@@ -30,6 +30,7 @@ from acorn.config import default_index_dir
 from acorn.extract.base import Block
 from acorn.query import FileGroup, Hit, Searcher
 from acorn.render import render
+from acorn.tui.actions import REGISTRY, Keymap, load_keymap, resolve_command
 
 
 def _format_hit_label(h: Hit) -> str:
@@ -51,6 +52,14 @@ def _format_file_label(g: FileGroup) -> str:
     return f"{name}  ({g.top_score:.2f})  [{g.kind}]"
 
 
+def _short_label(action_id: str) -> str:
+    """Footer-hint label for an action — first noun of the description."""
+    for a in REGISTRY:
+        if a.id == action_id:
+            return a.description.split(".")[0].split(" ")[0].rstrip(",")
+    return action_id
+
+
 class AcornApp(App[None]):
     """Phase 5 shell."""
 
@@ -61,13 +70,14 @@ class AcornApp(App[None]):
     Tree > .tree--label { padding: 0 1; }
     """
 
+    # BINDINGS is built from the action registry at import time so footer
+    # hints, help overlay, and runtime keymap all share one source.
     BINDINGS = [  # noqa: RUF012 — Textual's App.BINDINGS expects a class-level list literal
         Binding("ctrl+c", "quit", "Quit", show=False),
-        Binding("q", "quit", "Quit"),
-        Binding("slash", "focus_query", "Search"),
-        Binding("tab", "toggle_focus", "Focus pane"),
-        Binding("space", "peek_focused", "Peek"),
-        Binding("o", "open_default", "Open default"),
+        *(
+            Binding(key, action_id, _short_label(action_id))
+            for key, action_id in load_keymap().bindings.items()
+        ),
     ]
 
     def __init__(
@@ -76,6 +86,7 @@ class AcornApp(App[None]):
         index_dir: Path | None = None,
         collection: str | None = None,
         initial_query: str = "",
+        keymap: Keymap | None = None,
     ) -> None:
         super().__init__()
         self._index_dir = index_dir or default_index_dir()
@@ -84,6 +95,9 @@ class AcornApp(App[None]):
         self._searcher: Searcher | None = None
         self._current_query: str = ""
         self._groups: list[FileGroup] = []
+        self._acorn_keymap = keymap or load_keymap()
+        # Last `:command` palette result, exposed for tests.
+        self.last_palette_result: str | None = None
 
     # ── Layout ────────────────────────────────────────────────────
 
@@ -231,3 +245,62 @@ class AcornApp(App[None]):
             return
         _, hit = target
         opener.peek(Path(hit.path))
+
+    def action_open_focused(self) -> None:
+        """Open the current tree node — same as `Tree.NodeSelected`."""
+        tree = self.query_one("#results_pane", Tree)
+        if tree.cursor_node is None:
+            return
+        target = self._target_for_node(tree.cursor_node)
+        if target is None:
+            return
+        _, hit = target
+        opener.open_smart(path=Path(hit.path), kind=hit.kind, page=hit.page)
+
+    def action_show_help(self) -> None:
+        """Toggle a help overlay listing every action and its key."""
+        existing = self.query("#help_overlay")
+        if existing:
+            for w in existing:
+                w.remove()
+            return
+        from textual.containers import Vertical
+        from textual.widgets import Markdown as _Md
+
+        lines: list[str] = ["# Help", "", "| key | command | description |", "|---|---|---|"]
+        for a in REGISTRY:
+            key = self._acorn_keymap.for_action(a.id) or "—"
+            cmd = f":{a.palette_command}"
+            lines.append(f"| `{key}` | `{cmd}` | {a.description} |")
+        overlay = Vertical(_Md("\n".join(lines)), id="help_overlay")
+        self.mount(overlay)
+
+    def action_open_command_palette(self) -> None:
+        """Pop a one-shot input that runs ``resolve_command`` on submit."""
+        from textual.containers import Vertical
+
+        existing = self.query("#cmd_palette")
+        if existing:
+            for w in existing:
+                w.remove()
+            return
+        palette_input = Input(placeholder="Command…", id="cmd_palette_input")
+        wrapper = Vertical(palette_input, id="cmd_palette")
+        self.mount(wrapper)
+        palette_input.focus()
+
+    @on(Input.Submitted, "#cmd_palette_input")
+    def _on_palette_submit(self, ev: Input.Submitted) -> None:
+        name = ev.value.strip().lstrip(":")
+        action = resolve_command(name)
+        # Close the palette regardless.
+        for w in self.query("#cmd_palette"):
+            w.remove()
+        if action is None:
+            self.last_palette_result = f"unknown:{name}"
+            return
+        self.last_palette_result = action.id
+        # Run the action by name.
+        method = getattr(self, f"action_{action.id}", None)
+        if callable(method):
+            method()
