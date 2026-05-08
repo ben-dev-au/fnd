@@ -57,6 +57,17 @@ def index(
 
 
 @app.command()
+def tui(
+    collection: str | None = typer.Option(None, "--collection", "-c"),
+    query: str = typer.Option("", "--query", "-q", help="Initial query to seed the TUI."),
+) -> None:
+    """Launch the interactive TUI."""
+    from acorn.tui import AcornApp
+
+    AcornApp(collection=collection, initial_query=query).run()
+
+
+@app.command()
 def search(
     query: str,
     limit: int = 10,
