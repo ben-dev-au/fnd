@@ -22,11 +22,10 @@ async def test_empty_query_shows_placeholder(built_index: Path) -> None:
     app = AcornApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
-        from textual.widgets import Markdown
+        from textual.widgets import Static
 
-        md = app.query_one("#preview_md", Markdown)
-        # Just confirm the markdown widget rendered something non-error.
-        assert md is not None
+        preview = app.query_one("#preview_md", Static)
+        assert preview is not None
 
 
 @pytest.mark.asyncio

@@ -36,15 +36,22 @@ def _has_skim() -> bool:
     return any(p.exists() for p in candidates)
 
 
-def skim_url(path: Path, page: int) -> str:
+def skim_url(path: Path, page: int, *, search: str = "") -> str:
     """Build a Skim deep-link URL for ``path`` at 1-based ``page``.
 
-    Format verified during plan §21 Spike C: ``skim:///<pct-encoded>#page=N``
-    with three slashes (it's ``skim://`` + the absolute path which begins with
-    ``/``)."""
+    When ``search`` is non-empty, Skim opens with that string highlighted /
+    selected on the page (verified during plan §21 Spike C — Skim's URL
+    fragment supports ``&search=…``).
+
+    Format: ``skim:///<pct-encoded-abs-path>#page=N`` with three slashes
+    (skim:// + absolute path starting with /).
+    """
     abs_path = str(path.expanduser().resolve())
-    encoded = urllib.parse.quote(abs_path, safe="/")
-    return f"skim://{encoded}#page={page}"
+    encoded_path = urllib.parse.quote(abs_path, safe="/")
+    fragment_parts = [f"page={page}"]
+    if search:
+        fragment_parts.append(f"search={urllib.parse.quote(search)}")
+    return f"skim://{encoded_path}#{'&'.join(fragment_parts)}"
 
 
 def _osascript(commands: list[str]) -> subprocess.CompletedProcess[bytes]:
@@ -70,9 +77,10 @@ def open_pdf_via_applescript(path: Path, page: int) -> int:
     return proc.returncode
 
 
-def open_pdf_via_url(path: Path, page: int) -> int:
-    """Fallback: open the Skim URL via ``open``."""
-    url = skim_url(path, page)
+def open_pdf_via_url(path: Path, page: int, *, search: str = "") -> int:
+    """Open the Skim URL via ``open``. The URL form supports ``&search=`` so
+    the match is highlighted on the page; AppleScript does not."""
+    url = skim_url(path, page, search=search)
     return subprocess.run(["open", url], check=False).returncode
 
 
@@ -101,13 +109,22 @@ def open_smart(
     path: Path,
     kind: str,
     page: int = 0,
+    query: str = "",
     pdf_strategy: OpenStrategy = DEFAULT_PDF_STRATEGY,
 ) -> int:
     """Dispatch based on ``kind`` and locator metadata.
 
-    PDFs deep-link via Skim (AppleScript primary, URL fallback). Other
-    kinds fall through to ``open <path>``."""
+    PDFs deep-link via Skim. When ``query`` is non-empty, the URL form is
+    preferred over AppleScript because only the URL form supports
+    ``&search=`` (which makes Skim highlight the matching string on
+    the opened page). Falls back to AppleScript for query-less opens
+    (URL form has slight encoding fragility under unusual filenames per
+    §21 Spike C). Non-PDF kinds fall through to ``open <path>``.
+    """
     if kind == "pdf" and page > 0 and _has_skim():
+        # Prefer URL when we have a search term — only that form highlights.
+        if query.strip():
+            return open_pdf_via_url(path, page, search=query.strip())
         if pdf_strategy == "url":
             return open_pdf_via_url(path, page)
         if pdf_strategy == "applescript":

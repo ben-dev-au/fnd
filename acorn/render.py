@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from rich.text import Text
+
 from acorn.extract.base import Block
 
 _HEADING_KINDS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
@@ -102,6 +104,60 @@ def render_document(chunks: list[Any], *, query: str = "") -> str:
     if md.endswith("---"):
         md = md[:-3].rstrip()
     return md + "\n"
+
+
+def render_document_rich(chunks: list[Any], *, query: str = "") -> tuple[Text, dict[int, int]]:
+    """Build a Rich :class:`Text` for the preview pane plus a chunk-seq → line
+    offset map so the TUI can scroll precisely to the focused chunk.
+
+    Highlights every query-term match with a high-contrast style that doesn't
+    rely on the underlying terminal's bold rendering being visible.
+    Section headers are colored cyan/bold so they stand out as you scroll.
+    """
+    text = Text()
+    offsets: dict[int, int] = {}
+    line = 0
+
+    def _append(s: str, style: str = "") -> None:
+        nonlocal line
+        text.append(s, style=style)
+        line += s.count("\n")
+
+    for c in chunks:
+        offsets[int(getattr(c, "chunk_seq", 0))] = line
+        header = _chunk_header(c)
+        _append(f"\n {header}\n", style="bold #82aaff")  # tokyo-night-ish blue
+        _append("\n")
+        for b in c.blocks:
+            kind = getattr(b, "kind", "p")
+            text_value = getattr(b, "text", "") or ""
+            if kind in _HEADING_KINDS:
+                level = int(kind[1])
+                _append(f"{'  ' * (level - 1)}{text_value}\n", style="bold")
+            elif kind == "ul":
+                _append(f"  • {text_value}\n")
+            elif kind == "ol":
+                _append(f"  1. {text_value}\n")
+            elif kind == "code":
+                _append(f"{text_value}\n", style="dim")
+            elif kind == "quote":
+                _append(f"  ▎ {text_value}\n", style="italic dim")
+            else:
+                _append(f"{text_value}\n\n")
+
+    # High-contrast highlight for every query-term match across the whole
+    # rendered text. Done after structural rendering so it overrides per-block
+    # styles (Rich's styles compose; explicit color wins).
+    terms = _terms_from_query(query)
+    if terms:
+        sorted_terms = sorted({t for t in terms if t}, key=len, reverse=True)
+        pattern = re.compile(
+            r"\b(" + "|".join(re.escape(t) for t in sorted_terms) + r")\b",
+            re.IGNORECASE,
+        )
+        text.highlight_regex(pattern, style="bold black on #ffd866")
+
+    return text, offsets
 
 
 def _chunk_header(c: object) -> str:

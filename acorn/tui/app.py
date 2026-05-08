@@ -22,14 +22,14 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Footer, Input, Label, Markdown, SelectionList, Static, Tree
+from textual.widgets import Footer, Input, Label, SelectionList, Static, Tree
 from textual.widgets.selection_list import Selection
 from textual.widgets.tree import TreeNode
 
 from acorn import opener
 from acorn.config import default_index_dir
 from acorn.query import FileChunk, FileGroup, Hit, Searcher
-from acorn.render import render_document
+from acorn.render import render_document_rich
 from acorn.tui.actions import REGISTRY, Keymap, load_keymap, resolve_command
 
 
@@ -52,15 +52,6 @@ def _format_file_label(g: FileGroup) -> str:
     return f"{name}  ({g.top_score:.2f})  [{g.kind}]"
 
 
-def _estimate_block_lines(block: object) -> int:
-    """Rough line count for a body_struct block — used by scroll positioning."""
-    text = getattr(block, "text", "") or ""
-    if not text:
-        return 1
-    # Wrap-friendly heuristic: 1 line per 80 chars + count newlines.
-    return max(1, text.count("\n") + 1 + len(text) // 80)
-
-
 def _short_label(action_id: str) -> str:
     """Footer-hint label for an action — first noun of the description."""
     for a in REGISTRY:
@@ -73,14 +64,15 @@ class AcornApp(App[None]):
     """Phase 5 shell."""
 
     CSS = """
+    Screen { background: $surface; }
     #query_bar { height: 3; padding: 0 1; }
-    #status_bar { dock: top; height: 1; background: $boost; padding: 0 1; }
+    #status_bar { dock: top; height: 1; background: $panel; padding: 0 1; color: $text-muted; }
     #results_pane { width: 1fr; height: 1fr; border: round $primary; }
     #preview_pane { width: 2fr; height: 1fr; border: round $primary; }
-    #preview_md { padding: 0 1; }
+    #preview_md { padding: 1 2; height: auto; }
     #help_overlay {
         layer: overlay;
-        background: $surface;
+        background: $panel;
         border: round $accent;
         margin: 2 4 3 4;
         padding: 1 2 2 2;
@@ -89,23 +81,25 @@ class AcornApp(App[None]):
         dock: bottom;
         height: 3;
         padding: 0 1;
-        background: $boost;
+        background: $panel;
     }
     #collection_picker {
         layer: overlay;
-        background: $surface;
+        background: $panel;
         border: round $accent;
         margin: 4 8;
         padding: 1 2 2 2;
         height: auto;
     }
     Tree > .tree--label { padding: 0 1; }
+    Tree > .tree--cursor { background: $accent 30%; }
     """
 
     # BINDINGS is built from the action registry at import time so footer
     # hints, help overlay, and runtime keymap all share one source.
     BINDINGS = [  # noqa: RUF012 — Textual's App.BINDINGS expects a class-level list literal
         Binding("ctrl+c", "quit", "Quit", show=False),
+        Binding("escape", "dismiss_overlay", "Close overlay", show=False),
         *(
             Binding(key, action_id, _short_label(action_id))
             for key, action_id in load_keymap().bindings.items()
@@ -136,6 +130,11 @@ class AcornApp(App[None]):
         # full document on every cursor move within the same file. Keyed by
         # parent_id, invalidated on new query.
         self._chunk_cache: dict[str, list[FileChunk]] = {}
+        # Per-rendered-document chunk_seq → line offset map; used for precise
+        # scroll-to-chunk on cursor move.
+        self._chunk_offsets: dict[str, dict[int, int]] = {}
+        # Last rendered preview Text — exposed so tests can assert on highlights.
+        self.last_preview_text: Any = None
 
     # ── Layout ────────────────────────────────────────────────────
 
@@ -144,13 +143,16 @@ class AcornApp(App[None]):
         yield Input(placeholder="Search…", id="query_bar", value=self._initial_query)
         with Horizontal():
             yield Tree("Results", id="results_pane")
-            # Preview pane is a VerticalScroll wrapping Markdown so users can
-            # scroll the full document.
+            # Preview pane is a VerticalScroll wrapping a Static so we can
+            # render Rich Text with explicit highlight colours (Markdown's
+            # bold rendered too subtly per user feedback).
             with VerticalScroll(id="preview_pane"):
-                yield Markdown("*Type a query and press Enter.*", id="preview_md")
+                yield Static("Type a query and press Enter.", id="preview_md")
         yield Footer()
 
     def on_mount(self) -> None:
+        # Tokyo-night theme: muted blue/teal pastel palette per user request.
+        self.theme = "tokyo-night"
         self._searcher = Searcher(index_dir=self._index_dir)
         tree = self.query_one("#results_pane", Tree)
         tree.show_root = False
@@ -223,8 +225,13 @@ class AcornApp(App[None]):
             self._render_full_doc(g.parent_id, focus_chunk_seq=top.chunk_seq if top else 0)
 
     def _render_full_doc(self, parent_id: str, *, focus_chunk_seq: int) -> None:
-        """Render the full document for ``parent_id`` and (best-effort) scroll
-        the preview to the section identified by ``focus_chunk_seq``."""
+        """Render the full document for ``parent_id`` and scroll the preview
+        to the section identified by ``focus_chunk_seq``.
+
+        Scroll is precise — :func:`render_document_rich` returns a chunk_seq →
+        line-offset map built during render, so we know exactly which line
+        each chunk's section header begins on.
+        """
         if self._searcher is None:
             return
         chunks = self._chunk_cache.get(parent_id)
@@ -233,45 +240,53 @@ class AcornApp(App[None]):
             self._chunk_cache[parent_id] = chunks
         if not chunks:
             return
+        from rich.text import Text as _Text
+
+        body, offsets = render_document_rich(list(chunks), query=self._current_query)
         path = chunks[0].path
         crumb = Path(path).name
-        body_md = render_document(list(chunks), query=self._current_query)
-        md = self.query_one("#preview_md", Markdown)
-        md.update(f"# {crumb}\n\n{body_md}")
-        # Scroll the preview to the focused chunk's approximate offset.
-        # Each chunk is preceded by a "## …" header; we count those to
-        # estimate where to scroll the underlying VerticalScroll.
-        self._scroll_preview_to_chunk(chunks, focus_chunk_seq)
+        prefix = f" {crumb}\n\n"
+        prefix_lines = prefix.count("\n")
+        full = _Text()
+        full.append(prefix, style="bold #c0caf5")
+        full.append(body)
+        # Bump every chunk's line offset by the prefix's line count.
+        adjusted = {seq: line + prefix_lines for seq, line in offsets.items()}
+        self._chunk_offsets[parent_id] = adjusted
 
-    def _scroll_preview_to_chunk(self, chunks: list[FileChunk], focus_chunk_seq: int) -> None:
-        """Approximate scroll-to-chunk by counting blocks before the target."""
+        static = self.query_one("#preview_md", Static)
+        static.update(full)
+        self.last_preview_text = full
+        self._scroll_preview_to_chunk(parent_id, focus_chunk_seq)
+
+    def _scroll_preview_to_chunk(self, parent_id: str, focus_chunk_seq: int) -> None:
+        offsets = self._chunk_offsets.get(parent_id, {})
         scroll = self.query_one("#preview_pane", VerticalScroll)
-        # If we're at the first chunk, just scroll home.
-        if focus_chunk_seq <= chunks[0].chunk_seq:
+        if not offsets:
             scroll.scroll_home(animate=False)
             return
-        # Estimate visual lines = sum of block-count + 2 (header + divider) per
-        # preceding chunk. This is approximate but stable enough for orientation;
-        # a precise anchor system can land in a follow-up.
-        line_estimate = 1  # account for the file-title heading
-        for c in chunks:
-            if c.chunk_seq >= focus_chunk_seq:
-                break
-            line_estimate += 2  # "## header" + blank
-            line_estimate += sum(_estimate_block_lines(b) for b in c.blocks)
-            line_estimate += 2  # divider + blank
-        scroll.scroll_to(y=line_estimate, animate=False)
+        line = offsets.get(focus_chunk_seq, 0)
+        scroll.scroll_to(y=max(0, line - 1), animate=False)
 
     # ── Open / peek dispatch ──────────────────────────────────────
 
     @on(Tree.NodeSelected)
     def _on_tree_select(self, ev: Tree.NodeSelected[Any]) -> None:
-        """Enter on a tree node opens the matching file at its locator."""
+        """Enter on a tree node opens the matching file at its locator.
+
+        For PDFs, when there's an active query we route through Skim's URL
+        form so ``&search=`` highlights the term in Skim itself.
+        """
         target = self._target_for_node(ev.node)
         if target is None:
             return
         _, hit = target
-        opener.open_smart(path=Path(hit.path), kind=hit.kind, page=hit.page)
+        opener.open_smart(
+            path=Path(hit.path),
+            kind=hit.kind,
+            page=hit.page,
+            query=self._current_query,
+        )
 
     @staticmethod
     def _target_for_node(node: TreeNode[Any]) -> tuple[FileGroup, Hit] | None:
@@ -332,7 +347,12 @@ class AcornApp(App[None]):
         if target is None:
             return
         _, hit = target
-        opener.open_smart(path=Path(hit.path), kind=hit.kind, page=hit.page)
+        opener.open_smart(
+            path=Path(hit.path),
+            kind=hit.kind,
+            page=hit.page,
+            query=self._current_query,
+        )
 
     def action_open_collection_picker(self) -> None:
         """Pop a SelectionList of all configured collections; user toggles
@@ -369,6 +389,12 @@ class AcornApp(App[None]):
         """Live-update the active collection scope as the user toggles."""
         self._collections = list(ev.selection_list.selected)
         self._refresh_status()
+
+    def action_dismiss_overlay(self) -> None:
+        """Close any open overlay (help, picker, palette). No-op if none."""
+        for selector in ("#help_overlay", "#collection_picker", "#cmd_palette"):
+            for w in self.query(selector):
+                w.remove()
 
     def action_show_help(self) -> None:
         """Toggle a help overlay listing every action and its key."""
