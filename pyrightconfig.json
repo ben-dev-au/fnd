@@ -9,5 +9,6 @@
   "reportUnknownVariableType": "none",
   "reportUnknownArgumentType": "none",
   "reportUnknownParameterType": "warning",
-  "reportUnknownLambdaType": "none"
+  "reportUnknownLambdaType": "none",
+  "reportPrivateUsage": "none"
 }

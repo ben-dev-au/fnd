@@ -10,6 +10,7 @@ adds match-cluster minimap.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from acorn.extract.base import Block
 
@@ -56,7 +57,7 @@ def _terms_from_query(query: str) -> list[str]:
 
 
 def render(blocks: list[Block], *, query: str = "") -> str:
-    """Return Markdown source for the preview pane."""
+    """Return Markdown source for ``blocks`` with query terms highlighted."""
     terms = _terms_from_query(query)
     parts: list[str] = []
     for b in blocks:
@@ -76,3 +77,50 @@ def render(blocks: list[Block], *, query: str = "") -> str:
         else:
             parts.append(f"{text}\n\n")
     return "".join(parts).strip() + "\n"
+
+
+def render_document(chunks: list[Any], *, query: str = "") -> str:
+    """Render a full document (sequence of chunks) with section dividers and
+    every query-term occurrence bolded. Each chunk gets a section header
+    (``## p.N`` for PDFs, ``## Slide N`` for PPTX, ``## heading_path`` for
+    DOCX/MD) so the user sees structure as they scroll.
+
+    ``chunks`` is a list of :class:`acorn.query.FileChunk`-shaped records
+    (duck-typed to keep the renderer free of a query.py import dependency).
+    """
+    parts: list[str] = []
+    for c in chunks:
+        # Section header per chunk so structural boundaries are obvious.
+        header = _chunk_header(c)
+        if header:
+            parts.append(f"## {header}\n\n")
+        body = render(c.blocks, query=query)
+        parts.append(body)
+        parts.append("\n---\n\n")
+    md = "".join(parts).rstrip()
+    # Trim trailing horizontal rule.
+    if md.endswith("---"):
+        md = md[:-3].rstrip()
+    return md + "\n"
+
+
+def _chunk_header(c: object) -> str:
+    """Format a section header from a FileChunk's metadata.
+
+    Composes locator + heading when both exist (e.g. "p. 7 · 3.2 Soft
+    breaking"); falls back to whichever piece is present otherwise.
+    """
+    page = getattr(c, "page", 0)
+    slide = getattr(c, "slide", 0)
+    heading_path = getattr(c, "heading_path", "")
+    parts: list[str] = []
+    if page:
+        parts.append(f"p. {page}")
+    elif slide:
+        parts.append(f"Slide {slide}")
+    if heading_path:
+        parts.append(heading_path)
+    if parts:
+        return " · ".join(parts)
+    seq = getattr(c, "chunk_seq", 0)
+    return f"§ {seq + 1}"
