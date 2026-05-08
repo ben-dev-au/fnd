@@ -1,0 +1,6 @@
+A short plain text file used for the TXT extractor tests.
+
+The marigold compiler is mentioned only here in the corpus; queries for it should
+surface this file at rank 1.
+
+A second paragraph keeps the file from being trivially small.
