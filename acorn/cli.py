@@ -1,10 +1,12 @@
 """Acorn CLI entrypoints (typer).
 
-Phase 1 surface: `acorn index <root>` and `acorn search "<query>"`. Later phases add
-collection management, TUI, watch daemon, etc.
+Phase 1 surface: ``acorn version``, ``acorn index <root>``, ``acorn search "<query>"``.
+Later phases add collection management, TUI, watch daemon, etc.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import typer
 
@@ -24,11 +26,13 @@ def version() -> None:
 
 
 @app.command()
-def index(root: str) -> None:
-    """Index documents under <root> into the default collection."""
-    from acorn.index_pipeline import index_root
+def index(root: Path) -> None:
+    """Index documents under ROOT into the default collection."""
+    from acorn.config import default_index_dir
+    from acorn.index import build_index
 
-    index_root(root)
+    written = build_index(roots=[root], index_dir=default_index_dir())
+    typer.echo(f"indexed {written} chunks under {root}")
 
 
 @app.command()
