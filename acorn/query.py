@@ -7,7 +7,6 @@ RRF fusion of parallel sub-queries.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -225,22 +224,3 @@ class Searcher:
                 )
             )
         return out
-
-
-# ── CLI helper ─────────────────────────────────────────────────────────────
-
-
-def search_text(query: str, *, limit: int = _DEFAULT_LIMIT) -> Iterator[str]:
-    """Yield ranked ``file:locator snippet`` lines for the CLI ``search`` cmd."""
-    from acorn.config import default_index_dir
-
-    searcher = Searcher(index_dir=default_index_dir())
-    for hit in searcher.search(query, limit=limit):
-        loc = ""
-        if hit.page:
-            loc = f":p.{hit.page}"
-        elif hit.slide:
-            loc = f":s.{hit.slide}"
-        elif hit.heading_path:
-            loc = f" §{hit.heading_path}"
-        yield f"{hit.score:6.3f}  {hit.path}{loc}\n        {hit.snippet}"
