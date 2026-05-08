@@ -15,6 +15,9 @@ import textwrap
 from pathlib import Path
 
 import pymupdf  # type: ignore[import-not-found]
+from docx import Document as DocxDocument
+from pptx import Presentation
+from pptx.util import Inches, Pt
 
 FIXTURES = Path(__file__).parent
 
@@ -100,10 +103,79 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+# ── PPTX fixture ─────────────────────────────────────────────────────────────
+PPTX_SLIDES: list[tuple[str, str, str]] = [
+    # (title, body_text, speaker_notes)
+    ("Title Slide", "Test deck used by the PPTX extractor tests.", ""),
+    ("Agenda", "Outline of the talk.", "Reminder: keep it short."),
+    ("Background", "Some background information.", ""),
+    (
+        "Methods",
+        "We discuss methods. The lavender stapler was the differentiating tool.",
+        "This slide is the anchor; the unique phrase appears here only.",
+    ),
+    ("Results", "Outcomes of the pilot.", ""),
+    ("Discussion", "What it means.", ""),
+    ("Conclusion", "Wrap-up.", ""),
+    ("Q&A", "Questions and answers.", ""),
+]
+
+
+def _write_pptx(path: Path, slides: list[tuple[str, str, str]]) -> None:
+    prs = Presentation()
+    blank = prs.slide_layouts[5]  # title-only layout
+    for title_text, body_text, notes_text in slides:
+        slide = prs.slides.add_slide(blank)
+        title_shape = slide.shapes.title
+        if title_shape is not None:
+            title_shape.text = title_text
+        # Add a body text box.
+        tx_box = slide.shapes.add_textbox(Inches(0.5), Inches(2), Inches(9), Inches(4))
+        tf = tx_box.text_frame
+        tf.text = body_text
+        for para in tf.paragraphs:
+            for run in para.runs:
+                run.font.size = Pt(18)
+        if notes_text:
+            notes_tf = slide.notes_slide.notes_text_frame
+            if notes_tf is not None:
+                notes_tf.text = notes_text
+    path.parent.mkdir(parents=True, exist_ok=True)
+    prs.save(str(path))
+
+
+# ── DOCX fixture ─────────────────────────────────────────────────────────────
+# A list of (style_name, text). Heading 1/2 establish heading_path; Body Text is body.
+DOCX_PARAGRAPHS: list[tuple[str, str]] = [
+    ("Heading 1", "Methods Document"),
+    ("Body Text", "Top-level body of the document."),
+    ("Heading 2", "Sampling"),
+    ("Body Text", "Notes about sampling."),
+    (
+        "Body Text",
+        "The narwhal compiler appears only in this section.",
+    ),
+    ("Heading 2", "Analysis"),
+    ("Body Text", "Notes about analysis."),
+    ("Heading 1", "Conclusion"),
+    ("Body Text", "Wrap-up paragraph."),
+]
+
+
+def _write_docx(path: Path, paragraphs: list[tuple[str, str]]) -> None:
+    doc = DocxDocument()
+    for style, text in paragraphs:
+        doc.add_paragraph(text, style=style)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc.save(str(path))
+
+
 def build() -> None:
     _write_pdf(FIXTURES / "papers" / "test.pdf", PDF_PAGES)
     _write_text(FIXTURES / "notes" / "index.md", MD_CONTENT)
     _write_text(FIXTURES / "plain" / "short.txt", TXT_CONTENT)
+    _write_pptx(FIXTURES / "slides" / "deck.pptx", PPTX_SLIDES)
+    _write_docx(FIXTURES / "docs" / "methods.docx", DOCX_PARAGRAPHS)
 
 
 # ── Anchor table — the test contract ─────────────────────────────────────────
@@ -113,6 +185,8 @@ ANCHORS: list[tuple[str, str, object, str]] = [
     ("papers/test.pdf", "pdf", 7, "blue penguin sandwich"),
     ("notes/index.md", "md", "Test Notes > Methodology > Sampling", "ostrich firewall"),
     ("plain/short.txt", "txt", None, "marigold compiler"),
+    ("slides/deck.pptx", "pptx", 4, "lavender stapler"),
+    ("docs/methods.docx", "docx", "Methods Document > Sampling", "narwhal compiler"),
 ]
 
 
