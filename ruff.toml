@@ -1,0 +1,24 @@
+target-version = "py313"
+line-length = 100
+
+[lint]
+select = [
+    "E", "F", "W",      # pyflakes + pycodestyle
+    "I",                # isort
+    "B",                # bugbear
+    "C4",               # comprehensions
+    "SIM",              # simplify
+    "UP",               # pyupgrade
+    "RUF",              # ruff-specific
+    "N",                # naming
+    "PT",               # pytest style
+]
+ignore = [
+    "E501",             # line length is enforced by formatter
+]
+
+[lint.per-file-ignores]
+"tests/**" = ["B", "SIM"]
+
+[format]
+quote-style = "double"

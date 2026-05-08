@@ -1,0 +1,13 @@
+{
+  "include": ["acorn", "tests"],
+  "exclude": ["**/__pycache__", ".venv", "dist", "build"],
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "strict",
+  "reportMissingImports": "error",
+  "reportMissingTypeStubs": "none",
+  "reportUnknownMemberType": "none",
+  "reportUnknownVariableType": "none",
+  "reportUnknownArgumentType": "none",
+  "reportUnknownParameterType": "warning",
+  "reportUnknownLambdaType": "none"
+}

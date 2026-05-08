@@ -1,0 +1,40 @@
+"""Common types for extractors.
+
+A :class:`Chunk` is one indexed unit (one page of a PDF, one slide of a PPTX, one
+heading-section of a DOCX/MD, one fixed window of a TXT). Every chunk shares a
+``parent_id`` so the query layer can group hits back into per-file results.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Literal
+
+Kind = Literal["pdf", "pptx", "docx", "md", "txt"]
+
+
+@dataclass(slots=True, frozen=True)
+class Block:
+    """One renderable element of body_struct (preview pane).
+
+    ``kind`` is one of "h1".."h6", "p", "ul", "ol", "code", "quote".
+    """
+
+    kind: str
+    text: str
+
+
+@dataclass(slots=True)
+class Chunk:
+    parent_id: str
+    path: str
+    mtime: int
+    kind: Kind
+    body: str
+    body_struct: list[Block] = field(default_factory=list)
+    page: int = 0  # 1-based; 0 = not applicable
+    slide: int = 0  # 1-based; 0 = not applicable
+    heading_path: str = ""
+    title: str = ""
+    author: str = ""
+    chunk_seq: int = 0
