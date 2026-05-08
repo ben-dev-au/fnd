@@ -24,6 +24,7 @@ dependencies = [
     "pydantic-settings>=2.4",
     "platformdirs>=4.2",
     "loguru>=0.7",
+    "snowballstemmer>=3.0.1",
 ]
 
 [project.optional-dependencies]

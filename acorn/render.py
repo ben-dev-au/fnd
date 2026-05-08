@@ -12,27 +12,72 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import snowballstemmer
 from rich.text import Text
 
 from acorn.extract.base import Block
 
 _HEADING_KINDS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 
+# The Tantivy index uses ``en_stem`` (Snowball English) for the body field,
+# so a query for "penfold" matches both "penfold" and "penfolds". The preview
+# highlighter must agree: stem each query term and each document word, then
+# highlight by stem-equality. (Phase 5.9 — fixes user-reported bug where
+# "penfolds" matched "penfold" in results but didn't highlight.)
+_STEMMER = snowballstemmer.stemmer("english")
+HIGHLIGHT_STYLE = "bold black on #ffd866"
+
+
+def _stem(word: str) -> str:
+    return _STEMMER.stemWord(word.lower())
+
+
+def _term_stems(terms: list[str]) -> set[str]:
+    return {_stem(t) for t in terms if t}
+
+
+def text_has_match(text: str, term_stems: set[str]) -> bool:
+    """True if any whole word in ``text`` stems to one of ``term_stems``."""
+    if not term_stems or not text:
+        return False
+    return any(_stem(m.group(0)) in term_stems for m in re.finditer(r"\w+", text))
+
+
+def apply_stem_highlights(rendered: Text, term_stems: set[str]) -> bool:
+    """Stylize every word in ``rendered`` whose stem matches any
+    ``term_stems`` entry. Mutates ``rendered`` in place. Returns True if any
+    highlight was applied."""
+    if not term_stems:
+        return False
+    found = False
+    plain = rendered.plain
+    for m in re.finditer(r"\w+", plain):
+        if _stem(m.group(0)) in term_stems:
+            rendered.stylize(HIGHLIGHT_STYLE, m.start(), m.end())
+            found = True
+    return found
+
 
 def _highlight(text: str, terms: list[str]) -> str:
     """Wrap each whole-word occurrence of any term in Markdown bold (**…**).
 
-    Case-insensitive. Long-term match wins on ties so "supersymmetry" beats
-    "super" when both are queried.
+    Stem-aware: "penfold" highlights both "penfold" and "penfolds", matching
+    Tantivy's ``en_stem`` tokenizer behavior. Used by the legacy Markdown
+    render path (kept for export use; the TUI takes the Rich-Text path).
     """
     if not terms:
         return text
-    # Escape regex metas in terms; sort longest-first.
-    safe = sorted({re.escape(t) for t in terms if t}, key=len, reverse=True)
-    if not safe:
+    term_stems = _term_stems(terms)
+    if not term_stems:
         return text
-    pattern = re.compile(r"\b(" + "|".join(safe) + r")\b", re.IGNORECASE)
-    return pattern.sub(lambda m: f"**{m.group(0)}**", text)
+
+    def _wrap(m: re.Match[str]) -> str:
+        word = m.group(0)
+        if _stem(word) in term_stems:
+            return f"**{word}**"
+        return word
+
+    return re.sub(r"\w+", _wrap, text)
 
 
 def _terms_from_query(query: str) -> list[str]:
@@ -124,30 +169,18 @@ def render_chunk_pieces(chunk: Any, *, query: str = "") -> tuple[Text, list[tupl
     header = Text(f" {_chunk_header(chunk)}", style="bold #82aaff")
 
     terms = _terms_from_query(query)
-    pattern: re.Pattern[str] | None = None
-    if terms:
-        sorted_terms = sorted({t for t in terms if t}, key=len, reverse=True)
-        pattern = re.compile(
-            r"\b(" + "|".join(re.escape(t) for t in sorted_terms) + r")\b",
-            re.IGNORECASE,
-        )
+    term_stems = _term_stems(terms)
 
     chunk_has_match = bool(
-        pattern and any(pattern.search(getattr(b, "text", "") or "") for b in chunk.blocks)
+        term_stems
+        and any(text_has_match(getattr(b, "text", "") or "", term_stems) for b in chunk.blocks)
     )
 
     pieces: list[tuple[Text, bool]] = []
     if not chunk_has_match:
         # Single-piece body for performance.
-        body = render_chunk_rich(chunk, query=query)
-        # Strip the header from the body (render_chunk_rich prepends one).
-        body_lines = body.plain.splitlines()
-        if body_lines and body_lines[0].strip() == _chunk_header(chunk):
-            # Rebuild without the header line.
-            no_header = render_chunk_body_only(chunk, query=query)
-            pieces.append((no_header, False))
-        else:
-            pieces.append((body, False))
+        no_header = render_chunk_body_only(chunk, query=query)
+        pieces.append((no_header, False))
         return header, pieces
 
     # Match-bearing chunk: per-line pieces so we have precise scroll targets.
@@ -171,9 +204,7 @@ def render_chunk_pieces(chunk: Any, *, query: str = "") -> tuple[Text, list[tupl
                 rendered = Text(f"  ▎ {line}", style="italic dim")
             else:
                 rendered = Text(line)
-            has_match = bool(pattern and pattern.search(line))
-            if pattern and has_match:
-                rendered.highlight_regex(pattern, style="bold black on #ffd866")
+            has_match = apply_stem_highlights(rendered, term_stems)
             pieces.append((rendered, has_match))
     return header, pieces
 
@@ -198,14 +229,7 @@ def render_chunk_body_only(chunk: Any, *, query: str = "") -> Text:
         else:
             text.append(f"{text_value}\n")
     # Apply highlights so even the no-match-chunks page render is consistent.
-    terms = _terms_from_query(query)
-    if terms:
-        sorted_terms = sorted({t for t in terms if t}, key=len, reverse=True)
-        pattern = re.compile(
-            r"\b(" + "|".join(re.escape(t) for t in sorted_terms) + r")\b",
-            re.IGNORECASE,
-        )
-        text.highlight_regex(pattern, style="bold black on #ffd866")
+    apply_stem_highlights(text, _term_stems(_terms_from_query(query)))
     return text
 
 
@@ -235,14 +259,7 @@ def render_chunk_rich(chunk: Any, *, query: str = "") -> Text:
         else:
             text.append(f"{text_value}\n")
 
-    terms = _terms_from_query(query)
-    if terms:
-        sorted_terms = sorted({t for t in terms if t}, key=len, reverse=True)
-        pattern = re.compile(
-            r"\b(" + "|".join(re.escape(t) for t in sorted_terms) + r")\b",
-            re.IGNORECASE,
-        )
-        text.highlight_regex(pattern, style="bold black on #ffd866")
+    apply_stem_highlights(text, _term_stems(_terms_from_query(query)))
     return text
 
 
