@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.pyright/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+.DS_Store
+.coverage
+htmlcov/
+tests/fixtures/.cache/
+# Index data is never committed (lives in user's Library on macOS)
+index/
