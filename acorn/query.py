@@ -21,6 +21,7 @@ from acorn.schema import (
     F_CHUNK_SEQ,
     F_HEADING_PATH,
     F_KIND,
+    F_MTIME,
     F_PAGE,
     F_PARENT_ID,
     F_PATH,
@@ -46,6 +47,10 @@ class Hit:
     title: str
     snippet: str
     chunk_seq: int = 0
+    # Unix epoch seconds; 0 means "unknown / unindexed file". Used by the
+    # reranker (§4 recency boost) — pulled from the F_MTIME fast field at
+    # search time, not stored on the Hit until reranking runs.
+    mtime: int = 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -174,6 +179,7 @@ class Searcher:
                     title=_first_str(doc, F_TITLE),
                     snippet=_make_snippet(body_text, query),
                     chunk_seq=_first_int(doc, F_CHUNK_SEQ),
+                    mtime=_first_int(doc, F_MTIME),
                 )
             )
         return out
@@ -184,10 +190,14 @@ class Searcher:
         *,
         limit: int = _DEFAULT_LIMIT,
         collection: str | None = None,
+        profile: object | None = None,
+        now: int | None = None,
     ) -> list[Hit]:
         """Return one Hit per file (the file's best-scored chunk).
 
         Use :meth:`search_grouped` to keep all matched sections of each file.
+        When ``profile`` is set, applies the §4 Python post-rank adjustments
+        (recency / filetype / phrase-proximity) before per-file dedup.
         """
         if not query.strip():
             return []
@@ -195,6 +205,11 @@ class Searcher:
         # ``limit`` distinct files when several chunks of the same file rank
         # high.
         raw = self._raw_hits(query, limit=limit * 5, collection=collection)
+        if profile is not None:
+            from acorn.rerank import RankingProfile, rerank_hits
+
+            assert isinstance(profile, RankingProfile)
+            raw = rerank_hits(raw, profile=profile, query=query, now=now)
         seen: set[str] = set()
         out: list[Hit] = []
         for h in raw:
@@ -249,14 +264,27 @@ class Searcher:
         limit: int = _DEFAULT_LIMIT,
         sections_per_file: int = 5,
         collection: str | None = None,
+        profile: object | None = None,
+        now: int | None = None,
     ) -> list[FileGroup]:
         """Return ranked FileGroups, each with up to ``sections_per_file`` ranked
         section hits. Files are sorted by their top-scoring chunk; sections
         within a file are sorted by score (which generally matches document
-        order on a single keyword query, but doesn't have to)."""
+        order on a single keyword query, but doesn't have to).
+
+        When ``profile`` is set, the §4 Python post-rank adjustments run on
+        every raw hit before grouping; ``now`` (unix seconds) defaults to the
+        current wall clock and is exposed so tests get deterministic recency
+        math.
+        """
         if not query.strip():
             return []
         raw = self._raw_hits(query, limit=limit * 10, collection=collection)
+        if profile is not None:
+            from acorn.rerank import RankingProfile, rerank_hits
+
+            assert isinstance(profile, RankingProfile)
+            raw = rerank_hits(raw, profile=profile, query=query, now=now)
         groups: dict[str, list[Hit]] = {}
         order: list[str] = []  # parent_ids in first-seen-best-score order
         for h in raw:

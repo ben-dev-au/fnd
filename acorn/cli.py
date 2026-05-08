@@ -62,9 +62,10 @@ def tui(
     query: str = typer.Option("", "--query", "-q", help="Initial query to seed the TUI."),
 ) -> None:
     """Launch the interactive TUI."""
+    from acorn.config import load
     from acorn.tui import AcornApp
 
-    AcornApp(collection=collection, initial_query=query).run()
+    AcornApp(collection=collection, initial_query=query, config=load()).run()
 
 
 @app.command()
