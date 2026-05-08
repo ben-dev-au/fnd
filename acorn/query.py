@@ -46,6 +46,22 @@ class Hit:
     snippet: str
 
 
+@dataclass(slots=True, frozen=True)
+class FileGroup:
+    """One file with its ranked matched sections.
+
+    The TUI tree (phase 5) renders the file as a parent node and ``hits`` as
+    its sorted children. ``top_score`` mirrors ``hits[0].score`` for sorting.
+    """
+
+    parent_id: str
+    path: str
+    kind: str
+    title: str
+    top_score: float
+    hits: list[Hit]
+
+
 def _open_index(index_dir: Path) -> Index:
     sidecar = index_dir / ".acorn-schema-version"
     if not sidecar.exists():
@@ -100,17 +116,13 @@ class Searcher:
         self._index.reload()
         self._searcher = self._index.searcher()
 
-    def search(
+    def _raw_hits(
         self,
         query: str,
         *,
-        limit: int = _DEFAULT_LIMIT,
-        collection: str | None = None,
+        limit: int,
+        collection: str | None,
     ) -> list[Hit]:
-        if not query.strip():
-            return []
-        # Tantivy's parser handles boolean / phrase / fuzzy / field syntax natively.
-        # Per §22 Spike A: per-field boosts are query-time tunable.
         full_query = query
         if collection:
             full_query = f'collection:"{collection}" AND ({query})'
@@ -121,36 +133,98 @@ class Searcher:
         )
         result = self._searcher.search(parsed, limit=limit)
 
-        # Group by parent_id so each file's best chunk wins; later phases will
-        # nest sub-hits under each file in the TUI tree.
-        seen_parents: dict[str, Hit] = {}
-        ordered: list[Hit] = []
+        from acorn.struct import decode as decode_body_struct
+
+        out: list[Hit] = []
         for score, address in result.hits:
             doc = self._searcher.doc(address)
-            parent_id = _first_str(doc, F_PARENT_ID)
-            if parent_id in seen_parents:
-                continue
             body_struct_bytes = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
             body_text = ""
             if body_struct_bytes is not None:
-                from acorn.struct import decode as decode_body_struct
-
                 blocks = decode_body_struct(body_struct_bytes)
                 body_text = "\n".join(b.text for b in blocks)
-            hit = Hit(
-                score=float(score),
-                parent_id=parent_id,
-                path=_first_str(doc, F_PATH),
-                kind=_first_str(doc, F_KIND),
-                page=_first_int(doc, F_PAGE),
-                slide=_first_int(doc, F_SLIDE),
-                heading_path=_first_str(doc, F_HEADING_PATH),
-                title=_first_str(doc, F_TITLE),
-                snippet=_make_snippet(body_text, query),
+            out.append(
+                Hit(
+                    score=float(score),
+                    parent_id=_first_str(doc, F_PARENT_ID),
+                    path=_first_str(doc, F_PATH),
+                    kind=_first_str(doc, F_KIND),
+                    page=_first_int(doc, F_PAGE),
+                    slide=_first_int(doc, F_SLIDE),
+                    heading_path=_first_str(doc, F_HEADING_PATH),
+                    title=_first_str(doc, F_TITLE),
+                    snippet=_make_snippet(body_text, query),
+                )
             )
-            seen_parents[parent_id] = hit
-            ordered.append(hit)
-        return ordered
+        return out
+
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = _DEFAULT_LIMIT,
+        collection: str | None = None,
+    ) -> list[Hit]:
+        """Return one Hit per file (the file's best-scored chunk).
+
+        Use :meth:`search_grouped` to keep all matched sections of each file.
+        """
+        if not query.strip():
+            return []
+        # Pull deeper than ``limit`` so per-file dedup still leaves us with
+        # ``limit`` distinct files when several chunks of the same file rank
+        # high.
+        raw = self._raw_hits(query, limit=limit * 5, collection=collection)
+        seen: set[str] = set()
+        out: list[Hit] = []
+        for h in raw:
+            if h.parent_id in seen:
+                continue
+            seen.add(h.parent_id)
+            out.append(h)
+            if len(out) >= limit:
+                break
+        return out
+
+    def search_grouped(
+        self,
+        query: str,
+        *,
+        limit: int = _DEFAULT_LIMIT,
+        sections_per_file: int = 5,
+        collection: str | None = None,
+    ) -> list[FileGroup]:
+        """Return ranked FileGroups, each with up to ``sections_per_file`` ranked
+        section hits. Files are sorted by their top-scoring chunk; sections
+        within a file are sorted by score (which generally matches document
+        order on a single keyword query, but doesn't have to)."""
+        if not query.strip():
+            return []
+        raw = self._raw_hits(query, limit=limit * 10, collection=collection)
+        groups: dict[str, list[Hit]] = {}
+        order: list[str] = []  # parent_ids in first-seen-best-score order
+        for h in raw:
+            bucket = groups.get(h.parent_id)
+            if bucket is None:
+                groups[h.parent_id] = [h]
+                order.append(h.parent_id)
+            else:
+                bucket.append(h)
+        out: list[FileGroup] = []
+        for pid in order[:limit]:
+            section_hits = groups[pid][:sections_per_file]
+            top = section_hits[0]
+            out.append(
+                FileGroup(
+                    parent_id=pid,
+                    path=top.path,
+                    kind=top.kind,
+                    title=top.title,
+                    top_score=top.score,
+                    hits=section_hits,
+                )
+            )
+        return out
 
 
 # ── CLI helper ─────────────────────────────────────────────────────────────

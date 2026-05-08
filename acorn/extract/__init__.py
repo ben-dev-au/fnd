@@ -21,6 +21,8 @@ _DISPATCH: dict[str, str] = {
     ".md": "markdown",
     ".markdown": "markdown",
     ".pdf": "pdf",
+    ".pptx": "pptx",
+    ".docx": "docx",
 }
 
 
