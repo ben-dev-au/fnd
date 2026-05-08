@@ -147,15 +147,17 @@ async def test_tui_renders_full_document_when_section_focused(built_index: Path)
         await pilot.press("down")
         await pilot.pause()
 
-        # 12 chunk widgets (one per PDF page) should be mounted under the
-        # preview pane.
+        # 12 chunk-header widgets (one per PDF page) should be mounted under
+        # the preview pane. Per-line widgets are mounted alongside.
         assert len(app._chunk_widgets) == 12
-        # Each chunk widget renders Rich Text with our highlight style for
-        # the anchor terms; iterate and confirm.
+        # Iterate every preview widget — header + line — and confirm the
+        # anchor terms each carry our explicit highlight style.
         from rich.text import Text as _Text
+        from textual.widgets import Static
 
         seen_terms: set[str] = set()
-        for w in app._chunk_widgets.values():
+        pane = app.query_one("#preview_pane")
+        for w in pane.query(Static):
             r = getattr(w, "acorn_text", None)
             if not isinstance(r, _Text):
                 continue
