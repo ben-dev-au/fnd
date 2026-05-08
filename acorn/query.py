@@ -67,8 +67,7 @@ def _open_index(index_dir: Path) -> Index:
         raise FileNotFoundError(f"no acorn index at {index_dir}")
     if sidecar.read_text().strip() != str(SCHEMA_VERSION):
         raise RuntimeError(
-            f"index at {index_dir} schema version mismatch; rebuild with "
-            f"`acorn index --rebuild`"
+            f"index at {index_dir} schema version mismatch; rebuild with `acorn index --rebuild`"
         )
     return Index(build_schema(), path=str(index_dir))
 
@@ -122,9 +121,11 @@ class Searcher:
         limit: int,
         collection: str | None,
     ) -> list[Hit]:
-        full_query = query
+        from acorn.query_dsl import preprocess
+
+        full_query = preprocess(query)
         if collection:
-            full_query = f'collection:"{collection}" AND ({query})'
+            full_query = f'collection:"{collection}" AND ({full_query})'
         parsed = self._index.parse_query(
             full_query,
             default_field_names=DEFAULT_SEARCH_FIELDS,
