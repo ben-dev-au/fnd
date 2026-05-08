@@ -59,13 +59,13 @@ def test_user_overrides_replace_default(tmp_path: Path) -> None:
     cfg.write_text(
         textwrap.dedent("""\
             [normal]
-            "ctrl+x" = "open_default"
+            "ctrl+x" = "open_default_app"
             "ctrl+f" = "focus_query"
         """),
         encoding="utf-8",
     )
     km = load_keymap(path=cfg)
-    assert km.bindings["ctrl+x"] == "open_default"
+    assert km.bindings["ctrl+x"] == "open_default_app"
     assert km.bindings["ctrl+f"] == "focus_query"
     # Defaults that weren't overridden should still be present.
     assert km.for_action("quit") == "q"

@@ -132,13 +132,12 @@ def test_render_document_highlights_every_match_across_chunks() -> None:
 
 @pytest.mark.asyncio
 async def test_tui_renders_full_document_when_section_focused(built_index: Path) -> None:
-    """When the cursor lands on a file's section, the preview should contain
-    every page of that PDF (not just the matched one), with all anchor-phrase
-    matches highlighted via Rich Text styles."""
+    """When the cursor lands on a file's section, the preview should mount
+    one Static per chunk (every PDF page) with anchor-phrase highlights."""
     app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
-        from textual.widgets import Static, Tree
+        from textual.widgets import Tree
 
         tree = app.query_one("#results_pane", Tree)
         first = next(iter(tree.root.children))
@@ -148,28 +147,21 @@ async def test_tui_renders_full_document_when_section_focused(built_index: Path)
         await pilot.press("down")
         await pilot.pause()
 
-        preview = app.query_one("#preview_md", Static)
-        assert preview is not None
+        # 12 chunk widgets (one per PDF page) should be mounted under the
+        # preview pane.
+        assert len(app._chunk_widgets) == 12
+        # Each chunk widget renders Rich Text with our highlight style for
+        # the anchor terms; iterate and confirm.
         from rich.text import Text as _Text
 
-        rendered = app.last_preview_text
-        assert isinstance(rendered, _Text)
-        body = rendered.plain
-        # Every page header should be present (chunks 1..12 → " p. 1" ... " p. 12").
-        for page_no in (1, 7, 12):
-            assert f"p. {page_no}" in body, f"missing p.{page_no} in preview"
-        # The anchor phrase appears in the plain text.
-        assert "blue" in body.lower()
-        assert "penguin" in body.lower()
-        assert "sandwich" in body.lower()
-        # And the anchor is highlighted via a Rich Text style span.
-        spans_for_terms: list[str] = []
-        for span in rendered.spans:
-            seg = body[span.start : span.end].lower()
-            if seg in {"blue", "penguin", "sandwich"}:
-                spans_for_terms.append(seg)
-                # Each highlighted span carries the explicit highlight style.
-                assert "on #ffd866" in str(span.style)
-        assert {"blue", "penguin", "sandwich"} == set(
-            spans_for_terms
-        ), f"missing highlight spans, got {spans_for_terms}"
+        seen_terms: set[str] = set()
+        for w in app._chunk_widgets.values():
+            r = getattr(w, "acorn_text", None)
+            if not isinstance(r, _Text):
+                continue
+            for span in r.spans:
+                seg = r.plain[span.start : span.end].lower()
+                if seg in {"blue", "penguin", "sandwich"}:
+                    assert "on #ffd866" in str(span.style)
+                    seen_terms.add(seg)
+        assert seen_terms == {"blue", "penguin", "sandwich"}, seen_terms

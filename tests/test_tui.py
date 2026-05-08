@@ -24,7 +24,7 @@ async def test_empty_query_shows_placeholder(built_index: Path) -> None:
         await pilot.pause()
         from textual.widgets import Static
 
-        preview = app.query_one("#preview_md", Static)
+        preview = app.query_one("#placeholder", Static)
         assert preview is not None
 
 
@@ -81,10 +81,11 @@ async def test_expanding_file_node_shows_section_hits(built_index: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_enter_on_section_dispatches_opener(
+async def test_o_key_opens_at_locator_on_focused_section(
     built_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Pressing Enter on a leaf should call opener.open_smart with correct args."""
+    """Per phase 5.7: Enter no longer opens externally — only the explicit
+    `o` key (action_open_at_locator) does."""
     calls: list[dict[str, Any]] = []
 
     def fake_open_smart(*, path: Path, kind: str, page: int = 0, **_kw: Any) -> int:
@@ -101,17 +102,20 @@ async def test_enter_on_section_dispatches_opener(
         from textual.widgets import Tree
 
         tree = app.query_one("#results_pane", Tree)
-        # Expand the first file, focus on its first section, press Enter.
         first = next(iter(tree.root.children))
         first.expand()
         await pilot.pause()
-        # Focus tree, move to first child, press Enter.
         tree.focus()
-        await pilot.press("down")  # cursor onto first section leaf
+        await pilot.press("down")
+        # Pressing Enter should NOT open the external app any more.
         await pilot.press("enter")
         await pilot.pause()
+        assert not calls, f"Enter should not call open_smart; got {calls}"
 
-        assert calls, "expected open_smart to be called"
+        # Now `o` triggers action_open_at_locator → open_smart.
+        app.action_open_at_locator()
+        await pilot.pause()
+        assert calls, "expected open_smart to be called via `o`"
         assert calls[-1]["kind"] == "pdf"
         assert calls[-1]["page"] == 7
         assert calls[-1]["path"].endswith("test.pdf")

@@ -29,7 +29,7 @@ from textual.widgets.tree import TreeNode
 from acorn import opener
 from acorn.config import default_index_dir
 from acorn.query import FileChunk, FileGroup, Hit, Searcher
-from acorn.render import render_document_rich
+from acorn.render import render_chunk_rich
 from acorn.tui.actions import REGISTRY, Keymap, load_keymap, resolve_command
 
 
@@ -53,11 +53,21 @@ def _format_file_label(g: FileGroup) -> str:
 
 
 def _short_label(action_id: str) -> str:
-    """Footer-hint label for an action — first noun of the description."""
+    """Footer-hint label for an action — uses Action.footer_label when set,
+    otherwise falls back to the first word of the description."""
     for a in REGISTRY:
         if a.id == action_id:
+            if a.footer_label:
+                return a.footer_label
             return a.description.split(".")[0].split(" ")[0].rstrip(",")
     return action_id
+
+
+def _action_show(action_id: str) -> bool:
+    for a in REGISTRY:
+        if a.id == action_id:
+            return a.show_in_footer
+    return True
 
 
 class AcornApp(App[None]):
@@ -68,8 +78,11 @@ class AcornApp(App[None]):
     #query_bar { height: 3; padding: 0 1; }
     #status_bar { dock: top; height: 1; background: $panel; padding: 0 1; color: $text-muted; }
     #results_pane { width: 1fr; height: 1fr; border: round $primary; }
-    #preview_pane { width: 2fr; height: 1fr; border: round $primary; }
-    #preview_md { padding: 1 2; height: auto; }
+    #preview_pane { width: 2fr; height: 1fr; border: round $primary; padding: 1 2; }
+    .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
+    .chunk-section { padding: 0 0 1 0; height: auto; }
+    .chunk-section-focused { background: $accent 10%; }
+    #placeholder { color: $text-muted; }
     #help_overlay {
         layer: overlay;
         background: $panel;
@@ -101,7 +114,12 @@ class AcornApp(App[None]):
         Binding("ctrl+c", "quit", "Quit", show=False),
         Binding("escape", "dismiss_overlay", "Close overlay", show=False),
         *(
-            Binding(key, action_id, _short_label(action_id))
+            Binding(
+                key,
+                action_id,
+                _short_label(action_id),
+                show=_action_show(action_id),
+            )
             for key, action_id in load_keymap().bindings.items()
         ),
     ]
@@ -130,11 +148,12 @@ class AcornApp(App[None]):
         # full document on every cursor move within the same file. Keyed by
         # parent_id, invalidated on new query.
         self._chunk_cache: dict[str, list[FileChunk]] = {}
-        # Per-rendered-document chunk_seq → line offset map; used for precise
-        # scroll-to-chunk on cursor move.
-        self._chunk_offsets: dict[str, dict[int, int]] = {}
-        # Last rendered preview Text — exposed so tests can assert on highlights.
-        self.last_preview_text: Any = None
+        # Currently-rendered file's per-chunk Static widgets, keyed by
+        # chunk_seq. Cleared and rebuilt on each file change.
+        self._chunk_widgets: dict[int, Static] = {}
+        # The parent_id whose chunks are currently mounted in the preview
+        # pane (so we don't re-mount when cursor moves within the same file).
+        self._preview_parent_id: str | None = None
 
     # ── Layout ────────────────────────────────────────────────────
 
@@ -143,11 +162,11 @@ class AcornApp(App[None]):
         yield Input(placeholder="Search…", id="query_bar", value=self._initial_query)
         with Horizontal():
             yield Tree("Results", id="results_pane")
-            # Preview pane is a VerticalScroll wrapping a Static so we can
-            # render Rich Text with explicit highlight colours (Markdown's
-            # bold rendered too subtly per user feedback).
+            # Preview pane: VerticalScroll containing one Static per chunk
+            # so scroll_to_widget targets the exact chunk regardless of how
+            # text wraps visually.
             with VerticalScroll(id="preview_pane"):
-                yield Static("Type a query and press Enter.", id="preview_md")
+                yield Static("Type a query and press Enter.", id="placeholder")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -225,13 +244,13 @@ class AcornApp(App[None]):
             self._render_full_doc(g.parent_id, focus_chunk_seq=top.chunk_seq if top else 0)
 
     def _render_full_doc(self, parent_id: str, *, focus_chunk_seq: int) -> None:
-        """Render the full document for ``parent_id`` and scroll the preview
-        to the section identified by ``focus_chunk_seq``.
+        """Render the full document for ``parent_id`` as one Static widget
+        per chunk, then scroll the preview to the chunk identified by
+        ``focus_chunk_seq``.
 
-        Scroll is precise — :func:`render_document_rich` returns a chunk_seq →
-        line-offset map built during render, so we know exactly which line
-        each chunk's section header begins on.
-        """
+        Per-chunk widgets give precise ``scroll_to_widget`` targets,
+        immune to long-line wrapping (which broke the previous
+        line-offset approach for some PDFs)."""
         if self._searcher is None:
             return
         chunks = self._chunk_cache.get(parent_id)
@@ -240,53 +259,56 @@ class AcornApp(App[None]):
             self._chunk_cache[parent_id] = chunks
         if not chunks:
             return
-        from rich.text import Text as _Text
 
-        body, offsets = render_document_rich(list(chunks), query=self._current_query)
-        path = chunks[0].path
-        crumb = Path(path).name
-        prefix = f" {crumb}\n\n"
-        prefix_lines = prefix.count("\n")
-        full = _Text()
-        full.append(prefix, style="bold #c0caf5")
-        full.append(body)
-        # Bump every chunk's line offset by the prefix's line count.
-        adjusted = {seq: line + prefix_lines for seq, line in offsets.items()}
-        self._chunk_offsets[parent_id] = adjusted
+        # Mount fresh widgets only when the file has actually changed —
+        # otherwise we just scroll within the existing widget tree.
+        if parent_id != self._preview_parent_id:
+            self._mount_chunks_for_file(parent_id, chunks)
+            self._preview_parent_id = parent_id
 
-        static = self.query_one("#preview_md", Static)
-        static.update(full)
-        self.last_preview_text = full
-        self._scroll_preview_to_chunk(parent_id, focus_chunk_seq)
+        self._scroll_preview_to_chunk(focus_chunk_seq)
 
-    def _scroll_preview_to_chunk(self, parent_id: str, focus_chunk_seq: int) -> None:
-        offsets = self._chunk_offsets.get(parent_id, {})
-        scroll = self.query_one("#preview_pane", VerticalScroll)
-        if not offsets:
-            scroll.scroll_home(animate=False)
+    def _mount_chunks_for_file(self, parent_id: str, chunks: list[FileChunk]) -> None:
+        """Tear down the existing preview content and mount one Static per
+        chunk plus a title widget at the top."""
+        pane = self.query_one("#preview_pane", VerticalScroll)
+        for w in list(pane.children):
+            w.remove()
+        self._chunk_widgets = {}
+        title = Static(Path(chunks[0].path).name, classes="preview-title")
+        pane.mount(title)
+        for c in chunks:
+            text = render_chunk_rich(c, query=self._current_query)
+            w = Static(text, classes="chunk-section")
+            # Stash the Rich Text on the widget so tests / future
+            # programmatic features can introspect highlights without
+            # reaching into Static's name-mangled internals.
+            w.acorn_text = text  # type: ignore[attr-defined]
+            pane.mount(w)
+            self._chunk_widgets[c.chunk_seq] = w
+
+    def _scroll_preview_to_chunk(self, focus_chunk_seq: int) -> None:
+        widget = self._chunk_widgets.get(focus_chunk_seq)
+        if widget is None:
             return
-        line = offsets.get(focus_chunk_seq, 0)
-        scroll.scroll_to(y=max(0, line - 1), animate=False)
+        # Highlight the focused chunk's row so it's visually unambiguous.
+        for w in self._chunk_widgets.values():
+            w.remove_class("chunk-section-focused")
+        widget.add_class("chunk-section-focused")
+        # Defer scroll until layout has settled (mount → reflow → measure).
+        self.call_after_refresh(self._do_scroll_to_widget, widget)
+
+    def _do_scroll_to_widget(self, widget: Static) -> None:
+        pane = self.query_one("#preview_pane", VerticalScroll)
+        pane.scroll_to_widget(widget, top=True, animate=False)
 
     # ── Open / peek dispatch ──────────────────────────────────────
 
-    @on(Tree.NodeSelected)
-    def _on_tree_select(self, ev: Tree.NodeSelected[Any]) -> None:
-        """Enter on a tree node opens the matching file at its locator.
-
-        For PDFs, when there's an active query we route through Skim's URL
-        form so ``&search=`` highlights the term in Skim itself.
-        """
-        target = self._target_for_node(ev.node)
-        if target is None:
-            return
-        _, hit = target
-        opener.open_smart(
-            path=Path(hit.path),
-            kind=hit.kind,
-            page=hit.page,
-            query=self._current_query,
-        )
+    # Note: we deliberately do NOT bind Tree.NodeSelected to opener.open_smart.
+    # Per user feedback, clicking / Enter should populate the preview only;
+    # opening externally requires the explicit `o` (open at locator) or `O`
+    # (open default app) bindings. Selection still fires NodeHighlighted
+    # which drives the preview render via `_on_tree_highlight`.
 
     @staticmethod
     def _target_for_node(node: TreeNode[Any]) -> tuple[FileGroup, Hit] | None:
@@ -318,7 +340,28 @@ class AcornApp(App[None]):
         else:
             tree.focus()
 
-    def action_open_default(self) -> None:
+    def action_open_at_locator(self) -> None:
+        """Open the focused result at its page/section.
+
+        For PDFs with a non-empty query, routes through Skim's URL form
+        so ``&search=`` highlights the term in the opened PDF (§22 Spike C).
+        """
+        tree = self.query_one("#results_pane", Tree)
+        if tree.cursor_node is None:
+            return
+        target = self._target_for_node(tree.cursor_node)
+        if target is None:
+            return
+        _, hit = target
+        opener.open_smart(
+            path=Path(hit.path),
+            kind=hit.kind,
+            page=hit.page,
+            query=self._current_query,
+        )
+
+    def action_open_default_app(self) -> None:
+        """Open the focused file in its default app, ignoring the locator."""
         tree = self.query_one("#results_pane", Tree)
         if tree.cursor_node is None:
             return
@@ -337,22 +380,6 @@ class AcornApp(App[None]):
             return
         _, hit = target
         opener.peek(Path(hit.path))
-
-    def action_open_focused(self) -> None:
-        """Open the current tree node — same as `Tree.NodeSelected`."""
-        tree = self.query_one("#results_pane", Tree)
-        if tree.cursor_node is None:
-            return
-        target = self._target_for_node(tree.cursor_node)
-        if target is None:
-            return
-        _, hit = target
-        opener.open_smart(
-            path=Path(hit.path),
-            kind=hit.kind,
-            page=hit.page,
-            query=self._current_query,
-        )
 
     def action_open_collection_picker(self) -> None:
         """Pop a SelectionList of all configured collections; user toggles
