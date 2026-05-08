@@ -11,6 +11,7 @@ from pathlib import Path
 
 from tantivy import Document, Index
 
+from acorn.config import CollectionConfig
 from acorn.extract import Chunk, extract
 from acorn.schema import (
     F_AUTHOR,
@@ -83,20 +84,38 @@ def build_index(
     roots: Sequence[Path],
     index_dir: Path,
     collection: str = "default",
+    includes: list[str] | None = None,
+    excludes: list[str] | None = None,
+    follow_symlinks: bool = False,
+    rebuild: bool = False,
 ) -> int:
-    """Index every supported file under ``roots`` into ``index_dir``.
+    """Index supported files under ``roots`` into ``index_dir``.
 
-    Returns the number of chunks written. Phase 1 is single-process and
-    single-writer; multi-process extraction lands in phase 10.
+    Honours includes/excludes globs per §8 precedence rules. Returns the number
+    of chunks written. Phase 1 is single-process and single-writer; multi-
+    process extraction lands in phase 10.
+
+    When ``rebuild=True``, all existing chunks for ``collection`` are deleted
+    before re-adding — useful when an extractor improves and the user wants
+    fresh chunks without losing other collections.
     """
     index = _ensure_index(index_dir)
     writer = index.writer(heap_size=_WRITER_HEAP)
+
+    if rebuild:
+        writer.delete_documents(F_COLLECTION, collection)
+        writer.commit()
+
     written = 0
-    paths: Iterable[Path] = walk(roots)
+    paths: Iterable[Path] = walk(
+        roots=roots,
+        includes=includes,
+        excludes=excludes,
+        follow_symlinks=follow_symlinks,
+    )
     for path in paths:
-        # Phase 3 will add mtime gating; for now, delete-existing-then-readd
-        # is correct (and idempotent) but the writer also dedupes by parent_id
-        # already since we delete-by-term first.
+        # Idempotent re-index: delete chunks for this file then re-add. Phase
+        # 10 adds mtime gating to skip unchanged files entirely.
         writer.delete_documents(F_PARENT_ID, _path_parent_id(path))
         for chunk in extract(path):
             writer.add_document(_doc_for_chunk(chunk, collection=collection))
@@ -106,6 +125,25 @@ def build_index(
     writer.commit()
     writer.wait_merging_threads()
     return written
+
+
+def build_index_from_config(
+    *,
+    config: CollectionConfig,
+    collection: str,
+    index_dir: Path,
+    rebuild: bool = False,
+) -> int:
+    """Build a collection from its :class:`CollectionConfig`."""
+    return build_index(
+        roots=list(config.roots),
+        includes=config.includes or None,
+        excludes=config.excludes or None,
+        follow_symlinks=config.follow_symlinks,
+        index_dir=index_dir,
+        collection=collection,
+        rebuild=rebuild,
+    )
 
 
 def _path_parent_id(path: Path) -> str:
