@@ -33,6 +33,8 @@ from acorn.render import render_chunk_pieces
 from acorn.rerank import RankingProfile, profile_from_config
 from acorn.tui.actions import REGISTRY, Keymap, load_keymap, resolve_command
 
+_PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕"}
+
 
 def _format_hit_label(h: Hit) -> str:
     if h.page:
@@ -45,7 +47,11 @@ def _format_hit_label(h: Hit) -> str:
         loc = "—"
     section = h.heading_path.split(" > ")[-1] if h.heading_path else ""
     suffix = f"  {section}" if section and " > " in h.heading_path else ""
-    return f"{loc}{suffix}  ({h.score:.2f})"
+    # Per-pass glyph (§9c): exact / fuzzy / synonym. Suppressed for the
+    # exact pass to keep the common case visually quiet.
+    glyph = _PASS_GLYPHS.get(h.pass_index, "")
+    pass_marker = f" {glyph}" if h.pass_index > 0 else ""
+    return f"{loc}{suffix}  ({h.score:.2f}){pass_marker}"
 
 
 def _format_file_label(g: FileGroup) -> str:

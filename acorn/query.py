@@ -51,6 +51,9 @@ class Hit:
     # reranker (§4 recency boost) — pulled from the F_MTIME fast field at
     # search time, not stored on the Hit until reranking runs.
     mtime: int = 0
+    # Cascade pass that produced this hit (§9c): 0 = exact, 1 = fuzzy,
+    # 2 = synonym. Used by the TUI to render a per-pass glyph (●/~/⊕).
+    pass_index: int = 0
 
 
 @dataclass(slots=True, frozen=True)

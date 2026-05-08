@@ -209,6 +209,7 @@ def _replace_score(h: Hit, score: float) -> Hit:
         snippet=h.snippet,
         chunk_seq=h.chunk_seq,
         mtime=h.mtime,
+        pass_index=h.pass_index,
     )
 
 
