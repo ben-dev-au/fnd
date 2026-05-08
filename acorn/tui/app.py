@@ -27,9 +27,10 @@ from textual.widgets.selection_list import Selection
 from textual.widgets.tree import TreeNode
 
 from acorn import opener
-from acorn.config import default_index_dir
+from acorn.config import Config, default_index_dir
 from acorn.query import FileChunk, FileGroup, Hit, Searcher
 from acorn.render import render_chunk_pieces
+from acorn.rerank import RankingProfile, profile_from_config
 from acorn.tui.actions import REGISTRY, Keymap, load_keymap, resolve_command
 
 
@@ -134,6 +135,7 @@ class AcornApp(App[None]):
         collection: str | None = None,
         initial_query: str = "",
         keymap: Keymap | None = None,
+        config: Config | None = None,
     ) -> None:
         super().__init__()
         self._index_dir = index_dir or default_index_dir()
@@ -145,6 +147,11 @@ class AcornApp(App[None]):
         self._current_query: str = ""
         self._groups: list[FileGroup] = []
         self._acorn_keymap = keymap or load_keymap()
+        # Ranking profile applied at search time. Built from the active
+        # collection's ``ranking_profile`` field; default profile (all-zero)
+        # is the BM25 identity, so the no-config case is unchanged.
+        self._config = config
+        self._ranking_profile: RankingProfile = self._resolve_profile()
         # Last `:command` palette result, exposed for tests.
         self.last_palette_result: str | None = None
         # Cache of (parent_id) → list[FileChunk] so we don't re-fetch the
@@ -188,6 +195,28 @@ class AcornApp(App[None]):
             self._run_query(self._initial_query)
         self.query_one("#query_bar", Input).focus()
 
+    # ── Ranking profile (§7) ──────────────────────────────────────
+
+    def _resolve_profile(self) -> RankingProfile:
+        """Pick the ranking profile to apply to search results.
+
+        Resolution order:
+          1. If a single collection is active and its ``ranking_profile``
+             is defined in the config, use that.
+          2. Else fall back to the ``default`` ranking profile if defined.
+          3. Else neutral (BM25 identity) — return ``RankingProfile()``.
+        """
+        if self._config is None:
+            return RankingProfile()
+        name = "default"
+        if len(self._collections) == 1:
+            try:
+                col = self._config.collection(self._collections[0])
+                name = col.ranking_profile or "default"
+            except KeyError:
+                name = "default"
+        return profile_from_config(self._config.ranking_profile(name))
+
     # ── Status ────────────────────────────────────────────────────
 
     def _status_text(self) -> str:
@@ -218,7 +247,11 @@ class AcornApp(App[None]):
             scoped_query = query
             single_col = self._collections[0] if self._collections else None
         self._groups = self._searcher.search_grouped(
-            scoped_query, limit=50, sections_per_file=10, collection=single_col
+            scoped_query,
+            limit=50,
+            sections_per_file=10,
+            collection=single_col,
+            profile=self._ranking_profile,
         )
         # New query → invalidate the per-file chunk cache.
         self._chunk_cache.clear()
@@ -439,6 +472,9 @@ class AcornApp(App[None]):
     def _on_collection_selection_changed(self, ev: SelectionList.SelectedChanged[str]) -> None:
         """Live-update the active collection scope as the user toggles."""
         self._collections = list(ev.selection_list.selected)
+        # Single-collection scopes can pull a per-collection ranking profile;
+        # multi-scopes fall back to the default profile.
+        self._ranking_profile = self._resolve_profile()
         self._refresh_status()
 
     def action_dismiss_overlay(self) -> None:
