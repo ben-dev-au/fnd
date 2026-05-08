@@ -106,48 +106,32 @@ def render_document(chunks: list[Any], *, query: str = "") -> str:
     return md + "\n"
 
 
-def render_document_rich(chunks: list[Any], *, query: str = "") -> tuple[Text, dict[int, int]]:
-    """Build a Rich :class:`Text` for the preview pane plus a chunk-seq → line
-    offset map so the TUI can scroll precisely to the focused chunk.
-
-    Highlights every query-term match with a high-contrast style that doesn't
-    rely on the underlying terminal's bold rendering being visible.
-    Section headers are colored cyan/bold so they stand out as you scroll.
-    """
+def render_chunk_rich(chunk: Any, *, query: str = "") -> Text:
+    """Render one chunk as a Rich :class:`Text` — section header + body
+    blocks + query-term highlights. Used by the TUI's preview pane (one
+    Static widget per chunk so scroll_to_widget targets work precisely
+    regardless of how lines wrap visually)."""
     text = Text()
-    offsets: dict[int, int] = {}
-    line = 0
+    header = _chunk_header(chunk)
+    text.append(f" {header}\n", style="bold #82aaff")  # tokyo-night blue
+    text.append("\n")
+    for b in chunk.blocks:
+        kind = getattr(b, "kind", "p")
+        text_value = getattr(b, "text", "") or ""
+        if kind in _HEADING_KINDS:
+            level = int(kind[1])
+            text.append(f"{'  ' * (level - 1)}{text_value}\n", style="bold")
+        elif kind == "ul":
+            text.append(f"  • {text_value}\n")
+        elif kind == "ol":
+            text.append(f"  1. {text_value}\n")
+        elif kind == "code":
+            text.append(f"{text_value}\n", style="dim")
+        elif kind == "quote":
+            text.append(f"  ▎ {text_value}\n", style="italic dim")
+        else:
+            text.append(f"{text_value}\n")
 
-    def _append(s: str, style: str = "") -> None:
-        nonlocal line
-        text.append(s, style=style)
-        line += s.count("\n")
-
-    for c in chunks:
-        offsets[int(getattr(c, "chunk_seq", 0))] = line
-        header = _chunk_header(c)
-        _append(f"\n {header}\n", style="bold #82aaff")  # tokyo-night-ish blue
-        _append("\n")
-        for b in c.blocks:
-            kind = getattr(b, "kind", "p")
-            text_value = getattr(b, "text", "") or ""
-            if kind in _HEADING_KINDS:
-                level = int(kind[1])
-                _append(f"{'  ' * (level - 1)}{text_value}\n", style="bold")
-            elif kind == "ul":
-                _append(f"  • {text_value}\n")
-            elif kind == "ol":
-                _append(f"  1. {text_value}\n")
-            elif kind == "code":
-                _append(f"{text_value}\n", style="dim")
-            elif kind == "quote":
-                _append(f"  ▎ {text_value}\n", style="italic dim")
-            else:
-                _append(f"{text_value}\n\n")
-
-    # High-contrast highlight for every query-term match across the whole
-    # rendered text. Done after structural rendering so it overrides per-block
-    # styles (Rich's styles compose; explicit color wins).
     terms = _terms_from_query(query)
     if terms:
         sorted_terms = sorted({t for t in terms if t}, key=len, reverse=True)
@@ -156,7 +140,24 @@ def render_document_rich(chunks: list[Any], *, query: str = "") -> tuple[Text, d
             re.IGNORECASE,
         )
         text.highlight_regex(pattern, style="bold black on #ffd866")
+    return text
 
+
+def render_document_rich(chunks: list[Any], *, query: str = "") -> tuple[Text, dict[int, int]]:
+    """Build a single Rich :class:`Text` for the entire document plus a
+    chunk-seq → line offset map. Kept for tests and any future
+    "single-pane" rendering path; the TUI uses :func:`render_chunk_rich`
+    plus per-chunk widgets for precise scroll instead.
+    """
+    text = Text()
+    offsets: dict[int, int] = {}
+    line = 0
+    for c in chunks:
+        offsets[int(getattr(c, "chunk_seq", 0))] = line
+        chunk_text = render_chunk_rich(c, query=query)
+        text.append(chunk_text)
+        text.append("\n")
+        line += chunk_text.plain.count("\n") + 1
     return text, offsets
 
 

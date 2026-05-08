@@ -32,6 +32,8 @@ class Action:
     description: str
     default_key: str | None = None  # None = no default key (palette-only)
     command: str | None = None  # default = id; override for nicer names
+    footer_label: str | None = None  # short label for the auto Footer
+    show_in_footer: bool = True  # hide noisy actions from footer hints
 
     @property
     def palette_command(self) -> str:
@@ -46,51 +48,62 @@ REGISTRY: tuple[Action, ...] = (
         description="Focus the query input (start typing).",
         default_key="slash",
         command="search",
+        footer_label="Search",
     ),
     Action(
         id="toggle_focus",
-        description="Switch focus between query bar and results pane.",
+        description="Cycle focus between query bar, results, and preview.",
         default_key="tab",
+        footer_label="Pane",
     ),
     Action(
-        id="open_focused",
-        description="Open the focused result at its locator (Skim for PDFs).",
-        default_key="enter",
-        command="open",
-    ),
-    Action(
-        id="open_default",
-        description="Open the focused result in the default app (no page jump).",
+        id="open_at_locator",
+        description="Open the focused result in Skim at its page (PDFs) "
+        "or the default app for other formats.",
         default_key="o",
+        command="open",
+        footer_label="Open",
+    ),
+    Action(
+        id="open_default_app",
+        description="Open the focused file in the default app (no page jump).",
+        default_key="O",
+        command="open-default",
+        footer_label="Default",
     ),
     Action(
         id="peek_focused",
         description="Quick Look the focused file (no deep-link).",
         default_key="space",
         command="peek",
+        footer_label="Peek",
     ),
     Action(
         id="show_help",
         description="Toggle help overlay.",
         default_key="question_mark",
         command="help",
+        footer_label="Help",
     ),
     Action(
         id="open_command_palette",
         description="Open the command palette to run any action by name.",
         default_key="colon",
         command="palette",
+        footer_label="Cmd",
     ),
     Action(
         id="open_collection_picker",
         description="Toggle the collection picker (multi-select scope).",
         default_key="c",
         command="collections",
+        footer_label="Collections",
     ),
     Action(
         id="quit",
         description="Quit acorn.",
         default_key="q",
+        footer_label="Quit",
     ),
 )
 

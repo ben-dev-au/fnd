@@ -171,7 +171,9 @@ async def test_tui_passes_query_to_opener_for_skim_search(
         await pilot.pause()
         tree.focus()
         await pilot.press("down")
-        await pilot.press("enter")
+        # Phase 5.7: explicit `o` action is the open trigger now;
+        # plain Enter / click only updates the preview.
+        app.action_open_at_locator()
         await pilot.pause()
 
     assert seen
@@ -223,9 +225,9 @@ async def test_theme_is_set_on_mount(built_index: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_scroll_offsets_recorded_per_chunk(built_index: Path) -> None:
-    """After rendering a multi-chunk PDF, the offset map should contain a
-    row for every chunk_seq, with strictly increasing line numbers."""
+async def test_chunk_widgets_mounted_per_pdf_page(built_index: Path) -> None:
+    """Phase 5.7 model: per-chunk Static widgets give precise scroll targets.
+    A 12-page PDF should mount 12 chunk widgets, indexed by chunk_seq."""
     app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -239,16 +241,9 @@ async def test_scroll_offsets_recorded_per_chunk(built_index: Path) -> None:
         await pilot.press("down")
         await pilot.pause()
 
-        parent_ids = list(app._chunk_offsets)
-        assert parent_ids
-        offsets = app._chunk_offsets[parent_ids[0]]
-        # All 12 PDF pages should be represented.
-        assert len(offsets) == 12
-        # Line numbers strictly increase with chunk_seq.
-        sorted_seqs = sorted(offsets)
-        last_line = -1
-        for seq in sorted_seqs:
-            assert (
-                offsets[seq] > last_line
-            ), f"chunk {seq} offset {offsets[seq]} not greater than {last_line}"
-            last_line = offsets[seq]
+        # 12 chunk widgets keyed by chunk_seq 0..11.
+        assert len(app._chunk_widgets) == 12
+        assert set(app._chunk_widgets) == set(range(12))
+        # The focused chunk should carry the focused-class visual marker.
+        focused = [w for w in app._chunk_widgets.values() if w.has_class("chunk-section-focused")]
+        assert len(focused) == 1, f"expected exactly one focused chunk, got {len(focused)}"
