@@ -29,7 +29,7 @@ from textual.widgets.tree import TreeNode
 from acorn import opener
 from acorn.config import default_index_dir
 from acorn.query import FileChunk, FileGroup, Hit, Searcher
-from acorn.render import render_chunk_rich
+from acorn.render import render_chunk_pieces
 from acorn.tui.actions import REGISTRY, Keymap, load_keymap, resolve_command
 
 
@@ -81,7 +81,10 @@ class AcornApp(App[None]):
     #preview_pane { width: 2fr; height: 1fr; border: round $primary; padding: 1 2; }
     .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
     .chunk-section { padding: 0 0 1 0; height: auto; }
-    .chunk-section-focused { background: $accent 10%; }
+    .chunk-header { padding: 1 0 0 0; }
+    .chunk-line { padding: 0 0 0 0; height: auto; }
+    .chunk-line-match { background: $accent 8%; }
+    .chunk-section-focused { background: $accent 15%; }
     #placeholder { color: $text-muted; }
     #help_overlay {
         layer: overlay;
@@ -148,9 +151,14 @@ class AcornApp(App[None]):
         # full document on every cursor move within the same file. Keyed by
         # parent_id, invalidated on new query.
         self._chunk_cache: dict[str, list[FileChunk]] = {}
-        # Currently-rendered file's per-chunk Static widgets, keyed by
-        # chunk_seq. Cleared and rebuilt on each file change.
+        # Currently-rendered file's per-chunk header Static widgets, keyed
+        # by chunk_seq. Cleared and rebuilt on each file change.
         self._chunk_widgets: dict[int, Static] = {}
+        # First widget within each chunk that contains a query-term match.
+        # When scrolling to a chunk we target this widget so the matched
+        # text is visible, not just the chunk header. Falls back to the
+        # chunk's header widget when there's no match in that chunk.
+        self._match_targets: dict[int, Static] = {}
         # The parent_id whose chunks are currently mounted in the preview
         # pane (so we don't re-mount when cursor moves within the same file).
         self._preview_parent_id: str | None = None
@@ -269,34 +277,50 @@ class AcornApp(App[None]):
         self._scroll_preview_to_chunk(focus_chunk_seq)
 
     def _mount_chunks_for_file(self, parent_id: str, chunks: list[FileChunk]) -> None:
-        """Tear down the existing preview content and mount one Static per
-        chunk plus a title widget at the top."""
+        """Tear down the existing preview content and mount per-chunk widgets.
+
+        Each chunk becomes a header Static plus one Static per non-empty body
+        line. Per-line widgets give us a precise ``scroll_to_widget`` target
+        for the FIRST matched line in a chunk, so the user lands on the
+        highlighted match — not at the top of a 30-line page.
+        """
         pane = self.query_one("#preview_pane", VerticalScroll)
         for w in list(pane.children):
             w.remove()
         self._chunk_widgets = {}
+        self._match_targets = {}
         title = Static(Path(chunks[0].path).name, classes="preview-title")
         pane.mount(title)
         for c in chunks:
-            text = render_chunk_rich(c, query=self._current_query)
-            w = Static(text, classes="chunk-section")
-            # Stash the Rich Text on the widget so tests / future
-            # programmatic features can introspect highlights without
-            # reaching into Static's name-mangled internals.
-            w.acorn_text = text  # type: ignore[attr-defined]
-            pane.mount(w)
-            self._chunk_widgets[c.chunk_seq] = w
+            header_text, pieces = render_chunk_pieces(c, query=self._current_query)
+            header_w = Static(header_text, classes="chunk-section chunk-header")
+            header_w.acorn_text = header_text  # type: ignore[attr-defined]
+            pane.mount(header_w)
+            self._chunk_widgets[c.chunk_seq] = header_w
+            first_match: Static | None = None
+            for line_text, has_match in pieces:
+                line_w = Static(line_text, classes="chunk-line")
+                line_w.acorn_text = line_text  # type: ignore[attr-defined]
+                if has_match:
+                    line_w.add_class("chunk-line-match")
+                pane.mount(line_w)
+                if has_match and first_match is None:
+                    first_match = line_w
+            self._match_targets[c.chunk_seq] = first_match or header_w
 
     def _scroll_preview_to_chunk(self, focus_chunk_seq: int) -> None:
-        widget = self._chunk_widgets.get(focus_chunk_seq)
-        if widget is None:
+        header = self._chunk_widgets.get(focus_chunk_seq)
+        target = self._match_targets.get(focus_chunk_seq) or header
+        if target is None:
             return
-        # Highlight the focused chunk's row so it's visually unambiguous.
+        # Highlight the focused chunk's header so the row is visually
+        # unambiguous, even when we scroll to a match line below it.
         for w in self._chunk_widgets.values():
             w.remove_class("chunk-section-focused")
-        widget.add_class("chunk-section-focused")
+        if header is not None:
+            header.add_class("chunk-section-focused")
         # Defer scroll until layout has settled (mount → reflow → measure).
-        self.call_after_refresh(self._do_scroll_to_widget, widget)
+        self.call_after_refresh(self._do_scroll_to_widget, target)
 
     def _do_scroll_to_widget(self, widget: Static) -> None:
         pane = self.query_one("#preview_pane", VerticalScroll)

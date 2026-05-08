@@ -106,6 +106,109 @@ def render_document(chunks: list[Any], *, query: str = "") -> str:
     return md + "\n"
 
 
+def render_chunk_pieces(chunk: Any, *, query: str = "") -> tuple[Text, list[tuple[Text, bool]]]:
+    """Split a chunk into a header Text plus a list of (line_text, has_match)
+    pairs.
+
+    Two modes for performance:
+
+    * **Chunk contains a match**: emit one piece per body line so the TUI
+      can mount per-line widgets and ``scroll_to_widget`` targets the
+      specific matched line.
+    * **Chunk has no match**: emit a single piece containing the whole
+      chunk body — far fewer widgets to mount on long PDFs (a 105-page
+      winelist is ~3000 widgets all-per-line vs ~280 with this split).
+
+    The returned line Texts already have query-term highlights applied.
+    """
+    header = Text(f" {_chunk_header(chunk)}", style="bold #82aaff")
+
+    terms = _terms_from_query(query)
+    pattern: re.Pattern[str] | None = None
+    if terms:
+        sorted_terms = sorted({t for t in terms if t}, key=len, reverse=True)
+        pattern = re.compile(
+            r"\b(" + "|".join(re.escape(t) for t in sorted_terms) + r")\b",
+            re.IGNORECASE,
+        )
+
+    chunk_has_match = bool(
+        pattern and any(pattern.search(getattr(b, "text", "") or "") for b in chunk.blocks)
+    )
+
+    pieces: list[tuple[Text, bool]] = []
+    if not chunk_has_match:
+        # Single-piece body for performance.
+        body = render_chunk_rich(chunk, query=query)
+        # Strip the header from the body (render_chunk_rich prepends one).
+        body_lines = body.plain.splitlines()
+        if body_lines and body_lines[0].strip() == _chunk_header(chunk):
+            # Rebuild without the header line.
+            no_header = render_chunk_body_only(chunk, query=query)
+            pieces.append((no_header, False))
+        else:
+            pieces.append((body, False))
+        return header, pieces
+
+    # Match-bearing chunk: per-line pieces so we have precise scroll targets.
+    for b in chunk.blocks:
+        kind = getattr(b, "kind", "p")
+        text_value = getattr(b, "text", "") or ""
+        for line in text_value.splitlines() or [text_value]:
+            line = line.rstrip()
+            if not line:
+                continue
+            if kind in _HEADING_KINDS:
+                level = int(kind[1])
+                rendered = Text(f"{'  ' * (level - 1)}{line}", style="bold")
+            elif kind == "ul":
+                rendered = Text(f"  • {line}")
+            elif kind == "ol":
+                rendered = Text(f"  1. {line}")
+            elif kind == "code":
+                rendered = Text(line, style="dim")
+            elif kind == "quote":
+                rendered = Text(f"  ▎ {line}", style="italic dim")
+            else:
+                rendered = Text(line)
+            has_match = bool(pattern and pattern.search(line))
+            if pattern and has_match:
+                rendered.highlight_regex(pattern, style="bold black on #ffd866")
+            pieces.append((rendered, has_match))
+    return header, pieces
+
+
+def render_chunk_body_only(chunk: Any, *, query: str = "") -> Text:
+    """Render a chunk's body blocks (no header line) as a single Text."""
+    text = Text()
+    for b in chunk.blocks:
+        kind = getattr(b, "kind", "p")
+        text_value = getattr(b, "text", "") or ""
+        if kind in _HEADING_KINDS:
+            level = int(kind[1])
+            text.append(f"{'  ' * (level - 1)}{text_value}\n", style="bold")
+        elif kind == "ul":
+            text.append(f"  • {text_value}\n")
+        elif kind == "ol":
+            text.append(f"  1. {text_value}\n")
+        elif kind == "code":
+            text.append(f"{text_value}\n", style="dim")
+        elif kind == "quote":
+            text.append(f"  ▎ {text_value}\n", style="italic dim")
+        else:
+            text.append(f"{text_value}\n")
+    # Apply highlights so even the no-match-chunks page render is consistent.
+    terms = _terms_from_query(query)
+    if terms:
+        sorted_terms = sorted({t for t in terms if t}, key=len, reverse=True)
+        pattern = re.compile(
+            r"\b(" + "|".join(re.escape(t) for t in sorted_terms) + r")\b",
+            re.IGNORECASE,
+        )
+        text.highlight_regex(pattern, style="bold black on #ffd866")
+    return text
+
+
 def render_chunk_rich(chunk: Any, *, query: str = "") -> Text:
     """Render one chunk as a Rich :class:`Text` — section header + body
     blocks + query-term highlights. Used by the TUI's preview pane (one
