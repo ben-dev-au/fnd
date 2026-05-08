@@ -13,10 +13,12 @@ from typing import Final
 
 from tantivy import Index
 
+from acorn.extract.base import Block
 from acorn.schema import (
     DEFAULT_FIELD_BOOSTS,
     DEFAULT_SEARCH_FIELDS,
     F_BODY_STRUCT,
+    F_CHUNK_SEQ,
     F_HEADING_PATH,
     F_KIND,
     F_PAGE,
@@ -43,6 +45,23 @@ class Hit:
     heading_path: str
     title: str
     snippet: str
+    chunk_seq: int = 0
+
+
+@dataclass(slots=True, frozen=True)
+class FileChunk:
+    """One indexed chunk in document order — used by the TUI's full-document
+    preview. ``score`` is None for chunks that didn't match the query."""
+
+    parent_id: str
+    path: str
+    kind: str
+    page: int
+    slide: int
+    heading_path: str
+    chunk_seq: int
+    blocks: list[Block]
+    score: float | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -154,6 +173,7 @@ class Searcher:
                     heading_path=_first_str(doc, F_HEADING_PATH),
                     title=_first_str(doc, F_TITLE),
                     snippet=_make_snippet(body_text, query),
+                    chunk_seq=_first_int(doc, F_CHUNK_SEQ),
                 )
             )
         return out
@@ -185,6 +205,42 @@ class Searcher:
             if len(out) >= limit:
                 break
         return out
+
+    def get_file_chunks(self, parent_id: str) -> list[FileChunk]:
+        """Return every indexed chunk of the file identified by ``parent_id``,
+        ordered by ``chunk_seq``. Used by the TUI for the full-document preview.
+
+        Implementation: query for ``parent_id:<id>`` with a wide limit and
+        decode each chunk's stored body_struct.
+        """
+        from acorn.struct import decode as decode_body_struct
+
+        parsed = self._index.parse_query(
+            f'parent_id:"{parent_id}"',
+            default_field_names=[F_PARENT_ID],
+        )
+        # 5000 chunks/file is a generous ceiling; phase 12 will revisit for
+        # books / very long PDFs.
+        result = self._searcher.search(parsed, limit=5000)
+        chunks: list[FileChunk] = []
+        for _score, address in result.hits:
+            doc = self._searcher.doc(address)
+            body_struct_bytes = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
+            blocks = decode_body_struct(body_struct_bytes) if body_struct_bytes else []
+            chunks.append(
+                FileChunk(
+                    parent_id=_first_str(doc, F_PARENT_ID),
+                    path=_first_str(doc, F_PATH),
+                    kind=_first_str(doc, F_KIND),
+                    page=_first_int(doc, F_PAGE),
+                    slide=_first_int(doc, F_SLIDE),
+                    heading_path=_first_str(doc, F_HEADING_PATH),
+                    chunk_seq=_first_int(doc, F_CHUNK_SEQ),
+                    blocks=blocks,
+                )
+            )
+        chunks.sort(key=lambda c: c.chunk_seq)
+        return chunks
 
     def search_grouped(
         self,

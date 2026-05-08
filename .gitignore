@@ -11,6 +11,8 @@ build/
 .DS_Store
 .coverage
 htmlcov/
+.vscode/
+.idea/
 tests/fixtures/.cache/
 # Index data is never committed (lives in user's Library on macOS)
 index/

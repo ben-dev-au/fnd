@@ -82,6 +82,12 @@ REGISTRY: tuple[Action, ...] = (
         command="palette",
     ),
     Action(
+        id="open_collection_picker",
+        description="Toggle the collection picker (multi-select scope).",
+        default_key="c",
+        command="collections",
+    ),
+    Action(
         id="quit",
         description="Quit acorn.",
         default_key="q",
