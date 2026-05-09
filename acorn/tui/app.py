@@ -35,33 +35,71 @@ from acorn.tui.actions import REGISTRY, Keymap, load_keymap, resolve_command
 
 _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 
-# Eighth-block characters scaled 0/8 → 8/8. Index 0 is space so a zero
-# score renders as visible whitespace (preserving column alignment).
-_BAR_GLYPHS = " ▁▂▃▄▅▆▇█"
 
+def _score_bar(  # pyright: ignore[reportUnusedFunction]
+    *,
+    score: float,
+    max_score: float,
+    width: int = 5,
+) -> str:
+    """Pure utility kept for the legacy test surface.
 
-def _score_bar(*, score: float, max_score: float, width: int = 4) -> str:
-    """Render a horizontal score bar of ``width`` cells, each cell an
-    eighth-block character scaled to ``score / max_score``.
-
-    A defensive ``max_score == 0`` returns ``" " * width`` to avoid a
-    ZeroDivisionError when the result set has all-zero scores (or none
-    at all). Scores above ``max_score`` clamp to a full bar."""
+    The TUI no longer draws score bars — the user's feedback on the
+    eighth-block and full-block variants was that they read as visual
+    noise. The current label formatters use :func:`_score_style`
+    instead, colouring the numeric score in line with the theme.
+    """
     if max_score <= 0:
         return " " * width
     ratio = max(0.0, min(1.0, score / max_score))
-    # Each cell can hold 8 levels of fill; the bar holds width cells.
-    eighths = round(ratio * width * 8)
-    full = min(eighths // 8, width)
-    remainder = eighths - full * 8
-    out = "█" * full
-    if full < width:
-        out += _BAR_GLYPHS[remainder]
-        out += " " * (width - full - 1)
-    return out
+    full = round(ratio * width)
+    return "█" * full + " " * (width - full)
 
 
-def _format_hit_label(h: Hit, *, max_score: float = 0.0) -> str:
+def _score_style(score: float, max_score: float) -> str:
+    """Rich-style spec for a numeric score, graded by relative position.
+
+    Walks the tokyo-night accent palette from a vivid green (top tier)
+    through cyan and accent-blue down to a muted slate. The score is
+    the only place we lean on colour for ranking signal, so the steps
+    are saturated enough to read at a glance without becoming a
+    stoplight.
+    """
+    if max_score <= 0:
+        return "dim"
+    ratio = max(0.0, min(1.0, score / max_score))
+    if ratio >= 0.85:
+        return "bold #9ece6a"  # tokyo-night green — leader
+    if ratio >= 0.6:
+        return "#7dcfff"  # cyan
+    if ratio >= 0.35:
+        return "#7aa2f7"  # accent blue (theme default)
+    if ratio >= 0.15:
+        return "#bb9af7"  # cool magenta — fades from accent
+    return "dim #565f89"
+
+
+def _build_label(text: str, score: float, max_score: float) -> Any:
+    """Tree label combining a coloured numeric score (left, fixed width)
+    with the file/section text (right, may truncate cleanly).
+
+    Score-first layout means the colour-coded ranking signal is always
+    visible regardless of filename length — long titles truncate
+    against the right edge of the pane without ever eating the score.
+    """
+    from rich.text import Text
+
+    label = Text()
+    if max_score > 0 and score > 0:
+        label.append(f"{score:5.2f}", style=_score_style(score, max_score))
+        label.append("  ")
+    else:
+        label.append(" " * 7)
+    label.append(text)
+    return label
+
+
+def _format_hit_label(h: Hit, *, max_score: float = 0.0) -> Any:
     if h.page:
         loc = f"p.{h.page}"
     elif h.slide:
@@ -76,14 +114,11 @@ def _format_hit_label(h: Hit, *, max_score: float = 0.0) -> str:
     # exact pass to keep the common case visually quiet.
     glyph = _PASS_GLYPHS.get(h.pass_index, "")
     pass_marker = f" {glyph}" if h.pass_index > 0 else ""
-    bar = _score_bar(score=h.score, max_score=max_score) if max_score else ""
-    return f"{loc}{suffix}  {bar} {h.score:.2f}{pass_marker}"
+    return _build_label(f"{loc}{suffix}{pass_marker}", h.score, max_score)
 
 
-def _format_file_label(g: FileGroup, *, max_score: float = 0.0) -> str:
-    name = Path(g.path).name
-    bar = _score_bar(score=g.top_score, max_score=max_score) if max_score else ""
-    return f"{name}  {bar} {g.top_score:.2f}  [{g.kind}]"
+def _format_file_label(g: FileGroup, *, max_score: float = 0.0) -> Any:
+    return _build_label(Path(g.path).name, g.top_score, max_score)
 
 
 def _short_label(action_id: str) -> str:
@@ -108,19 +143,23 @@ _KEY_HINT_GLYPHS = {
     "slash": "/",
     "colon": ":",
     "question_mark": "?",
-    "space": "␣",
-    "tab": "⇥",
-    "enter": "⏎",
+    "space": "Spc",
+    "tab": "Tab",
+    "enter": "Enter",
     "escape": "Esc",
-    "up": "↑",
-    "down": "↓",
-    "left": "←",
-    "right": "→",
+    "up": "Up",
+    "down": "Down",
+    "left": "Left",
+    "right": "Right",
 }
 
 
 def _format_key_hint(key: str) -> str:
-    """Pretty-print a binding key for the footer hint row."""
+    """Pretty-print a binding key for the footer hint row.
+
+    Plain ASCII labels — Unicode arrow / return glyphs render
+    unevenly across terminals and the user reported them looking
+    'malformed and backwards' in the live UI."""
     return _KEY_HINT_GLYPHS.get(key, key)
 
 
@@ -153,17 +192,25 @@ class AcornApp(App[None]):
     #query_bar { height: 3; padding: 0 1; }
     #status_bar { dock: top; height: 1; background: $panel; padding: 0 1; color: $text-muted; }
     #footer_hints { dock: bottom; height: 1; background: $panel; padding: 0 1; color: $text-muted; }
+    /* Slim, lazygit-style scrollbars; horizontal scrolling disabled
+       because long file names truncate cleanly and a 1-cell horizontal
+       bar at the foot of every pane is just visual noise. */
+    * { scrollbar-size-vertical: 1; scrollbar-size-horizontal: 1; }
     /* Pane borders dim by default, brighten when the pane (or any
        descendant) is focused — lazygit's active-section convention. */
     #results_column { width: 1fr; height: 1fr; }
-    #results_pane { width: 100%; height: 2fr; border: round $primary 50%; }
+    #results_pane {
+        width: 100%; height: 2fr;
+        border: round $primary 50%;
+        overflow-x: hidden;
+    }
     #results_pane:focus-within { border: round $accent; }
-    #collections_panel { width: 100%; height: 1fr; border: round $primary 50%; }
-    #collections_panel:focus-within { border: round $accent; }
-    #collections_panel.collapsed { height: 3; }
-    #collections_panel.collapsed #collections_panel_tree { display: none; }
-    #collections_panel_header { dock: top; height: 1; padding: 0 1; color: $accent; text-style: bold; }
-    #collections_panel_tree { height: 1fr; }
+    #collections_panel_tree {
+        width: 100%; height: 1fr;
+        border: round $primary 50%;
+        overflow-x: hidden;
+    }
+    #collections_panel_tree:focus-within { border: round $accent; }
     #preview_pane { width: 2fr; height: 1fr; border: round $primary 50%; padding: 1 2; }
     #preview_pane:focus-within { border: round $accent; }
     .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
@@ -195,7 +242,8 @@ class AcornApp(App[None]):
         height: auto;
     }
     Tree > .tree--label { padding: 0 1; }
-    Tree > .tree--cursor { background: $accent 30%; }
+    /* Selected-row highlight: full-width accent (lazygit convention). */
+    Tree > .tree--cursor { background: $accent 40%; color: $text; text-style: bold; }
     """
 
     # BINDINGS is built from the action registry at import time so footer
@@ -265,9 +313,10 @@ class AcornApp(App[None]):
             # Left column: results on top, collections panel below.
             with Vertical(id="results_column"):
                 yield Tree("Results", id="results_pane")
-                with Vertical(id="collections_panel"):
-                    yield Static("", id="collections_panel_header")
-                    yield Tree("Collections", id="collections_panel_tree")
+                # Single-widget panel — its border_title carries the
+                # "Collections — N/M active" header, matching the
+                # results-pane styling.
+                yield Tree("Collections", id="collections_panel_tree")
             # Preview pane: VerticalScroll containing one Static per chunk
             # so scroll_to_widget targets the exact chunk regardless of how
             # text wraps visually.
@@ -323,8 +372,12 @@ class AcornApp(App[None]):
     # ── Status ────────────────────────────────────────────────────
 
     def _status_text(self) -> str:
-        col = ",".join(self._collections) if self._collections else "all"
-        return f" acorn  [{col}]"
+        col = ", ".join(self._collections) if self._collections else "all"
+        # Square brackets are Rich-markup syntax — using them in a
+        # markup-enabled Static would silently swallow the contents.
+        # Switching to a parenthesis avoids the gotcha and keeps the
+        # bar readable.
+        return f" acorn   scope: {col}"
 
     def _results_title(self) -> str:
         """Border title for the results pane — counts live next to the data
@@ -373,6 +426,8 @@ class AcornApp(App[None]):
                 return "query"
             if wid == "results_pane":
                 return "results"
+            if wid == "collections_panel_tree":
+                return "collections"
             if wid == "preview_pane":
                 return "preview"
             node = getattr(node, "parent", None)
@@ -393,13 +448,24 @@ class AcornApp(App[None]):
             if not key:
                 continue
             label = a.footer_label or _short_label(a.id)
-            hints.append(f"{_format_key_hint(key)}:{label}")
+            # Style the key glyph distinctly so the eye can scan keys
+            # and labels separately. Rich uses ``[reverse]…[/]`` to set
+            # an inverted background on the key portion.
+            hints.append(f"[reverse] {_format_key_hint(key)} [/] {label}")
             if len(hints) >= 6:
                 break
         import contextlib
 
         with contextlib.suppress(Exception):
-            self.query_one("#footer_hints", Static).update("   ".join(hints))
+            from rich.text import Text
+
+            sep = Text("  │  ", style="dim")
+            joined = Text("")
+            for i, hint in enumerate(hints):
+                if i:
+                    joined.append_text(sep)
+                joined.append_text(Text.from_markup(hint))
+            self.query_one("#footer_hints", Static).update(joined)
 
     def on_descendant_focus(self) -> None:  # Textual fires this on focus changes
         self._refresh_footer_hints()
@@ -653,8 +719,21 @@ class AcornApp(App[None]):
         _, hit = target
         opener.peek(Path(hit.path))
 
+    def _focused_tree(self) -> Tree[Any] | None:
+        """Whichever app-level tree currently owns focus, or None.
+
+        Used by the smart-collapse / smart-expand actions so the same
+        Left / Right semantics apply to every tree the user can focus
+        (results pane and the collections panel today)."""
+        ctx = self._focus_context()
+        if ctx == "results":
+            return self.query_one("#results_pane", Tree)
+        if ctx == "collections":
+            return self.query_one("#collections_panel_tree", Tree)
+        return None
+
     def action_tree_smart_collapse(self) -> None:
-        """Lazygit-style ``left``-arrow handling for the results tree.
+        """Lazygit-style ``left``-arrow handling for any focused tree.
 
         Rules:
         - Leaf focused → collapse the parent, move cursor onto it.
@@ -664,12 +743,12 @@ class AcornApp(App[None]):
           out one level at a time).
         - Cursor on a top-level node with nothing to back out to → no-op.
 
-        Does nothing if the results tree isn't focused, so the binding
-        is safe at the app level.
+        Active for both the results tree and the collections panel; a
+        no-op anywhere else, so the binding is safe at the app level.
         """
-        if self._focus_context() != "results":
+        tree = self._focused_tree()
+        if tree is None:
             return
-        tree = self.query_one("#results_pane", Tree)
         node = tree.cursor_node
         if node is None:
             return
@@ -684,6 +763,27 @@ class AcornApp(App[None]):
             return
         # Expanded branch with children: collapse it in place.
         node.collapse()
+
+    def action_tree_smart_expand(self) -> None:
+        """Right-arrow companion to ``action_tree_smart_collapse``.
+
+        - Collapsed branch with children → expand it.
+        - Already-expanded branch → move cursor to its first child.
+        - Leaf / no children → no-op.
+
+        Active for any focused tree, no-op elsewhere."""
+        tree = self._focused_tree()
+        if tree is None:
+            return
+        node = tree.cursor_node
+        if node is None or not node.children:
+            return
+        if not node.is_expanded:
+            node.expand()
+            return
+        # Already expanded — descend into the first child.
+        first_child = node.children[0]
+        tree.move_cursor(first_child)
 
     def action_open_collection_picker(self) -> None:
         """Pop a SelectionList of all configured collections; user toggles
@@ -732,7 +832,6 @@ class AcornApp(App[None]):
         Config, marking the currently-active collections."""
         try:
             tree = self.query_one("#collections_panel_tree", Tree)
-            header = self.query_one("#collections_panel_header", Static)
         except Exception:
             return
         cfg = self._config
@@ -745,6 +844,7 @@ class AcornApp(App[None]):
                 cfg = None
         names = sorted(cfg.collections.keys()) if cfg else []
         active = set(self._collections)
+        tree.show_root = False
         tree.clear()
         for name in names:
             col = cfg.collections[name] if cfg else None
@@ -754,9 +854,12 @@ class AcornApp(App[None]):
             node = tree.root.add(label, data={"kind": "collection", "name": name}, expand=False)
             if col:
                 for i, s in enumerate(col.sources):
-                    src_label = f"{i + 1}. {s.path}"
+                    # Show only the path's basename — full paths blow out
+                    # the panel width and trigger horizontal overflow.
+                    short = Path(str(s.path)).name or str(s.path)
+                    src_label = f"{i + 1}. {short}"
                     node.add_leaf(src_label, data={"kind": "source", "collection": name})
-        header.update(f"Collections — {len(active)}/{len(names)} active")
+        tree.border_title = f"Collections — {len(active)}/{len(names)} active"
 
     @on(Tree.NodeSelected, "#collections_panel_tree")
     def _on_collections_panel_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:

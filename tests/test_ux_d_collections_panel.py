@@ -12,7 +12,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from textual.widgets import Static, Tree
+from textual.widgets import Tree
 
 from acorn.config import Config, load
 from acorn.index import build_index
@@ -118,19 +118,19 @@ async def test_active_collection_marked_in_label(
 async def test_panel_header_shows_active_count(
     cfg_two_collections: Config, two_collection_index: Path
 ) -> None:
-    """Header shows X/Y active count so the user always knows their scope
-    state without counting markers."""
+    """The X/Y active count lives in the tree's ``border_title`` (matches
+    the results pane's styling). Originally this was a separate Static
+    above the tree — moved into the border title to make both panels
+    look identical."""
     app = AcornApp(index_dir=two_collection_index, config=cfg_two_collections)
     async with app.run_test() as pilot:
         await pilot.pause()
-        header = app.query_one("#collections_panel_header", Static)
-        text = str(header.content)
-        assert "0/2" in text or "0 of 2" in text, text
-        # Activate one.
         tree = app.query_one("#collections_panel_tree", Tree)
+        title = str(tree.border_title or "")
+        assert "0/2" in title, title
         tree.focus()
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        text = str(header.content)
-        assert "1/2" in text or "1 of 2" in text, text
+        title = str(tree.border_title or "")
+        assert "1/2" in title, title
