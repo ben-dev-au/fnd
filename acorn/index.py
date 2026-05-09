@@ -44,11 +44,16 @@ _COMMIT_BATCH = 500
 
 
 def _ensure_index(index_dir: Path, *, force: bool = False) -> Index:
+    import shutil
+
     index_dir = index_dir.expanduser().resolve()
     index_dir.mkdir(parents=True, exist_ok=True)
     schema = build_schema()
-    # Index.open_or_create returns an existing index if the schema matches; the
-    # SCHEMA_VERSION sidecar guards against silent format changes.
+    # The SCHEMA_VERSION sidecar guards against silent format changes.
+    # Tantivy itself also stores the schema in ``meta.json`` and refuses to
+    # open an index dir whose on-disk schema doesn't match the constructor's
+    # — so when ``force=True`` and the sidecar is stale we must wipe the
+    # dir so Tantivy creates a fresh index under the new schema.
     sidecar = index_dir / ".acorn-schema-version"
     if sidecar.exists():
         existing = sidecar.read_text().strip()
@@ -58,7 +63,13 @@ def _ensure_index(index_dir: Path, *, force: bool = False) -> Index:
                     f"index at {index_dir} has schema version {existing}; current is "
                     f"{SCHEMA_VERSION}. Rebuild with --rebuild."
                 )
-            # Rebuild path: overwrite the sidecar to the current version now.
+            # Rebuild path: clear the dir (Tantivy can't migrate schemas
+            # in place) and re-establish the sidecar.
+            for entry in index_dir.iterdir():
+                if entry.is_dir():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
             sidecar.write_text(str(SCHEMA_VERSION))
     else:
         sidecar.write_text(str(SCHEMA_VERSION))
