@@ -77,6 +77,27 @@ def _action_show(action_id: str) -> bool:
     return True
 
 
+class _PickerSelectionList(SelectionList[str]):
+    """SelectionList with Enter rebound to "apply" rather than "toggle".
+
+    Textual's ``OptionList.BINDINGS`` maps ``enter`` to ``select``, and
+    ``SelectionList.action_select`` toggles the option — meaning
+    Space-then-Enter (the natural "select then confirm" flow) silently
+    untoggles the user's choice. We override Enter to leave the picker
+    intact and dismiss it via the app's overlay handler.
+    """
+
+    BINDINGS = [Binding("enter", "apply", "Apply", show=False, priority=True)]  # noqa: RUF012
+
+    def action_apply(self) -> None:
+        # Defer to the app's overlay-dismiss action, which removes the
+        # picker container and any other transient overlays.
+        app = self.app
+        action = getattr(app, "action_dismiss_overlay", None)
+        if callable(action):
+            action()
+
+
 class AcornApp(App[None]):
     """Phase 5 shell."""
 
@@ -499,7 +520,7 @@ class AcornApp(App[None]):
             self.mount(note)
             return
         selections = [Selection(name, name, name in self._collections) for name in names]
-        sel_list = SelectionList[str](*selections, id="collection_selection")
+        sel_list = _PickerSelectionList(*selections, id="collection_selection")
         wrapper = Vertical(
             Label("Collections (Space toggles, Enter applies)"),
             sel_list,

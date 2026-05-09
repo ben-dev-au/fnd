@@ -118,6 +118,35 @@ async def test_single_collection_scope_does_not_use_dsl_prefix(
 
 
 @pytest.mark.asyncio
+async def test_picker_enter_dismisses_without_untoggling(two_collection_index: Path) -> None:
+    """Enter must close the picker, leaving the user's Space-toggled
+    selections intact. The default ``SelectionList`` treats Enter the
+    same as Space (toggle), which silently undoes everything the user
+    just selected — this regression test pins down the corrected
+    behaviour."""
+    app = AcornApp(index_dir=two_collection_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_open_collection_picker()
+        await pilot.pause()
+        from textual.widgets import SelectionList
+
+        sel = app.query_one("#collection_selection", SelectionList)
+        sel.focus()
+        await pilot.pause()
+        # Toggle the first option with Space.
+        await pilot.press("space")
+        await pilot.pause()
+        assert len(app._collections) == 1, "Space should toggle one option on"
+
+        # Press Enter — should close the picker and PRESERVE the toggle.
+        await pilot.press("enter")
+        await pilot.pause()
+        assert len(app._collections) == 1, "Enter must apply (dismiss), not untoggle the selection"
+        assert not app.query("#collection_picker"), "Enter must close the picker"
+
+
+@pytest.mark.asyncio
 async def test_picker_toggle_closes_when_already_open(two_collection_index: Path) -> None:
     app = AcornApp(index_dir=two_collection_index)
     async with app.run_test() as pilot:
