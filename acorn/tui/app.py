@@ -128,8 +128,15 @@ class AcornApp(App[None]):
     #footer_hints { dock: bottom; height: 1; background: $panel; padding: 0 1; color: $text-muted; }
     /* Pane borders dim by default, brighten when the pane (or any
        descendant) is focused — lazygit's active-section convention. */
-    #results_pane { width: 1fr; height: 1fr; border: round $primary 50%; }
+    #results_column { width: 1fr; height: 1fr; }
+    #results_pane { width: 100%; height: 2fr; border: round $primary 50%; }
     #results_pane:focus-within { border: round $accent; }
+    #collections_panel { width: 100%; height: 1fr; border: round $primary 50%; }
+    #collections_panel:focus-within { border: round $accent; }
+    #collections_panel.collapsed { height: 3; }
+    #collections_panel.collapsed #collections_panel_tree { display: none; }
+    #collections_panel_header { dock: top; height: 1; padding: 0 1; color: $accent; text-style: bold; }
+    #collections_panel_tree { height: 1fr; }
     #preview_pane { width: 2fr; height: 1fr; border: round $primary 50%; padding: 1 2; }
     #preview_pane:focus-within { border: round $accent; }
     .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
@@ -228,7 +235,12 @@ class AcornApp(App[None]):
         yield Static(self._status_text(), id="status_bar")
         yield Input(placeholder="Search…", id="query_bar", value=self._initial_query)
         with Horizontal():
-            yield Tree("Results", id="results_pane")
+            # Left column: results on top, collections panel below.
+            with Vertical(id="results_column"):
+                yield Tree("Results", id="results_pane")
+                with Vertical(id="collections_panel"):
+                    yield Static("", id="collections_panel_header")
+                    yield Tree("Collections", id="collections_panel_tree")
             # Preview pane: VerticalScroll containing one Static per chunk
             # so scroll_to_widget targets the exact chunk regardless of how
             # text wraps visually.
@@ -248,6 +260,11 @@ class AcornApp(App[None]):
         tree = self.query_one("#results_pane", Tree)
         tree.show_root = False
         tree.guide_depth = 2
+        # Collections panel — populated from the loaded Config.
+        ctree = self.query_one("#collections_panel_tree", Tree)
+        ctree.show_root = False
+        ctree.guide_depth = 2
+        self._refresh_collections_panel()
         # Initial border titles — refreshed live as the user searches.
         self._refresh_status()
         if self._initial_query:
@@ -670,6 +687,65 @@ class AcornApp(App[None]):
         # multi-scopes fall back to the default profile.
         self._ranking_profile = self._resolve_profile()
         self._refresh_status()
+        self._refresh_collections_panel()
+
+    # ── Collections panel (UX-D) ─────────────────────────────────
+
+    def _refresh_collections_panel(self) -> None:
+        """Repopulate the lazygit-style collections panel from the loaded
+        Config, marking the currently-active collections."""
+        try:
+            tree = self.query_one("#collections_panel_tree", Tree)
+            header = self.query_one("#collections_panel_header", Static)
+        except Exception:
+            return
+        cfg = self._config
+        if cfg is None:
+            from acorn.config import load as load_config
+
+            try:
+                cfg = load_config()
+            except Exception:
+                cfg = None
+        names = sorted(cfg.collections.keys()) if cfg else []
+        active = set(self._collections)
+        tree.clear()
+        for name in names:
+            col = cfg.collections[name] if cfg else None
+            marker = "●" if name in active else "○"
+            n_sources = len(col.sources) if col else 0
+            label = f"{marker}  {name}  ({n_sources} source{'s' if n_sources != 1 else ''})"
+            node = tree.root.add(label, data={"kind": "collection", "name": name}, expand=False)
+            if col:
+                for i, s in enumerate(col.sources):
+                    src_label = f"{i + 1}. {s.path}"
+                    node.add_leaf(src_label, data={"kind": "source", "collection": name})
+        header.update(f"Collections — {len(active)}/{len(names)} active")
+
+    @on(Tree.NodeSelected, "#collections_panel_tree")
+    def _on_collections_panel_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
+        """Enter on a tree node toggles the parent collection's
+        membership in the active scope (per the user's explicit
+        request: Enter, not Space). Source nodes route to their parent
+        collection — no per-source scoping yet."""
+        data = ev.node.data or {}
+        kind = data.get("kind")
+        if kind not in {"collection", "source"}:
+            return
+        name = str(data.get("name") if kind == "collection" else data.get("collection") or "")
+        if not name:
+            return
+        if name in self._collections:
+            self._collections.remove(name)
+        else:
+            self._collections.append(name)
+        self._ranking_profile = self._resolve_profile()
+        self._refresh_collections_panel()
+        self._refresh_status()
+        # Re-run the current query against the new scope so the user sees
+        # the effect immediately.
+        if self._current_query:
+            self._run_query(self._current_query)
 
     def action_dismiss_overlay(self) -> None:
         """Close any open overlay (help, picker, palette). No-op if none."""
