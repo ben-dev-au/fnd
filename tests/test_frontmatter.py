@@ -67,3 +67,33 @@ def test_unsupported_anchor_raises() -> None:
 def test_invalid_line_no_colon_raises() -> None:
     with pytest.raises(FrontmatterParseError, match="line 2"):
         read_frontmatter_from_text("---\nbroken line no colon\n---\n")
+
+
+def test_inline_list() -> None:
+    out = read_frontmatter_from_text("---\ntags: [course, active, dpwc]\n---\n")
+    assert out == {"tags": ["course", "active", "dpwc"]}
+
+
+def test_inline_list_quoted_items() -> None:
+    out = read_frontmatter_from_text("---\ntags: [\"with space\", 'one', plain]\n---\n")
+    assert out == {"tags": ["with space", "one", "plain"]}
+
+
+def test_inline_list_mixed_types() -> None:
+    out = read_frontmatter_from_text("---\nvals: [1, 2.5, true, null]\n---\n")
+    assert out == {"vals": [1, 2.5, True, None]}
+
+
+def test_block_list() -> None:
+    out = read_frontmatter_from_text("---\ntags:\n  - course\n  - active\n  - dpwc\n---\n")
+    assert out == {"tags": ["course", "active", "dpwc"]}
+
+
+def test_empty_inline_list() -> None:
+    out = read_frontmatter_from_text("---\ntags: []\n---\n")
+    assert out == {"tags": []}
+
+
+def test_unterminated_inline_list_raises() -> None:
+    with pytest.raises(FrontmatterParseError, match="list"):
+        read_frontmatter_from_text("---\ntags: [course, active\n---\n")
