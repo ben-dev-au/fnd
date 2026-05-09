@@ -193,6 +193,8 @@ def fusion_search(
     collection: str | None = None,
     synonyms: SynonymTable | None = None,
     subqueries: list[SubQuery] | None = None,
+    metadata_filter: str | None = None,
+    active_sources: list[str] | None = None,
 ) -> list[Hit]:
     """Run sub-queries in parallel and RRF-fuse the results.
 
@@ -200,16 +202,12 @@ def fusion_search(
     explicit sub-queries are supplied (e.g. from a ``:multi`` panel),
     auto-derivation is skipped — only the supplied list runs.
 
-    Each sub-query is issued through ``searcher._raw_hits`` so the index
-    sees identical analyzer/field-boost configuration as the single-pass
+    Each sub-query is issued through ``searcher._filtered_raw_hits`` so
+    the metadata filter (frontmatter post-filter) and the ``source_path``
+    scope apply to every sub-ranking before fusion. Sub-queries see
+    identical analyzer/field-boost configuration as the single-pass
     search path. Results are deduplicated by ``(parent_id, chunk_seq)``;
     ``pass_index`` is set from the highest-weighted contributing source.
-
-    .. todo:: Fusion does not yet honour ``metadata_filter`` (§5.5e-2):
-       sub-queries go through ``searcher._raw_hits`` directly, bypassing
-       ``Searcher._filtered_raw_hits``. Wire this up if/when fusion becomes
-       a default search path or gets a ``metadata_filter`` kwarg at the
-       TUI level. Tracked alongside the §9c cascade path.
     """
     subs = subqueries if subqueries is not None else auto_subqueries(query, synonyms=synonyms)
     if not subs:
@@ -217,7 +215,15 @@ def fusion_search(
 
     rankings: list[list[Hit]] = []
     for sub in subs:
-        rankings.append(searcher._raw_hits(sub.query, limit=limit, collection=collection))
+        rankings.append(
+            searcher._filtered_raw_hits(
+                sub.query,
+                target=limit,
+                collection=collection,
+                metadata_filter=metadata_filter,
+                active_sources=active_sources,
+            )
+        )
 
     # RRF dedup + sort. We rebuild the per-doc top-source map alongside the
     # fused score so we can attribute pass_index after the fact — rrf_fuse

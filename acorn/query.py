@@ -382,27 +382,43 @@ class Searcher:
 
             assert isinstance(profile, RankingProfile)
             raw = rerank_hits(raw, profile=profile, query=query, now=now)
-        groups: dict[str, list[Hit]] = {}
-        order: list[str] = []  # parent_ids in first-seen-best-score order
-        for h in raw:
-            bucket = groups.get(h.parent_id)
-            if bucket is None:
-                groups[h.parent_id] = [h]
-                order.append(h.parent_id)
-            else:
-                bucket.append(h)
-        out: list[FileGroup] = []
-        for pid in order[:limit]:
-            section_hits = groups[pid][:sections_per_file]
-            top = section_hits[0]
-            out.append(
-                FileGroup(
-                    parent_id=pid,
-                    path=top.path,
-                    kind=top.kind,
-                    title=top.title,
-                    top_score=top.score,
-                    hits=section_hits,
-                )
+        return group_by_file(raw, limit=limit, sections_per_file=sections_per_file)
+
+
+def group_by_file(hits: list[Hit], *, limit: int, sections_per_file: int = 5) -> list[FileGroup]:
+    """Bucket a flat ranked Hit list into per-file groups.
+
+    Hits keep first-seen order, so passing pre-ranked output (BM25,
+    reranked, fusion-fused, cascade-stitched) produces FileGroups in the
+    same order. Up to ``sections_per_file`` ranked sections per file;
+    the file's own ``top_score`` mirrors its first hit so callers can
+    re-sort if needed.
+
+    Used both by :meth:`Searcher.search_grouped` and the cascade /
+    fusion paths in the TUI's ``_run_query`` so every search path
+    funnels through identical grouping logic.
+    """
+    groups: dict[str, list[Hit]] = {}
+    order: list[str] = []
+    for h in hits:
+        bucket = groups.get(h.parent_id)
+        if bucket is None:
+            groups[h.parent_id] = [h]
+            order.append(h.parent_id)
+        else:
+            bucket.append(h)
+    out: list[FileGroup] = []
+    for pid in order[:limit]:
+        section_hits = groups[pid][:sections_per_file]
+        top = section_hits[0]
+        out.append(
+            FileGroup(
+                parent_id=pid,
+                path=top.path,
+                kind=top.kind,
+                title=top.title,
+                top_score=top.score,
+                hits=section_hits,
             )
-        return out
+        )
+    return out
