@@ -213,6 +213,10 @@ class AcornApp(App[None]):
         overflow-x: hidden;
     }
     #collections_panel_tree:focus-within { border: round $accent; }
+    /* Section collapse-to-header: Left at the panel root shrinks the
+       whole panel down to its border-title strip. */
+    #results_pane.collapsed,
+    #collections_panel_tree.collapsed { height: 3; }
     #preview_pane { width: 3fr; height: 1fr; border: round $primary 50%; padding: 0 1; }
     #preview_pane:focus-within { border: round $accent; }
     .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
@@ -276,8 +280,18 @@ class AcornApp(App[None]):
         super().__init__()
         self._index_dir = index_dir or default_index_dir()
         # Active collections — list[] supports multi-select via the picker.
-        # Empty list = "all collections" (no scope filter).
-        self._collections: list[str] = [collection] if collection else []
+        # Empty list = "all collections" (no scope filter). When the user
+        # didn't pass --collection, restore the last persisted scope so
+        # the TUI starts where they left it.
+        if collection:
+            self._collections: list[str] = [collection]
+            self._collapsed_panels: set[str] = set()
+        else:
+            from acorn.state import load as _load_state
+
+            saved = _load_state()
+            self._collections = list(saved.collections)
+            self._collapsed_panels = set(saved.collapsed_panels)
         self._initial_query = initial_query
         self._searcher: Searcher | None = None
         self._current_query: str = ""
@@ -342,6 +356,13 @@ class AcornApp(App[None]):
         ctree.show_root = False
         ctree.guide_depth = 2
         self._refresh_collections_panel()
+        # Restore any panels the user collapsed-to-header in a previous
+        # session.
+        import contextlib
+
+        for panel_id in self._collapsed_panels:
+            with contextlib.suppress(Exception):
+                self.query_one(f"#{panel_id}").add_class("collapsed")
         # Initial border titles — refreshed live as the user searches.
         self._refresh_status()
         if self._initial_query:
@@ -729,44 +750,56 @@ class AcornApp(App[None]):
         """Lazygit-style ``left``-arrow handling for any focused tree.
 
         Rules:
+        - Panel already collapsed-to-header → no-op (re-expand via Right).
         - Leaf focused → collapse the parent, move cursor onto it.
         - Expanded branch focused → collapse it (cursor stays put).
-        - Already-collapsed branch focused → walk up to its parent and
-          collapse that one (so repeated ``left`` presses keep backing
-          out one level at a time).
-        - Cursor on a top-level node with nothing to back out to → no-op.
+        - Already-collapsed top-level node → collapse the whole panel
+          to its header strip (lazygit's section-collapse gesture).
+        - Already-collapsed branch with parent → walk up + collapse parent.
 
         Active for both the results tree and the collections panel; a
-        no-op anywhere else, so the binding is safe at the app level.
+        no-op anywhere else.
         """
         tree = self._focused_tree()
         if tree is None:
             return
+        if "collapsed" in tree.classes:
+            return
         node = tree.cursor_node
         if node is None:
             return
-        # Leaf or already-collapsed: walk to parent and collapse it.
         if not node.children or not node.is_expanded:
             parent = node.parent
             # tree.root is a hidden virtual root; treat it as "no parent".
             if parent is None or parent is tree.root:
+                # Top of the tree, already collapsed — collapse the
+                # entire panel to its header strip.
+                if tree.id:
+                    tree.add_class("collapsed")
+                    self._collapsed_panels.add(tree.id)
+                    self._persist_state()
                 return
             parent.collapse()
             tree.move_cursor(parent)
             return
-        # Expanded branch with children: collapse it in place.
         node.collapse()
 
     def action_tree_smart_expand(self) -> None:
         """Right-arrow companion to ``action_tree_smart_collapse``.
 
+        - Panel collapsed-to-header → re-expand the panel.
         - Collapsed branch with children → expand it.
         - Already-expanded branch → move cursor to its first child.
         - Leaf / no children → no-op.
-
-        Active for any focused tree, no-op elsewhere."""
+        """
         tree = self._focused_tree()
         if tree is None:
+            return
+        if "collapsed" in tree.classes:
+            tree.remove_class("collapsed")
+            if tree.id:
+                self._collapsed_panels.discard(tree.id)
+                self._persist_state()
             return
         node = tree.cursor_node
         if node is None or not node.children:
@@ -774,7 +807,6 @@ class AcornApp(App[None]):
         if not node.is_expanded:
             node.expand()
             return
-        # Already expanded — descend into the first child.
         first_child = node.children[0]
         tree.move_cursor(first_child)
 
@@ -817,6 +849,20 @@ class AcornApp(App[None]):
         self._ranking_profile = self._resolve_profile()
         self._refresh_status()
         self._refresh_collections_panel()
+        self._persist_state()
+
+    def _persist_state(self) -> None:
+        """Save the current scope + panel state to disk so the next
+        launch starts where the user left off."""
+        from acorn.state import UiState, save
+
+        save(
+            UiState(
+                collections=list(self._collections),
+                sources=[],
+                collapsed_panels=sorted(self._collapsed_panels),
+            )
+        )
 
     # ── Collections panel (UX-D) ─────────────────────────────────
 
@@ -874,6 +920,7 @@ class AcornApp(App[None]):
         self._ranking_profile = self._resolve_profile()
         self._refresh_collections_panel()
         self._refresh_status()
+        self._persist_state()
         # Re-run the current query against the new scope so the user sees
         # the effect immediately.
         if self._current_query:
