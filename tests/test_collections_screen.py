@@ -231,6 +231,67 @@ async def test_pasted_frontmatter_match_indicator(
 
 
 @pytest.mark.asyncio
+async def test_save_triggers_reindex_when_paths_change(
+    tmp_path: Path,
+    tmp_index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A save that changes a source's path / includes / filter should
+    auto-reindex the collection so the index reflects the new scope."""
+    notes_a = tmp_path / "a"
+    notes_b = tmp_path / "b"
+    notes_a.mkdir()
+    notes_b.mkdir()
+    (notes_a / "x.md").write_text("# x\nblue penguin\n", encoding="utf-8")
+    (notes_b / "y.md").write_text("# y\nblue penguin\n", encoding="utf-8")
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        textwrap.dedent(f"""
+            [[collections.notes.sources]]
+            path = "{notes_a}"
+            includes = ["**/*.md"]
+        """),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    cfg = load(cfg_path)
+
+    # Build the initial index so the form will detect a "change" on save.
+    from acorn.index import build_index_from_config
+
+    build_index_from_config(
+        config=cfg.collection("notes"), collection="notes", index_dir=tmp_index_dir
+    )
+
+    app = AcornApp(index_dir=tmp_index_dir, config=cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f3")
+        await pilot.pause()
+        # Edit the only source: change its path to notes_b.
+        await pilot.press("e")
+        await pilot.pause()
+        from textual.widgets import Input
+
+        path_input = app.screen.query_one("#source_path_input", Input)
+        path_input.value = str(notes_b)
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+        # Save the collection (triggers reindex because path changed).
+        await pilot.press("s")
+        await pilot.pause()
+
+    # Searcher should now find y.md (notes_b) but not x.md (notes_a).
+    from acorn.query import Searcher
+
+    s = Searcher(index_dir=tmp_index_dir)
+    paths = {Path(h.path).name for h in s.search("blue penguin", limit=10, collection="notes")}
+    assert "y.md" in paths
+    assert "x.md" not in paths
+
+
+@pytest.mark.asyncio
 async def test_s_persists_changes_to_config_toml(
     tmp_path: Path,
     tmp_index_dir: Path,
