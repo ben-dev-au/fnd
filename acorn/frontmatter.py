@@ -12,10 +12,13 @@ frontmatter present"). An empty fenced block returns {}.
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 from pathlib import Path
 
 _FENCE = re.compile(r"^(---|\.\.\.)\s*$")
+_KEY_VALUE = re.compile(r"^([A-Za-z_][\w\- ]*?)\s*:\s*(.*)$")
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 class FrontmatterParseError(Exception):
@@ -56,7 +59,66 @@ def read_frontmatter_from_file(path: Path) -> dict[str, object] | None:
 
 
 def _parse_block(lines: list[str]) -> dict[str, object]:
-    """Stub for the next task. Returns {} so the empty-block test passes."""
     if not lines:
         return {}
-    raise FrontmatterParseError("frontmatter parsing not yet implemented")
+    out: dict[str, object] = {}
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
+        # Reject indented continuation that would imply nested mapping —
+        # we don't support nested structures.
+        if raw and raw[0] in (" ", "\t"):
+            raise FrontmatterParseError(
+                f"frontmatter line {i + 2}: nested mappings are not supported"
+            )
+        # Blank lines inside the block are allowed; ignore.
+        if not raw.strip():
+            i += 1
+            continue
+        m = _KEY_VALUE.match(raw)
+        if not m:
+            raise FrontmatterParseError(f"frontmatter line {i + 2}: expected ``key: value``")
+        key = m.group(1).rstrip()
+        value_text = m.group(2)
+        # YAML anchors / aliases / tags — explicit reject.
+        if value_text.startswith("&") or value_text.startswith("*") or value_text.startswith("!"):
+            raise FrontmatterParseError(
+                f"frontmatter line {i + 2}: anchors/aliases/tags are unsupported"
+            )
+        out[key] = _parse_scalar(value_text)
+        i += 1
+    return out
+
+
+def _parse_scalar(text: str) -> object:
+    """Coerce one bare value into an int/float/date/bool/None/str.
+
+    List parsing (inline ``[a, b]`` and block lists) is added in the next
+    task; for now any ``[`` or block-list marker is treated as a string.
+    """
+    s = text.strip()
+    if not s:
+        return ""
+    # Quoted strings.
+    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+        return s[1:-1]
+    # Booleans and null.
+    lower = s.lower()
+    if lower == "true":
+        return True
+    if lower == "false":
+        return False
+    if lower in ("null", "~"):
+        return None
+    # ISO date.
+    if _ISO_DATE.match(s):
+        return dt.date.fromisoformat(s)
+    # Number.
+    try:
+        if "." in s:
+            return float(s)
+        return int(s)
+    except ValueError:
+        pass
+    # Fallback: bare string.
+    return s
