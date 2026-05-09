@@ -151,3 +151,64 @@ def preprocess(query: str) -> str:
     q = _expand_numeric_compare(q)
     q = _expand_proximity_aliases(q)
     return q
+
+
+def split_metadata_filter(query: str) -> tuple[str, str | None]:
+    """Extract a single top-level ``[…]`` clause from ``query``.
+
+    Returns ``(lexical_query, metadata_filter_or_None)``. ``[…]`` blocks
+    appearing inside a quoted phrase are left intact. An empty ``[]`` is
+    treated as no filter (rather than an empty filter expression). Two or
+    more bracketed blocks raise ``ValueError`` — users compose alternatives
+    with ``AND``/``OR`` inside the single block.
+
+    Whitespace around the extracted clause is collapsed so the resulting
+    lexical query reads naturally.
+    """
+    in_quote: str | None = None
+    bracket_start: int | None = None
+    found_range: tuple[int, int] | None = None
+    i = 0
+    while i < len(query):
+        ch = query[i]
+        if in_quote:
+            if ch == in_quote:
+                in_quote = None
+            i += 1
+            continue
+        if ch in ('"', "'"):
+            in_quote = ch
+            i += 1
+            continue
+        if ch == "[":
+            if bracket_start is not None:
+                raise ValueError("unclosed [ before another [")
+            bracket_start = i
+            i += 1
+            continue
+        if ch == "]":
+            if bracket_start is None:
+                # Stray ']' is part of the lexical query — leave it.
+                i += 1
+                continue
+            if found_range is not None:
+                raise ValueError("only one inline [metadata filter] clause per query")
+            found_range = (bracket_start, i)
+            bracket_start = None
+            i += 1
+            continue
+        i += 1
+    if bracket_start is not None:
+        raise ValueError("unclosed [ in query")
+    if found_range is None:
+        return query, None
+    start, end = found_range
+    inner = query[start + 1 : end].strip()
+    if not inner:
+        # Empty []: drop it from the lexical, treat as "no filter".
+        lex = (query[:start] + query[end + 1 :]).strip()
+        lex = " ".join(lex.split())
+        return lex, None
+    lex = (query[:start] + query[end + 1 :]).strip()
+    lex = " ".join(lex.split())
+    return lex, inner
