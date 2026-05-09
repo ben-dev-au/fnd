@@ -103,3 +103,22 @@ async def test_collections_list_shows_each_with_source_count(
         assert "notes" in text
         assert "1 source" in text or "1 sources" in text
         assert "2 sources" in text
+
+
+@pytest.mark.asyncio
+async def test_clicking_collection_shows_its_sources(
+    cfg_three_collections: Config, tmp_index_dir: Path
+) -> None:
+    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f3")
+        await pilot.pause()
+        # Default selection: first alphabetically (coursework). Editor pane
+        # should already show its two sources without any extra interaction.
+        editor = app.screen.query_one("#collections_editor_pane")
+        text = "\n".join(str(s.content) for s in editor.query(Static))
+        assert "/tmp/notes" in text
+        assert "/tmp/decks" in text
+        assert "**/*.md" in text
+        assert "**/*.pdf" in text
