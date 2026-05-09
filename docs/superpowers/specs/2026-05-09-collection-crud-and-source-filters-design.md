@@ -11,8 +11,9 @@ A user must be able to:
 1. Add, edit, rename, and remove collections from inside the TUI without opening a text editor.
 2. Configure a collection as one or more **sources**, each with its own includes / excludes / metadata filter — so a single collection can pull in `**/*.md` from one tree and `**/*.pdf, **/*.pptx, **/*.docx` from another.
 3. Filter the markdown notes pulled from a source by **YAML frontmatter** using a small predicate DSL with comparison, glob, list-membership, and logical operators (e.g. `Course == 'Design Patterns with C++' AND status != 'archived'`).
-4. See DSL syntax errors **at save time** in the form (not just at runtime / next config load), and not be allowed to save invalid filters.
-5. Save → write back to `config.toml` without destroying user-authored comments / unrelated keys; auto-reindex when the change affects the indexed set.
+4. **Apply the same DSL at query time** — narrow the result set without making a dedicated collection — by typing the filter inline in the query bar inside square brackets: `[Course == 'DPwC'] strategy pattern`. The bracketed clause becomes a metadata post-filter; the rest is the lexical query.
+5. See DSL syntax errors **at save time** in the form (and inline as the user types in the query bar), and not be allowed to save invalid filters.
+6. Save → write back to `config.toml` without destroying user-authored comments / unrelated keys; auto-reindex when the change affects the indexed set.
 
 ## Non-goals (explicitly deferred)
 
@@ -23,15 +24,18 @@ A user must be able to:
 
 ## Architecture
 
-Three units, each independently testable:
+Five units, each independently testable:
 
 ```
 acorn/
 ├── frontmatter.py    # parse YAML frontmatter blocks from .md files
-├── filter_dsl.py     # parse + evaluate the predicate DSL
+├── filter_dsl.py     # parse + evaluate the predicate DSL (used at index AND query time)
+├── schema.py         # extended: stored meta_blob field for query-time filter
 ├── config.py         # extended: SourceConfig, multi-source CollectionConfig
 ├── walk.py           # extended: per-source filter chain
-├── index.py          # extended: applies frontmatter filter for .md sources
+├── index.py          # extended: applies frontmatter filter; serializes meta_blob
+├── query_dsl.py      # extended: pre-pass extracts inline [filter] clause
+├── query.py          # extended: Searcher post-filters via compiled predicate
 └── tui/
     └── collections_screen.py   # new Textual screen + actions
 ```
@@ -42,6 +46,9 @@ Dependencies between units:
 - `filter_dsl.py` is a leaf: no acorn imports.
 - `config.py` consumes `filter_dsl.compile_filter` to validate `frontmatter_filter` strings at load time.
 - `walk.py` consumes `frontmatter.read_frontmatter` and a compiled filter callable from each source.
+- `index.py` consumes `frontmatter.read_frontmatter` to serialize the file's metadata into `meta_blob` at index time (so query-time filters can read it back).
+- `query_dsl.py` extracts a leading or trailing `[…]` clause from the user query, returns `(lexical_query, metadata_filter_str)`.
+- `query.py` consumes `filter_dsl.compile_filter` once, decodes `meta_blob` per hit, applies the predicate as a post-rank step (same shape as `rerank_hits`).
 - `tui/collections_screen.py` consumes `config.py` (read/write), `filter_dsl.parse_or_error` (validate at save), and `index.py` (kick off reindex).
 
 ### New dep
@@ -196,9 +203,61 @@ The collection-level `walk(...)` shim continues to work for the legacy single-so
 
 1. For each path yielded by `walk_sources`, call the existing extractor dispatch.
 2. For `.md` paths: read frontmatter, evaluate the source's compiled filter, skip if it returns `False` (no extraction, no index entry).
-3. Frontmatter parse errors are logged once per file but don't abort the build.
+3. For surviving `.md` chunks: serialize the file's frontmatter to JSON bytes and store in the `meta_blob` field. Non-md chunks store empty bytes.
+4. Frontmatter parse errors are logged once per file but don't abort the build; the offending file is excluded by the index-time filter (already documented above) and `meta_blob` is left empty.
 
-No schema change to the Tantivy index; frontmatter is index-time-only.
+## Schema (`acorn/schema.py`)
+
+Adds one field:
+
+| field | type | indexed | stored | fast | purpose |
+|---|---|---|---|---|---|
+| `meta_blob` | bytes | no | yes | no | JSON-encoded frontmatter; decoded per hit at query time when a metadata filter is in effect. |
+
+Schema version bumps; existing indexes need a `--rebuild`. The sidecar `.acorn-schema-version` already gates this — old indexes refuse to load with a clear message, matching the established pattern.
+
+## Query DSL pre-pass (`acorn/query_dsl.py`)
+
+The pre-pass already translates `c:` → `collection:` and date / size tokens. It gains one more transform: extract a single bracketed metadata filter from anywhere in the query, leaving the rest as the lexical query.
+
+```python
+def split_metadata_filter(query: str) -> tuple[str, str | None]:
+    """Return (lexical_query, metadata_filter_or_None).
+
+    Recognises a single top-level [...] block (no nested brackets in v1).
+    Bracket appearing inside a quoted phrase is left alone. Whitespace
+    surrounding the extracted clause is collapsed.
+    """
+```
+
+Examples:
+
+| input | lexical | metadata |
+|---|---|---|
+| `[Course == 'DPwC'] strategy pattern` | `strategy pattern` | `Course == 'DPwC'` |
+| `strategy pattern [Course == 'DPwC']` | `strategy pattern` | `Course == 'DPwC'` |
+| `strategy pattern` | `strategy pattern` | `None` |
+| `"foo [bar]"` | `"foo [bar]"` | `None` (inside phrase) |
+
+Multiple `[…]` blocks → ValueError ("only one inline metadata filter per query"); user can compose with `AND` / `OR` inside the single block.
+
+## Query layer (`acorn/query.py`)
+
+`Searcher.search` and `Searcher.search_grouped` gain an optional `metadata_filter: str | None = None` kwarg. When set:
+
+1. Compile via `filter_dsl.compile_filter` once.
+2. Pull `limit * oversample_factor` raw hits from Tantivy (default oversample = 5; raised when filter exclusion is high).
+3. For each hit: decode `meta_blob` (empty → `{}`), apply predicate; drop on `False`.
+4. Apply rerank, dedup, group as today.
+5. Return top-N from the surviving set.
+
+If the post-filter eats too many hits to satisfy `limit`, the next call doubles oversample (capped at `limit * 50`) — bounded so a malicious filter can't make a query expensive.
+
+The TUI calls `Searcher.search_grouped(metadata_filter=metadata_filter)` after splitting via `query_dsl.split_metadata_filter`. A parse error in the bracketed filter surfaces inline under the query bar (same location as Tantivy parser errors) and the search doesn't run.
+
+## Saved searches & history
+
+Saved searches and `Up`/`Down` query history persist the *full* user-typed string including the `[…]` clause — round-trip is "what you typed comes back exactly." No separate column for the metadata filter; the DSL pre-pass extracts it on every replay.
 
 ## TUI (`acorn/tui/collections_screen.py`)
 
@@ -325,9 +384,20 @@ Confirmation modal ("Delete collection 'coursework' and remove its 412 indexed c
 - `acorn config validate` flags an invalid `frontmatter_filter` with column + message
 - Mixing `roots = [...]` and `[[sources]]` → ValidationError
 
-## Phasing — two commits
+### `tests/test_query_metadata_filter.py` — query-time post-filter
 
-### Phase 5.5e-1 — Backend (no UI)
+- `split_metadata_filter` extracts `[…]` from the start, end, or middle of a query
+- A `[…]` block inside a quoted phrase is left alone
+- Two `[…]` blocks → ValueError
+- Searcher with `metadata_filter="Course == 'DPwC'"` returns only docs whose stored frontmatter matches
+- Same DSL, same operators (`==`, `!=`, `<`, `>`, `<=`, `>=`, `~~`, `in`, `not in`, `AND`, `OR`, `NOT`)
+- Oversample-and-retry: a strict filter that excludes 90% of raw hits still returns the requested limit (when enough docs match overall)
+- Empty `meta_blob` (non-md chunk) under any filter → excluded
+- Saved-search round-trip preserves the bracketed clause
+
+## Phasing — three commits
+
+### Phase 5.5e-1 — Backend: index-time filtering
 
 1. `acorn/frontmatter.py` + tests
 2. `acorn/filter_dsl.py` + tests
@@ -337,9 +407,21 @@ Confirmation modal ("Delete collection 'coursework' and remove its 412 indexed c
 6. CLI: `acorn collection add <name> --source <path> [--include ... --exclude ... --filter ...]` (the TUI form will reuse the same `acorn.config` write primitives — no subprocess shelling)
 7. `acorn config validate` surfaces filter errors
 
-After 5.5e-1 a power user can configure everything via `acorn config edit` and `acorn collection add`; the form just makes it nicer.
+After 5.5e-1 a power user can configure filtered collections via `acorn config edit` and `acorn collection add`.
 
-### Phase 5.5e-2 — TUI form
+### Phase 5.5e-2 — Query-time filtering
+
+1. `acorn/schema.py` adds `meta_blob` stored field; bump schema version
+2. `acorn/index.py` serializes frontmatter JSON to `meta_blob` per chunk
+3. `acorn/query_dsl.py` adds `split_metadata_filter`
+4. `acorn/query.py` accepts `metadata_filter` kwarg and post-filters with oversample-and-retry
+5. CLI: `acorn search [--meta "<filter>"]` for non-TUI users
+6. TUI: query bar wires the inline `[…]` syntax; parse errors surface inline; saved searches round-trip the full string
+7. Tests: pre-pass split, post-filter end-to-end, oversample correctness, schema-version refusal of old index
+
+After 5.5e-2 the same DSL works at both index time and query time. **Existing indexes must be rebuilt** to gain the `meta_blob` field — old indexes still load (the field is optional in queries that don't use it) only if Tantivy permits adding optional stored fields without rebuild; if not, schema-version gate fires and the user runs `acorn collection reindex --all`. We will determine this empirically during the spike at the start of 5.5e-2 and document the path users must take.
+
+### Phase 5.5e-3 — TUI Collections form
 
 1. `acorn/tui/collections_screen.py` (new screen)
 2. New actions in registry; `F3` binding; help-overlay update
@@ -355,9 +437,9 @@ Each phase ships green with its own commit per §20 phase-gating.
 A change is "phase 5.5e complete" only when:
 
 1. All tests above are green; full suite still passes; `ruff` + `pyright --strict` clean.
-2. Manual smoke: configure a real Obsidian-vault source with a frontmatter filter via the TUI form, reindex, run a query → only matching notes appear; toggle the filter to its negation, reindex → complementary set appears.
-3. `config.toml` saved through the form keeps all hand-authored comments intact (verified by hand on a test file).
-4. Invalid filter → form refuses save with inline error; valid filter → saves and (auto-)reindexes.
+2. **5.5e-1 manual smoke** — configure a real Obsidian-vault source with a frontmatter filter via `acorn config edit`, reindex, run a query → only matching notes appear; toggle the filter to its negation, reindex → complementary set appears.
+3. **5.5e-2 manual smoke** — without changing the collection's index-time filter, type a query like `[Course == 'DPwC' AND status != 'archived'] design patterns` → results narrow to matching notes within ~100 ms; type a syntactically invalid filter → inline error appears, no search runs; remove the bracketed clause → results widen back.
+4. **5.5e-3 manual smoke** — `config.toml` saved through the form keeps all hand-authored comments intact (verified by hand on a test file). Invalid filter → form refuses save with inline error; valid filter → saves and (auto-)reindexes.
 5. Plan §22 ("Out of scope for v1") is updated to remove the "TUI Collection CRUD" deferral.
 
 ## Open questions
