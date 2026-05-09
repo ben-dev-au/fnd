@@ -134,7 +134,30 @@ def build_index_from_config(
     index_dir: Path,
     rebuild: bool = False,
 ) -> int:
-    """Build a collection from its :class:`CollectionConfig`."""
+    """Build a collection from its :class:`CollectionConfig`.
+
+    Uses ``config.sources`` (the canonical form) when available; falls back
+    to the legacy ``config.roots`` for callers that construct the model
+    before the schema migration is complete (phase 5.5e-1 T10 will remove
+    the legacy path entirely).
+    """
+    if config.sources:
+        # New (canonical) shape: iterate sources individually so each can
+        # carry its own includes/excludes.  For now we merge all roots into
+        # a single build_index call with the first source's filter settings
+        # as a best-effort compatibility shim; T10 will replace this with a
+        # proper per-source walk.
+        all_roots = [s.path for s in config.sources]
+        first = config.sources[0]
+        return build_index(
+            roots=all_roots,
+            includes=first.includes or None,
+            excludes=first.excludes or None,
+            follow_symlinks=first.follow_symlinks,
+            index_dir=index_dir,
+            collection=collection,
+            rebuild=rebuild,
+        )
     return build_index(
         roots=list(config.roots),
         includes=config.includes or None,
