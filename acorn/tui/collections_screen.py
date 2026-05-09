@@ -14,7 +14,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Footer, Input, Static
+from textual.widgets import Footer, Input, Static, TextArea
 
 from acorn.config import Config
 
@@ -236,6 +236,7 @@ class SourceEditScreen(Screen[dict[str, object] | None]):
     #source_edit_box Input { margin-bottom: 1; }
     #filter_parse_status { color: $success; }
     .filter_parse_error { color: $error; }
+    #frontmatter_sample { height: 6; margin-bottom: 1; border: round $surface; }
     """
 
     def __init__(
@@ -268,6 +269,9 @@ class SourceEditScreen(Screen[dict[str, object] | None]):
             yield Static("Frontmatter filter (DSL):")
             yield Input(value=self._initial["frontmatter_filter"], id="source_filter_input")
             yield Static("✓ filter parses", id="filter_parse_status")
+            yield Static("Test against pasted frontmatter:")
+            yield TextArea("", id="frontmatter_sample", classes="frontmatter_sample")
+            yield Static("(no sample)", id="frontmatter_match_status")
             yield Static("ctrl+s save · esc cancel", classes="footer_hint")
 
     def on_input_changed(self, ev: Input.Changed) -> None:
@@ -280,14 +284,59 @@ class SourceEditScreen(Screen[dict[str, object] | None]):
         if not text.strip():
             status.update("(no filter)")
             status.remove_class("filter_parse_error")
-            return
-        _pred, err = parse_or_error(text)
-        if err is None:
-            status.update("✓ filter parses")
-            status.remove_class("filter_parse_error")
         else:
-            status.update(f"✗ col {err.column}: {err.message}")
-            status.add_class("filter_parse_error")
+            _pred, err = parse_or_error(text)
+            if err is None:
+                status.update("✓ filter parses")
+                status.remove_class("filter_parse_error")
+            else:
+                status.update(f"✗ col {err.column}: {err.message}")
+                status.add_class("filter_parse_error")
+        self._refresh_match_status()
+
+    def on_text_area_changed(self, ev: TextArea.Changed) -> None:
+        if ev.text_area.id != "frontmatter_sample":
+            return
+        self._refresh_match_status()
+
+    def _refresh_match_status(self) -> None:
+        from acorn.filter_dsl import parse_or_error
+        from acorn.frontmatter import FrontmatterParseError, read_frontmatter_from_text
+
+        match = self.query_one("#frontmatter_match_status", Static)
+        sample = self.query_one("#frontmatter_sample", TextArea).text
+        filter_text = self.query_one("#source_filter_input", Input).value.strip()
+        if not sample.strip():
+            match.update("(no sample)")
+            match.remove_class("cs_match")
+            match.remove_class("cs_no_match")
+            return
+        try:
+            fm: dict[str, object] = read_frontmatter_from_text(sample) or {}
+        except FrontmatterParseError as e:
+            match.update(f"✗ frontmatter parse error: {e}")
+            match.add_class("cs_no_match")
+            match.remove_class("cs_match")
+            return
+        if not filter_text:
+            match.update("(no filter — sample is parsed but no predicate)")
+            match.remove_class("cs_match")
+            match.remove_class("cs_no_match")
+            return
+        pred, err = parse_or_error(filter_text)
+        if err is not None or pred is None:
+            match.update(f"✗ filter syntax: col {err.column}" if err else "✗")
+            match.add_class("cs_no_match")
+            match.remove_class("cs_match")
+            return
+        if pred(fm):
+            match.update("✓ matches filter")
+            match.add_class("cs_match")
+            match.remove_class("cs_no_match")
+        else:
+            match.update("✗ no match")
+            match.add_class("cs_no_match")
+            match.remove_class("cs_match")
 
     def action_save(self) -> None:
         from acorn.filter_dsl import parse_or_error
