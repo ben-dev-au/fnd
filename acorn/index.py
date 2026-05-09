@@ -43,7 +43,7 @@ _WRITER_HEAP = 50_000_000
 _COMMIT_BATCH = 500
 
 
-def _ensure_index(index_dir: Path) -> Index:
+def _ensure_index(index_dir: Path, *, force: bool = False) -> Index:
     index_dir = index_dir.expanduser().resolve()
     index_dir.mkdir(parents=True, exist_ok=True)
     schema = build_schema()
@@ -53,10 +53,13 @@ def _ensure_index(index_dir: Path) -> Index:
     if sidecar.exists():
         existing = sidecar.read_text().strip()
         if existing != str(SCHEMA_VERSION):
-            raise RuntimeError(
-                f"index at {index_dir} has schema version {existing}; current is "
-                f"{SCHEMA_VERSION}. Rebuild with --rebuild."
-            )
+            if not force:
+                raise RuntimeError(
+                    f"index at {index_dir} has schema version {existing}; current is "
+                    f"{SCHEMA_VERSION}. Rebuild with --rebuild."
+                )
+            # Rebuild path: overwrite the sidecar to the current version now.
+            sidecar.write_text(str(SCHEMA_VERSION))
     else:
         sidecar.write_text(str(SCHEMA_VERSION))
     return Index(schema, path=str(index_dir))
@@ -102,7 +105,7 @@ def build_index(
     before re-adding — useful when an extractor improves and the user wants
     fresh chunks without losing other collections.
     """
-    index = _ensure_index(index_dir)
+    index = _ensure_index(index_dir, force=rebuild)
     writer = index.writer(heap_size=_WRITER_HEAP)
 
     if rebuild:
@@ -152,7 +155,7 @@ def build_index_from_config(
     )
     from acorn.walk import walk_sources
 
-    index = _ensure_index(index_dir)
+    index = _ensure_index(index_dir, force=rebuild)
     writer = index.writer(heap_size=_WRITER_HEAP)
     if rebuild:
         writer.delete_documents(F_COLLECTION, collection)
