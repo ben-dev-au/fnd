@@ -61,8 +61,13 @@ async def test_left_on_collapsed_branch_walks_further_up(built_index: Path) -> N
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
+        # The top result auto-expands; collapse it so the cursor below
+        # lands on a top-level *collapsed* node (the scenario under test).
+        first = next(iter(tree.root.children))
+        first.collapse()
+        await pilot.pause()
         tree.focus()
-        await pilot.press("down")  # cursor onto first file (collapsed by default)
+        await pilot.press("down")
         await pilot.pause()
         focused = tree.cursor_node
         assert focused is not None
