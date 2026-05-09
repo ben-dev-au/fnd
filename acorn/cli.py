@@ -64,9 +64,13 @@ def tui(
 ) -> None:
     """Launch the interactive TUI."""
     from acorn.config import load
+    from acorn.migrate import prompt_and_rebuild_or_exit
     from acorn.tui import AcornApp
 
-    AcornApp(collection=collection, initial_query=query, config=load()).run()
+    cfg = load()
+    prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg)
+
+    AcornApp(collection=collection, initial_query=query, config=cfg).run()
 
 
 @app.command()
@@ -79,8 +83,12 @@ def search(
     ),
 ) -> None:
     """Search the index and print ranked file:locator snippets to stdout."""
+    from acorn.config import load
     from acorn.filter_dsl import FilterError
+    from acorn.migrate import prompt_and_rebuild_or_exit
     from acorn.query import Searcher
+
+    prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=load())
 
     searcher = Searcher(index_dir=default_index_dir())
     try:
