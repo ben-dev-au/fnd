@@ -243,24 +243,53 @@ class AcornApp(App[None]):
     def _run_query(self, query: str) -> None:
         if self._searcher is None:
             return
-        self._current_query = query
+        from acorn.filter_dsl import FilterError
+        from acorn.query_dsl import split_metadata_filter
+
+        # Extract a single inline [metadata filter] from the user query.
+        # Bracket parse errors (unclosed, multiple) surface as a notify;
+        # the search doesn't run.
+        try:
+            lexical, metadata_filter = split_metadata_filter(query)
+        except ValueError as e:
+            self.notify(str(e), severity="error", title="Filter syntax")
+            self._groups = []
+            self._refresh_results_tree()
+            return
+
+        self._current_query = query  # save the original (with [...]) for history
         # Multi-collection scoping: prefix with `c:a,b` so the DSL pre-pass
         # builds the correct (collection:"a" OR collection:"b") filter.
         if len(self._collections) >= 2:
-            scoped_query = f"c:{','.join(self._collections)} {query}"
+            scoped_query = f"c:{','.join(self._collections)} {lexical}"
             single_col = None
         else:
-            scoped_query = query
+            scoped_query = lexical
             single_col = self._collections[0] if self._collections else None
-        self._groups = self._searcher.search_grouped(
-            scoped_query,
-            limit=50,
-            sections_per_file=10,
-            collection=single_col,
-            profile=self._ranking_profile,
-        )
+        try:
+            self._groups = self._searcher.search_grouped(
+                scoped_query,
+                limit=50,
+                sections_per_file=10,
+                collection=single_col,
+                profile=self._ranking_profile,
+                metadata_filter=metadata_filter,
+            )
+        except FilterError as e:
+            self.notify(
+                f"col {e.column}: {e.message}",
+                severity="error",
+                title="Filter syntax",
+            )
+            self._groups = []
+            self._refresh_results_tree()
+            return
         # New query → invalidate the per-file chunk cache.
         self._chunk_cache.clear()
+        self._refresh_results_tree()
+
+    def _refresh_results_tree(self) -> None:
+        """Rebuild the results tree from ``self._groups`` and refresh status."""
         tree = self.query_one("#results_pane", Tree)
         tree.clear()
         for g in self._groups:
