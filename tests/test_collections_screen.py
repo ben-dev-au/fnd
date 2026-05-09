@@ -93,11 +93,13 @@ async def test_collections_list_shows_each_with_source_count(
         await pilot.pause()
         await pilot.press("f3")
         await pilot.pause()
-        # The list pane should have three rows (one per collection) showing
-        # the name and source count.
-        list_pane = app.screen.query_one("#collections_list_pane")
-        statics = list_pane.query(Static)
-        text = "\n".join(str(s.content) for s in statics)
+        # The tree's root has one child per collection; each label includes
+        # the name + source count.
+        from textual.widgets import Tree
+
+        tree = app.screen.query_one("#collections_tree", Tree)
+        labels = [str(c.label) for c in tree.root.children]
+        text = "\n".join(labels)
         assert "papers" in text
         assert "coursework" in text
         assert "notes" in text
@@ -114,10 +116,15 @@ async def test_clicking_collection_shows_its_sources(
         await pilot.pause()
         await pilot.press("f3")
         await pilot.pause()
-        # Default selection: first alphabetically (coursework). Editor pane
-        # should already show its two sources without any extra interaction.
-        editor = app.screen.query_one("#collections_editor_pane")
-        text = "\n".join(str(s.content) for s in editor.query(Static))
+        # Default cursor: first collection alphabetically (coursework).
+        # Its two sources are children of that node and show automatically
+        # because the form expands all collections by default.
+        from textual.widgets import Tree
+
+        tree = app.screen.query_one("#collections_tree", Tree)
+        coursework = next(c for c in tree.root.children if "coursework" in str(c.label))
+        source_labels = [str(s.label) for s in coursework.children]
+        text = "\n".join(source_labels)
         assert "/tmp/notes" in text
         assert "/tmp/decks" in text
         assert "**/*.md" in text
@@ -133,11 +140,12 @@ async def test_pressing_e_opens_source_edit_modal(
         await pilot.pause()
         await pilot.press("f3")
         await pilot.pause()
-        # Default selection: coursework (alphabetical first). Press 'e'
-        # to edit the first source.
+        # Default cursor lands on coursework (a collection node). Press
+        # `j` once to descend to its first source, then `e` to edit.
+        await pilot.press("j")
+        await pilot.pause()
         await pilot.press("e")
         await pilot.pause()
-        # Modal mounts an input with id source_path_input.
         assert app.screen.query("#source_path_input")
 
 
@@ -149,6 +157,8 @@ async def test_invalid_filter_shows_parse_error(
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("f3")
+        await pilot.pause()
+        await pilot.press("j")  # descend onto first source
         await pilot.pause()
         await pilot.press("e")
         await pilot.pause()
@@ -170,10 +180,11 @@ async def test_a_adds_blank_source_row(cfg_three_collections: Config, tmp_index_
         await pilot.pause()
         await pilot.press("f3")
         await pilot.pause()
-        # coursework starts with 2 sources.
+        # Cursor on coursework (collection). 'a' adds a source TO that
+        # collection — works whether cursor is on the collection node or
+        # one of its source children.
         await pilot.press("a")
         await pilot.pause()
-        # The source-edit modal should be open with empty fields.
         from textual.widgets import Input
 
         path_input = app.screen.query_one("#source_path_input", Input)
@@ -187,7 +198,9 @@ async def test_x_removes_focused_source(cfg_three_collections: Config, tmp_index
         await pilot.pause()
         await pilot.press("f3")
         await pilot.pause()
-        # coursework / first source is the focused one. Press 'x' to remove.
+        # Descend to coursework's first source, then 'x' to remove it.
+        await pilot.press("j")
+        await pilot.pause()
         await pilot.press("x")
         await pilot.pause()
         screen = app.screen
@@ -203,6 +216,8 @@ async def test_pasted_frontmatter_match_indicator(
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("f3")
+        await pilot.pause()
+        await pilot.press("j")  # descend onto first source
         await pilot.pause()
         await pilot.press("e")
         await pilot.pause()
@@ -269,7 +284,9 @@ async def test_save_triggers_reindex_when_paths_change(
         await pilot.pause()
         await pilot.press("f3")
         await pilot.pause()
-        # Edit the only source: change its path to notes_b.
+        # Descend onto the only source, then 'e' to edit.
+        await pilot.press("j")
+        await pilot.pause()
         await pilot.press("e")
         await pilot.pause()
         from textual.widgets import Input
@@ -315,7 +332,10 @@ async def test_s_persists_changes_to_config_toml(
         await pilot.press("f3")
         await pilot.pause()
         # In the form, focus the first source and "remove" it (so the diff
-        # is non-trivial: 1 source becomes 0).
+        # is non-trivial: 1 source becomes 0). Default cursor lands on the
+        # collection — press 'j' once to descend to its source child.
+        await pilot.press("j")
+        await pilot.pause()
         await pilot.press("x")
         await pilot.pause()
         # Save.
@@ -417,6 +437,8 @@ async def test_source_edit_strips_wrapping_quotes_from_path(
         await pilot.pause()
         await pilot.press("f3")
         await pilot.pause()
+        await pilot.press("j")  # descend onto first source
+        await pilot.pause()
         await pilot.press("e")
         await pilot.pause()
 
@@ -457,6 +479,8 @@ async def test_source_edit_refuses_save_when_path_does_not_exist(
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("f3")
+        await pilot.pause()
+        await pilot.press("j")  # descend onto first source
         await pilot.pause()
         await pilot.press("e")
         await pilot.pause()

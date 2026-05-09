@@ -13,9 +13,10 @@ from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.screen import Screen
-from textual.widgets import Footer, Input, Static, TextArea
+from textual.widgets import Footer, Input, Static, TextArea, Tree
+from textual.widgets.tree import TreeNode
 
 from acorn.config import Config, SourceConfig
 
@@ -35,15 +36,23 @@ def _strip_wrapping_quotes(text: str) -> str:
 
 
 class CollectionsScreen(Screen[None]):
-    """Top-level Collections form. Pushed from the main app via F3."""
+    """Top-level Collections form. Pushed from the main app via F3.
+
+    Layout: a single :class:`Tree` widget where collection nodes expand
+    into source children — same shape as the search results tree, so
+    ``j``/``k`` navigate the whole structure with no per-pane cursor.
+    Actions (``e``/``a``/``x``/``d``/``s``) operate on whichever node is
+    focused, and resolve a "current collection" from the focused node
+    (the source's parent if a source is focused).
+    """
 
     BINDINGS = [  # noqa: RUF012 — Textual class-list pattern
         Binding("escape", "close", "Close", show=True),
-        Binding("j,down", "list_next", "Next", show=False),
-        Binding("k,up", "list_prev", "Prev", show=False),
-        Binding("e", "edit_source", "Edit source", show=True),
-        Binding("J", "source_next", "Source ↓", show=False),
-        Binding("K", "source_prev", "Source ↑", show=False),
+        Binding("j,down", "tree_next", "Next", show=False),
+        Binding("k,up", "tree_prev", "Prev", show=False),
+        Binding("l,right", "tree_expand", "Expand", show=False),
+        Binding("h,left", "tree_collapse", "Collapse", show=False),
+        Binding("e,enter", "edit_source", "Edit", show=True),
         Binding("a", "add_source", "Add source", show=True),
         Binding("x", "remove_source", "Remove source", show=True),
         Binding("s", "save", "Save", show=True),
@@ -54,20 +63,14 @@ class CollectionsScreen(Screen[None]):
     CSS = """
     CollectionsScreen { background: $surface; }
     #collections_title { dock: top; height: 1; padding: 0 1; background: $panel; color: $accent; text-style: bold; }
-    #collections_body { width: 100%; height: 1fr; }
-    #collections_list_pane { width: 1fr; height: 1fr; border: round $primary; padding: 1; }
-    #collections_editor_pane { width: 2fr; height: 1fr; border: round $primary; padding: 1; }
+    #collections_tree_box { width: 100%; height: 1fr; border: round $primary; padding: 0 1; }
+    #collections_tree { height: 1fr; }
     """
 
     def __init__(self, config: Config, *, config_path: Path) -> None:
         super().__init__()
         self._config = config
         self._config_path = config_path
-        # Default selection: first collection alphabetically.
-        self._selected: str | None = (
-            sorted(config.collections.keys())[0] if config.collections else None
-        )
-        self._source_cursor: int = 0
         # Deep-copy the source list per collection at form open. Compared
         # against the live ``self._config`` on save to decide whether a
         # reindex is needed.
@@ -77,119 +80,211 @@ class CollectionsScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         yield Static("Collections", id="collections_title")
-        with Horizontal(id="collections_body"):
-            with Vertical(id="collections_list_pane"):
-                yield from self._collection_rows()
-            with Vertical(id="collections_editor_pane"):
-                yield from self._editor_rows()
+        with Vertical(id="collections_tree_box"):
+            tree: Tree[dict[str, object]] = Tree("Collections", id="collections_tree")
+            tree.show_root = False
+            tree.guide_depth = 2
+            yield tree
         yield Footer()
 
-    def _collection_rows(self) -> ComposeResult:
-        names = sorted(self._config.collections.keys())
-        if not names:
-            yield Static("(no collections — press n to add one)")
-            return
-        for name in names:
-            collection = self._config.collections[name]
-            count = len(collection.sources)
-            marker = "▸ " if name == self._selected else "  "
-            label = (
-                f"{marker}{name}  ({count} source{'s' if count != 1 else ''})"
-                f"  [{collection.ranking_profile}]"
-            )
-            yield Static(label, classes="collection_row")
+    def on_mount(self) -> None:
+        self._rebuild_tree()
+        tree = self.query_one("#collections_tree", Tree)
+        tree.focus()
 
-    def _editor_rows(self) -> ComposeResult:
-        if self._selected is None:
-            yield Static("Select a collection on the left, or press n to add a new one.")
+    # ── Tree state ────────────────────────────────────────────────
+
+    def _rebuild_tree(
+        self,
+        *,
+        focus: tuple[str | None, int | None] | None = None,
+    ) -> None:
+        """Wipe and rebuild the tree from ``self._config``.
+
+        ``focus`` is an optional ``(collection_name, source_index_or_None)``
+        pair — after the rebuild we walk the new nodes and try to land
+        the cursor on the matching one. If omitted we preserve the
+        currently-focused (collection, source) — which is what every
+        action needs after a mutation.
+        """
+        if focus is None:
+            focus = (self._focused_collection_name(), self._focused_source_index())
+        tree = self.query_one("#collections_tree", Tree)
+        tree.clear()
+        for name in sorted(self._config.collections.keys()):
+            c = self._config.collections[name]
+            count = len(c.sources)
+            label = f"{name}  ({count} source{'s' if count != 1 else ''})  [{c.ranking_profile}]"
+            collection_node = tree.root.add(
+                label, data={"kind": "collection", "name": name}, expand=True
+            )
+            for i, s in enumerate(c.sources):
+                bits = [f"{i + 1}. {s.path}"]
+                if s.includes:
+                    bits.append(f"includes: {', '.join(s.includes)}")
+                if s.excludes:
+                    bits.append(f"excludes: {', '.join(s.excludes)}")
+                if s.frontmatter_filter:
+                    bits.append(f"filter: {s.frontmatter_filter}")
+                collection_node.add_leaf(
+                    "  ·  ".join(bits),
+                    data={"kind": "source", "collection": name, "index": i},
+                )
+        # Restore focus if possible.
+        self._focus_node(*focus)
+
+    def _focus_node(self, collection_name: str | None, source_index: int | None) -> None:
+        """Move the tree cursor to the node identified by
+        ``(collection_name, source_index)``; falls back to the first
+        collection, or the root if the tree is empty.
+
+        Tantivy's :meth:`Tree.select_node` reads ``node._line`` to derive
+        the new ``cursor_line`` — but ``_line`` is only populated by
+        :meth:`Tree._build`, which Textual schedules lazily on idle.
+        Right after a rebuild the values are stale, so we touch
+        ``_tree_lines`` first to force a synchronous build before
+        selecting.
+        """
+        tree = self.query_one("#collections_tree", Tree)
+        _ = tree._tree_lines
+        target: TreeNode[dict[str, object]] | None = None
+        if collection_name is not None:
+            for c_node in tree.root.children:
+                data = c_node.data or {}
+                if data.get("kind") == "collection" and data.get("name") == collection_name:
+                    if source_index is None or not c_node.children:
+                        target = c_node
+                        break
+                    idx = min(source_index, len(c_node.children) - 1)
+                    target = c_node.children[idx]
+                    break
+        if target is None and tree.root.children:
+            target = tree.root.children[0]
+        if target is not None:
+            # ``move_cursor`` (not ``select_node``) — the latter posts a
+            # NodeSelected event whose default handler auto-toggles the
+            # node's expand state when ``auto_expand=True``, which collapses
+            # nodes we just added with ``expand=True``.
+            tree.move_cursor(target)
+
+    def _focused_node(self) -> TreeNode[dict[str, object]] | None:
+        try:
+            tree = self.query_one("#collections_tree", Tree)
+        except Exception:
+            return None
+        return tree.cursor_node
+
+    def _focused_collection_name(self) -> str | None:
+        """Resolve the focused-or-parent collection name from the tree
+        cursor. Returns None only when the tree is empty."""
+        node = self._focused_node()
+        if node is None:
+            return None
+        data = node.data or {}
+        kind = data.get("kind")
+        if kind == "collection":
+            return str(data.get("name") or "") or None
+        if kind == "source":
+            return str(data.get("collection") or "") or None
+        return None
+
+    def _focused_source_index(self) -> int | None:
+        node = self._focused_node()
+        if node is None:
+            return None
+        data = node.data or {}
+        if data.get("kind") == "source":
+            idx = data.get("index", 0)
+            return int(idx) if isinstance(idx, int) else 0
+        return None
+
+    # Backwards-compat properties — older tests assert these.
+
+    @property
+    def _selected(self) -> str | None:
+        return self._focused_collection_name()
+
+    @_selected.setter
+    def _selected(self, value: str | None) -> None:
+        # Setter is a no-op aside from re-positioning the tree cursor;
+        # kept so existing assignment-style mutations don't error during
+        # the gradual migration to tree-driven state.
+        if value is None:
             return
-        c = self._config.collections[self._selected]
-        yield Static(f"Editing: {self._selected}", classes="editor_heading")
-        yield Static(f"Ranking: {c.ranking_profile}")
-        yield Static("Sources:")
-        if not c.sources:
-            yield Static("  (none — press a to add a source)")
-            return
-        for i, s in enumerate(c.sources):
-            marker = "▸ " if i == self._source_cursor else "  "
-            yield Static(f"{marker}{i + 1}. {s.path}", classes="source_row")
-            if s.includes:
-                yield Static(f"     includes: {', '.join(s.includes)}")
-            if s.excludes:
-                yield Static(f"     excludes: {', '.join(s.excludes)}")
-            if s.frontmatter_filter:
-                yield Static(f"     filter:   {s.frontmatter_filter}")
+        self._focus_node(value, None)
+
+    @property
+    def _source_cursor(self) -> int:
+        idx = self._focused_source_index()
+        return idx if idx is not None else 0
+
+    @_source_cursor.setter
+    def _source_cursor(self, value: int) -> None:
+        self._focus_node(self._focused_collection_name(), value)
+
+    # ── Actions ───────────────────────────────────────────────────
 
     def action_close(self) -> None:
         self.dismiss(None)
 
-    def action_list_next(self) -> None:
-        names = sorted(self._config.collections.keys())
-        if not names or self._selected is None:
-            return
-        i = names.index(self._selected)
-        self._selected = names[(i + 1) % len(names)]
-        self._source_cursor = 0
-        self._refresh()
+    def action_tree_next(self) -> None:
+        tree = self.query_one("#collections_tree", Tree)
+        tree.action_cursor_down()
 
-    def action_list_prev(self) -> None:
-        names = sorted(self._config.collections.keys())
-        if not names or self._selected is None:
-            return
-        i = names.index(self._selected)
-        self._selected = names[(i - 1) % len(names)]
-        self._source_cursor = 0
-        self._refresh()
+    def action_tree_prev(self) -> None:
+        tree = self.query_one("#collections_tree", Tree)
+        tree.action_cursor_up()
+
+    def action_tree_expand(self) -> None:
+        node = self._focused_node()
+        if node is not None and not node.is_expanded:
+            node.expand()
+
+    def action_tree_collapse(self) -> None:
+        node = self._focused_node()
+        if node is not None and node.is_expanded:
+            node.collapse()
 
     def action_edit_source(self) -> None:
-        if self._selected is None:
+        name = self._focused_collection_name()
+        idx = self._focused_source_index()
+        if name is None or idx is None:
+            # Cursor is on a collection node (or the tree is empty) —
+            # editing collection-level metadata isn't in 5.5e-3 scope.
             return
-        c = self._config.collections[self._selected]
-        if not c.sources:
-            return
-        s = c.sources[self._source_cursor]
+        c = self._config.collections[name]
+        s = c.sources[idx]
         screen = SourceEditScreen(
-            title=f"{self._selected} / {self._source_cursor + 1}",
+            title=f"{name} / {idx + 1}",
             path=str(s.path),
             includes=list(s.includes),
             excludes=list(s.excludes),
             frontmatter_filter=s.frontmatter_filter,
         )
-        idx = self._source_cursor
-        self.app.push_screen(screen, callback=lambda r: self._apply_source_edit(idx, r))
-
-    def action_source_next(self) -> None:
-        if self._selected is None:
-            return
-        c = self._config.collections[self._selected]
-        if c.sources:
-            self._source_cursor = (self._source_cursor + 1) % len(c.sources)
-        self._refresh()
-
-    def action_source_prev(self) -> None:
-        if self._selected is None:
-            return
-        c = self._config.collections[self._selected]
-        if c.sources:
-            self._source_cursor = (self._source_cursor - 1) % len(c.sources)
-        self._refresh()
+        self.app.push_screen(
+            screen,
+            callback=lambda r: self._apply_source_edit(name, idx, r),
+        )
 
     def action_add_source(self) -> None:
-        if self._selected is None:
+        name = self._focused_collection_name()
+        if name is None:
             return
         screen = SourceEditScreen(
-            title=f"{self._selected} / new",
+            title=f"{name} / new",
             path="",
             includes=[],
             excludes=[],
             frontmatter_filter=None,
         )
-        self.app.push_screen(screen, callback=self._on_new_source_dismissed)
+        self.app.push_screen(screen, callback=lambda r: self._on_new_source_dismissed(name, r))
 
-    def _on_new_source_dismissed(self, result: dict[str, object] | None) -> None:
-        if result is None or self._selected is None:
+    def _on_new_source_dismissed(
+        self, collection_name: str, result: dict[str, object] | None
+    ) -> None:
+        if result is None:
             return
-        c = self._config.collections[self._selected]
+        c = self._config.collections[collection_name]
         c.sources.append(
             SourceConfig(
                 path=Path(str(result["path"])),
@@ -198,58 +293,58 @@ class CollectionsScreen(Screen[None]):
                 frontmatter_filter=result.get("frontmatter_filter"),  # type: ignore[arg-type]
             )
         )
-        self._source_cursor = len(c.sources) - 1
-        self._refresh()
+        new_index = len(c.sources) - 1
+        self._rebuild_tree(focus=(collection_name, new_index))
 
     def action_remove_source(self) -> None:
-        if self._selected is None:
+        name = self._focused_collection_name()
+        idx = self._focused_source_index()
+        if name is None or idx is None:
             return
-        c = self._config.collections[self._selected]
+        c = self._config.collections[name]
         if not c.sources:
             return
-        del c.sources[self._source_cursor]
-        if c.sources:
-            self._source_cursor = min(self._source_cursor, len(c.sources) - 1)
-        else:
-            self._source_cursor = 0
-        self._refresh()
+        del c.sources[idx]
+        new_idx = min(idx, len(c.sources) - 1) if c.sources else None
+        self._rebuild_tree(focus=(name, new_idx))
 
     def action_save(self) -> None:
-        if self._selected is None:
+        name = self._focused_collection_name()
+        if name is None:
             return
         from acorn.config import write_collection
         from acorn.index import build_index_from_config
 
-        c = self._config.collections[self._selected]
+        c = self._config.collections[name]
         write_collection(
             config_path=self._config_path,
-            name=self._selected,
+            name=name,
             collection=c,
         )
         # Did anything structural change? If so, reindex synchronously.
-        if self._needs_reindex(self._selected):
+        if self._needs_reindex(name):
             self.app.notify(
-                f"Reindexing {self._selected}…",
+                f"Reindexing {name}…",
                 severity="information",
                 timeout=2,
             )
             try:
                 n = build_index_from_config(
                     config=c,
-                    collection=self._selected,
+                    collection=name,
                     index_dir=self.app._index_dir,  # type: ignore[attr-defined]
                     rebuild=True,
                 )
                 self.app.notify(
-                    f"Indexed {n} chunks for {self._selected}.",
+                    f"Indexed {n} chunks for {name}.",
                     severity="information",
                 )
             except Exception as e:
                 self.app.notify(f"Reindex failed: {e}", severity="error")
         else:
-            self.app.notify(f"Saved {self._selected}", severity="information")
+            self.app.notify(f"Saved {name}", severity="information")
         # Refresh snapshot so subsequent saves diff against the new state.
-        self._initial[self._selected] = deepcopy(c.sources)
+        self._initial[name] = deepcopy(c.sources)
 
     def _needs_reindex(self, name: str) -> bool:
         prev = self._initial.get(name, [])
@@ -267,10 +362,15 @@ class CollectionsScreen(Screen[None]):
                 return True
         return False
 
-    def _apply_source_edit(self, index: int, result: dict[str, object] | None) -> None:
-        if result is None or self._selected is None:
+    def _apply_source_edit(
+        self,
+        collection_name: str,
+        index: int,
+        result: dict[str, object] | None,
+    ) -> None:
+        if result is None:
             return
-        c = self._config.collections[self._selected]
+        c = self._config.collections[collection_name]
         new_source = SourceConfig(
             path=Path(str(result["path"])),
             includes=list(result["includes"]),  # type: ignore[arg-type]
@@ -279,21 +379,12 @@ class CollectionsScreen(Screen[None]):
             follow_symlinks=c.sources[index].follow_symlinks,
         )
         c.sources[index] = new_source
-        self._refresh()
-
-    def _refresh(self) -> None:
-        """Re-render both panes; cheap because the form is small."""
-        list_pane = self.query_one("#collections_list_pane", Vertical)
-        editor_pane = self.query_one("#collections_editor_pane", Vertical)
-        list_pane.remove_children()
-        editor_pane.remove_children()
-        list_pane.mount_all(self._collection_rows())
-        editor_pane.mount_all(self._editor_rows())
+        self._rebuild_tree(focus=(collection_name, index))
 
     def action_delete_collection(self) -> None:
-        if self._selected is None:
+        name = self._focused_collection_name()
+        if name is None:
             return
-        name = self._selected
         screen = _DeleteConfirmScreen(f"Delete collection '{name}' and remove its indexed chunks?")
         self.app.push_screen(screen, callback=lambda r: self._on_delete_confirmed(name, r))
 
@@ -318,11 +409,10 @@ class CollectionsScreen(Screen[None]):
             writer.wait_merging_threads()
         except Exception as e:
             self.app.notify(f"Failed to drop chunks: {e}", severity="error")
-        # 4. Update selection.
+        # 4. Move focus to the next collection (or root if empty).
         names = sorted(self._config.collections.keys())
-        self._selected = names[0] if names else None
-        self._source_cursor = 0
-        self._refresh()
+        next_focus = names[0] if names else None
+        self._rebuild_tree(focus=(next_focus, None))
         self.app.notify(f"Deleted {name}", severity="information")
 
     def action_new_collection(self) -> None:
@@ -340,9 +430,7 @@ class CollectionsScreen(Screen[None]):
         empty = CollectionConfig(sources=[])
         self._config.collections[name] = empty
         self._initial[name] = []
-        self._selected = name
-        self._source_cursor = 0
-        self._refresh()
+        self._rebuild_tree(focus=(name, None))
         self.app.notify(
             f"Created {name}. Press 'a' to add a source, 's' to save.",
             severity="information",
