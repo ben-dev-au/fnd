@@ -44,16 +44,22 @@ _COMMIT_BATCH = 500
 
 
 def _ensure_index(index_dir: Path, *, force: bool = False) -> Index:
-    import shutil
+    """Open or initialise the Tantivy index at ``index_dir``.
 
+    Two correctness gates:
+
+    1. The ``.acorn-schema-version`` sidecar must match ``SCHEMA_VERSION``;
+       on mismatch we either raise (default) or wipe the dir (``force=True``).
+    2. Tantivy itself stores the schema in ``meta.json`` and rejects any
+       constructor call whose schema doesn't match the on-disk segments.
+       Both gates can disagree — e.g. if a prior rebuild bumped the
+       sidecar but crashed before Tantivy wrote new segments — so we
+       also retry on Tantivy's ``ValueError`` when ``force=True``,
+       wiping and re-opening with a fresh schema.
+    """
     index_dir = index_dir.expanduser().resolve()
     index_dir.mkdir(parents=True, exist_ok=True)
     schema = build_schema()
-    # The SCHEMA_VERSION sidecar guards against silent format changes.
-    # Tantivy itself also stores the schema in ``meta.json`` and refuses to
-    # open an index dir whose on-disk schema doesn't match the constructor's
-    # — so when ``force=True`` and the sidecar is stale we must wipe the
-    # dir so Tantivy creates a fresh index under the new schema.
     sidecar = index_dir / ".acorn-schema-version"
     if sidecar.exists():
         existing = sidecar.read_text().strip()
@@ -63,17 +69,40 @@ def _ensure_index(index_dir: Path, *, force: bool = False) -> Index:
                     f"index at {index_dir} has schema version {existing}; current is "
                     f"{SCHEMA_VERSION}. Rebuild with --rebuild."
                 )
-            # Rebuild path: clear the dir (Tantivy can't migrate schemas
-            # in place) and re-establish the sidecar.
-            for entry in index_dir.iterdir():
-                if entry.is_dir():
-                    shutil.rmtree(entry)
-                else:
-                    entry.unlink()
-            sidecar.write_text(str(SCHEMA_VERSION))
+            _wipe_index_dir(index_dir, sidecar)
     else:
         sidecar.write_text(str(SCHEMA_VERSION))
-    return Index(schema, path=str(index_dir))
+
+    try:
+        return Index(schema, path=str(index_dir))
+    except ValueError as e:
+        # Tantivy's "Schema error: ... does not match" — the sidecar said
+        # OK but Tantivy disagrees (e.g. recovery from a half-completed
+        # rebuild). With force=True we wipe and retry once; otherwise we
+        # surface a clearer recovery instruction.
+        if "schema" not in str(e).lower():
+            raise
+        if not force:
+            raise RuntimeError(
+                f"index at {index_dir} has an inconsistent schema state. "
+                f"Rebuild with `acorn collection reindex <name> --rebuild`."
+            ) from e
+        _wipe_index_dir(index_dir, sidecar)
+        return Index(schema, path=str(index_dir))
+
+
+def _wipe_index_dir(index_dir: Path, sidecar: Path) -> None:
+    """Clear every entry under ``index_dir`` and re-establish the sidecar
+    at the current ``SCHEMA_VERSION``. Used by the rebuild path when
+    Tantivy can't migrate the on-disk segments in place."""
+    import shutil
+
+    for entry in index_dir.iterdir():
+        if entry.is_dir():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+    sidecar.write_text(str(SCHEMA_VERSION))
 
 
 def _doc_for_chunk(chunk: Chunk, *, collection: str, meta_blob_bytes: bytes = b"") -> Document:

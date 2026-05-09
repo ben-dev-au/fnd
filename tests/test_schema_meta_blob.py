@@ -73,3 +73,69 @@ def test_force_rebuild_wipes_stale_index_dir(tmp_path: Path) -> None:
     # The stale subtree we created is gone (Tantivy creates its own
     # fresh files; the user's leftover dirs are not preserved).
     assert not nested.exists()
+
+
+def _build_legacy_v1_index(index_dir: Path) -> None:
+    """Build a real Tantivy index with a schema missing ``meta_blob`` (the
+    v1 shape). Stamp the *current* sidecar on top so the file system
+    looks like the bug-stuck state: sidecar says v2, segments say v1.
+
+    Used by both the ``_ensure_index`` recovery test and the
+    ``check_schema_status`` openable-trial test.
+    """
+    from tantivy import Index, SchemaBuilder
+
+    sb = SchemaBuilder()
+    sb.add_text_field("body", stored=False, tokenizer_name="default")
+    schema = sb.build()
+    Index(schema, path=str(index_dir))
+    # Pretend a prior force-rebuild bumped the sidecar but crashed before
+    # Tantivy got new segments — the exact stuck state in the field.
+    (index_dir / ".acorn-schema-version").write_text(str(SCHEMA_VERSION))
+
+
+def test_force_rebuild_recovers_from_inconsistent_sidecar_and_meta_json(
+    tmp_path: Path,
+) -> None:
+    """The bug from the field: a half-completed rebuild bumped the sidecar
+    to the current version but Tantivy's meta.json still has v1 schema.
+    Subsequent calls with ``force=True`` must wipe and recreate, not
+    propagate Tantivy's ``Schema error`` ValueError."""
+    from acorn.index import _ensure_index
+
+    _build_legacy_v1_index(tmp_path)
+    # Sanity: opening with the current schema raises ValueError.
+    from tantivy import Index
+
+    with pytest.raises(ValueError, match=r"(?i)schema"):
+        Index(build_schema(), path=str(tmp_path))
+    # _ensure_index(force=True) recovers cleanly.
+    _ensure_index(tmp_path, force=True)
+    # And re-opening succeeds without issue (the dir is now consistent).
+    Index(build_schema(), path=str(tmp_path))
+
+
+def test_open_without_force_on_inconsistent_dir_gives_clear_error(
+    tmp_path: Path,
+) -> None:
+    """Without ``force=True``, the same inconsistent state surfaces as a
+    RuntimeError pointing the user at the rebuild command — not Tantivy's
+    cryptic ``Schema error``."""
+    from acorn.index import _ensure_index
+
+    _build_legacy_v1_index(tmp_path)
+    with pytest.raises(RuntimeError, match=r"inconsistent|rebuild"):
+        _ensure_index(tmp_path)
+
+
+def test_check_schema_status_detects_inconsistent_dir(tmp_path: Path) -> None:
+    """``check_schema_status`` is the migrate helper's first signal. When
+    the sidecar matches but Tantivy disagrees, it must return STALE so
+    the migrate prompt fires (instead of trusting the sidecar and
+    blowing up later in the TUI)."""
+    from acorn.migrate import SchemaStatus, check_schema_status
+
+    _build_legacy_v1_index(tmp_path)
+    status, version = check_schema_status(tmp_path)
+    assert status is SchemaStatus.STALE
+    assert version == "inconsistent"
