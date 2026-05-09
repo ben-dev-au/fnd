@@ -107,7 +107,10 @@ def _format_hit_label(h: Hit, *, max_score: float = 0.0) -> Any:
     elif h.heading_path:
         loc = f"§ {h.heading_path}"
     else:
-        loc = "—"
+        # Markdown / TXT chunks with no headings still need a locator —
+        # fall back to the chunk sequence so every section row carries
+        # a position marker the user can act on.
+        loc = f"chunk {h.chunk_seq + 1}"
     section = h.heading_path.split(" > ")[-1] if h.heading_path else ""
     suffix = f"  {section}" if section and " > " in h.heading_path else ""
     # Per-pass glyph (§9c): exact / fuzzy / synonym. Suppressed for the
@@ -516,18 +519,19 @@ class AcornApp(App[None]):
     def _refresh_results_tree(self) -> None:
         """Rebuild the results tree from ``self._groups`` and refresh status.
 
-        Score bars are normalised against the maximum top-score in the
-        current result set so the leader always renders as a full bar;
-        this lets the user eyeball relative ranking without comparing
-        floats."""
+        The top result is auto-expanded so its section rows (with their
+        ``§ heading`` / ``p.N`` / ``chunk N`` locators) are immediately
+        visible — saves a keypress and makes the locator format
+        discoverable on first launch.
+        """
         tree = self.query_one("#results_pane", Tree)
         tree.clear()
         max_score = max((g.top_score for g in self._groups), default=0.0)
-        for g in self._groups:
+        for i, g in enumerate(self._groups):
             file_node = tree.root.add(
                 _format_file_label(g, max_score=max_score),
                 data={"kind": "file", "group": g},
-                expand=False,
+                expand=(i == 0),
             )
             for h in g.hits:
                 file_node.add_leaf(

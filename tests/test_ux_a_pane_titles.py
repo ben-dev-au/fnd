@@ -74,3 +74,42 @@ async def test_status_bar_widget_is_removed(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         assert not app.query("#status_bar"), "status bar widget still mounted"
+
+
+@pytest.mark.asyncio
+async def test_top_result_is_auto_expanded(built_index: Path) -> None:
+    """The first file row in the results tree should be expanded after a
+    search so the user immediately sees its section rows (with their
+    location prefixes) without having to press Right."""
+    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#results_pane", Tree)
+        first = next(iter(tree.root.children))
+        assert first.is_expanded, "top result should auto-expand"
+
+
+def test_format_hit_label_falls_back_for_markdown_without_heading() -> None:
+    """When a markdown chunk has no heading_path / page / slide, the row
+    should still carry a synthetic locator (``chunk N``) rather than the
+    generic em-dash placeholder."""
+    from acorn.query import Hit
+    from acorn.tui.app import _format_hit_label
+
+    h = Hit(
+        score=1.0,
+        parent_id="x",
+        path="/foo.md",
+        kind="md",
+        page=0,
+        slide=0,
+        heading_path="",
+        title="",
+        snippet="",
+        chunk_seq=3,
+        mtime=0,
+        pass_index=0,
+        meta_blob=b"",
+    )
+    label = str(_format_hit_label(h, max_score=10.0))
+    assert "chunk" in label.lower(), label
