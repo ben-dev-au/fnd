@@ -122,3 +122,42 @@ async def test_clicking_collection_shows_its_sources(
         assert "/tmp/decks" in text
         assert "**/*.md" in text
         assert "**/*.pdf" in text
+
+
+@pytest.mark.asyncio
+async def test_pressing_e_opens_source_edit_modal(
+    cfg_three_collections: Config, tmp_index_dir: Path
+) -> None:
+    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f3")
+        await pilot.pause()
+        # Default selection: coursework (alphabetical first). Press 'e'
+        # to edit the first source.
+        await pilot.press("e")
+        await pilot.pause()
+        # Modal mounts an input with id source_path_input.
+        assert app.screen.query("#source_path_input")
+
+
+@pytest.mark.asyncio
+async def test_invalid_filter_shows_parse_error(
+    cfg_three_collections: Config, tmp_index_dir: Path
+) -> None:
+    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f3")
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.pause()
+        from textual.widgets import Input
+
+        filter_input = app.screen.query_one("#source_filter_input", Input)
+        filter_input.value = "Course =="  # invalid DSL
+        # Filter parse-status should pick up the change after the input
+        # event fires.
+        await pilot.pause()
+        status = app.screen.query_one("#filter_parse_status", Static)
+        assert "col" in str(status.content).lower() or "error" in str(status.content).lower()

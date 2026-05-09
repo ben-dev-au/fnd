@@ -14,7 +14,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Footer, Static
+from textual.widgets import Footer, Input, Static
 
 from acorn.config import Config
 
@@ -26,6 +26,7 @@ class CollectionsScreen(Screen[None]):
         Binding("escape", "close", "Close", show=True),
         Binding("j,down", "list_next", "Next", show=False),
         Binding("k,up", "list_prev", "Prev", show=False),
+        Binding("e", "edit_first_source", "Edit source 1", show=False),
     ]
 
     CSS = """
@@ -108,6 +109,38 @@ class CollectionsScreen(Screen[None]):
         self._selected = names[(i - 1) % len(names)]
         self._refresh()
 
+    def action_edit_first_source(self) -> None:
+        if self._selected is None:
+            return
+        c = self._config.collections[self._selected]
+        if not c.sources:
+            return
+        s = c.sources[0]
+        screen = SourceEditScreen(
+            title=f"{self._selected} / 1",
+            path=str(s.path),
+            includes=list(s.includes),
+            excludes=list(s.excludes),
+            frontmatter_filter=s.frontmatter_filter,
+        )
+        self.app.push_screen(screen, callback=lambda r: self._apply_source_edit(0, r))
+
+    def _apply_source_edit(self, index: int, result: dict[str, object] | None) -> None:
+        if result is None or self._selected is None:
+            return
+        from acorn.config import SourceConfig
+
+        c = self._config.collections[self._selected]
+        new_source = SourceConfig(
+            path=Path(str(result["path"])),
+            includes=list(result["includes"]),  # type: ignore[arg-type]
+            excludes=list(result["excludes"]),  # type: ignore[arg-type]
+            frontmatter_filter=result.get("frontmatter_filter"),  # type: ignore[arg-type]
+            follow_symlinks=c.sources[index].follow_symlinks,
+        )
+        c.sources[index] = new_source
+        self._refresh()
+
     def _refresh(self) -> None:
         """Re-render both panes; cheap because the form is small."""
         list_pane = self.query_one("#collections_list_pane", Vertical)
@@ -116,3 +149,108 @@ class CollectionsScreen(Screen[None]):
         editor_pane.remove_children()
         list_pane.mount_all(self._collection_rows())
         editor_pane.mount_all(self._editor_rows())
+
+
+class SourceEditScreen(Screen[dict[str, object] | None]):
+    """Modal for editing one source. Returns the edited fields (or None
+    if cancelled) via :meth:`Screen.dismiss`. The parent
+    :class:`CollectionsScreen` applies the change to its in-memory
+    Config and re-renders.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("ctrl+s", "save", "Save", show=True),
+    ]
+
+    CSS = """
+    SourceEditScreen { align: center middle; background: $surface 80%; }
+    #source_edit_box { width: 80%; height: auto; border: round $accent; padding: 1; background: $surface; }
+    #source_edit_box Input { margin-bottom: 1; }
+    #filter_parse_status { color: $success; }
+    .filter_parse_error { color: $error; }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        path: str,
+        includes: list[str],
+        excludes: list[str],
+        frontmatter_filter: str | None,
+    ) -> None:
+        super().__init__()
+        self._title = title
+        self._initial = {
+            "path": path,
+            "includes": ",".join(includes),
+            "excludes": ",".join(excludes),
+            "frontmatter_filter": frontmatter_filter or "",
+        }
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="source_edit_box"):
+            yield Static(f"Edit source — {self._title}", classes="editor_heading")
+            yield Static("Path:")
+            yield Input(value=self._initial["path"], id="source_path_input")
+            yield Static("Includes (comma-separated globs):")
+            yield Input(value=self._initial["includes"], id="source_includes_input")
+            yield Static("Excludes (comma-separated globs):")
+            yield Input(value=self._initial["excludes"], id="source_excludes_input")
+            yield Static("Frontmatter filter (DSL):")
+            yield Input(value=self._initial["frontmatter_filter"], id="source_filter_input")
+            yield Static("✓ filter parses", id="filter_parse_status")
+            yield Static("ctrl+s save · esc cancel", classes="footer_hint")
+
+    def on_input_changed(self, ev: Input.Changed) -> None:
+        if ev.input.id != "source_filter_input":
+            return
+        from acorn.filter_dsl import parse_or_error
+
+        text = ev.value
+        status = self.query_one("#filter_parse_status", Static)
+        if not text.strip():
+            status.update("(no filter)")
+            status.remove_class("filter_parse_error")
+            return
+        _pred, err = parse_or_error(text)
+        if err is None:
+            status.update("✓ filter parses")
+            status.remove_class("filter_parse_error")
+        else:
+            status.update(f"✗ col {err.column}: {err.message}")
+            status.add_class("filter_parse_error")
+
+    def action_save(self) -> None:
+        from acorn.filter_dsl import parse_or_error
+
+        filter_text = self.query_one("#source_filter_input", Input).value.strip()
+        if filter_text:
+            _pred, err = parse_or_error(filter_text)
+            if err is not None:
+                # Refuse to save: surface a notify, leave the modal open.
+                self.app.notify(
+                    f"col {err.column}: {err.message}",
+                    severity="error",
+                    title="Filter syntax",
+                )
+                return
+        result: dict[str, object] = {
+            "path": self.query_one("#source_path_input", Input).value.strip(),
+            "includes": [
+                s.strip()
+                for s in self.query_one("#source_includes_input", Input).value.split(",")
+                if s.strip()
+            ],
+            "excludes": [
+                s.strip()
+                for s in self.query_one("#source_excludes_input", Input).value.split(",")
+                if s.strip()
+            ],
+            "frontmatter_filter": filter_text or None,
+        }
+        self.dismiss(result)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
