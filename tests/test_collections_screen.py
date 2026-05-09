@@ -369,3 +369,111 @@ async def test_n_creates_new_empty_collection(
         assert "research" in screen._config.collections  # type: ignore[attr-defined]
         # And research is now the selected collection.
         assert screen._selected == "research"  # type: ignore[attr-defined]
+
+
+def test_strip_wrapping_quotes_helper() -> None:
+    """The path field accepts paste-with-quotes — pure helper covers
+    every shape the user might paste."""
+    from acorn.tui.collections_screen import _strip_wrapping_quotes
+
+    assert _strip_wrapping_quotes("/Users/x/y") == "/Users/x/y"
+    assert _strip_wrapping_quotes("'/Users/x/y'") == "/Users/x/y"
+    assert _strip_wrapping_quotes('"/Users/x/y"') == "/Users/x/y"
+    # Whitespace around the wrapping quotes survives the strip.
+    assert _strip_wrapping_quotes("  '/Users/x/y'  ") == "/Users/x/y"
+    # Single quote at one end only — leave alone, probably a typo we
+    # shouldn't silently swallow.
+    assert _strip_wrapping_quotes("'/Users/x/y") == "'/Users/x/y"
+    assert _strip_wrapping_quotes("/Users/x/y'") == "/Users/x/y'"
+    # Empty / whitespace-only.
+    assert _strip_wrapping_quotes("") == ""
+    assert _strip_wrapping_quotes("   ") == ""
+
+
+@pytest.mark.asyncio
+async def test_source_edit_strips_wrapping_quotes_from_path(
+    tmp_path: Path,
+    tmp_index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pasting ``'/path'`` (quoted) into the path Input must save as
+    ``/path`` — without this, the walker looks for a directory whose name
+    starts with a literal quote and silently indexes 0 chunks."""
+    real_dir = tmp_path / "vault"
+    real_dir.mkdir()
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        textwrap.dedent("""
+            [[collections.notes.sources]]
+            path = "/tmp/old"
+        """),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    cfg = load(cfg_path)
+
+    app = AcornApp(index_dir=tmp_index_dir, config=cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f3")
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.pause()
+
+        from textual.widgets import Input
+
+        path_input = app.screen.query_one("#source_path_input", Input)
+        path_input.value = f"'{real_dir}'"  # paste-with-single-quotes
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+
+        screen = app.screen
+        # Modal dismissed; we're back on CollectionsScreen.
+        c = screen._config.collections["notes"]  # type: ignore[attr-defined]
+        # Path was de-quoted before being saved into SourceConfig.
+        assert str(c.sources[0].path) == str(real_dir)
+
+
+@pytest.mark.asyncio
+async def test_source_edit_refuses_save_when_path_does_not_exist(
+    tmp_path: Path,
+    tmp_index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-existent path is almost certainly a paste error or typo;
+    refuse the save and leave the modal open so the user can fix it."""
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        textwrap.dedent("""
+            [[collections.notes.sources]]
+            path = "/tmp/old"
+        """),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    cfg = load(cfg_path)
+
+    app = AcornApp(index_dir=tmp_index_dir, config=cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f3")
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.pause()
+
+        from textual.widgets import Input
+
+        path_input = app.screen.query_one("#source_path_input", Input)
+        path_input.value = str(tmp_path / "absent" / "missing-dir")
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+
+        # Modal should still be open — the path Input is still queryable.
+        assert app.screen.query("#source_path_input")
+        # And the underlying source path on the parent screen is unchanged.
+        # Reach into the underlying CollectionsScreen via the screen stack.
+        for s in app.screen_stack:
+            if hasattr(s, "_config"):
+                c = s._config.collections["notes"]  # type: ignore[attr-defined]
+                assert str(c.sources[0].path) == "/tmp/old"
+                break
