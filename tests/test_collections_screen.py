@@ -345,3 +345,27 @@ async def test_d_deletes_with_confirmation(
         await pilot.pause()
         screen = app.screen
         assert "coursework" not in screen._config.collections  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_n_creates_new_empty_collection(
+    cfg_three_collections: Config, tmp_index_dir: Path
+) -> None:
+    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f3")
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause()
+        from textual.widgets import Input
+
+        # New-name prompt mounts a single input.
+        name_input = app.screen.query_one("#new_collection_name", Input)
+        name_input.value = "research"
+        await pilot.press("enter")
+        await pilot.pause()
+        screen = app.screen
+        assert "research" in screen._config.collections  # type: ignore[attr-defined]
+        # And research is now the selected collection.
+        assert screen._selected == "research"  # type: ignore[attr-defined]
