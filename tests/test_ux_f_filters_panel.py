@@ -59,7 +59,9 @@ async def test_filters_panel_mounts(cfg_one_collection: Config, mixed_index: Pat
         labels = [str(c.label) for c in tree.root.children]
         joined = "\n".join(labels)
         assert "File type" in joined, joined
-        assert "Date" in joined, joined
+        # "Modified" reads more clearly than "Date" — the underlying
+        # field is the file's mtime, not creation/published date.
+        assert "Modified" in joined, joined
 
 
 @pytest.mark.asyncio
@@ -105,7 +107,7 @@ async def test_date_toggle_is_single_select(cfg_one_collection: Config, mixed_in
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#filters_panel_tree", Tree)
-        date_node = next(c for c in tree.root.children if "Date" in str(c.label))
+        date_node = next(c for c in tree.root.children if "Modified" in str(c.label))
         date_node.expand()
         await pilot.pause()
         week_leaf = next(c for c in date_node.children if " week" in str(c.label))

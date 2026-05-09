@@ -106,18 +106,41 @@ def _build_label(text: str, score: float, max_score: float) -> Any:
     return label
 
 
+def _trim_redundant_heading(heading_path: str, title: str, path: str) -> str:
+    """Strip leading segments that just repeat the filename or H1 title.
+
+    Markdown notes commonly nest every section under a single H1 that
+    matches the file basename. The result tree's parent row already
+    shows the filename, so prefixing every section row with the same
+    word is just clutter. Drop matching leading segments and return
+    whatever's left (possibly empty).
+    """
+    if not heading_path:
+        return ""
+
+    def _norm(s: str) -> str:
+        return "".join(ch for ch in s.lower() if ch.isalnum())
+
+    parts = [p.strip() for p in heading_path.split(">") if p.strip()]
+    redundant = {_norm(Path(path).stem)}
+    if title:
+        redundant.add(_norm(title))
+    while parts and _norm(parts[0]) in redundant:
+        parts.pop(0)
+    return " > ".join(parts)
+
+
 def _format_hit_label(h: Hit, *, max_score: float = 0.0) -> Any:
     if h.page:
         loc = f"p.{h.page}"
     elif h.slide:
         loc = f"s.{h.slide}"
-    elif h.heading_path:
-        loc = f"§ {h.heading_path}"
     else:
-        # Markdown / TXT chunks with no headings still need a locator —
-        # fall back to the chunk sequence so every section row carries
-        # a position marker the user can act on.
-        loc = f"chunk {h.chunk_seq + 1}"
+        # No heading left after stripping the filename/title prefix
+        # (or no heading at all): fall back to the chunk locator so
+        # every section row carries a unique position marker.
+        trimmed = _trim_redundant_heading(h.heading_path, h.title, h.path)
+        loc = f"§ {trimmed}" if trimmed else f"chunk {h.chunk_seq + 1}"
     # A snippet from the chunk body adds context — much more useful
     # than repeating the heading (which often matches the file's
     # title for shallow-headed markdown notes).
@@ -236,8 +259,25 @@ class AcornApp(App[None]):
     #results_pane.collapsed,
     #collections_panel_tree.collapsed,
     #filters_panel_tree.collapsed { height: 3; }
-    #preview_pane { width: 3fr; height: 1fr; border: round $primary 50%; padding: 0 1; }
+    /* Preview area: bordered VerticalScroll on the left, a thin
+       1-column minimap on the right that paints accent markers at
+       chunk positions containing matches. The wrapper keeps the
+       minimap visually attached to the preview without intruding
+       on the scrollable area. */
+    #preview_wrap { width: 2fr; height: 1fr; layout: horizontal; }
+    #preview_pane {
+        width: 1fr; height: 1fr;
+        border: round $primary 50%;
+        padding: 0 0 0 1;
+    }
     #preview_pane:focus-within { border: round $accent; }
+    #match_minimap {
+        width: 2; height: 1fr;
+        padding: 0;
+        background: $surface;
+        color: $accent;
+        content-align: center top;
+    }
     .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
     .chunk-section { padding: 0 0 1 0; height: auto; }
     .chunk-header { padding: 1 0 0 0; }
@@ -363,9 +403,12 @@ class AcornApp(App[None]):
                 yield Tree("Filters", id="filters_panel_tree")
             # Preview pane: VerticalScroll containing one Static per chunk
             # so scroll_to_widget targets the exact chunk regardless of how
-            # text wraps visually.
-            with VerticalScroll(id="preview_pane"):
-                yield Static("Type a query and press Enter.", id="placeholder")
+            # text wraps visually. Sibling ``#match_minimap`` is the thin
+            # accent strip painted with chunk-match markers (Phase D).
+            with Horizontal(id="preview_wrap"):
+                with VerticalScroll(id="preview_pane"):
+                    yield Static("Type a query and press Enter.", id="placeholder")
+                yield Static("", id="match_minimap")
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
@@ -585,8 +628,10 @@ class AcornApp(App[None]):
             self._groups = []
             self._refresh_results_tree()
             return
-        # New query → invalidate the per-file chunk cache.
+        # New query → invalidate the per-file chunk cache and force a
+        # remount of the preview chunks against the new query.
         self._chunk_cache.clear()
+        self._preview_parent_id = None
         self._refresh_results_tree()
 
     def _refresh_results_tree(self) -> None:
@@ -653,6 +698,10 @@ class AcornApp(App[None]):
             self._mount_chunks_for_file(parent_id, chunks)
             self._preview_parent_id = parent_id
             self._refresh_status()
+            # Minimap reflects per-chunk match positions for the file
+            # currently in the preview pane; defer a tick so the pane
+            # has a known height to map proportional positions against.
+            self.call_after_refresh(self._refresh_minimap)
 
         self._scroll_preview_to_chunk(focus_chunk_seq)
 
@@ -709,36 +758,71 @@ class AcornApp(App[None]):
             header_w.add_class("chunk-has-match")
 
     def _mount_markdown_chunk(self, pane: VerticalScroll, c: FileChunk) -> None:
-        """Markdown chunks render through ``rich.markdown.Markdown`` —
-        formatted headings, code blocks (pygments syntax highlighting),
-        tables, lists, blockquotes, bold/italic. The chunk header Static
-        is kept so ``scroll_to_widget`` still targets the chunk."""
+        """Markdown chunks: pretty rendering for context, per-line layout
+        for matches.
+
+        Matched chunks switch to per-line widgets (same path PDFs use)
+        so query terms get the yellow-on-bold highlight — consistent
+        word-level highlighting across every file kind. Non-matched
+        chunks render through ``rich.markdown.Markdown`` so headings,
+        code blocks, tables, lists, bold/italic still look right while
+        the user scrolls for context.
+
+        No chunk-header Static for markdown either way: the file's own
+        ``# H1`` is already in the rendered body, and the chunk header
+        was just repeating the filename for notes whose only heading
+        equalled their basename.
+        """
         from rich.markdown import Markdown
 
-        from acorn.render import _terms_from_query, render
+        from acorn.render import _term_stems, _terms_from_query, render, text_has_match
 
-        header_text, _pieces = render_chunk_pieces(c, query=self._current_query)
-        header_w = Static(header_text, classes="chunk-section chunk-header")
-        header_w.acorn_text = header_text  # type: ignore[attr-defined]
-        pane.mount(header_w)
-        self._chunk_widgets[c.chunk_seq] = header_w
-        # ``render()`` returns a Markdown source string with query terms
-        # already wrapped in ``**…**``, so matches show up as bold runs
-        # inside the rendered output without a custom highlighter.
-        md_source = render(c.blocks, query=self._current_query)
+        terms = _terms_from_query(self._current_query)
+        term_stems = _term_stems(terms)
+        has_match = bool(term_stems and any(text_has_match(b.text, term_stems) for b in c.blocks))
+
+        if has_match:
+            self._mount_md_per_line(pane, c)
+            return
+
+        # No matches in this chunk: render the formatted markdown for context.
+        md_source = render(c.blocks, query="")
         body_w = Static(
             Markdown(md_source, code_theme="monokai"),
             classes="chunk-section chunk-md-body",
         )
         pane.mount(body_w)
-        self._match_targets[c.chunk_seq] = header_w
-        # Mark chunks that contain query terms so the user can see at a
-        # glance which chunks are worth reading.
-        terms = [t.lower() for t in _terms_from_query(self._current_query)]
-        if terms:
-            haystack = " ".join(b.text for b in c.blocks).lower()
-            if any(t in haystack for t in terms):
-                header_w.add_class("chunk-has-match")
+        self._chunk_widgets[c.chunk_seq] = body_w
+        self._match_targets[c.chunk_seq] = body_w
+
+    def _mount_md_per_line(self, pane: VerticalScroll, c: FileChunk) -> None:
+        """Per-line markdown layout used when a chunk contains matches.
+
+        Mirrors ``_mount_plain_chunk`` minus the chunk-header Static —
+        the file already has its own H1 inline so an extra repeated
+        header crowds the preview. The first matched line carries the
+        accent left-bar so the user can spot match-bearing chunks while
+        scrolling.
+        """
+        _, pieces = render_chunk_pieces(c, query=self._current_query)
+        first_line: Static | None = None
+        first_match: Static | None = None
+        for line_text, has_match in pieces:
+            line_w = Static(line_text, classes="chunk-line")
+            line_w.acorn_text = line_text  # type: ignore[attr-defined]
+            if has_match:
+                line_w.add_class("chunk-line-match")
+            pane.mount(line_w)
+            if first_line is None:
+                first_line = line_w
+            if has_match and first_match is None:
+                first_match = line_w
+        target = first_match or first_line
+        if target is None:
+            return
+        target.add_class("chunk-has-match")
+        self._chunk_widgets[c.chunk_seq] = target
+        self._match_targets[c.chunk_seq] = target
 
     def _scroll_preview_to_chunk(self, focus_chunk_seq: int) -> None:
         header = self._chunk_widgets.get(focus_chunk_seq)
@@ -757,6 +841,48 @@ class AcornApp(App[None]):
     def _do_scroll_to_widget(self, widget: Static) -> None:
         pane = self.query_one("#preview_pane", VerticalScroll)
         pane.scroll_to_widget(widget, top=True, animate=False)
+
+    def _refresh_minimap(self) -> None:
+        """Paint the chunk-match minimap strip alongside the preview.
+
+        One row per visible cell, mapped proportionally to the file's
+        chunks: rows whose chunk contains a query-term match get an
+        accent ``▎`` glyph, the rest stay blank. Gives the user a
+        document-wide view of where the matches live, even when most
+        of them are outside the current scroll viewport — answers the
+        "scroll bar should mark match positions" feedback.
+        """
+        from rich.text import Text
+
+        from acorn.render import _term_stems, _terms_from_query, text_has_match
+
+        try:
+            minimap = self.query_one("#match_minimap", Static)
+            pane = self.query_one("#preview_pane", VerticalScroll)
+        except Exception:
+            return
+        chunks = self._chunk_cache.get(self._preview_parent_id) if self._preview_parent_id else None
+        if not chunks:
+            minimap.update(Text(""))
+            return
+        term_stems = _term_stems(_terms_from_query(self._current_query))
+        chunk_match = [
+            bool(term_stems and any(text_has_match(b.text, term_stems) for b in c.blocks))
+            for c in chunks
+        ]
+        if not any(chunk_match):
+            minimap.update(Text(""))
+            return
+        # Use the laid-out height so the strip aligns 1:1 with the
+        # scrollable area; fall back to a sensible default before
+        # first layout has settled.
+        height = pane.size.height or 30
+        n = len(chunks)
+        rows: list[str] = []
+        for i in range(height):
+            chunk_idx = min(int(i * n / height), n - 1)
+            rows.append("██" if chunk_match[chunk_idx] else "  ")
+        minimap.update(Text("\n".join(rows), style="bold #7aa2f7"))
 
     # ── Open / peek dispatch ──────────────────────────────────────
 
@@ -1067,7 +1193,7 @@ class AcornApp(App[None]):
 
         date_summary = self._filter_date or "any"
         date_node = tree.root.add(
-            f"Date             ({date_summary})",
+            f"Modified         ({date_summary})",
             data={"kind": "filter_category", "category": "date"},
             expand="date" in was_expanded,
         )
