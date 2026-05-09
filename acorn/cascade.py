@@ -125,6 +125,12 @@ def cascade_search(
     surfaced each one (0=literal, 1=fuzzy, 2=synonym). Order: pass-0 hits
     in original score order, then pass-1, then pass-2 — so the TUI shows
     exact matches above looser matches.
+
+    .. todo:: Cascade does not yet honour ``metadata_filter`` (§5.5e-2):
+       its passes go through ``searcher._raw_hits`` directly, bypassing
+       ``Searcher._filtered_raw_hits``. Wire this up if/when cascade
+       becomes a default search path or gets a ``metadata_filter`` kwarg
+       at the TUI level. Tracked alongside the §9d fusion path.
     """
     seen: set[tuple[str, int]] = set()
     out: list[Hit] = []
