@@ -136,37 +136,29 @@ def build_index_from_config(
 ) -> int:
     """Build a collection from its :class:`CollectionConfig`.
 
-    Uses ``config.sources`` (the canonical form) when available; falls back
-    to the legacy ``config.roots`` for callers that construct the model
-    before the schema migration is complete (phase 5.5e-1 T10 will remove
-    the legacy path entirely).
+    Walks each source's filter chain via :func:`acorn.walk.walk_sources`
+    and indexes the surviving paths. The legacy flat-shape config is
+    auto-promoted to a single implicit source by the loader, so this
+    function only sees the new shape.
     """
-    if config.sources:
-        # New (canonical) shape: iterate sources individually so each can
-        # carry its own includes/excludes.  For now we merge all roots into
-        # a single build_index call with the first source's filter settings
-        # as a best-effort compatibility shim; T10 will replace this with a
-        # proper per-source walk.
-        all_roots = [s.path for s in config.sources]
-        first = config.sources[0]
-        return build_index(
-            roots=all_roots,
-            includes=first.includes or None,
-            excludes=first.excludes or None,
-            follow_symlinks=first.follow_symlinks,
-            index_dir=index_dir,
-            collection=collection,
-            rebuild=rebuild,
-        )
-    return build_index(
-        roots=list(config.roots),
-        includes=config.includes or None,
-        excludes=config.excludes or None,
-        follow_symlinks=config.follow_symlinks,
-        index_dir=index_dir,
-        collection=collection,
-        rebuild=rebuild,
-    )
+    from acorn.walk import walk_sources
+
+    index = _ensure_index(index_dir)
+    writer = index.writer(heap_size=_WRITER_HEAP)
+    if rebuild:
+        writer.delete_documents(F_COLLECTION, collection)
+        writer.commit()
+    written = 0
+    for path in walk_sources(sources=config.sources):
+        writer.delete_documents(F_PARENT_ID, _path_parent_id(path))
+        for chunk in extract(path):
+            writer.add_document(_doc_for_chunk(chunk, collection=collection))
+            written += 1
+            if written % _COMMIT_BATCH == 0:
+                writer.commit()
+    writer.commit()
+    writer.wait_merging_threads()
+    return written
 
 
 def _path_parent_id(path: Path) -> str:
