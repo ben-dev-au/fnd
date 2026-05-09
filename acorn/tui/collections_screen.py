@@ -20,6 +20,20 @@ from textual.widgets import Footer, Input, Static, TextArea
 from acorn.config import Config, SourceConfig
 
 
+def _strip_wrapping_quotes(text: str) -> str:
+    """Drop matched surrounding ``'`` or ``"`` from a path-like string.
+
+    Paste-with-quotes is the dominant habit for paths with spaces. The
+    path field is always a literal filesystem path; the quote characters
+    are never part of a real path. Mismatched / one-sided quotes are
+    left intact (probably a bug in the user's input).
+    """
+    text = text.strip()
+    if len(text) >= 2 and text[0] in ('"', "'") and text[-1] == text[0]:
+        return text[1:-1].strip()
+    return text
+
+
 class CollectionsScreen(Screen[None]):
     """Top-level Collections form. Pushed from the main app via F3."""
 
@@ -528,8 +542,20 @@ class SourceEditScreen(Screen[dict[str, object] | None]):
                     title="Filter syntax",
                 )
                 return
+        path = _strip_wrapping_quotes(self.query_one("#source_path_input", Input).value.strip())
+        if not path:
+            self.app.notify("path is required", severity="error", title="Invalid path")
+            return
+        expanded = Path(path).expanduser()
+        if not expanded.exists():
+            self.app.notify(
+                f"path does not exist: {expanded}",
+                severity="error",
+                title="Invalid path",
+            )
+            return
         result: dict[str, object] = {
-            "path": self.query_one("#source_path_input", Input).value.strip(),
+            "path": path,
             "includes": [
                 s.strip()
                 for s in self.query_one("#source_includes_input", Input).value.split(",")
