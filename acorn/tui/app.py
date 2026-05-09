@@ -111,13 +111,18 @@ def _format_hit_label(h: Hit, *, max_score: float = 0.0) -> Any:
         # fall back to the chunk sequence so every section row carries
         # a position marker the user can act on.
         loc = f"chunk {h.chunk_seq + 1}"
-    section = h.heading_path.split(" > ")[-1] if h.heading_path else ""
-    suffix = f"  {section}" if section and " > " in h.heading_path else ""
+    # A snippet from the chunk body adds context — much more useful
+    # than repeating the heading (which often matches the file's
+    # title for shallow-headed markdown notes).
+    snippet = h.snippet.strip().replace("\n", " ") if h.snippet else ""
+    if len(snippet) > 60:
+        snippet = snippet[:60].rstrip() + "…"
+    body = f"{loc}  {snippet}" if snippet else loc
     # Per-pass glyph (§9c): exact / fuzzy / synonym. Suppressed for the
     # exact pass to keep the common case visually quiet.
     glyph = _PASS_GLYPHS.get(h.pass_index, "")
     pass_marker = f" {glyph}" if h.pass_index > 0 else ""
-    return _build_label(f"{loc}{suffix}{pass_marker}", h.score, max_score)
+    return _build_label(f"{body}{pass_marker}", h.score, max_score)
 
 
 def _format_file_label(g: FileGroup, *, max_score: float = 0.0) -> Any:
@@ -607,34 +612,77 @@ class AcornApp(App[None]):
     def _mount_chunks_for_file(self, parent_id: str, chunks: list[FileChunk]) -> None:
         """Tear down the existing preview content and mount per-chunk widgets.
 
-        Each chunk becomes a header Static plus one Static per non-empty body
-        line. Per-line widgets give us a precise ``scroll_to_widget`` target
-        for the FIRST matched line in a chunk, so the user lands on the
-        highlighted match — not at the top of a 30-line page.
+        For markdown files we hand the chunk body to ``rich.markdown.Markdown``
+        so headings, code blocks, tables, lists, bold/italic all render
+        properly — same `glow`-style formatting the user asked for.
+        Per-line match overlays are dropped on markdown chunks because the
+        renderer doesn't expose per-line spans; matches still appear bolded
+        inline (the underlying ``render(blocks, query=…)`` wraps terms in
+        ``**…**`` before the markdown source goes to Rich).
+
+        Other formats (PDF / DOCX / PPTX / TXT) keep the per-line Static
+        layout — those bodies aren't markdown, so the line overlay is the
+        natural way to flag matches.
         """
         pane = self.query_one("#preview_pane", VerticalScroll)
         for w in list(pane.children):
             w.remove()
         self._chunk_widgets = {}
         self._match_targets = {}
-        title = Static(Path(chunks[0].path).name, classes="preview-title")
+        first_chunk = chunks[0]
+        title = Static(Path(first_chunk.path).name, classes="preview-title")
         pane.mount(title)
+        is_markdown = first_chunk.kind == "md"
         for c in chunks:
-            header_text, pieces = render_chunk_pieces(c, query=self._current_query)
-            header_w = Static(header_text, classes="chunk-section chunk-header")
-            header_w.acorn_text = header_text  # type: ignore[attr-defined]
-            pane.mount(header_w)
-            self._chunk_widgets[c.chunk_seq] = header_w
-            first_match: Static | None = None
-            for line_text, has_match in pieces:
-                line_w = Static(line_text, classes="chunk-line")
-                line_w.acorn_text = line_text  # type: ignore[attr-defined]
-                if has_match:
-                    line_w.add_class("chunk-line-match")
-                pane.mount(line_w)
-                if has_match and first_match is None:
-                    first_match = line_w
-            self._match_targets[c.chunk_seq] = first_match or header_w
+            if is_markdown:
+                self._mount_markdown_chunk(pane, c)
+            else:
+                self._mount_plain_chunk(pane, c)
+
+    def _mount_plain_chunk(self, pane: VerticalScroll, c: FileChunk) -> None:
+        """Per-line layout for non-markdown chunks. Each body line becomes
+        its own Static so ``scroll_to_widget`` can target the first matched
+        line, and the match-row gets a subtle accent overlay."""
+        header_text, pieces = render_chunk_pieces(c, query=self._current_query)
+        header_w = Static(header_text, classes="chunk-section chunk-header")
+        header_w.acorn_text = header_text  # type: ignore[attr-defined]
+        pane.mount(header_w)
+        self._chunk_widgets[c.chunk_seq] = header_w
+        first_match: Static | None = None
+        for line_text, has_match in pieces:
+            line_w = Static(line_text, classes="chunk-line")
+            line_w.acorn_text = line_text  # type: ignore[attr-defined]
+            if has_match:
+                line_w.add_class("chunk-line-match")
+            pane.mount(line_w)
+            if has_match and first_match is None:
+                first_match = line_w
+        self._match_targets[c.chunk_seq] = first_match or header_w
+
+    def _mount_markdown_chunk(self, pane: VerticalScroll, c: FileChunk) -> None:
+        """Markdown chunks render through ``rich.markdown.Markdown`` —
+        formatted headings, code blocks (pygments syntax highlighting),
+        tables, lists, blockquotes, bold/italic. The chunk header Static
+        is kept so ``scroll_to_widget`` still targets the chunk."""
+        from rich.markdown import Markdown
+
+        from acorn.render import render
+
+        header_text, _pieces = render_chunk_pieces(c, query=self._current_query)
+        header_w = Static(header_text, classes="chunk-section chunk-header")
+        header_w.acorn_text = header_text  # type: ignore[attr-defined]
+        pane.mount(header_w)
+        self._chunk_widgets[c.chunk_seq] = header_w
+        # ``render()`` returns a Markdown source string with query terms
+        # already wrapped in ``**…**``, so matches show up as bold runs
+        # inside the rendered output without a custom highlighter.
+        md_source = render(c.blocks, query=self._current_query)
+        body_w = Static(
+            Markdown(md_source, code_theme="monokai"),
+            classes="chunk-section chunk-md-body",
+        )
+        pane.mount(body_w)
+        self._match_targets[c.chunk_seq] = header_w
 
     def _scroll_preview_to_chunk(self, focus_chunk_seq: int) -> None:
         header = self._chunk_widgets.get(focus_chunk_seq)
