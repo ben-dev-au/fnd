@@ -128,6 +128,8 @@ def config_edit() -> None:
 @config_app.command("validate")
 def config_validate() -> None:
     """Validate the config TOML; exit 1 with a helpful message on failure."""
+    from pydantic import ValidationError
+
     from acorn.config import default_config_path, load
 
     path = default_config_path()
@@ -136,6 +138,14 @@ def config_validate() -> None:
         raise typer.Exit(code=1)
     try:
         cfg = load(path)
+    except ValidationError as e:
+        # Pydantic packs the column-aware FilterError message into the
+        # individual error's ``msg`` field. Surface it line-by-line so the
+        # user sees both the location (frontmatter_filter) and column.
+        for err in e.errors():
+            loc = ".".join(str(x) for x in err["loc"])
+            typer.echo(f"{loc}: {err['msg']}", err=True)
+        raise typer.Exit(code=1) from e
     except Exception as e:
         typer.echo(f"invalid config: {e}", err=True)
         raise typer.Exit(code=1) from e
