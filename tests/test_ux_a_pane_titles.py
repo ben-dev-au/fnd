@@ -67,19 +67,10 @@ async def test_preview_pane_title_shows_file_name_when_focused(built_index: Path
 
 
 @pytest.mark.asyncio
-async def test_status_bar_no_longer_duplicates_counts(built_index: Path) -> None:
-    """Counts moved to the results pane title — the status bar should now
-    just hold the active collection scope, leaving the counts to the pane
-    that owns them. Prevents the user reading the same numbers twice."""
-    from textual.widgets import Static
-
+async def test_status_bar_widget_is_removed(built_index: Path) -> None:
+    """The top status bar is gone — its only content (active scope) is
+    shown in the Collections panel border title instead."""
     app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
-        status = str(app.query_one("#status_bar", Static).content)
-        assert (
-            "file" not in status.lower()
-        ), f"status bar should not duplicate file count; got {status!r}"
-        assert (
-            "section" not in status.lower()
-        ), f"status bar should not duplicate section count; got {status!r}"
+        assert not app.query("#status_bar"), "status bar widget still mounted"

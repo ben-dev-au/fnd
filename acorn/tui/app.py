@@ -189,9 +189,8 @@ class AcornApp(App[None]):
 
     CSS = """
     Screen { background: $surface; }
-    #query_bar { height: 3; padding: 0 1; }
-    #status_bar { dock: top; height: 1; background: $panel; padding: 0 1; color: $text-muted; }
-    #footer_hints { dock: bottom; height: 1; background: $panel; padding: 0 1; color: $text-muted; }
+    #query_bar { height: 1; padding: 0 1; border: none; }
+    #footer_hints { dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted; }
     /* Slim, lazygit-style scrollbars; horizontal scrolling disabled
        because long file names truncate cleanly and a 1-cell horizontal
        bar at the foot of every pane is just visual noise. */
@@ -211,7 +210,7 @@ class AcornApp(App[None]):
         overflow-x: hidden;
     }
     #collections_panel_tree:focus-within { border: round $accent; }
-    #preview_pane { width: 2fr; height: 1fr; border: round $primary 50%; padding: 1 2; }
+    #preview_pane { width: 3fr; height: 1fr; border: round $primary 50%; padding: 0 1; }
     #preview_pane:focus-within { border: round $accent; }
     .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
     .chunk-section { padding: 0 0 1 0; height: auto; }
@@ -307,7 +306,6 @@ class AcornApp(App[None]):
     # ── Layout ────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
-        yield Static(self._status_text(), id="status_bar")
         yield Input(placeholder="Search…", id="query_bar", value=self._initial_query)
         with Horizontal():
             # Left column: results on top, collections panel below.
@@ -369,15 +367,7 @@ class AcornApp(App[None]):
                 name = "default"
         return profile_from_config(self._config.ranking_profile(name))
 
-    # ── Status ────────────────────────────────────────────────────
-
-    def _status_text(self) -> str:
-        col = ", ".join(self._collections) if self._collections else "all"
-        # Square brackets are Rich-markup syntax — using them in a
-        # markup-enabled Static would silently swallow the contents.
-        # Switching to a parenthesis avoids the gotcha and keeps the
-        # bar readable.
-        return f" acorn   scope: {col}"
+    # ── Pane border titles ────────────────────────────────────────
 
     def _results_title(self) -> str:
         """Border title for the results pane — counts live next to the data
@@ -399,7 +389,6 @@ class AcornApp(App[None]):
         return "Preview"
 
     def _refresh_status(self) -> None:
-        self.query_one("#status_bar", Static).update(self._status_text())
         try:
             self.query_one("#results_pane", Tree).border_title = self._results_title()
             self.query_one("#preview_pane").border_title = self._preview_title()
