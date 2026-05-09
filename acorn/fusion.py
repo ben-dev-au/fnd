@@ -264,6 +264,7 @@ def _with_score(h: Hit, score: float) -> Hit:
         chunk_seq=h.chunk_seq,
         mtime=h.mtime,
         pass_index=h.pass_index,
+        meta_blob=h.meta_blob,
     )
 
 
@@ -281,4 +282,5 @@ def _with_pass_index(h: Hit, pass_index: int) -> Hit:
         chunk_seq=h.chunk_seq,
         mtime=h.mtime,
         pass_index=pass_index,
+        meta_blob=h.meta_blob,
     )

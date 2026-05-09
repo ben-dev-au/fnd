@@ -21,6 +21,7 @@ from acorn.schema import (
     F_CHUNK_SEQ,
     F_HEADING_PATH,
     F_KIND,
+    F_META_BLOB,
     F_MTIME,
     F_PAGE,
     F_PARENT_ID,
@@ -54,6 +55,10 @@ class Hit:
     # Cascade pass that produced this hit (§9c): 0 = exact, 1 = fuzzy,
     # 2 = synonym. Used by the TUI to render a per-pass glyph (●/~/⊕).
     pass_index: int = 0
+    # JSON-encoded frontmatter for the file (md only); empty bytes for
+    # non-md or md without frontmatter. Read at search time from F_META_BLOB
+    # so query-time post-filters (§5.5e-2) can decode and evaluate.
+    meta_blob: bytes = b""
 
 
 @dataclass(slots=True, frozen=True)
@@ -133,6 +138,18 @@ def _make_snippet(body_text: str, query: str, *, ctx: int = _SNIPPET_CTX) -> str
     return snippet
 
 
+def _passes_meta_filter(hit: Hit, predicate: object) -> bool:
+    """Apply ``predicate`` to a hit's frontmatter. Non-md hits bypass the
+    filter entirely (md-only semantics matching :func:`acorn.walk.walk_sources`).
+    """
+    if hit.kind != "md":
+        return True
+    from acorn.meta_blob import decode
+
+    fm = decode(hit.meta_blob)
+    return bool(predicate(fm))  # type: ignore[operator]
+
+
 class Searcher:
     """Single-pass searcher against an existing acorn index."""
 
@@ -170,6 +187,9 @@ class Searcher:
             if body_struct_bytes is not None:
                 blocks = decode_body_struct(body_struct_bytes)
                 body_text = "\n".join(b.text for b in blocks)
+            meta_blob_bytes = doc.get_first(F_META_BLOB)  # type: ignore[attr-defined]
+            if meta_blob_bytes is None:
+                meta_blob_bytes = b""
             out.append(
                 Hit(
                     score=float(score),
@@ -183,9 +203,43 @@ class Searcher:
                     snippet=_make_snippet(body_text, query),
                     chunk_seq=_first_int(doc, F_CHUNK_SEQ),
                     mtime=_first_int(doc, F_MTIME),
+                    meta_blob=meta_blob_bytes,
                 )
             )
         return out
+
+    def _filtered_raw_hits(
+        self,
+        query: str,
+        *,
+        target: int,
+        collection: str | None,
+        metadata_filter: str | None,
+    ) -> list[Hit]:
+        """Return at least ``target`` hits, applying the optional metadata
+        filter post-Tantivy with oversample-and-retry. Stops when survivors
+        meet ``target``, the oversample cap is hit, or Tantivy returns
+        fewer raw hits than requested (no more available).
+        """
+        if metadata_filter is None:
+            return self._raw_hits(query, limit=target, collection=collection)
+        from acorn.filter_dsl import compile_filter
+
+        predicate = compile_filter(metadata_filter)
+        oversample = 1
+        max_oversample = 50
+        while True:
+            raw = self._raw_hits(query, limit=target * oversample, collection=collection)
+            survivors = [h for h in raw if _passes_meta_filter(h, predicate)]
+            if len(survivors) >= target:
+                return survivors
+            if oversample >= max_oversample:
+                return survivors
+            if len(raw) < target * oversample:
+                # Tantivy returned fewer than asked — there are no more
+                # hits to oversample into.
+                return survivors
+            oversample *= 2
 
     def search(
         self,
@@ -195,6 +249,7 @@ class Searcher:
         collection: str | None = None,
         profile: object | None = None,
         now: int | None = None,
+        metadata_filter: str | None = None,
     ) -> list[Hit]:
         """Return one Hit per file (the file's best-scored chunk).
 
@@ -207,7 +262,12 @@ class Searcher:
         # Pull deeper than ``limit`` so per-file dedup still leaves us with
         # ``limit`` distinct files when several chunks of the same file rank
         # high.
-        raw = self._raw_hits(query, limit=limit * 5, collection=collection)
+        raw = self._filtered_raw_hits(
+            query,
+            target=limit * 5,
+            collection=collection,
+            metadata_filter=metadata_filter,
+        )
         if profile is not None:
             from acorn.rerank import RankingProfile, rerank_hits
 
@@ -269,6 +329,7 @@ class Searcher:
         collection: str | None = None,
         profile: object | None = None,
         now: int | None = None,
+        metadata_filter: str | None = None,
     ) -> list[FileGroup]:
         """Return ranked FileGroups, each with up to ``sections_per_file`` ranked
         section hits. Files are sorted by their top-scoring chunk; sections
@@ -282,7 +343,9 @@ class Searcher:
         """
         if not query.strip():
             return []
-        raw = self._raw_hits(query, limit=limit * 10, collection=collection)
+        raw = self._filtered_raw_hits(
+            query, target=limit * 10, collection=collection, metadata_filter=metadata_filter
+        )
         if profile is not None:
             from acorn.rerank import RankingProfile, rerank_hits
 

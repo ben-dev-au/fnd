@@ -21,7 +21,7 @@ import tantivy
 
 from acorn.query import Hit, Searcher
 from acorn.render import _terms_from_query
-from acorn.schema import F_BODY, F_PARENT_ID, build_schema
+from acorn.schema import F_BODY, F_META_BLOB, F_PARENT_ID, build_schema
 from acorn.struct import decode as decode_body_struct
 from acorn.synonyms import SynonymTable, expand
 
@@ -88,6 +88,9 @@ def _materialize_hits(
         if body_struct_bytes is not None:
             blocks = decode_body_struct(body_struct_bytes)
             body_text = "\n".join(b.text for b in blocks)
+        meta_blob_bytes = doc.get_first(F_META_BLOB)  # type: ignore[attr-defined]
+        if meta_blob_bytes is None:
+            meta_blob_bytes = b""
         out.append(
             Hit(
                 score=float(score),
@@ -101,6 +104,7 @@ def _materialize_hits(
                 snippet=_make_snippet(body_text, query),
                 chunk_seq=_first_int(doc, "chunk_seq"),
                 mtime=_first_int(doc, "mtime"),
+                meta_blob=meta_blob_bytes,
             )
         )
     return out
@@ -172,4 +176,5 @@ def _with_pass(h: Hit, pass_index: int) -> Hit:
         chunk_seq=h.chunk_seq,
         mtime=h.mtime,
         pass_index=pass_index,
+        meta_blob=h.meta_blob,
     )
