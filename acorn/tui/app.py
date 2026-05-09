@@ -295,12 +295,14 @@ class AcornApp(App[None]):
         if collection:
             self._collections: list[str] = [collection]
             self._collapsed_panels: set[str] = set()
+            self._active_sources: list[str] = []
         else:
             from acorn.state import load as _load_state
 
             saved = _load_state()
             self._collections = list(saved.collections)
             self._collapsed_panels = set(saved.collapsed_panels)
+            self._active_sources = list(saved.sources)
         self._initial_query = initial_query
         self._searcher: Searcher | None = None
         self._current_query: str = ""
@@ -532,6 +534,7 @@ class AcornApp(App[None]):
                 collection=single_col,
                 profile=self._ranking_profile,
                 metadata_filter=metadata_filter,
+                active_sources=list(self._active_sources) or None,
             )
         except FilterError as e:
             self.notify(
@@ -920,7 +923,7 @@ class AcornApp(App[None]):
         save(
             UiState(
                 collections=list(self._collections),
-                sources=[],
+                sources=list(self._active_sources),
                 collapsed_panels=sorted(self._collapsed_panels),
             )
         )
@@ -929,7 +932,8 @@ class AcornApp(App[None]):
 
     def _refresh_collections_panel(self) -> None:
         """Repopulate the lazygit-style collections panel from the loaded
-        Config, marking the currently-active collections."""
+        Config, marking active collections AND active sources within
+        them."""
         try:
             tree = self.query_one("#collections_panel_tree", Tree)
         except Exception:
@@ -943,47 +947,70 @@ class AcornApp(App[None]):
             except Exception:
                 cfg = None
         names = sorted(cfg.collections.keys()) if cfg else []
-        active = set(self._collections)
+        active_collections = set(self._collections)
+        active_sources = set(self._active_sources)
         tree.show_root = False
         tree.clear()
+        active_source_count = 0
+        total_source_count = 0
         for name in names:
             col = cfg.collections[name] if cfg else None
-            marker = "●" if name in active else "○"
+            marker = "●" if name in active_collections else "○"
             n_sources = len(col.sources) if col else 0
+            total_source_count += n_sources
             label = f"{marker}  {name}  ({n_sources} source{'s' if n_sources != 1 else ''})"
             node = tree.root.add(label, data={"kind": "collection", "name": name}, expand=False)
             if col:
                 for i, s in enumerate(col.sources):
-                    # Show only the path's basename — full paths blow out
-                    # the panel width and trigger horizontal overflow.
+                    source_id = str(Path(str(s.path)).expanduser().resolve())
+                    src_active = source_id in active_sources
+                    if src_active:
+                        active_source_count += 1
+                    src_marker = "●" if src_active else "○"
                     short = Path(str(s.path)).name or str(s.path)
-                    src_label = f"{i + 1}. {short}"
-                    node.add_leaf(src_label, data={"kind": "source", "collection": name})
-        tree.border_title = f"Collections — {len(active)}/{len(names)} active"
+                    src_label = f"{src_marker}  {i + 1}. {short}"
+                    node.add_leaf(
+                        src_label,
+                        data={
+                            "kind": "source",
+                            "collection": name,
+                            "source_id": source_id,
+                        },
+                    )
+        title = f"Collections — {len(active_collections)}/{len(names)} active"
+        if total_source_count and active_source_count:
+            title += f", {active_source_count}/{total_source_count} sources"
+        tree.border_title = title
 
     @on(Tree.NodeSelected, "#collections_panel_tree")
     def _on_collections_panel_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
-        """Enter on a tree node toggles the parent collection's
-        membership in the active scope (per the user's explicit
-        request: Enter, not Space). Source nodes route to their parent
-        collection — no per-source scoping yet."""
+        """Enter on a collection node toggles the collection's scope.
+        Enter on a source node toggles that single source's scope.
+        Per the user's explicit request: Enter, not Space."""
         data = ev.node.data or {}
         kind = data.get("kind")
-        if kind not in {"collection", "source"}:
-            return
-        name = str(data.get("name") if kind == "collection" else data.get("collection") or "")
-        if not name:
-            return
-        if name in self._collections:
-            self._collections.remove(name)
+        if kind == "collection":
+            name = str(data.get("name") or "")
+            if not name:
+                return
+            if name in self._collections:
+                self._collections.remove(name)
+            else:
+                self._collections.append(name)
+        elif kind == "source":
+            source_id = str(data.get("source_id") or "")
+            if not source_id:
+                return
+            if source_id in self._active_sources:
+                self._active_sources.remove(source_id)
+            else:
+                self._active_sources.append(source_id)
         else:
-            self._collections.append(name)
+            return
         self._ranking_profile = self._resolve_profile()
         self._refresh_collections_panel()
         self._refresh_status()
         self._persist_state()
-        # Re-run the current query against the new scope so the user sees
-        # the effect immediately.
         if self._current_query:
             self._run_query(self._current_query)
 

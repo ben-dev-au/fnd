@@ -29,6 +29,7 @@ from acorn.schema import (
     F_PATH,
     F_PATH_TOKENS,
     F_SLIDE,
+    F_SOURCE_PATH,
     F_TITLE,
     SCHEMA_VERSION,
     build_schema,
@@ -105,10 +106,17 @@ def _wipe_index_dir(index_dir: Path, sidecar: Path) -> None:
     sidecar.write_text(str(SCHEMA_VERSION))
 
 
-def _doc_for_chunk(chunk: Chunk, *, collection: str, meta_blob_bytes: bytes = b"") -> Document:
+def _doc_for_chunk(
+    chunk: Chunk,
+    *,
+    collection: str,
+    source_path: str = "",
+    meta_blob_bytes: bytes = b"",
+) -> Document:
     doc = Document()
     doc.add_text(F_PARENT_ID, chunk.parent_id)
     doc.add_text(F_COLLECTION, collection)
+    doc.add_text(F_SOURCE_PATH, source_path)
     doc.add_text(F_PATH, chunk.path)
     doc.add_text(F_PATH_TOKENS, chunk.path)
     doc.add_text(F_KIND, chunk.kind)
@@ -201,23 +209,33 @@ def build_index_from_config(
         writer.delete_documents(F_COLLECTION, collection)
         writer.commit()
     written = 0
-    for path in walk_sources(sources=config.sources):
-        meta_blob_bytes = b""
-        if path.suffix.lower() == ".md":
-            try:
-                fm = read_frontmatter_from_file(path)
-            except FrontmatterParseError:
-                fm = None
-            if fm:
-                meta_blob_bytes = encode_meta_blob(fm)
-        writer.delete_documents(F_PARENT_ID, _path_parent_id(path))
-        for chunk in extract(path):
-            writer.add_document(
-                _doc_for_chunk(chunk, collection=collection, meta_blob_bytes=meta_blob_bytes)
-            )
-            written += 1
-            if written % _COMMIT_BATCH == 0:
-                writer.commit()
+    # Walk per-source so each chunk carries an identifier of which
+    # source it came from — lets the search layer scope to a subset of
+    # a collection's sources without re-indexing.
+    for source in config.sources:
+        source_id = str(Path(source.path).expanduser().resolve())
+        for path in walk_sources(sources=[source]):
+            meta_blob_bytes = b""
+            if path.suffix.lower() == ".md":
+                try:
+                    fm = read_frontmatter_from_file(path)
+                except FrontmatterParseError:
+                    fm = None
+                if fm:
+                    meta_blob_bytes = encode_meta_blob(fm)
+            writer.delete_documents(F_PARENT_ID, _path_parent_id(path))
+            for chunk in extract(path):
+                writer.add_document(
+                    _doc_for_chunk(
+                        chunk,
+                        collection=collection,
+                        source_path=source_id,
+                        meta_blob_bytes=meta_blob_bytes,
+                    )
+                )
+                written += 1
+                if written % _COMMIT_BATCH == 0:
+                    writer.commit()
     writer.commit()
     writer.wait_merging_threads()
     return written

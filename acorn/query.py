@@ -170,12 +170,16 @@ class Searcher:
         *,
         limit: int,
         collection: str | None,
+        active_sources: list[str] | None = None,
     ) -> list[Hit]:
         from acorn.query_dsl import preprocess
 
         full_query = preprocess(query)
         if collection:
             full_query = f'collection:"{collection}" AND ({full_query})'
+        if active_sources:
+            src_clause = " OR ".join(f'source_path:"{s}"' for s in active_sources)
+            full_query = f"({src_clause}) AND ({full_query})"
         parsed = self._index.parse_query(
             full_query,
             default_field_names=DEFAULT_SEARCH_FIELDS,
@@ -221,29 +225,32 @@ class Searcher:
         target: int,
         collection: str | None,
         metadata_filter: str | None,
+        active_sources: list[str] | None = None,
     ) -> list[Hit]:
         """Return at least ``target`` hits, applying the optional metadata
-        filter post-Tantivy with oversample-and-retry. Stops when survivors
-        meet ``target``, the oversample cap is hit, or Tantivy returns
-        fewer raw hits than requested (no more available).
-        """
+        filter post-Tantivy with oversample-and-retry."""
         if metadata_filter is None:
-            return self._raw_hits(query, limit=target, collection=collection)
+            return self._raw_hits(
+                query, limit=target, collection=collection, active_sources=active_sources
+            )
         from acorn.filter_dsl import compile_filter
 
         predicate = compile_filter(metadata_filter)
         oversample = 1
         max_oversample = 50
         while True:
-            raw = self._raw_hits(query, limit=target * oversample, collection=collection)
+            raw = self._raw_hits(
+                query,
+                limit=target * oversample,
+                collection=collection,
+                active_sources=active_sources,
+            )
             survivors = [h for h in raw if _passes_meta_filter(h, predicate)]
             if len(survivors) >= target:
                 return survivors
             if oversample >= max_oversample:
                 return survivors
             if len(raw) < target * oversample:
-                # Tantivy returned fewer than asked — there are no more
-                # hits to oversample into.
                 return survivors
             oversample *= 2
 
@@ -256,23 +263,24 @@ class Searcher:
         profile: object | None = None,
         now: int | None = None,
         metadata_filter: str | None = None,
+        active_sources: list[str] | None = None,
     ) -> list[Hit]:
         """Return one Hit per file (the file's best-scored chunk).
 
         Use :meth:`search_grouped` to keep all matched sections of each file.
         When ``profile`` is set, applies the §4 Python post-rank adjustments
         (recency / filetype / phrase-proximity) before per-file dedup.
+        ``active_sources`` further narrows scope to chunks indexed from
+        the listed source paths.
         """
         if not query.strip():
             return []
-        # Pull deeper than ``limit`` so per-file dedup still leaves us with
-        # ``limit`` distinct files when several chunks of the same file rank
-        # high.
         raw = self._filtered_raw_hits(
             query,
             target=limit * 5,
             collection=collection,
             metadata_filter=metadata_filter,
+            active_sources=active_sources,
         )
         if profile is not None:
             from acorn.rerank import RankingProfile, rerank_hits
@@ -336,21 +344,20 @@ class Searcher:
         profile: object | None = None,
         now: int | None = None,
         metadata_filter: str | None = None,
+        active_sources: list[str] | None = None,
     ) -> list[FileGroup]:
         """Return ranked FileGroups, each with up to ``sections_per_file`` ranked
-        section hits. Files are sorted by their top-scoring chunk; sections
-        within a file are sorted by score (which generally matches document
-        order on a single keyword query, but doesn't have to).
-
-        When ``profile`` is set, the §4 Python post-rank adjustments run on
-        every raw hit before grouping; ``now`` (unix seconds) defaults to the
-        current wall clock and is exposed so tests get deterministic recency
-        math.
+        section hits. ``active_sources`` narrows scope to chunks indexed
+        from a subset of the active collection's sources.
         """
         if not query.strip():
             return []
         raw = self._filtered_raw_hits(
-            query, target=limit * 10, collection=collection, metadata_filter=metadata_filter
+            query,
+            target=limit * 10,
+            collection=collection,
+            metadata_filter=metadata_filter,
+            active_sources=active_sources,
         )
         if profile is not None:
             from acorn.rerank import RankingProfile, rerank_hits

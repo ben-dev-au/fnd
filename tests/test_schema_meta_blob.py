@@ -10,8 +10,9 @@ from tantivy import Document
 from acorn.schema import F_META_BLOB, SCHEMA_VERSION, build_schema
 
 
-def test_schema_version_bumped_to_two() -> None:
-    assert SCHEMA_VERSION == 2
+def test_schema_version_is_at_least_two() -> None:
+    """``meta_blob`` was introduced in v2; later bumps must keep it."""
+    assert SCHEMA_VERSION >= 2
 
 
 def test_meta_blob_field_constant_exists() -> None:
