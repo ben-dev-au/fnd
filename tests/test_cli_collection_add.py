@@ -130,3 +130,30 @@ def test_collection_add_preserves_user_comments(
     text = cfg_path.read_text(encoding="utf-8")
     assert "# I love this collection." in text
     assert "# global default" in text
+
+
+def test_collection_list_counts_sources_not_roots(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """After 5.5e-1, the canonical attribute is `sources` (legacy `roots` is
+    cleared by the normaliser). `collection list` must report source count
+    so users with the new schema see a meaningful number."""
+    runner, _cfg_path = _runner_with_config(
+        monkeypatch,
+        tmp_path,
+        """
+        [[collections.coursework.sources]]
+        path = "/tmp/notes"
+        includes = ["**/*.md"]
+
+        [[collections.coursework.sources]]
+        path = "/tmp/papers"
+        includes = ["**/*.pdf"]
+    """,
+    )
+    result = runner.invoke(app, ["collection", "list"])
+    assert result.exit_code == 0, result.output
+    assert "coursework" in result.output
+    # Two sources configured; output must show 2, not 0.
+    assert "2" in result.output
+    assert "source" in result.output.lower()

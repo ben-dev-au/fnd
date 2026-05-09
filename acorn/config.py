@@ -1,12 +1,15 @@
 """Config + filesystem locations.
 
 Per plan §6: a single TOML file owned by the user with collections, defaults,
-and ranking profiles. acorn never silently rewrites it; commands like
-``acorn collection add`` propose a diff and prompt before writing.
+and ranking profiles. ``acorn config edit`` is the read-modify-write entry
+point; ``acorn collection add`` appends a new ``[[sources]]`` table via
+``tomlkit``, preserving comments and unrelated tables.
 
 Phase 3 covers: defaults, collections (roots/includes/excludes/follow_symlinks).
 Phase 7 adds ranking profiles (recency boost / filetype boost / phrase
 proximity) — wired into :class:`acorn.rerank.RankingProfile` at search time.
+Phase 5.5e-1 adds :class:`SourceConfig` + multi-source collections + the
+``frontmatter_filter`` DSL (parsed eagerly via :mod:`acorn.filter_dsl`).
 """
 
 from __future__ import annotations
