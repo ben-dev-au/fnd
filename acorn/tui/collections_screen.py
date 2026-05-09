@@ -8,6 +8,7 @@ to ``config.toml`` via :func:`acorn.config.write_collection`, which uses
 
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 
 from textual.app import ComposeResult
@@ -16,7 +17,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Input, Static, TextArea
 
-from acorn.config import Config
+from acorn.config import Config, SourceConfig
 
 
 class CollectionsScreen(Screen[None]):
@@ -51,6 +52,12 @@ class CollectionsScreen(Screen[None]):
             sorted(config.collections.keys())[0] if config.collections else None
         )
         self._source_cursor: int = 0
+        # Deep-copy the source list per collection at form open. Compared
+        # against the live ``self._config`` on save to decide whether a
+        # reindex is needed.
+        self._initial: dict[str, list[SourceConfig]] = {
+            name: deepcopy(c.sources) for name, c in config.collections.items()
+        }
 
     def compose(self) -> ComposeResult:
         yield Static("Collections", id="collections_title")
@@ -166,8 +173,6 @@ class CollectionsScreen(Screen[None]):
     def _on_new_source_dismissed(self, result: dict[str, object] | None) -> None:
         if result is None or self._selected is None:
             return
-        from acorn.config import SourceConfig
-
         c = self._config.collections[self._selected]
         c.sources.append(
             SourceConfig(
@@ -197,6 +202,7 @@ class CollectionsScreen(Screen[None]):
         if self._selected is None:
             return
         from acorn.config import write_collection
+        from acorn.index import build_index_from_config
 
         c = self._config.collections[self._selected]
         write_collection(
@@ -204,13 +210,50 @@ class CollectionsScreen(Screen[None]):
             name=self._selected,
             collection=c,
         )
-        self.app.notify(f"Saved {self._selected}", severity="information")
+        # Did anything structural change? If so, reindex synchronously.
+        if self._needs_reindex(self._selected):
+            self.app.notify(
+                f"Reindexing {self._selected}…",
+                severity="information",
+                timeout=2,
+            )
+            try:
+                n = build_index_from_config(
+                    config=c,
+                    collection=self._selected,
+                    index_dir=self.app._index_dir,  # type: ignore[attr-defined]
+                    rebuild=True,
+                )
+                self.app.notify(
+                    f"Indexed {n} chunks for {self._selected}.",
+                    severity="information",
+                )
+            except Exception as e:
+                self.app.notify(f"Reindex failed: {e}", severity="error")
+        else:
+            self.app.notify(f"Saved {self._selected}", severity="information")
+        # Refresh snapshot so subsequent saves diff against the new state.
+        self._initial[self._selected] = deepcopy(c.sources)
+
+    def _needs_reindex(self, name: str) -> bool:
+        prev = self._initial.get(name, [])
+        curr = self._config.collections[name].sources
+        if len(prev) != len(curr):
+            return True
+        for a, b in zip(prev, curr, strict=True):
+            if (
+                a.path != b.path
+                or list(a.includes) != list(b.includes)
+                or list(a.excludes) != list(b.excludes)
+                or a.frontmatter_filter != b.frontmatter_filter
+                or a.follow_symlinks != b.follow_symlinks
+            ):
+                return True
+        return False
 
     def _apply_source_edit(self, index: int, result: dict[str, object] | None) -> None:
         if result is None or self._selected is None:
             return
-        from acorn.config import SourceConfig
-
         c = self._config.collections[self._selected]
         new_source = SourceConfig(
             path=Path(str(result["path"])),
