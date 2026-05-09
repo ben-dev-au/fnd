@@ -60,7 +60,7 @@ def test_unsupported_nested_mapping_raises() -> None:
 
 
 def test_unsupported_anchor_raises() -> None:
-    with pytest.raises(FrontmatterParseError, match="anchor|alias|unsupported"):
+    with pytest.raises(FrontmatterParseError, match=r"anchor|alias|unsupported"):
         read_frontmatter_from_text("---\nfoo: &x 1\nbar: *x\n---\n")
 
 
