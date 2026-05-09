@@ -161,3 +161,35 @@ async def test_invalid_filter_shows_parse_error(
         await pilot.pause()
         status = app.screen.query_one("#filter_parse_status", Static)
         assert "col" in str(status.content).lower() or "error" in str(status.content).lower()
+
+
+@pytest.mark.asyncio
+async def test_a_adds_blank_source_row(cfg_three_collections: Config, tmp_index_dir: Path) -> None:
+    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f3")
+        await pilot.pause()
+        # coursework starts with 2 sources.
+        await pilot.press("a")
+        await pilot.pause()
+        # The source-edit modal should be open with empty fields.
+        from textual.widgets import Input
+
+        path_input = app.screen.query_one("#source_path_input", Input)
+        assert path_input.value == ""
+
+
+@pytest.mark.asyncio
+async def test_x_removes_focused_source(cfg_three_collections: Config, tmp_index_dir: Path) -> None:
+    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f3")
+        await pilot.pause()
+        # coursework / first source is the focused one. Press 'x' to remove.
+        await pilot.press("x")
+        await pilot.pause()
+        screen = app.screen
+        c = screen._config.collections["coursework"]  # type: ignore[attr-defined]
+        assert len(c.sources) == 1  # was 2, now 1

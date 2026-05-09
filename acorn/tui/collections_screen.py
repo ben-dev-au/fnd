@@ -26,7 +26,11 @@ class CollectionsScreen(Screen[None]):
         Binding("escape", "close", "Close", show=True),
         Binding("j,down", "list_next", "Next", show=False),
         Binding("k,up", "list_prev", "Prev", show=False),
-        Binding("e", "edit_first_source", "Edit source 1", show=False),
+        Binding("e", "edit_source", "Edit source", show=True),
+        Binding("J", "source_next", "Source ↓", show=False),
+        Binding("K", "source_prev", "Source ↑", show=False),
+        Binding("a", "add_source", "Add source", show=True),
+        Binding("x", "remove_source", "Remove source", show=True),
     ]
 
     CSS = """
@@ -45,6 +49,7 @@ class CollectionsScreen(Screen[None]):
         self._selected: str | None = (
             sorted(config.collections.keys())[0] if config.collections else None
         )
+        self._source_cursor: int = 0
 
     def compose(self) -> ComposeResult:
         yield Static("Collections", id="collections_title")
@@ -68,7 +73,7 @@ class CollectionsScreen(Screen[None]):
                 f"{marker}{name}  ({count} source{'s' if count != 1 else ''})"
                 f"  [{collection.ranking_profile}]"
             )
-            yield Static(label, classes="collection_row", id=f"collection_row_{name}")
+            yield Static(label, classes="collection_row")
 
     def _editor_rows(self) -> ComposeResult:
         if self._selected is None:
@@ -81,8 +86,9 @@ class CollectionsScreen(Screen[None]):
         if not c.sources:
             yield Static("  (none — press a to add a source)")
             return
-        for i, s in enumerate(c.sources, start=1):
-            yield Static(f"  {i}. {s.path}", classes="source_row")
+        for i, s in enumerate(c.sources):
+            marker = "▸ " if i == self._source_cursor else "  "
+            yield Static(f"{marker}{i + 1}. {s.path}", classes="source_row")
             if s.includes:
                 yield Static(f"     includes: {', '.join(s.includes)}")
             if s.excludes:
@@ -99,6 +105,7 @@ class CollectionsScreen(Screen[None]):
             return
         i = names.index(self._selected)
         self._selected = names[(i + 1) % len(names)]
+        self._source_cursor = 0
         self._refresh()
 
     def action_list_prev(self) -> None:
@@ -107,23 +114,83 @@ class CollectionsScreen(Screen[None]):
             return
         i = names.index(self._selected)
         self._selected = names[(i - 1) % len(names)]
+        self._source_cursor = 0
         self._refresh()
 
-    def action_edit_first_source(self) -> None:
+    def action_edit_source(self) -> None:
         if self._selected is None:
             return
         c = self._config.collections[self._selected]
         if not c.sources:
             return
-        s = c.sources[0]
+        s = c.sources[self._source_cursor]
         screen = SourceEditScreen(
-            title=f"{self._selected} / 1",
+            title=f"{self._selected} / {self._source_cursor + 1}",
             path=str(s.path),
             includes=list(s.includes),
             excludes=list(s.excludes),
             frontmatter_filter=s.frontmatter_filter,
         )
-        self.app.push_screen(screen, callback=lambda r: self._apply_source_edit(0, r))
+        idx = self._source_cursor
+        self.app.push_screen(screen, callback=lambda r: self._apply_source_edit(idx, r))
+
+    def action_source_next(self) -> None:
+        if self._selected is None:
+            return
+        c = self._config.collections[self._selected]
+        if c.sources:
+            self._source_cursor = (self._source_cursor + 1) % len(c.sources)
+        self._refresh()
+
+    def action_source_prev(self) -> None:
+        if self._selected is None:
+            return
+        c = self._config.collections[self._selected]
+        if c.sources:
+            self._source_cursor = (self._source_cursor - 1) % len(c.sources)
+        self._refresh()
+
+    def action_add_source(self) -> None:
+        if self._selected is None:
+            return
+        screen = SourceEditScreen(
+            title=f"{self._selected} / new",
+            path="",
+            includes=[],
+            excludes=[],
+            frontmatter_filter=None,
+        )
+        self.app.push_screen(screen, callback=self._on_new_source_dismissed)
+
+    def _on_new_source_dismissed(self, result: dict[str, object] | None) -> None:
+        if result is None or self._selected is None:
+            return
+        from acorn.config import SourceConfig
+
+        c = self._config.collections[self._selected]
+        c.sources.append(
+            SourceConfig(
+                path=Path(str(result["path"])),
+                includes=list(result["includes"]),  # type: ignore[arg-type]
+                excludes=list(result["excludes"]),  # type: ignore[arg-type]
+                frontmatter_filter=result.get("frontmatter_filter"),  # type: ignore[arg-type]
+            )
+        )
+        self._source_cursor = len(c.sources) - 1
+        self._refresh()
+
+    def action_remove_source(self) -> None:
+        if self._selected is None:
+            return
+        c = self._config.collections[self._selected]
+        if not c.sources:
+            return
+        del c.sources[self._source_cursor]
+        if c.sources:
+            self._source_cursor = min(self._source_cursor, len(c.sources) - 1)
+        else:
+            self._source_cursor = 0
+        self._refresh()
 
     def _apply_source_edit(self, index: int, result: dict[str, object] | None) -> None:
         if result is None or self._selected is None:
