@@ -6,8 +6,7 @@ lazygit-style TUI.
 
 ## Status
 
-Early development. See `~/.claude/plans/i-can-t-find-a-precious-acorn.md` for the design spec
-and phase plan.
+Early development. See `docs/specs/` and `docs/plans/` for the design spec and phase plans.
 
 ## Quick start (dev)
 
