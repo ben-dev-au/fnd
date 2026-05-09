@@ -241,9 +241,21 @@ class CollectionsScreen(Screen[None]):
             node.expand()
 
     def action_tree_collapse(self) -> None:
+        """Lazygit-style smart collapse: a leaf or already-collapsed branch
+        backs out one level by collapsing its parent and moving the cursor
+        onto it. Expanded branches collapse in place."""
+        tree = self.query_one("#collections_tree", Tree)
         node = self._focused_node()
-        if node is not None and node.is_expanded:
-            node.collapse()
+        if node is None:
+            return
+        if not node.children or not node.is_expanded:
+            parent = node.parent
+            if parent is None or parent is tree.root:
+                return
+            parent.collapse()
+            tree.move_cursor(parent)
+            return
+        node.collapse()
 
     def action_edit_source(self) -> None:
         name = self._focused_collection_name()

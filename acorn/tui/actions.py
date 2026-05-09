@@ -63,6 +63,17 @@ REGISTRY: tuple[Action, ...] = (
         footer_label="Pane",
     ),
     Action(
+        id="tree_smart_collapse",
+        description="Collapse the focused node, or — when the cursor is on "
+        "a leaf or an already-collapsed branch — collapse the parent and "
+        "move up to it. Lazygit-style 'back out' gesture.",
+        default_key="left",
+        command="collapse",
+        footer_label="Collapse",
+        contexts=("results",),
+        show_in_footer=False,  # discoverable; left arrow is intuitive
+    ),
+    Action(
         id="open_at_locator",
         description="Open the focused result in Skim at its page (PDFs) "
         "or the default app for other formats.",
