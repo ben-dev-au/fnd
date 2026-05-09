@@ -2,7 +2,13 @@
 
 Phase 1: single-pass query, no rerank. Phase 7 adds the reranker (recency,
 filetype, phrase-proximity); phase 8 adds cascading multi-pass; phase 9 adds
-RRF fusion of parallel sub-queries.
+RRF fusion of parallel sub-queries. Phase 5.5e-2 adds the optional
+``metadata_filter`` kwarg on :meth:`Searcher.search` and
+:meth:`Searcher.search_grouped`: a DSL string (same grammar as the
+index-time ``frontmatter_filter``) is compiled once and applied as a
+post-rank predicate against each md chunk's stored ``meta_blob``, with
+oversample-and-retry inside :meth:`Searcher._filtered_raw_hits` so the
+caller still gets ``limit`` survivors when the filter is strict.
 """
 
 from __future__ import annotations

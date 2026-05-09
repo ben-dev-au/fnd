@@ -204,6 +204,12 @@ def fusion_search(
     sees identical analyzer/field-boost configuration as the single-pass
     search path. Results are deduplicated by ``(parent_id, chunk_seq)``;
     ``pass_index`` is set from the highest-weighted contributing source.
+
+    .. todo:: Fusion does not yet honour ``metadata_filter`` (§5.5e-2):
+       sub-queries go through ``searcher._raw_hits`` directly, bypassing
+       ``Searcher._filtered_raw_hits``. Wire this up if/when fusion becomes
+       a default search path or gets a ``metadata_filter`` kwarg at the
+       TUI level. Tracked alongside the §9c cascade path.
     """
     subs = subqueries if subqueries is not None else auto_subqueries(query, synonyms=synonyms)
     if not subs:
