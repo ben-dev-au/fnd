@@ -25,6 +25,36 @@ def test_save_then_load_round_trips(tmp_path: Path) -> None:
     assert load(p) == original
 
 
+def test_save_then_load_round_trips_filters(tmp_path: Path) -> None:
+    """Phase F: filter selections must round-trip alongside scope state.
+
+    Empty ``filter_kinds`` = "all kinds"; ``filter_date == 'any'`` = "any
+    date" — the absence of an explicit selection.
+    """
+    p = tmp_path / "scope.toml"
+    original = UiState(
+        collections=["DPC"],
+        filter_kinds=["pdf", "md"],
+        filter_date="week",
+    )
+    save(original, p)
+    assert load(p) == original
+
+
+def test_load_partial_filters_table(tmp_path: Path) -> None:
+    """A scope.toml without [filters] should still load — the filters
+    feature shouldn't break anyone whose state predates it."""
+    p = tmp_path / "scope.toml"
+    p.write_text(
+        "[scope]\ncollections = ['DPC']\nsources = []\n",
+        encoding="utf-8",
+    )
+    s = load(p)
+    assert s.collections == ["DPC"]
+    assert s.filter_kinds == []
+    assert s.filter_date == "any"
+
+
 def test_save_is_atomic(tmp_path: Path) -> None:
     """An interrupted write shouldn't leave a half-written scope.toml.
     We can't easily simulate a crash mid-rename, but we can confirm the

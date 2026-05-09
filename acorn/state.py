@@ -30,6 +30,11 @@ class UiState:
     collections: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
     collapsed_panels: list[str] = field(default_factory=list)
+    # Phase F filters. Empty kinds list = "all kinds"; ``filter_date`` of
+    # ``"any"`` = "any date". Anything else is treated as a literal token
+    # for the DSL pre-pass (kind:pdf, mtime:week, …).
+    filter_kinds: list[str] = field(default_factory=list)
+    filter_date: str = "any"
 
 
 def load(path: Path | None = None) -> UiState:
@@ -45,12 +50,18 @@ def load(path: Path | None = None) -> UiState:
         return UiState()
     scope_raw = raw.get("scope", {})
     panels_raw = raw.get("panels", {})
+    filters_raw = raw.get("filters", {})
     scope = scope_raw if isinstance(scope_raw, dict) else {}
     panels = panels_raw if isinstance(panels_raw, dict) else {}
+    filters = filters_raw if isinstance(filters_raw, dict) else {}
+    raw_date = filters.get("date", "any")
+    filter_date = raw_date if isinstance(raw_date, str) else "any"
     return UiState(
         collections=[s for s in scope.get("collections", []) if isinstance(s, str)],
         sources=[s for s in scope.get("sources", []) if isinstance(s, str)],
         collapsed_panels=[s for s in panels.get("collapsed", []) if isinstance(s, str)],
+        filter_kinds=[s for s in filters.get("kinds", []) if isinstance(s, str)],
+        filter_date=filter_date,
     )
 
 
@@ -66,6 +77,10 @@ def save(state: UiState, path: Path | None = None) -> None:
     panels = tomlkit.table()
     panels["collapsed"] = list(state.collapsed_panels)
     doc["panels"] = panels
+    filters = tomlkit.table()
+    filters["kinds"] = list(state.filter_kinds)
+    filters["date"] = state.filter_date
+    doc["filters"] = filters
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(tomlkit.dumps(doc), encoding="utf-8")
     os.replace(tmp, p)
