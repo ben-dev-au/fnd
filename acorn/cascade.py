@@ -32,11 +32,15 @@ def _fuzzy_pass(
     query: str,
     limit: int,
     collection: str | None,
+    active_sources: list[str] | None = None,
 ) -> list[Hit]:
     """Build a Boolean query of fuzzy term queries (distance=1) over the
     body field, AND-combined so all query terms must fuzzy-match.
 
     Returns nothing for queries with no plain word terms (operators-only).
+    ``active_sources`` further narrows the fuzzy pass to chunks indexed
+    from a subset of the active collection's sources, so the §9c cascade
+    fallback honours the same source-scope as the literal pass.
     """
     terms = _terms_from_query(query)
     if not terms:
@@ -61,6 +65,16 @@ def _fuzzy_pass(
                 tantivy.Query.term_query(schema, "collection", collection),
             )
         )
+    if active_sources:
+        # Active source-set filter: a Should-OR group inside a Must
+        # bucket so any one source path matching satisfies the clause.
+        from acorn.schema import F_SOURCE_PATH
+
+        source_subqueries: list[tuple[tantivy.Occur, tantivy.Query]] = [
+            (tantivy.Occur.Should, tantivy.Query.term_query(schema, F_SOURCE_PATH, src))
+            for src in active_sources
+        ]
+        subqueries.append((tantivy.Occur.Must, tantivy.Query.boolean_query(source_subqueries)))
     bq = tantivy.Query.boolean_query(subqueries)
     result = searcher._searcher.search(bq, limit=limit)
     return _materialize_hits(searcher, result.hits, query=query)
@@ -118,6 +132,8 @@ def cascade_search(
     limit: int = 50,
     collection: str | None = None,
     synonyms: SynonymTable | None = None,
+    metadata_filter: str | None = None,
+    active_sources: list[str] | None = None,
 ) -> list[Hit]:
     """Run literal → fuzzy → synonym passes until ``threshold`` hits found.
 
@@ -126,11 +142,12 @@ def cascade_search(
     in original score order, then pass-1, then pass-2 — so the TUI shows
     exact matches above looser matches.
 
-    .. todo:: Cascade does not yet honour ``metadata_filter`` (§5.5e-2):
-       its passes go through ``searcher._raw_hits`` directly, bypassing
-       ``Searcher._filtered_raw_hits``. Wire this up if/when cascade
-       becomes a default search path or gets a ``metadata_filter`` kwarg
-       at the TUI level. Tracked alongside the §9d fusion path.
+    ``metadata_filter`` and ``active_sources`` apply to every pass so
+    cascade preserves the same scope a single-pass search would, even
+    when widening to fuzzy / synonym. Literal + synonym passes go through
+    :meth:`Searcher._filtered_raw_hits` (which honours the metadata
+    filter); the programmatic fuzzy pass adds an inline source-set
+    clause to its boolean query.
     """
     seen: set[tuple[str, int]] = set()
     out: list[Hit] = []
@@ -144,15 +161,29 @@ def cascade_search(
             out.append(_with_pass(h, pass_index))
 
     # Pass 0: literal query through the standard parse_query path.
-    raw = searcher._raw_hits(query, limit=limit, collection=collection)
+    raw = searcher._filtered_raw_hits(
+        query,
+        target=limit,
+        collection=collection,
+        metadata_filter=metadata_filter,
+        active_sources=active_sources,
+    )
     _ingest(raw, 0)
     if len(out) >= threshold:
         return out
 
     # Pass 1: fuzzy via typed API (text-syntax ~1 is not supported by
-    # tantivy-py for indexed-non-fast text fields).
-    raw = _fuzzy_pass(searcher, query=query, limit=limit, collection=collection)
-    _ingest(raw, 1)
+    # tantivy-py for indexed-non-fast text fields). Metadata filter is
+    # applied post-hoc since the fuzzy pass bypasses parse_query entirely.
+    fuzzy_raw = _fuzzy_pass(
+        searcher,
+        query=query,
+        limit=limit,
+        collection=collection,
+        active_sources=active_sources,
+    )
+    fuzzy_raw = _apply_metadata_filter(fuzzy_raw, metadata_filter)
+    _ingest(fuzzy_raw, 1)
     if len(out) >= threshold:
         return out
 
@@ -160,10 +191,28 @@ def cascade_search(
     if synonyms is not None and synonyms.groups:
         syn_q = expand(query, synonyms)
         if syn_q != query:
-            raw = searcher._raw_hits(syn_q, limit=limit, collection=collection)
+            raw = searcher._filtered_raw_hits(
+                syn_q,
+                target=limit,
+                collection=collection,
+                metadata_filter=metadata_filter,
+                active_sources=active_sources,
+            )
             _ingest(raw, 2)
 
     return out
+
+
+def _apply_metadata_filter(hits: list[Hit], metadata_filter: str | None) -> list[Hit]:
+    """Re-use the searcher's predicate logic on a list of hits produced
+    outside ``parse_query`` (e.g. the fuzzy pass)."""
+    if metadata_filter is None:
+        return hits
+    from acorn.filter_dsl import compile_filter
+    from acorn.query import _passes_meta_filter
+
+    predicate = compile_filter(metadata_filter)
+    return [h for h in hits if _passes_meta_filter(h, predicate)]
 
 
 def _with_pass(h: Hit, pass_index: int) -> Hit:

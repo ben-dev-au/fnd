@@ -124,28 +124,33 @@ async def test_date_toggle_is_single_select(cfg_one_collection: Config, mixed_in
 
 @pytest.mark.asyncio
 async def test_filters_compose_into_query(cfg_one_collection: Config, mixed_index: Path) -> None:
-    """Active filters get prepended to the lexical query before the
-    DSL pre-pass runs. We verify by capturing what the searcher sees."""
+    """Active filters get AND-combined with the lexical query before
+    each fusion sub-query reaches the searcher. We spy at the lowest
+    layer (``_filtered_raw_hits``) since fusion issues multiple parallel
+    sub-queries — at least one of them must carry the kind/date filter
+    clauses for the field-restriction to take effect."""
     app = AcornApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
-        captured: dict[str, str] = {}
-        # Spy on the Searcher so we don't need a fully-populated index.
-        original = app._searcher.search_grouped  # type: ignore[union-attr]
+        captured_queries: list[str] = []
+        searcher = app._searcher
+        assert searcher is not None
+        original = searcher._filtered_raw_hits
 
         def spy(query: str, **kwargs: object) -> list[object]:
-            captured["query"] = query
+            captured_queries.append(query)
             return original(query, **kwargs)  # type: ignore[no-any-return,arg-type]
 
-        app._searcher.search_grouped = spy  # type: ignore[union-attr,method-assign]
+        searcher._filtered_raw_hits = spy  # type: ignore[method-assign]
         # Activate kind=md filter.
         app._filter_kinds = ["md"]
         app._filter_date = "week"
         app._run_query("glimmer")
         await pilot.pause()
-        assert "kind:md" in captured["query"]
-        assert "mtime:week" in captured["query"]
-        assert "glimmer" in captured["query"]
+        joined = " || ".join(captured_queries)
+        assert "kind:md" in joined, joined
+        assert "mtime:week" in joined, joined
+        assert "glimmer" in joined, joined
 
 
 @pytest.mark.asyncio
@@ -157,21 +162,24 @@ async def test_kind_multi_select_uses_or_group(
     app = AcornApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
-        captured: dict[str, str] = {}
-        original = app._searcher.search_grouped  # type: ignore[union-attr]
+        captured_queries: list[str] = []
+        searcher = app._searcher
+        assert searcher is not None
+        original = searcher._filtered_raw_hits
 
         def spy(query: str, **kwargs: object) -> list[object]:
-            captured["query"] = query
+            captured_queries.append(query)
             return original(query, **kwargs)  # type: ignore[no-any-return,arg-type]
 
-        app._searcher.search_grouped = spy  # type: ignore[union-attr,method-assign]
+        searcher._filtered_raw_hits = spy  # type: ignore[method-assign]
         app._filter_kinds = ["pdf", "md"]
         app._run_query("glimmer")
         await pilot.pause()
-        # Order-independent check.
-        assert "kind:(" in captured["query"]
-        assert "pdf" in captured["query"]
-        assert "md" in captured["query"]
+        joined = " || ".join(captured_queries)
+        # Order-independent check across all sub-queries.
+        assert "kind:(" in joined, joined
+        assert "pdf" in joined
+        assert "md" in joined
 
 
 @pytest.mark.asyncio

@@ -33,6 +33,7 @@ from acorn.query import FileChunk, FileGroup, Hit, Searcher
 from acorn.render import render_chunk_pieces
 from acorn.rerank import RankingProfile, profile_from_config
 from acorn.tui.actions import REGISTRY, Keymap, load_keymap, resolve_command
+from acorn.tui.preview_scrollbar import MatchAwareScroll
 
 _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 
@@ -214,6 +215,40 @@ def _format_key_hint(key: str) -> str:
     return _KEY_HINT_GLYPHS.get(key, key)
 
 
+class _PrefixingSearcher:
+    """Wrap a :class:`Searcher` and AND a fixed filter prefix into every
+    query string before it reaches Tantivy.
+
+    Fusion's phrase pass would otherwise wrap the whole query (including
+    field-restrictor prefixes like ``kind:md``) in quotes, which the
+    Tantivy parser reads as a literal phrase. By keeping the lexical
+    part clean and re-attaching the filter prefix at every sub-query
+    issue point, both fusion and cascade get correct field-restricted
+    behaviour without changing their public signatures.
+    """
+
+    def __init__(self, inner: Searcher, *, prefix: str) -> None:
+        self._inner = inner
+        self._prefix = prefix.strip()
+
+    def _wrap(self, query: str) -> str:
+        if not self._prefix:
+            return query
+        return f"({self._prefix}) AND ({query})"
+
+    def _filtered_raw_hits(self, query: str, **kwargs: Any) -> list[Hit]:
+        return self._inner._filtered_raw_hits(self._wrap(query), **kwargs)
+
+    def _raw_hits(self, query: str, **kwargs: Any) -> list[Hit]:
+        return self._inner._raw_hits(self._wrap(query), **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        # Forward attribute access to the underlying searcher (e.g.
+        # ``_searcher`` for fuzzy_pass's typed-API path, plus public
+        # methods callers might still want).
+        return getattr(self._inner, name)
+
+
 class _PickerSelectionList(SelectionList[str]):
     """SelectionList with Enter rebound to "apply" rather than "toggle".
 
@@ -242,19 +277,20 @@ class AcornApp(App[None]):
     Screen { background: $surface; }
     #query_bar { height: 1; padding: 0 1; border: none; }
     #footer_hints { dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted; }
-    /* Lazygit-thin scrollbars: 1 cell wide, no track background, the
-       thumb a muted accent so it disappears against the border until
-       you actually need it. */
+    /* Lazygit-thin scrollbars: 1 cell wide, fully transparent track so
+       only the thumb glyph shows against the screen background. The
+       custom MatchAwareScrollBarRender (preview only) overlays accent
+       markers on the track at chunk-match positions. */
     * {
         scrollbar-size-vertical: 1;
         scrollbar-size-horizontal: 1;
-        scrollbar-background: $surface;
-        scrollbar-background-active: $surface;
-        scrollbar-background-hover: $surface;
+        scrollbar-background: transparent;
+        scrollbar-background-active: transparent;
+        scrollbar-background-hover: transparent;
         scrollbar-color: $primary 60%;
         scrollbar-color-active: $accent;
         scrollbar-color-hover: $accent 70%;
-        scrollbar-corner-color: $surface;
+        scrollbar-corner-color: transparent;
     }
     /* Pane borders dim by default, brighten when the pane (or any
        descendant) is focused — lazygit's active-section convention.
@@ -283,10 +319,17 @@ class AcornApp(App[None]):
     }
     #filters_panel_tree:focus-within { border: round $accent; }
     /* Section collapse-to-header: Left at the panel root shrinks the
-       whole panel down to its border-title strip. */
+       whole panel down to its border-title strip. ``overflow: hidden``
+       suppresses any rogue scrollbar that would otherwise sneak past
+       the 3-cell height when the inner tree has more rows than fit. */
     #results_pane.collapsed,
     #collections_panel_tree.collapsed,
-    #filters_panel_tree.collapsed { height: 3; }
+    #filters_panel_tree.collapsed {
+        height: 3;
+        overflow: hidden;
+        scrollbar-size-vertical: 0;
+        scrollbar-size-horizontal: 0;
+    }
     #preview_pane {
         width: 2fr; height: 1fr;
         border: round $primary 50%;
@@ -322,8 +365,11 @@ class AcornApp(App[None]):
         height: auto;
     }
     Tree > .tree--label { padding: 0 1; }
-    /* Selected-row highlight: full-width accent (lazygit convention). */
-    Tree > .tree--cursor { background: $accent 40%; color: $text; text-style: bold; }
+    /* Selected-row highlight: only when the panel actually owns focus
+       — sidebar panels stop showing a stale ``current selection`` band
+       when the user is typing in the query bar or has focus elsewhere. */
+    Tree > .tree--cursor { background: transparent; color: $text; }
+    Tree:focus-within > .tree--cursor { background: $accent 40%; text-style: bold; }
     """
 
     # BINDINGS is built from the action registry at import time so footer
@@ -377,6 +423,15 @@ class AcornApp(App[None]):
         self._current_query: str = ""
         self._groups: list[FileGroup] = []
         self._acorn_keymap = keymap or load_keymap()
+        # Synonyms for §9c cascade and §9d fusion's ``syn`` sub-query.
+        # Missing file → empty table → no synonym expansion (no-op).
+        from acorn.config import app_data_dir
+        from acorn.synonyms import SynonymTable, load_synonyms
+
+        try:
+            self._synonyms: SynonymTable = load_synonyms(app_data_dir() / "synonyms.toml")
+        except Exception:
+            self._synonyms = SynonymTable()
         # Ranking profile applied at search time. Built from the active
         # collection's ``ranking_profile`` field; default profile (all-zero)
         # is the BM25 identity, so the no-config case is unchanged.
@@ -412,10 +467,11 @@ class AcornApp(App[None]):
                 # ``border_title``, matching the results-pane styling.
                 yield Tree("Collections", id="collections_panel_tree")
                 yield Tree("Filters", id="filters_panel_tree")
-            # Preview pane: VerticalScroll containing one Static per chunk
-            # so scroll_to_widget targets the exact chunk regardless of how
-            # text wraps visually.
-            with VerticalScroll(id="preview_pane"):
+            # Preview pane: MatchAwareScroll = VerticalScroll with a custom
+            # scrollbar that overlays chunk-match markers on the track.
+            # One Static per chunk inside, so scroll_to_widget targets the
+            # exact chunk regardless of how text wraps visually.
+            with MatchAwareScroll(id="preview_pane"):
                 yield Static("Type a query and press Enter.", id="placeholder")
         yield Static("", id="footer_hints")
 
@@ -594,10 +650,12 @@ class AcornApp(App[None]):
             return
 
         self._current_query = query  # save the original (with [...]) for history
-        # Phase F: prepend the active panel filters so the DSL pre-pass
-        # turns date tokens into mtime ranges and Tantivy field-restricts
-        # on kind. Empty filters short-circuit so the unfiltered query
-        # path is unchanged.
+        # Phase F: build the filter scaffolding (kind:, mtime:) and
+        # multi-collection scope (c:) as a SEPARATE prefix. The lexical
+        # part stays clean so the §9d fusion phrase-pass can wrap it
+        # in quotes without dragging field qualifiers inside the
+        # phrase (which Tantivy would parse as a literal phrase
+        # ``kind:md glimmer`` rather than a field-restricted query).
         filter_clauses: list[str] = []
         if self._filter_kinds:
             if len(self._filter_kinds) == 1:
@@ -606,24 +664,19 @@ class AcornApp(App[None]):
                 filter_clauses.append(f"kind:({' '.join(sorted(self._filter_kinds))})")
         if self._filter_date and self._filter_date != "any":
             filter_clauses.append(f"mtime:{self._filter_date}")
-        filtered_lexical = (
-            f"{' '.join(filter_clauses)} {lexical}".strip() if filter_clauses else lexical
-        )
-        # Multi-collection scoping: prefix with `c:a,b` so the DSL pre-pass
-        # builds the correct (collection:"a" OR collection:"b") filter.
         if len(self._collections) >= 2:
-            scoped_query = f"c:{','.join(self._collections)} {filtered_lexical}"
+            filter_clauses.append(f"c:{','.join(self._collections)}")
             single_col = None
         else:
-            scoped_query = filtered_lexical
             single_col = self._collections[0] if self._collections else None
+        filter_prefix = " ".join(filter_clauses)
         try:
-            self._groups = self._searcher.search_grouped(
-                scoped_query,
+            self._groups = self._search_layered(
+                lexical=lexical,
+                filter_prefix=filter_prefix,
                 limit=50,
                 sections_per_file=10,
                 collection=single_col,
-                profile=self._ranking_profile,
                 metadata_filter=metadata_filter,
                 active_sources=list(self._active_sources) or None,
             )
@@ -641,6 +694,85 @@ class AcornApp(App[None]):
         self._chunk_cache.clear()
         self._preview_parent_id = None
         self._refresh_results_tree()
+
+    def _search_layered(
+        self,
+        *,
+        lexical: str,
+        filter_prefix: str,
+        limit: int,
+        sections_per_file: int,
+        collection: str | None,
+        metadata_filter: str | None,
+        active_sources: list[str] | None,
+    ) -> list[FileGroup]:
+        """Master plan §9c + §9d wiring: fusion as default, cascade fallback.
+
+        - **Phase 9 fusion** (`acorn.fusion.fusion_search`) runs every query
+          through ``auto_subqueries`` (phrase + lex + syn) and RRF-fuses the
+          rankings. Phrase boost (weight 2.0) gives multi-word queries a
+          meaningful uplift when the terms appear adjacently.
+        - **Phase 8 cascade** (`acorn.cascade.cascade_search`) runs only when
+          fusion's combined output is sparse — adds fuzzy~1 and synonym
+          widening passes. This is where typo-tolerance lives.
+
+        ``filter_prefix`` carries field-restrictor clauses (``kind:md``,
+        ``mtime:week``, ``c:papers,notes``) that must AND with every sub-
+        query without being swallowed into a phrase wrapper. Per-sub-query
+        wrapping happens in :class:`_PrefixingSearcher` below so fusion +
+        cascade see the same effective query without changes to their
+        signatures.
+
+        Both paths flow through ``_filtered_raw_hits`` so ``metadata_filter``
+        + ``active_sources`` apply to every sub-pass identically. Output is
+        bucketed via :func:`acorn.query.group_by_file` so all three search
+        paths produce identically-shaped FileGroups for the TUI.
+        """
+        if self._searcher is None or not lexical.strip():
+            return []
+        from acorn.cascade import cascade_search
+        from acorn.fusion import fusion_search
+        from acorn.query import group_by_file
+        from acorn.rerank import rerank_hits
+
+        searcher = (
+            _PrefixingSearcher(self._searcher, prefix=filter_prefix)
+            if filter_prefix
+            else self._searcher
+        )
+
+        hits = fusion_search(
+            searcher,  # type: ignore[arg-type]
+            query=lexical,
+            limit=limit,
+            collection=collection,
+            synonyms=self._synonyms,
+            metadata_filter=metadata_filter,
+            active_sources=active_sources,
+        )
+        # §9c: when fusion's output is below threshold (a quarter of the
+        # caller's limit per the master plan), widen via cascade so fuzzy
+        # + synonym passes catch typos and unusual wording.
+        if len(hits) < max(1, limit // 4):
+            cascade_hits = cascade_search(
+                searcher,  # type: ignore[arg-type]
+                query=lexical,
+                threshold=limit,
+                limit=limit,
+                collection=collection,
+                synonyms=self._synonyms,
+                metadata_filter=metadata_filter,
+                active_sources=active_sources,
+            )
+            # Cascade dedups internally; if it surfaced more, prefer it.
+            if len(cascade_hits) > len(hits):
+                hits = cascade_hits
+        # ``_ranking_profile`` is always a RankingProfile instance (default
+        # is the BM25-identity profile), so we always pass through the
+        # post-rank step — recency / filetype / phrase-proximity boosts
+        # apply on top of fusion or cascade output.
+        hits = rerank_hits(hits, profile=self._ranking_profile, query=lexical)
+        return group_by_file(hits, limit=limit, sections_per_file=sections_per_file)
 
     def _refresh_results_tree(self) -> None:
         """Rebuild the results tree from ``self._groups`` and refresh status.
@@ -706,8 +838,27 @@ class AcornApp(App[None]):
             self._mount_chunks_for_file(parent_id, chunks)
             self._preview_parent_id = parent_id
             self._refresh_status()
+            # Hand the chunk-match map to the custom scrollbar so the bar
+            # itself shows where matches live in the document.
+            self._refresh_match_scrollbar(chunks)
 
         self._scroll_preview_to_chunk(focus_chunk_seq)
+
+    def _refresh_match_scrollbar(self, chunks: list[FileChunk]) -> None:
+        """Build a per-chunk match map and forward it to the preview's
+        custom scrollbar so chunk-match positions are visible on the bar."""
+        from acorn.render import _term_stems, _terms_from_query, text_has_match
+
+        try:
+            pane = self.query_one("#preview_pane", MatchAwareScroll)
+        except Exception:
+            return
+        term_stems = _term_stems(_terms_from_query(self._current_query))
+        match_map = [
+            bool(term_stems and any(text_has_match(b.text, term_stems) for b in c.blocks))
+            for c in chunks
+        ]
+        pane.set_match_map(match_map)
 
     def _mount_chunks_for_file(self, parent_id: str, chunks: list[FileChunk]) -> None:
         """Tear down the existing preview content and mount per-chunk widgets.
