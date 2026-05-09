@@ -325,7 +325,6 @@ class CollectionsScreen(Screen[None]):
         if name is None:
             return
         from acorn.config import write_collection
-        from acorn.index import build_index_from_config
 
         c = self._config.collections[name]
         write_collection(
@@ -333,30 +332,49 @@ class CollectionsScreen(Screen[None]):
             name=name,
             collection=c,
         )
-        # Did anything structural change? If so, reindex synchronously.
         if self._needs_reindex(name):
-            self.app.notify(
-                f"Reindexing {name}…",
-                severity="information",
-                timeout=2,
-            )
-            try:
-                n = build_index_from_config(
-                    config=c,
-                    collection=name,
-                    index_dir=self.app._index_dir,  # type: ignore[attr-defined]
-                    rebuild=True,
-                )
-                self.app.notify(
-                    f"Indexed {n} chunks for {name}.",
-                    severity="information",
-                )
-            except Exception as e:
-                self.app.notify(f"Reindex failed: {e}", severity="error")
+            # Run the (potentially slow) reindex on a worker thread so the
+            # UI stays responsive — the user can navigate, dismiss the
+            # screen, even kick off another save while it runs. The index
+            # writer is single-process, so concurrent reindexes serialise
+            # naturally on Tantivy's writer lock.
+            self._start_reindex_worker(name)
         else:
             self.app.notify(f"Saved {name}", severity="information")
         # Refresh snapshot so subsequent saves diff against the new state.
         self._initial[name] = deepcopy(c.sources)
+
+    def _start_reindex_worker(self, name: str) -> None:
+        """Kick off a thread-worker that rebuilds ``name``'s chunks. Posts
+        progress + result notifications back to the app via
+        ``call_from_thread``. Returns immediately."""
+        from acorn.index import build_index_from_config
+
+        c = self._config.collections[name]
+        index_dir = self.app._index_dir  # type: ignore[attr-defined]
+        app = self.app
+
+        def _run() -> None:
+            app.call_from_thread(
+                app.notify,
+                f"Reindexing {name}… (running in background)",
+                severity="information",
+                timeout=3,
+            )
+            try:
+                n = build_index_from_config(
+                    config=c, collection=name, index_dir=index_dir, rebuild=True
+                )
+            except Exception as e:
+                app.call_from_thread(app.notify, f"Reindex failed: {e}", severity="error")
+                return
+            app.call_from_thread(
+                app.notify,
+                f"Indexed {n} chunks for {name}.",
+                severity="information",
+            )
+
+        self.run_worker(_run, thread=True, exclusive=False, group=f"reindex-{name}")
 
     def _needs_reindex(self, name: str) -> bool:
         prev = self._initial.get(name, [])
