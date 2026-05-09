@@ -400,10 +400,14 @@ def _eval_compare(fm: Mapping[str, object], field: str, op: str, value: object) 
         # Strict null: missing field is False for every comparison.
         return False
     actual = fm[field]
-    if op == "==":
-        return actual == value
-    if op == "!=":
-        return actual != value
+    if op in ("==", "!="):
+        # Reject silent bool/int conflation: ``True == 1`` is True in raw
+        # Python, but for YAML frontmatter where ``true`` and ``1`` are
+        # distinct, that's a semantic surprise. If exactly one side is bool,
+        # they're not equal.
+        if isinstance(actual, bool) != isinstance(value, bool):
+            return op == "!="
+        return (actual == value) if op == "==" else (actual != value)
     if op == "~~":
         if not isinstance(actual, str) or not isinstance(value, str):
             return False

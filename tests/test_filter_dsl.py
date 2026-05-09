@@ -237,6 +237,22 @@ def test_compile_filter_invalid_raises() -> None:
         compile_filter("not valid syntax!")
 
 
+def test_eval_bool_and_int_are_not_interchangeable() -> None:
+    """Per YAML semantics: ``true`` and ``1`` are distinct values, so an
+    equality between a bool actual and a non-bool literal (or vice versa)
+    must return False, not silently match via Python's ``True == 1``."""
+    pred_eq_int = compile_filter("archived == 1")
+    pred_neq_int = compile_filter("archived != 1")
+    pred_eq_true = compile_filter("active == true")
+    # Bool actual, int literal: must NOT match.
+    assert pred_eq_int({"archived": True}) is False
+    # Bool actual, int literal, !=: must be True (they're not equal).
+    assert pred_neq_int({"archived": True}) is True
+    # Same-type bool == bool still works.
+    assert pred_eq_true({"active": True}) is True
+    assert pred_eq_true({"active": False}) is False
+
+
 @st.composite
 def _fields_and_values(draw: st.DrawFn) -> tuple[str, object]:
     field = draw(st.sampled_from(["a", "b", "c", "Course", "status"]))
