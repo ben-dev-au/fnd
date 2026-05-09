@@ -35,8 +35,33 @@ from acorn.tui.actions import REGISTRY, Keymap, load_keymap, resolve_command
 
 _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 
+# Eighth-block characters scaled 0/8 → 8/8. Index 0 is space so a zero
+# score renders as visible whitespace (preserving column alignment).
+_BAR_GLYPHS = " ▁▂▃▄▅▆▇█"
 
-def _format_hit_label(h: Hit) -> str:
+
+def _score_bar(*, score: float, max_score: float, width: int = 4) -> str:
+    """Render a horizontal score bar of ``width`` cells, each cell an
+    eighth-block character scaled to ``score / max_score``.
+
+    A defensive ``max_score == 0`` returns ``" " * width`` to avoid a
+    ZeroDivisionError when the result set has all-zero scores (or none
+    at all). Scores above ``max_score`` clamp to a full bar."""
+    if max_score <= 0:
+        return " " * width
+    ratio = max(0.0, min(1.0, score / max_score))
+    # Each cell can hold 8 levels of fill; the bar holds width cells.
+    eighths = round(ratio * width * 8)
+    full = min(eighths // 8, width)
+    remainder = eighths - full * 8
+    out = "█" * full
+    if full < width:
+        out += _BAR_GLYPHS[remainder]
+        out += " " * (width - full - 1)
+    return out
+
+
+def _format_hit_label(h: Hit, *, max_score: float = 0.0) -> str:
     if h.page:
         loc = f"p.{h.page}"
     elif h.slide:
@@ -51,12 +76,14 @@ def _format_hit_label(h: Hit) -> str:
     # exact pass to keep the common case visually quiet.
     glyph = _PASS_GLYPHS.get(h.pass_index, "")
     pass_marker = f" {glyph}" if h.pass_index > 0 else ""
-    return f"{loc}{suffix}  ({h.score:.2f}){pass_marker}"
+    bar = _score_bar(score=h.score, max_score=max_score) if max_score else ""
+    return f"{loc}{suffix}  {bar} {h.score:.2f}{pass_marker}"
 
 
-def _format_file_label(g: FileGroup) -> str:
+def _format_file_label(g: FileGroup, *, max_score: float = 0.0) -> str:
     name = Path(g.path).name
-    return f"{name}  ({g.top_score:.2f})  [{g.kind}]"
+    bar = _score_bar(score=g.top_score, max_score=max_score) if max_score else ""
+    return f"{name}  {bar} {g.top_score:.2f}  [{g.kind}]"
 
 
 def _short_label(action_id: str) -> str:
@@ -432,17 +459,26 @@ class AcornApp(App[None]):
         self._refresh_results_tree()
 
     def _refresh_results_tree(self) -> None:
-        """Rebuild the results tree from ``self._groups`` and refresh status."""
+        """Rebuild the results tree from ``self._groups`` and refresh status.
+
+        Score bars are normalised against the maximum top-score in the
+        current result set so the leader always renders as a full bar;
+        this lets the user eyeball relative ranking without comparing
+        floats."""
         tree = self.query_one("#results_pane", Tree)
         tree.clear()
+        max_score = max((g.top_score for g in self._groups), default=0.0)
         for g in self._groups:
             file_node = tree.root.add(
-                _format_file_label(g),
+                _format_file_label(g, max_score=max_score),
                 data={"kind": "file", "group": g},
                 expand=False,
             )
             for h in g.hits:
-                file_node.add_leaf(_format_hit_label(h), data={"kind": "section", "hit": h})
+                file_node.add_leaf(
+                    _format_hit_label(h, max_score=max_score),
+                    data={"kind": "section", "hit": h},
+                )
         self._refresh_status()
         if self._groups:
             tree.focus()
