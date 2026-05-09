@@ -169,7 +169,7 @@ def collection_list() -> None:
         return
     for name, c in sorted(cfg.collections.items()):
         marker = " *" if name == cfg.defaults.collection else "  "
-        typer.echo(f"{marker} {name}: {len(c.roots)} root(s)")
+        typer.echo(f"{marker} {name}: {len(c.sources)} source(s)")
 
 
 @collection_app.command("add")
