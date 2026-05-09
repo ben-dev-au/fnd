@@ -444,4 +444,4 @@ A change is "phase 5.5e complete" only when:
 
 ## Open questions
 
-None — design approved 2026-05-09. Implementation plan to follow via `superpowers:writing-plans`.
+None — design approved 2026-05-09. Implementation plan to follow.

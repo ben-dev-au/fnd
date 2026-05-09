@@ -1,8 +1,7 @@
 # Phase 5.5e-2 — Query-Time Metadata Filtering Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Spec:** [`docs/superpowers/specs/2026-05-09-collection-crud-and-source-filters-design.md`](../specs/2026-05-09-collection-crud-and-source-filters-design.md) — sections "Schema", "Query DSL pre-pass", "Query layer", and "Saved searches & history".
+**Spec:** [`docs/specs/2026-05-09-collection-crud-and-source-filters-design.md`](../specs/2026-05-09-collection-crud-and-source-filters-design.md) — sections "Schema", "Query DSL pre-pass", "Query layer", and "Saved searches & history".
 
 **Goal:** Make the same DSL that 5.5e-1 applied at index time work at query time, by storing frontmatter in a Tantivy `meta_blob` field and post-filtering ranked hits via the same compiled predicate. Inline `[…]` syntax in the query bar plus a `--meta` CLI flag are the user-facing surfaces.
 

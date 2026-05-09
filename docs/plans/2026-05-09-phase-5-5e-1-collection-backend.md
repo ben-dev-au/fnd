@@ -1,8 +1,7 @@
 # Phase 5.5e-1 — Collection Backend Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Spec:** [`docs/superpowers/specs/2026-05-09-collection-crud-and-source-filters-design.md`](../specs/2026-05-09-collection-crud-and-source-filters-design.md)
+**Spec:** [`docs/specs/2026-05-09-collection-crud-and-source-filters-design.md`](../specs/2026-05-09-collection-crud-and-source-filters-design.md)
 
 **Goal:** Ship the backend for multi-source collections with per-source includes/excludes plus a YAML-frontmatter predicate DSL applied at index time, so power users can configure filtered collections via `acorn config edit` and `acorn collection add`.
 

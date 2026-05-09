@@ -1,8 +1,7 @@
 # Phase 5.5e-3 — TUI Collections Form Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Spec:** [`docs/superpowers/specs/2026-05-09-collection-crud-and-source-filters-design.md`](../specs/2026-05-09-collection-crud-and-source-filters-design.md) — section "TUI (`acorn/tui/collections_screen.py`)".
+**Spec:** [`docs/specs/2026-05-09-collection-crud-and-source-filters-design.md`](../specs/2026-05-09-collection-crud-and-source-filters-design.md) — section "TUI (`acorn/tui/collections_screen.py`)".
 
 **Goal:** Add a full-screen Collections form behind `F3` / `:collections` so users can list, edit, save, and delete collections without leaving the TUI. The form is a thin lens over the user's `config.toml`; saves round-trip via `tomlkit` so hand-authored comments survive.
 
@@ -1858,11 +1857,11 @@ If you have a real config + index handy:
 
 Verify `config.toml` round-trip: open the file in `$EDITOR`, confirm comments and unrelated tables are preserved across all the operations above.
 
-- [ ] **Step 4: Update plan §22 (out-of-scope) — drop the "TUI Collection CRUD" deferral**
+- [ ] **Step 4: Update top-level plan §22 (out-of-scope) — drop the "TUI Collection CRUD" deferral**
 
-Open `/Users/BenDavidson/.claude/plans/i-can-t-find-a-precious-acorn.md`. Find the §22 line about "Collection CRUD UI inside the TUI" or equivalent. Strike it through (or remove) — it's now shipped.
+Find the §22 line about "Collection CRUD UI inside the TUI" or equivalent in the top-level acorn design plan. Strike it through (or remove) — it's now shipped.
 
-If the plan file isn't easily editable here (it lives outside the repo), skip this step and note it for the user to apply manually.
+If the plan file isn't easily editable here, skip this step and note it for the user to apply manually.
 
 - [ ] **Step 5: Update task tracker**
 
