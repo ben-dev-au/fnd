@@ -230,6 +230,10 @@ class AcornApp(App[None]):
     .chunk-line { padding: 0 0 0 0; height: auto; }
     .chunk-line-match { background: $accent 8%; }
     .chunk-section-focused { background: $accent 15%; }
+    /* Chunks with any match get an accent left-bar — an at-a-glance
+       signal in the preview pane (and against the scrollbar as the
+       user scrolls) of where the matches live. */
+    .chunk-has-match { border-left: thick $accent; padding-left: 1; }
     #placeholder { color: $text-muted; }
     #help_overlay {
         layer: overlay;
@@ -658,6 +662,8 @@ class AcornApp(App[None]):
             if has_match and first_match is None:
                 first_match = line_w
         self._match_targets[c.chunk_seq] = first_match or header_w
+        if first_match is not None:
+            header_w.add_class("chunk-has-match")
 
     def _mount_markdown_chunk(self, pane: VerticalScroll, c: FileChunk) -> None:
         """Markdown chunks render through ``rich.markdown.Markdown`` —
@@ -666,7 +672,7 @@ class AcornApp(App[None]):
         is kept so ``scroll_to_widget`` still targets the chunk."""
         from rich.markdown import Markdown
 
-        from acorn.render import render
+        from acorn.render import _terms_from_query, render
 
         header_text, _pieces = render_chunk_pieces(c, query=self._current_query)
         header_w = Static(header_text, classes="chunk-section chunk-header")
@@ -683,6 +689,13 @@ class AcornApp(App[None]):
         )
         pane.mount(body_w)
         self._match_targets[c.chunk_seq] = header_w
+        # Mark chunks that contain query terms so the user can see at a
+        # glance which chunks are worth reading.
+        terms = [t.lower() for t in _terms_from_query(self._current_query)]
+        if terms:
+            haystack = " ".join(b.text for b in c.blocks).lower()
+            if any(t in haystack for t in terms):
+                header_w.add_class("chunk-has-match")
 
     def _scroll_preview_to_chunk(self, focus_chunk_seq: int) -> None:
         header = self._chunk_widgets.get(focus_chunk_seq)
