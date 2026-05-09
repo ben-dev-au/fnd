@@ -193,3 +193,38 @@ async def test_x_removes_focused_source(cfg_three_collections: Config, tmp_index
         screen = app.screen
         c = screen._config.collections["coursework"]  # type: ignore[attr-defined]
         assert len(c.sources) == 1  # was 2, now 1
+
+
+@pytest.mark.asyncio
+async def test_pasted_frontmatter_match_indicator(
+    cfg_three_collections: Config, tmp_index_dir: Path
+) -> None:
+    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f3")
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.pause()
+        from textual.widgets import Input, TextArea
+
+        # Type a valid filter.
+        filter_input = app.screen.query_one("#source_filter_input", Input)
+        filter_input.value = "Course == 'DPwC'"
+        await pilot.pause()
+
+        # Paste matching frontmatter.
+        sample = app.screen.query_one("#frontmatter_sample", TextArea)
+        sample.text = "---\nCourse: DPwC\n---\n"
+        await pilot.pause()
+
+        match = app.screen.query_one("#frontmatter_match_status", Static)
+        match_text = str(match.content)
+        assert "match" in match_text.lower()
+        assert "✓" in match_text
+
+        # Now non-matching frontmatter.
+        sample.text = "---\nCourse: Other\n---\n"
+        await pilot.pause()
+        match = app.screen.query_one("#frontmatter_match_status", Static)
+        assert "no match" in str(match.content).lower() or "✗" in str(match.content)
