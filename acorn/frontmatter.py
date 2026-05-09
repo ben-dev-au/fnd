@@ -85,20 +85,39 @@ def _parse_block(lines: list[str]) -> dict[str, object]:
             raise FrontmatterParseError(
                 f"frontmatter line {i + 2}: anchors/aliases/tags are unsupported"
             )
+        # Block list: empty value, then ``- item`` lines (flush or indented).
+        if value_text.strip() == "" and i + 1 < len(lines):
+            next_line = lines[i + 1]
+            next_stripped = next_line.lstrip()
+            if next_stripped.startswith("- "):
+                indent = len(next_line) - len(next_stripped)
+                prefix = " " * indent + "- "
+                j = i + 1
+                items: list[object] = []
+                while j < len(lines) and lines[j].startswith(prefix):
+                    items.append(_parse_scalar(lines[j][len(prefix) :]))
+                    j += 1
+                out[key] = items
+                i = j
+                continue
         out[key] = _parse_scalar(value_text)
         i += 1
     return out
 
 
 def _parse_scalar(text: str) -> object:
-    """Coerce one bare value into an int/float/date/bool/None/str.
-
-    List parsing (inline ``[a, b]`` and block lists) is added in the next
-    task; for now any ``[`` or block-list marker is treated as a string.
-    """
+    """Coerce one bare value into an int/float/date/bool/None/str/list."""
     s = text.strip()
     if not s:
         return ""
+    # Inline list: [a, b, c]
+    if s.startswith("["):
+        if not s.endswith("]"):
+            raise FrontmatterParseError("inline list missing closing ]")
+        inner = s[1:-1].strip()
+        if not inner:
+            return []
+        return [_parse_scalar(item) for item in _split_csv(inner)]
     # Quoted strings.
     if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
         return s[1:-1]
@@ -122,3 +141,28 @@ def _parse_scalar(text: str) -> object:
         pass
     # Fallback: bare string.
     return s
+
+
+def _split_csv(text: str) -> list[str]:
+    """Split on commas while respecting quoted strings."""
+    parts: list[str] = []
+    buf = ""
+    quote: str | None = None
+    for ch in text:
+        if quote:
+            buf += ch
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ('"', "'"):
+            quote = ch
+            buf += ch
+            continue
+        if ch == ",":
+            parts.append(buf.strip())
+            buf = ""
+            continue
+        buf += ch
+    if buf.strip():
+        parts.append(buf.strip())
+    return parts
