@@ -42,9 +42,21 @@ class CollectionsScreen(Screen[None]):
     def compose(self) -> ComposeResult:
         yield Static("Collections", id="collections_title")
         with Horizontal(id="collections_body"):
-            yield Vertical(id="collections_list_pane")
+            with Vertical(id="collections_list_pane"):
+                yield from self._collection_rows()
             yield Vertical(id="collections_editor_pane")
         yield Footer()
+
+    def _collection_rows(self) -> ComposeResult:
+        names = sorted(self._config.collections.keys())
+        if not names:
+            yield Static("(no collections — press n to add one)")
+            return
+        for name in names:
+            collection = self._config.collections[name]
+            count = len(collection.sources)
+            label = f"{name}  ({count} source{'s' if count != 1 else ''})  [{collection.ranking_profile}]"
+            yield Static(label, classes="collection_row", id=f"collection_row_{name}")
 
     def action_close(self) -> None:
         self.dismiss(None)
