@@ -222,6 +222,45 @@ def load(path: Path | None = None) -> Config:
     return Config.model_validate(raw)
 
 
+def write_collection_source(
+    *,
+    config_path: Path,
+    collection_name: str,
+    source: SourceConfig,
+) -> None:
+    """Append ``source`` to ``collection_name`` in the config TOML at
+    ``config_path``. Creates the file (and the collection table) if
+    needed. Preserves comments and unrelated tables via tomlkit.
+
+    Raises FileNotFoundError if the parent dir is missing — caller is
+    expected to mkdir the config dir.
+    """
+    import tomlkit
+
+    if config_path.exists():
+        doc = tomlkit.parse(config_path.read_text(encoding="utf-8"))
+    else:
+        doc = tomlkit.document()
+
+    collections = doc.setdefault("collections", tomlkit.table())
+    collection = collections.setdefault(collection_name, tomlkit.table())
+    sources_array = collection.setdefault("sources", tomlkit.aot())  # array-of-tables
+
+    new_table = tomlkit.table()
+    new_table["path"] = str(source.path)
+    if source.includes:
+        new_table["includes"] = list(source.includes)
+    if source.excludes:
+        new_table["excludes"] = list(source.excludes)
+    if source.follow_symlinks:
+        new_table["follow_symlinks"] = source.follow_symlinks
+    if source.frontmatter_filter:
+        new_table["frontmatter_filter"] = source.frontmatter_filter
+    sources_array.append(new_table)
+
+    config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+
+
 STARTER_TEMPLATE = """\
 # acorn config — see plan §6 for the full schema.
 # Edit with `acorn config edit`.
