@@ -31,6 +31,7 @@ class CollectionsScreen(Screen[None]):
         Binding("K", "source_prev", "Source ↑", show=False),
         Binding("a", "add_source", "Add source", show=True),
         Binding("x", "remove_source", "Remove source", show=True),
+        Binding("s", "save", "Save", show=True),
     ]
 
     CSS = """
@@ -191,6 +192,19 @@ class CollectionsScreen(Screen[None]):
         else:
             self._source_cursor = 0
         self._refresh()
+
+    def action_save(self) -> None:
+        if self._selected is None:
+            return
+        from acorn.config import write_collection
+
+        c = self._config.collections[self._selected]
+        write_collection(
+            config_path=self._config_path,
+            name=self._selected,
+            collection=c,
+        )
+        self.app.notify(f"Saved {self._selected}", severity="information")
 
     def _apply_source_edit(self, index: int, result: dict[str, object] | None) -> None:
         if result is None or self._selected is None:

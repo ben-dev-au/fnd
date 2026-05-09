@@ -228,3 +228,40 @@ async def test_pasted_frontmatter_match_indicator(
         await pilot.pause()
         match = app.screen.query_one("#frontmatter_match_status", Static)
         assert "no match" in str(match.content).lower() or "✗" in str(match.content)
+
+
+@pytest.mark.asyncio
+async def test_s_persists_changes_to_config_toml(
+    tmp_path: Path,
+    tmp_index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        textwrap.dedent("""
+            # user comment
+            [[collections.notes.sources]]
+            path = "/tmp/old"
+            includes = ["**/*.md"]
+        """),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    cfg = load(cfg_path)
+    app = AcornApp(index_dir=tmp_index_dir, config=cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f3")
+        await pilot.pause()
+        # In the form, focus the first source and "remove" it (so the diff
+        # is non-trivial: 1 source becomes 0).
+        await pilot.press("x")
+        await pilot.pause()
+        # Save.
+        await pilot.press("s")
+        await pilot.pause()
+    # File should reflect 0 sources for notes; comment preserved.
+    text = cfg_path.read_text(encoding="utf-8")
+    assert "# user comment" in text
+    out = load(cfg_path)
+    assert len(out.collection("notes").sources) == 0

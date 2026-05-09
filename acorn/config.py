@@ -264,6 +264,56 @@ def write_collection_source(
     config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
 
 
+def write_collection(
+    *,
+    config_path: Path,
+    name: str,
+    collection: CollectionConfig,
+) -> None:
+    """Replace ``[collections.<name>]`` (and its ``[[sources]]`` array) in
+    the TOML at ``config_path``. Comments and unrelated tables are
+    preserved via ``tomlkit``. Creates the file and the ``collections``
+    table if needed.
+
+    The supplied :class:`CollectionConfig` is the canonical post-validation
+    form; this writer emits the new ``[[sources]]`` shape and never the
+    legacy flat ``roots = [...]`` shape.
+    """
+    import tomlkit
+
+    if config_path.exists():
+        doc = tomlkit.parse(config_path.read_text(encoding="utf-8"))
+    else:
+        doc = tomlkit.document()
+
+    collections = doc.setdefault("collections", tomlkit.table())
+    new_table = tomlkit.table()
+    if collection.ranking_profile != "default":
+        new_table["ranking_profile"] = collection.ranking_profile
+    if collection.sources:
+        sources_aot = tomlkit.aot()
+        for source in collection.sources:
+            st = tomlkit.table()
+            st["path"] = str(source.path)
+            if source.includes:
+                st["includes"] = list(source.includes)
+            if source.excludes:
+                st["excludes"] = list(source.excludes)
+            if source.follow_symlinks:
+                st["follow_symlinks"] = source.follow_symlinks
+            if source.frontmatter_filter:
+                st["frontmatter_filter"] = source.frontmatter_filter
+            sources_aot.append(st)
+        new_table["sources"] = sources_aot
+    else:
+        # tomlkit aot() with zero entries produces no output; use an inline
+        # array so `[collections.<name>]` survives the round-trip and loads
+        # back as CollectionConfig(sources=[]).
+        new_table.add("sources", tomlkit.array())
+    collections[name] = new_table
+    config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+
+
 STARTER_TEMPLATE = """\
 # acorn config — see plan §6 for the full schema.
 # Edit with `acorn config edit`.
