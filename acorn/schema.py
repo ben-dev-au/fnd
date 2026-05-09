@@ -21,6 +21,7 @@ title             text     default   yes     no    metadata title (boosted)
 author            text     default   yes     no    metadata author
 body              text     en_stem   no      no    full-text ranking
 body_struct       bytes    no        yes     no    JSON-encoded blocks for the preview pane
+meta_blob         bytes    no        yes     no    JSON frontmatter for query-time filter
 chunk_seq         u64      yes       yes     yes   ordering within a file
 ================  =======  ========  ======  ====  ============================================
 """
@@ -32,7 +33,7 @@ from typing import Final
 from tantivy import Schema, SchemaBuilder
 
 # Bump on any field-shape change; indexer refuses to open a stale index.
-SCHEMA_VERSION: Final[int] = 1
+SCHEMA_VERSION: Final[int] = 2
 
 # Field-name constants so callers don't sprinkle string literals.
 F_PARENT_ID: Final = "parent_id"
@@ -48,6 +49,7 @@ F_TITLE: Final = "title"
 F_AUTHOR: Final = "author"
 F_BODY: Final = "body"
 F_BODY_STRUCT: Final = "body_struct"
+F_META_BLOB: Final = "meta_blob"
 F_CHUNK_SEQ: Final = "chunk_seq"
 
 # Default search fields when the query has no explicit field qualifier.
@@ -90,5 +92,8 @@ def build_schema() -> Schema:
 
     # Stored bytes for the structured-preview JSON.
     sb.add_bytes_field(F_BODY_STRUCT, stored=True, indexed=False)
+
+    # JSON-encoded frontmatter for query-time metadata filter (§5.5e-2).
+    sb.add_bytes_field(F_META_BLOB, stored=True, indexed=False)
 
     return sb.build()
