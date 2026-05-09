@@ -6,7 +6,7 @@ import datetime as dt
 
 import pytest
 
-from acorn.filter_dsl import FilterError, TokenKind, tokenize
+from acorn.filter_dsl import And, Compare, FilterError, In, Not, Or, TokenKind, parse, tokenize
 
 
 def _kinds(text: str) -> list[TokenKind]:
@@ -80,3 +80,62 @@ def test_tokenize_unterminated_string_raises_with_column() -> None:
         tokenize("Course == 'DPwC")
     assert "unterminated" in exc.value.message.lower()
     assert exc.value.column == 11  # column of the opening quote (1-based)
+
+
+def test_parse_simple_compare() -> None:
+    tree = parse("Course == 'DPwC'")
+    assert tree == Compare("Course", "==", "DPwC")
+
+
+def test_parse_and_or_precedence() -> None:
+    """AND binds tighter than OR (matches typical predicate languages)."""
+    tree = parse("a == 1 OR b == 2 AND c == 3")
+    # Expected: a == 1 OR (b == 2 AND c == 3)
+    assert tree == Or(
+        Compare("a", "==", 1),
+        And(Compare("b", "==", 2), Compare("c", "==", 3)),
+    )
+
+
+def test_parse_parens_override_precedence() -> None:
+    tree = parse("(a == 1 OR b == 2) AND c == 3")
+    assert tree == And(
+        Or(Compare("a", "==", 1), Compare("b", "==", 2)),
+        Compare("c", "==", 3),
+    )
+
+
+def test_parse_not() -> None:
+    tree = parse("NOT a == 1")
+    assert tree == Not(Compare("a", "==", 1))
+
+
+def test_parse_in_membership() -> None:
+    tree = parse("'course' in tags")
+    assert tree == In("course", "tags", negated=False)
+
+
+def test_parse_not_in() -> None:
+    tree = parse("'archived' not in tags")
+    assert tree == In("archived", "tags", negated=True)
+
+
+def test_parse_quoted_identifier_with_space() -> None:
+    tree = parse('"due date" <= 2026-06-01')
+    assert tree == Compare("due date", "<=", dt.date(2026, 6, 1))
+
+
+def test_parse_empty_raises() -> None:
+    with pytest.raises(FilterError, match=r"empty|expected"):
+        parse("")
+
+
+def test_parse_dangling_operator_raises_with_column() -> None:
+    with pytest.raises(FilterError) as exc:
+        parse("Course ==")
+    assert exc.value.column >= 9
+
+
+def test_parse_unmatched_paren_raises() -> None:
+    with pytest.raises(FilterError, match=r"paren|expected"):
+        parse("(a == 1")
