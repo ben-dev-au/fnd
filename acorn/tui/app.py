@@ -33,7 +33,7 @@ from acorn.render import render_chunk_pieces
 from acorn.rerank import RankingProfile, profile_from_config
 from acorn.tui.actions import REGISTRY, Keymap, load_keymap, resolve_command
 
-_PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕"}
+_PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 
 
 def _format_hit_label(h: Hit) -> str:
