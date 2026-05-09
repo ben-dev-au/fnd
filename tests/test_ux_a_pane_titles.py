@@ -91,7 +91,7 @@ async def test_top_result_is_auto_expanded(built_index: Path) -> None:
 
 def test_format_hit_label_falls_back_for_markdown_without_heading() -> None:
     """When a markdown chunk has no heading_path / page / slide, the row
-    should still carry a synthetic locator (``chunk N``) rather than the
+    should still carry a synthetic locator (``§N``) rather than the
     generic em-dash placeholder."""
     from acorn.query import Hit
     from acorn.tui.app import _format_hit_label
@@ -112,4 +112,4 @@ def test_format_hit_label_falls_back_for_markdown_without_heading() -> None:
         meta_blob=b"",
     )
     label = str(_format_hit_label(h, max_score=10.0))
-    assert "chunk" in label.lower(), label
+    assert "§4" in label, label
