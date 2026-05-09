@@ -17,6 +17,9 @@ ignore = [
     "E501",             # line length is enforced by formatter
 ]
 
+[lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Option", "typer.Argument"]
+
 [lint.per-file-ignores]
 "tests/**" = ["B", "SIM"]
 

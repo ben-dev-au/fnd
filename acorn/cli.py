@@ -19,6 +19,8 @@ from pathlib import Path
 
 import typer
 
+from acorn.config import default_config_path
+
 app = typer.Typer(
     name="acorn",
     help="Fast, free, keyboard-driven document search for macOS.",
@@ -158,6 +160,66 @@ def collection_list() -> None:
     for name, c in sorted(cfg.collections.items()):
         marker = " *" if name == cfg.defaults.collection else "  "
         typer.echo(f"{marker} {name}: {len(c.roots)} root(s)")
+
+
+@collection_app.command("add")
+def collection_add(
+    name: str = typer.Argument(..., help="Collection name."),
+    source: list[Path] = typer.Option(
+        ...,
+        "--source",
+        help="Root directory for this collection. Repeat to add multiple.",
+    ),
+    include: list[str] = typer.Option(
+        [],
+        "--include",
+        help="Glob to include. Repeatable. Defaults to all supported types.",
+    ),
+    exclude: list[str] = typer.Option(
+        [],
+        "--exclude",
+        help="Glob to exclude. Repeatable.",
+    ),
+    filter: str | None = typer.Option(
+        None,
+        "--filter",
+        help="Frontmatter filter DSL (md sources only).",
+    ),
+    follow_symlinks: bool = typer.Option(False, "--follow-symlinks/--no-follow-symlinks"),
+) -> None:
+    """Add (or extend) a collection in the user's config TOML.
+
+    Each invocation appends one source (one --source argument). Repeat
+    the command to add additional sources to the same collection.
+    """
+    from acorn.config import (
+        SourceConfig,
+        write_collection_source,
+    )
+    from acorn.filter_dsl import FilterError, compile_filter
+
+    if filter is not None:
+        try:
+            compile_filter(filter)
+        except FilterError as e:
+            typer.echo(f"invalid filter: {e.message} (col {e.column})", err=True)
+            raise typer.Exit(code=1) from e
+
+    if len(source) != 1:
+        typer.echo("--source must be specified exactly once per command", err=True)
+        raise typer.Exit(code=1)
+
+    cfg_path = default_config_path()
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    new_source = SourceConfig(
+        path=source[0],
+        includes=list(include),
+        excludes=list(exclude),
+        follow_symlinks=follow_symlinks,
+        frontmatter_filter=filter,
+    )
+    write_collection_source(config_path=cfg_path, collection_name=name, source=new_source)
+    typer.echo(f"added source {source[0]} to collection {name} in {cfg_path}")
 
 
 @collection_app.command("reindex")
