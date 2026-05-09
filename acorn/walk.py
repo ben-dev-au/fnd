@@ -19,6 +19,10 @@ from __future__ import annotations
 import fnmatch
 from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from acorn.config import SourceConfig
 
 from acorn.extract import supported_suffixes
 
@@ -26,10 +30,21 @@ from acorn.extract import supported_suffixes
 def _matches_any(globs: list[str], rel_str: str) -> bool:
     """Return True if ``rel_str`` matches any glob.
 
-    ``**`` matches any number of path segments; ``fnmatch`` already handles
-    that correctly when ``/`` is a regular character in the pattern.
+    ``**`` matches any number of path segments, including zero — so
+    ``**/*.md`` must match both ``sub/a.md`` *and* ``a.md`` (root-level).
+    ``fnmatch`` treats ``**`` as a literal wildcard across ``/`` characters
+    which covers the subdir case but not the zero-segment case, so for
+    patterns that start with ``**/`` we also try the pattern without that
+    prefix against root-level paths (no ``/`` in ``rel_str``).
     """
-    return any(fnmatch.fnmatchcase(rel_str, g) for g in globs)
+    root_level = "/" not in rel_str
+    for g in globs:
+        if fnmatch.fnmatchcase(rel_str, g):
+            return True
+        # ``**/*.ext`` should match ``a.ext`` at the root level too.
+        if root_level and g.startswith("**/") and fnmatch.fnmatchcase(rel_str, g[3:]):
+            return True
+    return False
 
 
 def _is_hidden(rel: Path) -> bool:
@@ -95,3 +110,39 @@ def walk(
                 continue
 
             yield p
+
+
+def walk_sources(*, sources: list[SourceConfig]) -> Iterator[Path]:
+    """Yield in-scope paths across every source.
+
+    Per source: applies includes/excludes via :func:`walk`, then on
+    ``.md`` files runs the source's frontmatter filter. Frontmatter parse
+    errors and missing-field strict-null cases drop the file silently —
+    the indexer will eventually log them via ``acorn status --errors``
+    (phase 10).
+    """
+    from acorn.config import SourceConfig  # local import: avoid cycle
+    from acorn.filter_dsl import compile_filter
+    from acorn.frontmatter import (
+        FrontmatterParseError,
+        read_frontmatter_from_file,
+    )
+
+    for source in sources:
+        assert isinstance(source, SourceConfig)
+        predicate = compile_filter(source.frontmatter_filter) if source.frontmatter_filter else None
+        for path in walk(
+            roots=[source.path],
+            includes=source.includes or None,
+            excludes=source.excludes or None,
+            follow_symlinks=source.follow_symlinks,
+        ):
+            if predicate is None or path.suffix.lower() != ".md":
+                yield path
+                continue
+            try:
+                fm = read_frontmatter_from_file(path) or {}
+            except FrontmatterParseError:
+                continue
+            if predicate(fm):
+                yield path
