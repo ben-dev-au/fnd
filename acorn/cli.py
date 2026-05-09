@@ -19,7 +19,7 @@ from pathlib import Path
 
 import typer
 
-from acorn.config import default_config_path
+from acorn.config import default_config_path, default_index_dir
 
 app = typer.Typer(
     name="acorn",
@@ -51,7 +51,6 @@ def index(
 ) -> None:
     """Index documents under ROOT (ad-hoc, single-root). For configured
     collections use ``acorn collection reindex <name>``."""
-    from acorn.config import default_index_dir
     from acorn.index import build_index
 
     written = build_index(roots=[root], index_dir=default_index_dir(), collection=collection)
@@ -75,13 +74,21 @@ def search(
     query: str,
     limit: int = 10,
     collection: str | None = typer.Option(None, "--collection", "-c"),
+    meta: str | None = typer.Option(
+        None, "--meta", help="Inline metadata-filter DSL (md hits only)."
+    ),
 ) -> None:
     """Search the index and print ranked file:locator snippets to stdout."""
-    from acorn.config import default_index_dir
+    from acorn.filter_dsl import FilterError
     from acorn.query import Searcher
 
     searcher = Searcher(index_dir=default_index_dir())
-    for hit in searcher.search(query, limit=limit, collection=collection):
+    try:
+        hits = searcher.search(query, limit=limit, collection=collection, metadata_filter=meta)
+    except FilterError as e:
+        typer.echo(f"invalid filter: {e.message} (col {e.column})", err=True)
+        raise typer.Exit(code=1) from e
+    for hit in hits:
         loc = ""
         if hit.page:
             loc = f":p.{hit.page}"
@@ -238,7 +245,7 @@ def collection_reindex(
     rebuild: bool = typer.Option(False, "--rebuild", help="Drop existing chunks first."),
 ) -> None:
     """Index (or re-index) a configured collection."""
-    from acorn.config import default_index_dir, load
+    from acorn.config import load
     from acorn.index import build_index_from_config
 
     cfg = load()
