@@ -70,8 +70,19 @@ REGISTRY: tuple[Action, ...] = (
         default_key="left",
         command="collapse",
         footer_label="Collapse",
-        contexts=("results",),
-        show_in_footer=False,  # discoverable; left arrow is intuitive
+        contexts=("results", "collections"),
+        show_in_footer=False,
+    ),
+    Action(
+        id="tree_smart_expand",
+        description="Expand the focused branch; if already expanded, move "
+        "the cursor onto its first child. Right-arrow companion to the "
+        "smart-collapse action.",
+        default_key="right",
+        command="expand",
+        footer_label="Expand",
+        contexts=("results", "collections"),
+        show_in_footer=False,
     ),
     Action(
         id="open_at_locator",

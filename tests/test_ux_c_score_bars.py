@@ -1,4 +1,15 @@
-"""UX-C: visual score bars next to numeric scores in result rows."""
+"""UX-C: score bars were tried and rejected.
+
+The bars rendered as visual artefacts at terminal width (the user
+called them "horrific aesthetically and useless functionally"), so
+the file/section labels no longer carry them. Numeric scores stay in
+the underlying ``Hit`` / ``FileGroup`` data for callers that want
+them; the labels show plain content only.
+
+The ``_score_bar`` helper survives because it's a pure function that
+might be useful for a future visualisation; these tests pin its
+output so we don't drift if we ever revive it.
+"""
 
 from __future__ import annotations
 
@@ -13,41 +24,33 @@ from acorn.tui.app import _score_bar
 
 
 def test_score_bar_full_at_max() -> None:
-    """A score equal to the max should render as 4 full blocks."""
     bar = _score_bar(score=10.0, max_score=10.0, width=4)
     assert bar == "████"
 
 
 def test_score_bar_empty_at_zero_max() -> None:
     """Defensive: a max of 0 (no scored results) shouldn't divide by zero —
-    return an empty bar."""
+    return blank cells preserving column alignment."""
     bar = _score_bar(score=0.0, max_score=0.0, width=4)
     assert bar == "    "
 
 
 def test_score_bar_proportional_in_middle() -> None:
-    """Half the max → bar should be roughly half full."""
+    """Half the max → bar should be roughly half full (3-5 cells of 8)."""
     bar = _score_bar(score=5.0, max_score=10.0, width=8)
-    # Visual count of "filled" cells (not whitespace) should be roughly 4 of 8.
     filled = sum(1 for c in bar if c != " ")
     assert 3 <= filled <= 5, f"expected ~half filled, got {bar!r}"
 
 
 @pytest.mark.asyncio
-async def test_results_tree_labels_include_score_bar(
-    fixtures_dir: Path, tmp_index_dir: Path
-) -> None:
-    """End-to-end: after a search, every file label in the results tree
-    should carry a score-bar glyph alongside the numeric score."""
+async def test_results_tree_labels_omit_score_bars(fixtures_dir: Path, tmp_index_dir: Path) -> None:
+    """The label format shouldn't carry block-graph glyphs — they read
+    as visual artefacts on most terminals and the user vetoed them."""
     build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
     app = AcornApp(index_dir=tmp_index_dir, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
-        labels = [str(c.label) for c in tree.root.children]
-        assert labels
-        # Any of the eighth-block bar characters should appear in at least
-        # one label.
-        bar_glyphs = set("▁▂▃▄▅▆▇█")
-        joined = "\n".join(labels)
-        assert any(g in joined for g in bar_glyphs), f"no score-bar glyph in: {joined!r}"
+        labels = "\n".join(str(c.label) for c in tree.root.children)
+        for glyph in "▁▂▃▄▅▆▇█":
+            assert glyph not in labels, f"label still carries {glyph!r}: {labels!r}"
