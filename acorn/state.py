@@ -32,9 +32,12 @@ class UiState:
     collapsed_panels: list[str] = field(default_factory=list)
     # Phase F filters. Empty kinds list = "all kinds"; ``filter_date`` of
     # ``"any"`` = "any date". Anything else is treated as a literal token
-    # for the DSL pre-pass (kind:pdf, mtime:week, …).
+    # for the DSL pre-pass (kind:pdf, mtime:week, …). ``filter_fuzzy``
+    # is the body-field Levenshtein distance applied at query time —
+    # 0 disables, 1 catches single-typo matches, 2 is more forgiving.
     filter_kinds: list[str] = field(default_factory=list)
     filter_date: str = "any"
+    filter_fuzzy: int = 0
 
 
 def load(path: Path | None = None) -> UiState:
@@ -56,12 +59,15 @@ def load(path: Path | None = None) -> UiState:
     filters = filters_raw if isinstance(filters_raw, dict) else {}
     raw_date = filters.get("date", "any")
     filter_date = raw_date if isinstance(raw_date, str) else "any"
+    raw_fuzzy = filters.get("fuzzy", 0)
+    filter_fuzzy = int(raw_fuzzy) if isinstance(raw_fuzzy, int) else 0
     return UiState(
         collections=[s for s in scope.get("collections", []) if isinstance(s, str)],
         sources=[s for s in scope.get("sources", []) if isinstance(s, str)],
         collapsed_panels=[s for s in panels.get("collapsed", []) if isinstance(s, str)],
         filter_kinds=[s for s in filters.get("kinds", []) if isinstance(s, str)],
         filter_date=filter_date,
+        filter_fuzzy=max(0, min(2, filter_fuzzy)),
     )
 
 
@@ -80,6 +86,7 @@ def save(state: UiState, path: Path | None = None) -> None:
     filters = tomlkit.table()
     filters["kinds"] = list(state.filter_kinds)
     filters["date"] = state.filter_date
+    filters["fuzzy"] = int(state.filter_fuzzy)
     doc["filters"] = filters
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(tomlkit.dumps(doc), encoding="utf-8")

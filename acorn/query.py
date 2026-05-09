@@ -171,8 +171,10 @@ class Searcher:
         limit: int,
         collection: str | None,
         active_sources: list[str] | None = None,
+        fuzzy_distance: int = 0,
     ) -> list[Hit]:
         from acorn.query_dsl import preprocess
+        from acorn.schema import F_BODY
 
         full_query = preprocess(query)
         if collection:
@@ -180,11 +182,17 @@ class Searcher:
         if active_sources:
             src_clause = " OR ".join(f'source_path:"{s}"' for s in active_sources)
             full_query = f"({src_clause}) AND ({full_query})"
-        parsed = self._index.parse_query(
-            full_query,
-            default_field_names=DEFAULT_SEARCH_FIELDS,
-            field_boosts=DEFAULT_FIELD_BOOSTS,
-        )
+        parse_kwargs: dict[str, object] = {
+            "default_field_names": DEFAULT_SEARCH_FIELDS,
+            "field_boosts": DEFAULT_FIELD_BOOSTS,
+        }
+        # tantivy-py's QueryParser doesn't honour ``term~N`` syntax for
+        # tokenized fields, but it accepts a ``fuzzy_fields`` mapping
+        # that auto-fuzzes every parsed term against the listed field.
+        # ``(prefix, distance, transposition_cost_one)`` per term.
+        if fuzzy_distance > 0:
+            parse_kwargs["fuzzy_fields"] = {F_BODY: (False, fuzzy_distance, True)}
+        parsed = self._index.parse_query(full_query, **parse_kwargs)  # type: ignore[arg-type]
         result = self._searcher.search(parsed, limit=limit)
 
         from acorn.struct import decode as decode_body_struct
@@ -226,12 +234,17 @@ class Searcher:
         collection: str | None,
         metadata_filter: str | None,
         active_sources: list[str] | None = None,
+        fuzzy_distance: int = 0,
     ) -> list[Hit]:
         """Return at least ``target`` hits, applying the optional metadata
         filter post-Tantivy with oversample-and-retry."""
         if metadata_filter is None:
             return self._raw_hits(
-                query, limit=target, collection=collection, active_sources=active_sources
+                query,
+                limit=target,
+                collection=collection,
+                active_sources=active_sources,
+                fuzzy_distance=fuzzy_distance,
             )
         from acorn.filter_dsl import compile_filter
 
@@ -244,6 +257,7 @@ class Searcher:
                 limit=target * oversample,
                 collection=collection,
                 active_sources=active_sources,
+                fuzzy_distance=fuzzy_distance,
             )
             survivors = [h for h in raw if _passes_meta_filter(h, predicate)]
             if len(survivors) >= target:
@@ -264,6 +278,7 @@ class Searcher:
         now: int | None = None,
         metadata_filter: str | None = None,
         active_sources: list[str] | None = None,
+        fuzzy_distance: int = 0,
     ) -> list[Hit]:
         """Return one Hit per file (the file's best-scored chunk).
 
@@ -281,6 +296,7 @@ class Searcher:
             collection=collection,
             metadata_filter=metadata_filter,
             active_sources=active_sources,
+            fuzzy_distance=fuzzy_distance,
         )
         if profile is not None:
             from acorn.rerank import RankingProfile, rerank_hits
@@ -345,6 +361,7 @@ class Searcher:
         now: int | None = None,
         metadata_filter: str | None = None,
         active_sources: list[str] | None = None,
+        fuzzy_distance: int = 0,
     ) -> list[FileGroup]:
         """Return ranked FileGroups, each with up to ``sections_per_file`` ranked
         section hits. ``active_sources`` narrows scope to chunks indexed
@@ -358,6 +375,7 @@ class Searcher:
             collection=collection,
             metadata_filter=metadata_filter,
             active_sources=active_sources,
+            fuzzy_distance=fuzzy_distance,
         )
         if profile is not None:
             from acorn.rerank import RankingProfile, rerank_hits

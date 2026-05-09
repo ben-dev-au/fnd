@@ -41,6 +41,12 @@ _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 # to the values so the panel renders without further lookup tables.
 _FILTER_KINDS: tuple[str, ...] = ("pdf", "docx", "pptx", "md", "txt")
 _FILTER_DATES: tuple[str, ...] = ("any", "today", "week", "month", "year")
+# Body-field Levenshtein distance ranges from 0 (exact) to 2 (heavy
+# typo tolerance). Tantivy's QueryParser silently ignores ``term~N``
+# on tokenized fields, so we set this via the ``fuzzy_fields`` kwarg
+# instead — every body term parsed under non-zero distance becomes
+# fuzzy automatically.
+_FILTER_FUZZY: tuple[int, ...] = (0, 1, 2)
 
 
 def _score_bar(  # pyright: ignore[reportUnusedFunction]
@@ -352,6 +358,7 @@ class AcornApp(App[None]):
             self._active_sources: list[str] = []
             self._filter_kinds: list[str] = []
             self._filter_date: str = "any"
+            self._filter_fuzzy: int = 0
         else:
             from acorn.state import load as _load_state
 
@@ -361,6 +368,7 @@ class AcornApp(App[None]):
             self._active_sources = list(saved.sources)
             self._filter_kinds = list(saved.filter_kinds)
             self._filter_date = saved.filter_date or "any"
+            self._filter_fuzzy = saved.filter_fuzzy
         self._initial_query = initial_query
         self._searcher: Searcher | None = None
         self._current_query: str = ""
@@ -618,6 +626,7 @@ class AcornApp(App[None]):
                 profile=self._ranking_profile,
                 metadata_filter=metadata_filter,
                 active_sources=list(self._active_sources) or None,
+                fuzzy_distance=self._filter_fuzzy,
             )
         except FilterError as e:
             self.notify(
@@ -1095,6 +1104,7 @@ class AcornApp(App[None]):
                 collapsed_panels=sorted(self._collapsed_panels),
                 filter_kinds=list(self._filter_kinds),
                 filter_date=self._filter_date,
+                filter_fuzzy=self._filter_fuzzy,
             )
         )
 
@@ -1204,6 +1214,20 @@ class AcornApp(App[None]):
                 data={"kind": "filter_value", "category": "date", "value": d},
             )
 
+        fuzzy_summary = "off" if self._filter_fuzzy == 0 else f"~{self._filter_fuzzy}"
+        fuzzy_node = tree.root.add(
+            f"Fuzzy            ({fuzzy_summary})",
+            data={"kind": "filter_category", "category": "fuzzy"},
+            expand="fuzzy" in was_expanded,
+        )
+        for f in _FILTER_FUZZY:
+            label = "off" if f == 0 else f"distance {f}"
+            marker = "●" if f == self._filter_fuzzy else "○"
+            fuzzy_node.add_leaf(
+                f"{marker}  {label}",
+                data={"kind": "filter_value", "category": "fuzzy", "value": str(f)},
+            )
+
         # Header tracks whether anything is filtering; the dim default
         # keeps the panel quiet when no filters are active.
         active_bits: list[str] = []
@@ -1211,6 +1235,8 @@ class AcornApp(App[None]):
             active_bits.append(f"{len(active_kinds)} kind{'s' if len(active_kinds) != 1 else ''}")
         if self._filter_date and self._filter_date != "any":
             active_bits.append(self._filter_date)
+        if self._filter_fuzzy > 0:
+            active_bits.append(f"fuzzy~{self._filter_fuzzy}")
         title = "Filters" if not active_bits else f"Filters — {', '.join(active_bits)}"
         tree.border_title = title
 
@@ -1239,6 +1265,11 @@ class AcornApp(App[None]):
                 self._filter_kinds.append(value)
         elif category == "date":
             self._filter_date = value
+        elif category == "fuzzy":
+            try:
+                self._filter_fuzzy = max(0, min(2, int(value)))
+            except ValueError:
+                return
         else:
             return
         self._refresh_filters_panel()
