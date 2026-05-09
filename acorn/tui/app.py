@@ -193,7 +193,12 @@ class AcornApp(App[None]):
     def on_mount(self) -> None:
         # Tokyo-night theme: muted blue/teal pastel palette per user request.
         self.theme = "tokyo-night"
-        self._searcher = Searcher(index_dir=self._index_dir)
+        try:
+            self._searcher = Searcher(index_dir=self._index_dir)
+        except (FileNotFoundError, RuntimeError):
+            # No index yet — the app still opens so the user can manage
+            # collections, then reindex outside or from the CLI.
+            self._searcher = None
         tree = self.query_one("#results_pane", Tree)
         tree.show_root = False
         tree.guide_depth = 2
@@ -547,6 +552,30 @@ class AcornApp(App[None]):
         wrapper = Vertical(palette_input, id="cmd_palette")
         self.mount(wrapper)
         palette_input.focus()
+
+    def action_open_collections_form(self) -> None:
+        """Push the Collections screen for browsing / editing collections."""
+        from acorn.config import default_config_path
+        from acorn.tui.collections_screen import CollectionsScreen
+
+        # Use the config that was loaded at TUI launch as the starting point;
+        # the screen will reload from disk before showing to pick up any
+        # external edits.
+        if self._config is None:
+            return
+        screen = CollectionsScreen(self._config, config_path=default_config_path())
+        self.push_screen(screen, callback=self._on_collections_form_dismissed)
+
+    def _on_collections_form_dismissed(self, _result: object) -> None:
+        """The form may have written changes to disk; reload our cached
+        Config so subsequent searches use the new collection set."""
+        from acorn.config import load
+
+        self._config = load()
+        # Recompute ranking profile in case the active collection's profile
+        # was edited.
+        self._ranking_profile = self._resolve_profile()
+        self._refresh_status()
 
     @on(Input.Submitted, "#cmd_palette_input")
     def _on_palette_submit(self, ev: Input.Submitted) -> None:
