@@ -16,7 +16,7 @@ import tomllib
 from pathlib import Path
 
 from platformdirs import user_data_dir
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _APP_NAME = "acorn"
 
@@ -49,13 +49,60 @@ def default_config_path() -> Path:
 # ── Schema ──────────────────────────────────────────────────────────────────
 
 
-class CollectionConfig(BaseModel):
-    """One named set of roots + filters."""
+class SourceConfig(BaseModel):
+    """One root path inside a collection with its own filter chain."""
 
+    path: Path
+    includes: list[str] = Field(default_factory=list)
+    excludes: list[str] = Field(default_factory=list)
+    follow_symlinks: bool = False
+    frontmatter_filter: str | None = None
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def _expand_path(cls, v: object) -> object:
+        return Path(str(v)).expanduser()
+
+    @field_validator("frontmatter_filter")
+    @classmethod
+    def _validate_filter(cls, v: str | None) -> str | None:
+        # Eagerly compile so a syntax error surfaces at config load with
+        # the parser's column. The compiled predicate is rebuilt on demand
+        # at index time — caching here would couple the model to runtime.
+        if v is None or not v.strip():
+            return None
+        from acorn.filter_dsl import FilterError, compile_filter
+
+        try:
+            compile_filter(v)
+        except FilterError as e:
+            raise ValueError(f"frontmatter_filter: {e.message} (col {e.column})") from e
+        return v
+
+
+class CollectionConfig(BaseModel):
+    """One named set of sources + collection-wide options.
+
+    A collection can be configured in two equivalent shapes:
+
+    * **New (recommended):** ``[[collections.X.sources]]`` — one TOML table
+      per source, each with its own includes/excludes/frontmatter_filter.
+    * **Legacy:** flat ``roots = [...]``, ``includes = [...]``,
+      ``excludes = [...]`` on the collection. Loader normalises this into
+      a single implicit source so downstream code only sees the new shape.
+
+    Mixing both forms on the same collection is rejected at load.
+    """
+
+    # New shape — primary going forward.
+    sources: list[SourceConfig] = Field(default_factory=list)
+
+    # Legacy shape — accepted for backward compat; reconciled below.
     roots: list[Path] = Field(default_factory=list)
     includes: list[str] = Field(default_factory=list)
     excludes: list[str] = Field(default_factory=list)
     follow_symlinks: bool = False
+
     ocr: bool = False  # phase 10 honours this
     ranking_profile: str = "default"
 
@@ -65,6 +112,40 @@ class CollectionConfig(BaseModel):
         if not isinstance(v, list):
             return v
         return [Path(str(p)).expanduser() for p in v]
+
+    @model_validator(mode="after")
+    def _normalise_sources(self) -> CollectionConfig:
+        # sources were explicitly provided alongside roots — only valid if roots
+        # is already empty (idempotent re-validation path is handled below).
+        if self.sources and self.roots:
+            # Check whether this is an already-normalised model being re-validated
+            # (e.g. when a CollectionConfig instance is nested inside Config()).
+            # In that case sources already reflect the promoted roots, so roots
+            # is stale — just clear it.
+            # A user who *intentionally* mixes [[sources]] + roots will have
+            # source paths that do NOT match the roots 1-for-1.
+            source_paths = {s.path for s in self.sources}
+            root_paths = {Path(str(r)).expanduser() for r in self.roots}
+            if root_paths <= source_paths:
+                # All roots are represented in sources → idempotent re-validation.
+                object.__setattr__(self, "roots", [])
+                return self
+            raise ValueError("collection mixes legacy 'roots' with 'sources'; pick one")
+        if not self.sources and self.roots:
+            # Promote legacy flat shape into a single implicit source.
+            implicit = [
+                SourceConfig(
+                    path=root,
+                    includes=list(self.includes),
+                    excludes=list(self.excludes),
+                    follow_symlinks=self.follow_symlinks,
+                )
+                for root in self.roots
+            ]
+            object.__setattr__(self, "sources", implicit)
+            # Clear roots so this model is idempotent across re-validation.
+            object.__setattr__(self, "roots", [])
+        return self
 
 
 class RankingProfileConfig(BaseModel):
