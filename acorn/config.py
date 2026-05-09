@@ -314,6 +314,23 @@ def write_collection(
     config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
 
 
+def delete_collection(*, config_path: Path, name: str) -> None:
+    """Remove ``[collections.<name>]`` and its ``[[sources]]`` array from
+    the TOML at ``config_path``. Idempotent: silently no-op if the
+    collection (or the file) is absent. Comments and unrelated tables
+    are preserved via ``tomlkit``."""
+    import tomlkit
+
+    if not config_path.exists():
+        return
+    doc = tomlkit.parse(config_path.read_text(encoding="utf-8"))
+    collections = doc.get("collections")
+    if not collections or name not in collections:
+        return
+    del collections[name]
+    config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+
+
 STARTER_TEMPLATE = """\
 # acorn config — see plan §6 for the full schema.
 # Edit with `acorn config edit`.

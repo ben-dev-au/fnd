@@ -326,3 +326,22 @@ async def test_s_persists_changes_to_config_toml(
     assert "# user comment" in text
     out = load(cfg_path)
     assert len(out.collection("notes").sources) == 0
+
+
+@pytest.mark.asyncio
+async def test_d_deletes_with_confirmation(
+    cfg_three_collections: Config, tmp_index_dir: Path
+) -> None:
+    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f3")
+        await pilot.pause()
+        # Default selection: coursework. Press 'd' to delete.
+        await pilot.press("d")
+        await pilot.pause()
+        # Confirmation modal asks "Delete 'coursework'? [y/N]". Press y.
+        await pilot.press("y")
+        await pilot.pause()
+        screen = app.screen
+        assert "coursework" not in screen._config.collections  # type: ignore[attr-defined]

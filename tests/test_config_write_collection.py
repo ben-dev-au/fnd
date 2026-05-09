@@ -8,6 +8,7 @@ from pathlib import Path
 from acorn.config import (
     CollectionConfig,
     SourceConfig,
+    delete_collection,
     load,
     write_collection,
 )
@@ -94,3 +95,32 @@ def test_write_with_frontmatter_filter(tmp_path: Path) -> None:
     out = load(cfg_path)
     s = out.collection("notes").sources[0]
     assert s.frontmatter_filter == "Course == 'DPwC'"
+
+
+def test_delete_collection_removes_table(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        textwrap.dedent("""
+            # important
+            [[collections.papers.sources]]
+            path = "/tmp/papers"
+
+            [[collections.notes.sources]]
+            path = "/tmp/notes"
+        """),
+        encoding="utf-8",
+    )
+    delete_collection(config_path=cfg_path, name="notes")
+    out = load(cfg_path)
+    assert "papers" in out.collections
+    assert "notes" not in out.collections
+    text = cfg_path.read_text(encoding="utf-8")
+    assert "# important" in text
+
+
+def test_delete_missing_collection_is_idempotent(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text("", encoding="utf-8")
+    # Should not raise.
+    delete_collection(config_path=cfg_path, name="absent")
+    assert cfg_path.read_text(encoding="utf-8") == ""

@@ -33,6 +33,8 @@ class CollectionsScreen(Screen[None]):
         Binding("a", "add_source", "Add source", show=True),
         Binding("x", "remove_source", "Remove source", show=True),
         Binding("s", "save", "Save", show=True),
+        Binding("d", "delete_collection", "Delete", show=True),
+        Binding("n", "new_collection", "New", show=True),
     ]
 
     CSS = """
@@ -273,6 +275,123 @@ class CollectionsScreen(Screen[None]):
         editor_pane.remove_children()
         list_pane.mount_all(self._collection_rows())
         editor_pane.mount_all(self._editor_rows())
+
+    def action_delete_collection(self) -> None:
+        if self._selected is None:
+            return
+        name = self._selected
+        screen = _DeleteConfirmScreen(f"Delete collection '{name}' and remove its indexed chunks?")
+        self.app.push_screen(screen, callback=lambda r: self._on_delete_confirmed(name, r))
+
+    def _on_delete_confirmed(self, name: str, ok: bool | None) -> None:
+        if not ok:
+            return
+        from acorn.config import delete_collection
+        from acorn.index import _ensure_index
+        from acorn.schema import F_COLLECTION
+
+        # 1. Remove from on-disk config.
+        delete_collection(config_path=self._config_path, name=name)
+        # 2. Remove from in-memory Config so the form re-renders without it.
+        self._config.collections.pop(name, None)
+        self._initial.pop(name, None)
+        # 3. Drop chunks from the index.
+        try:
+            index = _ensure_index(self.app._index_dir)  # type: ignore[attr-defined]
+            writer = index.writer(heap_size=50_000_000)
+            writer.delete_documents(F_COLLECTION, name)
+            writer.commit()
+            writer.wait_merging_threads()
+        except Exception as e:
+            self.app.notify(f"Failed to drop chunks: {e}", severity="error")
+        # 4. Update selection.
+        names = sorted(self._config.collections.keys())
+        self._selected = names[0] if names else None
+        self._source_cursor = 0
+        self._refresh()
+        self.app.notify(f"Deleted {name}", severity="information")
+
+    def action_new_collection(self) -> None:
+        screen = _NewCollectionScreen()
+        self.app.push_screen(screen, callback=self._on_new_collection_named)
+
+    def _on_new_collection_named(self, name: str | None) -> None:
+        if not name:
+            return
+        if name in self._config.collections:
+            self.app.notify(f"Collection {name} already exists.", severity="warning")
+            return
+        from acorn.config import CollectionConfig
+
+        empty = CollectionConfig(sources=[])
+        self._config.collections[name] = empty
+        self._initial[name] = []
+        self._selected = name
+        self._source_cursor = 0
+        self._refresh()
+        self.app.notify(
+            f"Created {name}. Press 'a' to add a source, 's' to save.",
+            severity="information",
+        )
+
+
+class _DeleteConfirmScreen(Screen[bool]):
+    """Tiny y/N confirmation modal."""
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("y,Y", "yes", "Yes", show=True),
+        Binding("n,N,escape", "no", "No", show=True),
+    ]
+
+    CSS = """
+    _DeleteConfirmScreen { align: center middle; background: $surface 80%; }
+    #confirm_box { width: 60%; height: auto; border: round $error; padding: 1; background: $surface; }
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__()
+        self._message = message
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static(self._message),
+            Static("[y] yes   [N/Esc] no", classes="footer_hint"),
+            id="confirm_box",
+        )
+
+    def action_yes(self) -> None:
+        self.dismiss(True)
+
+    def action_no(self) -> None:
+        self.dismiss(False)
+
+
+class _NewCollectionScreen(Screen[str | None]):
+    """Tiny name-prompt for creating an empty collection."""
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape", "cancel", "Cancel", show=True),
+    ]
+
+    CSS = """
+    _NewCollectionScreen { align: center middle; background: $surface 80%; }
+    #new_collection_box { width: 60%; height: auto; border: round $accent; padding: 1; background: $surface; }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static("New collection name:"),
+            Input(id="new_collection_name", placeholder="e.g. research"),
+            Static("[Enter] create   [Esc] cancel", classes="footer_hint"),
+            id="new_collection_box",
+        )
+
+    def on_input_submitted(self, ev: Input.Submitted) -> None:
+        name = ev.value.strip()
+        self.dismiss(name or None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class SourceEditScreen(Screen[dict[str, object] | None]):
