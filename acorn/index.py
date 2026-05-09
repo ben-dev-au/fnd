@@ -13,6 +13,7 @@ from tantivy import Document, Index
 
 from acorn.config import CollectionConfig
 from acorn.extract import Chunk, extract
+from acorn.meta_blob import encode as encode_meta_blob
 from acorn.schema import (
     F_AUTHOR,
     F_BODY,
@@ -21,6 +22,7 @@ from acorn.schema import (
     F_COLLECTION,
     F_HEADING_PATH,
     F_KIND,
+    F_META_BLOB,
     F_MTIME,
     F_PAGE,
     F_PARENT_ID,
@@ -60,7 +62,7 @@ def _ensure_index(index_dir: Path) -> Index:
     return Index(schema, path=str(index_dir))
 
 
-def _doc_for_chunk(chunk: Chunk, *, collection: str) -> Document:
+def _doc_for_chunk(chunk: Chunk, *, collection: str, meta_blob_bytes: bytes = b"") -> Document:
     doc = Document()
     doc.add_text(F_PARENT_ID, chunk.parent_id)
     doc.add_text(F_COLLECTION, collection)
@@ -76,6 +78,7 @@ def _doc_for_chunk(chunk: Chunk, *, collection: str) -> Document:
     doc.add_unsigned(F_SLIDE, max(chunk.slide, 0))
     doc.add_unsigned(F_CHUNK_SEQ, max(chunk.chunk_seq, 0))
     doc.add_bytes(F_BODY_STRUCT, encode_body_struct(chunk.body_struct))
+    doc.add_bytes(F_META_BLOB, meta_blob_bytes)
     return doc
 
 
@@ -139,8 +142,14 @@ def build_index_from_config(
     Walks each source's filter chain via :func:`acorn.walk.walk_sources`
     and indexes the surviving paths. The legacy flat-shape config is
     auto-promoted to a single implicit source by the loader, so this
-    function only sees the new shape.
+    function only sees the new shape. For md files, frontmatter is read
+    once per file and serialized into ``meta_blob`` on every chunk so the
+    query-time post-filter (§5.5e-2) can decode + evaluate it.
     """
+    from acorn.frontmatter import (
+        FrontmatterParseError,
+        read_frontmatter_from_file,
+    )
     from acorn.walk import walk_sources
 
     index = _ensure_index(index_dir)
@@ -150,9 +159,19 @@ def build_index_from_config(
         writer.commit()
     written = 0
     for path in walk_sources(sources=config.sources):
+        meta_blob_bytes = b""
+        if path.suffix.lower() == ".md":
+            try:
+                fm = read_frontmatter_from_file(path)
+            except FrontmatterParseError:
+                fm = None
+            if fm:
+                meta_blob_bytes = encode_meta_blob(fm)
         writer.delete_documents(F_PARENT_ID, _path_parent_id(path))
         for chunk in extract(path):
-            writer.add_document(_doc_for_chunk(chunk, collection=collection))
+            writer.add_document(
+                _doc_for_chunk(chunk, collection=collection, meta_blob_bytes=meta_blob_bytes)
+            )
             written += 1
             if written % _COMMIT_BATCH == 0:
                 writer.commit()
