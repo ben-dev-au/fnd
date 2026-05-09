@@ -15,6 +15,7 @@ phase 7 adds reranker live-tuning.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -41,12 +42,6 @@ _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 # to the values so the panel renders without further lookup tables.
 _FILTER_KINDS: tuple[str, ...] = ("pdf", "docx", "pptx", "md", "txt")
 _FILTER_DATES: tuple[str, ...] = ("any", "today", "week", "month", "year")
-# Body-field Levenshtein distance ranges from 0 (exact) to 2 (heavy
-# typo tolerance). Tantivy's QueryParser silently ignores ``term~N``
-# on tokenized fields, so we set this via the ``fuzzy_fields`` kwarg
-# instead — every body term parsed under non-zero distance becomes
-# fuzzy automatically.
-_FILTER_FUZZY: tuple[int, ...] = (0, 1, 2)
 
 
 def _score_bar(  # pyright: ignore[reportUnusedFunction]
@@ -112,50 +107,62 @@ def _build_label(text: str, score: float, max_score: float) -> Any:
     return label
 
 
-def _trim_redundant_heading(heading_path: str, title: str, path: str) -> str:
-    """Strip leading segments that just repeat the filename or H1 title.
+_NON_WORD_RE = re.compile(r"[^a-z0-9]+")
 
-    Markdown notes commonly nest every section under a single H1 that
-    matches the file basename. The result tree's parent row already
-    shows the filename, so prefixing every section row with the same
-    word is just clutter. Drop matching leading segments and return
-    whatever's left (possibly empty).
+
+def _trim_redundant_heading(heading_path: str, title: str, path: str) -> str:
+    """Strip leading segments that just repeat words from the filename or
+    title. The result tree's parent row already shows the filename, so
+    prefixing every section row with the same words is just clutter.
+
+    A leading ``Templates`` segment is dropped when ``Templates`` also
+    appears as a word in the file basename (``DPC Wk8 Notes - Templates,
+    Strategy Pattern & C++ Streams``) or in the title — covers both the
+    pure ``# Templates`` H1 case and the deep multi-word filename case.
     """
     if not heading_path:
         return ""
 
-    def _norm(s: str) -> str:
-        return "".join(ch for ch in s.lower() if ch.isalnum())
+    def _words(s: str) -> set[str]:
+        return {w for w in _NON_WORD_RE.split(s.lower()) if w}
 
     parts = [p.strip() for p in heading_path.split(">") if p.strip()]
-    redundant = {_norm(Path(path).stem)}
-    if title:
-        redundant.add(_norm(title))
-    while parts and _norm(parts[0]) in redundant:
+    haystack = _words(Path(path).stem) | _words(title or "")
+    # If every segment is just a word from the filename / title, the
+    # whole crumb is redundant — keep the deepest one as the location
+    # marker, or drop it entirely when there's only one segment so the
+    # caller can fall back to a chunk locator.
+    if parts and all(_words(p).issubset(haystack) for p in parts):
+        return parts[-1] if len(parts) > 1 else ""
+    while parts and _words(parts[0]).issubset(haystack):
         parts.pop(0)
     return " > ".join(parts)
 
 
+def _shorten(text: str, limit: int) -> str:
+    """Truncate ``text`` to ``limit`` chars with an ellipsis suffix."""
+    text = text.strip().replace("\n", " ")
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
+
+
 def _format_hit_label(h: Hit, *, max_score: float = 0.0) -> Any:
+    """Result-tree row label: short locator left, snippet right.
+
+    Locator is a few chars (page / slide / trimmed heading / chunk N)
+    so the body snippet — the actually useful context for "is this
+    the match I want" — claims most of the row width.
+    """
     if h.page:
         loc = f"p.{h.page}"
     elif h.slide:
         loc = f"s.{h.slide}"
     else:
-        # No heading left after stripping the filename/title prefix
-        # (or no heading at all): fall back to the chunk locator so
-        # every section row carries a unique position marker.
         trimmed = _trim_redundant_heading(h.heading_path, h.title, h.path)
-        loc = f"§ {trimmed}" if trimmed else f"chunk {h.chunk_seq + 1}"
-    # A snippet from the chunk body adds context — much more useful
-    # than repeating the heading (which often matches the file's
-    # title for shallow-headed markdown notes).
-    snippet = h.snippet.strip().replace("\n", " ") if h.snippet else ""
-    if len(snippet) > 60:
-        snippet = snippet[:60].rstrip() + "…"
+        loc = _shorten(trimmed, 18) if trimmed else f"§{h.chunk_seq + 1}"
+    snippet = _shorten(h.snippet, 80) if h.snippet else ""
     body = f"{loc}  {snippet}" if snippet else loc
-    # Per-pass glyph (§9c): exact / fuzzy / synonym. Suppressed for the
-    # exact pass to keep the common case visually quiet.
     glyph = _PASS_GLYPHS.get(h.pass_index, "")
     pass_marker = f" {glyph}" if h.pass_index > 0 else ""
     return _build_label(f"{body}{pass_marker}", h.score, max_score)
@@ -235,27 +242,42 @@ class AcornApp(App[None]):
     Screen { background: $surface; }
     #query_bar { height: 1; padding: 0 1; border: none; }
     #footer_hints { dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted; }
-    /* Slim, lazygit-style scrollbars; horizontal scrolling disabled
-       because long file names truncate cleanly and a 1-cell horizontal
-       bar at the foot of every pane is just visual noise. */
-    * { scrollbar-size-vertical: 1; scrollbar-size-horizontal: 1; }
+    /* Lazygit-thin scrollbars: 1 cell wide, no track background, the
+       thumb a muted accent so it disappears against the border until
+       you actually need it. */
+    * {
+        scrollbar-size-vertical: 1;
+        scrollbar-size-horizontal: 1;
+        scrollbar-background: $surface;
+        scrollbar-background-active: $surface;
+        scrollbar-background-hover: $surface;
+        scrollbar-color: $primary 60%;
+        scrollbar-color-active: $accent;
+        scrollbar-color-hover: $accent 70%;
+        scrollbar-corner-color: $surface;
+    }
     /* Pane borders dim by default, brighten when the pane (or any
-       descendant) is focused — lazygit's active-section convention. */
+       descendant) is focused — lazygit's active-section convention.
+       Results expands to fill remaining space; Collections + Filters
+       size to their content so each panel stays exactly as tall as
+       its rows demand. */
     #results_column { width: 1fr; height: 1fr; }
     #results_pane {
-        width: 100%; height: 2fr;
+        width: 100%; height: 1fr;
         border: round $primary 50%;
         overflow-x: hidden;
     }
     #results_pane:focus-within { border: round $accent; }
     #collections_panel_tree {
-        width: 100%; height: 1fr;
+        width: 100%; height: auto;
+        max-height: 50%;
         border: round $primary 50%;
         overflow-x: hidden;
     }
     #collections_panel_tree:focus-within { border: round $accent; }
     #filters_panel_tree {
-        width: 100%; height: 1fr;
+        width: 100%; height: auto;
+        max-height: 50%;
         border: round $primary 50%;
         overflow-x: hidden;
     }
@@ -265,35 +287,18 @@ class AcornApp(App[None]):
     #results_pane.collapsed,
     #collections_panel_tree.collapsed,
     #filters_panel_tree.collapsed { height: 3; }
-    /* Preview area: bordered VerticalScroll on the left, a thin
-       1-column minimap on the right that paints accent markers at
-       chunk positions containing matches. The wrapper keeps the
-       minimap visually attached to the preview without intruding
-       on the scrollable area. */
-    #preview_wrap { width: 2fr; height: 1fr; layout: horizontal; }
     #preview_pane {
-        width: 1fr; height: 1fr;
+        width: 2fr; height: 1fr;
         border: round $primary 50%;
         padding: 0 0 0 1;
     }
     #preview_pane:focus-within { border: round $accent; }
-    #match_minimap {
-        width: 2; height: 1fr;
-        padding: 0;
-        background: $surface;
-        color: $accent;
-        content-align: center top;
-    }
     .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
     .chunk-section { padding: 0 0 1 0; height: auto; }
     .chunk-header { padding: 1 0 0 0; }
     .chunk-line { padding: 0 0 0 0; height: auto; }
     .chunk-line-match { background: $accent 8%; }
     .chunk-section-focused { background: $accent 15%; }
-    /* Chunks with any match get an accent left-bar — an at-a-glance
-       signal in the preview pane (and against the scrollbar as the
-       user scrolls) of where the matches live. */
-    .chunk-has-match { border-left: thick $accent; padding-left: 1; }
     #placeholder { color: $text-muted; }
     #help_overlay {
         layer: overlay;
@@ -358,7 +363,6 @@ class AcornApp(App[None]):
             self._active_sources: list[str] = []
             self._filter_kinds: list[str] = []
             self._filter_date: str = "any"
-            self._filter_fuzzy: int = 0
         else:
             from acorn.state import load as _load_state
 
@@ -368,7 +372,6 @@ class AcornApp(App[None]):
             self._active_sources = list(saved.sources)
             self._filter_kinds = list(saved.filter_kinds)
             self._filter_date = saved.filter_date or "any"
-            self._filter_fuzzy = saved.filter_fuzzy
         self._initial_query = initial_query
         self._searcher: Searcher | None = None
         self._current_query: str = ""
@@ -411,12 +414,9 @@ class AcornApp(App[None]):
                 yield Tree("Filters", id="filters_panel_tree")
             # Preview pane: VerticalScroll containing one Static per chunk
             # so scroll_to_widget targets the exact chunk regardless of how
-            # text wraps visually. Sibling ``#match_minimap`` is the thin
-            # accent strip painted with chunk-match markers (Phase D).
-            with Horizontal(id="preview_wrap"):
-                with VerticalScroll(id="preview_pane"):
-                    yield Static("Type a query and press Enter.", id="placeholder")
-                yield Static("", id="match_minimap")
+            # text wraps visually.
+            with VerticalScroll(id="preview_pane"):
+                yield Static("Type a query and press Enter.", id="placeholder")
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
@@ -626,7 +626,6 @@ class AcornApp(App[None]):
                 profile=self._ranking_profile,
                 metadata_filter=metadata_filter,
                 active_sources=list(self._active_sources) or None,
-                fuzzy_distance=self._filter_fuzzy,
             )
         except FilterError as e:
             self.notify(
@@ -707,10 +706,6 @@ class AcornApp(App[None]):
             self._mount_chunks_for_file(parent_id, chunks)
             self._preview_parent_id = parent_id
             self._refresh_status()
-            # Minimap reflects per-chunk match positions for the file
-            # currently in the preview pane; defer a tick so the pane
-            # has a known height to map proportional positions against.
-            self.call_after_refresh(self._refresh_minimap)
 
         self._scroll_preview_to_chunk(focus_chunk_seq)
 
@@ -763,8 +758,6 @@ class AcornApp(App[None]):
             if has_match and first_match is None:
                 first_match = line_w
         self._match_targets[c.chunk_seq] = first_match or header_w
-        if first_match is not None:
-            header_w.add_class("chunk-has-match")
 
     def _mount_markdown_chunk(self, pane: VerticalScroll, c: FileChunk) -> None:
         """Markdown chunks: pretty rendering for context, per-line layout
@@ -829,7 +822,6 @@ class AcornApp(App[None]):
         target = first_match or first_line
         if target is None:
             return
-        target.add_class("chunk-has-match")
         self._chunk_widgets[c.chunk_seq] = target
         self._match_targets[c.chunk_seq] = target
 
@@ -850,48 +842,6 @@ class AcornApp(App[None]):
     def _do_scroll_to_widget(self, widget: Static) -> None:
         pane = self.query_one("#preview_pane", VerticalScroll)
         pane.scroll_to_widget(widget, top=True, animate=False)
-
-    def _refresh_minimap(self) -> None:
-        """Paint the chunk-match minimap strip alongside the preview.
-
-        One row per visible cell, mapped proportionally to the file's
-        chunks: rows whose chunk contains a query-term match get an
-        accent ``▎`` glyph, the rest stay blank. Gives the user a
-        document-wide view of where the matches live, even when most
-        of them are outside the current scroll viewport — answers the
-        "scroll bar should mark match positions" feedback.
-        """
-        from rich.text import Text
-
-        from acorn.render import _term_stems, _terms_from_query, text_has_match
-
-        try:
-            minimap = self.query_one("#match_minimap", Static)
-            pane = self.query_one("#preview_pane", VerticalScroll)
-        except Exception:
-            return
-        chunks = self._chunk_cache.get(self._preview_parent_id) if self._preview_parent_id else None
-        if not chunks:
-            minimap.update(Text(""))
-            return
-        term_stems = _term_stems(_terms_from_query(self._current_query))
-        chunk_match = [
-            bool(term_stems and any(text_has_match(b.text, term_stems) for b in c.blocks))
-            for c in chunks
-        ]
-        if not any(chunk_match):
-            minimap.update(Text(""))
-            return
-        # Use the laid-out height so the strip aligns 1:1 with the
-        # scrollable area; fall back to a sensible default before
-        # first layout has settled.
-        height = pane.size.height or 30
-        n = len(chunks)
-        rows: list[str] = []
-        for i in range(height):
-            chunk_idx = min(int(i * n / height), n - 1)
-            rows.append("██" if chunk_match[chunk_idx] else "  ")
-        minimap.update(Text("\n".join(rows), style="bold #7aa2f7"))
 
     # ── Open / peek dispatch ──────────────────────────────────────
 
@@ -1104,7 +1054,6 @@ class AcornApp(App[None]):
                 collapsed_panels=sorted(self._collapsed_panels),
                 filter_kinds=list(self._filter_kinds),
                 filter_date=self._filter_date,
-                filter_fuzzy=self._filter_fuzzy,
             )
         )
 
@@ -1214,20 +1163,6 @@ class AcornApp(App[None]):
                 data={"kind": "filter_value", "category": "date", "value": d},
             )
 
-        fuzzy_summary = "off" if self._filter_fuzzy == 0 else f"~{self._filter_fuzzy}"
-        fuzzy_node = tree.root.add(
-            f"Fuzzy            ({fuzzy_summary})",
-            data={"kind": "filter_category", "category": "fuzzy"},
-            expand="fuzzy" in was_expanded,
-        )
-        for f in _FILTER_FUZZY:
-            label = "off" if f == 0 else f"distance {f}"
-            marker = "●" if f == self._filter_fuzzy else "○"
-            fuzzy_node.add_leaf(
-                f"{marker}  {label}",
-                data={"kind": "filter_value", "category": "fuzzy", "value": str(f)},
-            )
-
         # Header tracks whether anything is filtering; the dim default
         # keeps the panel quiet when no filters are active.
         active_bits: list[str] = []
@@ -1235,8 +1170,6 @@ class AcornApp(App[None]):
             active_bits.append(f"{len(active_kinds)} kind{'s' if len(active_kinds) != 1 else ''}")
         if self._filter_date and self._filter_date != "any":
             active_bits.append(self._filter_date)
-        if self._filter_fuzzy > 0:
-            active_bits.append(f"fuzzy~{self._filter_fuzzy}")
         title = "Filters" if not active_bits else f"Filters — {', '.join(active_bits)}"
         tree.border_title = title
 
@@ -1265,11 +1198,6 @@ class AcornApp(App[None]):
                 self._filter_kinds.append(value)
         elif category == "date":
             self._filter_date = value
-        elif category == "fuzzy":
-            try:
-                self._filter_fuzzy = max(0, min(2, int(value)))
-            except ValueError:
-                return
         else:
             return
         self._refresh_filters_panel()

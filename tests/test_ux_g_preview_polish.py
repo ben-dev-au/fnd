@@ -26,6 +26,17 @@ def test_trim_redundant_heading_strips_filename_prefix() -> None:
     assert out == "Iterators"
 
 
+def test_trim_redundant_heading_strips_word_in_long_filename() -> None:
+    """The filename can carry many words; if the leading heading segment
+    matches one of them it should still be stripped."""
+    out = _trim_redundant_heading(
+        "Templates > Strategy",
+        title="DPC Wk8 Notes - Templates, Strategy & C++ Streams",
+        path="/x/DPC Wk8 Notes - Templates, Strategy & C++ Streams.md",
+    )
+    assert out == "Strategy"
+
+
 def test_trim_redundant_heading_drops_when_only_filename() -> None:
     """A single-segment heading equal to the filename leaves nothing
     useful — caller falls back to a chunk locator."""
@@ -58,8 +69,11 @@ def test_format_hit_label_uses_chunk_locator_when_heading_redundant() -> None:
     )
     label = _format_hit_label(h, max_score=1.0)
     plain = label.plain  # rich.Text
-    assert "chunk 3" in plain, plain
-    assert "§ Templates" not in plain, plain
+    # Single-segment heading equal to the filename collapses to a
+    # ``§N`` chunk locator (no leading ``§ Templates`` since that just
+    # repeats the file row above).
+    assert "§3" in plain, plain
+    assert "Templates" not in plain.split("strategy")[0], plain
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -102,50 +116,6 @@ def md_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
     _write_md(a / "Notes.md", body)
     build_index(roots=[a], index_dir=tmp_index_dir, collection="notes")
     return tmp_index_dir
-
-
-@pytest.mark.asyncio
-async def test_minimap_widget_mounts(cfg_one: Config, md_index: Path) -> None:
-    """The minimap is part of the layout regardless of query state."""
-    app = AcornApp(index_dir=md_index, config=cfg_one)
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        # Should not raise.
-        app.query_one("#match_minimap", Static)
-
-
-@pytest.mark.asyncio
-async def test_minimap_paints_when_chunks_have_matches(cfg_one: Config, md_index: Path) -> None:
-    """After a match-bearing query renders, the minimap content is non-empty."""
-    app = AcornApp(
-        index_dir=md_index,
-        config=cfg_one,
-        collection="notes",
-        initial_query="glimmer",
-    )
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        tree = app.query_one("#results_pane", Tree)
-        tree.focus()
-        await pilot.pause()
-        # Drive a real cursor move so NodeHighlighted fires and the
-        # preview chunks actually mount.
-        await pilot.press("down")
-        await pilot.pause()
-        await pilot.press("up")
-        await pilot.pause()
-        # Force the minimap refresh — `call_after_refresh` already
-        # scheduled it, but pytest's pilot doesn't always flush that
-        # callback in time, so we invoke directly to keep the test
-        # deterministic.
-        app._refresh_minimap()
-        await pilot.pause()
-        minimap = app.query_one("#match_minimap", Static)
-        # ``Static.render()`` returns the current renderable (a Rich
-        # Text in our case); ``.plain`` is its un-styled string form.
-        rendered = minimap.render()
-        text = getattr(rendered, "plain", str(rendered))
-        assert "█" in text, text
 
 
 @pytest.mark.asyncio
