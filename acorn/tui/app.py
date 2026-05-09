@@ -35,6 +35,13 @@ from acorn.tui.actions import REGISTRY, Keymap, load_keymap, resolve_command
 
 _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 
+# Phase F filters: panel layout. ``kinds`` is multi-select (each value
+# toggles independently); ``date`` is a radio (single-select; selecting
+# a new value replaces the previous). The presentation labels live next
+# to the values so the panel renders without further lookup tables.
+_FILTER_KINDS: tuple[str, ...] = ("pdf", "docx", "pptx", "md", "txt")
+_FILTER_DATES: tuple[str, ...] = ("any", "today", "week", "month", "year")
+
 
 def _score_bar(  # pyright: ignore[reportUnusedFunction]
     *,
@@ -218,10 +225,17 @@ class AcornApp(App[None]):
         overflow-x: hidden;
     }
     #collections_panel_tree:focus-within { border: round $accent; }
+    #filters_panel_tree {
+        width: 100%; height: 1fr;
+        border: round $primary 50%;
+        overflow-x: hidden;
+    }
+    #filters_panel_tree:focus-within { border: round $accent; }
     /* Section collapse-to-header: Left at the panel root shrinks the
        whole panel down to its border-title strip. */
     #results_pane.collapsed,
-    #collections_panel_tree.collapsed { height: 3; }
+    #collections_panel_tree.collapsed,
+    #filters_panel_tree.collapsed { height: 3; }
     #preview_pane { width: 3fr; height: 1fr; border: round $primary 50%; padding: 0 1; }
     #preview_pane:focus-within { border: round $accent; }
     .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
@@ -296,6 +310,8 @@ class AcornApp(App[None]):
             self._collections: list[str] = [collection]
             self._collapsed_panels: set[str] = set()
             self._active_sources: list[str] = []
+            self._filter_kinds: list[str] = []
+            self._filter_date: str = "any"
         else:
             from acorn.state import load as _load_state
 
@@ -303,6 +319,8 @@ class AcornApp(App[None]):
             self._collections = list(saved.collections)
             self._collapsed_panels = set(saved.collapsed_panels)
             self._active_sources = list(saved.sources)
+            self._filter_kinds = list(saved.filter_kinds)
+            self._filter_date = saved.filter_date or "any"
         self._initial_query = initial_query
         self._searcher: Searcher | None = None
         self._current_query: str = ""
@@ -336,13 +354,13 @@ class AcornApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search…", id="query_bar", value=self._initial_query)
         with Horizontal():
-            # Left column: results on top, collections panel below.
+            # Left column: results on top, then Collections, then Filters.
             with Vertical(id="results_column"):
                 yield Tree("Results", id="results_pane")
-                # Single-widget panel — its border_title carries the
-                # "Collections — N/M active" header, matching the
-                # results-pane styling.
+                # Single-widget panels — each carries its summary in
+                # ``border_title``, matching the results-pane styling.
                 yield Tree("Collections", id="collections_panel_tree")
+                yield Tree("Filters", id="filters_panel_tree")
             # Preview pane: VerticalScroll containing one Static per chunk
             # so scroll_to_widget targets the exact chunk regardless of how
             # text wraps visually.
@@ -367,6 +385,11 @@ class AcornApp(App[None]):
         ctree.show_root = False
         ctree.guide_depth = 2
         self._refresh_collections_panel()
+        # Filters panel — kind/date selectors that compose into the query.
+        ftree = self.query_one("#filters_panel_tree", Tree)
+        ftree.show_root = False
+        ftree.guide_depth = 2
+        self._refresh_filters_panel()
         # Restore any panels the user collapsed-to-header in a previous
         # session.
         import contextlib
@@ -452,6 +475,8 @@ class AcornApp(App[None]):
                 return "results"
             if wid == "collections_panel_tree":
                 return "collections"
+            if wid == "filters_panel_tree":
+                return "filters"
             if wid == "preview_pane":
                 return "preview"
             node = getattr(node, "parent", None)
@@ -518,13 +543,28 @@ class AcornApp(App[None]):
             return
 
         self._current_query = query  # save the original (with [...]) for history
+        # Phase F: prepend the active panel filters so the DSL pre-pass
+        # turns date tokens into mtime ranges and Tantivy field-restricts
+        # on kind. Empty filters short-circuit so the unfiltered query
+        # path is unchanged.
+        filter_clauses: list[str] = []
+        if self._filter_kinds:
+            if len(self._filter_kinds) == 1:
+                filter_clauses.append(f"kind:{self._filter_kinds[0]}")
+            else:
+                filter_clauses.append(f"kind:({' '.join(sorted(self._filter_kinds))})")
+        if self._filter_date and self._filter_date != "any":
+            filter_clauses.append(f"mtime:{self._filter_date}")
+        filtered_lexical = (
+            f"{' '.join(filter_clauses)} {lexical}".strip() if filter_clauses else lexical
+        )
         # Multi-collection scoping: prefix with `c:a,b` so the DSL pre-pass
         # builds the correct (collection:"a" OR collection:"b") filter.
         if len(self._collections) >= 2:
-            scoped_query = f"c:{','.join(self._collections)} {lexical}"
+            scoped_query = f"c:{','.join(self._collections)} {filtered_lexical}"
             single_col = None
         else:
-            scoped_query = lexical
+            scoped_query = filtered_lexical
             single_col = self._collections[0] if self._collections else None
         try:
             self._groups = self._searcher.search_grouped(
@@ -808,6 +848,8 @@ class AcornApp(App[None]):
             return self.query_one("#results_pane", Tree)
         if ctx == "collections":
             return self.query_one("#collections_panel_tree", Tree)
+        if ctx == "filters":
+            return self.query_one("#filters_panel_tree", Tree)
         return None
 
     def action_tree_smart_collapse(self) -> None:
@@ -925,6 +967,8 @@ class AcornApp(App[None]):
                 collections=list(self._collections),
                 sources=list(self._active_sources),
                 collapsed_panels=sorted(self._collapsed_panels),
+                filter_kinds=list(self._filter_kinds),
+                filter_date=self._filter_date,
             )
         )
 
@@ -981,6 +1025,101 @@ class AcornApp(App[None]):
         if total_source_count and active_source_count:
             title += f", {active_source_count}/{total_source_count} sources"
         tree.border_title = title
+
+    # ── Filters panel (UX-F) ──────────────────────────────────────
+
+    def _refresh_filters_panel(self) -> None:
+        """Repopulate the Filters panel.
+
+        Two top-level branches: ``File type`` (multi-select) and
+        ``Date`` (radio). Each value row carries enough data on its
+        node to round-trip back to ``_on_filters_panel_selected``
+        without re-parsing labels.
+        """
+        try:
+            tree = self.query_one("#filters_panel_tree", Tree)
+        except Exception:
+            return
+        # Preserve which branches the user had open so a refresh after a
+        # toggle doesn't snap the panel back to all-collapsed.
+        was_expanded: set[str] = set()
+        for branch in tree.root.children:
+            data = branch.data if isinstance(branch.data, dict) else {}
+            cat = data.get("category")
+            if isinstance(cat, str) and branch.is_expanded:
+                was_expanded.add(cat)
+        tree.show_root = False
+        tree.clear()
+
+        active_kinds = set(self._filter_kinds)
+        kind_summary = f"{len(active_kinds)} of {len(_FILTER_KINDS)}" if active_kinds else "any"
+        kind_node = tree.root.add(
+            f"File type        ({kind_summary})",
+            data={"kind": "filter_category", "category": "kinds"},
+            expand="kinds" in was_expanded,
+        )
+        for k in _FILTER_KINDS:
+            marker = "●" if k in active_kinds else "○"
+            kind_node.add_leaf(
+                f"{marker}  {k}",
+                data={"kind": "filter_value", "category": "kinds", "value": k},
+            )
+
+        date_summary = self._filter_date or "any"
+        date_node = tree.root.add(
+            f"Date             ({date_summary})",
+            data={"kind": "filter_category", "category": "date"},
+            expand="date" in was_expanded,
+        )
+        for d in _FILTER_DATES:
+            marker = "●" if d == self._filter_date else "○"
+            date_node.add_leaf(
+                f"{marker}  {d}",
+                data={"kind": "filter_value", "category": "date", "value": d},
+            )
+
+        # Header tracks whether anything is filtering; the dim default
+        # keeps the panel quiet when no filters are active.
+        active_bits: list[str] = []
+        if active_kinds:
+            active_bits.append(f"{len(active_kinds)} kind{'s' if len(active_kinds) != 1 else ''}")
+        if self._filter_date and self._filter_date != "any":
+            active_bits.append(self._filter_date)
+        title = "Filters" if not active_bits else f"Filters — {', '.join(active_bits)}"
+        tree.border_title = title
+
+    @on(Tree.NodeSelected, "#filters_panel_tree")
+    def _on_filters_panel_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
+        """Enter on a filter value toggles it.
+
+        - File type: each value toggles independently (multi-select).
+        - Date: selecting a value replaces the previous (radio); picking
+          ``any`` clears the filter.
+        - Selecting a category row is a no-op; expand/collapse is the
+          tree's native behaviour for those.
+        """
+        data = ev.node.data or {}
+        kind = data.get("kind")
+        if kind != "filter_value":
+            return
+        category = str(data.get("category") or "")
+        value = str(data.get("value") or "")
+        if not category or not value:
+            return
+        if category == "kinds":
+            if value in self._filter_kinds:
+                self._filter_kinds.remove(value)
+            else:
+                self._filter_kinds.append(value)
+        elif category == "date":
+            self._filter_date = value
+        else:
+            return
+        self._refresh_filters_panel()
+        self._refresh_status()
+        self._persist_state()
+        if self._current_query:
+            self._run_query(self._current_query)
 
     @on(Tree.NodeSelected, "#collections_panel_tree")
     def _on_collections_panel_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
