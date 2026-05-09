@@ -36,3 +36,40 @@ def test_old_index_sidecar_refuses_load(tmp_path: Path) -> None:
     sidecar.write_text("1")
     with pytest.raises(RuntimeError, match="schema version"):
         _ensure_index(tmp_path)
+
+
+def test_force_rebuild_wipes_stale_index_dir(tmp_path: Path) -> None:
+    """``force=True`` is the rebuild path: it must clear leftover Tantivy
+    files so a new index can be opened under the current schema. A stale
+    sidecar alone isn't enough — Tantivy stores the schema in
+    ``meta.json`` too, and the constructor refuses to open a mismatched
+    dir.
+
+    Verifies that a stale dir with a non-matching ``meta.json`` doesn't
+    cause Tantivy to raise; the rebuild path clears the dir then opens
+    a fresh index. (Tantivy regenerates its own ``meta.json`` after the
+    wipe — that's expected.)
+    """
+    from acorn.index import _ensure_index
+
+    sidecar = tmp_path / ".acorn-schema-version"
+    sidecar.write_text("1")
+    # Simulate leftover artefacts from a v1 index. ``meta.json`` with
+    # a mismatched schema is what triggered the original bug.
+    (tmp_path / "meta.json").write_text(
+        '{"schema": [{"name": "old_field", "type": "text"}]}',
+        encoding="utf-8",
+    )
+    (tmp_path / "0001.fast").write_bytes(b"\x00\x01\x02")
+    nested = tmp_path / "subdir-from-old-segment"
+    nested.mkdir()
+    (nested / "x").write_text("y")
+
+    # Should not raise — the rebuild path wipes and reinitialises.
+    _ensure_index(tmp_path, force=True)
+
+    # Sidecar now matches current version.
+    assert sidecar.read_text().strip() == str(SCHEMA_VERSION)
+    # The stale subtree we created is gone (Tantivy creates its own
+    # fresh files; the user's leftover dirs are not preserved).
+    assert not nested.exists()
