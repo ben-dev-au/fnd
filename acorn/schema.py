@@ -33,11 +33,12 @@ from typing import Final
 from tantivy import Schema, SchemaBuilder
 
 # Bump on any field-shape change; indexer refuses to open a stale index.
-SCHEMA_VERSION: Final[int] = 2
+SCHEMA_VERSION: Final[int] = 3
 
 # Field-name constants so callers don't sprinkle string literals.
 F_PARENT_ID: Final = "parent_id"
 F_COLLECTION: Final = "collection"
+F_SOURCE_PATH: Final = "source_path"
 F_PATH: Final = "path"
 F_PATH_TOKENS: Final = "path_tokens"
 F_MTIME: Final = "mtime"
@@ -70,6 +71,7 @@ def build_schema() -> Schema:
     # Exact-match identifiers (raw tokenizer = single-term).
     sb.add_text_field(F_PARENT_ID, stored=True, fast=True, tokenizer_name="raw")
     sb.add_text_field(F_COLLECTION, stored=True, fast=True, tokenizer_name="raw")
+    sb.add_text_field(F_SOURCE_PATH, stored=True, fast=True, tokenizer_name="raw")
     sb.add_text_field(F_KIND, stored=True, fast=True, tokenizer_name="raw")
 
     # Display-only path; raw tokenizer keeps it stored without weird tokenization.
