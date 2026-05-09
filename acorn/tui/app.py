@@ -105,8 +105,12 @@ class AcornApp(App[None]):
     Screen { background: $surface; }
     #query_bar { height: 3; padding: 0 1; }
     #status_bar { dock: top; height: 1; background: $panel; padding: 0 1; color: $text-muted; }
-    #results_pane { width: 1fr; height: 1fr; border: round $primary; }
-    #preview_pane { width: 2fr; height: 1fr; border: round $primary; padding: 1 2; }
+    /* Pane borders dim by default, brighten when the pane (or any
+       descendant) is focused — lazygit's active-section convention. */
+    #results_pane { width: 1fr; height: 1fr; border: round $primary 50%; }
+    #results_pane:focus-within { border: round $accent; }
+    #preview_pane { width: 2fr; height: 1fr; border: round $primary 50%; padding: 1 2; }
+    #preview_pane:focus-within { border: round $accent; }
     .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
     .chunk-section { padding: 0 0 1 0; height: auto; }
     .chunk-header { padding: 1 0 0 0; }
@@ -223,6 +227,8 @@ class AcornApp(App[None]):
         tree = self.query_one("#results_pane", Tree)
         tree.show_root = False
         tree.guide_depth = 2
+        # Initial border titles — refreshed live as the user searches.
+        self._refresh_status()
         if self._initial_query:
             self._run_query(self._initial_query)
         self.query_one("#query_bar", Input).focus()
@@ -253,12 +259,34 @@ class AcornApp(App[None]):
 
     def _status_text(self) -> str:
         col = ",".join(self._collections) if self._collections else "all"
+        return f" acorn  [{col}]"
+
+    def _results_title(self) -> str:
+        """Border title for the results pane — counts live next to the data
+        they describe, not in a global status bar."""
         n_files = len(self._groups)
         n_sections = sum(len(g.hits) for g in self._groups)
-        return f" acorn  [{col}]   {n_files} files / {n_sections} sections"
+        if not self._groups:
+            return "Results"
+        return f"Results — {n_files} files / {n_sections} sections"
+
+    def _preview_title(self) -> str:
+        """Border title for the preview pane — file basename + chunk count
+        for the document currently mounted there."""
+        if self._preview_parent_id is None:
+            return "Preview"
+        for g in self._groups:
+            if g.parent_id == self._preview_parent_id:
+                return f"Preview — {Path(g.path).name}"
+        return "Preview"
 
     def _refresh_status(self) -> None:
         self.query_one("#status_bar", Static).update(self._status_text())
+        try:
+            self.query_one("#results_pane", Tree).border_title = self._results_title()
+            self.query_one("#preview_pane").border_title = self._preview_title()
+        except Exception:
+            pass
 
     # ── Search flow ───────────────────────────────────────────────
 
@@ -367,6 +395,7 @@ class AcornApp(App[None]):
         if parent_id != self._preview_parent_id:
             self._mount_chunks_for_file(parent_id, chunks)
             self._preview_parent_id = parent_id
+            self._refresh_status()
 
         self._scroll_preview_to_chunk(focus_chunk_seq)
 
