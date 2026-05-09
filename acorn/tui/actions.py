@@ -34,6 +34,12 @@ class Action:
     command: str | None = None  # default = id; override for nicer names
     footer_label: str | None = None  # short label for the auto Footer
     show_in_footer: bool = True  # hide noisy actions from footer hints
+    # Contexts where this action is relevant for the focus-aware footer.
+    # ``()`` (the default) means "always show". Otherwise, only show when
+    # the app's focus context matches one of these values. Recognised
+    # contexts: ``"query"`` (query input focused), ``"results"`` (results
+    # tree focused), ``"preview"`` (preview pane focused).
+    contexts: tuple[str, ...] = ()
 
     @property
     def palette_command(self) -> str:
@@ -63,6 +69,7 @@ REGISTRY: tuple[Action, ...] = (
         default_key="o",
         command="open",
         footer_label="Open",
+        contexts=("results", "preview"),
     ),
     Action(
         id="open_default_app",
@@ -70,6 +77,8 @@ REGISTRY: tuple[Action, ...] = (
         default_key="O",
         command="open-default",
         footer_label="Default",
+        contexts=("results", "preview"),
+        show_in_footer=False,  # noisy alongside Open; reachable via palette
     ),
     Action(
         id="peek_focused",
@@ -77,6 +86,7 @@ REGISTRY: tuple[Action, ...] = (
         default_key="space",
         command="peek",
         footer_label="Peek",
+        contexts=("results", "preview"),
     ),
     Action(
         id="show_help",
@@ -91,13 +101,14 @@ REGISTRY: tuple[Action, ...] = (
         default_key="colon",
         command="palette",
         footer_label="Cmd",
+        show_in_footer=False,  # discoverable via help (?)
     ),
     Action(
         id="open_collection_picker",
         description="Toggle the collection picker (multi-select scope).",
         default_key="c",
         command="collections",
-        footer_label="Collections",
+        footer_label="Scope",
     ),
     Action(
         id="open_collections_form",
@@ -105,6 +116,7 @@ REGISTRY: tuple[Action, ...] = (
         default_key="f3",
         command="collections-form",
         footer_label="Manage",
+        show_in_footer=False,  # advanced; F3 listed in help overlay
     ),
     Action(
         id="quit",

@@ -22,7 +22,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Footer, Input, Label, SelectionList, Static, Tree
+from textual.widgets import Input, Label, SelectionList, Static, Tree
 from textual.widgets.selection_list import Selection
 from textual.widgets.tree import TreeNode
 
@@ -77,6 +77,26 @@ def _action_show(action_id: str) -> bool:
     return True
 
 
+_KEY_HINT_GLYPHS = {
+    "slash": "/",
+    "colon": ":",
+    "question_mark": "?",
+    "space": "␣",
+    "tab": "⇥",
+    "enter": "⏎",
+    "escape": "Esc",
+    "up": "↑",
+    "down": "↓",
+    "left": "←",
+    "right": "→",
+}
+
+
+def _format_key_hint(key: str) -> str:
+    """Pretty-print a binding key for the footer hint row."""
+    return _KEY_HINT_GLYPHS.get(key, key)
+
+
 class _PickerSelectionList(SelectionList[str]):
     """SelectionList with Enter rebound to "apply" rather than "toggle".
 
@@ -105,6 +125,7 @@ class AcornApp(App[None]):
     Screen { background: $surface; }
     #query_bar { height: 3; padding: 0 1; }
     #status_bar { dock: top; height: 1; background: $panel; padding: 0 1; color: $text-muted; }
+    #footer_hints { dock: bottom; height: 1; background: $panel; padding: 0 1; color: $text-muted; }
     /* Pane borders dim by default, brighten when the pane (or any
        descendant) is focused — lazygit's active-section convention. */
     #results_pane { width: 1fr; height: 1fr; border: round $primary 50%; }
@@ -213,7 +234,7 @@ class AcornApp(App[None]):
             # text wraps visually.
             with VerticalScroll(id="preview_pane"):
                 yield Static("Type a query and press Enter.", id="placeholder")
-        yield Footer()
+        yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
         # Tokyo-night theme: muted blue/teal pastel palette per user request.
@@ -287,6 +308,57 @@ class AcornApp(App[None]):
             self.query_one("#preview_pane").border_title = self._preview_title()
         except Exception:
             pass
+        self._refresh_footer_hints()
+
+    # ── Footer hints (focus-aware, lazygit-style) ─────────────────
+
+    def _focus_context(self) -> str:
+        """Resolve the current focus context for footer-hint filtering.
+
+        Returns one of ``"query"``, ``"results"``, ``"preview"``, or
+        ``"global"`` (when nothing app-relevant is focused, e.g. an
+        overlay)."""
+        focused = self.focused
+        if focused is None:
+            return "global"
+        # Walk the ancestor chain looking for a recognisable id.
+        node: Any | None = focused
+        while node is not None:
+            wid = getattr(node, "id", None)
+            if wid == "query_bar":
+                return "query"
+            if wid == "results_pane":
+                return "results"
+            if wid == "preview_pane":
+                return "preview"
+            node = getattr(node, "parent", None)
+        return "global"
+
+    def _refresh_footer_hints(self) -> None:
+        """Rebuild the footer-hints Static text from REGISTRY, filtered
+        by the current focus context. Capped at 6 hints — beyond that
+        it stops being a glance."""
+        ctx = self._focus_context()
+        hints: list[str] = []
+        for a in REGISTRY:
+            if not a.show_in_footer:
+                continue
+            if a.contexts and ctx not in a.contexts:
+                continue
+            key = self._acorn_keymap.for_action(a.id)
+            if not key:
+                continue
+            label = a.footer_label or _short_label(a.id)
+            hints.append(f"{_format_key_hint(key)}:{label}")
+            if len(hints) >= 6:
+                break
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self.query_one("#footer_hints", Static).update("   ".join(hints))
+
+    def on_descendant_focus(self) -> None:  # Textual fires this on focus changes
+        self._refresh_footer_hints()
 
     # ── Search flow ───────────────────────────────────────────────
 
