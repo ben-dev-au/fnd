@@ -100,6 +100,13 @@ REGISTRY: tuple[Action, ...] = (
         footer_label="Collections",
     ),
     Action(
+        id="open_collections_form",
+        description="Open the Collections form (add / edit / delete collections).",
+        default_key="f3",
+        command="collections-form",
+        footer_label="Manage",
+    ),
+    Action(
         id="quit",
         description="Quit acorn.",
         default_key="q",
