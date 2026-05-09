@@ -600,6 +600,38 @@ class AcornApp(App[None]):
         _, hit = target
         opener.peek(Path(hit.path))
 
+    def action_tree_smart_collapse(self) -> None:
+        """Lazygit-style ``left``-arrow handling for the results tree.
+
+        Rules:
+        - Leaf focused → collapse the parent, move cursor onto it.
+        - Expanded branch focused → collapse it (cursor stays put).
+        - Already-collapsed branch focused → walk up to its parent and
+          collapse that one (so repeated ``left`` presses keep backing
+          out one level at a time).
+        - Cursor on a top-level node with nothing to back out to → no-op.
+
+        Does nothing if the results tree isn't focused, so the binding
+        is safe at the app level.
+        """
+        if self._focus_context() != "results":
+            return
+        tree = self.query_one("#results_pane", Tree)
+        node = tree.cursor_node
+        if node is None:
+            return
+        # Leaf or already-collapsed: walk to parent and collapse it.
+        if not node.children or not node.is_expanded:
+            parent = node.parent
+            # tree.root is a hidden virtual root; treat it as "no parent".
+            if parent is None or parent is tree.root:
+                return
+            parent.collapse()
+            tree.move_cursor(parent)
+            return
+        # Expanded branch with children: collapse it in place.
+        node.collapse()
+
     def action_open_collection_picker(self) -> None:
         """Pop a SelectionList of all configured collections; user toggles
         which to include in the search scope, presses Enter to apply."""
