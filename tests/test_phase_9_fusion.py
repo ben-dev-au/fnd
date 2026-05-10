@@ -173,16 +173,17 @@ def test_auto_subqueries_empty_query_returns_empty() -> None:
 
 def test_parse_multi_input_basic() -> None:
     text = 'lex: susy breaking\nphrase: "soft breaking"\nsyn: susy'
-    subs = parse_multi_input(text, synonyms=None)
-    sources = [s.source for s in subs]
+    result = parse_multi_input(text, synonyms=None)
+    sources = [s.source for s in result.subqueries]
     assert sources == ["lex", "phrase", "syn"]
+    assert result.intent is None
 
 
 def test_parse_multi_input_uses_default_weights_per_source() -> None:
     """`lex:` defaults to weight 1.0, `phrase:` to 2.0, `syn:` to 0.6 —
     matching the auto-mode weights in §9d."""
-    subs = parse_multi_input('lex: a\nphrase: "b c"\nsyn: a', synonyms=None)
-    by_source = {s.source: s for s in subs}
+    result = parse_multi_input('lex: a\nphrase: "b c"\nsyn: a', synonyms=None)
+    by_source = {s.source: s for s in result.subqueries}
     assert by_source["lex"].weight == pytest.approx(1.0)
     assert by_source["phrase"].weight == pytest.approx(2.0)
     assert by_source["syn"].weight == pytest.approx(0.6)
@@ -190,22 +191,22 @@ def test_parse_multi_input_uses_default_weights_per_source() -> None:
 
 def test_parse_multi_input_phrase_quotes_value_if_unquoted() -> None:
     """`phrase: foo bar` (no quotes) becomes the Tantivy phrase `"foo bar"`."""
-    subs = parse_multi_input("phrase: foo bar", synonyms=None)
-    assert subs[0].query == '"foo bar"'
+    result = parse_multi_input("phrase: foo bar", synonyms=None)
+    assert result.subqueries[0].query == '"foo bar"'
 
 
 def test_parse_multi_input_syn_uses_synonym_table_to_expand() -> None:
     """A `syn:` line must expand against the supplied table."""
     table = SynonymTable.from_groups([["susy", "supersymmetry"]])
-    subs = parse_multi_input("syn: susy", synonyms=table)
-    assert "supersymmetry" in subs[0].query
+    result = parse_multi_input("syn: susy", synonyms=table)
+    assert "supersymmetry" in result.subqueries[0].query
 
 
 def test_parse_multi_input_skips_blank_lines_and_unknown_prefixes() -> None:
     """Lines without a recognised prefix (or blanks/comments) are ignored."""
     text = "\n# a comment\nlex: a\n\nbogus: b\nlex: c\n"
-    subs = parse_multi_input(text, synonyms=None)
-    queries = [s.query for s in subs]
+    result = parse_multi_input(text, synonyms=None)
+    queries = [s.query for s in result.subqueries]
     assert queries == ["a", "c"]
 
 

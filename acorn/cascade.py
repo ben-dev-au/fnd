@@ -36,6 +36,7 @@ def _fuzzy_pass(
     limit: int,
     collection: str | None,
     active_sources: list[str] | None = None,
+    intent: str | None = None,
 ) -> list[Hit]:
     """Build a Boolean query of fuzzy term queries (distance=1) over the
     body field, AND-combined so all query terms must fuzzy-match.
@@ -80,7 +81,7 @@ def _fuzzy_pass(
         subqueries.append((tantivy.Occur.Must, tantivy.Query.boolean_query(source_subqueries)))
     bq = tantivy.Query.boolean_query(subqueries)
     result = searcher._searcher.search(bq, limit=limit)
-    return _materialize_hits(searcher, result.hits, query=query)
+    return _materialize_hits(searcher, result.hits, query=query, intent=intent)
 
 
 def _materialize_hits(
@@ -88,6 +89,7 @@ def _materialize_hits(
     pairs: list[tuple[float, tantivy.DocAddress]],
     *,
     query: str,
+    intent: str | None = None,
 ) -> list[Hit]:
     """Turn a (score, doc-address) list from a typed-API search into Hits.
 
@@ -118,7 +120,7 @@ def _materialize_hits(
                 slide=_first_int(doc, "slide"),
                 heading_path=_first_str(doc, "heading_path"),
                 title=_first_str(doc, "title"),
-                snippet=_make_snippet(body_text, query),
+                snippet=_make_snippet(body_text, query, intent=intent),
                 chunk_seq=_first_int(doc, "chunk_seq"),
                 mtime=_first_int(doc, "mtime"),
                 meta_blob=meta_blob_bytes,
@@ -138,6 +140,7 @@ def cascade_search(
     synonyms: SynonymTable | None = ...,
     metadata_filter: str | None = ...,
     active_sources: list[str] | None = ...,
+    intent: str | None = ...,
     with_trace: Literal[False] = False,
 ) -> list[Hit]: ...
 
@@ -153,6 +156,7 @@ def cascade_search(
     synonyms: SynonymTable | None = ...,
     metadata_filter: str | None = ...,
     active_sources: list[str] | None = ...,
+    intent: str | None = ...,
     with_trace: Literal[True],
 ) -> tuple[list[Hit], CascadeTrace]: ...
 
@@ -167,6 +171,7 @@ def cascade_search(
     synonyms: SynonymTable | None = None,
     metadata_filter: str | None = None,
     active_sources: list[str] | None = None,
+    intent: str | None = None,
     with_trace: bool = False,
 ) -> list[Hit] | tuple[list[Hit], CascadeTrace]:
     """Run literal → fuzzy → synonym passes until ``threshold`` hits found.
@@ -222,6 +227,7 @@ def cascade_search(
         collection=collection,
         metadata_filter=metadata_filter,
         active_sources=active_sources,
+        intent=intent,
     )
     new_count = _ingest(raw, 0)
     if with_trace:
@@ -247,6 +253,7 @@ def cascade_search(
         limit=pass_target,
         collection=collection,
         active_sources=active_sources,
+        intent=intent,
     )
     fuzzy_raw = _apply_metadata_filter(fuzzy_raw, metadata_filter)
     new_count = _ingest(fuzzy_raw, 1)
@@ -274,6 +281,7 @@ def cascade_search(
                 collection=collection,
                 metadata_filter=metadata_filter,
                 active_sources=active_sources,
+                intent=intent,
             )
             new_count = _ingest(raw, 2)
             if with_trace:

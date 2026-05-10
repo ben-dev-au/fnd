@@ -124,8 +124,21 @@ def _first_int(doc: object, field: str) -> int:
     return int(val)
 
 
-def _make_snippet(body_text: str, query: str, *, ctx: int = _SNIPPET_CTX) -> str:
-    """Return a short snippet centered on the first query-term match."""
+def _make_snippet(
+    body_text: str,
+    query: str,
+    *,
+    ctx: int = _SNIPPET_CTX,
+    intent: str | None = None,
+) -> str:
+    """Return a short snippet centered on the first query-term match.
+
+    When ``intent`` is supplied (UX-pass-4 §3), prefers a window whose
+    context overlaps with intent tokens — picks the first occurrence of
+    the query term whose ``±ctx/2`` window contains an intent token.
+    Falls back to the first occurrence when no intent-aware candidate
+    is found.
+    """
     if not body_text:
         return ""
     lower = body_text.lower()
@@ -137,10 +150,33 @@ def _make_snippet(body_text: str, query: str, *, ctx: int = _SNIPPET_CTX) -> str
             break
     if not needle:
         return body_text[:ctx].strip()
-    pos = lower.find(needle)
-    start = max(0, pos - ctx // 2)
-    end = min(len(body_text), pos + ctx // 2)
-    snippet = body_text[start:end].replace("\n", " ").strip()
+
+    # All occurrences — only build the list when intent biasing is in play
+    # (collecting all matches when there's only one to consider is wasteful).
+    intent_tokens = [t for t in (intent or "").lower().split() if len(t) >= 3] if intent else []
+    if intent_tokens:
+        positions: list[int] = []
+        start = 0
+        while True:
+            i = lower.find(needle, start)
+            if i < 0:
+                break
+            positions.append(i)
+            start = i + len(needle)
+        chosen = positions[0]
+        for pos in positions:
+            lo = max(0, pos - ctx // 2)
+            hi = min(len(body_text), pos + ctx // 2)
+            window = lower[lo:hi]
+            if any(tok in window for tok in intent_tokens):
+                chosen = pos
+                break
+        pos = chosen
+    else:
+        pos = lower.find(needle)
+    start_idx = max(0, pos - ctx // 2)
+    end_idx = min(len(body_text), pos + ctx // 2)
+    snippet = body_text[start_idx:end_idx].replace("\n", " ").strip()
     return snippet
 
 
@@ -172,6 +208,7 @@ class Searcher:
         collection: str | None,
         active_sources: list[str] | None = None,
         fuzzy_distance: int = 0,
+        intent: str | None = None,
     ) -> list[Hit]:
         from acorn.query_dsl import preprocess
         from acorn.schema import F_BODY
@@ -218,7 +255,7 @@ class Searcher:
                     slide=_first_int(doc, F_SLIDE),
                     heading_path=_first_str(doc, F_HEADING_PATH),
                     title=_first_str(doc, F_TITLE),
-                    snippet=_make_snippet(body_text, query),
+                    snippet=_make_snippet(body_text, query, intent=intent),
                     chunk_seq=_first_int(doc, F_CHUNK_SEQ),
                     mtime=_first_int(doc, F_MTIME),
                     meta_blob=meta_blob_bytes,
@@ -235,6 +272,7 @@ class Searcher:
         metadata_filter: str | None,
         active_sources: list[str] | None = None,
         fuzzy_distance: int = 0,
+        intent: str | None = None,
     ) -> list[Hit]:
         """Return at least ``target`` hits, applying the optional metadata
         filter post-Tantivy with oversample-and-retry."""
@@ -245,6 +283,7 @@ class Searcher:
                 collection=collection,
                 active_sources=active_sources,
                 fuzzy_distance=fuzzy_distance,
+                intent=intent,
             )
         from acorn.filter_dsl import compile_filter
 
@@ -258,6 +297,7 @@ class Searcher:
                 collection=collection,
                 active_sources=active_sources,
                 fuzzy_distance=fuzzy_distance,
+                intent=intent,
             )
             survivors = [h for h in raw if _passes_meta_filter(h, predicate)]
             if len(survivors) >= target:
@@ -279,6 +319,7 @@ class Searcher:
         metadata_filter: str | None = None,
         active_sources: list[str] | None = None,
         fuzzy_distance: int = 0,
+        intent: str | None = None,
     ) -> list[Hit]:
         """Return one Hit per file (the file's best-scored chunk).
 
@@ -297,6 +338,7 @@ class Searcher:
             metadata_filter=metadata_filter,
             active_sources=active_sources,
             fuzzy_distance=fuzzy_distance,
+            intent=intent,
         )
         if profile is not None:
             from acorn.rerank import RankingProfile, rerank_hits
@@ -362,6 +404,7 @@ class Searcher:
         metadata_filter: str | None = None,
         active_sources: list[str] | None = None,
         fuzzy_distance: int = 0,
+        intent: str | None = None,
     ) -> list[FileGroup]:
         """Return ranked FileGroups, each with up to ``sections_per_file`` ranked
         section hits. ``active_sources`` narrows scope to chunks indexed
@@ -376,6 +419,7 @@ class Searcher:
             metadata_filter=metadata_filter,
             active_sources=active_sources,
             fuzzy_distance=fuzzy_distance,
+            intent=intent,
         )
         if profile is not None:
             from acorn.rerank import RankingProfile, rerank_hits

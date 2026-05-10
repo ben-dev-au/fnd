@@ -141,6 +141,13 @@ REGISTRY: tuple[Action, ...] = (
         show_in_footer=False,  # advanced; F3 listed in help overlay
     ),
     Action(
+        id="open_multi_input",
+        description="Open the :multi DSL panel (intent / lex / phrase / syn lines).",
+        command="multi",
+        footer_label="Multi",
+        show_in_footer=False,  # palette-only power-user surface
+    ),
+    Action(
         id="quit",
         description="Quit acorn.",
         default_key="q",
