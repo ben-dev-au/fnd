@@ -204,10 +204,18 @@ def fusion_search(
 
     Each sub-query is issued through ``searcher._filtered_raw_hits`` so
     the metadata filter (frontmatter post-filter) and the ``source_path``
-    scope apply to every sub-ranking before fusion. Sub-queries see
-    identical analyzer/field-boost configuration as the single-pass
-    search path. Results are deduplicated by ``(parent_id, chunk_seq)``;
-    ``pass_index`` is set from the highest-weighted contributing source.
+    scope apply to every sub-ranking. Sub-queries see identical
+    analyzer/field-boost configuration as the single-pass search path.
+    Results are deduplicated by ``(parent_id, chunk_seq)`` and sorted
+    by RRF position; ``pass_index`` is set from the highest-weighted
+    contributing source.
+
+    **Score semantics**: RRF is used for *ordering*. The returned
+    ``Hit.score`` is the maximum BM25 score across the sub-queries that
+    surfaced the doc — so the TUI's score column stays in the BM25
+    range users can compare to (typically 1-40 for templates-style
+    queries) rather than the 0.0001-0.07 range RRF arithmetic would
+    produce. The internal RRF total still drives the sort order.
     """
     subs = subqueries if subqueries is not None else auto_subqueries(query, synonyms=synonyms)
     if not subs:
@@ -218,25 +226,43 @@ def fusion_search(
         rankings.append(
             searcher._filtered_raw_hits(
                 sub.query,
-                target=limit,
+                # Oversample per sub-query so the post-fusion grouper has
+                # enough chunks to fill ``limit`` files. Mirrors the
+                # ``target=limit * 10`` contract the old single-pass
+                # ``Searcher.search_grouped`` used.
+                target=limit * 10,
                 collection=collection,
                 metadata_filter=metadata_filter,
                 active_sources=active_sources,
             )
         )
 
-    # RRF dedup + sort. We rebuild the per-doc top-source map alongside the
-    # fused score so we can attribute pass_index after the fact — rrf_fuse
-    # itself is source-agnostic.
     weights = [s.weight for s in subs]
     fused = rrf_fuse(rankings, weights=weights)
 
     primary_source = _attribute_sources(rankings, subs)
+    bm25_scores = _bm25_score_map(rankings)
     out: list[Hit] = []
     for h in fused[:limit]:
         key = (h.parent_id, h.chunk_seq)
         src = primary_source.get(key, "lex")
-        out.append(_with_pass_index(h, _SOURCE_TO_PASS_INDEX.get(src, 0)))
+        # Restore the BM25 score from whichever sub-query surfaced this
+        # doc. RRF replaced ``score`` with the fused position-based
+        # value; for the user-facing score we want the original BM25.
+        bm25 = bm25_scores.get(key, h.score)
+        out.append(_with_pass_index(_with_score(h, bm25), _SOURCE_TO_PASS_INDEX.get(src, 0)))
+    return out
+
+
+def _bm25_score_map(rankings: list[list[Hit]]) -> dict[tuple[str, int], float]:
+    """Per-doc max BM25 score across sub-queries — the score the user
+    sees in the result row, regardless of which sub-query won fusion."""
+    out: dict[tuple[str, int], float] = {}
+    for ranking in rankings:
+        for hit in ranking:
+            key = (hit.parent_id, hit.chunk_seq)
+            if hit.score > out.get(key, float("-inf")):
+                out[key] = hit.score
     return out
 
 

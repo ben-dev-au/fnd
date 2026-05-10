@@ -160,10 +160,15 @@ def cascade_search(
             seen.add(key)
             out.append(_with_pass(h, pass_index))
 
+    # Oversample so the caller's per-file grouper has enough chunks to
+    # bucket into ``limit`` files. Mirrors the ``target = limit * 10``
+    # contract Searcher.search_grouped used.
+    pass_target = limit * 10
+
     # Pass 0: literal query through the standard parse_query path.
     raw = searcher._filtered_raw_hits(
         query,
-        target=limit,
+        target=pass_target,
         collection=collection,
         metadata_filter=metadata_filter,
         active_sources=active_sources,
@@ -178,7 +183,7 @@ def cascade_search(
     fuzzy_raw = _fuzzy_pass(
         searcher,
         query=query,
-        limit=limit,
+        limit=pass_target,
         collection=collection,
         active_sources=active_sources,
     )
@@ -193,7 +198,7 @@ def cascade_search(
         if syn_q != query:
             raw = searcher._filtered_raw_hits(
                 syn_q,
-                target=limit,
+                target=pass_target,
                 collection=collection,
                 metadata_filter=metadata_filter,
                 active_sources=active_sources,
