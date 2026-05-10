@@ -463,6 +463,15 @@ class AcornApp(App[None]):
         # The parent_id whose chunks are currently mounted in the preview
         # pane (so we don't re-mount when cursor moves within the same file).
         self._preview_parent_id: str | None = None
+        # Preview-load progress: ``(loaded, total)`` while a chunk-decode +
+        # mount worker is running, ``None`` otherwise (UX-pass-4 §4). Surfaced
+        # in the preview pane's border title so the user sees progress on
+        # large files without losing the previous preview.
+        self._preview_load_progress: tuple[int, int] | None = None
+        # Strong reference to the in-flight preview-mount task so the
+        # event loop doesn't garbage-collect it mid-run (asyncio task
+        # refs are weak — GC == cancellation).
+        self._preview_mount_task: object | None = None
 
     # ── Layout ────────────────────────────────────────────────────
 
@@ -553,14 +562,21 @@ class AcornApp(App[None]):
         return f"Results — {n_files} files / {n_sections} sections"
 
     def _preview_title(self) -> str:
-        """Border title for the preview pane — file basename + chunk count
-        for the document currently mounted there."""
-        if self._preview_parent_id is None:
+        """Border title for the preview pane — file basename + (when a
+        load is in flight) ``loading N/M chunks`` progress (UX-pass-4 §4)."""
+        progress = self._preview_load_progress
+        name_hint = ""
+        if self._preview_parent_id is not None:
+            for g in self._groups:
+                if g.parent_id == self._preview_parent_id:
+                    name_hint = f" — {Path(g.path).name}"
+                    break
+        if progress is not None:
+            loaded, total = progress
+            return f"Preview{name_hint} · loading {loaded}/{total} chunks"
+        if not name_hint:
             return "Preview"
-        for g in self._groups:
-            if g.parent_id == self._preview_parent_id:
-                return f"Preview — {Path(g.path).name}"
-        return "Preview"
+        return f"Preview{name_hint}"
 
     def _refresh_status(self) -> None:
         try:
@@ -797,27 +813,101 @@ class AcornApp(App[None]):
 
         Per-chunk widgets give precise ``scroll_to_widget`` targets,
         immune to long-line wrapping (which broke the previous
-        line-offset approach for some PDFs)."""
+        line-offset approach for some PDFs).
+
+        UX-pass-4 §4: cache misses dispatch a thread worker so the
+        Tantivy chunk fetch + JSON decode happens off the event loop. The
+        previous preview stays visible until the new file's chunks
+        finish mounting; ``exclusive=True`` on the worker group cancels
+        an in-flight load when the cursor moves to a different file.
+        """
         if self._searcher is None:
             return
         chunks = self._chunk_cache.get(parent_id)
-        if chunks is None:
-            chunks = self._searcher.get_file_chunks(parent_id)
-            self._chunk_cache[parent_id] = chunks
-        if not chunks:
+        if chunks is not None:
+            # Cache hit — same fast path as before.
+            if parent_id != self._preview_parent_id:
+                self._mount_chunks_for_file(parent_id, chunks)
+                self._preview_parent_id = parent_id
+                self._preview_load_progress = None
+                self._refresh_status()
+                self._refresh_match_scrollbar(chunks)
+            self._scroll_preview_to_chunk(focus_chunk_seq)
             return
 
-        # Mount fresh widgets only when the file has actually changed —
-        # otherwise we just scroll within the existing widget tree.
-        if parent_id != self._preview_parent_id:
-            self._mount_chunks_for_file(parent_id, chunks)
-            self._preview_parent_id = parent_id
-            self._refresh_status()
-            # Hand the chunk-match map to the custom scrollbar so the bar
-            # itself shows where matches live in the document.
-            self._refresh_match_scrollbar(chunks)
+        # Cache miss — load off-thread. Show progress in the preview
+        # pane's border title; keep the previous preview visible until
+        # mount begins.
+        target_parent_id = parent_id
+        target_focus = focus_chunk_seq
+        searcher = self._searcher
+        app = self
 
-        self._scroll_preview_to_chunk(focus_chunk_seq)
+        def _load() -> None:
+            try:
+                fetched = searcher.get_file_chunks(target_parent_id)
+            except Exception as e:
+                app.call_from_thread(app.notify, f"Preview load failed: {e}", severity="error")
+                return
+            app.call_from_thread(
+                app._on_preview_chunks_loaded,
+                target_parent_id,
+                target_focus,
+                fetched,
+            )
+
+        # Placeholder progress so the border title flips to "loading…"
+        # immediately even before the worker reports.
+        self._preview_load_progress = (0, 1)
+        self._refresh_status()
+        self.run_worker(_load, thread=True, exclusive=True, group="preview-load")
+
+    def _on_preview_chunks_loaded(
+        self,
+        parent_id: str,
+        focus_chunk_seq: int,
+        chunks: list[FileChunk],
+    ) -> None:
+        """Worker callback (event-loop side). Caches chunks, mounts in
+        yielding batches, and updates the scrollbar match map."""
+        import asyncio
+
+        self._chunk_cache[parent_id] = chunks
+        if not chunks:
+            self._preview_load_progress = None
+            self._refresh_status()
+            return
+        self._preview_parent_id = parent_id
+        self._preview_load_progress = (0, len(chunks))
+        self._refresh_status()
+        self._refresh_match_scrollbar(chunks)
+
+        async def _mount_batches() -> None:
+            batch_size = 25
+            pane = self.query_one("#preview_pane", VerticalScroll)
+            for w in list(pane.children):
+                w.remove()
+            self._chunk_widgets = {}
+            self._match_targets = {}
+            first_chunk = chunks[0]
+            title = Static(Path(first_chunk.path).name, classes="preview-title")
+            pane.mount(title)
+            is_markdown = first_chunk.kind == "md"
+            for i, c in enumerate(chunks):
+                if is_markdown:
+                    self._mount_markdown_chunk(pane, c)
+                else:
+                    self._mount_plain_chunk(pane, c)
+                if (i + 1) % batch_size == 0:
+                    self._preview_load_progress = (i + 1, len(chunks))
+                    self._refresh_status()
+                    # Yield to the event loop so keystrokes can interleave.
+                    await asyncio.sleep(0)
+            self._preview_load_progress = None
+            self._refresh_status()
+            self._scroll_preview_to_chunk(focus_chunk_seq)
+
+        self._preview_mount_task = asyncio.create_task(_mount_batches())
 
     def _refresh_match_scrollbar(self, chunks: list[FileChunk]) -> None:
         """Build a per-chunk match map and forward it to the preview's
