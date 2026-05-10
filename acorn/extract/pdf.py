@@ -17,6 +17,7 @@ and the user navigates by page number.
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -25,9 +26,76 @@ import pymupdf  # type: ignore[import-not-found]
 
 from acorn.extract.base import Block, Chunk
 
+# Block whose text is purely an integer page number (optionally
+# prefixed with "page" / "Page"). Matches the running page number a
+# typeset book prints in its top/bottom margin.
+_PAGE_NUMBER_RE = re.compile(r"^\s*(?:[Pp]age\s+)?(\d{1,5})\s*$")
+
 
 def _parent_id(path: Path) -> str:
     return hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()
+
+
+def _detect_printed_number(page: pymupdf.Page) -> str:
+    """Scan the top/bottom margins of ``page`` for a block that
+    contains *only* an integer — the running page number a typeset
+    book prints in its margin. Returns the integer as a string, or
+    ``""`` if there is no obvious candidate.
+
+    Used as a fallback when the PDF carries no explicit page labels:
+    most books with prefatory matter don't bother to declare labels in
+    the PDF metadata, so ``Page.get_label()`` is empty even though the
+    pages clearly *display* a different number from their PDF index.
+
+    Conservatism is the goal — false positives mislabel pages, which
+    is worse than displaying the PDF index. We only accept a block
+    that:
+
+    * sits entirely within the top 12% or bottom 12% of the page,
+    * is the only candidate found in that margin zone, AND
+    * contains nothing but a plausible integer (≤ 99999).
+
+    Bottom-margin candidates win when both edges produce one — that's
+    the dominant book convention.
+    """
+    rect = page.rect
+    if rect.height <= 0:
+        return ""
+    margin = rect.height * 0.12
+    top_max = margin
+    bot_min = rect.height - margin
+
+    text_dict = cast(dict[str, Any], page.get_text("dict"))
+    top_candidate = ""
+    bottom_candidate = ""
+    for block in text_dict.get("blocks", []):
+        bbox = block.get("bbox")
+        if not bbox or len(bbox) < 4:
+            continue
+        y_top = float(bbox[1])
+        y_bot = float(bbox[3])
+        in_top = y_bot < top_max
+        in_bottom = y_top > bot_min
+        if not (in_top or in_bottom):
+            continue
+        text_parts: list[str] = []
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                t = (span.get("text") or "").strip()
+                if t:
+                    text_parts.append(t)
+        block_text = " ".join(text_parts)
+        m = _PAGE_NUMBER_RE.match(block_text)
+        if not m:
+            continue
+        num = m.group(1)
+        if not (1 <= int(num) <= 99999):
+            continue
+        if in_bottom and not bottom_candidate:
+            bottom_candidate = num
+        elif in_top and not top_candidate:
+            top_candidate = num
+    return bottom_candidate or top_candidate
 
 
 def _toc_heading_for_page(toc: list[list[object]], page_no_1based: int) -> str:
@@ -121,16 +189,23 @@ def extract(path: Path) -> Iterator[Chunk]:
         for page_index in range(doc.page_count):
             page = doc[page_index]
             page_no = page_index + 1
-            # Printed page label (e.g. "292", "iv") if the PDF carries
-            # explicit labels; empty string otherwise. Books with
-            # prefatory pages typically label them in roman numerals
-            # so the displayed locator matches what's actually printed
-            # on the page, while ``page_no`` (PDF index) is what Skim
-            # needs for deep-linking.
+            # Printed page label (e.g. "292", "iv") so the displayed
+            # locator matches what's actually printed on the page,
+            # while ``page_no`` (PDF index) is what Skim needs for
+            # deep-linking. Two-stage:
+            #   1. ``Page.get_label()`` — works when the PDF carries
+            #      explicit page-label metadata.
+            #   2. Margin-scan heuristic — for the much-more-common
+            #      case of books that print a page number in the
+            #      header/footer but never bothered to declare labels
+            #      in the metadata. Intentionally conservative so we
+            #      degrade to the PDF index rather than mislabeling.
             try:
                 page_label = page.get_label() or ""
             except Exception:
                 page_label = ""
+            if not page_label:
+                page_label = _detect_printed_number(page)
             text = cast(str, page.get_text("text") or "")
 
             # Skip blank pages.
