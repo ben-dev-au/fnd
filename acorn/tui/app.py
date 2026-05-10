@@ -1318,18 +1318,17 @@ class AcornApp(App[None]):
 
             # Reveal every hidden widget in one pass and re-anchor the
             # scroll so the focused chunk stays at the top of viewport
-            # even though the doc just got taller.
+            # even though the doc just got taller. Defer the scroll via
+            # ``call_after_refresh`` (inside ``_scroll_preview_to_chunk``)
+            # — virtual_region.y for the focused widget is stale until
+            # Textual finishes a full layout pass on the just-revealed
+            # widgets, and a single ``asyncio.sleep(0)`` isn't always
+            # enough to guarantee that pass has run.
             if hidden_widgets:
                 for w in hidden_widgets:
                     w.display = True
                 hidden_widgets.clear()
-                await asyncio.sleep(0)
-                focused_widget = container.match_targets.get(
-                    focus_chunk_seq
-                ) or container.chunk_widgets.get(focus_chunk_seq)
-                if focused_widget is not None:
-                    with contextlib.suppress(Exception):
-                        pane.scroll_to_widget(focused_widget, animate=False, top=True)
+                self._scroll_preview_to_chunk(focus_chunk_seq)
                 await asyncio.sleep(0)
         finally:
             # Always reveal any widgets we hid; a cancelled task that
