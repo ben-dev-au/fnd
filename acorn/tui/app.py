@@ -999,25 +999,23 @@ class AcornApp(App[None]):
     ) -> None:
         """Unified async mount path used by both cache-hit and cache-miss.
 
-        Yields to the event loop via ``await asyncio.sleep(0)`` on every
-        batch boundary AND on the final iteration so:
-        1. Keystrokes (arrow keys, command palette) interleave during a
-           large mount — pressing a key mid-mount cancels this task
-           within ~one batch's mount-time and a fresh task starts.
-        2. The ProgressBar visibly reaches 100% before being removed
-           (the previous "missing tail" gap from <batch chunks left
-           over after the last batch boundary is fixed by the explicit
-           final-iteration yield).
+        Yields to the event loop on every batch boundary AND on the
+        final iteration. ``batch_size`` is intentionally small (3) so
+        cancellation latency stays under ~half a second even on books
+        where each markdown chunk takes 100-200ms to render — pressing
+        an arrow mid-mount cancels this task within at most three
+        chunks' worth of work and a fresh task starts.
 
-        For files larger than ``batch_size``, mounts a determinate
-        ProgressBar at the top of the pane. Smaller files skip the bar
-        — single-batch mounts complete in one tick, the bar would just
-        flash invisibly.
+        Bar visibility threshold is ``> batch_size`` (i.e. files with
+        4+ chunks show the bar). The bar persists at 100% through the
+        post-mount scroll so the user sees a continuous "still working"
+        signal until the page is navigable, instead of a 1-2 second
+        gap between "100%" disappearing and the layout pass settling.
         """
         import asyncio
         import contextlib
 
-        batch_size = 15
+        batch_size = 3
         pane = self.query_one("#preview_pane", VerticalScroll)
         # Atomic clear: removes both decode-phase indicators (if cache-
         # miss path mounted them) and any leftover content from a
@@ -1062,10 +1060,11 @@ class AcornApp(App[None]):
                 else:
                     self._mount_plain_chunk(pane, c)
                 # Yield + bar update on batch boundaries AND the final
-                # iteration. Without the final-iteration check, the
-                # last partial batch (e.g. chunks 451-500 when total is
-                # 500 and batch_size is 15) would render synchronously
-                # then disappear at "97%" — never visibly hitting 100%.
+                # iteration. The final-iteration check ensures the bar
+                # visibly hits 100% even when the trailing partial
+                # batch is smaller than batch_size (e.g. chunks 499-500
+                # when total=500 and batch_size=3 — 500%3==2, would
+                # otherwise stop updating at 498).
                 done_in_batch = (i + 1) % batch_size == 0
                 done_overall = (i + 1) == len(chunks)
                 if done_in_batch or done_overall:
@@ -1081,12 +1080,21 @@ class AcornApp(App[None]):
             # touching the pane.
             raise
 
+        # Keep the bar visible at 100% through the scroll → layout
+        # settle path so the user has a continuous "working" signal
+        # until the page is actually navigable. Order matters:
+        #
+        #   1. Trigger scroll (deferred via call_after_refresh)
+        #   2. Yield once so the scroll commits and chunks render
+        #   3. Only then remove the bar (the layout shift from removal
+        #      happens after navigation is ready, not before)
+        self._scroll_preview_to_chunk(focus_chunk_seq)
+        await asyncio.sleep(0)
         self._preview_load_progress = None
         if bar is not None:
             with contextlib.suppress(Exception):
                 bar.remove()
         self._refresh_status()
-        self._scroll_preview_to_chunk(focus_chunk_seq)
 
     def _refresh_match_scrollbar(self, chunks: list[FileChunk]) -> None:
         """Build a per-chunk match map and forward it to the preview's
