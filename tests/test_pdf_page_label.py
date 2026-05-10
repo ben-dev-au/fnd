@@ -166,3 +166,69 @@ def test_margin_scan_ignores_numbers_in_body_text(tmp_path: Path) -> None:
     assert len(chunks) == 1
     # Margin scan must NOT have picked up the centred "42".
     assert chunks[0].page_label == ""
+
+
+def test_cross_page_sequence_picks_page_number_over_chapter_number(tmp_path: Path) -> None:
+    """Real-book layout: a header that combines chapter number with
+    the running page number. Per-page rules can't tell which integer
+    is which, but the cross-page resolver picks the one that ticks
+    up by 1 across consecutive pages — that's the page number, not
+    the (constant) chapter number."""
+    pdf = tmp_path / "with-headers.pdf"
+    doc = pymupdf.open()
+    # 5 body pages, every header reads "Chapter 5    <page>" in the
+    # top margin. The chapter number ``5`` is constant across all
+    # pages; the running number ticks 41, 42, 43, 44, 45.
+    for i, page_num in enumerate([41, 42, 43, 44, 45]):
+        page = doc.new_page(width=612, height=792)
+        page.insert_text(
+            (72, 30),  # top margin
+            f"Chapter 5    {page_num}",
+            fontsize=10,
+            fontname="helv",
+        )
+        page.insert_text((72, 200), f"body text {i}", fontsize=12, fontname="helv")
+    doc.save(str(pdf))
+    doc.close()
+
+    chunks = list(extract(pdf))
+    assert [c.page_label for c in chunks] == ["41", "42", "43", "44", "45"]
+
+
+def test_cross_page_sequence_rejects_short_runs(tmp_path: Path) -> None:
+    """Two pages with sequential margin numbers isn't enough — could
+    be coincidence (e.g. cross-references of ``page 5 / page 6``).
+    Require at least 3 consecutive pages to commit."""
+    pdf = tmp_path / "short-run.pdf"
+    doc = pymupdf.open()
+    # Two pages whose margins each contain a different integer that
+    # happens to be sequential. With min_run=3 these should be left
+    # unlabeled.
+    for _i, num in enumerate([99, 100]):
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((300, 770), str(num), fontsize=10, fontname="helv")
+        page.insert_text((72, 200), "body", fontsize=12, fontname="helv")
+    doc.save(str(pdf))
+    doc.close()
+
+    chunks = list(extract(pdf))
+    assert all(c.page_label == "" for c in chunks)
+
+
+def test_meta_label_takes_precedence_over_margin_scan(tmp_path: Path) -> None:
+    """If the PDF declares an explicit page label, trust it — that's
+    the authoritative source. Margin scan only runs as a fallback."""
+    pdf = tmp_path / "explicit.pdf"
+    doc = pymupdf.open()
+    for i in range(3):
+        page = doc.new_page(width=612, height=792)
+        # Margin shows a *different* number — make sure metadata wins.
+        page.insert_text((300, 770), str(900 + i), fontsize=10, fontname="helv")
+        page.insert_text((72, 200), "body", fontsize=12, fontname="helv")
+    doc.set_page_labels([{"startpage": 0, "prefix": "", "style": "D", "firstpagenum": 7}])
+    doc.save(str(pdf))
+    doc.close()
+
+    chunks = list(extract(pdf))
+    # Meta says 7,8,9 — that's what we should see, not 900,901,902.
+    assert [c.page_label for c in chunks] == ["7", "8", "9"]

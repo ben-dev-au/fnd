@@ -26,57 +26,40 @@ import pymupdf  # type: ignore[import-not-found]
 
 from acorn.extract.base import Block, Chunk
 
-# Block whose text is purely an integer page number (optionally
-# prefixed with "page" / "Page"). Matches the running page number a
-# typeset book prints in its top/bottom margin.
-_PAGE_NUMBER_RE = re.compile(r"^\s*(?:[Pp]age\s+)?(\d{1,5})\s*$")
-
 
 def _parent_id(path: Path) -> str:
     return hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()
 
 
-def _detect_printed_number(page: pymupdf.Page) -> str:
-    """Scan the top/bottom margins of ``page`` for a block that
-    contains *only* an integer — the running page number a typeset
-    book prints in its margin. Returns the integer as a string, or
-    ``""`` if there is no obvious candidate.
+def _margin_integers(page: pymupdf.Page) -> list[int]:
+    """Every plausible integer found in the top or bottom 12% margin
+    of ``page``. Used as candidates for the running page number; the
+    cross-page resolver in :func:`_resolve_page_labels` decides which
+    candidate (if any) is actually the printed page number.
 
-    Used as a fallback when the PDF carries no explicit page labels:
-    most books with prefatory matter don't bother to declare labels in
-    the PDF metadata, so ``Page.get_label()`` is empty even though the
-    pages clearly *display* a different number from their PDF index.
-
-    Conservatism is the goal — false positives mislabel pages, which
-    is worse than displaying the PDF index. We only accept a block
-    that:
-
-    * sits entirely within the top 12% or bottom 12% of the page,
-    * is the only candidate found in that margin zone, AND
-    * contains nothing but a plausible integer (≤ 99999).
-
-    Bottom-margin candidates win when both edges produce one — that's
-    the dominant book convention.
+    We're permissive on purpose — a header like ``"Chapter 5    291"``
+    yields both ``5`` and ``291`` here, and the cross-page sequence
+    check then picks ``291`` because that's the integer that ticks up
+    by 1 across consecutive pages. The same logic naturally rejects
+    chapter numbers (which stay constant across many pages) and
+    section numbers (non-monotonic).
     """
     rect = page.rect
     if rect.height <= 0:
-        return ""
+        return []
     margin = rect.height * 0.12
     top_max = margin
     bot_min = rect.height - margin
 
     text_dict = cast(dict[str, Any], page.get_text("dict"))
-    top_candidate = ""
-    bottom_candidate = ""
+    out: list[int] = []
     for block in text_dict.get("blocks", []):
         bbox = block.get("bbox")
         if not bbox or len(bbox) < 4:
             continue
         y_top = float(bbox[1])
         y_bot = float(bbox[3])
-        in_top = y_bot < top_max
-        in_bottom = y_top > bot_min
-        if not (in_top or in_bottom):
+        if not (y_bot < top_max or y_top > bot_min):
             continue
         text_parts: list[str] = []
         for line in block.get("lines", []):
@@ -85,17 +68,81 @@ def _detect_printed_number(page: pymupdf.Page) -> str:
                 if t:
                     text_parts.append(t)
         block_text = " ".join(text_parts)
-        m = _PAGE_NUMBER_RE.match(block_text)
-        if not m:
-            continue
-        num = m.group(1)
-        if not (1 <= int(num) <= 99999):
-            continue
-        if in_bottom and not bottom_candidate:
-            bottom_candidate = num
-        elif in_top and not top_candidate:
-            top_candidate = num
-    return bottom_candidate or top_candidate
+        for m in re.finditer(r"\b(\d{1,5})\b", block_text):
+            n = int(m.group(1))
+            if 1 <= n <= 99999:
+                out.append(n)
+    return out
+
+
+def _resolve_page_labels(
+    *,
+    meta_labels: list[str],
+    margin_candidates: list[list[int]],
+    min_run: int = 3,
+) -> list[str]:
+    """Decide a printed page label per page index.
+
+    Two-stage:
+
+    1. Pages whose ``meta_labels[i]`` is non-empty keep that — the
+       PDF declared an explicit label, which is exact.
+    2. For the rest we scan ``margin_candidates`` for the longest
+       *consecutive* sequence: pages ``i, i+1, ..., i+k`` whose
+       margin yielded ``v, v+1, ..., v+k`` for some starting value
+       ``v``. That's almost certainly the running page number. Pages
+       inside the run get ``str(v + offset)``; pages outside get
+       ``""`` and the display layer falls back to the PDF index.
+
+    A run shorter than ``min_run`` is rejected as too coincidental
+    to trust.
+    """
+    n = len(meta_labels)
+    out = list(meta_labels)
+    if n == 0:
+        return out
+
+    pending = [i for i in range(n) if not out[i]]
+    if len(pending) < min_run:
+        return out
+
+    sets: list[set[int]] = [set(margin_candidates[i]) for i in range(n)]
+
+    best_start_index = -1
+    best_start_value = 0
+    best_length = 0
+    pending_set = set(pending)
+    for start_pos, idx0 in enumerate(pending):
+        # Only try as run-start values from this page's candidates.
+        for v0 in sets[idx0]:
+            length = 1
+            cursor = start_pos + 1
+            expected_idx = idx0 + 1
+            expected_v = v0 + 1
+            while cursor < len(pending):
+                nxt_idx = pending[cursor]
+                if nxt_idx != expected_idx:
+                    break
+                if expected_v not in sets[nxt_idx]:
+                    break
+                length += 1
+                cursor += 1
+                expected_idx += 1
+                expected_v += 1
+            if length > best_length:
+                best_length = length
+                best_start_index = idx0
+                best_start_value = v0
+
+    if best_length < min_run:
+        return out
+
+    # Apply the run.
+    for k in range(best_length):
+        idx = best_start_index + k
+        if idx in pending_set:
+            out[idx] = str(best_start_value + k)
+    return out
 
 
 def _toc_heading_for_page(toc: list[list[object]], page_no_1based: int) -> str:
@@ -186,30 +233,28 @@ def extract(path: Path) -> Iterator[Chunk]:
         meta_author = str(meta.get("author") or "")
         toc: list[list[object]] = doc.get_toc() or []
 
+        # First pass: build per-page state and collect label
+        # candidates. We need every page's margin integers up front so
+        # the cross-page resolver in ``_resolve_page_labels`` can find
+        # the consecutive run that pins down the printed numbering.
+        # Pages with no body text are kept as ``None`` to preserve
+        # ``page_index`` alignment with the resolver's output.
+        page_states: list[dict[str, Any] | None] = []
+        meta_labels: list[str] = []
+        margin_candidates: list[list[int]] = []
         for page_index in range(doc.page_count):
             page = doc[page_index]
             page_no = page_index + 1
-            # Printed page label (e.g. "292", "iv") so the displayed
-            # locator matches what's actually printed on the page,
-            # while ``page_no`` (PDF index) is what Skim needs for
-            # deep-linking. Two-stage:
-            #   1. ``Page.get_label()`` — works when the PDF carries
-            #      explicit page-label metadata.
-            #   2. Margin-scan heuristic — for the much-more-common
-            #      case of books that print a page number in the
-            #      header/footer but never bothered to declare labels
-            #      in the metadata. Intentionally conservative so we
-            #      degrade to the PDF index rather than mislabeling.
             try:
-                page_label = page.get_label() or ""
+                meta_label = page.get_label() or ""
             except Exception:
-                page_label = ""
-            if not page_label:
-                page_label = _detect_printed_number(page)
-            text = cast(str, page.get_text("text") or "")
+                meta_label = ""
+            meta_labels.append(meta_label)
+            margin_candidates.append(_margin_integers(page))
 
-            # Skip blank pages.
+            text = cast(str, page.get_text("text") or "")
             if not text.strip():
+                page_states.append(None)
                 continue
 
             # Heading: TOC-first, then font clustering, then empty.
@@ -239,19 +284,38 @@ def extract(path: Path) -> Iterator[Chunk]:
                 blocks.append(Block(kind="h2", text=page_title))
             blocks.append(Block(kind="p", text=text.strip()))
 
+            page_states.append(
+                {
+                    "page_no": page_no,
+                    "page_index": page_index,
+                    "text": text,
+                    "blocks": blocks,
+                    "heading_path": heading_path,
+                }
+            )
+
+        # Resolve labels using meta + cross-page sequence detection.
+        labels = _resolve_page_labels(
+            meta_labels=meta_labels,
+            margin_candidates=margin_candidates,
+        )
+
+        for state in page_states:
+            if state is None:
+                continue
             yield Chunk(
                 parent_id=parent_id,
                 path=str(path),
                 mtime=mtime,
                 kind="pdf",
-                body=text,
-                body_struct=blocks,
-                page=page_no,
-                page_label=page_label,
-                heading_path=heading_path,
+                body=state["text"],
+                body_struct=state["blocks"],
+                page=state["page_no"],
+                page_label=labels[state["page_index"]],
+                heading_path=state["heading_path"],
                 title=meta_title,
                 author=meta_author,
-                chunk_seq=page_index,
+                chunk_seq=state["page_index"],
             )
     finally:
         doc.close()
