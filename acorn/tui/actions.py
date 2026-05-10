@@ -148,6 +148,13 @@ REGISTRY: tuple[Action, ...] = (
         show_in_footer=False,  # palette-only power-user surface
     ),
     Action(
+        id="show_explain_overlay",
+        description=("Show JSON trace for the latest search " "(regime, sub-queries, RRF math)."),
+        command="explain",
+        footer_label="Explain",
+        show_in_footer=False,  # palette-only debugging surface
+    ),
+    Action(
         id="quit",
         description="Quit acorn.",
         default_key="q",

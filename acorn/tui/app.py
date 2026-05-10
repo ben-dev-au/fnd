@@ -29,6 +29,7 @@ from textual.widgets.tree import TreeNode
 
 from acorn import opener
 from acorn.config import Config, default_index_dir
+from acorn.explain import SearchTrace
 from acorn.query import FileChunk, FileGroup, Hit, Searcher
 from acorn.render import render_chunk_pieces
 from acorn.rerank import RankingProfile, profile_from_config
@@ -426,6 +427,10 @@ class AcornApp(App[None]):
         # the user submits a :multi block.
         self._current_intent: str | None = None
         self._groups: list[FileGroup] = []
+        # Most-recent SearchTrace, populated on every _run_query so the
+        # :explain overlay (UX-pass-4 §2) can dump it as JSON. None until
+        # the first search runs.
+        self._latest_trace: SearchTrace | None = None
         self._acorn_keymap = keymap or load_keymap()
         # Synonyms for §9c cascade and §9d fusion's ``syn`` sub-query.
         # Missing file → empty table → no synonym expansion (no-op).
@@ -719,6 +724,7 @@ class AcornApp(App[None]):
         signature changes.
         """
         if self._searcher is None or not lexical.strip():
+            self._latest_trace = None
             return []
         from acorn.layered import search_layered
 
@@ -727,7 +733,7 @@ class AcornApp(App[None]):
             if filter_prefix
             else self._searcher
         )
-        return search_layered(
+        groups, trace = search_layered(
             searcher,  # type: ignore[arg-type]
             query=lexical,
             limit=limit,
@@ -738,7 +744,10 @@ class AcornApp(App[None]):
             active_sources=active_sources,
             intent=self._current_intent,
             profile=self._ranking_profile,
+            with_trace=True,
         )
+        self._latest_trace = trace
+        return groups
 
     def _refresh_results_tree(self) -> None:
         """Rebuild the results tree from ``self._groups`` and refresh status.
@@ -1356,8 +1365,15 @@ class AcornApp(App[None]):
             self._run_query(self._current_query)
 
     def action_dismiss_overlay(self) -> None:
-        """Close any open overlay (help, picker, palette). No-op if none."""
-        for selector in ("#help_overlay", "#collection_picker", "#cmd_palette"):
+        """Close any open overlay (help, picker, palette, explain, multi).
+        No-op if none."""
+        for selector in (
+            "#help_overlay",
+            "#collection_picker",
+            "#cmd_palette",
+            "#explain_overlay",
+            "#multi_panel",
+        ):
             for w in self.query(selector):
                 w.remove()
 
@@ -1376,6 +1392,40 @@ class AcornApp(App[None]):
             cmd = f":{a.palette_command}"
             lines.append(f"| `{key}` | `{cmd}` | {a.description} |")
         overlay = Vertical(_Md("\n".join(lines)), id="help_overlay")
+        self.mount(overlay)
+
+    def action_show_explain_overlay(self) -> None:
+        """Toggle a JSON trace overlay for the most-recent search.
+
+        Mirrors the help-overlay style: a Vertical with an embedded
+        Markdown widget rendering the SearchTrace as a fenced ``json``
+        block. The trace covers the entire search call, not just the
+        focused hit — focused-hit details are visible in the trace's
+        per-hit ``contributions`` list (UX-pass-4 §2).
+        """
+        existing = self.query("#explain_overlay")
+        if existing:
+            for w in existing:
+                w.remove()
+            return
+        if self._latest_trace is None:
+            self.notify(
+                "no search yet — type a query first",
+                severity="warning",
+                title="Explain",
+            )
+            return
+        import json
+
+        from textual.widgets import Markdown as _Md
+
+        body = json.dumps(self._latest_trace.to_json(), indent=2)
+        md = (
+            f"# Explain — `{self._latest_trace.query}`\n\n"
+            f"Regime: **{self._latest_trace.regime}**\n\n"
+            f"```json\n{body}\n```\n"
+        )
+        overlay = Vertical(_Md(md), id="explain_overlay")
         self.mount(overlay)
 
     def action_open_command_palette(self) -> None:
