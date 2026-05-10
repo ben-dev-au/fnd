@@ -81,30 +81,88 @@ def search(
     meta: str | None = typer.Option(
         None, "--meta", help="Inline metadata-filter DSL (md hits only)."
     ),
+    explain: int | None = typer.Option(
+        None,
+        "--explain",
+        help=(
+            "Print JSON trace for the Nth hit (1-indexed). Routes through "
+            "the regime-aware layered search; emits which regime fired "
+            "(strong-signal / fusion / cascade), per-sub-query BM25 stats, "
+            "and per-hit RRF contributions."
+        ),
+    ),
 ) -> None:
-    """Search the index and print ranked file:locator snippets to stdout."""
+    """Search the index and print ranked file:locator snippets to stdout.
+
+    With ``--explain N``, emits a JSON trace for hit N after the regular
+    rows, showing which regime fired and the per-hit score breakdown.
+    """
+    import json
+
     from acorn.config import load
     from acorn.filter_dsl import FilterError
+    from acorn.layered import search_layered
     from acorn.migrate import prompt_and_rebuild_or_exit
-    from acorn.query import Searcher
+    from acorn.query import Hit, Searcher
 
     prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=load())
 
     searcher = Searcher(index_dir=default_index_dir())
     try:
-        hits = searcher.search(query, limit=limit, collection=collection, metadata_filter=meta)
+        if explain is None:
+            hits = searcher.search(query, limit=limit, collection=collection, metadata_filter=meta)
+            for hit in hits:
+                _print_hit(hit)
+            return
+        groups, trace = search_layered(
+            searcher,
+            query=query,
+            limit=limit,
+            sections_per_file=5,
+            collection=collection,
+            metadata_filter=meta,
+            with_trace=True,
+        )
+        # Flatten groups → hits in display order; one row per matched section.
+        flat: list[Hit] = [h for g in groups for h in g.hits]
+        for hit in flat[:limit]:
+            _print_hit(hit)
+        if not (1 <= explain <= len(flat)):
+            typer.echo(
+                f"--explain {explain}: out of range (have {len(flat)} hits)",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        payload = trace.to_json()
+        target = flat[explain - 1]
+        payload["explained_hit"] = {
+            "index": explain,
+            "parent_id": target.parent_id,
+            "chunk_seq": target.chunk_seq,
+            "score": round(target.score, 4),
+        }
+        typer.echo(json.dumps(payload, indent=2))
     except FilterError as e:
         typer.echo(f"invalid filter: {e.message} (col {e.column})", err=True)
         raise typer.Exit(code=1) from e
-    for hit in hits:
-        loc = ""
-        if hit.page:
-            loc = f":p.{hit.page}"
-        elif hit.slide:
-            loc = f":s.{hit.slide}"
-        elif hit.heading_path:
-            loc = f" §{hit.heading_path}"
-        typer.echo(f"{hit.score:6.3f}  {hit.path}{loc}\n        {hit.snippet}")
+
+
+def _print_hit(hit: object) -> None:
+    """Render one hit row in the existing CLI format."""
+    loc = ""
+    page = getattr(hit, "page", 0)
+    slide = getattr(hit, "slide", 0)
+    heading_path = getattr(hit, "heading_path", "")
+    if page:
+        loc = f":p.{page}"
+    elif slide:
+        loc = f":s.{slide}"
+    elif heading_path:
+        loc = f" §{heading_path}"
+    score = getattr(hit, "score", 0.0)
+    path = getattr(hit, "path", "")
+    snippet = getattr(hit, "snippet", "")
+    typer.echo(f"{score:6.3f}  {path}{loc}\n        {snippet}")
 
 
 # ── config sub-commands ───────────────────────────────────────────────────
