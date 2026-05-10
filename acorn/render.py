@@ -286,12 +286,20 @@ def _chunk_header(c: object) -> str:
 
     Composes locator + heading when both exist (e.g. "p. 7 · 3.2 Soft
     breaking"); falls back to whichever piece is present otherwise.
+
+    PDF page locator prefers the printed ``page_label`` (e.g. "292" or
+    "iv") when the PDF carries explicit labels — that's what the
+    reader actually sees on the page. ``page`` (the PDF page index) is
+    used only for the opener and as a fallback when no label exists.
     """
     page = getattr(c, "page", 0)
+    page_label = getattr(c, "page_label", "")
     slide = getattr(c, "slide", 0)
     heading_path = getattr(c, "heading_path", "")
     parts: list[str] = []
-    if page:
+    if page_label:
+        parts.append(f"p. {page_label}")
+    elif page:
         parts.append(f"p. {page}")
     elif slide:
         parts.append(f"Slide {slide}")
