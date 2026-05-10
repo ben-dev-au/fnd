@@ -93,3 +93,76 @@ def test_chunk_header_falls_back_to_page_index_when_no_label() -> None:
         chunk_seq = 6
 
     assert _chunk_header(_C()) == "p. 7"
+
+
+def _build_pdf_with_printed_numbers(path: Path, *, body_count: int, body_start: int) -> None:
+    """A PDF whose body pages print ``body_start..body_start+N-1`` in
+    the bottom margin — the typical typeset-book layout — and whose
+    front matter has no margin number at all (mimicking unlabeled
+    front matter you'd find in most real books).
+
+    No ``set_page_labels`` is called, so the metadata-based label
+    lookup returns "" and the extractor must fall back to the
+    margin-scan heuristic.
+    """
+    doc = pymupdf.open()
+    # 2 prefatory pages with body text but no margin number.
+    for n in range(2):
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((72, 100), f"front matter line {n}", fontsize=12, fontname="helv")
+    # Body pages: real text in the middle, the printed page number
+    # alone in the bottom margin (a few lines above the page edge).
+    for i in range(body_count):
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((72, 200), "body of the chapter goes here", fontsize=12, fontname="helv")
+        page.insert_text(
+            (300, 770),  # bottom margin, centered-ish
+            str(body_start + i),
+            fontsize=10,
+            fontname="helv",
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc.save(str(path))
+    doc.close()
+
+
+def test_extract_falls_back_to_margin_scan_when_no_label_metadata(tmp_path: Path) -> None:
+    """The much-more-common case: the PDF prints page numbers in the
+    margin but never declared explicit labels. The extractor's
+    heuristic should pick those up so the displayed locator stops
+    being off by the front-matter count."""
+    pdf = tmp_path / "book.pdf"
+    _build_pdf_with_printed_numbers(pdf, body_count=3, body_start=1)
+
+    chunks = list(extract(pdf))
+    assert len(chunks) == 5  # 2 front matter + 3 body
+
+    # Front matter has no printed number → empty label, falls back
+    # to PDF index in display.
+    assert chunks[0].page_label == ""
+    assert chunks[1].page_label == ""
+    # Body pages reflect the *printed* number, not the PDF index.
+    assert chunks[2].page_label == "1"
+    assert chunks[3].page_label == "2"
+    assert chunks[4].page_label == "3"
+    # And page (PDF index) is unchanged so Skim navigation still
+    # works.
+    assert [c.page for c in chunks] == [1, 2, 3, 4, 5]
+
+
+def test_margin_scan_ignores_numbers_in_body_text(tmp_path: Path) -> None:
+    """Don't mistake a number that happens to appear in the middle of
+    the page for the printed page number."""
+    pdf = tmp_path / "no-margins.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    # A naked integer right in the middle of the page, plus body text.
+    page.insert_text((300, 396), "42", fontsize=12, fontname="helv")
+    page.insert_text((72, 500), "this is body text", fontsize=12, fontname="helv")
+    doc.save(str(pdf))
+    doc.close()
+
+    chunks = list(extract(pdf))
+    assert len(chunks) == 1
+    # Margin scan must NOT have picked up the centred "42".
+    assert chunks[0].page_label == ""
