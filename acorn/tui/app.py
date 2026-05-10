@@ -421,6 +421,10 @@ class AcornApp(App[None]):
         self._initial_query = initial_query
         self._searcher: Searcher | None = None
         self._current_query: str = ""
+        # Last :multi block's intent line, if any. Disables strong-signal
+        # bypass and biases snippet selection (UX-pass-4 §3). None until
+        # the user submits a :multi block.
+        self._current_intent: str | None = None
         self._groups: list[FileGroup] = []
         self._acorn_keymap = keymap or load_keymap()
         # Synonyms for §9c cascade and §9d fusion's ``syn`` sub-query.
@@ -706,80 +710,35 @@ class AcornApp(App[None]):
         metadata_filter: str | None,
         active_sources: list[str] | None,
     ) -> list[FileGroup]:
-        """Master plan §9c + §9d wiring: fusion as default, cascade fallback.
+        """Master plan §9c + §9d wiring + UX-pass-4 §1 strong-signal regime.
 
-        - **Phase 9 fusion** (`acorn.fusion.fusion_search`) runs every query
-          through ``auto_subqueries`` (phrase + lex + syn) and RRF-fuses the
-          rankings. Phrase boost (weight 2.0) gives multi-word queries a
-          meaningful uplift when the terms appear adjacently.
-        - **Phase 8 cascade** (`acorn.cascade.cascade_search`) runs only when
-          fusion's combined output is sparse — adds fuzzy~1 and synonym
-          widening passes. This is where typo-tolerance lives.
-
-        ``filter_prefix`` carries field-restrictor clauses (``kind:md``,
-        ``mtime:week``, ``c:papers,notes``) that must AND with every sub-
-        query without being swallowed into a phrase wrapper. Per-sub-query
-        wrapping happens in :class:`_PrefixingSearcher` below so fusion +
-        cascade see the same effective query without changes to their
-        signatures.
-
-        Both paths flow through ``_filtered_raw_hits`` so ``metadata_filter``
-        + ``active_sources`` apply to every sub-pass identically. Output is
-        bucketed via :func:`acorn.query.group_by_file` so all three search
-        paths produce identically-shaped FileGroups for the TUI.
+        Delegates the regime decision to :func:`acorn.layered.search_layered`
+        so the TUI and CLI share one entry point. ``filter_prefix`` is
+        applied via :class:`_PrefixingSearcher` so fusion + cascade +
+        the regime probe all see the same effective query without any
+        signature changes.
         """
         if self._searcher is None or not lexical.strip():
             return []
-        from acorn.cascade import cascade_search
-        from acorn.fusion import fusion_search
-        from acorn.query import group_by_file
-        from acorn.rerank import rerank_hits
+        from acorn.layered import search_layered
 
         searcher = (
             _PrefixingSearcher(self._searcher, prefix=filter_prefix)
             if filter_prefix
             else self._searcher
         )
-
-        # Oversample chunks so the per-file grouper can fill up to
-        # ``limit`` files. Without this, a query whose top chunks all
-        # cluster in 2 files would produce only 2 result rows even
-        # when the corpus has 30+ matching files.
-        chunk_pool = limit * 10
-
-        hits = fusion_search(
+        return search_layered(
             searcher,  # type: ignore[arg-type]
             query=lexical,
-            limit=chunk_pool,
+            limit=limit,
+            sections_per_file=sections_per_file,
             collection=collection,
             synonyms=self._synonyms,
             metadata_filter=metadata_filter,
             active_sources=active_sources,
+            intent=self._current_intent,
+            profile=self._ranking_profile,
         )
-        # §9c: when fusion's chunk pool is sparse, widen via cascade so
-        # fuzzy + synonym passes catch typos and unusual wording. The
-        # threshold compares against the caller's *file*-count limit
-        # (a quarter, per master §9c) since that's what users see.
-        if len(hits) < max(1, limit // 4):
-            cascade_hits = cascade_search(
-                searcher,  # type: ignore[arg-type]
-                query=lexical,
-                threshold=chunk_pool,
-                limit=chunk_pool,
-                collection=collection,
-                synonyms=self._synonyms,
-                metadata_filter=metadata_filter,
-                active_sources=active_sources,
-            )
-            # Cascade dedups internally; if it surfaced more, prefer it.
-            if len(cascade_hits) > len(hits):
-                hits = cascade_hits
-        # ``_ranking_profile`` is always a RankingProfile instance (default
-        # is the BM25-identity profile), so we always pass through the
-        # post-rank step — recency / filetype / phrase-proximity boosts
-        # apply on top of fusion or cascade output.
-        hits = rerank_hits(hits, profile=self._ranking_profile, query=lexical)
-        return group_by_file(hits, limit=limit, sections_per_file=sections_per_file)
 
     def _refresh_results_tree(self) -> None:
         """Rebuild the results tree from ``self._groups`` and refresh status.

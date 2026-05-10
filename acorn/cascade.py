@@ -17,8 +17,11 @@ TUI shows exact matches above fuzzy ones above synonym ones.
 
 from __future__ import annotations
 
+from typing import Literal, overload
+
 import tantivy
 
+from acorn.explain import CascadePassTrace, CascadeTrace
 from acorn.query import Hit, Searcher
 from acorn.render import _terms_from_query
 from acorn.schema import F_BODY, F_META_BLOB, F_PARENT_ID, build_schema
@@ -124,6 +127,36 @@ def _materialize_hits(
     return out
 
 
+@overload
+def cascade_search(
+    searcher: Searcher,
+    *,
+    query: str,
+    threshold: int,
+    limit: int = ...,
+    collection: str | None = ...,
+    synonyms: SynonymTable | None = ...,
+    metadata_filter: str | None = ...,
+    active_sources: list[str] | None = ...,
+    with_trace: Literal[False] = False,
+) -> list[Hit]: ...
+
+
+@overload
+def cascade_search(
+    searcher: Searcher,
+    *,
+    query: str,
+    threshold: int,
+    limit: int = ...,
+    collection: str | None = ...,
+    synonyms: SynonymTable | None = ...,
+    metadata_filter: str | None = ...,
+    active_sources: list[str] | None = ...,
+    with_trace: Literal[True],
+) -> tuple[list[Hit], CascadeTrace]: ...
+
+
 def cascade_search(
     searcher: Searcher,
     *,
@@ -134,7 +167,8 @@ def cascade_search(
     synonyms: SynonymTable | None = None,
     metadata_filter: str | None = None,
     active_sources: list[str] | None = None,
-) -> list[Hit]:
+    with_trace: bool = False,
+) -> list[Hit] | tuple[list[Hit], CascadeTrace]:
     """Run literal → fuzzy → synonym passes until ``threshold`` hits found.
 
     Returns hits with :attr:`Hit.pass_index` set to the pass that first
@@ -148,17 +182,33 @@ def cascade_search(
     :meth:`Searcher._filtered_raw_hits` (which honours the metadata
     filter); the programmatic fuzzy pass adds an inline source-set
     clause to its boolean query.
+
+    ``with_trace`` (UX-pass-4 §2): when ``True``, returns
+    ``(hits, CascadeTrace)`` so the layered search can format the
+    regime label as ``cascade(+fuzzy)`` / ``cascade(+syn)`` based on
+    which passes contributed new hits.
     """
     seen: set[tuple[str, int]] = set()
     out: list[Hit] = []
+    pass_traces: list[CascadePassTrace] = []
 
-    def _ingest(hits: list[Hit], pass_index: int) -> None:
+    def _ingest(hits: list[Hit], pass_index: int) -> int:
+        before = len(out)
         for h in hits:
             key = (h.parent_id, h.chunk_seq)
             if key in seen:
                 continue
             seen.add(key)
             out.append(_with_pass(h, pass_index))
+        return len(out) - before
+
+    def _trace_result() -> tuple[list[Hit], CascadeTrace]:
+        return out, CascadeTrace(
+            query=query,
+            passes=pass_traces,
+            threshold=threshold,
+            final_count=len(out),
+        )
 
     # Oversample so the caller's per-file grouper has enough chunks to
     # bucket into ``limit`` files. Mirrors the ``target = limit * 10``
@@ -173,9 +223,20 @@ def cascade_search(
         metadata_filter=metadata_filter,
         active_sources=active_sources,
     )
-    _ingest(raw, 0)
+    new_count = _ingest(raw, 0)
+    if with_trace:
+        pass_traces.append(
+            CascadePassTrace(
+                pass_index=0,
+                name="literal",
+                query=query,
+                hit_count=len(raw),
+                new_count=new_count,
+                bm25_top=raw[0].score if raw else 0.0,
+            )
+        )
     if len(out) >= threshold:
-        return out
+        return _trace_result() if with_trace else out
 
     # Pass 1: fuzzy via typed API (text-syntax ~1 is not supported by
     # tantivy-py for indexed-non-fast text fields). Metadata filter is
@@ -188,9 +249,20 @@ def cascade_search(
         active_sources=active_sources,
     )
     fuzzy_raw = _apply_metadata_filter(fuzzy_raw, metadata_filter)
-    _ingest(fuzzy_raw, 1)
+    new_count = _ingest(fuzzy_raw, 1)
+    if with_trace:
+        pass_traces.append(
+            CascadePassTrace(
+                pass_index=1,
+                name="fuzzy",
+                query=query,
+                hit_count=len(fuzzy_raw),
+                new_count=new_count,
+                bm25_top=fuzzy_raw[0].score if fuzzy_raw else 0.0,
+            )
+        )
     if len(out) >= threshold:
-        return out
+        return _trace_result() if with_trace else out
 
     # Pass 2: synonym expansion through parse_query.
     if synonyms is not None and synonyms.groups:
@@ -203,9 +275,20 @@ def cascade_search(
                 metadata_filter=metadata_filter,
                 active_sources=active_sources,
             )
-            _ingest(raw, 2)
+            new_count = _ingest(raw, 2)
+            if with_trace:
+                pass_traces.append(
+                    CascadePassTrace(
+                        pass_index=2,
+                        name="synonym",
+                        query=syn_q,
+                        hit_count=len(raw),
+                        new_count=new_count,
+                        bm25_top=raw[0].score if raw else 0.0,
+                    )
+                )
 
-    return out
+    return _trace_result() if with_trace else out
 
 
 def _apply_metadata_filter(hits: list[Hit], metadata_filter: str | None) -> list[Hit]:

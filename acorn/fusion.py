@@ -24,12 +24,20 @@ matching the highest-weighted sub-query that surfaced it. This lets the
 TUI render a per-source glyph using the same vocabulary as cascade
 (``~`` fuzzy, ``⊕`` synonym) plus a new glyph for fusion-phrase hits
 (``pass_index=3``).
+
+Strong-signal bypass (UX-pass-4 §1) and the ``intent:`` line in
+:func:`parse_multi_input` (§3) are adapted from `tobi/qmd
+<https://github.com/tobi/qmd>`_ (MIT). The score normalization
+``s / (1 + s)`` and the threshold values 0.85 / 0.15 come from QMD;
+the implementation here is a Python rewrite. See README acknowledgments.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal, overload
 
+from acorn.explain import FusionTrace, HitContribution, SubQueryTrace
 from acorn.query import Hit, Searcher
 from acorn.synonyms import SynonymTable, expand
 
@@ -59,6 +67,27 @@ _SOURCE_TO_PASS_INDEX: dict[str, int] = {
     "syn": 2,
     "phrase": 3,
 }
+
+# Strong-signal bypass thresholds (UX-pass-4 §1). Operate on a normalized
+# BM25 score ``s_norm = s / (1 + s)``, monotone in [0, 1) — query-
+# independent and corpus-stable. Adapted from tobi/qmd (MIT) — see
+# README acknowledgments.
+STRONG_SIGNAL_MIN_NORM_SCORE: float = 0.85
+STRONG_SIGNAL_MIN_NORM_GAP: float = 0.15
+
+
+def normalize_bm25(score: float) -> float:
+    """Map a raw BM25 score (positive, unbounded) into ``[0, 1)``.
+
+    The transform ``s / (1 + s)`` is asymptotic to 1: it preserves
+    ordering, compresses gaps at high values (so 30 vs 31 is barely
+    distinguishable from 31 vs 32), and amplifies gaps at low values
+    (so 1.5 vs 0.5 is meaningful). Matches the threshold semantics
+    needed by strong-signal bypass.
+    """
+    if score <= 0.0:
+        return 0.0
+    return score / (1.0 + score)
 
 
 @dataclass(slots=True, frozen=True)
@@ -185,6 +214,38 @@ def parse_multi_input(text: str, *, synonyms: SynonymTable | None) -> list[SubQu
     return subs
 
 
+@overload
+def fusion_search(
+    searcher: Searcher,
+    *,
+    query: str,
+    limit: int = ...,
+    collection: str | None = ...,
+    synonyms: SynonymTable | None = ...,
+    subqueries: list[SubQuery] | None = ...,
+    metadata_filter: str | None = ...,
+    active_sources: list[str] | None = ...,
+    precomputed_lex_ranking: list[Hit] | None = ...,
+    with_trace: Literal[False] = False,
+) -> list[Hit]: ...
+
+
+@overload
+def fusion_search(
+    searcher: Searcher,
+    *,
+    query: str,
+    limit: int = ...,
+    collection: str | None = ...,
+    synonyms: SynonymTable | None = ...,
+    subqueries: list[SubQuery] | None = ...,
+    metadata_filter: str | None = ...,
+    active_sources: list[str] | None = ...,
+    precomputed_lex_ranking: list[Hit] | None = ...,
+    with_trace: Literal[True],
+) -> tuple[list[Hit], FusionTrace]: ...
+
+
 def fusion_search(
     searcher: Searcher,
     *,
@@ -195,7 +256,9 @@ def fusion_search(
     subqueries: list[SubQuery] | None = None,
     metadata_filter: str | None = None,
     active_sources: list[str] | None = None,
-) -> list[Hit]:
+    precomputed_lex_ranking: list[Hit] | None = None,
+    with_trace: bool = False,
+) -> list[Hit] | tuple[list[Hit], FusionTrace]:
     """Run sub-queries in parallel and RRF-fuse the results.
 
     When ``subqueries`` is None, calls :func:`auto_subqueries`. When
@@ -216,26 +279,45 @@ def fusion_search(
     range users can compare to (typically 1-40 for templates-style
     queries) rather than the 0.0001-0.07 range RRF arithmetic would
     produce. The internal RRF total still drives the sort order.
+
+    ``precomputed_lex_ranking`` (UX-pass-4 §1): when supplied, the lex
+    sub-query reuses this list instead of issuing a fresh
+    ``_filtered_raw_hits`` call. Lets the regime probe in
+    :mod:`acorn.layered` double as fusion's lex pass — saves one Tantivy
+    round-trip on every non-bypass query.
+
+    ``with_trace`` (UX-pass-4 §2): when ``True``, returns
+    ``(hits, FusionTrace)`` so callers (CLI ``--explain`` / TUI
+    ``:explain``) can inspect which sub-queries ran, per-hit BM25
+    scores, RRF contributions, and primary-source attribution. Default
+    ``False`` returns the existing ``list[Hit]`` unchanged.
     """
     subs = subqueries if subqueries is not None else auto_subqueries(query, synonyms=synonyms)
     if not subs:
+        if with_trace:
+            return [], _empty_fusion_trace(query)
         return []
 
     rankings: list[list[Hit]] = []
     for sub in subs:
-        rankings.append(
-            searcher._filtered_raw_hits(
-                sub.query,
-                # Oversample per sub-query so the post-fusion grouper has
-                # enough chunks to fill ``limit`` files. Mirrors the
-                # ``target=limit * 10`` contract the old single-pass
-                # ``Searcher.search_grouped`` used.
-                target=limit * 10,
-                collection=collection,
-                metadata_filter=metadata_filter,
-                active_sources=active_sources,
+        if sub.source == "lex" and precomputed_lex_ranking is not None:
+            # Reuse the regime probe's literal-pass result so we don't
+            # re-issue the same Tantivy query.
+            rankings.append(precomputed_lex_ranking)
+        else:
+            rankings.append(
+                searcher._filtered_raw_hits(
+                    sub.query,
+                    # Oversample per sub-query so the post-fusion grouper has
+                    # enough chunks to fill ``limit`` files. Mirrors the
+                    # ``target=limit * 10`` contract the old single-pass
+                    # ``Searcher.search_grouped`` used.
+                    target=limit * 10,
+                    collection=collection,
+                    metadata_filter=metadata_filter,
+                    active_sources=active_sources,
+                )
             )
-        )
 
     weights = [s.weight for s in subs]
     fused = rrf_fuse(rankings, weights=weights)
@@ -251,7 +333,88 @@ def fusion_search(
         # value; for the user-facing score we want the original BM25.
         bm25 = bm25_scores.get(key, h.score)
         out.append(_with_pass_index(_with_score(h, bm25), _SOURCE_TO_PASS_INDEX.get(src, 0)))
-    return out
+
+    if not with_trace:
+        return out
+    trace = _build_fusion_trace(query, subs, rankings, primary_source, out)
+    return out, trace
+
+
+def _build_fusion_trace(
+    query: str,
+    subs: list[SubQuery],
+    rankings: list[list[Hit]],
+    primary_source: dict[tuple[str, int], str],
+    out: list[Hit],
+) -> FusionTrace:
+    sub_traces = [
+        SubQueryTrace(
+            source=s.source,
+            query=s.query,
+            weight=s.weight,
+            hit_count=len(r),
+            bm25_top=r[0].score if r else 0.0,
+            bm25_second=r[1].score if len(r) > 1 else 0.0,
+            rrf_k=_RRF_K_DEFAULT,
+        )
+        for s, r in zip(subs, rankings, strict=True)
+    ]
+    # Per-hit contributions: walk each ranking once, accumulate
+    # rank/bm25/rrf for each (parent_id, chunk_seq) appearing in ``out``.
+    out_keys = {(h.parent_id, h.chunk_seq) for h in out}
+    bm25_per: dict[tuple[str, int], dict[str, float]] = {k: {} for k in out_keys}
+    rank_per: dict[tuple[str, int], dict[str, int]] = {k: {} for k in out_keys}
+    rrf_per: dict[tuple[str, int], dict[str, float]] = {k: {} for k in out_keys}
+    for ranking, sub in zip(rankings, subs, strict=True):
+        for rank, h in enumerate(ranking, start=1):
+            key = (h.parent_id, h.chunk_seq)
+            if key not in bm25_per:
+                continue
+            rank_per[key][sub.source] = rank
+            bm25_per[key][sub.source] = h.score
+            rrf = sub.weight / (_RRF_K_DEFAULT + rank)
+            if rank == 1:
+                rrf += _POS_BONUS_RANK_1
+            elif rank in (2, 3):
+                rrf += _POS_BONUS_RANK_2_3
+            rrf_per[key][sub.source] = rrf
+
+    contribution_traces = [
+        HitContribution(
+            parent_id=h.parent_id,
+            chunk_seq=h.chunk_seq,
+            bm25_per_source=bm25_per[(h.parent_id, h.chunk_seq)],
+            rank_per_source={
+                s.source: rank_per[(h.parent_id, h.chunk_seq)].get(s.source, 0) for s in subs
+            },
+            rrf_per_source=rrf_per[(h.parent_id, h.chunk_seq)],
+            fused_total=sum(rrf_per[(h.parent_id, h.chunk_seq)].values()),
+            primary_source=primary_source.get((h.parent_id, h.chunk_seq), "lex"),
+            final_score=h.score,
+        )
+        for h in out
+    ]
+    return FusionTrace(
+        query=query,
+        subqueries=sub_traces,
+        contributions=contribution_traces,
+        rrf_k=_RRF_K_DEFAULT,
+        pos_bonus_rank_1=_POS_BONUS_RANK_1,
+        pos_bonus_rank_2_3=_POS_BONUS_RANK_2_3,
+        default_weights=dict(_DEFAULT_WEIGHTS),
+    )
+
+
+def _empty_fusion_trace(query: str) -> FusionTrace:
+    return FusionTrace(
+        query=query,
+        subqueries=[],
+        contributions=[],
+        rrf_k=_RRF_K_DEFAULT,
+        pos_bonus_rank_1=_POS_BONUS_RANK_1,
+        pos_bonus_rank_2_3=_POS_BONUS_RANK_2_3,
+        default_weights=dict(_DEFAULT_WEIGHTS),
+    )
 
 
 def _bm25_score_map(rankings: list[list[Hit]]) -> dict[tuple[str, int], float]:
