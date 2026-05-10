@@ -22,7 +22,7 @@ from typing import Any
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Center, Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import (
     Input,
     Label,
@@ -346,24 +346,25 @@ class AcornApp(App[None]):
     }
     #preview_pane:focus-within { border: round $accent; }
     /* Preview-load indicators (UX-pass-4 §4 follow-up). The ProgressBar
-       sits flush at the top of the pane and reads as ambient (1 row,
-       accent-tinted, no ETA chrome). The LoadingIndicator wraps in a
-       Center container so the spinner sits in the middle of the empty
-       pane while decode is running, then both widgets self-remove
-       once the first chunks mount. */
+       spans the full pane width with the percentage label visible (so
+       the bar has guaranteed content even in indeterminate mode). The
+       LoadingIndicator self-centers via its own DEFAULT_CSS
+       (content-align: center middle, width: 100%, height: 100%) — it
+       fills the remaining vertical space below the bar. Both widgets
+       self-remove once the first chunks mount. */
     #preview_progress {
+        width: 100%;
         height: 1;
         margin: 0 0 1 0;
         background: transparent;
     }
-    #preview_progress > Bar { color: $accent; }
-    #preview_progress > PercentageStatus { color: $text-muted; }
+    #preview_progress Bar { width: 1fr; color: $accent; }
+    #preview_progress PercentageStatus { color: $text-muted; padding: 0 0 0 1; }
     #preview_loading {
         width: 100%;
         height: 1fr;
-        align: center middle;
+        color: $accent;
     }
-    #preview_loading LoadingIndicator { color: $accent; }
     .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
     .chunk-section { padding: 0 0 1 0; height: auto; }
     .chunk-header { padding: 1 0 0 0; }
@@ -901,24 +902,44 @@ class AcornApp(App[None]):
 
     def _mount_preview_loading_widgets(self) -> None:
         """Clear the preview pane and mount a ProgressBar (indeterminate)
-        plus a centered LoadingIndicator. Replaces any existing content."""
+        plus a self-centering LoadingIndicator. Replaces any existing
+        content; resets the scroll position so the new widgets are in
+        the viewport even if the user had scrolled deep into the
+        previous file's preview.
+
+        ``show_percentage=True`` is intentional: in indeterminate mode
+        (``total=None``) the inner ``Bar`` widget would otherwise have
+        no sibling content and the surrounding ``Horizontal`` container
+        collapses to ``width: auto``, making the whole bar invisibly
+        narrow. Keeping the percentage label gives the layout
+        non-zero content + a constantly-updating animation.
+        """
         pane = self.query_one("#preview_pane", VerticalScroll)
         for w in list(pane.children):
             w.remove()
         self._chunk_widgets = {}
         self._match_targets = {}
-        # Indeterminate by default (total=None) — animates while we wait
-        # for the worker to deliver chunks. We swap to determinate mode
-        # in _on_preview_chunks_loaded once we know the total.
         bar = ProgressBar(
             total=None,
             show_eta=False,
-            show_percentage=False,
+            show_percentage=True,
             id="preview_progress",
         )
-        spinner_box = Center(LoadingIndicator(), id="preview_loading")
+        # LoadingIndicator self-centers via its own DEFAULT_CSS — no
+        # outer Center container needed (the wrapper was previously
+        # double-wrapping and confusing the layout pass).
+        spinner = LoadingIndicator(id="preview_loading")
         pane.mount(bar)
-        pane.mount(spinner_box)
+        pane.mount(spinner)
+        # Ensure the new widgets land in the viewport — without this the
+        # pane keeps the previous file's scroll offset and the freshly-
+        # mounted bar / spinner are below the fold (the symptom: "no
+        # change in UI apparent" because the new content is just out of
+        # view).
+        pane.scroll_home(animate=False)
+        # Force a layout pass so the indicators paint before the worker
+        # callback potentially fires on the next event-loop tick.
+        pane.refresh(layout=True)
 
     def _clear_preview_loading_widgets(self) -> None:
         """Remove the ProgressBar + LoadingIndicator if mounted. Safe to
