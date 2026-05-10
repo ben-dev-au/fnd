@@ -741,24 +741,31 @@ class AcornApp(App[None]):
             else self._searcher
         )
 
+        # Oversample chunks so the per-file grouper can fill up to
+        # ``limit`` files. Without this, a query whose top chunks all
+        # cluster in 2 files would produce only 2 result rows even
+        # when the corpus has 30+ matching files.
+        chunk_pool = limit * 10
+
         hits = fusion_search(
             searcher,  # type: ignore[arg-type]
             query=lexical,
-            limit=limit,
+            limit=chunk_pool,
             collection=collection,
             synonyms=self._synonyms,
             metadata_filter=metadata_filter,
             active_sources=active_sources,
         )
-        # §9c: when fusion's output is below threshold (a quarter of the
-        # caller's limit per the master plan), widen via cascade so fuzzy
-        # + synonym passes catch typos and unusual wording.
+        # §9c: when fusion's chunk pool is sparse, widen via cascade so
+        # fuzzy + synonym passes catch typos and unusual wording. The
+        # threshold compares against the caller's *file*-count limit
+        # (a quarter, per master §9c) since that's what users see.
         if len(hits) < max(1, limit // 4):
             cascade_hits = cascade_search(
                 searcher,  # type: ignore[arg-type]
                 query=lexical,
-                threshold=limit,
-                limit=limit,
+                threshold=chunk_pool,
+                limit=chunk_pool,
                 collection=collection,
                 synonyms=self._synonyms,
                 metadata_filter=metadata_filter,
