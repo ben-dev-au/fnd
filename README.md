@@ -31,3 +31,16 @@ make lint          # ruff + pyright strict
 Foxtrot Pro works but costs ~$200 AUD/licence and has crash issues on a 50k+ corpus.
 Recoll's UX is clunky. PDF Search is PDF-only. acorn aims for Foxtrot-grade ranking and
 in-file navigation, free, with a keyboard-only flow no commercial tool offers.
+
+## Acknowledgments
+
+Some design choices in acorn's search layer are adapted from sibling
+open-source projects:
+
+- **[tobi/qmd](https://github.com/tobi/qmd)** (MIT): the strong-signal bypass
+  (skip parallel sub-queries when the literal probe is already unambiguous),
+  the score normalization `s / (1 + s)` that makes its thresholds (0.85
+  score, 0.15 gap) corpus-stable, and the `intent:` line in the multi-line
+  query DSL.
+- The Reciprocal Rank Fusion constant `k = 60` and rank-position bonuses
+  follow Cormack/Clarke/Buettcher (2009).
