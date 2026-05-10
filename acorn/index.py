@@ -25,6 +25,7 @@ from acorn.schema import (
     F_META_BLOB,
     F_MTIME,
     F_PAGE,
+    F_PAGE_LABEL,
     F_PARENT_ID,
     F_PATH,
     F_PATH_TOKENS,
@@ -124,6 +125,7 @@ def _doc_for_chunk(
     doc.add_text(F_TITLE, chunk.title)
     doc.add_text(F_AUTHOR, chunk.author)
     doc.add_text(F_BODY, chunk.body)
+    doc.add_text(F_PAGE_LABEL, chunk.page_label)
     doc.add_unsigned(F_MTIME, max(chunk.mtime, 0))
     doc.add_unsigned(F_PAGE, max(chunk.page, 0))
     doc.add_unsigned(F_SLIDE, max(chunk.slide, 0))

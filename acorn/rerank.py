@@ -207,6 +207,7 @@ def _replace_score(h: Hit, score: float) -> Hit:
         heading_path=h.heading_path,
         title=h.title,
         snippet=h.snippet,
+        page_label=h.page_label,
         chunk_seq=h.chunk_seq,
         mtime=h.mtime,
         pass_index=h.pass_index,

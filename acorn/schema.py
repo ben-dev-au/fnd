@@ -14,7 +14,8 @@ path              text     raw       yes     no    filesystem path (display + op
 path_tokens       text     default   no      no    tokenized for path matching
 mtime             u64      yes       yes     yes   incremental skip + recency boost
 kind              text     raw       yes     yes   ``pdf`` / ``pptx`` / ``docx`` / ``md`` / ``txt``
-page              u64      yes       yes     yes   1-based; 0 = N/A
+page              u64      yes       yes     yes   PDF page index (1-based); 0 = N/A
+page_label        text     raw       yes     no    printed page label (e.g. "292" or "iv"); "" if N/A
 slide             u64      yes       yes     yes   1-based; 0 = N/A
 heading_path      text     default   yes     no    DOCX/MD section path (boosted)
 title             text     default   yes     no    metadata title (boosted)
@@ -33,7 +34,7 @@ from typing import Final
 from tantivy import Schema, SchemaBuilder
 
 # Bump on any field-shape change; indexer refuses to open a stale index.
-SCHEMA_VERSION: Final[int] = 3
+SCHEMA_VERSION: Final[int] = 4
 
 # Field-name constants so callers don't sprinkle string literals.
 F_PARENT_ID: Final = "parent_id"
@@ -44,6 +45,7 @@ F_PATH_TOKENS: Final = "path_tokens"
 F_MTIME: Final = "mtime"
 F_KIND: Final = "kind"
 F_PAGE: Final = "page"
+F_PAGE_LABEL: Final = "page_label"
 F_SLIDE: Final = "slide"
 F_HEADING_PATH: Final = "heading_path"
 F_TITLE: Final = "title"
@@ -73,6 +75,8 @@ def build_schema() -> Schema:
     sb.add_text_field(F_COLLECTION, stored=True, fast=True, tokenizer_name="raw")
     sb.add_text_field(F_SOURCE_PATH, stored=True, fast=True, tokenizer_name="raw")
     sb.add_text_field(F_KIND, stored=True, fast=True, tokenizer_name="raw")
+    # Stored-only printed page label; raw tokenizer keeps it untouched.
+    sb.add_text_field(F_PAGE_LABEL, stored=True, tokenizer_name="raw")
 
     # Display-only path; raw tokenizer keeps it stored without weird tokenization.
     sb.add_text_field(F_PATH, stored=True, tokenizer_name="raw")

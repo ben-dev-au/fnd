@@ -32,7 +32,14 @@ class Chunk:
     kind: Kind
     body: str
     body_struct: list[Block] = field(default_factory=list)
+    # ``page`` is the *PDF page index* (1-based, sequential from cover) —
+    # used by the opener to deep-link via Skim. ``page_label`` is the
+    # *printed* page label as set in the PDF (e.g. "292" or "iv"); empty
+    # when the PDF has no labels. The two diverge for any book with
+    # roman-numbered front matter, where printed page 1 might be PDF
+    # page 39. Display layers prefer ``page_label`` when present.
     page: int = 0  # 1-based; 0 = not applicable
+    page_label: str = ""
     slide: int = 0  # 1-based; 0 = not applicable
     heading_path: str = ""
     title: str = ""

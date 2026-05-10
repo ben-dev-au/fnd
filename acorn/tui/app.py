@@ -268,7 +268,9 @@ def _format_hit_label(h: Hit, *, max_score: float = 0.0) -> Any:
     so the body snippet — the actually useful context for "is this
     the match I want" — claims most of the row width.
     """
-    if h.page:
+    if h.page_label:
+        loc = f"p.{h.page_label}"
+    elif h.page:
         loc = f"p.{h.page}"
     elif h.slide:
         loc = f"s.{h.slide}"

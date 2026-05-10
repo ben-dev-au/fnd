@@ -121,6 +121,16 @@ def extract(path: Path) -> Iterator[Chunk]:
         for page_index in range(doc.page_count):
             page = doc[page_index]
             page_no = page_index + 1
+            # Printed page label (e.g. "292", "iv") if the PDF carries
+            # explicit labels; empty string otherwise. Books with
+            # prefatory pages typically label them in roman numerals
+            # so the displayed locator matches what's actually printed
+            # on the page, while ``page_no`` (PDF index) is what Skim
+            # needs for deep-linking.
+            try:
+                page_label = page.get_label() or ""
+            except Exception:
+                page_label = ""
             text = cast(str, page.get_text("text") or "")
 
             # Skip blank pages.
@@ -162,6 +172,7 @@ def extract(path: Path) -> Iterator[Chunk]:
                 body=text,
                 body_struct=blocks,
                 page=page_no,
+                page_label=page_label,
                 heading_path=heading_path,
                 title=meta_title,
                 author=meta_author,
