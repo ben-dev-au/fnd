@@ -132,6 +132,47 @@ def test_cascade_falls_back_to_fuzzy_on_misspelling(small_md_corpus: Path) -> No
     assert all(h.pass_index >= 1 for h in fuzzy)
 
 
+def test_cascade_fuzzy_matches_when_indexed_token_is_stemmed(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Regression: ``F_BODY`` is indexed with ``en_stem``, so the on-disk
+    token for "Templates" is ``templat``. A typo query like "Templatas"
+    lowercases to ``templatas`` (8 chars). Without stemming the query,
+    Tantivy's ``fuzzy_term_query`` sees distance 2 from ``templat`` and
+    rejects the match — even though both forms come from the same root.
+    Stem the query before issuing the fuzzy search so the on-disk
+    Levenshtein distance is computed between the same token shapes the
+    analyzer wrote.
+
+    Picks word pairs the Snowball English stemmer actually reshapes
+    (unlike the ``glimer/glimmer`` and ``penquin/penguin`` pairs the
+    other tests use, where the stemmer leaves both forms untouched).
+    """
+    import snowballstemmer
+
+    stemmer = snowballstemmer.stemmer("english")
+    # Sanity-pin the test on stemmer behavior: if the stemmer ever stops
+    # reshaping these inputs the test stops exercising the bug.
+    assert stemmer.stemWord("templates") == "templat"
+    assert stemmer.stemWord("templatas") == "templata"
+
+    root = tmp_path / "docs"
+    root.mkdir(parents=True)
+    (root / "tpl.md").write_text(
+        "# Templates\nThe templates section starts here.\n",
+        encoding="utf-8",
+    )
+    build_index(roots=[tmp_path], index_dir=tmp_index_dir, collection="default")
+
+    s = Searcher(index_dir=tmp_index_dir)
+    hits = cascade_search(s, query="templatas", threshold=1)
+    paths = [Path(h.path).name for h in hits]
+    assert "tpl.md" in paths, hits
+    fuzzy = [h for h in hits if Path(h.path).name == "tpl.md"]
+    assert fuzzy
+    assert all(h.pass_index >= 1 for h in fuzzy)
+
+
 def test_cascade_synonym_pass_finds_long_form(tmp_path: Path, tmp_index_dir: Path) -> None:
     """A query for 'MSSM' returns 0 exact hits, but cascading via the
     synonym pass must surface the document that uses the long form."""

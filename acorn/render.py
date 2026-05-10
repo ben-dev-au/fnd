@@ -10,12 +10,15 @@ adds match-cluster minimap.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import snowballstemmer
 from rich.text import Text
 
 from acorn.extract.base import Block
+
+if TYPE_CHECKING:
+    from acorn.matching import MatchSpec
 
 _HEADING_KINDS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 
@@ -26,6 +29,11 @@ _HEADING_KINDS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 # "penfolds" matched "penfold" in results but didn't highlight.)
 _STEMMER = snowballstemmer.stemmer("english")
 HIGHLIGHT_STYLE = "bold black on #ffd866"
+# Mismatch overlay for fuzzy-pass hits — orange so the eye can read
+# at a glance which char(s) in a near-match diverge from what the user
+# typed. Same black foreground as HIGHLIGHT_STYLE so adjacent
+# yellow/orange runs feel like one painted word.
+MISMATCH_STYLE = "bold black on #ff9e64"
 
 
 def _stem(word: str) -> str:
@@ -37,16 +45,36 @@ def _term_stems(terms: list[str]) -> set[str]:
 
 
 def text_has_match(text: str, term_stems: set[str]) -> bool:
-    """True if any whole word in ``text`` stems to one of ``term_stems``."""
+    """True if any whole word in ``text`` stems to one of ``term_stems``.
+
+    Strict-stem variant kept for callers that explicitly want literal
+    semantics (e.g. snippet detection that should not light up on
+    fuzzy near-matches). Fuzzy / synonym-aware callers should use
+    :func:`text_has_any_match` with a :class:`MatchSpec`.
+    """
     if not term_stems or not text:
         return False
     return any(_stem(m.group(0)) in term_stems for m in re.finditer(r"\w+", text))
 
 
+def text_has_any_match(text: str, spec: MatchSpec) -> bool:
+    """True if any whole word in ``text`` matches ``spec`` under any of
+    the cascade's pass semantics (exact-stem, fuzzy-AUTO, synonym).
+    Used by the match-aware scrollbar so its markers cover all the
+    same chunks the user-visible highlights cover."""
+    from acorn.matching import word_matches
+
+    if spec.is_empty or not text:
+        return False
+    return any(word_matches(m.group(0), spec) for m in re.finditer(r"\w+", text))
+
+
 def apply_stem_highlights(rendered: Text, term_stems: set[str]) -> bool:
     """Stylize every word in ``rendered`` whose stem matches any
     ``term_stems`` entry. Mutates ``rendered`` in place. Returns True if any
-    highlight was applied."""
+    highlight was applied. Strict-stem variant kept for callers that
+    don't want fuzzy / synonym expansion (tests, exports). Live
+    preview rendering should use :func:`apply_match_highlights`."""
     if not term_stems:
         return False
     found = False
@@ -56,6 +84,86 @@ def apply_stem_highlights(rendered: Text, term_stems: set[str]) -> bool:
             rendered.stylize(HIGHLIGHT_STYLE, m.start(), m.end())
             found = True
     return found
+
+
+def apply_match_highlights(rendered: Text, spec: MatchSpec) -> bool:
+    """Stylize every word in ``rendered`` whose stem matches the
+    :class:`acorn.matching.MatchSpec`. Catches fuzzy-AUTO and synonym
+    variants in addition to literal stems.
+
+    Char-level colour split: literal / synonym matches paint the whole
+    word yellow (no mismatch information to convey — same meaning).
+    Fuzzy-only matches align the doc word against the closest typed
+    query term and paint matching chars yellow, divergent chars
+    orange, so the user can read at a glance which letter was the
+    typo or insertion that pushed the word out of the literal pass.
+    """
+    if spec.is_empty:
+        return False
+    found = False
+    plain = rendered.plain
+    for m in re.finditer(r"\w+", plain):
+        word = m.group(0)
+        runs = word_highlight_runs(word, spec)
+        if not runs:
+            continue
+        for offset_start, offset_end, style in runs:
+            rendered.stylize(style, m.start() + offset_start, m.start() + offset_end)
+        found = True
+    return found
+
+
+def word_highlight_runs(word: str, spec: MatchSpec) -> list[tuple[int, int, str]]:
+    """Return the per-char highlight runs for ``word`` against ``spec``.
+
+    Each run is ``(start_offset, end_offset, style_string)`` relative
+    to ``word``. Empty list means no highlight (no match). For exact-
+    or synonym-stem matches the function returns one yellow run
+    covering the whole word; for fuzzy-AUTO matches it returns one or
+    more runs split by Levenshtein alignment against the closest typed
+    term — yellow for matching chars, orange for substitutions /
+    insertions.
+
+    Used by both renderers (Markdown widget spans and per-line plain
+    Rich Text) so the visual treatment is identical.
+    """
+    from acorn.matching import (
+        _STEMMER as _MATCH_STEMMER,
+    )
+    from acorn.matching import (
+        align_doc_word,
+        closest_raw_term,
+        word_matches,
+    )
+
+    if spec.is_empty or not word:
+        return []
+    if not word_matches(word, spec):
+        return []
+    stem = _MATCH_STEMMER.stemWord(word.lower())
+    # Exact-stem (literal / phrase / synonym) → whole word yellow.
+    if stem in spec.exact_stems:
+        return [(0, len(word), HIGHLIGHT_STYLE)]
+    # Fuzzy-only → align against closest typed term.
+    raw = closest_raw_term(word, spec)
+    if raw is None:
+        return [(0, len(word), HIGHLIGHT_STYLE)]
+    matches = align_doc_word(word, raw)
+    if not matches:
+        return [(0, len(word), HIGHLIGHT_STYLE)]
+    # Compress consecutive same-state chars into runs.
+    runs: list[tuple[int, int, str]] = []
+    cur_start = 0
+    cur_match = matches[0]
+    for i in range(1, len(matches)):
+        if matches[i] != cur_match:
+            style = HIGHLIGHT_STYLE if cur_match else MISMATCH_STYLE
+            runs.append((cur_start, i, style))
+            cur_start = i
+            cur_match = matches[i]
+    style = HIGHLIGHT_STYLE if cur_match else MISMATCH_STYLE
+    runs.append((cur_start, len(matches), style))
+    return runs
 
 
 def _highlight(text: str, terms: list[str]) -> str:
@@ -151,7 +259,9 @@ def render_document(chunks: list[Any], *, query: str = "") -> str:
     return md + "\n"
 
 
-def render_chunk_pieces(chunk: Any, *, query: str = "") -> tuple[Text, list[tuple[Text, bool]]]:
+def render_chunk_pieces(
+    chunk: Any, *, query: str = "", match_spec: Any = None
+) -> tuple[Text, list[tuple[Text, bool]]]:
     """Split a chunk into a header Text plus a list of (line_text, has_match)
     pairs.
 
@@ -165,16 +275,26 @@ def render_chunk_pieces(chunk: Any, *, query: str = "") -> tuple[Text, list[tupl
       winelist is ~3000 widgets all-per-line vs ~280 with this split).
 
     The returned line Texts already have query-term highlights applied.
+    When ``match_spec`` is provided (an :class:`acorn.matching.MatchSpec`),
+    fuzzy-AUTO and synonym variants are highlighted in addition to
+    literal stems — same semantics the cascade fuzzy / synonym passes
+    use. Fall-back to literal-only stem matching when ``match_spec``
+    is ``None`` (preserves the old test surface).
     """
     header = Text(f" {_chunk_header(chunk)}", style="bold #82aaff")
 
     terms = _terms_from_query(query)
     term_stems = _term_stems(terms)
 
-    chunk_has_match = bool(
-        term_stems
-        and any(text_has_match(getattr(b, "text", "") or "", term_stems) for b in chunk.blocks)
-    )
+    if match_spec is not None and not match_spec.is_empty:
+        chunk_has_match = any(
+            text_has_any_match(getattr(b, "text", "") or "", match_spec) for b in chunk.blocks
+        )
+    else:
+        chunk_has_match = bool(
+            term_stems
+            and any(text_has_match(getattr(b, "text", "") or "", term_stems) for b in chunk.blocks)
+        )
 
     pieces: list[tuple[Text, bool]] = []
     if not chunk_has_match:
@@ -204,7 +324,10 @@ def render_chunk_pieces(chunk: Any, *, query: str = "") -> tuple[Text, list[tupl
                 rendered = Text(f"  ▎ {line}", style="italic dim")
             else:
                 rendered = Text(line)
-            has_match = apply_stem_highlights(rendered, term_stems)
+            if match_spec is not None and not match_spec.is_empty:
+                has_match = apply_match_highlights(rendered, match_spec)
+            else:
+                has_match = apply_stem_highlights(rendered, term_stems)
             pieces.append((rendered, has_match))
     return header, pieces
 

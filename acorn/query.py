@@ -23,6 +23,7 @@ from acorn.extract.base import Block
 from acorn.schema import (
     DEFAULT_FIELD_BOOSTS,
     DEFAULT_SEARCH_FIELDS,
+    F_BODY_MD,
     F_BODY_STRUCT,
     F_CHUNK_SEQ,
     F_HEADING_PATH,
@@ -75,7 +76,15 @@ class Hit:
 @dataclass(slots=True, frozen=True)
 class FileChunk:
     """One indexed chunk in document order — used by the TUI's full-document
-    preview. ``score`` is None for chunks that didn't match the query."""
+    preview. ``score`` is None for chunks that didn't match the query.
+
+    ``blocks`` is the legacy plain-text Block list (used by the snippet
+    pipeline and as a fallback for the preview pane on stale indexes).
+    ``body_md`` is the verbatim or serialised markdown source used by
+    the structural preview renderer (Textual Markdown widget) for
+    md / docx / pptx chunks; empty for pdf / txt where there is no
+    structure to render.
+    """
 
     parent_id: str
     path: str
@@ -86,6 +95,7 @@ class FileChunk:
     chunk_seq: int
     blocks: list[Block]
     page_label: str = ""
+    body_md: str = ""
     score: float | None = None
 
 
@@ -384,6 +394,8 @@ class Searcher:
             doc = self._searcher.doc(address)
             body_struct_bytes = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
             blocks = decode_body_struct(body_struct_bytes) if body_struct_bytes else []
+            body_md_bytes = doc.get_first(F_BODY_MD)  # type: ignore[attr-defined]
+            body_md = body_md_bytes.decode("utf-8") if body_md_bytes else ""
             chunks.append(
                 FileChunk(
                     parent_id=_first_str(doc, F_PARENT_ID),
@@ -395,6 +407,7 @@ class Searcher:
                     chunk_seq=_first_int(doc, F_CHUNK_SEQ),
                     blocks=blocks,
                     page_label=_first_str(doc, F_PAGE_LABEL),
+                    body_md=body_md,
                 )
             )
         chunks.sort(key=lambda c: c.chunk_seq)

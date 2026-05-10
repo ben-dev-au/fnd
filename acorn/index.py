@@ -17,6 +17,7 @@ from acorn.meta_blob import encode as encode_meta_blob
 from acorn.schema import (
     F_AUTHOR,
     F_BODY,
+    F_BODY_MD,
     F_BODY_STRUCT,
     F_CHUNK_SEQ,
     F_COLLECTION,
@@ -131,6 +132,7 @@ def _doc_for_chunk(
     doc.add_unsigned(F_SLIDE, max(chunk.slide, 0))
     doc.add_unsigned(F_CHUNK_SEQ, max(chunk.chunk_seq, 0))
     doc.add_bytes(F_BODY_STRUCT, encode_body_struct(chunk.body_struct))
+    doc.add_bytes(F_BODY_MD, chunk.body_md.encode("utf-8"))
     doc.add_bytes(F_META_BLOB, meta_blob_bytes)
     return doc
 

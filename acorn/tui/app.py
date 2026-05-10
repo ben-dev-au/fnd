@@ -20,27 +20,45 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from textual import on
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.content import Span
 from textual.widget import Widget
 from textual.widgets import (
     Input,
-    Label,
+    Markdown,
     ProgressBar,
-    SelectionList,
     Static,
     Tree,
 )
-from textual.widgets.selection_list import Selection
+from textual.widgets._markdown import (
+    MarkdownBlock,
+    MarkdownBlockQuote,
+    MarkdownH1,
+    MarkdownH2,
+    MarkdownH3,
+    MarkdownH4,
+    MarkdownH5,
+    MarkdownH6,
+    MarkdownOrderedListItem,
+    MarkdownParagraph,
+    MarkdownTD,
+    MarkdownTH,
+    MarkdownUnorderedListItem,
+)
 from textual.widgets.tree import TreeNode
 
 from acorn import opener
 from acorn.config import Config, default_index_dir
 from acorn.explain import SearchTrace
+from acorn.matching import MatchSpec
 from acorn.query import FileChunk, FileGroup, Hit, Searcher
-from acorn.render import render_chunk_pieces
+from acorn.render import (
+    render_chunk_pieces,
+    word_highlight_runs,
+)
 from acorn.rerank import RankingProfile, profile_from_config
 from acorn.tui.actions import REGISTRY, Keymap, load_keymap, resolve_command
 from acorn.tui.preview_scrollbar import MatchAwareScroll
@@ -93,9 +111,9 @@ class PreviewContainer(Container):
         self.total_chunks = total_chunks
         self.mounted_indices: set[int] = set()
         # chunk_seq → first widget for that chunk (the header / title row).
-        self.chunk_widgets: dict[int, Static] = {}
+        self.chunk_widgets: dict[int, Widget] = {}
         # chunk_seq → first match-bearing widget (or header when no match).
-        self.match_targets: dict[int, Static] = {}
+        self.match_targets: dict[int, Widget] = {}
 
     @property
     def is_complete(self) -> bool:
@@ -148,6 +166,201 @@ class PreviewCache:
         evicted = list(self._cache.values())
         self._cache.clear()
         return evicted
+
+
+# ── Highlight-aware Markdown widget tree ──────────────────────────────
+#
+# Textual's stock Markdown widget renders a per-block widget tree out
+# of markdown-it tokens (headings, paragraphs, lists, blockquotes,
+# tables, fenced code, etc.). We subclass the block kinds whose inline
+# text should carry search-term highlights and overlay
+# ``Content.add_spans`` after the base build runs — match-only spans
+# layered on top of whatever style the base block produced. Code
+# fences (``MarkdownFence``) are intentionally NOT subclassed: the
+# stock widget uses ``rich.syntax.Syntax`` for the fence body, and
+# splatting yellow highlights inside code makes it harder to read,
+# not easier.
+#
+# The match logic shells out to the same ``_terms_from_query`` /
+# ``_term_stems`` / Snowball stemmer used everywhere else in the app
+# (acorn/render.py:46) so the highlight semantics agree with snippet
+# detection and the per-line plain renderer.
+
+
+def _build_match_spans(plain: str, spec: MatchSpec) -> list[Span]:
+    """Return a list of highlight spans covering every word in ``plain``
+    that matches ``spec`` under any of the cascade's pass semantics —
+    exact-stem (literal / phrase / synonym) or fuzzy-AUTO.
+
+    Char-level colour split: literal / synonym matches → one yellow
+    span covering the whole word. Fuzzy-only matches → multiple spans
+    split by Levenshtein alignment against the closest typed query
+    term (yellow for chars that align, orange for substitutions /
+    insertions). Same per-word run helper as the per-line plain
+    renderer (``acorn.render.word_highlight_runs``) so the visual
+    treatment is identical across markdown / docx / pptx / pdf / txt
+    previews. Span styles are concrete Rich style strings so the
+    visual doesn't depend on Textual's component-class CSS resolution.
+    """
+    if spec.is_empty or not plain:
+        return []
+    spans: list[Span] = []
+    for m in re.finditer(r"\w+", plain):
+        runs = word_highlight_runs(m.group(0), spec)
+        for offset_start, offset_end, style in runs:
+            spans.append(Span(m.start() + offset_start, m.start() + offset_end, style))
+    return spans
+
+
+def _record_first_match(block: MarkdownBlock, spans: list[Span]) -> None:
+    """If this block contains the first highlighted match in the
+    document, register it on the parent ``AcornMarkdown`` so the
+    preview pane can scroll to it. First-write-wins: subsequent matched
+    blocks don't overwrite.
+    """
+    if not spans:
+        return
+    md = block._markdown  # weakref unwrap
+    if isinstance(md, AcornMarkdown) and md._first_match_block is None:
+        md._first_match_block = block
+
+
+def _apply_highlights_after_build(block: MarkdownBlock) -> None:
+    """Common ``build_from_token`` postlude shared by every highlight-
+    aware subclass: pull ``match_spec`` off the parent AcornMarkdown,
+    compute spans against ``block._content.plain``, and replace the
+    block's content with the span-augmented version. No-op when the
+    parent isn't an AcornMarkdown (e.g. the stock Markdown widget the
+    help overlay uses) or when the spec is empty."""
+    md = block._markdown
+    spec = getattr(md, "match_spec", None)
+    if spec is None or spec.is_empty:
+        return
+    spans = _build_match_spans(block._content.plain, spec)
+    if not spans:
+        return
+    block.set_content(block._content.add_spans(spans))
+    _record_first_match(block, spans)
+
+
+class _HighlightingBlockMixin:
+    """Drop-in mixin for the MarkdownBlock subclasses that should apply
+    search-term highlights after the base build. Avoids repeating the
+    same five-line ``build_from_token`` body on every subclass."""
+
+    def build_from_token(self, token):  # type: ignore[override]
+        super().build_from_token(token)  # type: ignore[misc]
+        _apply_highlights_after_build(self)  # type: ignore[arg-type]
+
+
+class AcornMarkdownH1(_HighlightingBlockMixin, MarkdownH1):
+    pass
+
+
+class AcornMarkdownH2(_HighlightingBlockMixin, MarkdownH2):
+    pass
+
+
+class AcornMarkdownH3(_HighlightingBlockMixin, MarkdownH3):
+    pass
+
+
+class AcornMarkdownH4(_HighlightingBlockMixin, MarkdownH4):
+    pass
+
+
+class AcornMarkdownH5(_HighlightingBlockMixin, MarkdownH5):
+    pass
+
+
+class AcornMarkdownH6(_HighlightingBlockMixin, MarkdownH6):
+    pass
+
+
+class AcornMarkdownParagraph(_HighlightingBlockMixin, MarkdownParagraph):
+    pass
+
+
+class AcornMarkdownBlockQuote(_HighlightingBlockMixin, MarkdownBlockQuote):
+    pass
+
+
+class AcornMarkdownOrderedListItem(_HighlightingBlockMixin, MarkdownOrderedListItem):
+    pass
+
+
+class AcornMarkdownUnorderedListItem(_HighlightingBlockMixin, MarkdownUnorderedListItem):
+    pass
+
+
+class AcornMarkdownTH(_HighlightingBlockMixin, MarkdownTH):
+    pass
+
+
+class AcornMarkdownTD(_HighlightingBlockMixin, MarkdownTD):
+    pass
+
+
+class AcornMarkdown(Markdown):
+    """Markdown widget with inline search-term highlighting.
+
+    Subclasses ``textual.widgets.Markdown`` and registers
+    highlight-aware block subclasses for the kinds whose inline text
+    should carry the highlight overlay (headings, paragraphs,
+    blockquotes, list items, table cells). Fenced code blocks
+    (``MarkdownFence``) intentionally remain on the base class — the
+    stock widget renders them via ``rich.syntax.Syntax`` and we don't
+    want to muddy that with extra styling.
+
+    The user's query stems are passed in at construction time and
+    stashed on the instance so each block subclass can read them
+    during ``build_from_token``. ``first_match_block`` resolves to the
+    earliest block in document order whose Content gained at least
+    one highlight span — the preview pane scrolls to it so the user
+    sees the match without manual scrolling.
+    """
+
+    DEFAULT_CSS = """
+    AcornMarkdown {
+        height: auto;
+    }
+    """
+
+    BLOCKS: dict[str, type[MarkdownBlock]] = {  # noqa: RUF012
+        **Markdown.BLOCKS,
+        "h1": AcornMarkdownH1,
+        "h2": AcornMarkdownH2,
+        "h3": AcornMarkdownH3,
+        "h4": AcornMarkdownH4,
+        "h5": AcornMarkdownH5,
+        "h6": AcornMarkdownH6,
+        "paragraph_open": AcornMarkdownParagraph,
+        "blockquote_open": AcornMarkdownBlockQuote,
+        "list_item_ordered_open": AcornMarkdownOrderedListItem,
+        "list_item_unordered_open": AcornMarkdownUnorderedListItem,
+        "th_open": AcornMarkdownTH,
+        "td_open": AcornMarkdownTD,
+    }
+
+    def __init__(
+        self,
+        markdown: str | None = None,
+        *,
+        match_spec: MatchSpec | None = None,
+        name: str | None = None,
+        id: str | None = None,
+        classes: str | None = None,
+    ) -> None:
+        super().__init__(markdown=markdown, name=name, id=id, classes=classes)
+        self.match_spec: MatchSpec = match_spec or MatchSpec()
+        self._first_match_block: MarkdownBlock | None = None
+
+    @property
+    def first_match_block(self) -> MarkdownBlock | None:
+        """The first highlighted block in document order, or ``None``
+        when the source has no matches. Set by the highlight-aware
+        block subclasses during ``build_from_token``."""
+        return self._first_match_block
 
 
 # Phase F filters: panel layout. ``kinds`` is multi-select (each value
@@ -219,6 +432,43 @@ def _build_label(text: str, score: float, max_score: float) -> Any:
         label.append(" " * 7)
     label.append(text)
     return label
+
+
+# Formats whose extractor produces a ``body_md`` markdown source
+# suitable for the AcornMarkdown structural renderer. Other formats
+# (pdf, txt) stay on the per-line plain renderer that targets
+# specific matched lines for scroll precision.
+_MARKDOWN_RENDERED_KINDS: frozenset[str] = frozenset({"md", "docx", "pptx"})
+
+
+def _uses_markdown_renderer(c: FileChunk) -> bool:
+    """True when this chunk should mount through ``AcornMarkdown``.
+    A chunk needs both a markdown-capable kind AND non-empty
+    ``body_md``; the empty-source fallback (defensive — schema-version
+    refusal should make it unreachable) keeps stale-index loads from
+    crashing the renderer."""
+    return c.kind in _MARKDOWN_RENDERED_KINDS and bool(c.body_md)
+
+
+def _legacy_blocks_to_md(blocks: list[Any]) -> str:
+    """Reconstruct a minimal markdown source from the legacy plain-text
+    Block list. Used as a defensive fallback for chunks with empty
+    ``body_md`` (e.g. an old index that slipped through the schema
+    check). Never produces structurally-correct markdown for tables /
+    nested lists / fenced code — those round-tripping properly is
+    exactly what the schema bump and extractor rewrite are for. Just
+    enough to keep a stale-index preview from rendering empty.
+    """
+    parts: list[str] = []
+    for b in blocks:
+        kind = getattr(b, "kind", "p")
+        text = getattr(b, "text", "") or ""
+        if kind in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            level = int(kind[1])
+            parts.append(f"{'#' * level} {text}\n")
+        else:
+            parts.append(f"{text}\n\n")
+    return "".join(parts).strip() + "\n"
 
 
 _NON_WORD_RE = re.compile(r"[^a-z0-9]+")
@@ -364,27 +614,6 @@ class _PrefixingSearcher:
         return getattr(self._inner, name)
 
 
-class _PickerSelectionList(SelectionList[str]):
-    """SelectionList with Enter rebound to "apply" rather than "toggle".
-
-    Textual's ``OptionList.BINDINGS`` maps ``enter`` to ``select``, and
-    ``SelectionList.action_select`` toggles the option — meaning
-    Space-then-Enter (the natural "select then confirm" flow) silently
-    untoggles the user's choice. We override Enter to leave the picker
-    intact and dismiss it via the app's overlay handler.
-    """
-
-    BINDINGS = [Binding("enter", "apply", "Apply", show=False, priority=True)]  # noqa: RUF012
-
-    def action_apply(self) -> None:
-        # Defer to the app's overlay-dismiss action, which removes the
-        # picker container and any other transient overlays.
-        app = self.app
-        action = getattr(app, "action_dismiss_overlay", None)
-        if callable(action):
-            action()
-
-
 class AcornApp(App[None]):
     """Phase 5 shell."""
 
@@ -406,6 +635,21 @@ class AcornApp(App[None]):
         scrollbar-color-active: $accent;
         scrollbar-color-hover: $accent 70%;
         scrollbar-corner-color: transparent;
+    }
+    /* Textual's stock MarkdownFence pins scrollbar-size-horizontal /
+       vertical and gives its inner Label a ``padding: 1 2`` block,
+       which leaves a dark backdrop row above the scrollbar that
+       reads as part of the bar — making the bottom of the fence
+       look noticeably thicker than the rest of the app's hairline
+       scrollbars. App-level CSS outranks widget DEFAULT_CSS, so
+       force scrollbar size to 1 AND drop the bottom padding so the
+       bar sits flush against the last code line. */
+    MarkdownFence {
+        scrollbar-size-vertical: 1;
+        scrollbar-size-horizontal: 1;
+    }
+    MarkdownFence > Label {
+        padding: 0 1;
     }
     /* Pane borders dim by default, brighten when the pane (or any
        descendant) is focused — lazygit's active-section convention.
@@ -436,11 +680,22 @@ class AcornApp(App[None]):
     /* Section collapse-to-header: Left at the panel root shrinks the
        whole panel down to its border-title strip. ``overflow: hidden``
        suppresses any rogue scrollbar that would otherwise sneak past
-       the 3-cell height when the inner tree has more rows than fit. */
-    #results_pane.collapsed,
+       the collapsed height when the inner tree has more rows than fit.
+       The results pane intentionally keeps a 1-row content area
+       (height: 3 = top border + 1 row + bottom border) so the
+       currently-selected hit — which drives the preview pane — stays
+       visible. The secondary panels (collections, filters) drop to
+       just the two border rows so their cursor highlight doesn't bleed
+       through and read as "still selected" when the panel is closed. */
+    #results_pane.collapsed {
+        height: 3;
+        overflow: hidden;
+        scrollbar-size-vertical: 0;
+        scrollbar-size-horizontal: 0;
+    }
     #collections_panel_tree.collapsed,
     #filters_panel_tree.collapsed {
-        height: 3;
+        height: 2;
         overflow: hidden;
         scrollbar-size-vertical: 0;
         scrollbar-size-horizontal: 0;
@@ -495,14 +750,6 @@ class AcornApp(App[None]):
         height: 3;
         padding: 0 1;
         background: $panel;
-    }
-    #collection_picker {
-        layer: overlay;
-        background: $panel;
-        border: round $accent;
-        margin: 4 8;
-        padding: 1 2 2 2;
-        height: auto;
     }
     Tree > .tree--label { padding: 0 1; }
     /* Selected-row highlight: only when the panel actually owns focus
@@ -561,6 +808,21 @@ class AcornApp(App[None]):
         self._initial_query = initial_query
         self._searcher: Searcher | None = None
         self._current_query: str = ""
+        # Cached match-spec for the active query — drives the markdown-
+        # widget highlight subclasses, the per-line plain renderer's
+        # highlight pass, and the match-aware scrollbar marker map. The
+        # spec captures the SAME literal / fuzzy / synonym semantics
+        # the cascade uses, so any word the searcher would have hit on
+        # gets the user-visible highlight (not just exact-stem hits).
+        # Recomputed on every ``_run_query``.
+        self._current_match_spec: MatchSpec = MatchSpec()
+        # Distraction-free reading toggle. When ``False`` the renderers
+        # see an empty MatchSpec and emit no highlight spans / scrollbar
+        # markers, leaving the preview as plain text. The current
+        # query stays intact so flipping the toggle back on restores
+        # highlights without re-running the search. Bound to ``h`` via
+        # the action registry.
+        self._highlights_enabled: bool = True
         # Last :multi block's intent line, if any. Disables strong-signal
         # bypass and biases snippet selection (UX-pass-4 §3). None until
         # the user submits a :multi block.
@@ -601,8 +863,12 @@ class AcornApp(App[None]):
         # Convenience aliases that point into the active container —
         # legacy code paths (_scroll_preview_to_chunk, etc.) read from
         # these instead of poking at the container directly.
-        self._chunk_widgets: dict[int, Static] = {}
-        self._match_targets: dict[int, Static] = {}
+        # Widgets here may be either per-line ``Static``s (PDF / TXT
+        # plain renderer) or whole-chunk ``AcornMarkdown`` widgets (md
+        # / docx / pptx structural renderer). The dict is widened to
+        # ``Widget`` so both can be stored without complaint.
+        self._chunk_widgets: dict[int, Widget] = {}
+        self._match_targets: dict[int, Widget] = {}
         # The parent_id whose chunks are currently mounted in the preview
         # pane (so we don't re-mount when cursor moves within the same file).
         self._preview_parent_id: str | None = None
@@ -683,7 +949,13 @@ class AcornApp(App[None]):
         self._refresh_status()
         if self._initial_query:
             self._run_query(self._initial_query)
-        self.query_one("#query_bar", Input).focus()
+        # When the CLI handed us a query that produced results,
+        # ``_refresh_results_tree`` already focused the results pane and
+        # parked the cursor on the top hit; the user's first keypress
+        # should advance through results instead of appending characters
+        # to the search bar.
+        if not self._initial_query or not self._groups:
+            self.query_one("#query_bar", Input).focus()
 
     # ── Ranking profile (§7) ──────────────────────────────────────
 
@@ -806,6 +1078,35 @@ class AcornApp(App[None]):
     def on_descendant_focus(self) -> None:  # Textual fires this on focus changes
         self._refresh_footer_hints()
 
+    def on_key(self, event: events.Key) -> None:
+        """Repurpose Up/Down to navigate between sidebar panels when the
+        focused panel is collapsed-to-header.
+
+        Inside a collapsed tree the cursor row isn't visible anyway, so
+        intra-tree Up/Down moves are noise. While collapsed they instead
+        cycle focus to the previous/next ``Tree`` sibling in the left
+        column (wrapping at the edges) so a user can sweep through
+        panels with one hand on the arrow keys. Uncollapsed panels keep
+        Textual's default Tree key handling untouched.
+        """
+        if event.key not in ("up", "down"):
+            return
+        tree = self._focused_tree()
+        if tree is None or "collapsed" not in tree.classes:
+            return
+        try:
+            column = self.query_one("#results_column", Vertical)
+        except Exception:
+            return
+        panes = [w for w in column.children if isinstance(w, Tree)]
+        if tree not in panes:
+            return
+        delta = 1 if event.key == "down" else -1
+        target = panes[(panes.index(tree) + delta) % len(panes)]
+        target.focus()
+        event.stop()
+        event.prevent_default()
+
     # ── Search flow ───────────────────────────────────────────────
 
     @on(Input.Submitted, "#query_bar")
@@ -830,6 +1131,14 @@ class AcornApp(App[None]):
             return
 
         self._current_query = query  # save the original (with [...]) for history
+        # Build a comprehensive MatchSpec covering literal stems +
+        # fuzzy-AUTO variants + synonym expansions, mirroring the
+        # cascade's match semantics. Every preview render this query
+        # drives reads from this single spec so the highlight rules
+        # never drift from the search rules.
+        self._current_match_spec = MatchSpec.from_query(
+            lexical, synonyms=self._synonyms, fuzzy=True
+        )
         # Phase F: build the filter scaffolding (kind:, mtime:) and
         # multi-collection scope (c:) as a SEPARATE prefix. The lexical
         # part stays clean so the §9d fusion phrase-pass can wrap it
@@ -967,6 +1276,17 @@ class AcornApp(App[None]):
         self._refresh_status()
         if self._groups:
             tree.focus()
+            # Drop the cursor onto the first hit of the auto-expanded top
+            # file — the preview already renders that hit, so leaving the
+            # cursor on the parent file row would force a redundant Down
+            # keypress before navigation actually advances to a new match.
+            # ``cursor_line = 1`` lands on line 1 (root is hidden, line 0
+            # is the top file, line 1 is its first child) without needing
+            # the per-node line index that ``move_cursor`` relies on —
+            # which isn't built until the next render tick.
+            top_file = tree.root.children[0]
+            if top_file.children:
+                tree.cursor_line = 1
 
     # ── Preview ───────────────────────────────────────────────────
 
@@ -1379,7 +1699,7 @@ class AcornApp(App[None]):
         # Find the smallest already-mounted index greater than this one
         # — we mount BEFORE that widget so chunks stay in document
         # order regardless of which phase mounts them.
-        before_widget: Static | None = None
+        before_widget: Widget | None = None
         next_mounted = min(
             (j for j in container.mounted_indices if j > index),
             default=-1,
@@ -1388,13 +1708,12 @@ class AcornApp(App[None]):
             before_seq = all_chunks[next_mounted].chunk_seq
             before_widget = container.chunk_widgets.get(before_seq)
 
-        is_markdown = chunk.kind == "md"
-        # Save current widgets-by-chunk_seq so the mount helpers fill
-        # the per-container dicts (they update self._chunk_widgets /
-        # self._match_targets, which are aliased to the active
-        # container's dicts).
-        if is_markdown:
-            self._mount_markdown_chunk(container, chunk, before=before_widget)
+        # Structural renderer (markdown widget) for formats whose
+        # extractor populated body_md; per-line plain layout for
+        # everything else (PDF, TXT). Save current widgets-by-chunk_seq
+        # so the mount helpers fill the per-container dicts.
+        if _uses_markdown_renderer(chunk):
+            self._mount_structured_chunk(container, chunk, before=before_widget)
         else:
             self._mount_plain_chunk(container, chunk, before=before_widget)
         container.mounted_indices.add(index)
@@ -1402,17 +1721,14 @@ class AcornApp(App[None]):
     def _refresh_match_scrollbar(self, chunks: list[FileChunk]) -> None:
         """Build a per-chunk match map and forward it to the preview's
         custom scrollbar so chunk-match positions are visible on the bar."""
-        from acorn.render import _term_stems, _terms_from_query, text_has_match
+        from acorn.render import text_has_any_match
 
         try:
             pane = self.query_one("#preview_pane", MatchAwareScroll)
         except Exception:
             return
-        term_stems = _term_stems(_terms_from_query(self._current_query))
-        match_map = [
-            bool(term_stems and any(text_has_match(b.text, term_stems) for b in c.blocks))
-            for c in chunks
-        ]
+        spec = self._effective_match_spec
+        match_map = [any(text_has_any_match(b.text, spec) for b in c.blocks) for c in chunks]
         pane.set_match_map(match_map)
 
     def _mount_chunks_for_file(self, parent_id: str, chunks: list[FileChunk]) -> None:
@@ -1437,10 +1753,9 @@ class AcornApp(App[None]):
         first_chunk = chunks[0]
         title = Static(Path(first_chunk.path).name, classes="preview-title")
         container.mount(title)
-        is_markdown = first_chunk.kind == "md"
         for i, c in enumerate(chunks):
-            if is_markdown:
-                self._mount_markdown_chunk(container, c)
+            if _uses_markdown_renderer(c):
+                self._mount_structured_chunk(container, c)
             else:
                 self._mount_plain_chunk(container, c)
             container.mounted_indices.add(i)
@@ -1450,7 +1765,7 @@ class AcornApp(App[None]):
         parent: Container | VerticalScroll,
         c: FileChunk,
         *,
-        before: Static | None = None,
+        before: Widget | None = None,
     ) -> None:
         """Per-line layout for non-markdown chunks. Each body line becomes
         its own Static so ``scroll_to_widget`` can target the first matched
@@ -1466,7 +1781,9 @@ class AcornApp(App[None]):
         before that anchor — used by background-fill prepending so
         chunks land in document order even when mounted out of sequence.
         """
-        _, pieces = render_chunk_pieces(c, query=self._current_query)
+        _, pieces = render_chunk_pieces(
+            c, query=self._current_query, match_spec=self._effective_match_spec
+        )
         first_widget: Static | None = None
         first_match: Static | None = None
         for line_text, has_match in pieces:
@@ -1485,81 +1802,58 @@ class AcornApp(App[None]):
         self._chunk_widgets[c.chunk_seq] = first_widget
         self._match_targets[c.chunk_seq] = first_match or first_widget
 
-    def _mount_markdown_chunk(
+    def _mount_structured_chunk(
         self,
         parent: Container | VerticalScroll,
         c: FileChunk,
         *,
-        before: Static | None = None,
+        before: Widget | None = None,
     ) -> None:
-        """Markdown chunks: pretty rendering for context, per-line layout
-        for matches.
+        """Structural markdown rendering for formats whose extractor
+        populated ``body_md`` (md / docx / pptx).
 
-        Matched chunks switch to per-line widgets (same path PDFs use)
-        so query terms get the yellow-on-bold highlight. Non-matched
-        chunks render through ``rich.markdown.Markdown`` so headings,
-        code blocks, tables, lists, bold/italic still look right while
-        the user scrolls for context.
+        Mounts a single :class:`AcornMarkdown` widget per chunk —
+        Textual builds out the per-block widget tree (headings,
+        paragraphs, tables, fenced code, lists, blockquotes) and our
+        highlight-aware subclasses overlay match-only spans on the
+        rendered Content. Code fences keep the stock ``MarkdownFence``
+        rendering (syntax-highlighted via Rich), so query terms inside
+        a code block don't muddy the syntax colours.
+
+        ``_chunk_widgets`` maps the chunk seq to the AcornMarkdown
+        widget itself (used for chunk-boundary scrolling); ``_match_
+        targets`` maps to ``first_match_block`` when the chunk has
+        matches, falling back to the AcornMarkdown so scroll still
+        lands at the chunk top when nothing matched.
         """
-        from rich.markdown import Markdown
-
-        from acorn.render import _term_stems, _terms_from_query, render, text_has_match
-
-        terms = _terms_from_query(self._current_query)
-        term_stems = _term_stems(terms)
-        has_match = bool(term_stems and any(text_has_match(b.text, term_stems) for b in c.blocks))
-
-        if has_match:
-            self._mount_md_per_line(parent, c, before=before)
-            return
-
-        md_source = render(c.blocks, query="")
-        body_w = Static(
-            Markdown(md_source, code_theme="monokai"),
+        source = c.body_md or _legacy_blocks_to_md(c.blocks)
+        md_widget = AcornMarkdown(
+            source,
+            match_spec=self._effective_match_spec,
             classes="chunk-section chunk-md-body chunk-first",
         )
-        parent.mount(body_w, before=before)
-        self._chunk_widgets[c.chunk_seq] = body_w
-        self._match_targets[c.chunk_seq] = body_w
-
-    def _mount_md_per_line(
-        self,
-        parent: Container | VerticalScroll,
-        c: FileChunk,
-        *,
-        before: Static | None = None,
-    ) -> None:
-        """Per-line markdown layout used when a chunk contains matches."""
-        _, pieces = render_chunk_pieces(c, query=self._current_query)
-        first_line: Static | None = None
-        first_match: Static | None = None
-        for line_text, has_match in pieces:
-            line_w = Static(line_text, classes="chunk-line")
-            line_w.acorn_text = line_text  # type: ignore[attr-defined]
-            if has_match:
-                line_w.add_class("chunk-line-match")
-            parent.mount(line_w, before=before)
-            if first_line is None:
-                line_w.add_class("chunk-first")
-                first_line = line_w
-            if has_match and first_match is None:
-                first_match = line_w
-        target = first_match or first_line
-        if target is None:
-            return
-        self._chunk_widgets[c.chunk_seq] = first_line or target
-        self._match_targets[c.chunk_seq] = target
+        parent.mount(md_widget, before=before)
+        self._chunk_widgets[c.chunk_seq] = md_widget
+        # ``first_match_block`` is populated by the highlight-aware
+        # subclasses during build_from_token, which fires after mount
+        # but before the user can interact, so this is set by the
+        # time the next scroll-to-match request lands.
+        self._match_targets[c.chunk_seq] = md_widget
 
     def _scroll_preview_to_chunk(self, focus_chunk_seq: int) -> None:
         header = self._chunk_widgets.get(focus_chunk_seq)
         target = self._match_targets.get(focus_chunk_seq) or header
         if target is None:
             return
-        # Highlight the focused chunk's header so the row is visually
-        # unambiguous, even when we scroll to a match line below it.
+        # Mark the focused chunk's header so single-line plain chunks
+        # (PDF / TXT) get a subtle accent band on the matched line.
+        # Skip the marker on AcornMarkdown widgets because the tinted
+        # background reads as an "ugly brown" overlay across the whole
+        # rendered chunk — for markdown chunks the per-word search
+        # highlight is already the visual indicator.
         for w in self._chunk_widgets.values():
             w.remove_class("chunk-section-focused")
-        if header is not None:
+        if header is not None and not isinstance(header, AcornMarkdown):
             header.add_class("chunk-section-focused")
         # Defer scroll until layout has settled (mount → reflow → measure).
         self.call_after_refresh(self._do_scroll_to_widget, target)
@@ -1704,7 +1998,10 @@ class AcornApp(App[None]):
         """Right-arrow companion to ``action_tree_smart_collapse``.
 
         - Panel collapsed-to-header → re-expand the panel.
-        - Collapsed branch with children → expand it.
+        - Collapsed branch with children → expand it AND drop the cursor
+          onto its first child (the preview already shows that child, so
+          leaving the cursor on the parent file row would force a wasted
+          Down keypress before a fresh match comes into view).
         - Already-expanded branch → move cursor to its first child.
         - Leaf / no children → no-op.
         """
@@ -1722,50 +2019,98 @@ class AcornApp(App[None]):
             return
         if not node.is_expanded:
             node.expand()
+            # Just-expanded nodes don't have line indices yet for their
+            # children; defer the cursor move until the next render tick
+            # so move_cursor lands on the right line.
+            tree_ref = tree
+            node_ref = node
+            self.call_after_refresh(
+                lambda: tree_ref.move_cursor(node_ref.children[0]) if node_ref.children else None
+            )
             return
         first_child = node.children[0]
         tree.move_cursor(first_child)
 
-    def action_open_collection_picker(self) -> None:
-        """Pop a SelectionList of all configured collections; user toggles
-        which to include in the search scope, presses Enter to apply."""
-        from acorn.config import load as load_config
+    @property
+    def _effective_match_spec(self) -> MatchSpec:
+        """The MatchSpec the renderers should consult. Falls back to an
+        empty spec when the user has toggled highlights off — the
+        preview pane then renders the plain document with no yellow /
+        orange overlays and no scrollbar match markers."""
+        return self._current_match_spec if self._highlights_enabled else MatchSpec()
 
-        existing = self.query("#collection_picker")
-        if existing:
-            for w in existing:
-                w.remove()
-            return
-        cfg = load_config()
-        names = sorted(cfg.collections)
-        if not names:
-            # Show a tiny note and bail.
-            note = Vertical(
-                Label("No collections configured. Run `acorn config edit`."),
-                id="collection_picker",
-            )
-            self.mount(note)
-            return
-        selections = [Selection(name, name, name in self._collections) for name in names]
-        sel_list = _PickerSelectionList(*selections, id="collection_selection")
-        wrapper = Vertical(
-            Label("Collections (Space toggles, Enter applies)"),
-            sel_list,
-            id="collection_picker",
+    def action_toggle_highlights(self) -> None:
+        """Flip the search-highlight overlay on/off without re-running
+        the query. Re-renders the currently-shown preview file from
+        scratch so the new state takes effect immediately on whatever
+        the user is reading."""
+        self._highlights_enabled = not self._highlights_enabled
+        self.notify(
+            "Highlights " + ("on" if self._highlights_enabled else "off"),
+            timeout=1.5,
         )
-        self.mount(wrapper)
-        sel_list.focus()
+        self._rerender_current_preview()
 
-    @on(SelectionList.SelectedChanged, "#collection_selection")
-    def _on_collection_selection_changed(self, ev: SelectionList.SelectedChanged[str]) -> None:
-        """Live-update the active collection scope as the user toggles."""
-        self._collections = list(ev.selection_list.selected)
-        # Single-collection scopes can pull a per-collection ranking profile;
-        # multi-scopes fall back to the default profile.
-        self._ranking_profile = self._resolve_profile()
-        self._refresh_status()
-        self._refresh_collections_panel()
-        self._persist_state()
+    def _rerender_current_preview(self) -> None:
+        """Drop the preview cache (its widgets carry already-applied
+        highlight spans, so they can't simply re-paint themselves) and
+        re-issue the render for the focused result. Used by
+        ``action_toggle_highlights`` so the new overlay state lands
+        without waiting for the user to move the cursor."""
+        import contextlib
+
+        # Re-use the per-query cache invalidation: clear decoded
+        # chunks, kill any in-flight mount worker, drop cached
+        # PreviewContainers from the DOM, reset alias maps.
+        self._chunk_cache.clear()
+        self._cancel_preview_mount_task()
+        evicted = self._preview_cache.clear()
+        for old in evicted:
+            with contextlib.suppress(Exception):
+                old.remove()
+        if self._active_preview is not None and self._active_preview.parent is not None:
+            with contextlib.suppress(Exception):
+                self._active_preview.remove()
+        self._active_preview = None
+        self._chunk_widgets = {}
+        self._match_targets = {}
+        self._preview_parent_id = None
+        self._hide_progress_bar()
+        # Re-trigger the preview render for the focused result. We pull
+        # the (parent_id, focus_chunk_seq) pair off the cursor's
+        # data — same logic ``_on_tree_highlight`` uses on cursor
+        # change.
+        try:
+            tree = self.query_one("#results_pane", Tree)
+        except Exception:
+            return
+        cursor = tree.cursor_node
+        if cursor is None or not isinstance(cursor.data, dict):
+            return
+        kind = cursor.data.get("kind")
+        if kind == "section":
+            hit: Hit = cursor.data["hit"]
+            self._render_full_doc(hit.parent_id, focus_chunk_seq=hit.chunk_seq)
+        elif kind == "file":
+            g: FileGroup = cursor.data["group"]
+            top = g.hits[0] if g.hits else None
+            self._render_full_doc(g.parent_id, focus_chunk_seq=top.chunk_seq if top else 0)
+
+    def action_focus_results_pane(self) -> None:
+        """Single-key teleport from anywhere → results tree."""
+        self.query_one("#results_pane", Tree).focus()
+
+    def action_focus_preview_pane(self) -> None:
+        """Single-key teleport from anywhere → preview pane."""
+        self.query_one("#preview_pane").focus()
+
+    def action_focus_filters_panel(self) -> None:
+        """Single-key teleport from anywhere → filters sidebar panel."""
+        self.query_one("#filters_panel_tree", Tree).focus()
+
+    def action_focus_collections_panel(self) -> None:
+        """Single-key teleport from anywhere → collections sidebar panel."""
+        self.query_one("#collections_panel_tree", Tree).focus()
 
     def _persist_state(self) -> None:
         """Save the current scope + panel state to disk so the next
@@ -1964,11 +2309,10 @@ class AcornApp(App[None]):
             self._run_query(self._current_query)
 
     def action_dismiss_overlay(self) -> None:
-        """Close any open overlay (help, picker, palette, explain, multi).
+        """Close any open overlay (help, palette, explain, multi).
         No-op if none."""
         for selector in (
             "#help_overlay",
-            "#collection_picker",
             "#cmd_palette",
             "#explain_overlay",
             "#multi_panel",

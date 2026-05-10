@@ -127,25 +127,27 @@ async def test_chunk_widgets_rebuild_when_focus_moves_to_different_file(
         children = list(tree.root.children)
         assert len(children) == 2, f"expected 2 PDFs in tree, got {len(children)}"
 
-        # Expand and focus first PDF's first section.
+        # Park on file-0's first hit — that's the auto-seated cursor on
+        # launch, but be defensive so a future fixture change with
+        # ``children[0]`` collapsed-by-default doesn't silently flip
+        # this test's preconditions.
         children[0].expand()
         await pilot.pause()
         tree.focus()
-        await pilot.press("down")
+        first_leaf_zero = children[0].children[0]
+        tree.move_cursor(first_leaf_zero)
         await pilot.pause()
         first_pid = app._preview_parent_id
         first_widgets = dict(app._chunk_widgets)
         assert len(first_widgets) == 12
 
-        # Move to the SECOND PDF in the tree.
+        # Now jump to the SECOND PDF's first hit and verify the preview
+        # tears down + rebuilds for it.
         children[1].expand()
         await pilot.pause()
-        # Cursor down through remaining children of file-1, then onto file-2.
-        for _ in range(20):
-            await pilot.press("down")
-            await pilot.pause()
-            if app._preview_parent_id != first_pid:
-                break
+        second_leaf_zero = children[1].children[0]
+        tree.move_cursor(second_leaf_zero)
+        await pilot.pause()
         assert app._preview_parent_id is not None
         assert app._preview_parent_id != first_pid, "preview did not rebuild for file 2"
         # Fresh chunks mounted for the new file.
