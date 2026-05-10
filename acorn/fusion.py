@@ -105,6 +105,24 @@ class SubQuery:
     source: str
 
 
+@dataclass(slots=True, frozen=True)
+class MultiInput:
+    """Result of parsing a ``:multi`` block (UX-pass-4 §3).
+
+    ``intent`` does NOT produce a sub-query. It influences:
+
+    * regime triage — intent disables strong-signal bypass
+      (:func:`acorn.layered._evaluate_strong_signal`)
+    * snippet selection — chunks containing intent tokens preferred
+      (:func:`acorn.query._make_snippet`)
+    * forward-compat with the §22 LLM cross-encoder reranker (deferred
+      to v2).
+    """
+
+    subqueries: list[SubQuery]
+    intent: str | None = None
+
+
 def rrf_fuse(
     rankings: list[list[Hit]],
     *,
@@ -181,20 +199,26 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
     return subs
 
 
-def parse_multi_input(text: str, *, synonyms: SynonymTable | None) -> list[SubQuery]:
-    """Parse the ``:multi`` typed-input syntax into parallel sub-queries.
+def parse_multi_input(text: str, *, synonyms: SynonymTable | None) -> MultiInput:
+    """Parse the ``:multi`` typed-input syntax into a :class:`MultiInput`.
 
     Each non-blank line is ``<source>: <value>``. Recognised sources are
-    ``lex``, ``phrase``, and ``syn``. Lines starting with ``#`` are
-    comments. Unknown prefixes are ignored (the TUI surfaces a parse error
-    inline; this function stays permissive so a typo in one line doesn't
-    abort a usable multi-line query).
+    ``lex``, ``phrase``, ``syn``, and ``intent``. Lines starting with
+    ``#`` are comments. Unknown prefixes are ignored (the TUI surfaces a
+    parse error inline; this function stays permissive so a typo in one
+    line doesn't abort a usable multi-line query).
 
     A ``phrase:`` value that isn't already quoted is wrapped in quotes so
     the Tantivy parser sees it as a phrase query.
     A ``syn:`` value is expanded against the supplied table at parse time.
+    An ``intent:`` line is captured separately — it does NOT produce a
+    sub-query, but is returned on the :class:`MultiInput` so callers can
+    pass it to :func:`acorn.layered.search_layered`. Last-write-wins if
+    multiple intent lines appear (matches QMD's "at most one intent
+    line" rule).
     """
     subs: list[SubQuery] = []
+    intent: str | None = None
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
@@ -204,14 +228,19 @@ def parse_multi_input(text: str, *, synonyms: SynonymTable | None) -> list[SubQu
         prefix, value = line.split(":", 1)
         prefix = prefix.strip().lower()
         value = value.strip()
-        if not value or prefix not in _DEFAULT_WEIGHTS:
+        if not value:
+            continue
+        if prefix == "intent":
+            intent = value
+            continue
+        if prefix not in _DEFAULT_WEIGHTS:
             continue
         if prefix == "phrase" and not (value.startswith('"') and value.endswith('"')):
             value = f'"{value}"'
         elif prefix == "syn" and synonyms is not None and synonyms.groups:
             value = expand(value, synonyms)
         subs.append(SubQuery(query=value, weight=_DEFAULT_WEIGHTS[prefix], source=prefix))
-    return subs
+    return MultiInput(subqueries=subs, intent=intent)
 
 
 @overload
@@ -226,6 +255,7 @@ def fusion_search(
     metadata_filter: str | None = ...,
     active_sources: list[str] | None = ...,
     precomputed_lex_ranking: list[Hit] | None = ...,
+    intent: str | None = ...,
     with_trace: Literal[False] = False,
 ) -> list[Hit]: ...
 
@@ -242,6 +272,7 @@ def fusion_search(
     metadata_filter: str | None = ...,
     active_sources: list[str] | None = ...,
     precomputed_lex_ranking: list[Hit] | None = ...,
+    intent: str | None = ...,
     with_trace: Literal[True],
 ) -> tuple[list[Hit], FusionTrace]: ...
 
@@ -257,6 +288,7 @@ def fusion_search(
     metadata_filter: str | None = None,
     active_sources: list[str] | None = None,
     precomputed_lex_ranking: list[Hit] | None = None,
+    intent: str | None = None,
     with_trace: bool = False,
 ) -> list[Hit] | tuple[list[Hit], FusionTrace]:
     """Run sub-queries in parallel and RRF-fuse the results.
@@ -316,6 +348,7 @@ def fusion_search(
                     collection=collection,
                     metadata_filter=metadata_filter,
                     active_sources=active_sources,
+                    intent=intent,
                 )
             )
 

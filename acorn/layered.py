@@ -103,6 +103,7 @@ def search_layered(
         collection=collection,
         metadata_filter=metadata_filter,
         active_sources=active_sources,
+        intent=intent,
     )
 
     # Step 2: strong-signal check. Disabled when intent is supplied —
@@ -126,6 +127,7 @@ def search_layered(
                 metadata_filter=metadata_filter,
                 active_sources=active_sources,
                 precomputed_lex_ranking=probe,
+                intent=intent,
                 with_trace=True,
             )
         else:
@@ -138,6 +140,7 @@ def search_layered(
                 metadata_filter=metadata_filter,
                 active_sources=active_sources,
                 precomputed_lex_ranking=probe,
+                intent=intent,
             )
 
         regime = "fusion"
@@ -153,6 +156,7 @@ def search_layered(
                     synonyms=synonyms,
                     metadata_filter=metadata_filter,
                     active_sources=active_sources,
+                    intent=intent,
                     with_trace=True,
                 )
             else:
@@ -165,6 +169,7 @@ def search_layered(
                     synonyms=synonyms,
                     metadata_filter=metadata_filter,
                     active_sources=active_sources,
+                    intent=intent,
                 )
             if len(cascade_hits) > len(hits):
                 hits = cascade_hits

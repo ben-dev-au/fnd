@@ -1391,6 +1391,52 @@ class AcornApp(App[None]):
         self.mount(wrapper)
         palette_input.focus()
 
+    def action_open_multi_input(self) -> None:
+        """Open the :multi DSL panel for typed sub-queries + intent line.
+
+        Submit (Ctrl+J) parses via :func:`acorn.fusion.parse_multi_input`,
+        sets ``_current_intent`` + ``_current_subqueries`` on the app,
+        and runs the search. Empty submit closes the panel.
+        """
+        from textual.widgets import TextArea
+
+        existing = self.query("#multi_panel")
+        if existing:
+            for w in existing:
+                w.remove()
+            return
+        editor = TextArea(
+            text="intent: \nlex: \nphrase: \nsyn: \n",
+            id="multi_panel_input",
+            language=None,
+        )
+        wrapper = Vertical(editor, id="multi_panel")
+        self.mount(wrapper)
+        editor.focus()
+
+    def action_submit_multi_input(self) -> None:
+        """Parse and apply the :multi panel's contents, then run search."""
+        from textual.widgets import TextArea
+
+        from acorn.fusion import parse_multi_input
+
+        existing = self.query("#multi_panel_input")
+        if not existing:
+            return
+        editor = self.query_one("#multi_panel_input", TextArea)
+        text = editor.text
+        for w in self.query("#multi_panel"):
+            w.remove()
+        result = parse_multi_input(text, synonyms=self._synonyms)
+        self._current_intent = result.intent
+        # Use lex line(s) as the search query (auto_subqueries inside
+        # fusion_search will re-derive phrase + syn from this). Keeping
+        # intent-only as the UX-pass-4 §3 hook; explicit sub-query
+        # override is a future extension.
+        lexical_parts = [s.query for s in result.subqueries if s.source == "lex"]
+        if lexical_parts:
+            self._run_query(" ".join(lexical_parts))
+
     def action_open_collections_form(self) -> None:
         """Push the Collections screen for browsing / editing collections."""
         from acorn.config import default_config_path
