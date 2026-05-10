@@ -3,10 +3,16 @@
 Three widening passes are tried in order:
 
   0. literal — query as the user typed it (already stem-aware via en_stem)
-  1. fuzzy — every bare word becomes a ``fuzzy_term_query(distance=1)``
-     against the body field (Tantivy's ``parse_query`` does NOT support the
-     ``term~1`` text syntax, so we build fuzzy queries via the typed API
-     instead — verified against tantivy-py 0.26)
+  1. fuzzy — Lucene-style "rewrite" fuzzy: enumerate the F_BODY term
+     dictionary for indexed stems within the per-term auto-distance
+     (0 for ≤2 chars, 1 for 3-5, 2 for ≥6 — same shape as Lucene's
+     ``fuzziness=AUTO``), then issue an OR of regular ``term_query``
+     for each matching stem. This is the same rewrite Lucene applies
+     to ``MultiTermQuery`` so the matched docs land back on BM25
+     scoring (TF/IDF/length) rather than the constant 1.0 Tantivy's
+     ``fuzzy_term_query`` returns. A single-character prefix anchors
+     the dictionary scan so a 6-char stem with distance 2 doesn't
+     bring in unrelated short words.
   2. synonym — terms in any synonym group expand to (term OR sym1 OR sym2)
 
 A pass runs only if the cumulative deduplicated hit count is below the
@@ -19,14 +25,70 @@ from __future__ import annotations
 
 from typing import Literal, overload
 
+import snowballstemmer
 import tantivy
 
 from acorn.explain import CascadePassTrace, CascadeTrace
+from acorn.matching import auto_fuzzy_distance, levenshtein_within
 from acorn.query import Hit, Searcher
 from acorn.render import _terms_from_query
 from acorn.schema import F_BODY, F_META_BLOB, F_PAGE_LABEL, F_PARENT_ID, build_schema
 from acorn.struct import decode as decode_body_struct
 from acorn.synonyms import SynonymTable, expand
+
+# ``F_BODY`` is analyzed with ``en_stem`` (Snowball English) at index
+# time, so the on-disk token form for "Templates" is ``templat``. The
+# fuzzy pass bypasses ``parse_query`` (which normally stems the query
+# the same way), so we have to stem each query term ourselves before
+# handing it to ``fuzzy_term_query`` — otherwise a 1-edit typo like
+# "Templatas" → ``templatas`` ends up at distance 2 from the indexed
+# ``templat`` and silently drops out of the cascade.
+_FUZZY_STEMMER = snowballstemmer.stemmer("english")
+
+
+# Cap on dictionary entries scanned per character bucket. F_BODY is
+# en_stem-tokenised, so a typical English corpus has ~20-50k unique
+# stems per leading character — the cap keeps the worst-case scan
+# bounded on huge corpora without losing matches in normal ones.
+_FUZZY_DICT_LIMIT = 50_000
+
+
+def _fuzzy_term_variants(searcher: Searcher, stem: str, max_dist: int) -> list[str]:
+    """Enumerate indexed F_BODY stems within ``max_dist`` of ``stem``.
+
+    Walks the term dictionary (via ``Searcher.terms_with_prefix``) using
+    the stem's first character as a prefix anchor — same trick Lucene's
+    ``MultiTermQuery`` rewrite uses to keep the candidate set tight
+    when distance ≥ 2. For ``max_dist == 0`` returns ``[stem]`` if
+    indexed and ``[]`` otherwise. Returns the original stem first when
+    present so the BooleanQuery's first sub-clause is the exact stem
+    (matches Lucene's preference for the closest term).
+    """
+    if max_dist == 0:
+        # Probe the dictionary cheaply: any prefix scan including this
+        # stem returns it in the (term, count) list.
+        return [
+            t for t, _ in searcher._searcher.terms_with_prefix(F_BODY, stem, limit=1) if t == stem
+        ]
+    if not stem:
+        return []
+    # Anchor the scan to the first character — Lucene's rewrite uses a
+    # single-char prefix when prefix_length isn't set; works because
+    # any indexed term within edit distance N must share at least one
+    # char with the query stem.
+    prefix = stem[0]
+    candidates = searcher._searcher.terms_with_prefix(F_BODY, prefix, limit=_FUZZY_DICT_LIMIT)
+    out: list[str] = []
+    seen = False
+    for term, _count in candidates:
+        if term == stem:
+            seen = True
+            continue
+        if levenshtein_within(term, stem, max_dist=max_dist) <= max_dist:
+            out.append(term)
+    if seen:
+        out.insert(0, stem)
+    return out
 
 
 def _fuzzy_pass(
@@ -50,16 +112,43 @@ def _fuzzy_pass(
     if not terms:
         return []
     schema = build_schema()
-    # ``fuzzy_term_query`` is case-sensitive and operates on the indexed
-    # token form. Body uses ``en_stem`` (lowercased + Snowball stem), so
-    # we lowercase the user-typed term before issuing the fuzzy query.
-    subqueries: list[tuple[tantivy.Occur, tantivy.Query]] = [
-        (
-            tantivy.Occur.Must,
-            tantivy.Query.fuzzy_term_query(schema, F_BODY, t.lower(), distance=1),
-        )
-        for t in terms
-    ]
+    # ``F_BODY`` is en_stem-analyzed, so the on-disk token form for
+    # "Templates" is ``templat``. The fuzzy pass bypasses parse_query
+    # (and its query-time stemming), so we lowercase + Snowball-stem
+    # each query term ourselves before consulting the dictionary —
+    # otherwise the Levenshtein distance is computed between
+    # mismatched token shapes (``templatas`` vs ``templat`` would
+    # read as distance 2).
+    #
+    # We then expand each query stem into the set of indexed stems
+    # within Lucene-AUTO edit distance and OR them as regular
+    # ``term_query``s. This is the same rewrite Lucene applies to
+    # ``MultiTermQuery`` so each matched doc lands on BM25 scoring
+    # rather than Tantivy's constant-1.0 ``fuzzy_term_query`` output.
+    stems = [_FUZZY_STEMMER.stemWord(t.lower()) for t in terms]
+    distances = [auto_fuzzy_distance(s) for s in stems]
+    subqueries: list[tuple[tantivy.Occur, tantivy.Query]] = []
+    for stem, dist in zip(stems, distances, strict=True):
+        variants = _fuzzy_term_variants(searcher, stem, dist)
+        if not variants:
+            # No indexed stem within distance — the AND of fuzzy term
+            # clauses can never match, so bail early.
+            return []
+        if len(variants) == 1:
+            subqueries.append(
+                (
+                    tantivy.Occur.Must,
+                    tantivy.Query.term_query(schema, F_BODY, variants[0]),
+                )
+            )
+        else:
+            term_or = tantivy.Query.boolean_query(
+                [
+                    (tantivy.Occur.Should, tantivy.Query.term_query(schema, F_BODY, v))
+                    for v in variants
+                ]
+            )
+            subqueries.append((tantivy.Occur.Must, term_or))
     if collection:
         # Restrict to a collection by AND'ing a term query on the
         # ``collection`` field.
@@ -94,8 +183,8 @@ def _materialize_hits(
     """Turn a (score, doc-address) list from a typed-API search into Hits.
 
     Pulled out of ``Searcher._raw_hits`` so the cascade can issue queries
-    that bypass ``parse_query`` (e.g. fuzzy_term_query) but still yield the
-    same Hit shape the rest of the system expects.
+    that bypass ``parse_query`` (e.g. the dictionary-rewritten fuzzy pass)
+    but still yield the same Hit shape the rest of the system expects.
     """
     from acorn.query import _first_int, _first_str, _make_snippet  # local import: avoid cycle
 

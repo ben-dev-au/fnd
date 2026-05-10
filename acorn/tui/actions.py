@@ -126,11 +126,45 @@ REGISTRY: tuple[Action, ...] = (
         show_in_footer=False,  # discoverable via help (?)
     ),
     Action(
-        id="open_collection_picker",
-        description="Toggle the collection picker (multi-select scope).",
+        id="focus_results_pane",
+        description="Focus the results tree.",
+        default_key="r",
+        command="results",
+        footer_label="Results",
+        show_in_footer=False,
+    ),
+    Action(
+        id="focus_preview_pane",
+        description="Focus the preview pane.",
+        default_key="p",
+        command="preview",
+        footer_label="Preview",
+        show_in_footer=False,
+    ),
+    Action(
+        id="focus_filters_panel",
+        description="Focus the filters panel.",
+        default_key="f",
+        command="filters",
+        footer_label="Filters",
+        show_in_footer=False,
+    ),
+    Action(
+        id="focus_collections_panel",
+        description="Focus the collections panel.",
         default_key="c",
         command="collections",
-        footer_label="Scope",
+        footer_label="Collections",
+        show_in_footer=False,
+    ),
+    Action(
+        id="toggle_highlights",
+        description="Toggle search-term highlights in the preview pane "
+        "(useful for distraction-free reading without re-running the search).",
+        default_key="h",
+        command="highlights",
+        footer_label="Highlights",
+        show_in_footer=False,
     ),
     Action(
         id="open_collections_form",

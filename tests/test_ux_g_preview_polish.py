@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from textual.containers import VerticalScroll
-from textual.widgets import Static, Tree
+from textual.widgets import Tree
 
 from acorn.config import Config, load
 from acorn.index import build_index
@@ -119,8 +119,17 @@ def md_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_md_match_chunk_uses_per_line_layout(cfg_one: Config, md_index: Path) -> None:
-    """Markdown chunks with matches mount per-line so word highlights work."""
+async def test_md_match_chunk_renders_via_markdown_widget_with_highlight(
+    cfg_one: Config, md_index: Path
+) -> None:
+    """Matched markdown chunks render via Textual's Markdown widget tree
+    (AcornMarkdown), with the matched word carrying a search-highlight
+    span on its block's Content. Replaces the legacy per-line layout
+    assertion — the structural renderer keeps tables / fenced code /
+    lists rendering correctly even when a chunk contains a match.
+    """
+    from acorn.tui.app import AcornMarkdown
+
     app = AcornApp(
         index_dir=md_index,
         config=cfg_one,
@@ -131,15 +140,21 @@ async def test_md_match_chunk_uses_per_line_layout(cfg_one: Config, md_index: Pa
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause()
-        await pilot.press("down")
-        await pilot.pause()
-        await pilot.press("up")
-        await pilot.pause()
+        await pilot.pause(0.3)
         pane = app.query_one("#preview_pane", VerticalScroll)
-        # Per-line layout: at least one Static carries the
-        # ``chunk-line-match`` class for a match-bearing line. The old
-        # markdown-only path mounted a single Static per chunk, so this
-        # would never appear there.
-        match_lines = [w for w in pane.query(Static) if "chunk-line-match" in w.classes]
-        assert match_lines, "expected per-line match highlight on md chunks"
+        md_widgets = list(pane.query(AcornMarkdown))
+        assert md_widgets, "expected matched md chunk to mount AcornMarkdown"
+        # Some block under at least one AcornMarkdown carries a
+        # search-highlight span — that's the visible match indicator.
+        any_highlight = False
+        for md in md_widgets:
+            for block in md.query("MarkdownBlock"):
+                spans = getattr(block, "_content", None)
+                if spans is None:
+                    continue
+                if any("bold" in str(s.style) for s in spans.spans):
+                    any_highlight = True
+                    break
+            if any_highlight:
+                break
+        assert any_highlight, "expected a highlight span on at least one block"

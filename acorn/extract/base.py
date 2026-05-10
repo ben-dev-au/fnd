@@ -32,6 +32,11 @@ class Chunk:
     kind: Kind
     body: str
     body_struct: list[Block] = field(default_factory=list)
+    # Original source for the structural preview renderer. For markdown
+    # this is the verbatim section source; for docx/pptx it is the
+    # serialised-to-markdown content (set by the relevant extractor).
+    # Empty string for formats without a structural renderer (pdf, txt).
+    body_md: str = ""
     # ``page`` is the *PDF page index* (1-based, sequential from cover) —
     # used by the opener to deep-link via Skim. ``page_label`` is the
     # *printed* page label as set in the PDF (e.g. "292" or "iv"); empty
