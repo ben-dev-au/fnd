@@ -473,10 +473,13 @@ class AcornApp(App[None]):
     .preview-progress PercentageStatus { color: $text-muted; padding: 0 0 0 1; }
     .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
     .chunk-section { padding: 0 0 1 0; height: auto; }
-    .chunk-header { padding: 1 0 0 0; }
     .chunk-line { padding: 0 0 0 0; height: auto; }
     .chunk-line-match { background: $accent 8%; }
     .chunk-section-focused { background: $accent 15%; }
+    /* First widget of each chunk gets a single-row top gap so the
+       reader can still see chunk boundaries without the locator
+       header text (which lives in the sidebar). */
+    .chunk-first { padding: 1 0 0 0; }
     #placeholder { color: $text-muted; }
     #help_overlay {
         layer: overlay;
@@ -1316,20 +1319,16 @@ class AcornApp(App[None]):
                     await asyncio.sleep(0)
             await asyncio.sleep(0)
 
-            # Reveal every hidden widget in one pass and re-anchor the
-            # scroll so the focused chunk stays at the top of viewport
-            # even though the doc just got taller. Defer the scroll via
-            # ``call_after_refresh`` (inside ``_scroll_preview_to_chunk``)
-            # — virtual_region.y for the focused widget is stale until
-            # Textual finishes a full layout pass on the just-revealed
-            # widgets, and a single ``asyncio.sleep(0)`` isn't always
-            # enough to guarantee that pass has run.
+            # Reveal every hidden widget in one pass. We don't scroll
+            # here — see the finally block. Hiding the progress bar
+            # also removes the ``is-loading`` class which un-hides the
+            # scrollbar; that itself can shift layout, so we want any
+            # final scroll re-anchor to happen AFTER all of these
+            # layout-affecting changes have settled.
             if hidden_widgets:
                 for w in hidden_widgets:
                     w.display = True
                 hidden_widgets.clear()
-                self._scroll_preview_to_chunk(focus_chunk_seq)
-                await asyncio.sleep(0)
         finally:
             # Always reveal any widgets we hid; a cancelled task that
             # left them hidden would leak a half-displayed container
@@ -1344,6 +1343,18 @@ class AcornApp(App[None]):
                     with contextlib.suppress(Exception):
                         old.remove()
                 self._hide_progress_bar()
+                # Re-anchor scroll to the user's selected chunk AFTER
+                # the reveal + bar-hide layout changes have queued.
+                # We don't trust ``virtual_region.y`` to be fresh yet,
+                # so chain two ``call_after_refresh``s — that buys a
+                # full extra render cycle for layout to finish before
+                # the actual ``scroll_to_widget`` call fires.
+                target_seq = focus_chunk_seq
+
+                def _schedule_anchor() -> None:
+                    self.call_after_refresh(self._scroll_preview_to_chunk, target_seq)
+
+                self.call_after_refresh(_schedule_anchor)
             else:
                 # Partial — leave the bar visible (a revisit will
                 # resume); but if no task will resume (cancellation
@@ -1443,15 +1454,18 @@ class AcornApp(App[None]):
         its own Static so ``scroll_to_widget`` can target the first matched
         line, and the match-row gets a subtle accent overlay.
 
+        We deliberately don't mount the locator header (``p. 351 · ...``)
+        — that information lives on the sidebar result row; repeating it
+        per-chunk in the preview is just visual clutter. The first body
+        widget of each chunk gets a ``chunk-first`` class so a small top
+        gap still marks the chunk boundary.
+
         ``before`` (if supplied) makes every widget mount immediately
         before that anchor — used by background-fill prepending so
         chunks land in document order even when mounted out of sequence.
         """
-        header_text, pieces = render_chunk_pieces(c, query=self._current_query)
-        header_w = Static(header_text, classes="chunk-section chunk-header")
-        header_w.acorn_text = header_text  # type: ignore[attr-defined]
-        parent.mount(header_w, before=before)
-        self._chunk_widgets[c.chunk_seq] = header_w
+        _, pieces = render_chunk_pieces(c, query=self._current_query)
+        first_widget: Static | None = None
         first_match: Static | None = None
         for line_text, has_match in pieces:
             line_w = Static(line_text, classes="chunk-line")
@@ -1459,9 +1473,15 @@ class AcornApp(App[None]):
             if has_match:
                 line_w.add_class("chunk-line-match")
             parent.mount(line_w, before=before)
+            if first_widget is None:
+                line_w.add_class("chunk-first")
+                first_widget = line_w
             if has_match and first_match is None:
                 first_match = line_w
-        self._match_targets[c.chunk_seq] = first_match or header_w
+        if first_widget is None:
+            return
+        self._chunk_widgets[c.chunk_seq] = first_widget
+        self._match_targets[c.chunk_seq] = first_match or first_widget
 
     def _mount_markdown_chunk(
         self,
@@ -1494,7 +1514,7 @@ class AcornApp(App[None]):
         md_source = render(c.blocks, query="")
         body_w = Static(
             Markdown(md_source, code_theme="monokai"),
-            classes="chunk-section chunk-md-body",
+            classes="chunk-section chunk-md-body chunk-first",
         )
         parent.mount(body_w, before=before)
         self._chunk_widgets[c.chunk_seq] = body_w
@@ -1518,13 +1538,14 @@ class AcornApp(App[None]):
                 line_w.add_class("chunk-line-match")
             parent.mount(line_w, before=before)
             if first_line is None:
+                line_w.add_class("chunk-first")
                 first_line = line_w
             if has_match and first_match is None:
                 first_match = line_w
         target = first_match or first_line
         if target is None:
             return
-        self._chunk_widgets[c.chunk_seq] = target
+        self._chunk_widgets[c.chunk_seq] = first_line or target
         self._match_targets[c.chunk_seq] = target
 
     def _scroll_preview_to_chunk(self, focus_chunk_seq: int) -> None:
