@@ -838,44 +838,38 @@ class AcornApp(App[None]):
         per chunk, then scroll the preview to the chunk identified by
         ``focus_chunk_seq``.
 
-        Per-chunk widgets give precise ``scroll_to_widget`` targets,
-        immune to long-line wrapping (which broke the previous
-        line-offset approach for some PDFs).
-
-        UX-pass-4 §4 (and follow-up): cache misses dispatch a thread
-        worker so the Tantivy chunk fetch + JSON decode happens off the
-        event loop. The pane is cleared immediately and a ProgressBar
-        plus centered LoadingIndicator are mounted so the user sees an
-        unambiguous "work in progress" signal — no holdover content
-        from the previously-selected file. The bar starts in
-        indeterminate mode (decode phase, total unknown) and switches
-        to determinate mode once chunks arrive.
-
-        ``exclusive=True`` on the worker group cancels an in-flight
-        decode when the cursor moves; we also explicitly cancel any
-        live mount task so chunks from the previous file can't append
-        into the new pane.
+        Both cache-hit and cache-miss paths go through the same unified
+        async mount loop (:meth:`_mount_chunks_async`) which yields to
+        the event loop after every chunk so keystrokes can interleave
+        and the user can cancel a slow mount by moving to another row.
+        Cache miss adds a worker-dispatched decode phase up front, with
+        an indeterminate ProgressBar + spinner shown until chunks arrive.
         """
+        import asyncio
+
         if self._searcher is None:
             return
         chunks = self._chunk_cache.get(parent_id)
         if chunks is not None:
-            # Cache hit — instant remount, no spinner. Keeps cursor-scroll
-            # through previously-loaded files flicker-free.
+            # Cache hit — go straight to the async mount loop. Even
+            # cached files take time to mount (one widget per chunk;
+            # books are hundreds of chunks), so the bar keeps the user
+            # informed and the per-chunk yield keeps the keyboard live.
             if parent_id != self._preview_parent_id:
                 self._cancel_preview_mount_task()
-                self._mount_chunks_for_file(parent_id, chunks)
-                self._preview_parent_id = parent_id
-                self._preview_load_progress = None
-                self._refresh_status()
-                self._refresh_match_scrollbar(chunks)
-            self._scroll_preview_to_chunk(focus_chunk_seq)
+                self._preview_mount_task = asyncio.create_task(
+                    self._mount_chunks_async(parent_id, focus_chunk_seq, chunks)
+                )
+            else:
+                # Same file — just scroll to the new section.
+                self._scroll_preview_to_chunk(focus_chunk_seq)
             return
 
-        # Cache miss — clear the pane, show indicators, dispatch worker.
+        # Cache miss — clear pane, show indeterminate indicators,
+        # dispatch worker. The worker callback hands off to the same
+        # async mount loop the cache-hit path uses.
         self._cancel_preview_mount_task()
         self._mount_preview_loading_widgets()
-        # Reset preview state: title no longer reflects the previous file.
         self._preview_parent_id = None
         self._preview_load_progress = (0, None)
         self._refresh_status()
@@ -979,11 +973,11 @@ class AcornApp(App[None]):
         focus_chunk_seq: int,
         chunks: list[FileChunk],
     ) -> None:
-        """Worker callback (event-loop side). Switches the ProgressBar to
-        determinate mode and kicks off a batched mount loop that yields
-        between batches so keystrokes keep flowing."""
+        """Worker callback (event-loop side). Caches the chunks and hands
+        off to the unified async mount loop, which clears any decode-
+        phase indicators, mounts a determinate ProgressBar, and mounts
+        chunks in batches with per-chunk yields."""
         import asyncio
-        import contextlib
 
         self._chunk_cache[parent_id] = chunks
         if not chunks:
@@ -993,53 +987,106 @@ class AcornApp(App[None]):
             self._preview_parent_id = parent_id
             self._refresh_status()
             return
+        self._preview_mount_task = asyncio.create_task(
+            self._mount_chunks_async(parent_id, focus_chunk_seq, chunks)
+        )
 
+    async def _mount_chunks_async(
+        self,
+        parent_id: str,
+        focus_chunk_seq: int,
+        chunks: list[FileChunk],
+    ) -> None:
+        """Unified async mount path used by both cache-hit and cache-miss.
+
+        Yields to the event loop via ``await asyncio.sleep(0)`` on every
+        batch boundary AND on the final iteration so:
+        1. Keystrokes (arrow keys, command palette) interleave during a
+           large mount — pressing a key mid-mount cancels this task
+           within ~one batch's mount-time and a fresh task starts.
+        2. The ProgressBar visibly reaches 100% before being removed
+           (the previous "missing tail" gap from <batch chunks left
+           over after the last batch boundary is fixed by the explicit
+           final-iteration yield).
+
+        For files larger than ``batch_size``, mounts a determinate
+        ProgressBar at the top of the pane. Smaller files skip the bar
+        — single-batch mounts complete in one tick, the bar would just
+        flash invisibly.
+        """
+        import asyncio
+        import contextlib
+
+        batch_size = 15
+        pane = self.query_one("#preview_pane", VerticalScroll)
+        # Atomic clear: removes both decode-phase indicators (if cache-
+        # miss path mounted them) and any leftover content from a
+        # previous file. ``await`` is essential — Widget.remove() is
+        # async and returns AwaitRemove; without awaiting we'd race
+        # the new mount and hit DuplicateIds on ``#preview_progress``.
+        await pane.remove_children()
+        self._chunk_widgets = {}
+        self._match_targets = {}
         self._preview_parent_id = parent_id
-        self._preview_load_progress = (0, len(chunks))
         self._refresh_status()
         self._refresh_match_scrollbar(chunks)
-        # Swap the bar from indeterminate to determinate now that total
-        # is known. Drop the spinner — the bar alone carries the signal
-        # while chunks fill the rest of the pane.
+
+        if not chunks:
+            self._preview_load_progress = None
+            return
+
+        show_bar = len(chunks) > batch_size
+        bar: ProgressBar | None = None
+        if show_bar:
+            bar = ProgressBar(
+                total=len(chunks),
+                show_eta=False,
+                show_percentage=True,
+                id="preview_progress",
+            )
+            pane.mount(bar)
+            pane.scroll_home(animate=False)
+            pane.refresh(layout=True)
+            self._preview_load_progress = (0, len(chunks))
+            self._refresh_status()
+
+        first_chunk = chunks[0]
+        title = Static(Path(first_chunk.path).name, classes="preview-title")
+        pane.mount(title)
+        is_markdown = first_chunk.kind == "md"
+
         try:
-            bar = self.query_one("#preview_progress", ProgressBar)
-            bar.update(total=len(chunks), progress=0)
-        except Exception:
-            bar = None
-        for w in self.query("#preview_loading"):
-            w.remove()
+            for i, c in enumerate(chunks):
+                if is_markdown:
+                    self._mount_markdown_chunk(pane, c)
+                else:
+                    self._mount_plain_chunk(pane, c)
+                # Yield + bar update on batch boundaries AND the final
+                # iteration. Without the final-iteration check, the
+                # last partial batch (e.g. chunks 451-500 when total is
+                # 500 and batch_size is 15) would render synchronously
+                # then disappear at "97%" — never visibly hitting 100%.
+                done_in_batch = (i + 1) % batch_size == 0
+                done_overall = (i + 1) == len(chunks)
+                if done_in_batch or done_overall:
+                    if bar is not None:
+                        with contextlib.suppress(Exception):
+                            bar.update(progress=i + 1)
+                    self._preview_load_progress = (i + 1, len(chunks))
+                    await asyncio.sleep(0)
+        except asyncio.CancelledError:
+            # Cursor moved to another file mid-mount — the new
+            # _render_full_doc call has already cleared the pane and
+            # is starting a fresh mount. Just unwind cleanly without
+            # touching the pane.
+            raise
 
-        async def _mount_batches() -> None:
-            try:
-                batch_size = 25
-                pane = self.query_one("#preview_pane", VerticalScroll)
-                first_chunk = chunks[0]
-                title = Static(Path(first_chunk.path).name, classes="preview-title")
-                pane.mount(title)
-                is_markdown = first_chunk.kind == "md"
-                for i, c in enumerate(chunks):
-                    if is_markdown:
-                        self._mount_markdown_chunk(pane, c)
-                    else:
-                        self._mount_plain_chunk(pane, c)
-                    if (i + 1) % batch_size == 0:
-                        self._preview_load_progress = (i + 1, len(chunks))
-                        if bar is not None:
-                            with contextlib.suppress(Exception):
-                                bar.update(progress=i + 1)
-                        # Yield to the event loop so keystrokes interleave.
-                        await asyncio.sleep(0)
-                self._preview_load_progress = None
-                self._clear_preview_loading_widgets()
-                self._refresh_status()
-                self._scroll_preview_to_chunk(focus_chunk_seq)
-            except asyncio.CancelledError:
-                # Cursor moved to another file mid-mount — the new
-                # _render_full_doc call has already cleared the pane and
-                # mounted fresh indicators, so just unwind cleanly.
-                raise
-
-        self._preview_mount_task = asyncio.create_task(_mount_batches())
+        self._preview_load_progress = None
+        if bar is not None:
+            with contextlib.suppress(Exception):
+                bar.remove()
+        self._refresh_status()
+        self._scroll_preview_to_chunk(focus_chunk_seq)
 
     def _refresh_match_scrollbar(self, chunks: list[FileChunk]) -> None:
         """Build a per-chunk match map and forward it to the preview's
