@@ -105,8 +105,8 @@ async def test_preview_clears_old_content_and_shows_indicators(
         # Indicators present (Center container holds the LoadingIndicator;
         # the inner widget itself takes a tick to compose, so checking
         # the wrapper is sufficient).
-        assert len(app.query("#preview_progress")) == 1
-        assert len(app.query("#preview_loading")) == 1
+        assert len(app.query(".preview-progress")) == 1
+        assert len(app.query(".preview-loading")) == 1
         # _preview_parent_id reset (no holdover) and progress flagged.
         assert app._preview_parent_id is None
         assert app._preview_load_progress is not None
@@ -129,15 +129,15 @@ async def test_progress_bar_switches_to_determinate_after_decode(
         big_group = next(g for g in app._groups if g.path.endswith("big.md"))
         app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         # Indeterminate bar mounted immediately.
-        bar = app.query_one("#preview_progress", ProgressBar)
+        bar = app.query_one(".preview-progress", ProgressBar)
         assert bar.total is None
         # Drain decode + mount completely.
         await pilot.pause()
         await pilot.pause()
         await pilot.pause()
         # After mount completes, the bar self-removes.
-        assert len(app.query("#preview_progress")) == 0
-        assert len(app.query("#preview_loading")) == 0
+        assert len(app.query(".preview-progress")) == 0
+        assert len(app.query(".preview-loading")) == 0
         # And the chunks are mounted (preview pane has children beyond
         # the indicators — the title widget plus chunk widgets).
         pane = app.query_one("#preview_pane")
@@ -172,6 +172,34 @@ async def test_switching_files_mid_load_cancels_mount_task(
         await pilot.pause()
         # Final state reflects small.md, not big.md.
         assert app._preview_parent_id == small_group.parent_id
+
+
+@pytest.mark.asyncio
+async def test_rapid_file_switching_does_not_raise_duplicate_ids(
+    cfg: Config, two_file_index: Path
+) -> None:
+    """Regression: switching files mid-mount used to crash with
+    DuplicateIds because cancellation didn't run the bar's cleanup,
+    leaving an id-collision-prone widget in the DOM. Class-based
+    selectors + try/finally cleanup make this benign."""
+    app = AcornApp(index_dir=two_file_index, config=cfg, collection="notes")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._run_query("target")
+        await pilot.pause()
+        small_group = next(g for g in app._groups if g.path.endswith("small.md"))
+        big_group = next(g for g in app._groups if g.path.endswith("big.md"))
+        # Toggle several times in quick succession — each call cancels
+        # the in-flight mount and starts a new one. None of these calls
+        # should raise.
+        for _ in range(5):
+            app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
+            await pilot.pause()
+            app._render_full_doc(small_group.parent_id, focus_chunk_seq=0)
+            await pilot.pause()
+        # Drain to a settled state.
+        await pilot.pause()
+        await pilot.pause()
 
 
 @pytest.mark.asyncio

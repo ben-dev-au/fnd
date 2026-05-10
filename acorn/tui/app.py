@@ -345,22 +345,22 @@ class AcornApp(App[None]):
         padding: 0 0 0 1;
     }
     #preview_pane:focus-within { border: round $accent; }
-    /* Preview-load indicators (UX-pass-4 §4 follow-up). The ProgressBar
-       spans the full pane width with the percentage label visible (so
-       the bar has guaranteed content even in indeterminate mode). The
-       LoadingIndicator self-centers via its own DEFAULT_CSS
-       (content-align: center middle, width: 100%, height: 100%) — it
-       fills the remaining vertical space below the bar. Both widgets
-       self-remove once the first chunks mount. */
-    #preview_progress {
+    /* Preview-load indicators (UX-pass-4 §4 follow-up). Class-based —
+       NOT id-based — because a mid-mount cancellation can leave a
+       previous bar lingering in the DOM until the next event-loop
+       tick processes its async removal; mounting a fresh bar with
+       the same id would crash with DuplicateIds. Multiple widgets
+       with the same class coexist safely; the next ``await
+       pane.remove_children()`` reaps stragglers. */
+    .preview-progress {
         width: 100%;
         height: 1;
         margin: 0 0 1 0;
         background: transparent;
     }
-    #preview_progress Bar { width: 1fr; color: $accent; }
-    #preview_progress PercentageStatus { color: $text-muted; padding: 0 0 0 1; }
-    #preview_loading {
+    .preview-progress Bar { width: 1fr; color: $accent; }
+    .preview-progress PercentageStatus { color: $text-muted; padding: 0 0 0 1; }
+    .preview-loading {
         width: 100%;
         height: 1fr;
         color: $accent;
@@ -896,10 +896,11 @@ class AcornApp(App[None]):
 
     def _mount_preview_loading_widgets(self) -> None:
         """Clear the preview pane and mount a ProgressBar (indeterminate)
-        plus a self-centering LoadingIndicator. Replaces any existing
-        content; resets the scroll position so the new widgets are in
-        the viewport even if the user had scrolled deep into the
-        previous file's preview.
+        plus a self-centering LoadingIndicator. Uses classes (not ids)
+        so a stale bar left over from a cancelled previous mount can
+        coexist briefly without raising DuplicateIds — the cancelled
+        task's async ``bar.remove()`` will land on the next tick and
+        the next ``await pane.remove_children()`` reaps any survivors.
 
         ``show_percentage=True`` is intentional: in indeterminate mode
         (``total=None``) the inner ``Bar`` widget would otherwise have
@@ -917,12 +918,12 @@ class AcornApp(App[None]):
             total=None,
             show_eta=False,
             show_percentage=True,
-            id="preview_progress",
+            classes="preview-progress",
         )
         # LoadingIndicator self-centers via its own DEFAULT_CSS — no
         # outer Center container needed (the wrapper was previously
         # double-wrapping and confusing the layout pass).
-        spinner = LoadingIndicator(id="preview_loading")
+        spinner = LoadingIndicator(classes="preview-loading")
         pane.mount(bar)
         pane.mount(spinner)
         # Ensure the new widgets land in the viewport — without this the
@@ -936,9 +937,10 @@ class AcornApp(App[None]):
         pane.refresh(layout=True)
 
     def _clear_preview_loading_widgets(self) -> None:
-        """Remove the ProgressBar + LoadingIndicator if mounted. Safe to
-        call when they aren't present (e.g. cache-hit path)."""
-        for selector in ("#preview_progress", "#preview_loading"):
+        """Remove any ProgressBar + LoadingIndicator instances mounted
+        in the preview pane. Class-based selectors so stragglers from
+        a cancelled previous mount are also reaped."""
+        for selector in (".preview-progress", ".preview-loading"):
             for w in self.query(selector):
                 w.remove()
 
@@ -1040,7 +1042,7 @@ class AcornApp(App[None]):
                 total=len(chunks),
                 show_eta=False,
                 show_percentage=True,
-                id="preview_progress",
+                classes="preview-progress",
             )
             pane.mount(bar)
             pane.scroll_home(animate=False)
@@ -1053,6 +1055,13 @@ class AcornApp(App[None]):
         pane.mount(title)
         is_markdown = first_chunk.kind == "md"
 
+        # try / finally so the bar is cleaned up even on cancellation —
+        # without this, a mid-mount cancel left the bar in the DOM with
+        # its async-removal not yet processed; the next cache-miss
+        # _mount_preview_loading_widgets (sync, no await) raced the
+        # leftover bar's removal and crashed with DuplicateIds. Class-
+        # based selectors (not ids) make the same scenario benign even
+        # if cleanup is slightly delayed.
         try:
             for i, c in enumerate(chunks):
                 if is_markdown:
@@ -1073,28 +1082,22 @@ class AcornApp(App[None]):
                             bar.update(progress=i + 1)
                     self._preview_load_progress = (i + 1, len(chunks))
                     await asyncio.sleep(0)
-        except asyncio.CancelledError:
-            # Cursor moved to another file mid-mount — the new
-            # _render_full_doc call has already cleared the pane and
-            # is starting a fresh mount. Just unwind cleanly without
-            # touching the pane.
-            raise
-
-        # Keep the bar visible at 100% through the scroll → layout
-        # settle path so the user has a continuous "working" signal
-        # until the page is actually navigable. Order matters:
-        #
-        #   1. Trigger scroll (deferred via call_after_refresh)
-        #   2. Yield once so the scroll commits and chunks render
-        #   3. Only then remove the bar (the layout shift from removal
-        #      happens after navigation is ready, not before)
-        self._scroll_preview_to_chunk(focus_chunk_seq)
-        await asyncio.sleep(0)
-        self._preview_load_progress = None
-        if bar is not None:
-            with contextlib.suppress(Exception):
-                bar.remove()
-        self._refresh_status()
+            # Keep the bar visible at 100% through the scroll → layout
+            # settle path so the user has a continuous "working" signal
+            # until the page is actually navigable. Order matters:
+            #
+            #   1. Trigger scroll (deferred via call_after_refresh)
+            #   2. Yield once so the scroll commits and chunks render
+            #   3. Only then remove the bar (the layout shift from
+            #      removal happens after navigation is ready)
+            self._scroll_preview_to_chunk(focus_chunk_seq)
+            await asyncio.sleep(0)
+        finally:
+            self._preview_load_progress = None
+            if bar is not None:
+                with contextlib.suppress(Exception):
+                    bar.remove()
+            self._refresh_status()
 
     def _refresh_match_scrollbar(self, chunks: list[FileChunk]) -> None:
         """Build a per-chunk match map and forward it to the preview's
