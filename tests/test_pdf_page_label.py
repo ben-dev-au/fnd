@@ -215,6 +215,32 @@ def test_cross_page_sequence_rejects_short_runs(tmp_path: Path) -> None:
     assert all(c.page_label == "" for c in chunks)
 
 
+def test_page_label_survives_layered_search_pipeline(tmp_path: Path, tmp_index_dir: Path) -> None:
+    """Regression: every Hit-reconstruction site (rerank, fusion, cascade)
+    must propagate ``page_label`` — otherwise the result-tree locator
+    falls back to the PDF index even though the index has the right
+    label stored. This used to silently drop the field at four sites."""
+    from acorn.index import build_index
+    from acorn.layered import search_layered
+    from acorn.query import Searcher
+
+    pdf = tmp_path / "labeled.pdf"
+    _build_labeled_pdf(pdf)
+    build_index(roots=[tmp_path], index_dir=tmp_index_dir, collection="t")
+
+    s = Searcher(index_dir=tmp_index_dir)
+    # The fixture has bodies "body 0".."body 4" — query for the unique
+    # body text so we get a stable hit.
+    groups, _ = search_layered(
+        s, query="body", limit=5, sections_per_file=5, collection="t", with_trace=True
+    )
+    assert groups, "expected at least one matching group"
+    labels = [h.page_label for g in groups for h in g.hits]
+    # Fixture pages: i, ii, 1, 2, 3 — none should be empty after the
+    # layered pipeline reconstructs Hits.
+    assert all(lbl != "" for lbl in labels), f"page_label dropped somewhere: {labels}"
+
+
 def test_meta_label_takes_precedence_over_margin_scan(tmp_path: Path) -> None:
     """If the PDF declares an explicit page label, trust it — that's
     the authoritative source. Margin scan only runs as a fallback."""

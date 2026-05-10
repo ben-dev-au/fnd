@@ -24,7 +24,7 @@ import tantivy
 from acorn.explain import CascadePassTrace, CascadeTrace
 from acorn.query import Hit, Searcher
 from acorn.render import _terms_from_query
-from acorn.schema import F_BODY, F_META_BLOB, F_PARENT_ID, build_schema
+from acorn.schema import F_BODY, F_META_BLOB, F_PAGE_LABEL, F_PARENT_ID, build_schema
 from acorn.struct import decode as decode_body_struct
 from acorn.synonyms import SynonymTable, expand
 
@@ -121,6 +121,7 @@ def _materialize_hits(
                 heading_path=_first_str(doc, "heading_path"),
                 title=_first_str(doc, "title"),
                 snippet=_make_snippet(body_text, query, intent=intent),
+                page_label=_first_str(doc, F_PAGE_LABEL),
                 chunk_seq=_first_int(doc, "chunk_seq"),
                 mtime=_first_int(doc, "mtime"),
                 meta_blob=meta_blob_bytes,
@@ -324,6 +325,7 @@ def _with_pass(h: Hit, pass_index: int) -> Hit:
         heading_path=h.heading_path,
         title=h.title,
         snippet=h.snippet,
+        page_label=h.page_label,
         chunk_seq=h.chunk_seq,
         mtime=h.mtime,
         pass_index=pass_index,
