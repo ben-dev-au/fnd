@@ -452,12 +452,12 @@ class AcornApp(App[None]):
         padding: 0 0 0 1;
     }
     #preview_pane:focus-within { border: round $accent; }
-    /* Lock vertical scroll while a partial mount is in flight — once
-       the full document is mounted, removing this class re-enables
-       free scrolling. The match-scrollbar markers are still computed
-       from the full chunks list so users can see where matches will
-       land before they can scroll. */
-    #preview_pane.is-loading { overflow-y: hidden; scrollbar-size-vertical: 0; }
+    /* While a partial mount is in flight we hide the scrollbar (its
+       virtual size keeps growing as chunks land, so the thumb would
+       jitter). Programmatic ``scroll_to_widget`` calls during phase 2b
+       still need to work — using ``overflow-y: hidden`` would prevent
+       that, so we only suppress the bar's chrome, not scrolling. */
+    #preview_pane.is-loading { scrollbar-size-vertical: 0; }
     /* Preview-load progress bar — sibling of the pane (NOT inside it),
        always present, hidden via class. Show/hide is a single class
        toggle, no DOM mount races. */
@@ -1058,7 +1058,11 @@ class AcornApp(App[None]):
 
         if cached is not None and cached.is_complete:
             # Instant return — flip the active container, scroll, hide bar.
+            # The match-scrollbar marker map is per-file, so a cache hit
+            # still has to refresh it; otherwise the previous file's map
+            # bleeds through and shows phantom marks across the whole bar.
             self._activate_preview_container(cached)
+            self._refresh_match_scrollbar(chunks)
             self._scroll_preview_to_chunk(focus_chunk_seq)
             self._hide_progress_bar()
             return
@@ -1264,28 +1268,40 @@ class AcornApp(App[None]):
             await asyncio.sleep(0)
 
             # Phase 2b: background fill ABOVE the window, closest-first.
-            # Each prepend inserts a widget before the current first
-            # chunk; without scroll compensation the focused chunk
-            # would drift downward visually. scroll_to_widget keeps
-            # it in view.
+            # Prepending a widget shifts everything below it downward by
+            # the prepended widget's height. Without compensation the
+            # focused chunk drifts down and out of the viewport, which
+            # the user perceives as the preview "jumping through every
+            # chunk".
+            #
+            # Strategy: mount batch_prepend chunks silently (no yield —
+            # so Textual batches the layout pass), then yield + re-pin
+            # the focused chunk to the top of the viewport with
+            # ``top=True``. New chunks land above the viewport, out of
+            # sight; the user only ever sees the focus chunk anchored
+            # in place.
+            batch_prepend = 15
             focused_widget = container.match_targets.get(
                 focus_chunk_seq
             ) or container.chunk_widgets.get(focus_chunk_seq)
+            since_yield = 0
             for i in range(win_start - 1, -1, -1):
                 if i in container.mounted_indices:
                     continue
                 self._mount_chunk_into(container, chunks[i], i, chunks)
                 self._update_progress_bar(progress=len(container.mounted_indices))
-                if (win_start - i) % 3 == 0:
+                since_yield += 1
+                if since_yield >= batch_prepend:
+                    await asyncio.sleep(0)
                     if focused_widget is not None:
                         with contextlib.suppress(Exception):
-                            pane.scroll_to_widget(focused_widget, animate=False, top=False)
-                    await asyncio.sleep(0)
-            # Final scroll-fix after the loop, in case we exited mid-
-            # batch without yielding.
+                            pane.scroll_to_widget(focused_widget, animate=False, top=True)
+                    since_yield = 0
+            # Final re-pin after the last partial batch.
+            await asyncio.sleep(0)
             if focused_widget is not None:
                 with contextlib.suppress(Exception):
-                    pane.scroll_to_widget(focused_widget, animate=False, top=False)
+                    pane.scroll_to_widget(focused_widget, animate=False, top=True)
             await asyncio.sleep(0)
         finally:
             if container.is_complete:
