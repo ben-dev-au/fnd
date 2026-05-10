@@ -80,12 +80,11 @@ async def test_preview_load_dispatches_worker_on_cache_miss(
 
 
 @pytest.mark.asyncio
-async def test_preview_clears_old_content_and_shows_indicators(
+async def test_preview_clears_old_content_and_shows_progress_bar(
     cfg: Config, two_file_index: Path
 ) -> None:
-    """On cache miss the pane immediately replaces previous content with
-    a ProgressBar (indeterminate) + centered LoadingIndicator — no
-    holdover from the previously-selected file."""
+    """On cache miss the always-on ProgressBar un-hides immediately —
+    the user sees feedback before the worker even returns."""
     app = AcornApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -93,34 +92,27 @@ async def test_preview_clears_old_content_and_shows_indicators(
         await pilot.pause()
         small_group = next(g for g in app._groups if g.path.endswith("small.md"))
         big_group = next(g for g in app._groups if g.path.endswith("big.md"))
-        # Load small file first so the pane has content to displace.
+        # Load small file first so something is mounted.
         app._render_full_doc(small_group.parent_id, focus_chunk_seq=0)
         await pilot.pause()
         await pilot.pause()
         assert app._preview_parent_id == small_group.parent_id
-        # Now switch to the big file. Immediately after dispatch (sync
-        # return) the pane must be cleared and the indicators mounted —
-        # no chunks from small.md left visible.
+        # Switch to the big file. Bar should un-hide immediately.
         app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
-        # Indicators present (Center container holds the LoadingIndicator;
-        # the inner widget itself takes a tick to compose, so checking
-        # the wrapper is sufficient).
-        assert len(app.query(".preview-progress")) == 1
-        assert len(app.query(".preview-loading")) == 1
-        # _preview_parent_id reset (no holdover) and progress flagged.
-        assert app._preview_parent_id is None
-        assert app._preview_load_progress is not None
-        # Title reflects clean state, not "loading N/M chunks".
-        assert "loading" not in app._preview_title().lower()
+        bar = app.query_one("#preview_progress_bar", ProgressBar)
+        assert "-hidden" not in bar.classes
+        # Pane has scroll lock during load.
+        pane = app.query_one("#preview_pane")
+        assert "is-loading" in pane.classes
 
 
 @pytest.mark.asyncio
 async def test_progress_bar_switches_to_determinate_after_decode(
     cfg: Config, two_file_index: Path
 ) -> None:
-    """The bar starts indeterminate (total=None) during decode, then
-    flips to determinate (total=len(chunks)) when chunks arrive — and
-    is removed when mount finishes."""
+    """The always-on bar starts indeterminate (total=None) during
+    decode, switches to determinate (total=len(chunks)) when chunks
+    arrive, and re-hides via class once mount completes."""
     app = AcornApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -128,20 +120,20 @@ async def test_progress_bar_switches_to_determinate_after_decode(
         await pilot.pause()
         big_group = next(g for g in app._groups if g.path.endswith("big.md"))
         app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
-        # Indeterminate bar mounted immediately.
-        bar = app.query_one(".preview-progress", ProgressBar)
+        # Indeterminate at start.
+        bar = app.query_one("#preview_progress_bar", ProgressBar)
         assert bar.total is None
+        assert "-hidden" not in bar.classes
         # Drain decode + mount completely.
-        await pilot.pause()
-        await pilot.pause()
-        await pilot.pause()
-        # After mount completes, the bar self-removes.
-        assert len(app.query(".preview-progress")) == 0
-        assert len(app.query(".preview-loading")) == 0
-        # And the chunks are mounted (preview pane has children beyond
-        # the indicators — the title widget plus chunk widgets).
+        for _ in range(8):
+            await pilot.pause()
+        # After mount completes, the bar is hidden (class), pane scroll
+        # lock removed.
+        assert "-hidden" in bar.classes
         pane = app.query_one("#preview_pane")
-        assert len(pane.children) > 0
+        assert "is-loading" not in pane.classes
+        # And the chunks are mounted inside a PreviewContainer in the pane.
+        assert len(app.query("PreviewContainer")) >= 1
 
 
 @pytest.mark.asyncio
@@ -172,6 +164,39 @@ async def test_switching_files_mid_load_cancels_mount_task(
         await pilot.pause()
         # Final state reflects small.md, not big.md.
         assert app._preview_parent_id == small_group.parent_id
+
+
+@pytest.mark.asyncio
+async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Path) -> None:
+    """A previously-mounted file (with chunk count above the cache
+    threshold) should NOT remount on revisit — its PreviewContainer
+    stays in the LRU and a return visit is an O(1) class flip."""
+    app = AcornApp(index_dir=two_file_index, config=cfg, collection="notes")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._run_query("target")
+        await pilot.pause()
+        big_group = next(g for g in app._groups if g.path.endswith("big.md"))
+        small_group = next(g for g in app._groups if g.path.endswith("small.md"))
+        # First visit to big — fully mount.
+        app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
+        for _ in range(10):
+            await pilot.pause()
+        # Should be cached now (60+ chunks, above min threshold).
+        cached = app._preview_cache.get(big_group.parent_id, app._current_query_signature())
+        assert cached is not None
+        assert cached.is_complete
+        big_container = cached
+        # Switch to small; no new mount task expected for big when we
+        # come back (it's complete and cached).
+        app._render_full_doc(small_group.parent_id, focus_chunk_seq=0)
+        for _ in range(5):
+            await pilot.pause()
+        # Return to big — bar should NOT show (cache hit, complete).
+        app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
+        bar = app.query_one("#preview_progress_bar", ProgressBar)
+        assert "-hidden" in bar.classes  # bar stays hidden on instant return
+        assert app._active_preview is big_container
 
 
 @pytest.mark.asyncio

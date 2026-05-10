@@ -16,17 +16,17 @@ phase 7 adds reranker live-tuning.
 from __future__ import annotations
 
 import re
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import (
     Input,
     Label,
-    LoadingIndicator,
     ProgressBar,
     SelectionList,
     Static,
@@ -45,6 +45,109 @@ from acorn.tui.actions import REGISTRY, Keymap, load_keymap, resolve_command
 from acorn.tui.preview_scrollbar import MatchAwareScroll
 
 _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
+
+
+# Preview widget cache (UX-pass-4 §4 hybrid follow-up).
+#
+# Repeat visits to a previously-loaded file should be instant. The decode
+# cache (_chunk_cache) saved the chunk DATA but mounting hundreds of
+# rich-rendered widgets each visit was the actual bottleneck. Keep the
+# mounted widget tree alive in a per-file Container; switching files is
+# then a single class-toggle. Bounded by LRU + a chunk-count threshold so
+# small files (which mount instantly anyway) don't bloat memory.
+_PREVIEW_CACHE_MAX_FILES = 8
+_PREVIEW_CACHE_MIN_CHUNKS = 30
+# Visible-first mount window — chunks are decoded already, mounting
+# focused ± these counts synchronously gives the user instant viewport
+# feedback before the background fill starts.
+_VISIBLE_FIRST_ABOVE = 7
+_VISIBLE_FIRST_BELOW = 7
+
+
+class PreviewContainer(Container):
+    """Per-file preview container holding the mounted chunk widgets.
+
+    One container per cached file lives inside ``#preview_pane``; only
+    one is ``-active`` (visible) at a time. Switching files toggles
+    classes — no remount cost. Each container tracks which chunk
+    indices have been mounted so a partial-then-cancelled mount can be
+    resumed on revisit.
+    """
+
+    DEFAULT_CSS = """
+    PreviewContainer { width: 100%; height: auto; }
+    PreviewContainer.-hidden { display: none; }
+    """
+
+    def __init__(
+        self,
+        *,
+        parent_doc_id: str,
+        query_signature: str,
+        total_chunks: int,
+    ) -> None:
+        super().__init__()
+        self.parent_doc_id = parent_doc_id
+        self.query_signature = query_signature
+        self.total_chunks = total_chunks
+        self.mounted_indices: set[int] = set()
+        # chunk_seq → first widget for that chunk (the header / title row).
+        self.chunk_widgets: dict[int, Static] = {}
+        # chunk_seq → first match-bearing widget (or header when no match).
+        self.match_targets: dict[int, Static] = {}
+
+    @property
+    def is_complete(self) -> bool:
+        return len(self.mounted_indices) >= self.total_chunks
+
+
+class PreviewCache:
+    """LRU cache of :class:`PreviewContainer`, keyed by
+    ``(parent_doc_id, query_signature)``. Files with fewer than
+    :data:`_PREVIEW_CACHE_MIN_CHUNKS` chunks are NOT cached — they
+    mount fast enough that keeping the widget tree alive isn't worth
+    the memory.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_files: int = _PREVIEW_CACHE_MAX_FILES,
+        min_chunks: int = _PREVIEW_CACHE_MIN_CHUNKS,
+    ) -> None:
+        self._cache: OrderedDict[tuple[str, str], PreviewContainer] = OrderedDict()
+        self.max_files = max_files
+        self.min_chunks = min_chunks
+
+    def get(self, parent_doc_id: str, query_signature: str) -> PreviewContainer | None:
+        key = (parent_doc_id, query_signature)
+        container = self._cache.get(key)
+        if container is not None:
+            self._cache.move_to_end(key)
+        return container
+
+    def put(self, container: PreviewContainer) -> list[PreviewContainer]:
+        """Cache ``container`` (only if it meets the size threshold) and
+        return any LRU-evicted containers the caller must remove from the
+        DOM."""
+        if container.total_chunks < self.min_chunks:
+            return []
+        key = (container.parent_doc_id, container.query_signature)
+        self._cache[key] = container
+        self._cache.move_to_end(key)
+        evicted: list[PreviewContainer] = []
+        while len(self._cache) > self.max_files:
+            _, old = self._cache.popitem(last=False)
+            evicted.append(old)
+        return evicted
+
+    def clear(self) -> list[PreviewContainer]:
+        """Drop everything; return the previously-cached containers so
+        the caller can remove them from the DOM."""
+        evicted = list(self._cache.values())
+        self._cache.clear()
+        return evicted
+
 
 # Phase F filters: panel layout. ``kinds`` is multi-select (each value
 # toggles independently); ``date`` is a radio (single-select; selecting
@@ -339,32 +442,34 @@ class AcornApp(App[None]):
         scrollbar-size-vertical: 0;
         scrollbar-size-horizontal: 0;
     }
+    /* Right-side preview column: always-on ProgressBar above, scrollable
+       preview pane below. Column width matches what #preview_pane used
+       to claim directly. */
+    #preview_column { width: 2fr; height: 1fr; }
     #preview_pane {
-        width: 2fr; height: 1fr;
+        width: 100%; height: 1fr;
         border: round $primary 50%;
         padding: 0 0 0 1;
     }
     #preview_pane:focus-within { border: round $accent; }
-    /* Preview-load indicators (UX-pass-4 §4 follow-up). Class-based —
-       NOT id-based — because a mid-mount cancellation can leave a
-       previous bar lingering in the DOM until the next event-loop
-       tick processes its async removal; mounting a fresh bar with
-       the same id would crash with DuplicateIds. Multiple widgets
-       with the same class coexist safely; the next ``await
-       pane.remove_children()`` reaps stragglers. */
+    /* Lock vertical scroll while a partial mount is in flight — once
+       the full document is mounted, removing this class re-enables
+       free scrolling. The match-scrollbar markers are still computed
+       from the full chunks list so users can see where matches will
+       land before they can scroll. */
+    #preview_pane.is-loading { overflow-y: hidden; scrollbar-size-vertical: 0; }
+    /* Preview-load progress bar — sibling of the pane (NOT inside it),
+       always present, hidden via class. Show/hide is a single class
+       toggle, no DOM mount races. */
     .preview-progress {
         width: 100%;
         height: 1;
-        margin: 0 0 1 0;
+        margin: 0 1 0 1;
         background: transparent;
     }
+    .preview-progress.-hidden { display: none; }
     .preview-progress Bar { width: 1fr; color: $accent; }
     .preview-progress PercentageStatus { color: $text-muted; padding: 0 0 0 1; }
-    .preview-loading {
-        width: 100%;
-        height: 1fr;
-        color: $accent;
-    }
     .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
     .chunk-section { padding: 0 0 1 0; height: auto; }
     .chunk-header { padding: 1 0 0 0; }
@@ -480,13 +585,17 @@ class AcornApp(App[None]):
         # full document on every cursor move within the same file. Keyed by
         # parent_id, invalidated on new query.
         self._chunk_cache: dict[str, list[FileChunk]] = {}
-        # Currently-rendered file's per-chunk header Static widgets, keyed
-        # by chunk_seq. Cleared and rebuilt on each file change.
+        # Widget-level cache (UX-pass-4 §4 hybrid): keeps the mounted
+        # widget tree alive across file switches so repeat visits are
+        # O(1). Cleared on every new query (highlights would be wrong).
+        self._preview_cache: PreviewCache = PreviewCache()
+        # The currently-active PreviewContainer (the one with `-active`
+        # class). None until the first file is rendered.
+        self._active_preview: PreviewContainer | None = None
+        # Convenience aliases that point into the active container —
+        # legacy code paths (_scroll_preview_to_chunk, etc.) read from
+        # these instead of poking at the container directly.
         self._chunk_widgets: dict[int, Static] = {}
-        # First widget within each chunk that contains a query-term match.
-        # When scrolling to a chunk we target this widget so the matched
-        # text is visible, not just the chunk header. Falls back to the
-        # chunk's header widget when there's no match in that chunk.
         self._match_targets: dict[int, Static] = {}
         # The parent_id whose chunks are currently mounted in the preview
         # pane (so we don't re-mount when cursor moves within the same file).
@@ -514,12 +623,25 @@ class AcornApp(App[None]):
                 # ``border_title``, matching the results-pane styling.
                 yield Tree("Collections", id="collections_panel_tree")
                 yield Tree("Filters", id="filters_panel_tree")
-            # Preview pane: MatchAwareScroll = VerticalScroll with a custom
-            # scrollbar that overlays chunk-match markers on the track.
-            # One Static per chunk inside, so scroll_to_widget targets the
-            # exact chunk regardless of how text wraps visually.
-            with MatchAwareScroll(id="preview_pane"):
-                yield Static("Type a query and press Enter.", id="placeholder")
+            # Right column: always-on ProgressBar above the preview pane
+            # (UX-pass-4 §4 follow-up). Keeping the bar OUTSIDE the
+            # scrollable pane means its visibility is a single class
+            # toggle — no mount/remove DOM races, no waiting on
+            # remove_children to drain. Bar starts hidden.
+            with Vertical(id="preview_column"):
+                yield ProgressBar(
+                    total=None,
+                    show_eta=False,
+                    show_percentage=True,
+                    classes="preview-progress -hidden",
+                    id="preview_progress_bar",
+                )
+                # Preview pane: MatchAwareScroll = VerticalScroll with a
+                # custom scrollbar that overlays chunk-match markers on
+                # the track. Per-file Containers hold the actual chunk
+                # widgets so cache hits are O(1) display flips.
+                with MatchAwareScroll(id="preview_pane"):
+                    yield Static("Type a query and press Enter.", id="placeholder")
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
@@ -741,10 +863,32 @@ class AcornApp(App[None]):
             self._groups = []
             self._refresh_results_tree()
             return
-        # New query → invalidate the per-file chunk cache and force a
-        # remount of the preview chunks against the new query.
+        # New query → invalidate BOTH caches:
+        # * _chunk_cache (decoded chunk data; rebuilt by next decode)
+        # * _preview_cache (mounted widgets; their highlights were baked
+        #   from the previous query, so they're stale even if the file
+        #   shows up in the new results)
+        # The cache invalidation also drops the rendered widgets from
+        # the DOM so the next preview load starts from a clean slate.
+        import contextlib
+
         self._chunk_cache.clear()
+        self._cancel_preview_mount_task()
+        evicted = self._preview_cache.clear()
+        for old in evicted:
+            with contextlib.suppress(Exception):
+                old.remove()
+        # Also drop the currently-active container if any (it was
+        # already evicted above if it was in cache; otherwise it's a
+        # small file that wasn't cached and we still need to clear).
+        if self._active_preview is not None and self._active_preview.parent is not None:
+            with contextlib.suppress(Exception):
+                self._active_preview.remove()
+        self._active_preview = None
+        self._chunk_widgets = {}
+        self._match_targets = {}
         self._preview_parent_id = None
+        self._hide_progress_bar()
         self._refresh_results_tree()
 
     def _search_layered(
@@ -834,45 +978,37 @@ class AcornApp(App[None]):
             self._render_full_doc(g.parent_id, focus_chunk_seq=top.chunk_seq if top else 0)
 
     def _render_full_doc(self, parent_id: str, *, focus_chunk_seq: int) -> None:
-        """Render the full document for ``parent_id`` as one Static widget
-        per chunk, then scroll the preview to the chunk identified by
-        ``focus_chunk_seq``.
+        """Render the full document for ``parent_id`` as one widget per
+        chunk, then scroll to the chunk identified by ``focus_chunk_seq``.
 
-        Both cache-hit and cache-miss paths go through the same unified
-        async mount loop (:meth:`_mount_chunks_async`) which yields to
-        the event loop after every chunk so keystrokes can interleave
-        and the user can cancel a slow mount by moving to another row.
-        Cache miss adds a worker-dispatched decode phase up front, with
-        an indeterminate ProgressBar + spinner shown until chunks arrive.
+        Hybrid load (UX-pass-4 §4 follow-up):
+
+        1. Look up the cached :class:`PreviewContainer` for this file +
+           query. If complete, activate (O(1) class flip) and scroll —
+           done.
+        2. If partial (resume case), activate, scroll, dispatch a task
+           that mounts only the un-mounted indices.
+        3. If absent and the chunk DATA is cached, create a fresh
+           container and dispatch the visible-first + background mount.
+        4. If even the chunk data is missing, dispatch the decode worker
+           first; its callback enters step 3.
         """
         import asyncio
 
         if self._searcher is None:
             return
+
         chunks = self._chunk_cache.get(parent_id)
         if chunks is not None:
-            # Cache hit — go straight to the async mount loop. Even
-            # cached files take time to mount (one widget per chunk;
-            # books are hundreds of chunks), so the bar keeps the user
-            # informed and the per-chunk yield keeps the keyboard live.
-            if parent_id != self._preview_parent_id:
-                self._cancel_preview_mount_task()
-                self._preview_mount_task = asyncio.create_task(
-                    self._mount_chunks_async(parent_id, focus_chunk_seq, chunks)
-                )
-            else:
-                # Same file — just scroll to the new section.
-                self._scroll_preview_to_chunk(focus_chunk_seq)
+            # We have decoded data — go to the mount path.
+            self._dispatch_preview_mount(parent_id, focus_chunk_seq, chunks)
             return
 
-        # Cache miss — clear pane, show indeterminate indicators,
-        # dispatch worker. The worker callback hands off to the same
-        # async mount loop the cache-hit path uses.
+        # Need to decode first. The bar appears immediately; the worker
+        # decodes off-thread and its callback re-enters via the chunk
+        # data path.
         self._cancel_preview_mount_task()
-        self._mount_preview_loading_widgets()
-        self._preview_parent_id = None
-        self._preview_load_progress = (0, None)
-        self._refresh_status()
+        self._show_progress_bar(total=None)
 
         target_parent_id = parent_id
         target_focus = focus_chunk_seq
@@ -892,67 +1028,140 @@ class AcornApp(App[None]):
                 fetched,
             )
 
+        _ = asyncio.get_event_loop()  # ensure a loop exists for the callback
         self.run_worker(_load, thread=True, exclusive=True, group="preview-load")
 
-    def _mount_preview_loading_widgets(self) -> None:
-        """Clear the preview pane and mount a ProgressBar (indeterminate)
-        plus a self-centering LoadingIndicator. Uses classes (not ids)
-        so a stale bar left over from a cancelled previous mount can
-        coexist briefly without raising DuplicateIds — the cancelled
-        task's async ``bar.remove()`` will land on the next tick and
-        the next ``await pane.remove_children()`` reaps any survivors.
+    def _dispatch_preview_mount(
+        self,
+        parent_id: str,
+        focus_chunk_seq: int,
+        chunks: list[FileChunk],
+    ) -> None:
+        """Decide which mount path to take given the (parent_id, query)
+        cache state. Always synchronous in its decision so the bar can
+        appear instantly when there's actual work to do."""
+        import asyncio
 
-        ``show_percentage=True`` is intentional: in indeterminate mode
-        (``total=None``) the inner ``Bar`` widget would otherwise have
-        no sibling content and the surrounding ``Horizontal`` container
-        collapses to ``width: auto``, making the whole bar invisibly
-        narrow. Keeping the percentage label gives the layout
-        non-zero content + a constantly-updating animation.
-        """
-        pane = self.query_one("#preview_pane", VerticalScroll)
-        for w in list(pane.children):
-            w.remove()
-        self._chunk_widgets = {}
-        self._match_targets = {}
-        bar = ProgressBar(
-            total=None,
-            show_eta=False,
-            show_percentage=True,
-            classes="preview-progress",
+        # Same file already active — just scroll, no work.
+        if (
+            self._active_preview is not None
+            and self._active_preview.parent_doc_id == parent_id
+            and self._active_preview.is_complete
+            and self._preview_parent_id == parent_id
+        ):
+            self._scroll_preview_to_chunk(focus_chunk_seq)
+            return
+
+        self._cancel_preview_mount_task()
+        query_sig = self._current_query_signature()
+        cached = self._preview_cache.get(parent_id, query_sig)
+
+        if cached is not None and cached.is_complete:
+            # Instant return — flip the active container, scroll, hide bar.
+            self._activate_preview_container(cached)
+            self._scroll_preview_to_chunk(focus_chunk_seq)
+            self._hide_progress_bar()
+            return
+
+        # Either no container yet OR a partially-mounted one (resume).
+        # Either way, kick off the mount task; show the bar immediately
+        # so the user sees feedback before the task even starts.
+        if cached is None:
+            container = PreviewContainer(
+                parent_doc_id=parent_id,
+                query_signature=query_sig,
+                total_chunks=len(chunks),
+            )
+        else:
+            container = cached
+        self._show_progress_bar(
+            total=len(chunks),
+            progress=len(container.mounted_indices),
         )
-        # LoadingIndicator self-centers via its own DEFAULT_CSS — no
-        # outer Center container needed (the wrapper was previously
-        # double-wrapping and confusing the layout pass).
-        spinner = LoadingIndicator(classes="preview-loading")
-        pane.mount(bar)
-        pane.mount(spinner)
-        # Ensure the new widgets land in the viewport — without this the
-        # pane keeps the previous file's scroll offset and the freshly-
-        # mounted bar / spinner are below the fold (the symptom: "no
-        # change in UI apparent" because the new content is just out of
-        # view).
-        pane.scroll_home(animate=False)
-        # Force a layout pass so the indicators paint before the worker
-        # callback potentially fires on the next event-loop tick.
-        pane.refresh(layout=True)
+        self._preview_mount_task = asyncio.create_task(
+            self._mount_chunks_async(parent_id, focus_chunk_seq, chunks, container)
+        )
 
-    def _clear_preview_loading_widgets(self) -> None:
-        """Remove any ProgressBar + LoadingIndicator instances mounted
-        in the preview pane. Class-based selectors so stragglers from
-        a cancelled previous mount are also reaped."""
-        for selector in (".preview-progress", ".preview-loading"):
-            for w in self.query(selector):
-                w.remove()
+    def _current_query_signature(self) -> str:
+        """Stable signature for the current query — match-bearing
+        widgets are baked with this query's highlights, so the cache
+        must invalidate when it changes. Includes intent because intent
+        biases snippet selection (UX-pass-4 §3)."""
+        return f"{self._current_query}|{self._current_intent or ''}"
+
+    def _show_progress_bar(self, *, total: int | None, progress: int = 0) -> None:
+        """Show the always-on ProgressBar at the top of the preview
+        column. ``total=None`` switches it to indeterminate (animated)
+        mode for the decode phase; a real total switches to determinate
+        with the percentage label visible."""
+        import contextlib
+
+        try:
+            bar = self.query_one("#preview_progress_bar", ProgressBar)
+        except Exception:
+            return
+        with contextlib.suppress(Exception):
+            bar.update(total=total, progress=progress)
+        bar.remove_class("-hidden")
+        # Lock pane scrolling while a mount is in flight; the bar +
+        # match-scrollbar markers tell the user where things are
+        # without them needing to scroll.
+        try:
+            pane = self.query_one("#preview_pane", VerticalScroll)
+            pane.add_class("is-loading")
+        except Exception:
+            pass
+
+    def _hide_progress_bar(self) -> None:
+        """Hide the always-on ProgressBar and re-enable pane scrolling."""
+        import contextlib
+
+        try:
+            bar = self.query_one("#preview_progress_bar", ProgressBar)
+        except Exception:
+            return
+        bar.add_class("-hidden")
+        with contextlib.suppress(Exception):
+            bar.update(total=None, progress=0)
+        try:
+            pane = self.query_one("#preview_pane", VerticalScroll)
+            pane.remove_class("is-loading")
+        except Exception:
+            pass
+
+    def _update_progress_bar(self, progress: int) -> None:
+        """Bump the always-on ProgressBar's current progress."""
+        import contextlib
+
+        try:
+            bar = self.query_one("#preview_progress_bar", ProgressBar)
+        except Exception:
+            return
+        with contextlib.suppress(Exception):
+            bar.update(progress=progress)
+
+    def _activate_preview_container(self, container: PreviewContainer) -> None:
+        """Make ``container`` the visible preview; hide all others."""
+        for child in self.query(PreviewContainer):
+            if child is container:
+                child.remove_class("-hidden")
+            else:
+                child.add_class("-hidden")
+        self._active_preview = container
+        self._preview_parent_id = container.parent_doc_id
+        # Update the legacy aliases that other code paths read from.
+        self._chunk_widgets = container.chunk_widgets
+        self._match_targets = container.match_targets
 
     def _cancel_preview_mount_task(self) -> None:
-        """Cancel any in-flight mount task so chunks from a previous
-        file's load don't continue appending after we switch files."""
+        """Cancel any in-flight mount task. The cancelled task's
+        partial-mount state lives on its :class:`PreviewContainer`,
+        so a later visit can resume it."""
         import contextlib
 
         task = self._preview_mount_task
         if task is None:
             return
-        # asyncio.Task; cancel() is a no-op if already done.
         try:
             done = task.done()  # type: ignore[attr-defined]
         except Exception:
@@ -963,10 +1172,8 @@ class AcornApp(App[None]):
         self._preview_mount_task = None
 
     def _on_preview_load_failed(self, exc: BaseException) -> None:
-        """Worker error callback. Clear loading widgets, surface a notify."""
-        self._clear_preview_loading_widgets()
-        self._preview_load_progress = None
-        self._refresh_status()
+        """Worker error callback. Hide the bar, surface a notify."""
+        self._hide_progress_bar()
         self.notify(f"Preview load failed: {exc}", severity="error")
 
     def _on_preview_chunks_loaded(
@@ -975,129 +1182,160 @@ class AcornApp(App[None]):
         focus_chunk_seq: int,
         chunks: list[FileChunk],
     ) -> None:
-        """Worker callback (event-loop side). Caches the chunks and hands
-        off to the unified async mount loop, which clears any decode-
-        phase indicators, mounts a determinate ProgressBar, and mounts
-        chunks in batches with per-chunk yields."""
-        import asyncio
-
+        """Worker callback. Caches chunk data; hands off to the same
+        mount path the cache-hit case uses."""
         self._chunk_cache[parent_id] = chunks
         if not chunks:
-            # Empty file — drop the indicators, leave the pane blank.
-            self._clear_preview_loading_widgets()
-            self._preview_load_progress = None
+            # Empty file — hide bar, leave pane blank.
+            self._hide_progress_bar()
             self._preview_parent_id = parent_id
             self._refresh_status()
             return
-        self._preview_mount_task = asyncio.create_task(
-            self._mount_chunks_async(parent_id, focus_chunk_seq, chunks)
-        )
+        self._dispatch_preview_mount(parent_id, focus_chunk_seq, chunks)
 
     async def _mount_chunks_async(
         self,
         parent_id: str,
         focus_chunk_seq: int,
         chunks: list[FileChunk],
+        container: PreviewContainer,
     ) -> None:
-        """Unified async mount path used by both cache-hit and cache-miss.
+        """Visible-first mount + closest-first background fill.
 
-        Yields to the event loop on every batch boundary AND on the
-        final iteration. ``batch_size`` is intentionally small (3) so
-        cancellation latency stays under ~half a second even on books
-        where each markdown chunk takes 100-200ms to render — pressing
-        an arrow mid-mount cancels this task within at most three
-        chunks' worth of work and a fresh task starts.
+        Phase 1 (sync, fast): mount the focused chunk plus
+        :data:`_VISIBLE_FIRST_ABOVE` chunks above and
+        :data:`_VISIBLE_FIRST_BELOW` below — a window roughly matching
+        the typical viewport. The user sees the relevant content
+        instantly.
 
-        Bar visibility threshold is ``> batch_size`` (i.e. files with
-        4+ chunks show the bar). The bar persists at 100% through the
-        post-mount scroll so the user sees a continuous "still working"
-        signal until the page is navigable, instead of a 1-2 second
-        gap between "100%" disappearing and the layout pass settling.
+        Phase 2 (async, batched): append the remaining chunks BELOW the
+        visible window first (no scroll shift), then prepend chunks
+        ABOVE the window in closest-first order, calling
+        ``scroll_to_widget`` after each prepend so the focused chunk
+        stays in the viewport.
+
+        Cancellation is non-destructive: the partial state lives on
+        ``container.mounted_indices`` so a revisit can resume from
+        where this task left off.
         """
         import asyncio
         import contextlib
 
-        batch_size = 3
         pane = self.query_one("#preview_pane", VerticalScroll)
-        # Atomic clear: removes both decode-phase indicators (if cache-
-        # miss path mounted them) and any leftover content from a
-        # previous file. ``await`` is essential — Widget.remove() is
-        # async and returns AwaitRemove; without awaiting we'd race
-        # the new mount and hit DuplicateIds on ``#preview_progress``.
-        await pane.remove_children()
-        self._chunk_widgets = {}
-        self._match_targets = {}
-        self._preview_parent_id = parent_id
-        self._refresh_status()
+
+        # Make sure container is mounted in the pane and active.
+        if container.parent is None:
+            await pane.remove_children(".placeholder")
+            pane.mount(container)
+        self._activate_preview_container(container)
         self._refresh_match_scrollbar(chunks)
 
-        if not chunks:
-            self._preview_load_progress = None
-            return
+        # Establish the focused window indices (clamped to chunks).
+        focus_idx = next(
+            (i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq),
+            0,
+        )
+        win_start = max(0, focus_idx - _VISIBLE_FIRST_ABOVE)
+        win_end = min(len(chunks), focus_idx + _VISIBLE_FIRST_BELOW + 1)
 
-        show_bar = len(chunks) > batch_size
-        bar: ProgressBar | None = None
-        if show_bar:
-            bar = ProgressBar(
-                total=len(chunks),
-                show_eta=False,
-                show_percentage=True,
-                classes="preview-progress",
-            )
-            pane.mount(bar)
-            pane.scroll_home(animate=False)
-            pane.refresh(layout=True)
-            self._preview_load_progress = (0, len(chunks))
-            self._refresh_status()
-
-        first_chunk = chunks[0]
-        title = Static(Path(first_chunk.path).name, classes="preview-title")
-        pane.mount(title)
-        is_markdown = first_chunk.kind == "md"
-
-        # try / finally so the bar is cleaned up even on cancellation —
-        # without this, a mid-mount cancel left the bar in the DOM with
-        # its async-removal not yet processed; the next cache-miss
-        # _mount_preview_loading_widgets (sync, no await) raced the
-        # leftover bar's removal and crashed with DuplicateIds. Class-
-        # based selectors (not ids) make the same scenario benign even
-        # if cleanup is slightly delayed.
         try:
-            for i, c in enumerate(chunks):
-                if is_markdown:
-                    self._mount_markdown_chunk(pane, c)
-                else:
-                    self._mount_plain_chunk(pane, c)
-                # Yield + bar update on batch boundaries AND the final
-                # iteration. The final-iteration check ensures the bar
-                # visibly hits 100% even when the trailing partial
-                # batch is smaller than batch_size (e.g. chunks 499-500
-                # when total=500 and batch_size=3 — 500%3==2, would
-                # otherwise stop updating at 498).
-                done_in_batch = (i + 1) % batch_size == 0
-                done_overall = (i + 1) == len(chunks)
-                if done_in_batch or done_overall:
-                    if bar is not None:
-                        with contextlib.suppress(Exception):
-                            bar.update(progress=i + 1)
-                    self._preview_load_progress = (i + 1, len(chunks))
-                    await asyncio.sleep(0)
-            # Keep the bar visible at 100% through the scroll → layout
-            # settle path so the user has a continuous "working" signal
-            # until the page is actually navigable. Order matters:
-            #
-            #   1. Trigger scroll (deferred via call_after_refresh)
-            #   2. Yield once so the scroll commits and chunks render
-            #   3. Only then remove the bar (the layout shift from
-            #      removal happens after navigation is ready)
+            # Phase 1: sync mount of the visible window. Mount in
+            # document order so widgets in the container are in
+            # ascending chunk_seq from the start.
+            for i in range(win_start, win_end):
+                if i in container.mounted_indices:
+                    continue
+                self._mount_chunk_into(container, chunks[i], i, chunks)
+            # Scroll to focused chunk before yielding.
             self._scroll_preview_to_chunk(focus_chunk_seq)
+            self._update_progress_bar(progress=len(container.mounted_indices))
+            await asyncio.sleep(0)
+
+            # Phase 2a: background fill BELOW the window, in order.
+            # No scroll shift since these append below visible content.
+            for i in range(win_end, len(chunks)):
+                if i in container.mounted_indices:
+                    continue
+                self._mount_chunk_into(container, chunks[i], i, chunks)
+                self._update_progress_bar(progress=len(container.mounted_indices))
+                # Yield every 3 chunks for cancellation responsiveness.
+                if (i - win_end + 1) % 3 == 0:
+                    await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+            # Phase 2b: background fill ABOVE the window, closest-first.
+            # Each prepend inserts a widget before the current first
+            # chunk; without scroll compensation the focused chunk
+            # would drift downward visually. scroll_to_widget keeps
+            # it in view.
+            focused_widget = container.match_targets.get(
+                focus_chunk_seq
+            ) or container.chunk_widgets.get(focus_chunk_seq)
+            for i in range(win_start - 1, -1, -1):
+                if i in container.mounted_indices:
+                    continue
+                self._mount_chunk_into(container, chunks[i], i, chunks)
+                self._update_progress_bar(progress=len(container.mounted_indices))
+                if (win_start - i) % 3 == 0:
+                    if focused_widget is not None:
+                        with contextlib.suppress(Exception):
+                            pane.scroll_to_widget(focused_widget, animate=False, top=False)
+                    await asyncio.sleep(0)
+            # Final scroll-fix after the loop, in case we exited mid-
+            # batch without yielding.
+            if focused_widget is not None:
+                with contextlib.suppress(Exception):
+                    pane.scroll_to_widget(focused_widget, animate=False, top=False)
             await asyncio.sleep(0)
         finally:
-            self._preview_load_progress = None
-            if bar is not None:
-                with contextlib.suppress(Exception):
-                    bar.remove()
+            if container.is_complete:
+                # Promote the container into the LRU cache.
+                evicted = self._preview_cache.put(container)
+                for old in evicted:
+                    with contextlib.suppress(Exception):
+                        old.remove()
+                self._hide_progress_bar()
+            else:
+                # Partial — leave the bar visible (a revisit will
+                # resume); but if no task will resume (cancellation
+                # because user moved on), the next _show_progress_bar
+                # for the new file will overwrite our state.
+                pass
             self._refresh_status()
+
+    def _mount_chunk_into(
+        self,
+        container: PreviewContainer,
+        chunk: FileChunk,
+        index: int,
+        all_chunks: list[FileChunk],
+    ) -> None:
+        """Mount one chunk widget into ``container`` at the position
+        implied by its index. Updates the container's
+        ``mounted_indices`` / ``chunk_widgets`` / ``match_targets``
+        bookkeeping."""
+        # Find the smallest already-mounted index greater than this one
+        # — we mount BEFORE that widget so chunks stay in document
+        # order regardless of which phase mounts them.
+        before_widget: Static | None = None
+        next_mounted = min(
+            (j for j in container.mounted_indices if j > index),
+            default=-1,
+        )
+        if next_mounted >= 0:
+            before_seq = all_chunks[next_mounted].chunk_seq
+            before_widget = container.chunk_widgets.get(before_seq)
+
+        is_markdown = chunk.kind == "md"
+        # Save current widgets-by-chunk_seq so the mount helpers fill
+        # the per-container dicts (they update self._chunk_widgets /
+        # self._match_targets, which are aliased to the active
+        # container's dicts).
+        if is_markdown:
+            self._mount_markdown_chunk(container, chunk, before=before_widget)
+        else:
+            self._mount_plain_chunk(container, chunk, before=before_widget)
+        container.mounted_indices.add(index)
 
     def _refresh_match_scrollbar(self, chunks: list[FileChunk]) -> None:
         """Build a per-chunk match map and forward it to the preview's
@@ -1116,43 +1354,54 @@ class AcornApp(App[None]):
         pane.set_match_map(match_map)
 
     def _mount_chunks_for_file(self, parent_id: str, chunks: list[FileChunk]) -> None:
-        """Tear down the existing preview content and mount per-chunk widgets.
-
-        For markdown files we hand the chunk body to ``rich.markdown.Markdown``
-        so headings, code blocks, tables, lists, bold/italic all render
-        properly — same `glow`-style formatting the user asked for.
-        Per-line match overlays are dropped on markdown chunks because the
-        renderer doesn't expose per-line spans; matches still appear bolded
-        inline (the underlying ``render(blocks, query=…)`` wraps terms in
-        ``**…**`` before the markdown source goes to Rich).
-
-        Other formats (PDF / DOCX / PPTX / TXT) keep the per-line Static
-        layout — those bodies aren't markdown, so the line overlay is the
-        natural way to flag matches.
+        """Legacy synchronous mount path retained for tests that exercise
+        the rendering surface directly. The interactive flow now uses
+        :meth:`_mount_chunks_async` (visible-first + background fill);
+        this entry point clears the pane and mounts everything at once
+        into a fresh :class:`PreviewContainer`.
         """
         pane = self.query_one("#preview_pane", VerticalScroll)
         for w in list(pane.children):
             w.remove()
-        self._chunk_widgets = {}
-        self._match_targets = {}
+        container = PreviewContainer(
+            parent_doc_id=parent_id,
+            query_signature=self._current_query_signature(),
+            total_chunks=len(chunks),
+        )
+        pane.mount(container)
+        self._activate_preview_container(container)
+        if not chunks:
+            return
         first_chunk = chunks[0]
         title = Static(Path(first_chunk.path).name, classes="preview-title")
-        pane.mount(title)
+        container.mount(title)
         is_markdown = first_chunk.kind == "md"
-        for c in chunks:
+        for i, c in enumerate(chunks):
             if is_markdown:
-                self._mount_markdown_chunk(pane, c)
+                self._mount_markdown_chunk(container, c)
             else:
-                self._mount_plain_chunk(pane, c)
+                self._mount_plain_chunk(container, c)
+            container.mounted_indices.add(i)
 
-    def _mount_plain_chunk(self, pane: VerticalScroll, c: FileChunk) -> None:
+    def _mount_plain_chunk(
+        self,
+        parent: Container | VerticalScroll,
+        c: FileChunk,
+        *,
+        before: Static | None = None,
+    ) -> None:
         """Per-line layout for non-markdown chunks. Each body line becomes
         its own Static so ``scroll_to_widget`` can target the first matched
-        line, and the match-row gets a subtle accent overlay."""
+        line, and the match-row gets a subtle accent overlay.
+
+        ``before`` (if supplied) makes every widget mount immediately
+        before that anchor — used by background-fill prepending so
+        chunks land in document order even when mounted out of sequence.
+        """
         header_text, pieces = render_chunk_pieces(c, query=self._current_query)
         header_w = Static(header_text, classes="chunk-section chunk-header")
         header_w.acorn_text = header_text  # type: ignore[attr-defined]
-        pane.mount(header_w)
+        parent.mount(header_w, before=before)
         self._chunk_widgets[c.chunk_seq] = header_w
         first_match: Static | None = None
         for line_text, has_match in pieces:
@@ -1160,26 +1409,26 @@ class AcornApp(App[None]):
             line_w.acorn_text = line_text  # type: ignore[attr-defined]
             if has_match:
                 line_w.add_class("chunk-line-match")
-            pane.mount(line_w)
+            parent.mount(line_w, before=before)
             if has_match and first_match is None:
                 first_match = line_w
         self._match_targets[c.chunk_seq] = first_match or header_w
 
-    def _mount_markdown_chunk(self, pane: VerticalScroll, c: FileChunk) -> None:
+    def _mount_markdown_chunk(
+        self,
+        parent: Container | VerticalScroll,
+        c: FileChunk,
+        *,
+        before: Static | None = None,
+    ) -> None:
         """Markdown chunks: pretty rendering for context, per-line layout
         for matches.
 
         Matched chunks switch to per-line widgets (same path PDFs use)
-        so query terms get the yellow-on-bold highlight — consistent
-        word-level highlighting across every file kind. Non-matched
+        so query terms get the yellow-on-bold highlight. Non-matched
         chunks render through ``rich.markdown.Markdown`` so headings,
         code blocks, tables, lists, bold/italic still look right while
         the user scrolls for context.
-
-        No chunk-header Static for markdown either way: the file's own
-        ``# H1`` is already in the rendered body, and the chunk header
-        was just repeating the filename for notes whose only heading
-        equalled their basename.
         """
         from rich.markdown import Markdown
 
@@ -1190,28 +1439,26 @@ class AcornApp(App[None]):
         has_match = bool(term_stems and any(text_has_match(b.text, term_stems) for b in c.blocks))
 
         if has_match:
-            self._mount_md_per_line(pane, c)
+            self._mount_md_per_line(parent, c, before=before)
             return
 
-        # No matches in this chunk: render the formatted markdown for context.
         md_source = render(c.blocks, query="")
         body_w = Static(
             Markdown(md_source, code_theme="monokai"),
             classes="chunk-section chunk-md-body",
         )
-        pane.mount(body_w)
+        parent.mount(body_w, before=before)
         self._chunk_widgets[c.chunk_seq] = body_w
         self._match_targets[c.chunk_seq] = body_w
 
-    def _mount_md_per_line(self, pane: VerticalScroll, c: FileChunk) -> None:
-        """Per-line markdown layout used when a chunk contains matches.
-
-        Mirrors ``_mount_plain_chunk`` minus the chunk-header Static —
-        the file already has its own H1 inline so an extra repeated
-        header crowds the preview. The first matched line carries the
-        accent left-bar so the user can spot match-bearing chunks while
-        scrolling.
-        """
+    def _mount_md_per_line(
+        self,
+        parent: Container | VerticalScroll,
+        c: FileChunk,
+        *,
+        before: Static | None = None,
+    ) -> None:
+        """Per-line markdown layout used when a chunk contains matches."""
         _, pieces = render_chunk_pieces(c, query=self._current_query)
         first_line: Static | None = None
         first_match: Static | None = None
@@ -1220,7 +1467,7 @@ class AcornApp(App[None]):
             line_w.acorn_text = line_text  # type: ignore[attr-defined]
             if has_match:
                 line_w.add_class("chunk-line-match")
-            pane.mount(line_w)
+            parent.mount(line_w, before=before)
             if first_line is None:
                 first_line = line_w
             if has_match and first_match is None:
