@@ -24,6 +24,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.widget import Widget
 from textual.widgets import (
     Input,
     Label,
@@ -1042,18 +1043,35 @@ class AcornApp(App[None]):
         appear instantly when there's actual work to do."""
         import asyncio
 
-        # Same file already active — just scroll, no work.
+        query_sig = self._current_query_signature()
+
+        # Same file + same query already active. Two sub-cases:
+        #   (a) target chunk widget exists — just scroll, no remount.
+        #   (b) target chunk not yet mounted (still loading the file
+        #       and the user clicked a result above the load front):
+        #       cancel the in-flight task and resume the SAME container
+        #       with the new focus window. We keep all already-mounted
+        #       chunks; the worker only mounts the missing ones.
         if (
             self._active_preview is not None
             and self._active_preview.parent_doc_id == parent_id
-            and self._active_preview.is_complete
-            and self._preview_parent_id == parent_id
+            and self._active_preview.query_signature == query_sig
         ):
-            self._scroll_preview_to_chunk(focus_chunk_seq)
+            container = self._active_preview
+            if container.is_complete or focus_chunk_seq in container.chunk_widgets:
+                self._scroll_preview_to_chunk(focus_chunk_seq)
+                return
+            self._cancel_preview_mount_task()
+            self._show_progress_bar(
+                total=len(chunks),
+                progress=len(container.mounted_indices),
+            )
+            self._preview_mount_task = asyncio.create_task(
+                self._mount_chunks_async(parent_id, focus_chunk_seq, chunks, container)
+            )
             return
 
         self._cancel_preview_mount_task()
-        query_sig = self._current_query_signature()
         cached = self._preview_cache.get(parent_id, query_sig)
 
         if cached is not None and cached.is_complete:
@@ -1204,7 +1222,7 @@ class AcornApp(App[None]):
         chunks: list[FileChunk],
         container: PreviewContainer,
     ) -> None:
-        """Visible-first mount + closest-first background fill.
+        """Visible-first mount + hidden-prepend background fill.
 
         Phase 1 (sync, fast): mount the focused chunk plus
         :data:`_VISIBLE_FIRST_ABOVE` chunks above and
@@ -1212,15 +1230,22 @@ class AcornApp(App[None]):
         the typical viewport. The user sees the relevant content
         instantly.
 
-        Phase 2 (async, batched): append the remaining chunks BELOW the
-        visible window first (no scroll shift), then prepend chunks
-        ABOVE the window in closest-first order, calling
-        ``scroll_to_widget`` after each prepend so the focused chunk
-        stays in the viewport.
+        Phase 2a (async, batched): append the remaining chunks BELOW
+        the visible window in document order. These add to virtual
+        size but don't shift the visible viewport.
 
-        Cancellation is non-destructive: the partial state lives on
-        ``container.mounted_indices`` so a revisit can resume from
-        where this task left off.
+        Phase 2b (async, batched): mount the chunks ABOVE the visible
+        window, but set ``display = False`` on each newly-mounted
+        widget the moment it lands. Hidden widgets contribute zero
+        layout, so the focused chunk's screen position stays put while
+        the background fill runs (no jumping). After the last above-
+        window chunk is mounted, we reveal the entire batch at once
+        and re-anchor scroll to the focused chunk's top edge.
+
+        Cancellation is non-destructive: partial state lives on
+        ``container.mounted_indices``. The ``finally`` block always
+        reveals any still-hidden widgets so a cancelled task doesn't
+        leave the container in a half-hidden state.
         """
         import asyncio
         import contextlib
@@ -1241,6 +1266,11 @@ class AcornApp(App[None]):
         )
         win_start = max(0, focus_idx - _VISIBLE_FIRST_ABOVE)
         win_end = min(len(chunks), focus_idx + _VISIBLE_FIRST_BELOW + 1)
+
+        # Newly-mounted "above-window" widgets get hidden until phase 2b
+        # finishes; the finally block makes sure every entry in this
+        # list ends up displayed even on cancellation.
+        hidden_widgets: list[Widget] = []
 
         try:
             # Phase 1: sync mount of the visible window. Mount in
@@ -1267,43 +1297,47 @@ class AcornApp(App[None]):
                     await asyncio.sleep(0)
             await asyncio.sleep(0)
 
-            # Phase 2b: background fill ABOVE the window, closest-first.
-            # Prepending a widget shifts everything below it downward by
-            # the prepended widget's height. Without compensation the
-            # focused chunk drifts down and out of the viewport, which
-            # the user perceives as the preview "jumping through every
-            # chunk".
-            #
-            # Strategy: mount batch_prepend chunks silently (no yield —
-            # so Textual batches the layout pass), then yield + re-pin
-            # the focused chunk to the top of the viewport with
-            # ``top=True``. New chunks land above the viewport, out of
-            # sight; the user only ever sees the focus chunk anchored
-            # in place.
-            batch_prepend = 15
-            focused_widget = container.match_targets.get(
-                focus_chunk_seq
-            ) or container.chunk_widgets.get(focus_chunk_seq)
-            since_yield = 0
+            # Phase 2b: hidden-prepend ABOVE the window. Each newly-
+            # mounted widget gets ``display = False`` immediately, so
+            # it takes no layout space and the focused chunk doesn't
+            # drift while the rest of the doc loads. Yields are larger
+            # here because hidden widgets cost almost nothing to add.
             for i in range(win_start - 1, -1, -1):
                 if i in container.mounted_indices:
                     continue
+                before = set(container.children)
                 self._mount_chunk_into(container, chunks[i], i, chunks)
+                for w in container.children:
+                    if w not in before:
+                        w.display = False
+                        hidden_widgets.append(w)
                 self._update_progress_bar(progress=len(container.mounted_indices))
-                since_yield += 1
-                if since_yield >= batch_prepend:
+                if (win_start - i) % 15 == 0:
                     await asyncio.sleep(0)
-                    if focused_widget is not None:
-                        with contextlib.suppress(Exception):
-                            pane.scroll_to_widget(focused_widget, animate=False, top=True)
-                    since_yield = 0
-            # Final re-pin after the last partial batch.
             await asyncio.sleep(0)
-            if focused_widget is not None:
-                with contextlib.suppress(Exception):
-                    pane.scroll_to_widget(focused_widget, animate=False, top=True)
-            await asyncio.sleep(0)
+
+            # Reveal every hidden widget in one pass and re-anchor the
+            # scroll so the focused chunk stays at the top of viewport
+            # even though the doc just got taller.
+            if hidden_widgets:
+                for w in hidden_widgets:
+                    w.display = True
+                hidden_widgets.clear()
+                await asyncio.sleep(0)
+                focused_widget = container.match_targets.get(
+                    focus_chunk_seq
+                ) or container.chunk_widgets.get(focus_chunk_seq)
+                if focused_widget is not None:
+                    with contextlib.suppress(Exception):
+                        pane.scroll_to_widget(focused_widget, animate=False, top=True)
+                await asyncio.sleep(0)
         finally:
+            # Always reveal any widgets we hid; a cancelled task that
+            # left them hidden would leak a half-displayed container
+            # into the cache.
+            for w in hidden_widgets:
+                with contextlib.suppress(Exception):
+                    w.display = True
             if container.is_complete:
                 # Promote the container into the LRU cache.
                 evicted = self._preview_cache.put(container)
