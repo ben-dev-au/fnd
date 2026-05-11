@@ -478,6 +478,10 @@ def _open_config_file_action(app: AcornApp) -> None:
     app.action_open_config_file()
 
 
+def _open_keybindings_file_action(app: AcornApp) -> None:
+    app.action_open_keybindings_file()  # type: ignore[attr-defined]
+
+
 def _provider_collections(app: AcornApp) -> tuple[MenuItem, ...]:
     """Content of the Collections sub-screen — `Add collection` action
     followed by one drill-in row per configured collection."""
@@ -660,6 +664,13 @@ def _summary_config_path(_app: AcornApp) -> str:
     return ("…" + p[-50:]) if len(p) > 50 else p
 
 
+def _summary_keybindings_path(_app: AcornApp) -> str:
+    from acorn.config import default_config_path
+
+    p = str(default_config_path().parent / "keybindings.toml")
+    return ("…" + p[-50:]) if len(p) > 50 else p
+
+
 def _provider_root(_app: AcornApp) -> tuple[MenuItem, ...]:
     """Root settings menu — a clean, short list of categories. No
     content piled on top of each other. Each drill-in row pushes its
@@ -697,6 +708,15 @@ def _provider_root(_app: AcornApp) -> tuple[MenuItem, ...]:
             external=_open_config_file_action,
             value_getter=_summary_config_path,
             keywords=("edit", "config", "toml"),
+        ),
+        MenuItem(
+            id="root.open_keybindings_file",
+            label="Open keybindings file in editor",
+            description="Drop into $EDITOR on keybindings.toml; Shift+Enter reveals in Finder.",
+            kind=KIND_EXTERNAL,
+            external=_open_keybindings_file_action,
+            value_getter=_summary_keybindings_path,
+            keywords=("edit", "keybindings", "rebind"),
         ),
     )
 
@@ -763,7 +783,7 @@ def walk_all_sections(app: AcornApp) -> Iterator[tuple[tuple[str, ...], MenuItem
             yield breadcrumb, item
     # Root-level actions that aren't behind a category drill.
     for item in build_root_items(app):
-        if item.id == "root.open_config_file":
+        if item.id in ("root.open_config_file", "root.open_keybindings_file"):
             yield (), item
     # Pseudo-rows surface confusions in search without taking up real estate
     # in any sub-screen.

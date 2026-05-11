@@ -34,8 +34,8 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 @pytest.mark.asyncio
 async def test_root_menu_is_short_list_of_categories(built_index: Path) -> None:
     """`:` opens a small list of category drill-ins — Preferences,
-    Collections, Keybindings, Open config file. No content piled on
-    top of each other."""
+    Collections, Keybindings, Open config file, Open keybindings file.
+    No content piled on top of each other."""
     from acorn.tui.menu import KIND_EXTERNAL
     from acorn.tui.settings_screen import SettingsList, SettingsScreen
 
@@ -48,13 +48,14 @@ async def test_root_menu_is_short_list_of_categories(built_index: Path) -> None:
         assert isinstance(screen, SettingsScreen)
         assert screen._breadcrumb == ()
         lst = screen.query_one(SettingsList)
-        # Root has exactly the four expected drill / action rows.
+        # Root has exactly the five expected drill / action rows.
         labels = [it.label for it in lst._items]
         assert labels == [
             "Preferences",
             "Collections",
             "Keybindings",
             "Open config file in editor",
+            "Open keybindings file in editor",
         ]
         # Every row is "external" (push a sub-screen / run an action).
         assert all(it.kind == KIND_EXTERNAL for it in lst._items)

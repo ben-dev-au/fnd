@@ -33,6 +33,22 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 
 @pytest.mark.asyncio
+async def test_root_has_open_keybindings_file(built_index: Path) -> None:
+    """Spec: IA › Root — sibling action for the keybindings TOML."""
+    from acorn.tui import AcornApp
+    from acorn.tui.settings_screen import SettingsList
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_open_command_palette()
+        await pilot.pause()
+        lst = app.screen.query_one(SettingsList)
+        labels = [it.label for it in lst._items]
+        assert "Open keybindings file in editor" in labels
+
+
+@pytest.mark.asyncio
 async def test_shift_enter_on_open_config_calls_reveal(built_index: Path) -> None:
     """Spec: Reveal pattern — Shift+Enter on the Open config row reveals
     config.toml in Finder."""
