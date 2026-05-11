@@ -266,12 +266,13 @@ class DetailStrip(Widget):
     def set(self, description: str, metadata: str = "") -> None:
         self._description = description
         self._metadata = metadata
-        self._render()
+        self._refresh_strip()
 
     def clear(self) -> None:
         self.set("", "")
 
-    def _render(self) -> None:
+    def _refresh_strip(self) -> None:
+        # Internal name to avoid colliding with Widget._render (Textual base).
         rendered = self._render_lines()
         try:
             self.query_one("#detail_description", Static).update(rendered[0])
@@ -287,7 +288,7 @@ class DetailStrip(Widget):
         )
 
     def on_mount(self) -> None:
-        self._render()
+        self._refresh_strip()
 ```
 
 - [ ] **Step 5: Run test to verify it passes**
