@@ -57,3 +57,22 @@ async def test_pressing_key_while_search_focused_does_not_invoke(built_index: Pa
         await pilot.pause()
         # Search has 'o' in it; menu still up.
         assert isinstance(app.screen, SettingsScreen)
+
+
+def test_drill_summary_mode_default_and_validation() -> None:
+    """Spec: Drill-cue preference — defaults to always_show; validates set."""
+    from pydantic import ValidationError
+
+    from acorn.config import Defaults
+
+    d = Defaults()
+    assert d.drill_summary_mode == "always_show"
+    # Each known mode round-trips.
+    for mode in ("always_show", "smart", "always_ellipsis"):
+        Defaults(drill_summary_mode=mode)
+    # Unknown values rejected.
+    try:
+        Defaults(drill_summary_mode="banana")  # type: ignore[arg-type]
+    except ValidationError:
+        return
+    raise AssertionError("expected ValidationError for unknown mode")
