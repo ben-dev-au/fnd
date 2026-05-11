@@ -92,6 +92,7 @@ def _render_row(
     app: AcornApp | None,
     width: int | None = None,
     breadcrumb: tuple[str, ...] | None = None,
+    highlight: str | None = None,
 ) -> Text:
     """Render one menu row as Rich Text.
 
@@ -111,6 +112,10 @@ def _render_row(
     ``breadcrumb`` is a tuple of section labels — when provided it is
     rendered instead of the normal trailing value so the user knows
     which section each cross-section search result comes from.
+
+    ``highlight`` is the active search query (lowercased ok). When given
+    and the label contains a case-insensitive match, that substring is
+    rendered bold so the user sees why the row was returned.
     """
     if item.kind == KIND_HEADER:
         return _render_header(item, width)
@@ -129,7 +134,18 @@ def _render_row(
         used = len(item.key) + 2  # brackets + key
         key_field.append(" " * max(1, _KEY_COL - used))
         text.append_text(key_field)
-    text.append(item.label)
+    if highlight:
+        low = item.label.lower()
+        h_low = highlight.lower()
+        i = low.find(h_low)
+        if i >= 0:
+            text.append(item.label[:i])
+            text.append(item.label[i : i + len(highlight)], style="bold")
+            text.append(item.label[i + len(highlight) :])
+        else:
+            text.append(item.label)
+    else:
+        text.append(item.label)
     if breadcrumb:
         # Cross-section search: show the section path instead of trailing value.
         bc_text = " › ".join(breadcrumb)
@@ -352,6 +368,9 @@ class SettingsList(Widget, can_focus=True):
         # Maps id(item) → breadcrumb tuple during cross-section search.
         # Empty when no filter is active.
         self._search_breadcrumbs: dict[int, tuple[str, ...]] = {}
+        # The active search query, lowercased — used to bold the matching
+        # substring inside each filtered row's label.
+        self._search_query: str = ""
 
     def compose(self) -> ComposeResult:
         yield Vertical(id="settings_list_body")
@@ -394,9 +413,18 @@ class SettingsList(Widget, can_focus=True):
             return
         width = self.size.width or 80
         rows = list(body.query(Static))
+        highlight = self._search_query or None
         for i, (item, row) in enumerate(zip(self._items, rows, strict=False)):
             bc = self._search_breadcrumbs.get(id(item)) or None
-            row.update(_render_row(item, app, width=width - 2, breadcrumb=bc))
+            row.update(
+                _render_row(
+                    item,
+                    app,
+                    width=width - 2,
+                    breadcrumb=bc,
+                    highlight=highlight,
+                )
+            )
             if i == self.cursor_index and item.kind != KIND_HEADER:
                 row.add_class("-cursor")
             else:
@@ -682,6 +710,7 @@ class SettingsScreen(Screen[None]):
     def _on_search_changed(self, ev: Input.Changed) -> None:
         q = ev.value.strip().lower()
         lst = self.query_one(SettingsList)
+        lst._search_query = q
         if not q:
             self._filter_active = False
             self._search_breadcrumbs = {}

@@ -154,3 +154,37 @@ async def test_search_match_for_scalar_opens_edit_bar_inline(
         # The edit bar should be open with the current value populated.
         bar = screen.query_one(EditBar)
         assert "-hidden" not in bar.classes
+
+
+def test_search_result_label_has_bold_substring_for_query() -> None:
+    """Spec: Search › Match display — matched substring rendered bold."""
+    from acorn.tui.menu import KIND_SCALAR, MenuItem
+    from acorn.tui.settings_screen import _render_row
+
+    item = MenuItem(id="x", label="Result limit", kind=KIND_SCALAR)
+    rendered = _render_row(item, app=None, width=80, highlight="result")
+    label_str = str(rendered)
+    assert "Result" in label_str
+    # Walk the Rich Text spans and confirm at least one segment over the
+    # "Result" substring carries a bold style.
+    bold_segments = [s for s in rendered.spans if "bold" in str(s.style).lower()]
+    assert bold_segments, "expected bold span over matched substring"
+
+
+def test_render_row_no_highlight_when_query_misses() -> None:
+    """Substring matching is case-insensitive but only bolds on a hit."""
+    from acorn.tui.menu import KIND_SCALAR, MenuItem
+    from acorn.tui.settings_screen import _render_row
+
+    item = MenuItem(id="x", label="Result limit", kind=KIND_SCALAR)
+    rendered = _render_row(item, app=None, width=80, highlight="zzz")
+    label_str = str(rendered)
+    assert "Result limit" in label_str
+    # No bold span over the label range when there's no match.
+    for span in rendered.spans:
+        if "bold" not in str(span.style).lower():
+            continue
+        # The label "Result limit" lives at offsets [0, 12) since no key col.
+        assert span.start >= len(
+            "Result limit"
+        ), f"unexpected bold span over label area on no-match render: {span!r}"
