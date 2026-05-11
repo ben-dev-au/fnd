@@ -53,6 +53,7 @@ from acorn.tui.menu import (
     build_root_items,
     section_items,
     section_label,
+    walk_all_sections,
 )
 from acorn.tui.widgets import DetailStrip
 
@@ -85,11 +86,17 @@ _SETTINGS_HINTS: tuple[tuple[str, str], ...] = (
 # ── Row rendering ────────────────────────────────────────────────────
 
 
-def _render_row(item: MenuItem, app: AcornApp | None, width: int | None = None) -> Text:
+def _render_row(
+    item: MenuItem,
+    app: AcornApp | None,
+    width: int | None = None,
+    breadcrumb: tuple[str, ...] | None = None,
+) -> Text:
     """Render one menu row as Rich Text.
 
     Layout (left to right):
       [key]  label  ……………… trailing_value
+                               (or breadcrumb in dim italic when filtering)
 
     - Keys (Keybindings rows) render as ``[<key>]`` in $accent bold,
       bracketed in $text-muted for a subtle frame.
@@ -99,6 +106,10 @@ def _render_row(item: MenuItem, app: AcornApp | None, width: int | None = None) 
 
     ``app`` may be ``None`` for tests that don't construct a full app —
     in that case the trailing-value lookup is skipped.
+
+    ``breadcrumb`` is a tuple of section labels — when provided it is
+    rendered instead of the normal trailing value so the user knows
+    which section each cross-section search result comes from.
     """
     if item.kind == KIND_HEADER:
         return _render_header(item, width)
@@ -118,17 +129,28 @@ def _render_row(item: MenuItem, app: AcornApp | None, width: int | None = None) 
         key_field.append(" " * max(1, _KEY_COL - used))
         text.append_text(key_field)
     text.append(item.label)
-    trailing = item.trailing_value(app) if app is not None else ""
-    if trailing and width is not None:
-        # Right-align trailing value with dotted-pad. width is the
-        # available column count.
-        used = (_KEY_COL if item.key else 0) + len(item.label)
-        pad = max(2, width - used - len(trailing) - 2)
-        text.append(" " + "·" * pad + " ", style="dim")
-        text.append(trailing, style="bold")
-    elif trailing:
-        text.append("   ")
-        text.append(trailing, style="bold")
+    if breadcrumb:
+        # Cross-section search: show the section path instead of trailing value.
+        bc_text = " › ".join(breadcrumb)
+        if width is not None:
+            used = (_KEY_COL if item.key else 0) + len(item.label)
+            pad = max(2, width - used - len(bc_text) - 2)
+            text.append(" " + "·" * pad + " ", style="dim")
+        else:
+            text.append("   ")
+        text.append(bc_text, style="dim italic")
+    else:
+        trailing = item.trailing_value(app) if app is not None else ""
+        if trailing and width is not None:
+            # Right-align trailing value with dotted-pad. width is the
+            # available column count.
+            used = (_KEY_COL if item.key else 0) + len(item.label)
+            pad = max(2, width - used - len(trailing) - 2)
+            text.append(" " + "·" * pad + " ", style="dim")
+            text.append(trailing, style="bold")
+        elif trailing:
+            text.append("   ")
+            text.append(trailing, style="bold")
     return text
 
 
@@ -276,14 +298,22 @@ class SettingsList(Widget, can_focus=True):
     def __init__(self) -> None:
         super().__init__()
         self._items: list[MenuItem] = []
+        # Maps id(item) → breadcrumb tuple during cross-section search.
+        # Empty when no filter is active.
+        self._search_breadcrumbs: dict[int, tuple[str, ...]] = {}
 
     def compose(self) -> ComposeResult:
         yield Vertical(id="settings_list_body")
 
     # ── Population ──────────────────────────────────────────────
 
-    def set_items(self, items: list[MenuItem]) -> None:
+    def set_items(
+        self,
+        items: list[MenuItem],
+        breadcrumbs: dict[int, tuple[str, ...]] | None = None,
+    ) -> None:
         self._items = list(items)
+        self._search_breadcrumbs = dict(breadcrumbs) if breadcrumbs else {}
         body = self.query_one("#settings_list_body", Vertical)
         # Remove existing rows synchronously by walking the DOM directly —
         # Textual's `remove_children` is async and would race against the
@@ -314,7 +344,8 @@ class SettingsList(Widget, can_focus=True):
         width = self.size.width or 80
         rows = list(body.query(Static))
         for i, (item, row) in enumerate(zip(self._items, rows, strict=False)):
-            row.update(_render_row(item, app, width=width - 2))
+            bc = self._search_breadcrumbs.get(id(item)) or None
+            row.update(_render_row(item, app, width=width - 2, breadcrumb=bc))
             if i == self.cursor_index and item.kind != KIND_HEADER:
                 row.add_class("-cursor")
             else:
@@ -479,6 +510,8 @@ class SettingsScreen(Screen[None]):
         self._items: tuple[MenuItem, ...] = items
         self._root_provider = root_provider
         self._filter_active: bool = False
+        # Populated during cross-section search: maps id(item) → breadcrumb.
+        self._search_breadcrumbs: dict[int, tuple[str, ...]] = {}
 
     # ── Layout ──────────────────────────────────────────────────
 
@@ -525,21 +558,35 @@ class SettingsScreen(Screen[None]):
         lst = self.query_one(SettingsList)
         if not q:
             self._filter_active = False
+            self._search_breadcrumbs = {}
             lst.set_items(list(self._items))
             return
         self._filter_active = True
-        filtered = self._filter_items(q)
-        lst.set_items(filtered)
+        filtered, breadcrumbs = self._filter_items(q)
+        self._search_breadcrumbs = breadcrumbs
+        lst.set_items(filtered, breadcrumbs=breadcrumbs)
 
-    def _filter_items(self, q: str) -> list[MenuItem]:
-        out: list[MenuItem] = []
-        for item in self._items:
+    def _filter_items(self, q: str) -> tuple[list[MenuItem], dict[int, tuple[str, ...]]]:
+        """Cross-section: walk every section's leaves, score by substring
+        match against label + key + keywords + breadcrumb segments."""
+        matches: list[tuple[int, MenuItem, tuple[str, ...]]] = []
+        app: AcornApp = self.app  # type: ignore[assignment]
+        for path, item in walk_all_sections(app):
             if item.kind == KIND_HEADER:
                 continue
-            haystack = " ".join((item.label, item.description, item.key, *item.keywords)).lower()
-            if q in haystack:
-                out.append(item)
-        return out
+            haystack = " ".join(
+                (item.label, item.description, item.key, *item.keywords, *path)
+            ).lower()
+            idx = haystack.find(q)
+            if idx == -1:
+                continue
+            # Earlier match in the label scores higher (smaller idx first).
+            label_idx = item.label.lower().find(q)
+            score = label_idx if label_idx != -1 else 1000 + idx
+            matches.append((score, item, path))
+        matches.sort(key=lambda m: (m[0], len(m[1].label)))
+        breadcrumbs = {id(item): path for _, item, path in matches}
+        return [item for _, item, _ in matches], breadcrumbs
 
     @on(Input.Submitted, "#settings_search")
     def _on_search_submitted(self, _ev: Input.Submitted) -> None:
@@ -555,6 +602,7 @@ class SettingsScreen(Screen[None]):
         if search.value:
             search.value = ""
             self._filter_active = False
+            self._search_breadcrumbs = {}
             return
         import contextlib
 

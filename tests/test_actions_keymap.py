@@ -117,9 +117,10 @@ async def test_open_command_palette_pushes_settings_menu(built_index: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_root_menu_search_filters_categories(built_index: Path) -> None:
-    """The root menu's search Input filters its category rows. The
-    sub-screen filters its own rows. (No cross-screen search in v2.)"""
+async def test_root_menu_search_is_cross_section(built_index: Path) -> None:
+    """The root menu's search Input walks every section (cross-section
+    search). Typing a term that matches a leaf in the Keybindings section
+    surfaces those keybinding rows, not just the top-level category row."""
     from textual.widgets import Input
 
     from acorn.tui.menu import KIND_HEADER
@@ -136,9 +137,15 @@ async def test_root_menu_search_filters_categories(built_index: Path) -> None:
         search.value = "keybindings"
         await pilot.pause()
         lst = screen.query_one(SettingsList)
-        # "Keybindings" is one of the four root categories — single match.
+        # Cross-section search surfaces leaves from the Keybindings section
+        # (each row's breadcrumb is "Keybindings"). The word "keybindings"
+        # matches via the breadcrumb segment, so we get individual key rows.
         selectable = [item for item in lst._items if item.kind != KIND_HEADER]
-        assert any(item.label == "Keybindings" for item in selectable)
+        assert len(selectable) > 0
+        # Every result has a breadcrumb pointing to the Keybindings section.
+        assert all(
+            screen._search_breadcrumbs.get(id(item)) == ("Keybindings",) for item in selectable
+        )
 
 
 @pytest.mark.asyncio
