@@ -22,3 +22,17 @@ def test_f3_no_longer_in_keymap() -> None:
     assert (
         "f3" not in keymap.bindings
     ), f"F3 should not be bound; keymap.bindings has: {keymap.bindings.get('f3')!r}"
+
+
+def test_detail_strip_renders_description_and_metadata() -> None:
+    """Spec: Visual system › Detail strip — 2 lines, description then
+    metadata in $text-muted."""
+    from acorn.tui.widgets.detail_strip import DetailStrip
+
+    strip = DetailStrip()
+    strip._description = "Result limit (1–1000) — max results returned per query."
+    strip._metadata = "Stored in defaults.result_limit · Applies on next search"
+    rendered = strip._render_lines()
+    assert len(rendered) == 2
+    assert "Result limit" in str(rendered[0])
+    assert "Stored in defaults.result_limit" in str(rendered[1])
