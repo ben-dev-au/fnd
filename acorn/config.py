@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 import tomllib
 from pathlib import Path
+from typing import Any
 
 from platformdirs import user_data_dir
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -60,6 +61,37 @@ INDEXER_FILETYPES: dict[str, str] = {
     "docx": "Word (.docx)",
     "pptx": "PowerPoint (.pptx)",
     "txt": "Plain text (.txt)",
+}
+
+# Exclude presets for the Add Collection wizard's Excludes multi-select. Each
+# preset defines a set of globs and a default toggle state. Presets marked
+# default=True are pre-ticked in the UI.
+EXCLUDES_PRESETS: dict[str, dict[str, Any]] = {
+    "hidden": {
+        "label": "Hidden / system",
+        "globs": ["**/.*", "**/.DS_Store", "**/.git/**"],
+        "default": True,
+    },
+    "node_modules": {
+        "label": "Node modules",
+        "globs": ["**/node_modules/**"],
+        "default": False,
+    },
+    "python_caches": {
+        "label": "Python caches",
+        "globs": ["**/__pycache__/**", "**/*.pyc"],
+        "default": False,
+    },
+    "build_artefacts": {
+        "label": "Build artefacts",
+        "globs": ["**/dist/**", "**/build/**"],
+        "default": False,
+    },
+    "obsidian_meta": {
+        "label": "Obsidian metadata",
+        "globs": ["**/.obsidian/**"],
+        "default": False,
+    },
 }
 
 
