@@ -26,6 +26,7 @@ naturally; no pre-popping or manual back stacks.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
@@ -327,6 +328,8 @@ class SettingsList(Widget, can_focus=True):
         # scalars / toggles / actions / leaf rows.
         Binding("enter", "activate", show=False),
         Binding("right", "drill", show=False),
+        # Shift+Enter = reveal in Finder (file-capable rows only).
+        Binding("shift+enter", "reveal", show=False),
         # Numeric jumps stay as a hidden affordance.
         *(Binding(str(n), f"jump({n})", show=False) for n in range(1, 10)),
     ]
@@ -506,6 +509,30 @@ class SettingsList(Widget, can_focus=True):
                 self._post_highlight()
                 self.post_message(self.Activated(item))
                 return
+
+    def action_reveal(self) -> None:
+        """Shift+Enter on a reveal-capable row triggers Finder reveal of
+        the underlying file. Capability is keyed off well-known row ids."""
+        if not (0 <= self.cursor_index < len(self._items)):
+            return
+        item = self._items[self.cursor_index]
+        path = self._reveal_target(item)
+        if path is None:
+            return
+        from acorn import opener
+
+        opener.reveal(path)
+
+    def _reveal_target(self, item: MenuItem) -> Path | None:
+        """Return the file path to reveal for ``item``, or None if the row
+        isn't reveal-capable."""
+        from acorn.config import default_config_path
+
+        if item.id == "root.open_config_file":
+            return default_config_path()
+        if item.id == "root.open_keybindings_file":
+            return Path(default_config_path()).parent / "keybindings.toml"
+        return None
 
 
 # ── Main list screen ────────────────────────────────────────────────
