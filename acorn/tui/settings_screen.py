@@ -785,6 +785,50 @@ class SettingsScreen(Screen[None]):
         while isinstance(self.app.screen, SettingsScreen | PickerScreen):
             self.app.pop_screen()
 
+    async def on_key(self, ev: events.Key) -> None:
+        """Lazygit-style press-key-to-invoke on the Keybindings sub-screen.
+
+        Only fires when the screen's breadcrumb ends in "Keybindings" AND
+        focus is on the list (not the search input). Looks for a row whose
+        ``key`` field matches the pressed key; if found, dispatches the
+        action and closes the settings stack.
+        """
+        if self._breadcrumb[-1:] != ("Keybindings",):
+            return
+        focused = self.focused
+        if focused is None or not isinstance(focused, SettingsList):
+            return
+        pressed = ev.key
+        pressed_label = _normalise_key_label(pressed)
+        for item in self.query_one(SettingsList)._items:
+            if item.kind == KIND_HEADER or not item.key:
+                continue
+            # Never intercept Enter — that belongs to the regular activate path.
+            if item.key.lower() == "enter":
+                continue
+            if item.key.lower() == pressed_label.lower():
+                ev.stop()
+                ev.prevent_default()
+                self._close_settings_stack()
+                if item.action_id:
+                    method = getattr(self.app, f"action_{item.action_id}", None)
+                    if callable(method):
+                        method()
+                return
+
+
+def _normalise_key_label(key: str) -> str:
+    """Map Textual's key names to the labels used in MenuItem.key."""
+    return {
+        "space": "Space",
+        "ctrl+c": "Ctrl+C",
+        "shift+enter": "Shift+Enter",
+        "tab": "Tab",
+        "question_mark": "?",
+        "colon": ":",
+        "slash": "/",
+    }.get(key, key)
+
 
 def _summarize(exc: Exception) -> str:
     """Single-line summary of an exception, with Pydantic-aware
