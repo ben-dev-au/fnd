@@ -84,28 +84,44 @@ _SETTINGS_HINTS: tuple[tuple[str, str], ...] = (
 # ── Row rendering ────────────────────────────────────────────────────
 
 
-def _render_row(item: MenuItem, app: AcornApp, width: int | None = None) -> Text:
-    """Produce a Rich Text rendering of one menu row.
+def _render_row(item: MenuItem, app: AcornApp | None, width: int | None = None) -> Text:
+    """Render one menu row as Rich Text.
 
-    Layout depends on ``kind``:
-      - HEADER level 1: full-width rule line + bold $accent label
-      - HEADER level 2: bold $accent label (no rule)
-      - ACTION with `key`: ``key (muted, KEY_COL wide)  label``
-      - SCALAR / TOGGLE / PICKER: ``label  …pad…  trailing_value`` ($primary)
-      - Other: just label
+    Layout (left to right):
+      [key]  label  ……………… trailing_value
+
+    - Keys (Keybindings rows) render as ``[<key>]`` in $accent bold,
+      bracketed in $text-muted for a subtle frame.
+    - Labels render in $text.
+    - Trailing values right-align in $primary bold (setting values) or
+      $text-muted italic (drill row summaries / search breadcrumbs).
+
+    ``app`` may be ``None`` for tests that don't construct a full app —
+    in that case the trailing-value lookup is skipped.
     """
     if item.kind == KIND_HEADER:
         return _render_header(item, width)
 
     text = Text()
     if item.key:
-        text.append(item.key.ljust(_KEY_COL), style="dim")
+        # Bracketed key in 12-char column: "[<key>]" + padding.
+        # Rich's `Text` style strings don't resolve Textual theme vars
+        # ($accent etc.), so we use plain `bold` for the key glyph and
+        # let the surrounding CSS apply the accent colour.
+        bracket_open = Text("[", style="dim")
+        key_glyph = Text(item.key, style="bold")
+        bracket_close = Text("]", style="dim")
+        key_field = bracket_open + key_glyph + bracket_close
+        # Pad to 12 columns so labels align across rows.
+        used = len(item.key) + 2  # brackets + key
+        key_field.append(" " * max(1, _KEY_COL - used))
+        text.append_text(key_field)
     text.append(item.label)
-    trailing = item.trailing_value(app)
+    trailing = item.trailing_value(app) if app is not None else ""
     if trailing and width is not None:
         # Right-align trailing value with dotted-pad. width is the
         # available column count.
-        used = (len(item.key.ljust(_KEY_COL)) if item.key else 0) + len(item.label)
+        used = (_KEY_COL if item.key else 0) + len(item.label)
         pad = max(2, width - used - len(trailing) - 2)
         text.append(" " + "·" * pad + " ", style="dim")
         text.append(trailing, style="bold")
