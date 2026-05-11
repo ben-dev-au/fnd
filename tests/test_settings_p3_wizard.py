@@ -210,3 +210,35 @@ async def test_save_writes_collection_and_reindexes(
         assert "**/*.md" in src.includes
         # Excludes from the `hidden` preset are present.
         assert any(".git" in g for g in src.excludes)
+
+
+@pytest.mark.asyncio
+async def test_esc_discards_wizard_with_no_side_effects(
+    tmp_path: Path, built_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec: Wizard › Esc — cancelling after typing a name does NOT
+    create an empty collection."""
+    from acorn.config import default_config_path, load
+    from acorn.tui.settings_screen import AddCollectionWizard
+
+    # Redirect all config reads/writes to an isolated temp file.
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+
+    # Snapshot the (empty) config state before.
+    cfg_path.write_text("")  # ensure file exists
+    before = load(default_config_path()).collections.copy()
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        wiz = AddCollectionWizard()
+        wiz._fields["name"] = "ghost"
+        app.push_screen(wiz)
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+    after = load(default_config_path()).collections
+    assert "ghost" not in after, "Esc must not create an empty collection"
+    assert set(after.keys()) == set(before.keys())
