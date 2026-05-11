@@ -446,12 +446,15 @@ class SettingsScreen(Screen[None]):
     ]
 
     CSS = """
-    SettingsScreen { background: $surface; }
+    SettingsScreen { background: $surface; align: center middle; }
     SettingsScreen > #settings_box {
-        height: 1fr;
+        height: auto;
+        max-height: 90%;
+        width: auto;
+        min-width: 60;
+        max-width: 100;
         border: round $primary 50%;
         padding: 0 1;
-        margin: 0 0 0 0;
     }
     SettingsScreen > #settings_box:focus-within { border: round $accent; }
     #settings_search {
