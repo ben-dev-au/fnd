@@ -2723,6 +2723,36 @@ class AcornApp(App[None]):
         self._refresh_collections_panel()
         self.notify("Reloaded config", timeout=2)
 
+    def action_open_keybindings_file(self) -> None:
+        """Drop into $EDITOR on keybindings.toml; reload keymap on return."""
+        import os
+        import subprocess
+
+        from acorn.config import default_config_path
+
+        path = default_config_path().parent / "keybindings.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_text(
+                '# Acorn user keybinding overrides.\n# [normal]\n# "j"    = "focus_results_pane"\n',
+                encoding="utf-8",
+            )
+        # Close any settings screens so the editor takes over the terminal
+        # cleanly; otherwise Textual's screen_stack restoration can flash a
+        # half-painted menu over the freshly-loaded TUI.
+        from acorn.tui.settings_screen import SettingsScreen
+
+        while isinstance(self.screen, SettingsScreen):
+            self.pop_screen()
+        editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
+        with self.suspend():
+            subprocess.call([editor, str(path)])
+        # Reload the keymap so new bindings take effect immediately.
+        from acorn.tui.actions import load_keymap
+
+        self._acorn_keymap = load_keymap()
+        self.notify("Reloaded keybindings", timeout=2)
+
     def _on_recovery_done(self, result: object) -> None:
         from acorn.config import load
 
