@@ -1406,6 +1406,7 @@ class AddCollectionWizard(Screen[None]):
             "name": "",
             "path": "",
             "includes": [],
+            "includes_custom": "",
             "excludes_presets": [
                 key for key, preset in EXCLUDES_PRESETS.items() if preset["default"]
             ],
@@ -1469,9 +1470,17 @@ class AddCollectionWizard(Screen[None]):
                 kind=KIND_PICKER,
                 multi=True,
                 choices_provider=lambda _app: [
-                    ChoiceOption(value=ext, label=label) for ext, label in INDEXER_FILETYPES.items()
+                    *(
+                        ChoiceOption(value=ext, label=label)
+                        for ext, label in INDEXER_FILETYPES.items()
+                    ),
+                    ChoiceOption(
+                        value="__custom__",
+                        label="Custom glob…",
+                        description="Add a free-form glob pattern (e.g. `**/*.org`).",
+                    ),
                 ],
-                picker_getter=lambda _app: list(self._fields["includes"]),
+                picker_getter=lambda _app: self._includes_picker_state(),
                 picker_setter=lambda _app, vs: self._set_includes(vs),
             ),
             MenuItem(
@@ -1480,14 +1489,21 @@ class AddCollectionWizard(Screen[None]):
                 kind=KIND_PICKER,
                 multi=True,
                 choices_provider=lambda _app: [
+                    *(
+                        ChoiceOption(
+                            value=key,
+                            label=preset["label"],
+                            description=", ".join(preset["globs"]),
+                        )
+                        for key, preset in EXCLUDES_PRESETS.items()
+                    ),
                     ChoiceOption(
-                        value=key,
-                        label=preset["label"],
-                        description=", ".join(preset["globs"]),
-                    )
-                    for key, preset in EXCLUDES_PRESETS.items()
+                        value="__custom__",
+                        label="Custom glob…",
+                        description="Add a free-form glob pattern (comma-separated).",
+                    ),
                 ],
-                picker_getter=lambda _app: list(self._fields["excludes_presets"]),
+                picker_getter=lambda _app: self._excludes_picker_state(),
                 picker_setter=lambda _app, vs: self._set_excludes_presets(vs),
             ),
             MenuItem(
@@ -1514,13 +1530,58 @@ class AddCollectionWizard(Screen[None]):
     def _set_follow(self, value: bool) -> None:
         self._fields["follow_symlinks"] = bool(value)
 
+    def _includes_picker_state(self) -> list[str]:
+        """What the Includes picker should show as pre-selected — the
+        extension list, plus the `__custom__` sentinel when a custom
+        value is set so the user sees the toggle as ticked."""
+        state = list(self._fields["includes"])
+        if str(self._fields.get("includes_custom") or "").strip():
+            state.append("__custom__")
+        return state
+
+    def _excludes_picker_state(self) -> list[str]:
+        state = list(self._fields["excludes_presets"])
+        if str(self._fields.get("excludes_custom") or "").strip():
+            state.append("__custom__")
+        return state
+
     def _set_includes(self, values: list[str]) -> None:
-        self._fields["includes"] = list(values)
+        """Splits the picker output into preset extensions vs the custom
+        sentinel. When `__custom__` is in the selection we leave the
+        existing ``includes_custom`` value (or trigger a follow-up edit
+        bar) so the user can type their glob."""
+        picked = list(values)
+        wants_custom = "__custom__" in picked
+        exts = [v for v in picked if v != "__custom__"]
+        self._fields["includes"] = exts
+        if wants_custom and not str(self._fields.get("includes_custom") or "").strip():
+            # Open an EditBar to prompt for the custom glob value.
+            self._prompt_custom("includes_custom", "Includes custom glob")
+        elif not wants_custom:
+            self._fields["includes_custom"] = ""
         self.query_one(SettingsList).refresh_values()
 
     def _set_excludes_presets(self, values: list[str]) -> None:
-        self._fields["excludes_presets"] = list(values)
+        picked = list(values)
+        wants_custom = "__custom__" in picked
+        presets = [v for v in picked if v != "__custom__"]
+        self._fields["excludes_presets"] = presets
+        if wants_custom and not str(self._fields.get("excludes_custom") or "").strip():
+            self._prompt_custom("excludes_custom", "Excludes custom globs (comma-separated)")
+        elif not wants_custom:
+            self._fields["excludes_custom"] = ""
         self.query_one(SettingsList).refresh_values()
+
+    def _prompt_custom(self, field_key: str, label: str) -> None:
+        """Open the wizard's EditBar to capture a custom glob value and
+        store it in ``self._fields[field_key]`` on submit."""
+        item = MenuItem(
+            id=f"wiz.{field_key}",
+            label=label,
+            kind=KIND_SCALAR,
+            value_getter=lambda _app, key=field_key: str(self._fields.get(key) or ""),
+        )
+        self.query_one(EditBar).open(item, str(self._fields.get(field_key) or ""))
 
     @on(SettingsList.Activated)
     def _on_field_activated(self, ev: SettingsList.Activated) -> None:
@@ -1574,6 +1635,11 @@ class AddCollectionWizard(Screen[None]):
             return
 
         includes_globs: list[str] = [f"**/*.{ext}" for ext in self._fields["includes"]]
+        includes_custom = str(self._fields.get("includes_custom") or "")
+        for g in includes_custom.split(","):
+            g = g.strip()
+            if g:
+                includes_globs.append(g)
 
         excludes_globs: list[str] = []
         for preset_id in self._fields["excludes_presets"]:
