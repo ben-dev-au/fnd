@@ -124,3 +124,43 @@ async def test_excludes_field_opens_presets_picker_with_defaults(built_index: Pa
         assert isinstance(app.screen, PickerScreen)
         # `hidden` preset is pre-selected.
         assert "hidden" in app.screen._selected
+
+
+@pytest.mark.asyncio
+async def test_path_validation_inline(tmp_path: Path, built_index: Path) -> None:
+    """Spec: Wizard › Source path — live ✓/✗ inline validation."""
+    from textual.widgets import Input, Static
+
+    from acorn.tui.settings_screen import (
+        AddCollectionWizard,
+        EditBar,
+        SettingsList,
+    )
+
+    real_dir = tmp_path / "exists"
+    real_dir.mkdir()
+    (real_dir / "a.md").write_text("hello")
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(AddCollectionWizard())
+        await pilot.pause()
+        wiz = app.screen
+        assert isinstance(wiz, AddCollectionWizard)
+        lst = wiz.query_one(SettingsList)
+        path_idx = next(i for i, it in enumerate(lst._items) if it.id == "wiz.path")
+        lst.cursor_index = path_idx
+        await pilot.press("enter")
+        await pilot.pause()
+        bar = wiz.query_one(EditBar)
+        # Type a path that does not exist.
+        bar.query_one("#editor_input", Input).value = str(tmp_path / "nope")
+        await pilot.pause()
+        err = bar.query_one(".-edit-error", Static).render()
+        assert "does not exist" in str(err).lower()
+        # Type a path that does exist.
+        bar.query_one("#editor_input", Input).value = str(real_dir)
+        await pilot.pause()
+        err = bar.query_one(".-edit-error", Static).render()
+        assert "✓" in str(err) or "1 file" in str(err).lower()

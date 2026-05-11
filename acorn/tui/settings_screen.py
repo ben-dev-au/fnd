@@ -180,6 +180,8 @@ class EditBar(Horizontal):
     EditBar > Static.-edit-label { color: $text-muted; width: auto; }
     EditBar > Input#editor_input { border: none; padding: 0 1; color: $primary; background: $surface; width: 1fr; }
     EditBar > Static.-edit-error { color: $error; width: auto; }
+    EditBar > Static.-edit-error.-ok { color: $success; }
+    EditBar > Static.-edit-error.-warn { color: $warning; }
     """
 
     class EditCommitted(Message):
@@ -221,7 +223,53 @@ class EditBar(Horizontal):
             self.screen.query_one(SettingsList).focus()
 
     def show_error(self, message: str) -> None:
-        self.query_one(".-edit-error", Static).update(message)
+        label = self.query_one(".-edit-error", Static)
+        label.remove_class("-ok")
+        label.remove_class("-warn")
+        label.update(message)
+
+    def _set_status(self, text: str, *, tone: str = "error") -> None:
+        """Update the inline status label with one of the styling tones.
+
+        tone ∈ {"error" (default red, set by base class), "ok" (success),
+        "warn" (warning)}.
+        """
+        label = self.query_one(".-edit-error", Static)
+        label.remove_class("-ok")
+        label.remove_class("-warn")
+        if tone == "ok":
+            label.add_class("-ok")
+        elif tone == "warn":
+            label.add_class("-warn")
+        label.update(text)
+
+    @on(Input.Changed, "#editor_input")
+    def _on_input_changed(self, ev: Input.Changed) -> None:
+        """For the wizard's Source path row, validate on every keystroke
+        and surface ✓/✗ inline in the (repurposed) error label."""
+        if self._item is None:
+            return
+        if self._item.id != "wiz.path":
+            return
+        from pathlib import Path as _Path
+
+        raw = ev.value.strip().strip("'\"")
+        if not raw:
+            self._set_status("", tone="error")
+            return
+        p = _Path(raw).expanduser()
+        if not p.exists():
+            self._set_status("✗ does not exist", tone="error")
+            return
+        if not p.is_dir():
+            self._set_status("⚠ not a directory", tone="warn")
+            return
+        try:
+            n = sum(1 for _ in p.iterdir())
+        except OSError:
+            self._set_status("⚠ unreadable", tone="warn")
+            return
+        self._set_status(f"✓ {n} entries", tone="ok")
 
     @on(Input.Submitted, "#editor_input")
     def _on_submit(self, ev: Input.Submitted) -> None:
