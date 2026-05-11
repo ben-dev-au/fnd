@@ -119,9 +119,30 @@ class MenuItem:
 
     def trailing_value(self, app: AcornApp) -> str:
         """Right-aligned trailing column. Setting kinds carry the live
-        value; drill kinds and actions render empty trailing slots (we
-        dropped the ``▶`` chevron — drilling is implicit)."""
+        value; drill rows obey ``drill_summary_mode`` from config."""
         try:
+            cfg = getattr(app, "_config", None)
+            if cfg is None:
+                from acorn.config import load as _load_cfg
+
+                try:
+                    cfg = _load_cfg()
+                except Exception:
+                    cfg = None
+            mode: str = (
+                cfg.defaults.drill_summary_mode
+                if cfg and hasattr(cfg.defaults, "drill_summary_mode")
+                else "always_show"
+            )
+            # Drill rows (KIND_EXTERNAL with a value_getter) obey the mode.
+            if self.kind == KIND_EXTERNAL and self.value_getter is not None:
+                if mode == "always_ellipsis":
+                    return "…"
+                if mode == "smart":
+                    v = self.value_getter(app)
+                    return v if v else "…"
+                return self.value_getter(app)
+            # Non-drill rows: setting values / toggle states always shown.
             if self.value_getter is not None:
                 return self.value_getter(app)
             if self.kind == KIND_TOGGLE and self.toggle_getter is not None:
@@ -365,6 +386,24 @@ def _provider_preferences(_app: AcornApp) -> tuple[MenuItem, ...]:
             toggle_getter=lambda app: app._highlights_enabled,  # type: ignore[attr-defined]
             toggle_setter=_set_highlights,
             keywords=("highlight",),
+        ),
+        MenuItem(
+            id="pref.drill_summary_mode",
+            label="Drill row summaries",
+            description="How drill-in rows render their trailing column.",
+            kind=KIND_PICKER,
+            choices_provider=lambda _app: [
+                ChoiceOption(value="always_show", label="Always show summary"),
+                ChoiceOption(value="smart", label="Smart (only when informative)"),
+                ChoiceOption(value="always_ellipsis", label="Always show … only"),
+            ],
+            picker_getter=lambda app: (  # type: ignore[arg-type]
+                app._config.defaults.drill_summary_mode  # type: ignore[attr-defined]
+                if app._config  # type: ignore[attr-defined]
+                else "always_show"
+            ),
+            picker_setter=_setting_writer("defaults.drill_summary_mode"),
+            keywords=("drill", "summary", "trailing"),
         ),
         header("Defaults", level=2),
         MenuItem(

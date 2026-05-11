@@ -76,3 +76,37 @@ def test_drill_summary_mode_default_and_validation() -> None:
     except ValidationError:
         return
     raise AssertionError("expected ValidationError for unknown mode")
+
+
+@pytest.mark.asyncio
+async def test_drill_mode_always_ellipsis(
+    built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec: Drill-cue preference — `always_ellipsis` mode renders `…`
+    instead of content summaries."""
+    from acorn.config import write_setting
+
+    # Isolate config reads/writes to the tmp dir.
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+
+    # Write directly to cfg_path so the patched default_config_path() picks it up.
+    write_setting(
+        config_path=cfg_path,
+        dotted_path="defaults.drill_summary_mode",
+        value="always_ellipsis",
+    )
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_open_command_palette()
+        await pilot.pause()
+        screen = app.screen
+        from acorn.tui.settings_screen import SettingsList, SettingsScreen
+
+        assert isinstance(screen, SettingsScreen)
+        lst = screen.query_one(SettingsList)
+        preferences = next(it for it in lst._items if it.label == "Preferences")
+        # In always_ellipsis mode the trailing value is `…`.
+        assert preferences.trailing_value(app) == "…"
