@@ -729,3 +729,22 @@ def section_items(app: AcornApp, section_id: str) -> tuple[MenuItem, ...]:
 
 def section_label(section_id: str) -> str:
     return _SECTION_LABELS.get(section_id, section_id)
+
+
+def walk_all_sections(app: AcornApp) -> Iterator[tuple[tuple[str, ...], MenuItem]]:
+    """Yield ``(breadcrumb, leaf)`` pairs for every selectable item across
+    every section. The basis for cross-section search.
+
+    Headers are skipped. Per-collection sub-screens are NOT descended —
+    finding a collection in search drills into its editor anyway.
+    """
+    for section_id, label in _SECTION_LABELS.items():
+        breadcrumb = (label,)
+        for item in section_items(app, section_id):
+            if item.kind == KIND_HEADER:
+                continue
+            yield breadcrumb, item
+    # Root-level actions that aren't behind a category drill.
+    for item in build_root_items(app):
+        if item.id == "root.open_config_file":
+            yield (), item
