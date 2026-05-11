@@ -122,7 +122,7 @@ class MenuItem:
         value; drill kinds and actions render empty trailing slots (we
         dropped the ``▶`` chevron — drilling is implicit)."""
         try:
-            if self.kind == KIND_SCALAR and self.value_getter is not None:
+            if self.value_getter is not None:
                 return self.value_getter(app)
             if self.kind == KIND_TOGGLE and self.toggle_getter is not None:
                 return "On" if self.toggle_getter(app) else "Off"
@@ -624,6 +624,42 @@ def _open_section(section_id: str) -> Callable[[AcornApp], None]:
     return _open
 
 
+def _summary_preferences(_app: AcornApp) -> str:
+    return "Result limit · Debounce · Highlights · Defaults"
+
+
+def _summary_collections(app: AcornApp) -> str:
+    cfg = app._config  # type: ignore[attr-defined]
+    if cfg is None:
+        from acorn.config import load as _load_config
+
+        try:
+            cfg = _load_config()
+        except Exception:
+            cfg = None
+    if cfg is None:
+        return "0 collections"
+    n_collections = len(cfg.collections)
+    n_sources = sum(len(c.sources) for c in cfg.collections.values())
+    return (
+        f"{n_collections} collection{'s' if n_collections != 1 else ''}"
+        f" · {n_sources} source{'s' if n_sources != 1 else ''}"
+    )
+
+
+def _summary_keybindings(app: AcornApp) -> str:
+    keymap = app._acorn_keymap  # type: ignore[attr-defined]
+    n_keys = len(keymap.bindings)
+    return f"{n_keys} keys across 6 contexts"
+
+
+def _summary_config_path(_app: AcornApp) -> str:
+    from acorn.config import default_config_path
+
+    p = str(default_config_path())
+    return ("…" + p[-50:]) if len(p) > 50 else p
+
+
 def _provider_root(_app: AcornApp) -> tuple[MenuItem, ...]:
     """Root settings menu — a clean, short list of categories. No
     content piled on top of each other. Each drill-in row pushes its
@@ -632,9 +668,10 @@ def _provider_root(_app: AcornApp) -> tuple[MenuItem, ...]:
         MenuItem(
             id=f"root.{SECTION_PREFERENCES}",
             label="Preferences",
-            description="Result limits, debounce, defaults, display options.",
+            description="Preferences: result limit, debounce, defaults, highlights, ranking.",
             kind=KIND_EXTERNAL,
             external=_open_section(SECTION_PREFERENCES),
+            value_getter=_summary_preferences,
         ),
         MenuItem(
             id=f"root.{SECTION_COLLECTIONS}",
@@ -642,20 +679,23 @@ def _provider_root(_app: AcornApp) -> tuple[MenuItem, ...]:
             description="Add, edit, or delete collections and their sources.",
             kind=KIND_EXTERNAL,
             external=_open_section(SECTION_COLLECTIONS),
+            value_getter=_summary_collections,
         ),
         MenuItem(
             id=f"root.{SECTION_KEYBINDINGS}",
             label="Keybindings",
-            description="Every key and what it does. Searchable.",
+            description="Every key and what it does. Press a key in the list to invoke it.",
             kind=KIND_EXTERNAL,
             external=_open_section(SECTION_KEYBINDINGS),
+            value_getter=_summary_keybindings,
         ),
         MenuItem(
             id="root.open_config_file",
             label="Open config file in editor",
-            description="Drop into $EDITOR on config.toml; reload on save.",
+            description="Drop into $EDITOR on config.toml; reload on save. Shift+Enter reveals in Finder.",
             kind=KIND_EXTERNAL,
             external=_open_config_file_action,
+            value_getter=_summary_config_path,
             keywords=("edit", "config", "toml"),
         ),
     )

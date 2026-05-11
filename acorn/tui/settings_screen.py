@@ -54,6 +54,7 @@ from acorn.tui.menu import (
     section_items,
     section_label,
 )
+from acorn.tui.widgets import DetailStrip
 
 if TYPE_CHECKING:
     from acorn.tui.app import AcornApp
@@ -464,9 +465,6 @@ class SettingsScreen(Screen[None]):
     SettingsScreen > #footer_hints {
         dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
     }
-    SettingsScreen > #settings_status {
-        dock: bottom; height: 1; padding: 0 1; color: $text-muted; background: $surface;
-    }
     """
 
     def __init__(
@@ -494,8 +492,8 @@ class SettingsScreen(Screen[None]):
             box.border_title = title
             yield Input(placeholder="Type to filter…", id="settings_search")
             yield SettingsList()
+            yield DetailStrip()
         yield EditBar()
-        yield Static("", id="settings_status")
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
@@ -503,23 +501,21 @@ class SettingsScreen(Screen[None]):
         lst.set_items(list(self._items))
         lst.focus()
         self._render_footer()
-        self._render_status()
+        self._seed_detail_strip()
+
+    def _seed_detail_strip(self) -> None:
+        """Populate the detail strip with the first selectable item so
+        the user sees content immediately on open."""
+        first = next((it for it in self._items if it.is_selectable), None)
+        if first is not None:
+            strip = self.query_one(DetailStrip)
+            strip.set(first.description or "", self._row_metadata(first))
 
     # ── Footer ──────────────────────────────────────────────────
 
     def _render_footer(self) -> None:
         app: AcornApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(_hint_bar(app, _SETTINGS_HINTS))
-
-    def _render_status(self) -> None:
-        try:
-            from acorn import __version__
-
-            ver = __version__
-        except Exception:
-            ver = ""
-        status = f"acorn{(' ' + ver) if ver else ''}  ·  press ? from the main screen for keys"
-        self.query_one("#settings_status", Static).update(Text(status, style="dim"))
 
     # ── Search ──────────────────────────────────────────────────
 
@@ -575,10 +571,25 @@ class SettingsScreen(Screen[None]):
         self._activate_item(ev.item)
 
     @on(SettingsList.Highlighted)
-    def _on_item_highlighted(self, _ev: SettingsList.Highlighted) -> None:
-        # Hook for future inline description display; no-op for now (the
-        # row label already carries the description).
-        return
+    def _on_item_highlighted(self, ev: SettingsList.Highlighted) -> None:
+        strip = self.query_one(DetailStrip)
+        item = ev.item
+        if item is None:
+            strip.clear()
+            return
+        strip.set(item.description or "", self._row_metadata(item))
+
+    def _row_metadata(self, item: MenuItem) -> str:
+        """Build the 2nd-line metadata for the detail strip — storage path,
+        constraint, applicability note, etc."""
+        parts: list[str] = []
+        if item.setting_path:
+            parts.append(f"Stored in {item.setting_path}")
+        if item.hint:
+            parts.append(item.hint)
+        if item.action_id:
+            parts.append(f"Runs {item.action_id}")
+        return " · ".join(parts)
 
     def _activate_item(self, item: MenuItem) -> None:
         app: AcornApp = self.app  # type: ignore[assignment]
