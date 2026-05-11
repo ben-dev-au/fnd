@@ -36,3 +36,21 @@ def test_detail_strip_renders_description_and_metadata() -> None:
     assert len(rendered) == 2
     assert "Result limit" in str(rendered[0])
     assert "Stored in defaults.result_limit" in str(rendered[1])
+
+
+def test_row_with_key_renders_bracketed_accent() -> None:
+    """Spec: Visual system › Key style — bracketed `[o]` accent."""
+    from acorn.tui.menu import KIND_ACTION, MenuItem
+    from acorn.tui.settings_screen import _render_row
+
+    item = MenuItem(
+        id="k.test",
+        label="Open at locator",
+        kind=KIND_ACTION,
+        key="o",
+        action_id="open_at_locator",
+    )
+    rendered = _render_row(item, app=None, width=80)
+    text_str = str(rendered)
+    assert "[o]" in text_str, f"expected '[o]' in rendered row; got: {text_str!r}"
+    assert "▶" not in text_str
