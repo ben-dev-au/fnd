@@ -331,3 +331,116 @@ async def test_set_includes_with_custom_sentinel_strips_and_prompts(
         await pilot.press("enter")
         await pilot.pause()
         assert wiz._fields["includes_custom"] == "**/*.org"
+
+
+@pytest.mark.asyncio
+async def test_source_form_uses_picker_for_includes(
+    built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec: Per-source form — Includes is a multi-select picker pre-checked
+    from the existing globs (parsed back into the indexer ext set)."""
+    from acorn.config import (
+        CollectionConfig,
+        SourceConfig,
+        write_collection,
+    )
+    from acorn.tui import AcornApp
+    from acorn.tui.settings_screen import (
+        PickerScreen,
+        SettingsList,
+        SourceFormScreen,
+    )
+
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+
+    real = tmp_path / "vault"
+    real.mkdir()
+    write_collection(
+        config_path=cfg_path,
+        name="probe2",
+        collection=CollectionConfig(
+            sources=[SourceConfig(path=real, includes=["**/*.md", "**/*.pdf"])]
+        ),
+    )
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        from acorn.config import load
+
+        app._config = load()
+        app.push_screen(SourceFormScreen(collection_name="probe2", source_index=0))
+        await pilot.pause()
+        form = app.screen
+        assert isinstance(form, SourceFormScreen)
+        lst = form.query_one(SettingsList)
+        idx = next(i for i, it in enumerate(lst._items) if it.id == "form.includes")
+        # The row must be a multi-select picker, not a free-text scalar.
+        assert lst._items[idx].kind == "picker"
+        lst.cursor_index = idx
+        await pilot.press("enter")
+        await pilot.pause()
+        picker = app.screen
+        assert isinstance(picker, PickerScreen)
+        # md and pdf pre-selected from the existing globs.
+        assert "md" in picker._selected
+        assert "pdf" in picker._selected
+
+
+@pytest.mark.asyncio
+async def test_source_form_excludes_picker_round_trips_hidden_preset(
+    built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Excludes globs that match the `hidden` preset round-trip to a
+    pre-selected `hidden` entry."""
+    from acorn.config import (
+        EXCLUDES_PRESETS,
+        CollectionConfig,
+        SourceConfig,
+        write_collection,
+    )
+    from acorn.tui import AcornApp
+    from acorn.tui.settings_screen import (
+        PickerScreen,
+        SettingsList,
+        SourceFormScreen,
+    )
+
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+
+    real = tmp_path / "vault"
+    real.mkdir()
+    write_collection(
+        config_path=cfg_path,
+        name="probe3",
+        collection=CollectionConfig(
+            sources=[
+                SourceConfig(
+                    path=real,
+                    includes=["**/*.md"],
+                    excludes=list(EXCLUDES_PRESETS["hidden"]["globs"]),
+                )
+            ]
+        ),
+    )
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        from acorn.config import load
+
+        app._config = load()
+        app.push_screen(SourceFormScreen(collection_name="probe3", source_index=0))
+        await pilot.pause()
+        form = app.screen
+        assert isinstance(form, SourceFormScreen)
+        lst = form.query_one(SettingsList)
+        idx = next(i for i, it in enumerate(lst._items) if it.id == "form.excludes")
+        lst.cursor_index = idx
+        await pilot.press("enter")
+        await pilot.pause()
+        picker = app.screen
+        assert isinstance(picker, PickerScreen)
+        assert "hidden" in picker._selected
