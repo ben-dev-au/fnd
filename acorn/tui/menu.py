@@ -467,9 +467,9 @@ def _make_reindex(name: str) -> Callable[[AcornApp], None]:
 
 def _make_add_collection() -> Callable[[AcornApp], None]:
     def _open(app: AcornApp) -> None:
-        from acorn.tui.settings_screen import NewCollectionScreen
+        from acorn.tui.settings_screen import AddCollectionWizard
 
-        app.push_screen(NewCollectionScreen())
+        app.push_screen(AddCollectionWizard())
 
     return _open
 

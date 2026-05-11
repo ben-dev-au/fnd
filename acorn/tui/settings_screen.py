@@ -1178,6 +1178,168 @@ class SourceFormScreen(Screen[None]):
         target.focus()
 
 
+class AddCollectionWizard(Screen[None]):
+    """Single-screen form for creating a new collection + its first source.
+
+    Field rows live in a SettingsList; the frontmatter sample tester docks
+    below. Ctrl+S validates everything and writes via write_collection +
+    triggers a reindex.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Cancel", show=False),
+        Binding("ctrl+s", "save_close", "Save", show=False),
+        Binding("tab", "cycle_focus(1)", show=False),
+        Binding("shift+tab", "cycle_focus(-1)", show=False),
+    ]
+
+    CSS = """
+    AddCollectionWizard { background: $surface; align: center middle; }
+    AddCollectionWizard > #settings_box {
+        height: auto;
+        max-height: 90%;
+        width: auto;
+        min-width: 72;
+        max-width: 100;
+        border: round $primary 50%;
+        padding: 0 1;
+    }
+    AddCollectionWizard > #settings_box:focus-within { border: round $accent; }
+    AddCollectionWizard #frontmatter_sample {
+        height: 6; border: round $primary 50%; padding: 0 1;
+    }
+    AddCollectionWizard #frontmatter_sample:focus { border: round $accent; }
+    AddCollectionWizard .form_separator { color: $text-muted; padding: 1 0 0 0; }
+    AddCollectionWizard #match_status { color: $text-muted; }
+    AddCollectionWizard #match_status.-match { color: $success; }
+    AddCollectionWizard #match_status.-no-match { color: $error; }
+    AddCollectionWizard > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        from acorn.config import EXCLUDES_PRESETS
+
+        self._fields: dict[str, Any] = {
+            "name": "",
+            "path": "",
+            "includes": [],
+            "excludes_presets": [
+                key for key, preset in EXCLUDES_PRESETS.items() if preset["default"]
+            ],
+            "excludes_custom": "",
+            "filter": "",
+            "follow_symlinks": False,
+        }
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings_box") as box:
+            box.border_title = "Add Collection"
+            yield SettingsList()
+            yield Static(
+                "─── Test filter against sample frontmatter ───",
+                classes="form_separator",
+            )
+            yield TextArea("", id="frontmatter_sample")
+            yield Static("(no sample)", id="match_status")
+            yield DetailStrip()
+        yield EditBar()
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        self._populate_fields()
+        self.query_one(SettingsList).focus()
+        app: AcornApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(
+                app,
+                (
+                    ("⏎", "Edit"),
+                    ("Tab", "Sample"),
+                    ("Ctrl+S", "Save & Index"),
+                    ("Esc", "Cancel"),
+                ),
+            )
+        )
+
+    def _populate_fields(self) -> None:
+        self.query_one(SettingsList).set_items(self._build_field_items())
+
+    def _build_field_items(self) -> list[MenuItem]:
+        # Picker rows / live validation come in Tasks 13 / 14. For now,
+        # all six rows render as KIND_SCALAR with summary getters.
+        return [
+            MenuItem(
+                id="wiz.name",
+                label="Name",
+                kind=KIND_SCALAR,
+                value_getter=lambda _app: self._fields["name"] or "(required)",
+            ),
+            MenuItem(
+                id="wiz.path",
+                label="Source path",
+                kind=KIND_SCALAR,
+                value_getter=lambda _app: self._fields["path"] or "(required)",
+            ),
+            MenuItem(
+                id="wiz.includes",
+                label="Includes",
+                kind=KIND_SCALAR,
+                value_getter=lambda _app: self._summarize_includes(),
+            ),
+            MenuItem(
+                id="wiz.excludes",
+                label="Excludes",
+                kind=KIND_SCALAR,
+                value_getter=lambda _app: self._summarize_excludes(),
+            ),
+            MenuItem(
+                id="wiz.filter",
+                label="Frontmatter filter",
+                kind=KIND_SCALAR,
+                value_getter=lambda _app: self._fields["filter"] or "(none)",
+            ),
+            MenuItem(
+                id="wiz.follow_symlinks",
+                label="Follow symlinks",
+                kind=KIND_TOGGLE,
+                toggle_getter=lambda _app: bool(self._fields["follow_symlinks"]),
+                toggle_setter=lambda _app, v: self._set_follow(v),
+            ),
+        ]
+
+    def _summarize_includes(self) -> str:
+        return f"{len(self._fields['includes'])} types"
+
+    def _summarize_excludes(self) -> str:
+        return f"{len(self._fields['excludes_presets'])} presets"
+
+    def _set_follow(self, value: bool) -> None:
+        self._fields["follow_symlinks"] = bool(value)
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    def action_save_close(self) -> None:
+        # Filled in Task 15.
+        self.app.pop_screen()
+
+    def action_cycle_focus(self, direction: int) -> None:
+        widgets = [
+            self.query_one(SettingsList),
+            self.query_one("#frontmatter_sample", TextArea),
+        ]
+        focused = self.focused
+        idx = 0
+        for i, w in enumerate(widgets):
+            if focused is w or (focused is not None and focused in w.walk_children()):
+                idx = i
+                break
+        widgets[(idx + direction) % len(widgets)].focus()
+
+
 class NewCollectionScreen(Screen[None]):
     """Tiny one-Input prompt for creating an empty collection."""
 
