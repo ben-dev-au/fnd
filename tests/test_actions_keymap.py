@@ -87,7 +87,7 @@ def test_unknown_action_in_user_keymap_is_dropped(tmp_path: Path) -> None:
     assert any("fly_to_the_moon" in w for w in warnings)
 
 
-# ── Command palette in the TUI ─────────────────────────────────────────
+# ── Settings menu (replaces the old command palette / help overlay) ───
 
 
 @pytest.fixture
@@ -97,51 +97,65 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_command_palette_runs_known_command(built_index: Path) -> None:
+async def test_open_command_palette_pushes_settings_menu(built_index: Path) -> None:
+    """`:` opens the unified Settings & Commands menu (replaces the old
+    one-shot palette input)."""
+    from acorn.tui.settings_screen import SettingsScreen
+
     app = AcornApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
         await pilot.pause()
-        from textual.widgets import Input
-
-        palette = app.query_one("#cmd_palette_input", Input)
-        palette.value = ":help"
-        await pilot.press("enter")
+        assert isinstance(app.screen, SettingsScreen)
+        # Reachable root — the menu's top level shows every section.
+        assert app.screen._breadcrumb == ()
+        # Second press closes the stack.
+        app.action_open_command_palette()
         await pilot.pause()
-        assert app.last_palette_result == "show_help"
+        assert not isinstance(app.screen, SettingsScreen)
 
 
 @pytest.mark.asyncio
-async def test_command_palette_unknown_command_recorded(built_index: Path) -> None:
+async def test_root_menu_search_filters_categories(built_index: Path) -> None:
+    """The root menu's search Input filters its category rows. The
+    sub-screen filters its own rows. (No cross-screen search in v2.)"""
+    from textual.widgets import Input
+
+    from acorn.tui.menu import KIND_HEADER
+    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+
     app = AcornApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
         await pilot.pause()
-        from textual.widgets import Input
-
-        palette = app.query_one("#cmd_palette_input", Input)
-        palette.value = "fly_to_the_moon"
-        await pilot.press("enter")
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        search = screen.query_one("#settings_search", Input)
+        search.value = "keybindings"
         await pilot.pause()
-        assert app.last_palette_result == "unknown:fly_to_the_moon"
+        lst = screen.query_one(SettingsList)
+        # "Keybindings" is one of the four root categories — single match.
+        selectable = [item for item in lst._items if item.kind != KIND_HEADER]
+        assert any(item.label == "Keybindings" for item in selectable)
 
 
 @pytest.mark.asyncio
-async def test_help_overlay_lists_every_action(built_index: Path) -> None:
+async def test_show_help_pushes_keybindings_subscreen(built_index: Path) -> None:
+    """`?` pushes the Keybindings sub-screen directly — one Esc returns
+    to the main app."""
+    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+
     app = AcornApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_show_help()
         await pilot.pause()
-        from textual.widgets import Markdown
-
-        # The help overlay mounts a Markdown widget under #help_overlay.
-        overlay = app.query_one("#help_overlay")
-        md_widgets = overlay.query(Markdown)
-        assert len(md_widgets) >= 1
-        # Toggle off — overlay should be gone.
-        app.action_show_help()
-        await pilot.pause()
-        assert not app.query("#help_overlay")
+        assert isinstance(app.screen, SettingsScreen)
+        assert app.screen._breadcrumb == ("Keybindings",)
+        # Every REGISTRY action with a bound key shows up in the list.
+        lst = app.screen.query_one(SettingsList)
+        labels = " ".join(item.label for item in lst._items)
+        assert "Focus the search bar" in labels
+        assert "Quit" in labels

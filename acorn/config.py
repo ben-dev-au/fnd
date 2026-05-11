@@ -314,6 +314,54 @@ def write_collection(
     config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
 
 
+def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Config:
+    """Update a single field in the config TOML by dotted path.
+
+    Examples of ``dotted_path``:
+
+    - ``defaults.result_limit``
+    - ``defaults.collection``
+    - ``ranking.default.recency_boost``
+    - ``collections.default.ranking_profile``
+
+    Preserves comments and unrelated tables via ``tomlkit``. The full
+    document is re-validated through :class:`Config` after the in-memory
+    edit; on validation failure the on-disk file is **not** modified and
+    the underlying exception propagates so the caller can surface it.
+    """
+    import tomlkit
+
+    if config_path.exists():
+        doc = tomlkit.parse(config_path.read_text(encoding="utf-8"))
+    else:
+        doc = tomlkit.document()
+
+    parts = [p for p in dotted_path.split(".") if p]
+    if not parts:
+        raise ValueError("dotted_path must contain at least one segment")
+    *parents, leaf = parts
+    cursor: object = doc
+    for p in parents:
+        existing = cursor.get(p) if hasattr(cursor, "get") else None  # type: ignore[union-attr]
+        if existing is None or not hasattr(existing, "get"):
+            new_tbl = tomlkit.table()
+            cursor[p] = new_tbl  # type: ignore[index]
+            cursor = new_tbl
+        else:
+            cursor = existing
+    cursor[leaf] = value  # type: ignore[index]
+
+    # Validate the full document before committing to disk. Re-parsing the
+    # tomlkit dump gives us a plain dict — Pydantic doesn't accept tomlkit's
+    # Item subclasses directly.
+    raw = tomllib.loads(tomlkit.dumps(doc))
+    config = Config.model_validate(raw)
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+    return config
+
+
 def delete_collection(*, config_path: Path, name: str) -> None:
     """Remove ``[collections.<name>]`` and its ``[[sources]]`` array from
     the TOML at ``config_path``. Idempotent: silently no-op if the
@@ -331,16 +379,42 @@ def delete_collection(*, config_path: Path, name: str) -> None:
     config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
 
 
-STARTER_TEMPLATE = """\
-# acorn config — see plan §6 for the full schema.
-# Edit with `acorn config edit`.
+CONFIG_TEMPLATE = """\
+# Acorn configuration. Edit this file directly, or use the in-app
+# Settings menu (open with `:`). Validate with `acorn config validate`.
+# UI-driven edits preserve your comments and formatting.
 
 [defaults]
-collection    = "default"
-result_limit  = 200
+collection    = "default"     # Active collection when --collection is omitted.
+result_limit  = 200           # Max results per query (1-1000).
+preview_chunks = 5            # Chunks rendered in the preview pane (1-50).
+debounce_ms   = 200           # Wait this many ms after the last keystroke (0-2000).
 
-[collections.default]
-roots    = ["~/Documents"]
-# includes = ["**/*.pdf", "**/*.docx", "**/*.pptx", "**/*.md", "**/*.txt"]
+# A collection groups one or more source directories. The starter
+# collection points at ~/Documents; edit, add more [[sources]] tables,
+# or replace it entirely.
+[[collections.default.sources]]
+path = "~/Documents"
+# includes = ["**/*.md", "**/*.pdf", "**/*.docx", "**/*.pptx", "**/*.txt"]
 excludes = ["**/.git/**", "**/.DS_Store", "**/__pycache__/**"]
+# follow_symlinks = false
+# frontmatter_filter = "type:note"  # md sources only — DSL described in docs.
+
+# Example second collection — uncomment to use:
+# [[collections.notes.sources]]
+# path = "~/Documents/Notes"
+# includes = ["*.md", "*.txt"]
+# excludes = [".obsidian/**", "drafts/**"]
+
+# Ranking profiles tune the scorer. Attach to a collection by setting
+# ranking_profile = "<name>" inside that collection's table.
+# [ranking.default]
+# recency_boost      = 0.2       # 0.0 = ignore mtime; higher = boost recent files.
+# recency_half_life  = "365d"
+# filetype_boosts    = { md = 1.0, txt = 0.9, pdf = 0.85 }
+# phrase_proximity   = 0.3
 """
+
+# Backwards-compat alias for any older callers that imported the
+# previous name. Both refer to the same string.
+STARTER_TEMPLATE = CONFIG_TEMPLATE

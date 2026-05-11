@@ -184,29 +184,39 @@ async def test_tui_passes_query_to_opener_for_skim_search(
 
 
 @pytest.mark.asyncio
-async def test_escape_dismisses_help_overlay(built_index: Path) -> None:
+async def test_escape_closes_help_menu(built_index: Path) -> None:
+    """Help (`?`) opens the Settings menu pre-navigated to Keybindings;
+    Esc walks the user back to the main app."""
+    from acorn.tui.settings_screen import SettingsScreen
+
     app = AcornApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_show_help()
         await pilot.pause()
-        assert app.query("#help_overlay")
+        assert isinstance(app.screen, SettingsScreen)
+        # Pop Keybindings → root → main app.
         await pilot.press("escape")
         await pilot.pause()
-        assert not app.query("#help_overlay")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, SettingsScreen)
 
 
 @pytest.mark.asyncio
-async def test_escape_dismisses_command_palette(built_index: Path) -> None:
+async def test_escape_closes_settings_menu(built_index: Path) -> None:
+    """`:` opens the unified Settings menu; Esc closes it."""
+    from acorn.tui.settings_screen import SettingsScreen
+
     app = AcornApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
         await pilot.pause()
-        assert app.query("#cmd_palette")
+        assert isinstance(app.screen, SettingsScreen)
         await pilot.press("escape")
         await pilot.pause()
-        assert not app.query("#cmd_palette")
+        assert not isinstance(app.screen, SettingsScreen)
 
 
 # ── Theme applied ───────────────────────────────────────────────────
