@@ -444,3 +444,37 @@ async def test_source_form_excludes_picker_round_trips_hidden_preset(
         picker = app.screen
         assert isinstance(picker, PickerScreen)
         assert "hidden" in picker._selected
+
+
+@pytest.mark.asyncio
+async def test_save_with_missing_name_shows_inline_error(
+    built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec: Locked decision #12 — inline error, no toast."""
+    from textual.widgets import Static
+
+    from acorn.tui.settings_screen import AddCollectionWizard
+
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    real = tmp_path / "vault"
+    real.mkdir()
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        wiz = AddCollectionWizard()
+        # Path set, name blank.
+        wiz._fields["path"] = str(real)
+        app.push_screen(wiz)
+        await pilot.pause()
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+        # We should still be on the wizard.
+        assert isinstance(app.screen, AddCollectionWizard)
+        err = app.screen.query_one("#wizard_error", Static)
+        rendered = str(err.render()).lower()
+        assert "name" in rendered
+        assert "required" in rendered
+        # The widget is no longer hidden after the error fires.
+        assert "-hidden" not in err.classes

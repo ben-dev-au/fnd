@@ -1592,6 +1592,8 @@ class AddCollectionWizard(Screen[None]):
     AddCollectionWizard #match_status { color: $text-muted; }
     AddCollectionWizard #match_status.-match { color: $success; }
     AddCollectionWizard #match_status.-no-match { color: $error; }
+    AddCollectionWizard #wizard_error { color: $error; padding: 0 1; height: auto; }
+    AddCollectionWizard #wizard_error.-hidden { display: none; }
     AddCollectionWizard > #footer_hints {
         dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
     }
@@ -1624,9 +1626,23 @@ class AddCollectionWizard(Screen[None]):
             )
             yield TextArea("", id="frontmatter_sample")
             yield Static("(no sample)", id="match_status")
+            yield Static("", id="wizard_error", classes="-hidden")
             yield DetailStrip()
         yield EditBar()
         yield Static("", id="footer_hints")
+
+    def _show_error(self, message: str) -> None:
+        """Render an inline validation error in the wizard's #wizard_error
+        Static. Phase 6 dropped the old `notify()` toast pattern so the
+        user sees errors anchored to the form they're filling out."""
+        err = self.query_one("#wizard_error", Static)
+        err.update(message)
+        err.remove_class("-hidden")
+
+    def _clear_error(self) -> None:
+        err = self.query_one("#wizard_error", Static)
+        err.update("")
+        err.add_class("-hidden")
 
     def on_mount(self) -> None:
         self._populate_fields()
@@ -1820,17 +1836,19 @@ class AddCollectionWizard(Screen[None]):
             write_collection,
         )
 
+        self._clear_error()
+
         name = str(self._fields["name"]).strip()
         path = str(self._fields["path"]).strip().strip("'\"")
         if not name:
-            self.notify("Name is required", severity="error")
+            self._show_error("Name is required.")
             return
         if not path:
-            self.notify("Source path is required", severity="error")
+            self._show_error("Source path is required.")
             return
         p = Path(path).expanduser()
         if not p.exists():
-            self.notify(f"Path does not exist: {p}", severity="error")
+            self._show_error(f"Path does not exist: {p}")
             return
 
         includes_globs: list[str] = [f"**/*.{ext}" for ext in self._fields["includes"]]
@@ -1852,7 +1870,7 @@ class AddCollectionWizard(Screen[None]):
         app: AcornApp = self.app  # type: ignore[assignment]
         cfg = app._config  # type: ignore[attr-defined]
         if cfg is not None and name in cfg.collections:
-            self.notify(f"Collection {name!r} already exists", severity="warning")
+            self._show_error(f"Collection {name!r} already exists.")
             return
 
         source = SourceConfig(
