@@ -111,6 +111,92 @@ async def test_root_rows_show_trailing_summaries(
 
 
 @pytest.mark.asyncio
+async def test_collection_row_shows_source_count_and_ranking(
+    built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec: IA › Collections sub-screen — each collection row's trailing
+    shows source count and `ranking:<profile>` with scope dot prefix."""
+    from acorn.config import (
+        CollectionConfig,
+        SourceConfig,
+        write_collection,
+    )
+    from acorn.tui import AcornApp
+    from acorn.tui.menu import SECTION_COLLECTIONS, section_items
+
+    # Isolate config so we have a known "default" collection.
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+
+    real = tmp_path / "docs"
+    real.mkdir()
+    write_collection(
+        config_path=cfg_path,
+        name="default",
+        collection=CollectionConfig(sources=[SourceConfig(path=real, includes=["**/*.md"])]),
+    )
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test():
+        from acorn.config import load
+
+        app._config = load()  # type: ignore[attr-defined]
+        items = section_items(app, SECTION_COLLECTIONS)
+        default = next(it for it in items if it.id == "collection.default")
+        trailing = default.trailing_value(app)
+        assert "source" in trailing.lower()
+        assert "ranking" in trailing.lower()
+        # Scope dot ● or ○ is rendered at the start.
+        assert trailing[0] in ("●", "○")
+
+
+@pytest.mark.asyncio
+async def test_source_row_shows_filetypes_and_path_warning(
+    tmp_path: Path, built_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec: IA › Sources sub-screen — source rows show file-types and
+    `⚠ path not found` when the path no longer resolves."""
+    from acorn.config import (
+        CollectionConfig,
+        SourceConfig,
+        write_collection,
+    )
+    from acorn.tui import AcornApp
+    from acorn.tui.menu import _provider_sources
+
+    # Isolate config writes.
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+
+    # Make a collection with two sources: one valid, one missing.
+    real = tmp_path / "exists"
+    real.mkdir()
+    (real / "a.md").write_text("x")
+    write_collection(
+        config_path=cfg_path,
+        name="probe",
+        collection=CollectionConfig(
+            sources=[
+                SourceConfig(path=real, includes=["**/*.md"]),
+                SourceConfig(path=tmp_path / "nope", includes=["**/*.pdf"]),
+            ]
+        ),
+    )
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test():
+        # Reload config so the new collection is visible.
+        from acorn.config import load
+
+        app._config = load()  # type: ignore[attr-defined]
+        items = _provider_sources(app, "probe")
+        valid = next(it for it in items if it.id == "sources.probe.0")
+        missing = next(it for it in items if it.id == "sources.probe.1")
+        assert "md" in valid.trailing_value(app).lower()
+        assert "⚠" in missing.trailing_value(app)
+
+
+@pytest.mark.asyncio
 async def test_detail_strip_updates_on_cursor_move(built_index: Path) -> None:
     """Spec: Visual system › Detail strip — populates on focus change."""
     from acorn.tui import AcornApp

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -423,14 +424,16 @@ def _provider_preferences(_app: AcornApp) -> tuple[MenuItem, ...]:
 
 
 def _collection_summary(app: AcornApp, name: str) -> str:
-    """Trailing slot for a collection row in the root list — shows
-    source count plus an `●` if the collection is active."""
+    """Trailing slot for a collection row in the Collections sub-screen —
+    shows scope dot, source count, and ranking profile."""
     cfg = app._config  # type: ignore[attr-defined]
     if cfg is None or name not in cfg.collections:
         return ""
-    n = len(cfg.collections[name].sources)
+    coll = cfg.collections[name]
+    n = len(coll.sources)
     active = "●" if name in (app._collections or []) else "○"  # type: ignore[attr-defined]
-    return f"{active} {n} source{'s' if n != 1 else ''}"
+    profile = getattr(coll, "ranking_profile", None) or "default"
+    return f"{active} {n} source{'s' if n != 1 else ''} · ranking:{profile}"
 
 
 def _make_open_collection_screen(name: str) -> Callable[[AcornApp], None]:
@@ -619,6 +622,40 @@ def _set_collection_ranking_profile(app: AcornApp, name: str, value: Any) -> Non
     app._refresh_status()  # type: ignore[attr-defined]
 
 
+def _source_trailing(collection_name: str, idx: int) -> Callable[[AcornApp], str]:
+    """Build a value_getter for a per-source row that shows file-types
+    and a path-not-found warning when the source directory is missing."""
+
+    def _summary(app: AcornApp) -> str:
+        from acorn.config import INDEXER_FILETYPES
+
+        cfg = app._config  # type: ignore[attr-defined]
+        if cfg is None or collection_name not in cfg.collections:
+            return ""
+        sources = cfg.collections[collection_name].sources
+        if idx >= len(sources):
+            return ""
+        src = sources[idx]
+        # Derive display extensions from glob patterns in src.includes.
+        exts: list[str] = []
+        for glob in src.includes:
+            for ext in INDEXER_FILETYPES:
+                if glob.endswith(f".{ext}"):
+                    exts.append(ext)
+                    break
+        types = ", ".join(exts) if exts else "Custom"
+        suffix = ""
+        try:
+            p = Path(src.path)
+            if not p.exists():
+                suffix = " · ⚠ path not found"
+        except Exception:
+            suffix = " · ⚠ path not found"
+        return f"{types}{suffix}"
+
+    return _summary
+
+
 def _provider_sources(app: AcornApp, name: str) -> tuple[MenuItem, ...]:
     """Per-collection Sources list."""
     cfg = app._config  # type: ignore[attr-defined]
@@ -634,8 +671,6 @@ def _provider_sources(app: AcornApp, name: str) -> tuple[MenuItem, ...]:
     ]
     col = cfg.collections[name]
     for i, src in enumerate(col.sources):
-        from pathlib import Path
-
         path_display = str(src.path) if src.path else "(no path)"
         items.append(
             MenuItem(
@@ -644,7 +679,7 @@ def _provider_sources(app: AcornApp, name: str) -> tuple[MenuItem, ...]:
                 description=path_display,
                 kind=KIND_EXTERNAL,
                 external=_make_open_source_form(name, i),
-                value_getter=lambda _app, p=path_display: p,
+                value_getter=_source_trailing(name, i),
             )
         )
     return tuple(items)
