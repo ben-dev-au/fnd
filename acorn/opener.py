@@ -143,3 +143,21 @@ def explain_open(*, kind: str, page: int, pdf_strategy: OpenStrategy) -> str:
         if pdf_strategy == "url":
             return f"open '{shlex.quote(str(skim_url(Path('/X'), page)))}'"
     return "open <file> (default app)"
+
+
+def reveal(path: Path | str) -> None:
+    """Reveal ``path`` in Finder (selected) via macOS `open -R`.
+
+    Fire-and-forget — uses Popen so the TUI doesn't block on Finder's
+    launch latency. On non-macOS platforms this is a no-op for now (the
+    project targets macOS per pyproject).
+    """
+    import platform
+
+    if platform.system() != "Darwin":
+        return
+    subprocess.Popen(
+        ["open", "-R", str(path)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
