@@ -1268,8 +1268,8 @@ class AddCollectionWizard(Screen[None]):
         self.query_one(SettingsList).set_items(self._build_field_items())
 
     def _build_field_items(self) -> list[MenuItem]:
-        # Picker rows / live validation come in Tasks 13 / 14. For now,
-        # all six rows render as KIND_SCALAR with summary getters.
+        from acorn.config import EXCLUDES_PRESETS, INDEXER_FILETYPES
+
         return [
             MenuItem(
                 id="wiz.name",
@@ -1286,14 +1286,29 @@ class AddCollectionWizard(Screen[None]):
             MenuItem(
                 id="wiz.includes",
                 label="Includes",
-                kind=KIND_SCALAR,
-                value_getter=lambda _app: self._summarize_includes(),
+                kind=KIND_PICKER,
+                multi=True,
+                choices_provider=lambda _app: [
+                    ChoiceOption(value=ext, label=label) for ext, label in INDEXER_FILETYPES.items()
+                ],
+                picker_getter=lambda _app: list(self._fields["includes"]),
+                picker_setter=lambda _app, vs: self._set_includes(vs),
             ),
             MenuItem(
                 id="wiz.excludes",
                 label="Excludes",
-                kind=KIND_SCALAR,
-                value_getter=lambda _app: self._summarize_excludes(),
+                kind=KIND_PICKER,
+                multi=True,
+                choices_provider=lambda _app: [
+                    ChoiceOption(
+                        value=key,
+                        label=preset["label"],
+                        description=", ".join(preset["globs"]),
+                    )
+                    for key, preset in EXCLUDES_PRESETS.items()
+                ],
+                picker_getter=lambda _app: list(self._fields["excludes_presets"]),
+                picker_setter=lambda _app, vs: self._set_excludes_presets(vs),
             ),
             MenuItem(
                 id="wiz.filter",
@@ -1318,6 +1333,37 @@ class AddCollectionWizard(Screen[None]):
 
     def _set_follow(self, value: bool) -> None:
         self._fields["follow_symlinks"] = bool(value)
+
+    def _set_includes(self, values: list[str]) -> None:
+        self._fields["includes"] = list(values)
+        self.query_one(SettingsList).refresh_values()
+
+    def _set_excludes_presets(self, values: list[str]) -> None:
+        self._fields["excludes_presets"] = list(values)
+        self.query_one(SettingsList).refresh_values()
+
+    @on(SettingsList.Activated)
+    def _on_field_activated(self, ev: SettingsList.Activated) -> None:
+        item = ev.item
+        if item.kind == KIND_PICKER:
+            self.app.push_screen(PickerScreen(item))
+        elif item.kind == KIND_SCALAR:
+            field_key = item.id.split(".", 1)[-1]
+            current = self._fields.get(field_key, "")
+            self.query_one(EditBar).open(item, str(current or ""))
+        elif item.kind == KIND_TOGGLE:
+            new = not (item.toggle_getter(self.app) if item.toggle_getter else False)  # type: ignore[arg-type]
+            if item.toggle_setter is not None:
+                item.toggle_setter(self.app, new)  # type: ignore[arg-type]
+            self.query_one(SettingsList).refresh_values()
+
+    @on(EditBar.EditCommitted)
+    def _on_edit_committed(self, ev: EditBar.EditCommitted) -> None:
+        field_key = ev.item.id.split(".", 1)[-1]
+        self._fields[field_key] = ev.value
+        self.query_one(EditBar).close()
+        self.query_one(SettingsList).refresh_values()
+        self.query_one(SettingsList).focus()
 
     def action_back(self) -> None:
         self.app.pop_screen()

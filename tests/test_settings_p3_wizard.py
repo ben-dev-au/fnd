@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from acorn.tui import AcornApp
+
 
 @pytest.fixture
 def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
@@ -66,3 +68,59 @@ async def test_add_collection_pushes_wizard_with_expected_fields(built_index: Pa
             "Follow symlinks",
         ):
             assert required in labels, f"missing field {required!r}; got {labels}"
+
+
+@pytest.mark.asyncio
+async def test_includes_field_opens_filetypes_picker(built_index: Path) -> None:
+    """Spec: Wizard › Includes — multi-select of indexer-supported types."""
+    from acorn.tui.settings_screen import (
+        AddCollectionWizard,
+        PickerScreen,
+        SettingsList,
+    )
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(AddCollectionWizard())
+        await pilot.pause()
+        wiz = app.screen
+        assert isinstance(wiz, AddCollectionWizard)
+        lst = wiz.query_one(SettingsList)
+        # Move cursor to the Includes row.
+        inc_idx = next(i for i, it in enumerate(lst._items) if it.id == "wiz.includes")
+        lst.cursor_index = inc_idx
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, PickerScreen)
+        # The picker shows the indexer-supported types.
+        from acorn.config import INDEXER_FILETYPES
+
+        choice_values = [c.value for c in app.screen._choices]
+        assert set(choice_values) == set(INDEXER_FILETYPES.keys())
+
+
+@pytest.mark.asyncio
+async def test_excludes_field_opens_presets_picker_with_defaults(built_index: Path) -> None:
+    """Spec: Wizard › Excludes — preset multi-select, hidden pre-checked."""
+    from acorn.tui.settings_screen import (
+        AddCollectionWizard,
+        PickerScreen,
+        SettingsList,
+    )
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(AddCollectionWizard())
+        await pilot.pause()
+        wiz = app.screen
+        assert isinstance(wiz, AddCollectionWizard)
+        lst = wiz.query_one(SettingsList)
+        exc_idx = next(i for i, it in enumerate(lst._items) if it.id == "wiz.excludes")
+        lst.cursor_index = exc_idx
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, PickerScreen)
+        # `hidden` preset is pre-selected.
+        assert "hidden" in app.screen._selected
