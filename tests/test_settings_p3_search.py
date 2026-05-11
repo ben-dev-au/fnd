@@ -210,3 +210,31 @@ async def test_zero_match_shows_empty_state_hint(built_index: Path) -> None:
         lst = screen.query_one(SettingsList)
         labels = [it.label for it in lst._items]
         assert any("No matches" in label for label in labels), labels
+
+
+def test_filter_haystack_excludes_description() -> None:
+    """Spec: Search index covers label/key/keywords/breadcrumb — NOT
+    description prose. Indexing descriptions muddies results."""
+    import asyncio
+
+    from acorn.config import CollectionConfig, Config, SourceConfig
+    from acorn.tui import AcornApp
+    from acorn.tui.settings_screen import SettingsScreen
+
+    async def run() -> None:
+        app = AcornApp()
+        cfg = Config(collections={"x": CollectionConfig(sources=[SourceConfig(path=Path("."))])})
+        app._config = cfg
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_open_command_palette()
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, SettingsScreen)
+            filtered, _bc = screen._filter_items("muddies")
+            # "muddies" appears only in a description prose, never in label/keywords.
+            assert (
+                filtered == []
+            ), f"description prose leaked into the search index: {[m.label for m in filtered]}"
+
+    asyncio.run(run())

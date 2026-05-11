@@ -27,7 +27,7 @@ naturally; no pre-popping or manual back stacks.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.text import Text
 from textual import events, on
@@ -158,16 +158,22 @@ def _render_row(
         text.append(bc_text, style="dim italic")
     else:
         trailing = item.trailing_value(app) if app is not None else ""
+        # Setting values (scalar/toggle/picker) carry information the user
+        # is scanning for — render bold. Drill-row content summaries are
+        # navigational hints, not values: render dim so they don't compete
+        # with row labels.
+        is_drill_summary = item.kind == KIND_EXTERNAL and bool(item.value_getter)
+        trailing_style = "dim" if is_drill_summary else "bold"
         if trailing and width is not None:
             # Right-align trailing value with dotted-pad. width is the
             # available column count.
             used = (_KEY_COL if item.key else 0) + len(item.label)
             pad = max(2, width - used - len(trailing) - 2)
             text.append(" " + "·" * pad + " ", style="dim")
-            text.append(trailing, style="bold")
+            text.append(trailing, style=trailing_style)
         elif trailing:
             text.append("   ")
-            text.append(trailing, style="bold")
+            text.append(trailing, style=trailing_style)
     return text
 
 
@@ -260,13 +266,22 @@ class EditBar(Horizontal):
             label.add_class("-warn")
         label.update(text)
 
+    # Rows that participate in live path validation. Any KIND_SCALAR row
+    # whose id is in this set surfaces ✓/✗ feedback in the error label as
+    # the user types. Adding a new path-typed field is a one-line change.
+    _PATH_VALIDATE_IDS: ClassVar[frozenset[str]] = frozenset({"wiz.path", "form.path"})
+
+    # Cap the directory walk so a path like ~/Downloads doesn't stall the
+    # UI on every keystroke. 5_000 is enough to communicate "lots" without
+    # paying the cost of counting them all.
+    _PATH_ENTRY_CAP: ClassVar[int] = 5_000
+
     @on(Input.Changed, "#editor_input")
     def _on_input_changed(self, ev: Input.Changed) -> None:
-        """For the wizard's Source path row, validate on every keystroke
-        and surface ✓/✗ inline in the (repurposed) error label."""
-        if self._item is None:
-            return
-        if self._item.id != "wiz.path":
+        """For path-typed scalar rows (Add Collection wizard, per-source
+        form), validate on every keystroke and surface ✓/✗ inline in the
+        repurposed error label."""
+        if self._item is None or self._item.id not in self._PATH_VALIDATE_IDS:
             return
         from pathlib import Path as _Path
 
@@ -282,7 +297,12 @@ class EditBar(Horizontal):
             self._set_status("⚠ not a directory", tone="warn")
             return
         try:
-            n = sum(1 for _ in p.iterdir())
+            n = 0
+            for _ in p.iterdir():
+                n += 1
+                if n >= self._PATH_ENTRY_CAP:
+                    self._set_status(f"✓ {self._PATH_ENTRY_CAP}+ entries", tone="ok")
+                    return
         except OSError:
             self._set_status("⚠ unreadable", tone="warn")
             return
@@ -647,6 +667,21 @@ class SettingsScreen(Screen[None]):
         if not self._breadcrumb:
             self._render_version_status()
 
+    def on_screen_resume(self) -> None:
+        """Re-render trailing values when control returns to this screen.
+
+        Picker / sub-screen edits mutate config from another screen — when
+        they pop, this screen becomes active again but its painted rows
+        still show the pre-edit values. Refreshing here is the cheapest
+        fix and keeps each row's value_getter as the single source of
+        truth (the lambdas already read ``app._config`` lazily).
+        """
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self.query_one(SettingsList).refresh_values()
+        self._refresh_hint_bar()
+
     def _render_version_status(self) -> None:
         """Show `acorn vX.Y.Z` at the bottom of the root menu so users
         can spot the version without leaving the TUI."""
@@ -760,15 +795,18 @@ class SettingsScreen(Screen[None]):
 
     def _filter_items(self, q: str) -> tuple[list[MenuItem], dict[int, tuple[str, ...]]]:
         """Cross-section: walk every section's leaves, score by substring
-        match against label + key + keywords + breadcrumb segments."""
+        match against label + key + keywords + breadcrumb segments.
+
+        Spec deliberately excludes ``description`` prose — descriptions
+        surface in the detail strip on focus, and indexing them muddies
+        the search results.
+        """
         matches: list[tuple[int, MenuItem, tuple[str, ...]]] = []
         app: AcornApp = self.app  # type: ignore[assignment]
         for path, item in walk_all_sections(app):
             if item.kind == KIND_HEADER:
                 continue
-            haystack = " ".join(
-                (item.label, item.description, item.key, *item.keywords, *path)
-            ).lower()
+            haystack = " ".join((item.label, item.key, *item.keywords, *path)).lower()
             idx = haystack.find(q)
             if idx == -1:
                 continue
@@ -1179,6 +1217,8 @@ class SourceFormScreen(Screen[None]):
     SourceFormScreen #match_status { color: $text-muted; padding: 0 0 0 0; }
     SourceFormScreen #match_status.-match { color: $success; }
     SourceFormScreen #match_status.-no-match { color: $error; }
+    SourceFormScreen #form_error { color: $error; padding: 0 1; height: auto; }
+    SourceFormScreen #form_error.-hidden { display: none; }
     SourceFormScreen > #footer_hints {
         dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
     }
@@ -1216,9 +1256,19 @@ class SourceFormScreen(Screen[None]):
             )
             yield TextArea("", id="frontmatter_sample")
             yield Static("(no sample)", id="match_status")
+            yield Static("", id="form_error", classes="-hidden")
         yield EditBar()
-        yield Static("Ctrl+S Save · Esc Cancel", id="form_help")
         yield Static("", id="footer_hints")
+
+    def _show_error(self, message: str) -> None:
+        err = self.query_one("#form_error", Static)
+        err.update(message)
+        err.remove_class("-hidden")
+
+    def _clear_error(self) -> None:
+        err = self.query_one("#form_error", Static)
+        err.update("")
+        err.add_class("-hidden")
 
     # ── Lifecycle ──────────────────────────────────────────────
 
@@ -1501,16 +1551,14 @@ class SourceFormScreen(Screen[None]):
             write_collection,
         )
 
+        self._clear_error()
+
         path = str(self._fields["path"] or "").strip().strip("'\"")
         if not path:
-            self.notify("Path is required", severity="error", title="Invalid source")
+            self._show_error("Path is required.")
             return
         if not Path(path).expanduser().exists():
-            self.notify(
-                f"Path does not exist: {path}",
-                severity="error",
-                title="Invalid source",
-            )
+            self._show_error(f"Path does not exist: {path}")
             return
         # Reassemble globs from picker-driven fields.
         includes_globs: list[str] = [f"**/*.{ext}" for ext in self._fields["includes"]]
@@ -1534,13 +1582,13 @@ class SourceFormScreen(Screen[None]):
                 frontmatter_filter=(str(self._fields["filter"]) or None),
             )
         except Exception as e:
-            self.notify(_summarize(e), severity="error", title="Invalid source")
+            self._show_error(_summarize(e))
             return
 
         app: AcornApp = self.app  # type: ignore[assignment]
         cfg = app._config  # type: ignore[attr-defined]
         if cfg is None or self._collection_name not in cfg.collections:
-            self.notify("Collection vanished — please reopen the menu", severity="error")
+            self._show_error("Collection vanished — please reopen the menu.")
             return
         col: CollectionConfig = cfg.collections[self._collection_name]
         if self._source_index is None:
@@ -1554,7 +1602,7 @@ class SourceFormScreen(Screen[None]):
                 collection=col,
             )
         except Exception as e:
-            self.notify(_summarize(e), severity="error", title="Save failed")
+            self._show_error(_summarize(e))
             return
         app._config = load()  # type: ignore[attr-defined]
         app._refresh_collections_panel()  # type: ignore[attr-defined]
@@ -1749,7 +1797,8 @@ class AddCollectionWizard(Screen[None]):
                 id="wiz.filter",
                 label="Frontmatter filter",
                 kind=KIND_SCALAR,
-                value_getter=lambda _app: self._fields["filter"] or "(none)",
+                hint="frontmatter DSL",
+                value_getter=lambda _app: self._filter_with_status(),
             ),
             MenuItem(
                 id="wiz.follow_symlinks",
@@ -1768,6 +1817,20 @@ class AddCollectionWizard(Screen[None]):
 
     def _set_follow(self, value: bool) -> None:
         self._fields["follow_symlinks"] = bool(value)
+
+    def _filter_with_status(self) -> str:
+        """Trailing column for the Frontmatter filter row — shows the
+        DSL string plus a live ``✓`` / ``✗ col N`` parse indicator so
+        syntax mistakes surface without leaving the form."""
+        text = str(self._fields.get("filter") or "").strip()
+        if not text:
+            return "(none)"
+        from acorn.filter_dsl import parse_or_error
+
+        _pred, err = parse_or_error(text)
+        if err is None:
+            return f"{text}   ✓"
+        return f"{text}   ✗ col {err.column}"
 
     def _includes_picker_state(self) -> list[str]:
         """What the Includes picker should show as pre-selected — the
@@ -1837,12 +1900,75 @@ class AddCollectionWizard(Screen[None]):
                 item.toggle_setter(self.app, new)  # type: ignore[arg-type]
             self.query_one(SettingsList).refresh_values()
 
+    @on(SettingsList.Highlighted)
+    def _on_field_highlighted(self, ev: SettingsList.Highlighted) -> None:
+        """Mirror the SettingsScreen pattern: populate the DetailStrip
+        with the focused row's description on cursor move."""
+        strip = self.query_one(DetailStrip)
+        item = ev.item
+        if item is None:
+            strip.clear()
+            return
+        meta = item.hint or ""
+        strip.set(item.description or "", meta)
+
+    @on(TextArea.Changed, "#frontmatter_sample")
+    def _on_sample_changed(self, _ev: TextArea.Changed) -> None:
+        """Live match-status when the user pastes/edits a frontmatter
+        sample — mirrors SourceFormScreen so the wizard's tester is
+        actually functional, not just visually present."""
+        self._refresh_match_status()
+
+    def _refresh_match_status(self) -> None:
+        sample = self.query_one("#frontmatter_sample", TextArea).text
+        filter_text = str(self._fields.get("filter") or "").strip()
+        status = self.query_one("#match_status", Static)
+        status.remove_class("-match")
+        status.remove_class("-no-match")
+        if not sample.strip():
+            status.update("(no sample)")
+            return
+        from acorn.filter_dsl import parse_or_error
+        from acorn.frontmatter import FrontmatterParseError, read_frontmatter_from_text
+
+        try:
+            fm: dict[str, object] = read_frontmatter_from_text(sample) or {}
+        except FrontmatterParseError as e:
+            status.update(f"✗ frontmatter parse error: {e}")
+            status.add_class("-no-match")
+            return
+        if not filter_text:
+            status.update("(no filter)")
+            return
+        pred, err = parse_or_error(filter_text)
+        if err is not None or pred is None:
+            status.update(f"✗ filter syntax: col {err.column}" if err else "✗ syntax error")
+            status.add_class("-no-match")
+            return
+        if pred(fm):
+            status.update("✓ sample matches filter")
+            status.add_class("-match")
+        else:
+            status.update("✗ sample does not match filter")
+            status.add_class("-no-match")
+
     @on(EditBar.EditCommitted)
     def _on_edit_committed(self, ev: EditBar.EditCommitted) -> None:
         field_key = ev.item.id.split(".", 1)[-1]
+        if field_key == "filter":
+            text = str(ev.value or "").strip()
+            if text:
+                from acorn.filter_dsl import parse_or_error
+
+                _pred, err = parse_or_error(text)
+                if err is not None:
+                    self.query_one(EditBar).show_error(f"col {err.column}: {err.message}")
+                    return
         self._fields[field_key] = ev.value
         self.query_one(EditBar).close()
         self.query_one(SettingsList).refresh_values()
+        # Re-evaluate the sample tester since the filter may have changed.
+        self._refresh_match_status()
         self.query_one(SettingsList).focus()
 
     def action_back(self) -> None:

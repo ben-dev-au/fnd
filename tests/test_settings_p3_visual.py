@@ -374,3 +374,56 @@ async def test_subscreen_omits_version_status(built_index: Path) -> None:
             raise AssertionError("subscreen should not mount #settings_status")
         except NoMatches:
             pass
+
+
+@pytest.mark.asyncio
+async def test_preferences_refreshes_trailing_after_picker_pops(
+    built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: drilling into a KIND_PICKER setting (e.g. Drill row
+    summaries) commits the new value via the picker, which pops. The
+    parent SettingsScreen must re-render its trailings on resume —
+    otherwise the user sees the old value until they leave and return."""
+    from acorn.tui import AcornApp
+    from acorn.tui.menu import SECTION_PREFERENCES
+    from acorn.tui.settings_screen import (
+        PickerScreen,
+        SettingsList,
+        SettingsScreen,
+        open_settings_section,
+    )
+
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        open_settings_section(app, SECTION_PREFERENCES)
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        lst = screen.query_one(SettingsList)
+        drill_idx = next(i for i, it in enumerate(lst._items) if it.id == "pref.drill_summary_mode")
+        lst.cursor_index = drill_idx
+        # Before: trailing reads "always_show" (default).
+        before = lst._items[drill_idx].trailing_value(app)
+        assert "always_show" in before, before
+        # Open picker.
+        await pilot.press("enter")
+        await pilot.pause()
+        picker = app.screen
+        assert isinstance(picker, PickerScreen)
+        # Manually commit a new value and pop, mirroring how a real user
+        # toggles a radio in the picker.
+        picker._commit({"always_ellipsis"})
+        app.pop_screen()
+        await pilot.pause()
+        # After: the trailing must reflect the new mode without the user
+        # leaving and returning.
+        rendered_after = str(
+            list(lst.query_one("#settings_list_body").children)[drill_idx].render()
+        )
+        assert (
+            "always_ellipsis" in rendered_after
+        ), f"Trailing did not refresh after picker pop; got: {rendered_after!r}"
