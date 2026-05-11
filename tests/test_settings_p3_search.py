@@ -69,3 +69,52 @@ async def test_walk_includes_scope_pseudo_row(built_index: Path, fixtures_dir: P
         keywords = " ".join(scope.keywords).lower()
         assert "scope" in keywords
         assert "active" in keywords
+
+
+@pytest.mark.asyncio
+async def test_search_on_root_finds_preferences_leaf(built_index: Path, fixtures_dir: Path) -> None:
+    """Spec: Search behaviour — typing on root surfaces leaves from
+    every section, with the breadcrumb on each row."""
+    from textual.widgets import Input
+
+    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+
+    app = AcornApp(index_dir=built_index, config=_seed_config(fixtures_dir))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_open_command_palette()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        search = screen.query_one("#settings_search", Input)
+        search.value = "result limit"
+        await pilot.pause()
+        lst = screen.query_one(SettingsList)
+        # The first item should be the Preferences › Result limit leaf.
+        first = lst._items[0]
+        assert first.label == "Result limit"
+
+
+@pytest.mark.asyncio
+async def test_search_on_keybindings_finds_preference(
+    built_index: Path, fixtures_dir: Path
+) -> None:
+    """Spec: Cross-section search is global — searching from a sub-screen
+    finds items in other sections."""
+    from textual.widgets import Input
+
+    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+
+    app = AcornApp(index_dir=built_index, config=_seed_config(fixtures_dir))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_show_help()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        search = screen.query_one("#settings_search", Input)
+        search.value = "debounce"
+        await pilot.pause()
+        lst = screen.query_one(SettingsList)
+        labels = [it.label for it in lst._items]
+        assert any("Debounce" in label for label in labels)
