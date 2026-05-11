@@ -164,3 +164,49 @@ async def test_path_validation_inline(tmp_path: Path, built_index: Path) -> None
         await pilot.pause()
         err = bar.query_one(".-edit-error", Static).render()
         assert "✓" in str(err) or "1 file" in str(err).lower()
+
+
+@pytest.mark.asyncio
+async def test_save_writes_collection_and_reindexes(
+    tmp_path: Path, built_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec: Wizard › Save — write_collection + reindex + drop on per-collection sub-screen."""
+    from acorn.config import load
+    from acorn.tui.settings_screen import (
+        AddCollectionWizard,
+        SettingsScreen,
+    )
+
+    # Redirect all config reads/writes to an isolated temp file.
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+
+    real_dir = tmp_path / "vault"
+    real_dir.mkdir()
+    (real_dir / "a.md").write_text("# hello")
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        wiz = AddCollectionWizard()
+        wiz._fields["name"] = "research"
+        wiz._fields["path"] = str(real_dir)
+        wiz._fields["includes"] = ["md"]
+        wiz._fields["excludes_presets"] = ["hidden"]
+        app.push_screen(wiz)
+        await pilot.pause()
+        # Trigger save.
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+        # We should land on the new collection's per-collection sub-screen.
+        assert isinstance(app.screen, SettingsScreen)
+        assert app.screen._breadcrumb == ("Collections", "research")
+        # The on-disk config has the new collection with the right shape.
+        cfg = load(cfg_path)
+        assert "research" in cfg.collections
+        src = cfg.collections["research"].sources[0]
+        assert str(src.path) == str(real_dir)
+        # Includes are mapped to globs.
+        assert "**/*.md" in src.includes
+        # Excludes from the `hidden` preset are present.
+        assert any(".git" in g for g in src.excludes)
