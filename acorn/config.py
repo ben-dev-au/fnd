@@ -51,6 +51,17 @@ def default_config_path() -> Path:
 
 # ── Schema ──────────────────────────────────────────────────────────────────
 
+# Indexer-supported file types in display order. Used by the Add Source /
+# Add Collection wizards to render the Includes multi-select. Keep this in
+# sync with the kinds the extractor pipeline handles.
+INDEXER_FILETYPES: dict[str, str] = {
+    "md": "Markdown (.md)",
+    "pdf": "PDF (.pdf)",
+    "docx": "Word (.docx)",
+    "pptx": "PowerPoint (.pptx)",
+    "txt": "Plain text (.txt)",
+}
+
 
 class SourceConfig(BaseModel):
     """One root path inside a collection with its own filter chain."""
