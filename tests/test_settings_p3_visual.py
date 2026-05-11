@@ -329,3 +329,48 @@ async def test_hint_bar_edit_bar_open_variant(built_index: Path) -> None:
         labels = [label for _, label in cluster]
         assert "Save" in labels, f"expected Save in edit-bar cluster; got: {cluster!r}"
         assert "Cancel" in labels, f"expected Cancel in edit-bar cluster; got: {cluster!r}"
+
+
+@pytest.mark.asyncio
+async def test_root_screen_shows_version_status_line(built_index: Path) -> None:
+    """Spec: Use case A4 — version visible at the bottom of the root menu."""
+    from textual.widgets import Static
+
+    from acorn import __version__
+    from acorn.tui import AcornApp
+    from acorn.tui.settings_screen import SettingsScreen
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_open_command_palette()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        status = screen.query_one("#settings_status", Static)
+        rendered = str(status.render())
+        assert __version__ in rendered, f"expected version in status; got: {rendered!r}"
+
+
+@pytest.mark.asyncio
+async def test_subscreen_omits_version_status(built_index: Path) -> None:
+    """Sub-screens don't carry the version line — only the root does."""
+    from acorn.tui import AcornApp
+    from acorn.tui.settings_screen import SettingsScreen
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_show_help()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        # Keybindings sub-screen → no version status.
+        assert screen._breadcrumb == ("Keybindings",)
+        from textual.css.query import NoMatches
+
+        try:
+            screen.query_one("#settings_status")
+            raise AssertionError("subscreen should not mount #settings_status")
+        except NoMatches:
+            pass

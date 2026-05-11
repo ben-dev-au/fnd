@@ -599,6 +599,9 @@ class SettingsScreen(Screen[None]):
     SettingsScreen > #footer_hints {
         dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
     }
+    SettingsScreen #settings_status {
+        height: 1; padding: 0 1; color: $text-muted;
+    }
     """
 
     def __init__(
@@ -629,6 +632,9 @@ class SettingsScreen(Screen[None]):
             yield Input(placeholder="Type to filter…", id="settings_search")
             yield SettingsList()
             yield DetailStrip()
+            if not self._breadcrumb:
+                # Root-only version + build identifier; sub-screens omit it.
+                yield Static("", id="settings_status")
         yield EditBar()
         yield Static("", id="footer_hints")
 
@@ -638,6 +644,24 @@ class SettingsScreen(Screen[None]):
         lst.focus()
         self._render_footer()
         self._seed_detail_strip()
+        if not self._breadcrumb:
+            self._render_version_status()
+
+    def _render_version_status(self) -> None:
+        """Show `acorn vX.Y.Z` at the bottom of the root menu so users
+        can spot the version without leaving the TUI."""
+        try:
+            from acorn import __version__
+        except ImportError:
+            __version__ = ""
+        if not __version__:
+            try:
+                from importlib.metadata import version as _ver
+
+                __version__ = _ver("acorn")
+            except Exception:
+                __version__ = "dev"
+        self.query_one("#settings_status", Static).update(f"acorn v{__version__}")
 
     def _seed_detail_strip(self) -> None:
         """Populate the detail strip with the first selectable item so
