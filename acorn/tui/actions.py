@@ -172,7 +172,7 @@ REGISTRY: tuple[Action, ...] = (
         default_key=None,
         command="collections-form",
         footer_label="Manage",
-        show_in_footer=False,  # advanced; F3 listed in help overlay
+        show_in_footer=False,  # advanced; reachable via `:` palette only
     ),
     Action(
         id="open_multi_input",

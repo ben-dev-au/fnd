@@ -2665,8 +2665,8 @@ class AcornApp(App[None]):
             self._run_query(" ".join(lexical_parts))
 
     def action_open_collections_form(self) -> None:
-        """F3 entry: push the Collections sub-screen directly. One Esc
-        returns to the main app."""
+        """Palette entry: push the Collections sub-screen directly. One
+        Esc returns to the main app."""
         from acorn.tui.menu import SECTION_COLLECTIONS
         from acorn.tui.settings_screen import SettingsScreen, open_settings_section
 
