@@ -1417,8 +1417,70 @@ class AddCollectionWizard(Screen[None]):
         self.app.pop_screen()
 
     def action_save_close(self) -> None:
-        # Filled in Task 15.
+        from pathlib import Path
+
+        from acorn.config import (
+            EXCLUDES_PRESETS,
+            CollectionConfig,
+            SourceConfig,
+            default_config_path,
+            load,
+            write_collection,
+        )
+
+        name = str(self._fields["name"]).strip()
+        path = str(self._fields["path"]).strip().strip("'\"")
+        if not name:
+            self.notify("Name is required", severity="error")
+            return
+        if not path:
+            self.notify("Source path is required", severity="error")
+            return
+        p = Path(path).expanduser()
+        if not p.exists():
+            self.notify(f"Path does not exist: {p}", severity="error")
+            return
+
+        includes_globs: list[str] = [f"**/*.{ext}" for ext in self._fields["includes"]]
+
+        excludes_globs: list[str] = []
+        for preset_id in self._fields["excludes_presets"]:
+            excludes_globs.extend(EXCLUDES_PRESETS[preset_id]["globs"])
+        custom = str(self._fields["excludes_custom"] or "")
+        for g in custom.split(","):
+            g = g.strip()
+            if g:
+                excludes_globs.append(g)
+
+        app: AcornApp = self.app  # type: ignore[assignment]
+        cfg = app._config  # type: ignore[attr-defined]
+        if cfg is not None and name in cfg.collections:
+            self.notify(f"Collection {name!r} already exists", severity="warning")
+            return
+
+        source = SourceConfig(
+            path=p,
+            includes=includes_globs,
+            excludes=excludes_globs,
+            follow_symlinks=bool(self._fields["follow_symlinks"]),
+            frontmatter_filter=(str(self._fields["filter"]).strip() or None),
+        )
+        new_collection = CollectionConfig(sources=[source])
+        config_path = default_config_path()
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        write_collection(
+            config_path=config_path,
+            name=name,
+            collection=new_collection,
+        )
+        app._config = load()  # type: ignore[attr-defined]
+        app._refresh_collections_panel()  # type: ignore[attr-defined]
+        app._reindex_collection_async(name)  # type: ignore[attr-defined]
+        # Pop wizard, then push the new collection's per-collection sub-screen.
         self.app.pop_screen()
+        from acorn.tui.menu import _make_open_collection_screen
+
+        _make_open_collection_screen(name)(app)
 
     def action_cycle_focus(self, direction: int) -> None:
         widgets = [
