@@ -218,3 +218,114 @@ async def test_detail_strip_updates_on_cursor_move(built_index: Path) -> None:
         lst.action_move(1)
         await pilot.pause()
         assert "Collections" in strip._description or "collection" in strip._description.lower()
+
+
+@pytest.mark.asyncio
+async def test_hint_bar_appends_reveal_when_cursor_on_reveal_capable_row(
+    built_index: Path,
+) -> None:
+    """Spec: Hint bar — append `Shift+⏎ Reveal` when row supports reveal."""
+    from acorn.tui import AcornApp
+    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_open_command_palette()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        lst = screen.query_one(SettingsList)
+        idx = next(i for i, it in enumerate(lst._items) if it.id == "root.open_config_file")
+        lst.cursor_index = idx
+        await pilot.pause()
+        # Assert on the resolved cluster (the actual logic) — Static.render
+        # in the test pilot doesn't always reflect the last .update() call.
+        cluster = screen._hint_cluster()
+        labels = [label for _, label in cluster]
+        assert (
+            "Reveal" in labels
+        ), f"expected Reveal hint on Open config row; got cluster: {cluster!r}"
+
+
+@pytest.mark.asyncio
+async def test_hint_bar_keybindings_variant(built_index: Path) -> None:
+    """Spec: Hint bar — Keybindings screen shows `⏎ Run · [key] Run directly · Esc Back`."""
+    from acorn.tui import AcornApp
+    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_show_help()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen.query_one(SettingsList).focus()
+        await pilot.pause()
+        cluster = screen._hint_cluster()
+        keys = [k for k, _ in cluster]
+        labels = [lab for _, lab in cluster]
+        assert "Run" in labels, f"expected Keybindings cluster; got: {cluster!r}"
+        assert "[key]" in keys, f"expected press-key entry; got: {cluster!r}"
+
+
+@pytest.mark.asyncio
+async def test_hint_bar_search_focused_variant(built_index: Path) -> None:
+    """Spec: Hint bar — Search input focused shows results / open-first / clear hints."""
+    from textual.widgets import Input
+
+    from acorn.tui import AcornApp
+    from acorn.tui.settings_screen import SettingsScreen
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_open_command_palette()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen.query_one("#settings_search", Input).focus()
+        await pilot.pause()
+        cluster = screen._hint_cluster()
+        labels = [label for _, label in cluster]
+        assert (
+            "Clear" in labels or "Results" in labels
+        ), f"expected search-focused cluster; got: {cluster!r}"
+
+
+@pytest.mark.asyncio
+async def test_hint_bar_edit_bar_open_variant(built_index: Path) -> None:
+    """Spec: Hint bar — Edit-bar open shows `⏎ Save · Esc Cancel`."""
+    from acorn.tui import AcornApp
+    from acorn.tui.settings_screen import EditBar, SettingsScreen
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Open Preferences and drill into a scalar to open the EditBar.
+        from acorn.tui.menu import SECTION_PREFERENCES
+        from acorn.tui.settings_screen import (
+            SettingsList,
+            open_settings_section,
+        )
+
+        open_settings_section(app, SECTION_PREFERENCES)
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        lst = screen.query_one(SettingsList)
+        # Find a KIND_SCALAR row.
+        from acorn.tui.menu import KIND_SCALAR
+
+        idx = next(i for i, it in enumerate(lst._items) if it.kind == KIND_SCALAR)
+        lst.cursor_index = idx
+        screen._activate_item(lst._items[idx])
+        await pilot.pause()
+        # EditBar should be open (no -hidden class).
+        bar = screen.query_one(EditBar)
+        assert "-hidden" not in bar.classes
+        cluster = screen._hint_cluster()
+        labels = [label for _, label in cluster]
+        assert "Save" in labels, f"expected Save in edit-bar cluster; got: {cluster!r}"
+        assert "Cancel" in labels, f"expected Cancel in edit-bar cluster; got: {cluster!r}"
