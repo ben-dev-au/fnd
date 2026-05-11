@@ -48,3 +48,24 @@ async def test_walk_all_sections_includes_every_leaf(built_index: Path, fixtures
         assert "Open config file in editor" in labels
         # No headers leak through.
         assert not any(item.kind == KIND_HEADER for _, item in all_items)
+
+
+@pytest.mark.asyncio
+async def test_walk_includes_scope_pseudo_row(built_index: Path, fixtures_dir: Path) -> None:
+    """Spec: Use cases › D — pre-empt confusion about active scope by
+    surfacing a sidebar pointer in cross-section results."""
+    from acorn.tui.menu import walk_all_sections
+
+    app = AcornApp(index_dir=built_index, config=_seed_config(fixtures_dir))
+    async with app.run_test():
+        all_items = list(walk_all_sections(app))
+        scope = next(
+            (item for _, item in all_items if item.id == "pseudo.scope"),
+            None,
+        )
+        assert scope is not None
+        assert "sidebar" in scope.description.lower()
+        # Keywords cover the obvious search terms.
+        keywords = " ".join(scope.keywords).lower()
+        assert "scope" in keywords
+        assert "active" in keywords

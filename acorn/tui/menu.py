@@ -731,6 +731,23 @@ def section_label(section_id: str) -> str:
     return _SECTION_LABELS.get(section_id, section_id)
 
 
+def _pseudo_scope_row() -> MenuItem:
+    """A search-only row that explains where the active-collection scope
+    lives (sidebar in the main app, not the settings menu)."""
+    return MenuItem(
+        id="pseudo.scope",
+        label="Active collection scope",
+        description=(
+            "Toggle which collections / sources are included in the "
+            "current search scope from the main app's Collections sidebar "
+            "(press `c` to focus it). Not a config setting."
+        ),
+        kind=KIND_ACTION,
+        action_id="focus_collections_panel",
+        keywords=("scope", "active", "toggle collection", "sidebar"),
+    )
+
+
 def walk_all_sections(app: AcornApp) -> Iterator[tuple[tuple[str, ...], MenuItem]]:
     """Yield ``(breadcrumb, leaf)`` pairs for every selectable item across
     every section. The basis for cross-section search.
@@ -748,3 +765,6 @@ def walk_all_sections(app: AcornApp) -> Iterator[tuple[tuple[str, ...], MenuItem
     for item in build_root_items(app):
         if item.id == "root.open_config_file":
             yield (), item
+    # Pseudo-rows surface confusions in search without taking up real estate
+    # in any sub-screen.
+    yield (), _pseudo_scope_row()
