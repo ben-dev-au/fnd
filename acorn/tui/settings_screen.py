@@ -719,6 +719,19 @@ class SettingsScreen(Screen[None]):
         self._filter_active = True
         filtered, breadcrumbs = self._filter_items(q)
         self._search_breadcrumbs = breadcrumbs
+        if not filtered:
+            # Empty-state hint — a non-selectable placeholder row so the
+            # cursor-skip rule keeps it inert.
+            placeholder = MenuItem(
+                id="search.empty",
+                label=(
+                    f"No matches for '{ev.value.strip()}'. "
+                    "Try shorter terms or press Esc to clear."
+                ),
+                kind=KIND_HEADER,
+            )
+            lst.set_items([placeholder])
+            return
         lst.set_items(filtered, breadcrumbs=breadcrumbs)
 
     def _filter_items(self, q: str) -> tuple[list[MenuItem], dict[int, tuple[str, ...]]]:

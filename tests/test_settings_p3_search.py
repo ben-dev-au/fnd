@@ -188,3 +188,25 @@ def test_render_row_no_highlight_when_query_misses() -> None:
         assert span.start >= len(
             "Result limit"
         ), f"unexpected bold span over label area on no-match render: {span!r}"
+
+
+@pytest.mark.asyncio
+async def test_zero_match_shows_empty_state_hint(built_index: Path) -> None:
+    """Spec: Search › Empty-state hint — `No matches for '<q>'` placeholder."""
+    from textual.widgets import Input
+
+    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_open_command_palette()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        search = screen.query_one("#settings_search", Input)
+        search.value = "zzzzzzz-no-match"
+        await pilot.pause()
+        lst = screen.query_one(SettingsList)
+        labels = [it.label for it in lst._items]
+        assert any("No matches" in label for label in labels), labels
