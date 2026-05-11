@@ -54,3 +54,15 @@ def test_row_with_key_renders_bracketed_accent() -> None:
     text_str = str(rendered)
     assert "[o]" in text_str, f"expected '[o]' in rendered row; got: {text_str!r}"
     assert "▶" not in text_str
+
+
+def test_root_container_hugs_content() -> None:
+    """Spec: Visual system › Container — height: auto, not 1fr."""
+    from acorn.tui.settings_screen import SettingsScreen
+
+    css = SettingsScreen.CSS
+    # Find the #settings_box rule and check its height.
+    box_rule = css.split("#settings_box {")[1].split("}")[0]
+    assert "height: auto" in box_rule
+    assert "max-height" in box_rule
+    assert "align: center middle" in css  # somewhere in the screen styles
