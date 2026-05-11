@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from platformdirs import user_data_dir
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -216,6 +216,7 @@ class Defaults(BaseModel):
     result_limit: int = 200
     preview_chunks: int = 5
     debounce_ms: int = 200
+    drill_summary_mode: Literal["always_show", "smart", "always_ellipsis"] = "always_show"
 
 
 class Config(BaseModel):
@@ -432,6 +433,11 @@ collection    = "default"     # Active collection when --collection is omitted.
 result_limit  = 200           # Max results per query (1-1000).
 preview_chunks = 5            # Chunks rendered in the preview pane (1-50).
 debounce_ms   = 200           # Wait this many ms after the last keystroke (0-2000).
+# How drill-in row trailing summaries render in the Settings menu:
+#   always_show       (default): each row shows its content summary
+#   smart                       : summary only on rows with real content
+#   always_ellipsis             : a dim `…` on every drill row
+drill_summary_mode = "always_show"
 
 # A collection groups one or more source directories. The starter
 # collection points at ~/Documents; edit, add more [[sources]] tables,
