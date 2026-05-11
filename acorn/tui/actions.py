@@ -169,7 +169,7 @@ REGISTRY: tuple[Action, ...] = (
     Action(
         id="open_collections_form",
         description="Open the Collections form (add / edit / delete collections).",
-        default_key="f3",
+        default_key=None,
         command="collections-form",
         footer_label="Manage",
         show_in_footer=False,  # advanced; F3 listed in help overlay

@@ -12,3 +12,13 @@ def test_indexer_filetypes_exposed_and_complete() -> None:
     assert tuple(INDEXER_FILETYPES) == ("md", "pdf", "docx", "pptx", "txt")
     assert INDEXER_FILETYPES["md"] == "Markdown (.md)"
     assert INDEXER_FILETYPES["pdf"] == "PDF (.pdf)"
+
+
+def test_f3_no_longer_in_keymap() -> None:
+    """Spec: Locked decisions — F3 dropped."""
+    from acorn.tui.actions import load_keymap
+
+    keymap = load_keymap()
+    assert (
+        "f3" not in keymap.bindings
+    ), f"F3 should not be bound; keymap.bindings has: {keymap.bindings.get('f3')!r}"
