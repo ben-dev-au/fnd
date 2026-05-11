@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 
 def test_indexer_filetypes_exposed_and_complete() -> None:
     """Spec: Add Collection wizard › Includes — file types come from a
@@ -66,3 +70,58 @@ def test_root_container_hugs_content() -> None:
     assert "height: auto" in box_rule
     assert "max-height" in box_rule
     assert "align: center middle" in css  # somewhere in the screen styles
+
+
+@pytest.fixture
+def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
+    from acorn.index import build_index
+
+    build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
+    return tmp_index_dir
+
+
+@pytest.mark.asyncio
+async def test_root_rows_show_trailing_summaries(built_index: Path) -> None:
+    """Spec: IA › Root — every drill row shows what's inside."""
+    from acorn.tui import AcornApp
+    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_open_command_palette()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        lst = screen.query_one(SettingsList)
+        by_label = {it.label: it for it in lst._items}
+        preferences = by_label["Preferences"]
+        assert preferences.trailing_value(app), "Preferences row needs a trailing summary"
+        collections = by_label["Collections"]
+        assert "collection" in collections.trailing_value(app).lower()
+        keybindings = by_label["Keybindings"]
+        assert "key" in keybindings.trailing_value(app).lower()
+
+
+@pytest.mark.asyncio
+async def test_detail_strip_updates_on_cursor_move(built_index: Path) -> None:
+    """Spec: Visual system › Detail strip — populates on focus change."""
+    from acorn.tui import AcornApp
+    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from acorn.tui.widgets import DetailStrip
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_open_command_palette()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        strip = screen.query_one(DetailStrip)
+        # Cursor at index 0 (Preferences). Strip shows Preferences description.
+        assert "Preferences" in strip._description or "preferences" in strip._description.lower()
+        # Move cursor to Collections.
+        lst = screen.query_one(SettingsList)
+        lst.action_move(1)
+        await pilot.pause()
+        assert "Collections" in strip._description or "collection" in strip._description.lower()
