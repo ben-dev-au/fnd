@@ -118,3 +118,39 @@ async def test_search_on_keybindings_finds_preference(
         lst = screen.query_one(SettingsList)
         labels = [it.label for it in lst._items]
         assert any("Debounce" in label for label in labels)
+
+
+@pytest.mark.asyncio
+async def test_search_match_for_scalar_opens_edit_bar_inline(
+    built_index: Path, fixtures_dir: Path
+) -> None:
+    """Spec: Cross-section search › Activation rule — scalar matches
+    open the edit bar on the *current* screen."""
+    from textual.widgets import Input
+
+    from acorn.tui.settings_screen import (
+        EditBar,
+        SettingsList,
+        SettingsScreen,
+    )
+
+    app = AcornApp(index_dir=built_index, config=_seed_config(fixtures_dir))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_open_command_palette()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        search = screen.query_one("#settings_search", Input)
+        search.value = "result limit"
+        await pilot.pause()
+        # Activate the first match (which is Preferences › Result limit).
+        lst = screen.query_one(SettingsList)
+        lst.cursor_index = 0
+        await pilot.press("enter")
+        await pilot.pause()
+        # We should still be on the root screen.
+        assert app.screen is screen
+        # The edit bar should be open with the current value populated.
+        bar = screen.query_one(EditBar)
+        assert "-hidden" not in bar.classes
