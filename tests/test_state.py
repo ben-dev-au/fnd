@@ -55,6 +55,32 @@ def test_load_partial_filters_table(tmp_path: Path) -> None:
     assert s.filter_date == "any"
 
 
+def test_save_then_load_round_trips_sidebar_expand(tmp_path: Path) -> None:
+    """Per-section expand state for the secondary sidebar (collection
+    parents + filter branches) survives a quit/relaunch cycle."""
+    p = tmp_path / "scope.toml"
+    original = UiState(
+        expanded_collections=["default", "notes"],
+        expanded_filter_branches=["kinds", "date"],
+    )
+    save(original, p)
+    assert load(p) == original
+
+
+def test_load_partial_panels_table(tmp_path: Path) -> None:
+    """Older scope.toml files lack the new expand fields; load shouldn't
+    break and the fields should default to empty."""
+    p = tmp_path / "scope.toml"
+    p.write_text(
+        "[scope]\ncollections = []\nsources = []\n[panels]\ncollapsed = ['filters']\n",
+        encoding="utf-8",
+    )
+    s = load(p)
+    assert s.collapsed_panels == ["filters"]
+    assert s.expanded_collections == []
+    assert s.expanded_filter_branches == []
+
+
 def test_save_is_atomic(tmp_path: Path) -> None:
     """An interrupted write shouldn't leave a half-written scope.toml.
     We can't easily simulate a crash mid-rename, but we can confirm the

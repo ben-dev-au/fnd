@@ -30,6 +30,12 @@ class UiState:
     collections: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
     collapsed_panels: list[str] = field(default_factory=list)
+    # Per-section expand state within the secondary sidebar. Whole-panel
+    # collapse lives in ``collapsed_panels``; these track the inner
+    # branches/parent rows the user opened. Restored on launch so the
+    # sidebar looks the way it did at quit.
+    expanded_collections: list[str] = field(default_factory=list)
+    expanded_filter_branches: list[str] = field(default_factory=list)
     # Phase F filters. Empty kinds list = "all kinds"; ``filter_date`` of
     # ``"any"`` = "any date". Anything else is treated as a literal token
     # for the DSL pre-pass (kind:pdf, mtime:week, …).
@@ -64,6 +70,12 @@ def load(path: Path | None = None) -> UiState:
         collections=[s for s in scope.get("collections", []) if isinstance(s, str)],
         sources=[s for s in scope.get("sources", []) if isinstance(s, str)],
         collapsed_panels=[s for s in panels.get("collapsed", []) if isinstance(s, str)],
+        expanded_collections=[
+            s for s in panels.get("expanded_collections", []) if isinstance(s, str)
+        ],
+        expanded_filter_branches=[
+            s for s in panels.get("expanded_filter_branches", []) if isinstance(s, str)
+        ],
         filter_kinds=[s for s in filters.get("kinds", []) if isinstance(s, str)],
         filter_date=filter_date,
     )
@@ -80,6 +92,8 @@ def save(state: UiState, path: Path | None = None) -> None:
     doc["scope"] = scope
     panels = tomlkit.table()
     panels["collapsed"] = list(state.collapsed_panels)
+    panels["expanded_collections"] = list(state.expanded_collections)
+    panels["expanded_filter_branches"] = list(state.expanded_filter_branches)
     doc["panels"] = panels
     filters = tomlkit.table()
     filters["kinds"] = list(state.filter_kinds)

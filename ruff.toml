@@ -15,6 +15,12 @@ select = [
 ]
 ignore = [
     "E501",             # line length is enforced by formatter
+    # The TUI uses non-ASCII glyphs as deliberate UX (breadcrumb `›`,
+    # match markers ✓/✗, rule lines `─`, separator dots `·`). These are
+    # NOT confusable in their rendered context.
+    "RUF001",           # ambiguous unicode in string literal
+    "RUF002",           # ambiguous unicode in docstring
+    "RUF003",           # ambiguous unicode in comment
 ]
 
 [lint.flake8-bugbear]

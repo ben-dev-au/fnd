@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from textual import events, on
 from textual.app import App, ComposeResult
@@ -60,7 +60,7 @@ from acorn.render import (
     word_highlight_runs,
 )
 from acorn.rerank import RankingProfile, profile_from_config
-from acorn.tui.actions import REGISTRY, Keymap, load_keymap, resolve_command
+from acorn.tui.actions import REGISTRY, Keymap, load_keymap
 from acorn.tui.preview_scrollbar import MatchAwareScroll
 
 _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
@@ -414,6 +414,23 @@ def _score_style(score: float, max_score: float) -> str:
     return "dim #565f89"
 
 
+def _styled_parent_label(label: Any) -> Any:
+    """Render a tree-parent label in the muted "structural row" style.
+
+    Parents in the Results and Filters trees aren't cursor-selectable
+    when expanded (`_skip_expanded_parents`); Collections parents stay
+    selectable but get the same visual treatment so the parent/child
+    distinction reads consistently across all three trees.
+    """
+    from rich.text import Text
+
+    if isinstance(label, Text):
+        styled = label.copy()
+        styled.stylize("dim")
+        return styled
+    return Text(str(label), style="dim")
+
+
 def _build_label(text: str, score: float, max_score: float) -> Any:
     """Tree label combining a coloured numeric score (left, fixed width)
     with the file/section text (right, may truncate cleanly).
@@ -556,28 +573,34 @@ def _action_show(action_id: str) -> bool:
     return True
 
 
-_KEY_HINT_GLYPHS = {
-    "slash": "/",
-    "colon": ":",
-    "question_mark": "?",
-    "space": "Spc",
-    "tab": "Tab",
-    "enter": "Enter",
-    "escape": "Esc",
-    "up": "Up",
-    "down": "Down",
-    "left": "Left",
-    "right": "Right",
-}
+def render_hint_bar(
+    anchors: tuple[tuple[str, str], ...],
+    contextual: tuple[tuple[str, str], ...] = (),
+) -> Any:
+    """Build the bottom hint bar as a Rich ``Text``.
 
+    Two clusters separated by extra whitespace: ``anchors`` on the left
+    (always present, builds muscle memory), ``contextual`` on the right
+    (changes by focus / screen). Both use the same key-glyph rendering
+    so the visual is identical across the main app and the Settings
+    menu — this is the renderer both call into.
+    """
+    from rich.text import Text
 
-def _format_key_hint(key: str) -> str:
-    """Pretty-print a binding key for the footer hint row.
+    def _cluster(pairs: tuple[tuple[str, str], ...]) -> Text:
+        sep = Text("  │  ", style="dim")
+        out = Text("")
+        for i, (key, label) in enumerate(pairs):
+            if i:
+                out.append_text(sep)
+            out.append_text(Text.from_markup(f"[reverse] {key} [/] {label}"))
+        return out
 
-    Plain ASCII labels — Unicode arrow / return glyphs render
-    unevenly across terminals and the user reported them looking
-    'malformed and backwards' in the live UI."""
-    return _KEY_HINT_GLYPHS.get(key, key)
+    joined = _cluster(anchors)
+    if contextual:
+        joined.append_text(Text("      ", style=""))
+        joined.append_text(_cluster(contextual))
+    return joined
 
 
 class _PrefixingSearcher:
@@ -738,19 +761,6 @@ class AcornApp(App[None]):
        header text (which lives in the sidebar). */
     .chunk-first { padding: 1 0 0 0; }
     #placeholder { color: $text-muted; }
-    #help_overlay {
-        layer: overlay;
-        background: $panel;
-        border: round $accent;
-        margin: 2 4 3 4;
-        padding: 1 2 2 2;
-    }
-    #cmd_palette {
-        dock: bottom;
-        height: 3;
-        padding: 0 1;
-        background: $panel;
-    }
     Tree > .tree--label { padding: 0 1; }
     /* Selected-row highlight: only when the panel actually owns focus
        — sidebar panels stop showing a stale ``current selection`` band
@@ -763,7 +773,7 @@ class AcornApp(App[None]):
     # hints, help overlay, and runtime keymap all share one source.
     BINDINGS = [  # noqa: RUF012 — Textual's App.BINDINGS expects a class-level list literal
         Binding("ctrl+c", "quit", "Quit", show=False),
-        Binding("escape", "dismiss_overlay", "Close overlay", show=False),
+        Binding("escape", "escape_back", "Back", show=False),
         *(
             Binding(
                 key,
@@ -796,6 +806,8 @@ class AcornApp(App[None]):
             self._active_sources: list[str] = []
             self._filter_kinds: list[str] = []
             self._filter_date: str = "any"
+            self._expanded_collections: set[str] = set()
+            self._expanded_filter_branches: set[str] = set()
         else:
             from acorn.state import load as _load_state
 
@@ -805,6 +817,12 @@ class AcornApp(App[None]):
             self._active_sources = list(saved.sources)
             self._filter_kinds = list(saved.filter_kinds)
             self._filter_date = saved.filter_date or "any"
+            self._expanded_collections = set(saved.expanded_collections)
+            # Prune unknown branch names so a renamed branch doesn't get
+            # stuck "expanded" forever.
+            self._expanded_filter_branches = {
+                b for b in saved.expanded_filter_branches if b in ("kinds", "date")
+            }
         self._initial_query = initial_query
         self._searcher: Searcher | None = None
         self._current_query: str = ""
@@ -847,8 +865,6 @@ class AcornApp(App[None]):
         # is the BM25 identity, so the no-config case is unchanged.
         self._config = config
         self._ranking_profile: RankingProfile = self._resolve_profile()
-        # Last `:command` palette result, exposed for tests.
-        self.last_palette_result: str | None = None
         # Cache of (parent_id) → list[FileChunk] so we don't re-fetch the
         # full document on every cursor move within the same file. Keyed by
         # parent_id, invalidated on new query.
@@ -882,6 +898,10 @@ class AcornApp(App[None]):
         # event loop doesn't garbage-collect it mid-run (asyncio task
         # refs are weak — GC == cancellation).
         self._preview_mount_task: object | None = None
+        # Last direction the user moved through a tree (+1 = down, -1 = up).
+        # Drives the parent-skip rule so an Up keypress that lands the
+        # cursor on an expanded parent bounces upward, not downward.
+        self._last_arrow_direction: int = 1
 
     # ── Layout ────────────────────────────────────────────────────
 
@@ -928,15 +948,25 @@ class AcornApp(App[None]):
         tree = self.query_one("#results_pane", Tree)
         tree.show_root = False
         tree.guide_depth = 2
+        # Results parents (file rows) are not cursor-selectable when expanded —
+        # the cursor bounces past them onto the first hit. See
+        # ``_skip_expanded_parent``.
+        tree._skip_expanded_parents = True  # type: ignore[attr-defined]
         # Collections panel — populated from the loaded Config.
         ctree = self.query_one("#collections_panel_tree", Tree)
         ctree.show_root = False
         ctree.guide_depth = 2
+        # Collections parents stay cursor-selectable so Enter still toggles
+        # the whole collection (`_on_collections_panel_selected`).
+        ctree._skip_expanded_parents = False  # type: ignore[attr-defined]
         self._refresh_collections_panel()
         # Filters panel — kind/date selectors that compose into the query.
         ftree = self.query_one("#filters_panel_tree", Tree)
         ftree.show_root = False
         ftree.guide_depth = 2
+        # Filters parents (File type / Modified) are no-ops on Enter — skip
+        # past them when expanded.
+        ftree._skip_expanded_parents = True  # type: ignore[attr-defined]
         self._refresh_filters_panel()
         # Restore any panels the user collapsed-to-header in a previous
         # session.
@@ -1041,46 +1071,113 @@ class AcornApp(App[None]):
             node = getattr(node, "parent", None)
         return "global"
 
+    # Anchor cluster — keys that never move regardless of focus. Muscle
+    # memory: search, settings menu, keybindings, quit. Sourced as a
+    # tuple-of-tuples so the order is explicit.
+    _FOOTER_ANCHORS: tuple[tuple[str, str], tuple[str, str], tuple[str, str], tuple[str, str]] = (
+        ("/", "Search"),
+        (":", "Menu"),
+        ("?", "Keys"),
+        ("q", "Quit"),
+    )
+
+    # Contextual cluster, keyed by focus context — what's *relevant* in
+    # the pane that has focus right now. Empty list = no contextual hints
+    # (anchor cluster alone).
+    _FOOTER_CONTEXTUAL: ClassVar[dict[str, tuple[tuple[str, str], ...]]] = {
+        "query": (
+            ("Enter", "Run"),
+            ("Esc", "Results"),
+        ),
+        "results": (
+            ("o", "Open"),
+            ("Spc", "Peek"),
+            ("Tab", "Search"),
+        ),
+        "preview": (
+            ("j/k", "Scroll"),
+            ("Esc", "Results"),
+        ),
+        "filters": (
+            ("Enter", "Toggle"),
+            ("←/→", "Collapse"),
+            ("Esc", "Results"),
+        ),
+        "collections": (
+            ("Enter", "Toggle"),
+            ("←/→", "Collapse"),
+            ("Esc", "Results"),
+        ),
+    }
+
     def _refresh_footer_hints(self) -> None:
-        """Rebuild the footer-hints Static text from REGISTRY, filtered
-        by the current focus context. Capped at 6 hints — beyond that
-        it stops being a glance."""
+        """Render the bottom hint bar from the anchor + per-focus tables.
+
+        Delegates the actual rendering to :func:`render_hint_bar` so the
+        Settings menu uses the same visual.
+        """
         ctx = self._focus_context()
-        hints: list[str] = []
-        for a in REGISTRY:
-            if not a.show_in_footer:
-                continue
-            if a.contexts and ctx not in a.contexts:
-                continue
-            key = self._acorn_keymap.for_action(a.id)
-            if not key:
-                continue
-            label = a.footer_label or _short_label(a.id)
-            # Style the key glyph distinctly so the eye can scan keys
-            # and labels separately. Rich uses ``[reverse]…[/]`` to set
-            # an inverted background on the key portion.
-            hints.append(f"[reverse] {_format_key_hint(key)} [/] {label}")
-            if len(hints) >= 6:
-                break
+
+        # Overlay state (explain / multi DSL) preempts the per-pane table.
+        # The settings menu lives on the screen_stack and renders its
+        # own hint row, so we don't reach this branch when it's open.
+        overlay_hint: tuple[tuple[str, str], ...] | None = None
+        if self.query("#explain_overlay") or self.query("#multi_panel"):
+            overlay_hint = (("Esc", "Close"),)
+
+        contextual = (
+            overlay_hint if overlay_hint is not None else self._FOOTER_CONTEXTUAL.get(ctx, ())
+        )
+
         import contextlib
 
         with contextlib.suppress(Exception):
-            from rich.text import Text
-
-            sep = Text("  │  ", style="dim")
-            joined = Text("")
-            for i, hint in enumerate(hints):
-                if i:
-                    joined.append_text(sep)
-                joined.append_text(Text.from_markup(hint))
-            self.query_one("#footer_hints", Static).update(joined)
+            self.query_one("#footer_hints", Static).update(
+                render_hint_bar(self._FOOTER_ANCHORS, contextual)
+            )
 
     def on_descendant_focus(self) -> None:  # Textual fires this on focus changes
         self._refresh_footer_hints()
+        # If focus just landed in a tree that opts into parent-skip and the
+        # cursor is parked on an expanded parent, bounce past it before the
+        # user does anything else.
+        focused = self.focused
+        if isinstance(focused, Tree) and getattr(focused, "_skip_expanded_parents", False):
+            node = focused.cursor_node
+            if node is not None and node is not focused.root and node.children and node.is_expanded:
+                self._skip_expanded_parent(focused, 1)
+
+    def _skip_expanded_parent(self, tree: Tree[Any], direction: int) -> None:
+        """Advance the tree's cursor past an expanded-parent row.
+
+        When ``tree._skip_expanded_parents`` is true and the cursor is on
+        an expanded parent (children visible), the cursor is invalid —
+        bounce it one row in ``direction`` (+1 = down, -1 = up) and keep
+        bouncing while we land on more expanded parents. Stops at a leaf,
+        a collapsed parent, or the boundary of the tree.
+        """
+        if not getattr(tree, "_skip_expanded_parents", False):
+            return
+        safety = 0
+        while safety < 16:
+            node = tree.cursor_node
+            if node is None or node is tree.root:
+                return
+            if not node.children or not node.is_expanded:
+                return
+            before = tree.cursor_line
+            if direction >= 0:
+                tree.action_cursor_down()
+            else:
+                tree.action_cursor_up()
+            if tree.cursor_line == before:
+                return  # at boundary
+            safety += 1
 
     def on_key(self, event: events.Key) -> None:
-        """Repurpose Up/Down to navigate between sidebar panels when the
-        focused panel is collapsed-to-header.
+        """Track arrow direction (for the parent-skip rule) and repurpose
+        Up/Down to navigate between sidebar panels when the focused panel
+        is collapsed-to-header.
 
         Inside a collapsed tree the cursor row isn't visible anyway, so
         intra-tree Up/Down moves are noise. While collapsed they instead
@@ -1089,6 +1186,10 @@ class AcornApp(App[None]):
         panels with one hand on the arrow keys. Uncollapsed panels keep
         Textual's default Tree key handling untouched.
         """
+        if event.key == "down":
+            self._last_arrow_direction = 1
+        elif event.key == "up":
+            self._last_arrow_direction = -1
         if event.key not in ("up", "down"):
             return
         tree = self._focused_tree()
@@ -1264,7 +1365,7 @@ class AcornApp(App[None]):
         max_score = max((g.top_score for g in self._groups), default=0.0)
         for i, g in enumerate(self._groups):
             file_node = tree.root.add(
-                _format_file_label(g, max_score=max_score),
+                _styled_parent_label(_format_file_label(g, max_score=max_score)),
                 data={"kind": "file", "group": g},
                 expand=(i == 0),
             )
@@ -1292,6 +1393,16 @@ class AcornApp(App[None]):
 
     @on(Tree.NodeHighlighted)
     def _on_tree_highlight(self, ev: Tree.NodeHighlighted[Any]) -> None:
+        # Parent-skip rule: if this tree opts in and the cursor lands on
+        # an expanded parent, bounce past it before triggering side-effects
+        # like preview rendering. The bounce posts a new NodeHighlighted on
+        # the resolved child which re-enters this handler.
+        tree = ev.control
+        if getattr(tree, "_skip_expanded_parents", False):
+            node = ev.node
+            if node is not tree.root and node.children and node.is_expanded:
+                self._skip_expanded_parent(tree, self._last_arrow_direction)
+                return
         data: Any = ev.node.data
         if not isinstance(data, dict):
             return
@@ -2122,6 +2233,8 @@ class AcornApp(App[None]):
                 collections=list(self._collections),
                 sources=list(self._active_sources),
                 collapsed_panels=sorted(self._collapsed_panels),
+                expanded_collections=sorted(self._expanded_collections),
+                expanded_filter_branches=sorted(self._expanded_filter_branches),
                 filter_kinds=list(self._filter_kinds),
                 filter_date=self._filter_date,
             )
@@ -2148,6 +2261,9 @@ class AcornApp(App[None]):
         names = sorted(cfg.collections.keys()) if cfg else []
         active_collections = set(self._collections)
         active_sources = set(self._active_sources)
+        # Drop persisted expand entries for collections that no longer
+        # exist so the saved set stays bounded over time.
+        self._expanded_collections &= set(names)
         tree.show_root = False
         tree.clear()
         active_source_count = 0
@@ -2158,7 +2274,11 @@ class AcornApp(App[None]):
             n_sources = len(col.sources) if col else 0
             total_source_count += n_sources
             label = f"{marker}  {name}  ({n_sources} source{'s' if n_sources != 1 else ''})"
-            node = tree.root.add(label, data={"kind": "collection", "name": name}, expand=False)
+            node = tree.root.add(
+                _styled_parent_label(label),
+                data={"kind": "collection", "name": name},
+                expand=name in self._expanded_collections,
+            )
             if col:
                 for i, s in enumerate(col.sources):
                     source_id = str(Path(str(s.path)).expanduser().resolve())
@@ -2195,23 +2315,27 @@ class AcornApp(App[None]):
             tree = self.query_one("#filters_panel_tree", Tree)
         except Exception:
             return
-        # Preserve which branches the user had open so a refresh after a
-        # toggle doesn't snap the panel back to all-collapsed.
-        was_expanded: set[str] = set()
+        # Branch expand state lives in ``_expanded_filter_branches`` and
+        # is persisted across runs. Re-sync it from the live tree before
+        # clearing so a NodeExpanded that came in between refreshes isn't
+        # lost. (Pruning to known branches happens in __init__.)
         for branch in tree.root.children:
             data = branch.data if isinstance(branch.data, dict) else {}
             cat = data.get("category")
-            if isinstance(cat, str) and branch.is_expanded:
-                was_expanded.add(cat)
+            if isinstance(cat, str) and cat in ("kinds", "date"):
+                if branch.is_expanded:
+                    self._expanded_filter_branches.add(cat)
+                else:
+                    self._expanded_filter_branches.discard(cat)
         tree.show_root = False
         tree.clear()
 
         active_kinds = set(self._filter_kinds)
         kind_summary = f"{len(active_kinds)} of {len(_FILTER_KINDS)}" if active_kinds else "any"
         kind_node = tree.root.add(
-            f"File type        ({kind_summary})",
+            _styled_parent_label(f"File type        ({kind_summary})"),
             data={"kind": "filter_category", "category": "kinds"},
-            expand="kinds" in was_expanded,
+            expand="kinds" in self._expanded_filter_branches,
         )
         for k in _FILTER_KINDS:
             marker = "●" if k in active_kinds else "○"
@@ -2222,9 +2346,9 @@ class AcornApp(App[None]):
 
         date_summary = self._filter_date or "any"
         date_node = tree.root.add(
-            f"Modified         ({date_summary})",
+            _styled_parent_label(f"Modified         ({date_summary})"),
             data={"kind": "filter_category", "category": "date"},
-            expand="date" in was_expanded,
+            expand="date" in self._expanded_filter_branches,
         )
         for d in _FILTER_DATES:
             marker = "●" if d == self._filter_date else "○"
@@ -2308,34 +2432,134 @@ class AcornApp(App[None]):
         if self._current_query:
             self._run_query(self._current_query)
 
+    @on(Tree.NodeExpanded, "#collections_panel_tree")
+    def _on_collection_branch_expanded(self, ev: Tree.NodeExpanded[dict[str, object]]) -> None:
+        data = ev.node.data if isinstance(ev.node.data, dict) else {}
+        if data.get("kind") != "collection":
+            return
+        name = str(data.get("name") or "")
+        if name and name not in self._expanded_collections:
+            self._expanded_collections.add(name)
+            self._persist_state()
+
+    @on(Tree.NodeCollapsed, "#collections_panel_tree")
+    def _on_collection_branch_collapsed(self, ev: Tree.NodeCollapsed[dict[str, object]]) -> None:
+        data = ev.node.data if isinstance(ev.node.data, dict) else {}
+        if data.get("kind") != "collection":
+            return
+        name = str(data.get("name") or "")
+        if name and name in self._expanded_collections:
+            self._expanded_collections.discard(name)
+            self._persist_state()
+
+    @on(Tree.NodeExpanded, "#filters_panel_tree")
+    def _on_filter_branch_expanded(self, ev: Tree.NodeExpanded[dict[str, object]]) -> None:
+        data = ev.node.data if isinstance(ev.node.data, dict) else {}
+        if data.get("kind") != "filter_category":
+            return
+        cat = str(data.get("category") or "")
+        if cat in ("kinds", "date") and cat not in self._expanded_filter_branches:
+            self._expanded_filter_branches.add(cat)
+            self._persist_state()
+
+    @on(Tree.NodeCollapsed, "#filters_panel_tree")
+    def _on_filter_branch_collapsed(self, ev: Tree.NodeCollapsed[dict[str, object]]) -> None:
+        data = ev.node.data if isinstance(ev.node.data, dict) else {}
+        if data.get("kind") != "filter_category":
+            return
+        cat = str(data.get("category") or "")
+        if cat in self._expanded_filter_branches:
+            self._expanded_filter_branches.discard(cat)
+            self._persist_state()
+
+    @on(Tree.NodeExpanded, "#results_pane")
+    def _bounce_on_results_expand(self, ev: Tree.NodeExpanded[Any]) -> None:
+        self._bounce_after_expand(ev)
+
+    @on(Tree.NodeExpanded, "#filters_panel_tree")
+    def _bounce_on_filters_expand(self, ev: Tree.NodeExpanded[Any]) -> None:
+        self._bounce_after_expand(ev)
+
+    def _bounce_after_expand(self, ev: Tree.NodeExpanded[Any]) -> None:
+        """If the just-expanded node is where the cursor sits, bounce past
+        it onto its first child. Keeps the parent-skip rule consistent
+        regardless of how the expand was triggered (Right arrow, Space,
+        programmatic)."""
+        tree = ev.control
+        if not getattr(tree, "_skip_expanded_parents", False):
+            return
+        if tree.cursor_node is ev.node and ev.node.children:
+            # Defer one tick — newly-mounted children may not have line
+            # indices yet, and ``action_cursor_down`` reads ``cursor_line``.
+            tree_ref = tree
+            self.call_after_refresh(lambda: self._skip_expanded_parent(tree_ref, 1))
+
     def action_dismiss_overlay(self) -> None:
-        """Close any open overlay (help, palette, explain, multi).
-        No-op if none."""
-        for selector in (
-            "#help_overlay",
-            "#cmd_palette",
-            "#explain_overlay",
-            "#multi_panel",
-        ):
+        """Close any remaining in-app overlay (explain, multi DSL).
+
+        Kept as a public action so palette / command-driven dismissal
+        still works. The Esc key now binds to :meth:`action_escape_back`
+        which delegates here first, then cascades focus toward the
+        results pane.
+        """
+        for selector in ("#explain_overlay", "#multi_panel"):
             for w in self.query(selector):
                 w.remove()
 
-    def action_show_help(self) -> None:
-        """Toggle a help overlay listing every action and its key."""
-        existing = self.query("#help_overlay")
-        if existing:
-            for w in existing:
-                w.remove()
-            return
-        from textual.widgets import Markdown as _Md
+    def action_escape_back(self) -> None:
+        """One-step Esc cascade toward the results pane.
 
-        lines: list[str] = ["# Help", "", "| key | command | description |", "|---|---|---|"]
-        for a in REGISTRY:
-            key = self._acorn_keymap.for_action(a.id) or "—"
-            cmd = f":{a.palette_command}"
-            lines.append(f"| `{key}` | `{cmd}` | {a.description} |")
-        overlay = Vertical(_Md("\n".join(lines)), id="help_overlay")
-        self.mount(overlay)
+        Order of precedence (first match wins):
+
+        1. If an in-app overlay (explain trace, :multi panel) is up,
+           close it. Focus is left wherever it was.
+        2. Otherwise, branch on the current focus context:
+
+           - ``query`` / ``preview`` / ``filters`` / ``collections``
+             → focus the results pane.
+           - ``results`` / ``global`` → no-op (you're already at the
+             primary pane, or no pane is recognised).
+
+        The unified Settings menu and the Collections form live on the
+        screen stack and override this binding with their own ``Esc``
+        handler (back one level / dismiss form). This action only fires
+        when the main app screen is on top.
+        """
+        # Step 1 — dismiss in-app overlay if present.
+        dismissed = False
+        for selector in ("#explain_overlay", "#multi_panel"):
+            for w in self.query(selector):
+                w.remove()
+                dismissed = True
+        if dismissed:
+            return
+
+        # Step 2 — cascade focus toward the results pane.
+        ctx = self._focus_context()
+        if ctx in ("query", "preview", "filters", "collections"):
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                self.query_one("#results_pane", Tree).focus()
+
+    def action_show_help(self) -> None:
+        """Open the Settings menu pre-navigated to the Keybindings section.
+
+        The standalone help overlay was removed in the Settings overhaul —
+        ``?`` now lands the user inside the menu's filterable Keybindings
+        list, which doubles as the up-to-date cheat sheet.
+        """
+        from acorn.tui.menu import SECTION_KEYBINDINGS
+        from acorn.tui.settings_screen import (
+            SettingsScreen,
+            open_settings_section,
+        )
+
+        # Already in the menu — close the current stack before pushing
+        # Keybindings so Esc returns to the main app in one press.
+        if isinstance(self.screen, SettingsScreen):
+            self._close_settings_stack()
+        open_settings_section(self, SECTION_KEYBINDINGS)
 
     def action_show_explain_overlay(self) -> None:
         """Toggle a JSON trace overlay for the most-recent search.
@@ -2372,17 +2596,27 @@ class AcornApp(App[None]):
         self.mount(overlay)
 
     def action_open_command_palette(self) -> None:
-        """Pop a one-shot input that runs ``resolve_command`` on submit."""
+        """Open the unified Settings & Commands menu.
 
-        existing = self.query("#cmd_palette")
-        if existing:
-            for w in existing:
-                w.remove()
+        Replaces the original blind-typed palette: the user lands on a
+        full-screen list of every action and setting, with a search Input
+        at the top for free-text filtering across all sections.
+        """
+        from acorn.tui.settings_screen import SettingsScreen, open_settings
+
+        if isinstance(self.screen, SettingsScreen):
+            self._close_settings_stack()
             return
-        palette_input = Input(placeholder="Command…", id="cmd_palette_input")
-        wrapper = Vertical(palette_input, id="cmd_palette")
-        self.mount(wrapper)
-        palette_input.focus()
+        open_settings(self)
+
+    def _close_settings_stack(self) -> None:
+        """Pop every nested SettingsScreen so the user returns to the
+        main app. Used by the Esc cascade and by re-pressing ``:`` while
+        the menu is open."""
+        from acorn.tui.settings_screen import SettingsScreen
+
+        while isinstance(self.screen, SettingsScreen):
+            self.pop_screen()
 
     def action_open_multi_input(self) -> None:
         """Open the :multi DSL panel for typed sub-queries + intent line.
@@ -2431,41 +2665,112 @@ class AcornApp(App[None]):
             self._run_query(" ".join(lexical_parts))
 
     def action_open_collections_form(self) -> None:
-        """Push the Collections screen for browsing / editing collections."""
-        from acorn.config import default_config_path
-        from acorn.tui.collections_screen import CollectionsScreen
+        """F3 entry: push the Collections sub-screen directly. One Esc
+        returns to the main app."""
+        from acorn.tui.menu import SECTION_COLLECTIONS
+        from acorn.tui.settings_screen import SettingsScreen, open_settings_section
 
-        # Use the config that was loaded at TUI launch as the starting point;
-        # the screen will reload from disk before showing to pick up any
-        # external edits.
         if self._config is None:
             return
-        screen = CollectionsScreen(self._config, config_path=default_config_path())
-        self.push_screen(screen, callback=self._on_collections_form_dismissed)
+        if isinstance(self.screen, SettingsScreen):
+            self._close_settings_stack()
+        open_settings_section(self, SECTION_COLLECTIONS)
 
-    def _on_collections_form_dismissed(self, _result: object) -> None:
-        """The form may have written changes to disk; reload our cached
-        Config so subsequent searches use the new collection set."""
-        from acorn.config import load
+    def action_open_config_file(self) -> None:
+        """Drop into ``$EDITOR`` on the user's config.toml; reload Config
+        on return. On validation failure, push the recovery screen."""
+        import os
+        import subprocess
 
-        self._config = load()
-        # Recompute ranking profile in case the active collection's profile
-        # was edited.
+        from acorn.config import (
+            CONFIG_TEMPLATE,
+            default_config_path,
+            load,
+        )
+
+        path = default_config_path()
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(CONFIG_TEMPLATE, encoding="utf-8")
+        # Close any settings screens so the editor takes over the terminal
+        # cleanly; otherwise Textual's screen_stack restoration can flash a
+        # half-painted menu over the freshly-loaded TUI.
+        from acorn.tui.settings_screen import SettingsScreen
+
+        while isinstance(self.screen, SettingsScreen):
+            self.pop_screen()
+        editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
+        with self.suspend():
+            subprocess.call([editor, str(path)])
+        try:
+            self._config = load()
+        except Exception as e:
+            from acorn.tui.config_recovery_screen import (
+                ConfigRecoveryScreen,
+                _format_error,
+            )
+
+            self.push_screen(
+                ConfigRecoveryScreen(
+                    error_text=_format_error(e, path),
+                    config_path=path,
+                ),
+                callback=self._on_recovery_done,
+            )
+            return
         self._ranking_profile = self._resolve_profile()
         self._refresh_status()
+        self._refresh_collections_panel()
+        self.notify("Reloaded config", timeout=2)
 
-    @on(Input.Submitted, "#cmd_palette_input")
-    def _on_palette_submit(self, ev: Input.Submitted) -> None:
-        name = ev.value.strip().lstrip(":")
-        action = resolve_command(name)
-        # Close the palette regardless.
-        for w in self.query("#cmd_palette"):
-            w.remove()
-        if action is None:
-            self.last_palette_result = f"unknown:{name}"
+    def _on_recovery_done(self, result: object) -> None:
+        from acorn.config import load
+
+        if result == "valid":
+            try:
+                self._config = load()
+                self._ranking_profile = self._resolve_profile()
+                self._refresh_status()
+                self._refresh_collections_panel()
+            except Exception:
+                pass
+
+    def _reindex_collection_async(self, name: str) -> None:
+        """Worker that drops + rebuilds chunks for ``name``. Notifies on
+        start/finish/error. Reused by SourceFormScreen, RenameCollection,
+        and the Reindex action in the per-collection sub-menu."""
+        # Reload config so we hit the latest source list.
+        import contextlib
+
+        from acorn.config import load
+        from acorn.index import build_index_from_config
+
+        with contextlib.suppress(Exception):
+            self._config = load()
+        cfg = self._config
+        if cfg is None or name not in cfg.collections:
             return
-        self.last_palette_result = action.id
-        # Run the action by name.
-        method = getattr(self, f"action_{action.id}", None)
-        if callable(method):
-            method()
+        col = cfg.collections[name]
+        index_dir = self._index_dir
+
+        def _run() -> None:
+            self.call_from_thread(
+                self.notify,
+                f"Reindexing {name}…",
+                severity="information",
+                timeout=3,
+            )
+            try:
+                n = build_index_from_config(
+                    config=col, collection=name, index_dir=index_dir, rebuild=True
+                )
+            except Exception as e:
+                self.call_from_thread(self.notify, f"Reindex failed: {e}", severity="error")
+                return
+            self.call_from_thread(
+                self.notify,
+                f"Indexed {n} chunks for {name}.",
+                severity="information",
+            )
+
+        self.run_worker(_run, thread=True, exclusive=False, group=f"reindex-{name}")
