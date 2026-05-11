@@ -44,7 +44,7 @@ KIND_TOGGLE = "toggle"
 KIND_PICKER = "picker"
 KIND_EXTERNAL = "external"
 
-# Section ids the `?` / F3 shortcuts push directly as sub-screens.
+# Section ids the `?` shortcut pushes directly as a sub-screen.
 SECTION_KEYBINDINGS = "keybindings"
 SECTION_PREFERENCES = "preferences"
 SECTION_COLLECTIONS = "collections"
@@ -215,7 +215,6 @@ _KEYS_GLOBAL: tuple[tuple[str, str, str], ...] = (
     (":", "open_command_palette", "Open settings & commands"),
     ("?", "show_help", "Open keybindings"),
     ("Tab", "toggle_focus", "Toggle focus query ↔ results"),
-    ("F3", "open_collections_form", "Open Settings › Collections"),
     ("Ctrl+C", "quit", "Quit"),
     ("Esc", "", "Back / cascade focus to results"),
 )
@@ -801,7 +800,7 @@ def build_root_items(app: AcornApp) -> tuple[MenuItem, ...]:
 
 
 # Section providers exposed by id — used by `open_settings_section` and
-# the `?` / F3 shortcuts to push a specific sub-screen directly.
+# the `?` shortcut to push a specific sub-screen directly.
 _SECTION_PROVIDERS: dict[str, Callable[[AcornApp], tuple[MenuItem, ...]]] = {
     SECTION_PREFERENCES: _provider_preferences,
     SECTION_COLLECTIONS: _provider_collections,
