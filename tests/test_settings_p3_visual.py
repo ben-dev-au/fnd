@@ -81,10 +81,17 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_root_rows_show_trailing_summaries(built_index: Path) -> None:
-    """Spec: IA › Root — every drill row shows what's inside."""
+async def test_root_rows_show_trailing_summaries(
+    built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec: IA › Root — every drill row shows what's inside (always_show mode)."""
     from acorn.tui import AcornApp
     from acorn.tui.settings_screen import SettingsList, SettingsScreen
+
+    # Isolate from the user's real config so drill_summary_mode stays at
+    # the default "always_show" regardless of what is on disk.
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
 
     app = AcornApp(index_dir=built_index)
     async with app.run_test() as pilot:
