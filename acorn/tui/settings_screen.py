@@ -1038,6 +1038,50 @@ class PickerScreen(Screen[None]):
 # ── Collection-form screens (rebuilt from CollectionsScreen) ────────
 
 
+def _split_includes_globs(globs: list[str]) -> tuple[list[str], str]:
+    """Map a list of includes globs back to ``(ext_keys, custom_blob)``.
+
+    A glob is recognised as a preset extension iff it has the canonical
+    ``**/*.<ext>`` shape; anything else falls through to the custom blob
+    (comma-joined) so the user keeps their original pattern verbatim.
+    """
+    from acorn.config import INDEXER_FILETYPES
+
+    exts: list[str] = []
+    leftover: list[str] = []
+    for g in globs:
+        matched_ext: str | None = None
+        for ext in INDEXER_FILETYPES:
+            if g == f"**/*.{ext}":
+                matched_ext = ext
+                break
+        if matched_ext is not None:
+            exts.append(matched_ext)
+        else:
+            leftover.append(g)
+    return exts, ", ".join(leftover)
+
+
+def _split_excludes_globs(globs: list[str]) -> tuple[list[str], str]:
+    """Map excludes globs back to ``(preset_keys, custom_blob)``.
+
+    A preset is considered selected iff every glob it ships is present.
+    Once a preset's globs are consumed they are removed from the remaining
+    pool; whatever's left becomes the comma-joined custom blob.
+    """
+    from acorn.config import EXCLUDES_PRESETS
+
+    remaining = list(globs)
+    preset_keys: list[str] = []
+    for key, preset in EXCLUDES_PRESETS.items():
+        preset_globs = preset["globs"]
+        if all(g in remaining for g in preset_globs):
+            preset_keys.append(key)
+            for g in preset_globs:
+                remaining.remove(g)
+    return preset_keys, ", ".join(remaining)
+
+
 class SourceFormScreen(Screen[None]):
     """Per-source editor.
 
@@ -1080,8 +1124,10 @@ class SourceFormScreen(Screen[None]):
         self._source_index = source_index  # None = adding new
         self._fields: dict[str, Any] = {
             "path": "",
-            "includes": "",
-            "excludes": "",
+            "includes": [],  # list[str] of indexer ext keys (md / pdf / …)
+            "includes_custom": "",  # comma-separated free-form globs
+            "excludes_presets": [],  # list[str] of EXCLUDES_PRESETS keys
+            "excludes_custom": "",  # comma-separated free-form globs
             "filter": "",
             "follow_symlinks": False,
         }
@@ -1129,23 +1175,77 @@ class SourceFormScreen(Screen[None]):
         if not (0 <= self._source_index < len(sources)):
             return
         s = sources[self._source_index]
+        exts, includes_custom = _split_includes_globs(list(s.includes))
+        preset_keys, excludes_custom = _split_excludes_globs(list(s.excludes))
         self._fields = {
             "path": str(s.path),
-            "includes": ", ".join(s.includes),
-            "excludes": ", ".join(s.excludes),
+            "includes": exts,
+            "includes_custom": includes_custom,
+            "excludes_presets": preset_keys,
+            "excludes_custom": excludes_custom,
             "filter": s.frontmatter_filter or "",
             "follow_symlinks": bool(s.follow_symlinks),
         }
-        self._snapshot = dict(self._fields)
+        self._snapshot = {
+            "path": self._fields["path"],
+            "includes": list(self._fields["includes"]),
+            "includes_custom": self._fields["includes_custom"],
+            "excludes_presets": list(self._fields["excludes_presets"]),
+            "excludes_custom": self._fields["excludes_custom"],
+            "filter": self._fields["filter"],
+            "follow_symlinks": self._fields["follow_symlinks"],
+        }
 
     def _populate_fields(self) -> None:
         self.query_one(SettingsList).set_items(self._build_field_items())
 
     def _build_field_items(self) -> list[MenuItem]:
+        from acorn.config import EXCLUDES_PRESETS, INDEXER_FILETYPES
+
         return [
             self._field_item("path", "Path", hint="path or ~/path"),
-            self._field_item("includes", "Includes", hint="comma-separated globs"),
-            self._field_item("excludes", "Excludes", hint="comma-separated globs"),
+            MenuItem(
+                id="form.includes",
+                label="Includes",
+                kind=KIND_PICKER,
+                multi=True,
+                choices_provider=lambda _app: [
+                    *(
+                        ChoiceOption(value=ext, label=label)
+                        for ext, label in INDEXER_FILETYPES.items()
+                    ),
+                    ChoiceOption(
+                        value="__custom__",
+                        label="Custom glob…",
+                        description="Add a free-form glob pattern (e.g. `**/*.org`).",
+                    ),
+                ],
+                picker_getter=lambda _app: self._includes_picker_state(),
+                picker_setter=lambda _app, vs: self._set_includes(vs),
+            ),
+            MenuItem(
+                id="form.excludes",
+                label="Excludes",
+                kind=KIND_PICKER,
+                multi=True,
+                choices_provider=lambda _app: [
+                    *(
+                        ChoiceOption(
+                            value=key,
+                            label=preset["label"],
+                            description=", ".join(preset["globs"]),
+                        )
+                        for key, preset in EXCLUDES_PRESETS.items()
+                    ),
+                    ChoiceOption(
+                        value="__custom__",
+                        label="Custom glob…",
+                        description="Add a free-form glob pattern (comma-separated).",
+                    ),
+                ],
+                picker_getter=lambda _app: self._excludes_picker_state(),
+                picker_setter=lambda _app, vs: self._set_excludes(vs),
+            ),
             self._field_item("filter", "Filter", hint="frontmatter DSL"),
             MenuItem(
                 id="form.follow_symlinks",
@@ -1155,6 +1255,47 @@ class SourceFormScreen(Screen[None]):
                 toggle_setter=lambda _app, v: self._set_follow(v),
             ),
         ]
+
+    def _includes_picker_state(self) -> list[str]:
+        state = list(self._fields["includes"])
+        if str(self._fields.get("includes_custom") or "").strip():
+            state.append("__custom__")
+        return state
+
+    def _excludes_picker_state(self) -> list[str]:
+        state = list(self._fields["excludes_presets"])
+        if str(self._fields.get("excludes_custom") or "").strip():
+            state.append("__custom__")
+        return state
+
+    def _set_includes(self, values: list[str]) -> None:
+        picked = list(values)
+        wants_custom = "__custom__" in picked
+        self._fields["includes"] = [v for v in picked if v != "__custom__"]
+        if wants_custom and not str(self._fields.get("includes_custom") or "").strip():
+            self._prompt_custom("includes_custom", "Includes custom glob")
+        elif not wants_custom:
+            self._fields["includes_custom"] = ""
+        self.query_one(SettingsList).refresh_values()
+
+    def _set_excludes(self, values: list[str]) -> None:
+        picked = list(values)
+        wants_custom = "__custom__" in picked
+        self._fields["excludes_presets"] = [v for v in picked if v != "__custom__"]
+        if wants_custom and not str(self._fields.get("excludes_custom") or "").strip():
+            self._prompt_custom("excludes_custom", "Excludes custom globs (comma-separated)")
+        elif not wants_custom:
+            self._fields["excludes_custom"] = ""
+        self.query_one(SettingsList).refresh_values()
+
+    def _prompt_custom(self, field_key: str, label: str) -> None:
+        item = MenuItem(
+            id=f"form.{field_key}",
+            label=label,
+            kind=KIND_SCALAR,
+            value_getter=lambda _app, key=field_key: str(self._fields.get(key) or ""),
+        )
+        self.query_one(EditBar).open(item, str(self._fields.get(field_key) or ""))
 
     def _field_item(self, key: str, label: str, *, hint: str) -> MenuItem:
         def _get(_app: Any) -> str:
@@ -1182,7 +1323,9 @@ class SourceFormScreen(Screen[None]):
     @on(SettingsList.Activated)
     def _on_field_activated(self, ev: SettingsList.Activated) -> None:
         item = ev.item
-        if item.kind == KIND_SCALAR:
+        if item.kind == KIND_PICKER:
+            self.app.push_screen(PickerScreen(item))
+        elif item.kind == KIND_SCALAR:
             current = self._fields.get(item.id.split(".", 1)[-1], "")
             if item.id == "form.filter":
                 current = self._fields["filter"]
@@ -1284,6 +1427,7 @@ class SourceFormScreen(Screen[None]):
         from pathlib import Path
 
         from acorn.config import (
+            EXCLUDES_PRESETS,
             CollectionConfig,
             SourceConfig,
             default_config_path,
@@ -1302,11 +1446,24 @@ class SourceFormScreen(Screen[None]):
                 title="Invalid source",
             )
             return
+        # Reassemble globs from picker-driven fields.
+        includes_globs: list[str] = [f"**/*.{ext}" for ext in self._fields["includes"]]
+        for g in str(self._fields.get("includes_custom") or "").split(","):
+            g = g.strip()
+            if g:
+                includes_globs.append(g)
+        excludes_globs: list[str] = []
+        for preset_id in self._fields["excludes_presets"]:
+            excludes_globs.extend(EXCLUDES_PRESETS[preset_id]["globs"])
+        for g in str(self._fields.get("excludes_custom") or "").split(","):
+            g = g.strip()
+            if g:
+                excludes_globs.append(g)
         try:
             new_source = SourceConfig(
                 path=Path(path),
-                includes=[s.strip() for s in str(self._fields["includes"]).split(",") if s.strip()],
-                excludes=[s.strip() for s in str(self._fields["excludes"]).split(",") if s.strip()],
+                includes=includes_globs,
+                excludes=excludes_globs,
                 follow_symlinks=bool(self._fields["follow_symlinks"]),
                 frontmatter_filter=(str(self._fields["filter"]) or None),
             )
