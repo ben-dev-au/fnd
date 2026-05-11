@@ -622,8 +622,59 @@ class SettingsScreen(Screen[None]):
     # ── Footer ──────────────────────────────────────────────────
 
     def _render_footer(self) -> None:
+        """Pick the hint-bar cluster based on focus, edit-bar state,
+        breadcrumb, and cursor row."""
         app: AcornApp = self.app  # type: ignore[assignment]
-        self.query_one("#footer_hints", Static).update(_hint_bar(app, _SETTINGS_HINTS))
+        cluster = self._hint_cluster()
+        self.query_one("#footer_hints", Static).update(_hint_bar(app, cluster))
+
+    def _hint_cluster(self) -> tuple[tuple[str, str], ...]:
+        """Choose the contextual hint cluster for the current state.
+
+        Priority: edit-bar open > search input focused > Keybindings
+        sub-screen > reveal-capable cursor row > default.
+        """
+        # Edit-bar open: just the save/cancel pair.
+        try:
+            bar = self.query_one(EditBar)
+            if "-hidden" not in bar.classes:
+                return (("⏎", "Save"), ("Esc", "Cancel"))
+        except Exception:
+            pass
+
+        # Search input focused: hand-off / clear cluster.
+        focused = self.focused
+        if isinstance(focused, Input) and getattr(focused, "id", None) == "settings_search":
+            return (("↓", "Results"), ("⏎", "Open first"), ("Esc", "Clear"))
+
+        # Keybindings sub-screen: ⏎ Run · [key] Run directly · Esc Back.
+        if self._breadcrumb[-1:] == ("Keybindings",):
+            return (("⏎", "Run"), ("[key]", "Run directly"), ("Esc", "Back"))
+
+        # Default cluster — possibly with Shift+⏎ Reveal appended.
+        cluster: tuple[tuple[str, str], ...] = (
+            ("↑↓", "Nav"),
+            ("⏎", "Open"),
+            ("←", "Back"),
+            ("/", "Filter"),
+        )
+        try:
+            lst = self.query_one(SettingsList)
+            if 0 <= lst.cursor_index < len(lst._items):
+                item = lst._items[lst.cursor_index]
+                if item.id in ("root.open_config_file", "root.open_keybindings_file"):
+                    cluster = (*cluster, ("Shift+⏎", "Reveal"))
+        except Exception:
+            pass
+        return cluster
+
+    def _refresh_hint_bar(self) -> None:
+        """Public-ish entry to recompute the hint bar after focus or
+        cursor-row changes."""
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self._render_footer()
 
     # ── Search ──────────────────────────────────────────────────
 
@@ -699,8 +750,17 @@ class SettingsScreen(Screen[None]):
         item = ev.item
         if item is None:
             strip.clear()
-            return
-        strip.set(item.description or "", self._row_metadata(item))
+        else:
+            strip.set(item.description or "", self._row_metadata(item))
+        # Hint bar may need a "Shift+⏎ Reveal" append/strip depending on row.
+        self._refresh_hint_bar()
+
+    def on_descendant_focus(self, _ev: events.DescendantFocus) -> None:
+        """Re-render the hint bar when focus moves (search ↔ list)."""
+        self._refresh_hint_bar()
+
+    def on_descendant_blur(self, _ev: events.DescendantBlur) -> None:
+        self._refresh_hint_bar()
 
     def _row_metadata(self, item: MenuItem) -> str:
         """Build the 2nd-line metadata for the detail strip — storage path,
@@ -738,6 +798,7 @@ class SettingsScreen(Screen[None]):
             if item.value_getter is not None:
                 current = item.value_getter(app)
             self.query_one(EditBar).open(item, current)
+            self._refresh_hint_bar()
             return
         if item.kind == KIND_PICKER:
             self.app.push_screen(PickerScreen(item))
