@@ -97,7 +97,8 @@ async def test_includes_field_opens_filetypes_picker(built_index: Path) -> None:
         from acorn.config import INDEXER_FILETYPES
 
         choice_values = [c.value for c in app.screen._choices]
-        assert set(choice_values) == set(INDEXER_FILETYPES.keys())
+        # Every indexer-supported extension appears, plus the custom escape hatch.
+        assert set(INDEXER_FILETYPES.keys()) <= set(choice_values)
 
 
 @pytest.mark.asyncio
@@ -242,3 +243,91 @@ async def test_esc_discards_wizard_with_no_side_effects(
     after = load(default_config_path()).collections
     assert "ghost" not in after, "Esc must not create an empty collection"
     assert set(after.keys()) == set(before.keys())
+
+
+@pytest.mark.asyncio
+async def test_includes_picker_includes_custom_entry(built_index: Path) -> None:
+    """Spec: Wizard › Includes — `Custom glob…` escape hatch."""
+    from acorn.tui import AcornApp
+    from acorn.tui.settings_screen import (
+        AddCollectionWizard,
+        PickerScreen,
+        SettingsList,
+    )
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(AddCollectionWizard())
+        await pilot.pause()
+        wiz = app.screen
+        assert isinstance(wiz, AddCollectionWizard)
+        lst = wiz.query_one(SettingsList)
+        idx = next(i for i, it in enumerate(lst._items) if it.id == "wiz.includes")
+        lst.cursor_index = idx
+        await pilot.press("enter")
+        await pilot.pause()
+        picker = app.screen
+        assert isinstance(picker, PickerScreen)
+        values = [c.value for c in picker._choices]
+        assert "__custom__" in values, f"expected `__custom__` choice; got {values}"
+
+
+@pytest.mark.asyncio
+async def test_excludes_picker_includes_custom_entry(built_index: Path) -> None:
+    """Spec: Wizard › Excludes — `Custom glob…` escape hatch."""
+    from acorn.tui import AcornApp
+    from acorn.tui.settings_screen import (
+        AddCollectionWizard,
+        PickerScreen,
+        SettingsList,
+    )
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(AddCollectionWizard())
+        await pilot.pause()
+        wiz = app.screen
+        assert isinstance(wiz, AddCollectionWizard)
+        lst = wiz.query_one(SettingsList)
+        idx = next(i for i, it in enumerate(lst._items) if it.id == "wiz.excludes")
+        lst.cursor_index = idx
+        await pilot.press("enter")
+        await pilot.pause()
+        picker = app.screen
+        assert isinstance(picker, PickerScreen)
+        values = [c.value for c in picker._choices]
+        assert "__custom__" in values, f"expected `__custom__` choice; got {values}"
+
+
+@pytest.mark.asyncio
+async def test_set_includes_with_custom_sentinel_strips_and_prompts(
+    built_index: Path,
+) -> None:
+    """Setting includes via the picker with `__custom__` selected strips
+    the sentinel from `_fields["includes"]` and opens the EditBar."""
+    from textual.widgets import Input
+
+    from acorn.tui import AcornApp
+    from acorn.tui.settings_screen import AddCollectionWizard, EditBar
+
+    app = AcornApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        wiz = AddCollectionWizard()
+        app.push_screen(wiz)
+        await pilot.pause()
+        # Simulate the picker committing `md` plus the custom sentinel.
+        wiz._set_includes(["md", "__custom__"])
+        await pilot.pause()
+        # Sentinel filtered out of the regular extensions list.
+        assert wiz._fields["includes"] == ["md"]
+        # Edit bar opened to prompt for the custom value.
+        bar = wiz.query_one(EditBar)
+        assert "-hidden" not in bar.classes
+        # Submit a custom glob; it lands in includes_custom.
+        bar.query_one("#editor_input", Input).value = "**/*.org"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert wiz._fields["includes_custom"] == "**/*.org"
