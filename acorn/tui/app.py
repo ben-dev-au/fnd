@@ -1451,6 +1451,13 @@ class AcornApp(App[None]):
         # decodes off-thread and its callback re-enters via the chunk
         # data path.
         self._cancel_preview_mount_task()
+        # Hide the previously-active container so the user sees a clean
+        # "loading" state during the decode. Without this, large files
+        # (e.g. a 1000-page PDF with thousands of chunks) keep showing
+        # the previous file's content for the full decode wall-clock,
+        # making the click look unresponsive.
+        if self._active_preview is not None and self._active_preview.parent_doc_id != parent_id:
+            self._active_preview.add_class("-hidden")
         self._show_progress_bar(total=None)
 
         target_parent_id = parent_id
@@ -1763,9 +1770,10 @@ class AcornApp(App[None]):
                     continue
                 self._mount_chunk_into(container, chunks[i], i, chunks)
                 self._update_progress_bar(progress=len(container.mounted_indices))
-                # Yield every 3 chunks for cancellation responsiveness.
-                if (i - win_end + 1) % 3 == 0:
-                    await asyncio.sleep(0)
+                # Yield every chunk so a slow mount can't peg the UI
+                # thread between yields. asyncio.sleep(0) hands control
+                # back to the loop so pending key/redraw events run.
+                await asyncio.sleep(0)
             await asyncio.sleep(0)
 
             # Phase 2b: hidden-prepend ABOVE the window. Each newly-
