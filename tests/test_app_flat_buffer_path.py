@@ -50,6 +50,34 @@ def pdf_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 
 @pytest.fixture
+def multi_match_pdf_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
+    """A multi-page PDF where ``zebra`` appears on every page — gives
+    the tree multiple section hits under one file so cursor-between-
+    sections tests have something to move between."""
+    import pymupdf  # type: ignore[import-not-found]
+
+    papers = tmp_path / "papers"
+    papers.mkdir(parents=True, exist_ok=True)
+    doc = pymupdf.open()
+    try:
+        for page_idx in range(6):
+            page = doc.new_page(width=612, height=792)
+            y = 60.0
+            for line_idx in range(30):
+                if line_idx == 10 + page_idx:  # match on a different line per page
+                    text = f"page {page_idx} mentions the unique zebra phrase"
+                else:
+                    text = f"page {page_idx} line {line_idx} ordinary"
+                page.insert_text((72, y), text, fontsize=12, fontname="helv")
+                y += 18
+        doc.save(str(papers / "multi.pdf"), garbage=4, clean=True, deflate=True)
+    finally:
+        doc.close()
+    build_index(roots=[tmp_path], index_dir=tmp_index_dir, collection="default")
+    return tmp_index_dir
+
+
+@pytest.fixture
 def md_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
     notes = tmp_path / "notes"
     notes.mkdir()
@@ -123,6 +151,63 @@ async def test_flat_buffer_scrollbar_carries_line_precise_markers(
         assert bar._match_map == []
         # The pushed match lines match what the buffer reports publicly.
         assert bar._match_lines == buf.match_lines
+
+
+@pytest.mark.asyncio
+async def test_cursor_between_sections_calls_scroll_to_chunk_each_time(
+    multi_match_pdf_index: Path,
+) -> None:
+    """User reported: 'Selecting different matches within a file no
+    longer displays those matches in the preview, only the first
+    match'. Cursor moves between section hits under the same file
+    must call ``scroll_to_chunk`` with each new chunk_seq — testing
+    that directly via a spy (independent of fixture viewport size /
+    whether the buffer is tall enough to actually scroll)."""
+    app = AcornApp(index_dir=multi_match_pdf_index, initial_query="zebra")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#results_pane", Tree)
+        first = next(iter(tree.root.children))
+        first.expand()
+        await pilot.pause()
+        tree.focus()
+        # Cursor down once to land on the first section.
+        await pilot.press("down")
+        await pilot.pause()
+        buf = app._active_flat_buffer
+        assert buf is not None
+        # The file should have multiple section children — bail clearly
+        # if the fixture didn't produce them.
+        section_count = sum(
+            1
+            for c in first.children
+            if isinstance(c.data, dict) and c.data.get("kind") == "section"
+        )
+        assert section_count >= 3, f"fixture must produce ≥3 sections per file; got {section_count}"
+
+        # Patch scroll_to_chunk on the buffer to record every call.
+        calls: list[int] = []
+        real = buf.scroll_to_chunk
+
+        def spy(chunk_id, **kwargs):  # type: ignore[no-untyped-def]
+            calls.append(chunk_id)
+            real(chunk_id, **kwargs)
+
+        buf.scroll_to_chunk = spy  # type: ignore[method-assign]
+
+        # Move to the next section, and the one after.
+        await pilot.press("down")
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+
+        # Two cursor moves -> at least two scroll_to_chunk calls with
+        # distinct chunk_seq values (each section maps to a different
+        # PDF page → different chunk).
+        assert len(calls) >= 2, f"expected at least 2 scroll_to_chunk calls, got {calls}"
+        assert (
+            calls[-1] != calls[-2]
+        ), f"consecutive cursor moves landed on the same chunk_seq: {calls}"
 
 
 @pytest.mark.asyncio

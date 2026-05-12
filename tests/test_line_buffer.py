@@ -218,10 +218,12 @@ async def test_widget_scroll_to_chunk_prefers_first_match_line() -> None:
 
 
 @pytest.mark.asyncio
-async def test_widget_focused_chunk_repaint_is_local() -> None:
-    """set_focused_chunk repaints only the focused chunk's strips,
-    leaves other strips untouched. We assert by snapshotting Strip
-    identities before/after and checking which slice changed."""
+async def test_widget_focused_chunk_overlay_is_per_render() -> None:
+    """``set_focused_chunk`` doesn't rebuild Strips — focused-chunk
+    accent is applied at render time via the component class. The
+    cached Strip array stays identical across focus changes (cheap to
+    flip back and forth), and the row overlay style is non-None only
+    for visual rows inside the focused chunk's range."""
     from textual.app import App, ComposeResult
 
     class _Host(App[None]):
@@ -244,18 +246,24 @@ async def test_widget_focused_chunk_repaint_is_local() -> None:
         before = list(buf._strips)
         buf.set_focused_chunk(2)
         await pilot.pause()
-        # Only chunk 2's lines should have been replaced; chunk 1 and
-        # chunk 3 strips stay identical (by identity).
-        chunk2_range = fv.chunk_to_range[2]
+        # No rebuild: every Strip identity is preserved.
         for li in range(len(buf._strips)):
-            if chunk2_range[0] <= li < chunk2_range[1]:
+            assert (
+                buf._strips[li] is before[li]
+            ), f"focus change must not rebuild Strip at line {li}"
+        # Row-overlay resolution flags the focused chunk's visual rows.
+        chunk2_range = fv.chunk_to_range[2]
+        for vy in range(len(buf._strips)):
+            logical = buf._visual_to_logical[vy]
+            overlay = buf._row_overlay_style(vy)
+            if chunk2_range[0] <= logical < chunk2_range[1]:
                 assert (
-                    buf._strips[li] is not before[li]
-                ), f"chunk 2 line {li} should have been repainted"
-            else:
+                    overlay is not None
+                ), f"focused chunk row vy={vy} (logical={logical}) should have overlay"
+            elif logical not in fv.match_lines:
                 assert (
-                    buf._strips[li] is before[li]
-                ), f"line {li} outside the focused chunk must not be touched"
+                    overlay is None
+                ), f"non-focused, non-match row vy={vy} should not have overlay"
 
 
 @pytest.mark.asyncio
