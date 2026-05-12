@@ -61,6 +61,8 @@ from acorn.render import (
 )
 from acorn.rerank import RankingProfile, profile_from_config
 from acorn.tui.actions import REGISTRY, Keymap, load_keymap
+from acorn.tui.line_buffer import FileView, LineBufferPreview, build_file_view
+from acorn.tui.preview_dispatcher import choose_preview_mode
 from acorn.tui.preview_scrollbar import MatchAwareScroll
 
 _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
@@ -938,6 +940,14 @@ class AcornApp(App[None]):
         # The currently-active PreviewContainer (the one with `-active`
         # class). None until the first file is rendered.
         self._active_preview: PreviewContainer | None = None
+        # Phase 5 flat-buffer pipeline: PDF / TXT files render through
+        # one :class:`LineBufferPreview` widget per file instead of a
+        # per-chunk widget tree. ``_flat_buffer_cache`` is an LRU keyed
+        # the same way as :class:`PreviewCache` so cache-hit semantics
+        # are identical. ``_active_flat_buffer`` mirrors
+        # ``_active_preview`` for the flat path.
+        self._flat_buffer_cache: OrderedDict[tuple[str, str], LineBufferPreview] = OrderedDict()
+        self._active_flat_buffer: LineBufferPreview | None = None
         # Convenience aliases that point into the active container —
         # legacy code paths (_scroll_preview_to_chunk, etc.) read from
         # these instead of poking at the container directly.
@@ -1331,6 +1341,17 @@ class AcornApp(App[None]):
             with contextlib.suppress(Exception):
                 self._active_preview.remove()
         self._active_preview = None
+        # Same lifecycle for the flat-buffer cache: highlights were
+        # baked from the previous query, so every cached widget is
+        # stale. Drop all of them from the DOM.
+        for buf in list(self._flat_buffer_cache.values()):
+            with contextlib.suppress(Exception):
+                buf.remove()
+        self._flat_buffer_cache.clear()
+        if self._active_flat_buffer is not None and self._active_flat_buffer.parent is not None:
+            with contextlib.suppress(Exception):
+                self._active_flat_buffer.remove()
+        self._active_flat_buffer = None
         self._chunk_widgets = {}
         self._match_targets = {}
         self._preview_parent_id = None
@@ -1517,6 +1538,14 @@ class AcornApp(App[None]):
         appear instantly when there's actual work to do."""
         import asyncio
 
+        # Phase 5 redesign: route by format. PDF / TXT take the flat-
+        # buffer path (one widget per file, line API, line-precise
+        # scrollbar markers). MD / DOCX / PPTX stay on the structural
+        # Markdown widget below.
+        if choose_preview_mode(chunks) == "flat":
+            self._dispatch_flat_buffer_mount(parent_id, focus_chunk_seq, chunks)
+            return
+
         query_sig = self._current_query_signature()
 
         # Same file + same query already active. Two sub-cases:
@@ -1592,6 +1621,100 @@ class AcornApp(App[None]):
         self._preview_mount_task = asyncio.create_task(
             self._mount_chunks_async(parent_id, focus_chunk_seq, chunks, container)
         )
+
+    def _dispatch_flat_buffer_mount(
+        self,
+        parent_id: str,
+        focus_chunk_seq: int,
+        chunks: list[FileChunk],
+    ) -> None:
+        """Flat-buffer mount path — one :class:`LineBufferPreview`
+        widget per file. No multi-phase mount, no per-chunk widget
+        tree, no progressive load — once the chunks are decoded the
+        FileView builds in one pass and the widget paints in one
+        pass too.
+
+        Cache hits flip ``-hidden`` on the previously-cached widget
+        and scroll to the focus; cold loads build a fresh FileView,
+        mount a new widget, and install the view.
+        """
+        import contextlib
+
+        query_sig = self._current_query_signature()
+        cache_key = (parent_id, query_sig)
+
+        # Cache hit: flip visible, scroll, hide bar. Match markers are
+        # already baked into the cached buffer's scrollbar so no extra
+        # refresh is needed.
+        cached = self._flat_buffer_cache.get(cache_key)
+        if cached is not None and cached.parent is not None:
+            self._flat_buffer_cache.move_to_end(cache_key)
+            self._activate_flat_buffer(cached)
+            cached.scroll_to_chunk(focus_chunk_seq, prefer_first_match=True)
+            self._hide_progress_bar()
+            self._preview_parent_id = parent_id
+            self._refresh_status()
+            return
+
+        # Cold path: build the FileView from decoded chunks, mount a
+        # fresh LineBufferPreview.
+        pane = self.query_one("#preview_pane", VerticalScroll)
+        # Drop the placeholder if it's still mounted.
+        for w in list(pane.children):
+            if isinstance(w, Static) and "placeholder" in w.classes:
+                with contextlib.suppress(Exception):
+                    w.remove()
+
+        fv = self._build_file_view_for_chunks(chunks)
+        buf = LineBufferPreview(wrap=True)
+        pane.mount(buf)
+        self._activate_flat_buffer(buf)
+        buf.set_file_view(fv)
+        buf.scroll_to_chunk(focus_chunk_seq, prefer_first_match=True)
+
+        # LRU-cache the buffer so revisits within the same query are
+        # instant (display flip only).
+        self._flat_buffer_cache[cache_key] = buf
+        self._flat_buffer_cache.move_to_end(cache_key)
+        while len(self._flat_buffer_cache) > _PREVIEW_CACHE_MAX_FILES:
+            _, evicted = self._flat_buffer_cache.popitem(last=False)
+            with contextlib.suppress(Exception):
+                evicted.remove()
+
+        self._hide_progress_bar()
+        self._preview_parent_id = parent_id
+        self._refresh_status()
+
+    def _build_file_view_for_chunks(self, chunks: list[FileChunk]) -> FileView:
+        """Convert decoded chunks into a :class:`FileView` for the flat
+        path. Reuses the same word-level match-span helper the
+        structural renderer uses so highlight semantics agree."""
+        spec = self._effective_match_spec
+        triples: list[tuple[int, str, list[tuple[int, int]]]] = []
+        for c in chunks:
+            body_text = "\n".join(b.text for b in c.blocks)
+            spans = _build_match_spans(body_text, spec) if not spec.is_empty else []
+            byte_spans = [(s.start, s.end) for s in spans]
+            triples.append((c.chunk_seq, body_text, byte_spans))
+        return build_file_view(triples)
+
+    def _activate_flat_buffer(self, buf: LineBufferPreview) -> None:
+        """Show ``buf`` and hide every other preview widget (structural
+        containers and other flat buffers) so only one file is on
+        screen at a time."""
+        for child in self.query(PreviewContainer):
+            child.add_class("-hidden")
+        for child in self.query(LineBufferPreview):
+            if child is buf:
+                child.remove_class("-hidden")
+            else:
+                child.add_class("-hidden")
+        self._active_flat_buffer = buf
+        self._active_preview = None
+        # Reset the structural-path alias dicts so any straggler scroll
+        # call can't accidentally try to scroll to a now-orphaned widget.
+        self._chunk_widgets = {}
+        self._match_targets = {}
 
     def _current_query_signature(self) -> str:
         """Stable signature for the current query — match-bearing
@@ -2029,6 +2152,11 @@ class AcornApp(App[None]):
         self._match_targets[c.chunk_seq] = md_widget
 
     def _scroll_preview_to_chunk(self, focus_chunk_seq: int) -> None:
+        # Flat-buffer path: the widget owns its own scroll and knows
+        # how to land on the matched line within a chunk.
+        if self._active_flat_buffer is not None:
+            self._active_flat_buffer.scroll_to_chunk(focus_chunk_seq, prefer_first_match=True)
+            return
         header = self._chunk_widgets.get(focus_chunk_seq)
         target = self._match_targets.get(focus_chunk_seq) or header
         if target is None:
@@ -2260,6 +2388,14 @@ class AcornApp(App[None]):
             with contextlib.suppress(Exception):
                 self._active_preview.remove()
         self._active_preview = None
+        for buf in list(self._flat_buffer_cache.values()):
+            with contextlib.suppress(Exception):
+                buf.remove()
+        self._flat_buffer_cache.clear()
+        if self._active_flat_buffer is not None and self._active_flat_buffer.parent is not None:
+            with contextlib.suppress(Exception):
+                self._active_flat_buffer.remove()
+        self._active_flat_buffer = None
         self._chunk_widgets = {}
         self._match_targets = {}
         self._preview_parent_id = None

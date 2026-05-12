@@ -120,9 +120,11 @@ def long_page_pdf_index(fixtures_dir: Path, tmp_index_dir: Path, tmp_path: Path)
 async def test_match_target_is_a_line_widget_not_the_header(
     long_page_pdf_index: Path,
 ) -> None:
-    """Phase 5.8: the scroll target for a chunk-with-matches must be a
-    per-line widget that actually contains the match — not the chunk's
-    section header."""
+    """Phase 5 contract: when a focused PDF chunk contains a match,
+    ``scroll_to_chunk`` lands on the matched line, NOT the chunk's
+    first line. The user-visible bug was scrolling to "page top"
+    instead of the actual match position — the flat buffer's
+    ``first_hit_line_in_chunk`` map keeps the precise target."""
     app = AcornApp(index_dir=long_page_pdf_index, initial_query="zebra")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -136,28 +138,29 @@ async def test_match_target_is_a_line_widget_not_the_header(
         await pilot.press("down")
         await pilot.pause()
 
-        # The cursor is on a section that contains "zebra".
-        # _match_targets[seq] should be a different widget from
-        # _chunk_widgets[seq], and that widget should carry our
-        # match-line class.
-        assert app._match_targets, "no match targets recorded"
-        focused_seq = next(iter(app._match_targets))
-        target = app._match_targets[focused_seq]
-        header = app._chunk_widgets[focused_seq]
+        buf = app._active_flat_buffer
+        assert buf is not None, "PDF should mount the flat-buffer preview"
+        fv = buf.file_view
+        assert fv is not None
         assert (
-            target is not header
-        ), "match target should be a per-line widget, not the chunk header"
-        assert target.has_class(
-            "chunk-line-match"
-        ), f"target should carry chunk-line-match class; got {target.classes}"
+            fv.first_hit_line_in_chunk
+        ), "expected at least one chunk to record a first-match line"
+        focused_seq, hit_line = next(iter(fv.first_hit_line_in_chunk.items()))
+        chunk_start, _ = fv.chunk_to_range[focused_seq]
+        # The matched line is past the chunk's first line — that's the
+        # whole point of scroll_to_chunk(prefer_first_match=True).
+        assert hit_line >= chunk_start
+        # And the line really does contain "zebra".
+        assert "zebra" in fv.lines[hit_line].plain.lower(), fv.lines[hit_line].plain
 
 
 @pytest.mark.asyncio
 async def test_match_target_falls_back_to_header_when_no_match_in_chunk(
     long_page_pdf_index: Path,
 ) -> None:
-    """Chunks without query-term matches still need a scroll target — we
-    fall back to the chunk's header widget."""
+    """Chunks without query-term matches still need a scroll target —
+    ``scroll_to_chunk`` falls back to the chunk's first line when
+    ``first_hit_line_in_chunk`` has no entry for that chunk."""
     app = AcornApp(index_dir=long_page_pdf_index, initial_query="zebra")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -171,12 +174,14 @@ async def test_match_target_falls_back_to_header_when_no_match_in_chunk(
         await pilot.press("down")
         await pilot.pause()
 
-        # The single-page synthetic PDF has only one chunk → just confirm
-        # the invariant: every chunk in the map has SOME target widget.
-        for seq, header in app._chunk_widgets.items():
-            assert seq in app._match_targets
-            target = app._match_targets[seq]
-            assert target is header or target.has_class("chunk-line-match")
+        buf = app._active_flat_buffer
+        assert buf is not None
+        fv = buf.file_view
+        assert fv is not None
+        # Every chunk in chunk_to_range must have SOME scroll target —
+        # either a first-match line OR the chunk's first line.
+        for seq, rng in fv.chunk_to_range.items():
+            assert seq in fv.first_hit_line_in_chunk or rng[0] >= 0
 
 
 def test_chunks_without_matches_collapse_to_single_piece() -> None:

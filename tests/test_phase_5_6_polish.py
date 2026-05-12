@@ -236,8 +236,9 @@ async def test_theme_is_set_on_mount(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_chunk_widgets_mounted_per_pdf_page(built_index: Path) -> None:
-    """Phase 5.7 model: per-chunk Static widgets give precise scroll targets.
-    A 12-page PDF should mount 12 chunk widgets, indexed by chunk_seq."""
+    """Phase 5 model: PDFs mount through the flat-buffer pipeline.
+    The widget owns a FileView whose ``chunk_to_range`` covers every
+    page; the focused chunk's first-match line is the scroll target."""
     app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -251,9 +252,11 @@ async def test_chunk_widgets_mounted_per_pdf_page(built_index: Path) -> None:
         await pilot.press("down")
         await pilot.pause()
 
-        # 12 chunk widgets keyed by chunk_seq 0..11.
-        assert len(app._chunk_widgets) == 12
-        assert set(app._chunk_widgets) == set(range(12))
-        # The focused chunk should carry the focused-class visual marker.
-        focused = [w for w in app._chunk_widgets.values() if w.has_class("chunk-section-focused")]
-        assert len(focused) == 1, f"expected exactly one focused chunk, got {len(focused)}"
+        buf = app._active_flat_buffer
+        assert buf is not None, "PDF should mount the flat-buffer preview"
+        fv = buf.file_view
+        assert fv is not None
+        # 12 PDF pages → 12 chunk ranges, keyed by chunk_seq 0..11.
+        assert set(fv.chunk_to_range) == set(range(12))
+        # The focused chunk has a recorded first-match line.
+        assert fv.first_hit_line_in_chunk, fv.first_hit_line_in_chunk
