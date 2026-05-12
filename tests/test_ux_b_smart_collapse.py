@@ -81,8 +81,15 @@ async def test_left_on_collapsed_branch_walks_further_up(built_index: Path) -> N
 
 @pytest.mark.asyncio
 async def test_left_on_expanded_branch_just_collapses_it(built_index: Path) -> None:
-    """Cursor on an expanded branch → Left collapses it in place
-    (cursor stays on the same node)."""
+    """Cursor on an expanded branch's first child → Left collapses the
+    parent in place, then the cursor falls back to the (now collapsed)
+    parent row because the section row is no longer visible.
+
+    Note: the results tree treats *expanded* file rows as unselectable
+    (``ResultsTree.validate_cursor_line``). The cursor can only land
+    on a file row while that file is collapsed. Up/down from a child
+    of an expanded parent skips the parent entirely; collapsing it
+    makes the parent row selectable again."""
     app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -91,11 +98,12 @@ async def test_left_on_expanded_branch_just_collapses_it(built_index: Path) -> N
         first_file.expand()
         await pilot.pause()
         tree.focus()
-        await pilot.press("down")  # leaf
-        await pilot.press("up")  # back to file node
+        await pilot.press("down")  # land on a leaf (parent is unselectable while expanded)
         await pilot.pause()
-        assert tree.cursor_node is first_file
-        assert first_file.is_expanded
+        assert tree.cursor_node is not first_file, "cursor must not land on an expanded file row"
+        # Collapse the parent via Left. With the parent now collapsed,
+        # the previously-visible child row is gone — cursor should
+        # naturally end up on the parent row (which is now selectable).
         await pilot.press("left")
         await pilot.pause()
         assert not first_file.is_expanded
