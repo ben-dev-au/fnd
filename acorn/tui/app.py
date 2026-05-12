@@ -1266,19 +1266,16 @@ class AcornApp(App[None]):
         else:
             single_col = self._collections[0] if self._collections else None
         filter_prefix = " ".join(filter_clauses)
+        cfg_defaults = self._config.defaults if self._config else None
+        sections_cap = cfg_defaults.sections_per_file_max if cfg_defaults else 200
+        sections_threshold = cfg_defaults.sections_score_threshold if cfg_defaults else 0.5
         try:
             self._groups = self._search_layered(
                 lexical=lexical,
                 filter_prefix=filter_prefix,
                 limit=50,
-                # Surface up to 50 sections per file (was 10). A 1000-page
-                # document with thousands of matches would otherwise hide
-                # most navigable hits behind an arbitrary low cap; the
-                # whole point of the app is to *find* matches, not just
-                # the first ten. The list-virtualised Tree handles this
-                # row count fine and the user can collapse files they
-                # aren't reading.
-                sections_per_file=50,
+                sections_per_file=sections_cap,
+                sections_score_threshold=sections_threshold,
                 collection=single_col,
                 metadata_filter=metadata_filter,
                 active_sources=list(self._active_sources) or None,
@@ -1327,6 +1324,7 @@ class AcornApp(App[None]):
         filter_prefix: str,
         limit: int,
         sections_per_file: int,
+        sections_score_threshold: float = 0.0,
         collection: str | None,
         metadata_filter: str | None,
         active_sources: list[str] | None,
@@ -1354,6 +1352,7 @@ class AcornApp(App[None]):
             query=lexical,
             limit=limit,
             sections_per_file=sections_per_file,
+            sections_score_threshold=sections_score_threshold,
             collection=collection,
             synonyms=self._synonyms,
             metadata_filter=metadata_filter,

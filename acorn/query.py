@@ -450,14 +450,21 @@ class Searcher:
         return group_by_file(raw, limit=limit, sections_per_file=sections_per_file)
 
 
-def group_by_file(hits: list[Hit], *, limit: int, sections_per_file: int = 5) -> list[FileGroup]:
+def group_by_file(
+    hits: list[Hit],
+    *,
+    limit: int,
+    sections_per_file: int = 5,
+    score_threshold: float = 0.0,
+) -> list[FileGroup]:
     """Bucket a flat ranked Hit list into per-file groups.
 
     Hits keep first-seen order, so passing pre-ranked output (BM25,
     reranked, fusion-fused, cascade-stitched) produces FileGroups in the
-    same order. Up to ``sections_per_file`` ranked sections per file;
-    the file's own ``top_score`` mirrors its first hit so callers can
-    re-sort if needed.
+    same order. Sections are kept when the section's score is at least
+    ``score_threshold * file_top_score`` and the per-file cap
+    ``sections_per_file`` hasn't been hit yet; ``score_threshold = 0``
+    disables the relative filter (cap-only behaviour).
 
     Used both by :meth:`Searcher.search_grouped` and the cascade /
     fusion paths in the TUI's ``_run_query`` so every search path
@@ -474,8 +481,16 @@ def group_by_file(hits: list[Hit], *, limit: int, sections_per_file: int = 5) ->
             bucket.append(h)
     out: list[FileGroup] = []
     for pid in order[:limit]:
-        section_hits = groups[pid][:sections_per_file]
-        top = section_hits[0]
+        all_hits = groups[pid]
+        top = all_hits[0]
+        # Relative-score filter: keep sections whose score is at least
+        # ``threshold * top_score``. Threshold 0 disables (cap-only).
+        if score_threshold > 0.0 and top.score > 0.0:
+            min_score = top.score * score_threshold
+            kept = [h for h in all_hits if h.score >= min_score]
+        else:
+            kept = all_hits
+        section_hits = kept[:sections_per_file]
         out.append(
             FileGroup(
                 parent_id=pid,

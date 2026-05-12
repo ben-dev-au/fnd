@@ -217,6 +217,12 @@ class Defaults(BaseModel):
     preview_chunks: int = 5
     debounce_ms: int = 200
     drill_summary_mode: Literal["always_show", "smart", "always_ellipsis"] = "always_show"
+    # Per-file match surfacing. Sections are kept when their relevance
+    # score is at least ``sections_score_threshold * file_top_score``,
+    # capped at ``sections_per_file_max`` as a safety net. Threshold of
+    # 1.0 = top-scoring section only; 0.0 = every match up to the cap.
+    sections_score_threshold: float = 0.5
+    sections_per_file_max: int = 200
 
 
 class Config(BaseModel):
@@ -438,6 +444,13 @@ debounce_ms   = 200           # Wait this many ms after the last keystroke (0-20
 #   smart                       : summary only on rows with real content
 #   always_ellipsis             : a dim `…` on every drill row
 drill_summary_mode = "always_show"
+# Per-file match surfacing. Sections in a file are kept when their
+# score is at least ``sections_score_threshold * file_top_score``,
+# capped by ``sections_per_file_max``. 0.5 keeps strong-relative-score
+# matches and drops weak ones; raise toward 1.0 for fewer/stronger hits,
+# lower toward 0.0 to surface every match (subject to the cap).
+sections_score_threshold = 0.5    # 0.0-1.0
+sections_per_file_max    = 200    # Hard cap (1-2000)
 
 # A collection groups one or more source directories. The starter
 # collection points at ~/Documents; edit, add more [[sources]] tables,
