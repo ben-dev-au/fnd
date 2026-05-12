@@ -75,7 +75,13 @@ _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 # then a single class-toggle. Bounded by LRU + a chunk-count threshold so
 # small files (which mount instantly anyway) don't bloat memory.
 _PREVIEW_CACHE_MAX_FILES = 8
-_PREVIEW_CACHE_MIN_CHUNKS = 30
+# Cache *every* complete file (1+ chunks) so revisits are O(1) and old
+# containers get LRU-evicted+removed from the DOM. The previous threshold
+# of 30 meant short markdown files never made it to the cache, never got
+# evicted, and stacked up in the preview pane — every file switch then
+# paid an O(N) walk in ``_activate_preview_container`` where N = files
+# visited this session.
+_PREVIEW_CACHE_MIN_CHUNKS = 1
 # Visible-first mount window — chunks are decoded already, mounting
 # focused ± these counts synchronously gives the user instant viewport
 # feedback before the background fill starts.
@@ -1508,6 +1514,21 @@ class AcornApp(App[None]):
             return
 
         self._cancel_preview_mount_task()
+        # Sweep any PreviewContainer in the preview pane that isn't tracked
+        # by the LRU cache. This catches containers whose mount was
+        # cancelled before completion (rapid file switching) — those
+        # never reached ``_preview_cache.put`` and would otherwise
+        # accumulate, slowing every subsequent ``_activate_preview_container``
+        # walk in proportion to the leak count.
+        import contextlib as _contextlib
+
+        cached_containers = set(self._preview_cache._cache.values())
+        for stranded in list(self.query(PreviewContainer)):
+            if stranded not in cached_containers:
+                with _contextlib.suppress(Exception):
+                    stranded.remove()
+        if self._active_preview is not None and self._active_preview not in cached_containers:
+            self._active_preview = None
         cached = self._preview_cache.get(parent_id, query_sig)
 
         if cached is not None and cached.is_complete:
@@ -1709,15 +1730,29 @@ class AcornApp(App[None]):
         hidden_widgets: list[Widget] = []
 
         try:
-            # Phase 1: sync mount of the visible window. Mount in
-            # document order so widgets in the container are in
-            # ascending chunk_seq from the start.
-            for i in range(win_start, win_end):
-                if i in container.mounted_indices:
-                    continue
-                self._mount_chunk_into(container, chunks[i], i, chunks)
-            # Scroll to focused chunk before yielding.
+            # Phase 1a: mount the focused chunk first and yield so it
+            # paints before the surrounding context mounts. On large
+            # files the rest of the visible window can take several
+            # hundred ms to mount; the user clicked a specific match
+            # and should see THAT chunk's content first, not stare at a
+            # progress bar while neighbouring chunks slowly fill in.
+            if focus_idx not in container.mounted_indices:
+                self._mount_chunk_into(container, chunks[focus_idx], focus_idx, chunks)
             self._scroll_preview_to_chunk(focus_chunk_seq)
+            self._update_progress_bar(progress=len(container.mounted_indices))
+            await asyncio.sleep(0)
+
+            # Phase 1b: mount the rest of the visible window. Closest-to-
+            # focus first, alternating below/above, so chunks adjacent to
+            # the user's eye fill in before the edges of the viewport.
+            max_offset = max(focus_idx - win_start, win_end - 1 - focus_idx)
+            for offset in range(1, max_offset + 1):
+                below = focus_idx + offset
+                if below < win_end and below not in container.mounted_indices:
+                    self._mount_chunk_into(container, chunks[below], below, chunks)
+                above = focus_idx - offset
+                if win_start <= above and above not in container.mounted_indices:
+                    self._mount_chunk_into(container, chunks[above], above, chunks)
             self._update_progress_bar(progress=len(container.mounted_indices))
             await asyncio.sleep(0)
 
