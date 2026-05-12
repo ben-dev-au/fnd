@@ -1271,7 +1271,14 @@ class AcornApp(App[None]):
                 lexical=lexical,
                 filter_prefix=filter_prefix,
                 limit=50,
-                sections_per_file=10,
+                # Surface up to 50 sections per file (was 10). A 1000-page
+                # document with thousands of matches would otherwise hide
+                # most navigable hits behind an arbitrary low cap; the
+                # whole point of the app is to *find* matches, not just
+                # the first ten. The list-virtualised Tree handles this
+                # row count fine and the user can collapse files they
+                # aren't reading.
+                sections_per_file=50,
                 collection=single_col,
                 metadata_filter=metadata_filter,
                 active_sources=list(self._active_sources) or None,
@@ -1812,12 +1819,21 @@ class AcornApp(App[None]):
             for w in hidden_widgets:
                 with contextlib.suppress(Exception):
                     w.display = True
+            # Cache the container even when the mount didn't run to
+            # completion. For monster files (1000+ page PDFs with
+            # thousands of chunks) the user reliably navigates away
+            # before is_complete becomes True; without caching the
+            # partial container, every revisit re-mounts from scratch
+            # and the file looks like it has no cache. The resume path
+            # in ``_dispatch_preview_mount`` skips already-mounted
+            # indices so partial-cache hits paint the previously-
+            # mounted region instantly and continue the fill in the
+            # background.
+            evicted = self._preview_cache.put(container)
+            for old in evicted:
+                with contextlib.suppress(Exception):
+                    old.remove()
             if container.is_complete:
-                # Promote the container into the LRU cache.
-                evicted = self._preview_cache.put(container)
-                for old in evicted:
-                    with contextlib.suppress(Exception):
-                        old.remove()
                 self._hide_progress_bar()
                 # Re-anchor scroll to the user's selected chunk AFTER
                 # the reveal + bar-hide layout changes have queued.
@@ -1831,12 +1847,9 @@ class AcornApp(App[None]):
                     self.call_after_refresh(self._scroll_preview_to_chunk, target_seq)
 
                 self.call_after_refresh(_schedule_anchor)
-            else:
-                # Partial — leave the bar visible (a revisit will
-                # resume); but if no task will resume (cancellation
-                # because user moved on), the next _show_progress_bar
-                # for the new file will overwrite our state.
-                pass
+            # Partial mounts leave the bar visible — a revisit will
+            # resume from ``mounted_indices`` and the bar reflects
+            # progress.
             self._refresh_status()
 
     def _mount_chunk_into(
