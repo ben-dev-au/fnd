@@ -1669,8 +1669,18 @@ class AcornApp(App[None]):
         buf = LineBufferPreview(wrap=True)
         pane.mount(buf)
         self._activate_flat_buffer(buf)
-        buf.set_file_view(fv)
-        buf.scroll_to_chunk(focus_chunk_seq, prefer_first_match=True)
+        # Defer the FileView install one refresh cycle so the buffer
+        # has a real ``size.width`` by the time wrap-mode strips are
+        # built. Otherwise the first paint runs unwrapped, and the
+        # follow-up resize re-wrap shifts the scroll position out
+        # from under the user's selected match.
+        target_seq = focus_chunk_seq
+
+        def _install() -> None:
+            buf.set_file_view(fv)
+            buf.scroll_to_chunk(target_seq, prefer_first_match=True)
+
+        self.call_after_refresh(_install)
 
         # LRU-cache the buffer so revisits within the same query are
         # instant (display flip only).

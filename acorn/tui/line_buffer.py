@@ -33,7 +33,7 @@ Design notes:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.console import Console
 from rich.segment import Segment
@@ -50,12 +50,15 @@ if TYPE_CHECKING:
     pass
 
 
-# Per-line accent overlays. The visual intent matches the legacy CSS
-# classes (chunk-line-match @ 8% and chunk-section-focused @ 15%) but
-# rendered through Rich style strings so the line buffer can paint
-# them without leaning on Textual's per-widget CSS engine.
-_MATCH_LINE_STYLE = "on rgba(255,180,90,0.10)"  # ~ accent 8%
-_FOCUSED_CHUNK_STYLE = "on rgba(255,180,90,0.18)"  # ~ accent 15%
+# Per-line accent overlays. Painted at ``render_line`` time via the
+# widget's Textual component classes (which respect the active theme
+# and resolve ``$accent N%`` to a concrete blended color). Rich's
+# ``Style.parse`` rejects ``rgba(...)`` outright, so an earlier
+# attempt to bake the overlays into the Strips via Rich styles
+# produced no visible highlight at all — the component-class route is
+# the right idiom.
+_COMPONENT_MATCH_LINE = "line-buffer--match"
+_COMPONENT_FOCUSED_CHUNK = "line-buffer--focused-chunk"
 
 
 @dataclass(slots=True)
@@ -147,7 +150,12 @@ def build_file_view(
             global_line_idx = len(fv.lines)
             t = Text(raw_line)
             if span_set:
-                t.stylize(_MATCH_LINE_STYLE)
+                # Per-match bold span. Row-level background tint is
+                # applied at render time via the widget's component
+                # class (see :class:`LineBufferPreview`), not baked in
+                # here — Rich rejects ``rgba(...)`` and the legacy
+                # ``$accent N%`` form is only meaningful inside
+                # Textual CSS.
                 for span_start, span_end in span_set:
                     t.stylize("bold", span_start, span_end)
                 fv.match_lines.add(global_line_idx)
@@ -183,6 +191,11 @@ class LineBufferPreview(ScrollView, can_focus=True):
 
     ALLOW_SELECT = True
 
+    COMPONENT_CLASSES: ClassVar[set[str]] = {
+        _COMPONENT_MATCH_LINE,
+        _COMPONENT_FOCUSED_CHUNK,
+    }
+
     DEFAULT_CSS = """
     LineBufferPreview {
         background: $surface;
@@ -190,6 +203,12 @@ class LineBufferPreview(ScrollView, can_focus=True):
         width: 1fr;
         height: 1fr;
         scrollbar-gutter: stable;
+    }
+    LineBufferPreview > .line-buffer--match {
+        background: $accent 8%;
+    }
+    LineBufferPreview > .line-buffer--focused-chunk {
+        background: $accent 15%;
     }
     """
 
@@ -328,16 +347,13 @@ class LineBufferPreview(ScrollView, can_focus=True):
         """Paint the focused-chunk accent band over ``chunk_id`` and
         clear it from the previously focused one.
 
-        Updates only the affected Strips in place — no full rebuild.
+        Cheap — just flips the focused id and asks the widget to repaint.
+        The actual overlay style is applied in :meth:`render_line` via
+        a component class, so no Strip rebuild is needed.
         """
         if self._focused_chunk == chunk_id or self._fv is None:
             return
-        prev = self._focused_chunk
         self._focused_chunk = chunk_id
-        if prev is not None:
-            self._repaint_chunk_strips(prev)
-        if chunk_id is not None:
-            self._repaint_chunk_strips(chunk_id)
         self.refresh()
 
     @property
@@ -375,9 +391,34 @@ class LineBufferPreview(ScrollView, can_focus=True):
         line_idx = scroll_y + y
         if not (0 <= line_idx < len(self._strips)):
             return Strip.blank(self.size.width, self.rich_style)
-        return self._strips[line_idx].crop_extend(
-            scroll_x, scroll_x + self.size.width, self.rich_style
-        )
+        # Resolve the per-row accent overlay (focused chunk wins over
+        # match line; both compose with the strip's own foreground
+        # styles via Rich's standard background-overlay semantics).
+        overlay = self._row_overlay_style(line_idx)
+        fill_style = overlay if overlay is not None else self.rich_style
+        strip = self._strips[line_idx].crop_extend(scroll_x, scroll_x + self.size.width, fill_style)
+        if overlay is not None:
+            strip = strip.apply_style(overlay)
+        return strip
+
+    def _row_overlay_style(self, visual_y: int) -> Any:
+        """Return the component-class style overlay for this visual row,
+        or ``None`` if the row doesn't need an accent. The focused-chunk
+        overlay takes precedence; otherwise match lines get the lighter
+        tint."""
+        if self._fv is None:
+            return None
+        if visual_y >= len(self._visual_to_logical):
+            return None
+        logical = self._visual_to_logical[visual_y]
+        focused = self._focused_chunk
+        if focused is not None:
+            rng = self._fv.chunk_to_range.get(focused)
+            if rng is not None and rng[0] <= logical < rng[1]:
+                return self.get_component_rich_style(_COMPONENT_FOCUSED_CHUNK)
+        if logical in self._fv.match_lines:
+            return self.get_component_rich_style(_COMPONENT_MATCH_LINE)
+        return None
 
     # ── Scrollbar override ──────────────────────────────────────
 
@@ -436,9 +477,12 @@ class LineBufferPreview(ScrollView, can_focus=True):
 
         Owns the bookkeeping for both wrap modes: populates
         ``_strips``, ``_visual_to_logical``, and
-        ``_logical_to_visual_start`` in one pass; updates the focus
-        style for the currently-focused chunk; and resets ``virtual_size``
-        so the scrollbar sizes itself correctly for the new visual count.
+        ``_logical_to_visual_start`` in one pass; resets ``virtual_size``
+        so the scrollbar sizes itself correctly for the new visual
+        count. Per-row accent overlays (match line, focused chunk) are
+        applied at render time in :meth:`render_line` via component
+        classes — keeping the strips style-neutral here means a focus
+        change doesn't require a full rebuild.
         """
         fv = self._fv
         if fv is None:
@@ -453,16 +497,8 @@ class LineBufferPreview(ScrollView, can_focus=True):
         # > 0 = wrap to that width; tracks the viewport size.
         wrap_width = self.size.width if self._wrap and self.size.width > 0 else 0
         self._wrap_width = wrap_width
-        # Bucket each logical line's focused-chunk style so the rebuild
-        # produces the correct overlay without a second pass.
-        focused_chunk = self._focused_chunk
-        focused_range = fv.chunk_to_range.get(focused_chunk) if focused_chunk is not None else None
 
-        strips, v2l, l2vs = self._render_lines(
-            fv.lines,
-            wrap_width=wrap_width,
-            focused_logical_range=focused_range,
-        )
+        strips, v2l, l2vs = self._render_lines(fv.lines, wrap_width=wrap_width)
         self._strips = strips
         self._visual_to_logical = v2l
         self._logical_to_visual_start = l2vs
@@ -480,7 +516,6 @@ class LineBufferPreview(ScrollView, can_focus=True):
         lines: list[Text],
         *,
         wrap_width: int,
-        focused_logical_range: tuple[int, int] | None,
     ) -> tuple[list[Strip], list[int], list[int]]:
         """Render ``lines`` to Strips, splitting at ``\\n`` segments.
 
@@ -504,14 +539,7 @@ class LineBufferPreview(ScrollView, can_focus=True):
         strips: list[Strip] = []
         v2l: list[int] = []
         l2vs: list[int] = [0] * len(lines)
-        for li, raw_line in enumerate(lines):
-            if focused_logical_range is not None and (
-                focused_logical_range[0] <= li < focused_logical_range[1]
-            ):
-                line = raw_line.copy()
-                line.stylize(_FOCUSED_CHUNK_STYLE)
-            else:
-                line = raw_line
+        for li, line in enumerate(lines):
             l2vs[li] = len(strips)
             current: list[Segment] = []
             produced_any = False
@@ -551,49 +579,6 @@ class LineBufferPreview(ScrollView, can_focus=True):
                 strips.append(Strip([]))
                 v2l.append(li)
         return strips, v2l, l2vs
-
-    def _repaint_chunk_strips(self, chunk_id: int) -> None:
-        """Rebuild the strips for every line belonging to ``chunk_id``,
-        applying / removing the focused-chunk style as appropriate.
-
-        Touches only the affected slice of ``self._strips``; the
-        surrounding lines are untouched. Wrap-aware: a chunk may span
-        more visual rows than logical lines, so the slice is computed
-        from the cached ``_logical_to_visual_start`` map.
-        """
-        if self._fv is None:
-            return
-        rng = self._fv.chunk_to_range.get(chunk_id)
-        if rng is None:
-            return
-        log_start, log_end = rng
-        vis_start = self._logical_to_visual_y(log_start)
-        if log_end >= len(self._fv.lines):
-            vis_end = len(self._strips)
-        else:
-            vis_end = self._logical_to_visual_y(log_end)
-        is_focus = chunk_id == self._focused_chunk
-        focused_range = rng if is_focus else None
-        new_strips, new_v2l, _ = self._render_lines(
-            self._fv.lines[log_start:log_end],
-            wrap_width=self._wrap_width,
-            focused_logical_range=(0, log_end - log_start) if focused_range else None,
-        )
-        # Shift v2l entries from chunk-local back to absolute logical
-        # line indices so the visual-to-logical map stays globally valid.
-        shifted_v2l = [li + log_start for li in new_v2l]
-        old_visual_count = vis_end - vis_start
-        self._strips[vis_start:vis_end] = new_strips
-        self._visual_to_logical[vis_start:vis_end] = shifted_v2l
-        # Visual row count for this chunk could change if wrap behaviour
-        # differs between focused / unfocused (it shouldn't — style
-        # doesn't affect cell widths — but defend the bookkeeping). If
-        # it does, fix up the downstream l2vs offsets and virtual_size.
-        delta = len(new_strips) - old_visual_count
-        if delta != 0:
-            for li in range(log_end, len(self._logical_to_visual_start)):
-                self._logical_to_visual_start[li] += delta
-            self.virtual_size = Size(self._base_width, len(self._strips))
 
     # ── Selection (multi-line copy) ─────────────────────────────
 
