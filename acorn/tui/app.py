@@ -89,6 +89,53 @@ _VISIBLE_FIRST_ABOVE = 7
 _VISIBLE_FIRST_BELOW = 7
 
 
+class ResultsTree(Tree[dict[str, Any]]):
+    """Results tree where expanded parents (file rows) are literally
+    unselectable.
+
+    Earlier the rule was enforced after-the-fact by ``_on_tree_highlight``
+    and ``_bounce_after_expand``: the cursor would land on the parent row
+    for a frame and then bounce. With a slow preview load on top, the
+    bounce became visible and felt like a glitchy jump.
+
+    Validating in :meth:`validate_cursor_line` is atomic — the cursor
+    never lands on an expanded parent in the first place. Pressing ↓
+    from the row above an expanded parent moves directly to the parent's
+    first child; pressing ↑ from a child moves directly to the row above
+    the parent. No frames in between.
+    """
+
+    def validate_cursor_line(self, value: int) -> int:
+        clamped = super().validate_cursor_line(value)
+        if not getattr(self, "_skip_expanded_parents", False):
+            return clamped
+        # Walk in the move direction past any expanded parents.
+        current = int(self.cursor_line)
+        direction = 1 if clamped > current else (-1 if clamped < current else 1)
+        last = max(0, len(self._tree_lines) - 1)
+        target = clamped
+        safety = 0
+        while safety < 64:
+            try:
+                line = self._tree_lines[target]
+            except IndexError:
+                return clamped
+            node = line.node
+            if node is self.root:
+                return target
+            if not (node.children and node.is_expanded):
+                return target
+            next_target = target + direction
+            if next_target < 0 or next_target > last:
+                # Boundary — don't shove the cursor off the edge; keep
+                # it where it was so the press feels like a no-op
+                # instead of a jump.
+                return current
+            target = next_target
+            safety += 1
+        return current
+
+
 class PreviewContainer(Container):
     """Per-file preview container holding the mounted chunk widgets.
 
@@ -904,10 +951,6 @@ class AcornApp(App[None]):
         # event loop doesn't garbage-collect it mid-run (asyncio task
         # refs are weak — GC == cancellation).
         self._preview_mount_task: object | None = None
-        # Last direction the user moved through a tree (+1 = down, -1 = up).
-        # Drives the parent-skip rule so an Up keypress that lands the
-        # cursor on an expanded parent bounces upward, not downward.
-        self._last_arrow_direction: int = 1
 
     # ── Layout ────────────────────────────────────────────────────
 
@@ -916,11 +959,16 @@ class AcornApp(App[None]):
         with Horizontal():
             # Left column: results on top, then Collections, then Filters.
             with Vertical(id="results_column"):
-                yield Tree("Results", id="results_pane")
+                yield ResultsTree("Results", id="results_pane")
                 # Single-widget panels — each carries its summary in
                 # ``border_title``, matching the results-pane styling.
+                # Collections tree uses the plain Tree (expanded
+                # collection rows stay selectable — Enter toggles the
+                # whole collection in/out of scope). Filters tree uses
+                # the skip-expanded-parent subclass so File-type /
+                # Modified headers behave the same as file rows.
                 yield Tree("Collections", id="collections_panel_tree")
-                yield Tree("Filters", id="filters_panel_tree")
+                yield ResultsTree("Filters", id="filters_panel_tree")
             # Right column: always-on ProgressBar above the preview pane
             # (UX-pass-4 §4 follow-up). Keeping the bar OUTSIDE the
             # scrollable pane means its visibility is a single class
@@ -1144,46 +1192,13 @@ class AcornApp(App[None]):
 
     def on_descendant_focus(self) -> None:  # Textual fires this on focus changes
         self._refresh_footer_hints()
-        # If focus just landed in a tree that opts into parent-skip and the
-        # cursor is parked on an expanded parent, bounce past it before the
-        # user does anything else.
-        focused = self.focused
-        if isinstance(focused, Tree) and getattr(focused, "_skip_expanded_parents", False):
-            node = focused.cursor_node
-            if node is not None and node is not focused.root and node.children and node.is_expanded:
-                self._skip_expanded_parent(focused, 1)
-
-    def _skip_expanded_parent(self, tree: Tree[Any], direction: int) -> None:
-        """Advance the tree's cursor past an expanded-parent row.
-
-        When ``tree._skip_expanded_parents`` is true and the cursor is on
-        an expanded parent (children visible), the cursor is invalid —
-        bounce it one row in ``direction`` (+1 = down, -1 = up) and keep
-        bouncing while we land on more expanded parents. Stops at a leaf,
-        a collapsed parent, or the boundary of the tree.
-        """
-        if not getattr(tree, "_skip_expanded_parents", False):
-            return
-        safety = 0
-        while safety < 16:
-            node = tree.cursor_node
-            if node is None or node is tree.root:
-                return
-            if not node.children or not node.is_expanded:
-                return
-            before = tree.cursor_line
-            if direction >= 0:
-                tree.action_cursor_down()
-            else:
-                tree.action_cursor_up()
-            if tree.cursor_line == before:
-                return  # at boundary
-            safety += 1
+        # ``ResultsTree.validate_cursor_line`` keeps the cursor off
+        # expanded parents at the moment of any cursor_line change, so
+        # no on-focus bounce is needed.
 
     def on_key(self, event: events.Key) -> None:
-        """Track arrow direction (for the parent-skip rule) and repurpose
-        Up/Down to navigate between sidebar panels when the focused panel
-        is collapsed-to-header.
+        """Repurpose Up/Down to navigate between sidebar panels when the
+        focused panel is collapsed-to-header.
 
         Inside a collapsed tree the cursor row isn't visible anyway, so
         intra-tree Up/Down moves are noise. While collapsed they instead
@@ -1192,10 +1207,6 @@ class AcornApp(App[None]):
         panels with one hand on the arrow keys. Uncollapsed panels keep
         Textual's default Tree key handling untouched.
         """
-        if event.key == "down":
-            self._last_arrow_direction = 1
-        elif event.key == "up":
-            self._last_arrow_direction = -1
         if event.key not in ("up", "down"):
             return
         tree = self._focused_tree()
@@ -1405,16 +1416,10 @@ class AcornApp(App[None]):
 
     @on(Tree.NodeHighlighted)
     def _on_tree_highlight(self, ev: Tree.NodeHighlighted[Any]) -> None:
-        # Parent-skip rule: if this tree opts in and the cursor lands on
-        # an expanded parent, bounce past it before triggering side-effects
-        # like preview rendering. The bounce posts a new NodeHighlighted on
-        # the resolved child which re-enters this handler.
-        tree = ev.control
-        if getattr(tree, "_skip_expanded_parents", False):
-            node = ev.node
-            if node is not tree.root and node.children and node.is_expanded:
-                self._skip_expanded_parent(tree, self._last_arrow_direction)
-                return
+        # ``ResultsTree.validate_cursor_line`` already keeps the cursor
+        # off expanded parents, so by the time NodeHighlighted fires the
+        # cursor is guaranteed to be on a selectable row. No bounce
+        # needed here — just dispatch the preview render.
         data: Any = ev.node.data
         if not isinstance(data, dict):
             return
@@ -2588,28 +2593,6 @@ class AcornApp(App[None]):
         if cat in self._expanded_filter_branches:
             self._expanded_filter_branches.discard(cat)
             self._persist_state()
-
-    @on(Tree.NodeExpanded, "#results_pane")
-    def _bounce_on_results_expand(self, ev: Tree.NodeExpanded[Any]) -> None:
-        self._bounce_after_expand(ev)
-
-    @on(Tree.NodeExpanded, "#filters_panel_tree")
-    def _bounce_on_filters_expand(self, ev: Tree.NodeExpanded[Any]) -> None:
-        self._bounce_after_expand(ev)
-
-    def _bounce_after_expand(self, ev: Tree.NodeExpanded[Any]) -> None:
-        """If the just-expanded node is where the cursor sits, bounce past
-        it onto its first child. Keeps the parent-skip rule consistent
-        regardless of how the expand was triggered (Right arrow, Space,
-        programmatic)."""
-        tree = ev.control
-        if not getattr(tree, "_skip_expanded_parents", False):
-            return
-        if tree.cursor_node is ev.node and ev.node.children:
-            # Defer one tick — newly-mounted children may not have line
-            # indices yet, and ``action_cursor_down`` reads ``cursor_line``.
-            tree_ref = tree
-            self.call_after_refresh(lambda: self._skip_expanded_parent(tree_ref, 1))
 
     def action_dismiss_overlay(self) -> None:
         """Close any remaining in-app overlay (explain, multi DSL).
