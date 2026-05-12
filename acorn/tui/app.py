@@ -1701,14 +1701,18 @@ class AcornApp(App[None]):
     def _build_file_view_for_chunks(self, chunks: list[FileChunk]) -> FileView:
         """Convert decoded chunks into a :class:`FileView` for the flat
         path. Reuses the same word-level match-span helper the
-        structural renderer uses so highlight semantics agree."""
+        structural renderer uses so highlight semantics — including
+        the per-word colour (yellow for exact matches, orange for
+        fuzzy ones) — agree across pipelines."""
         spec = self._effective_match_spec
-        triples: list[tuple[int, str, list[tuple[int, int]]]] = []
+        triples: list[tuple[int, str, list[tuple[int, int] | tuple[int, int, str]]]] = []
         for c in chunks:
             body_text = "\n".join(b.text for b in c.blocks)
             spans = _build_match_spans(body_text, spec) if not spec.is_empty else []
-            byte_spans = [(s.start, s.end) for s in spans]
-            triples.append((c.chunk_seq, body_text, byte_spans))
+            styled_spans: list[tuple[int, int] | tuple[int, int, str]] = [
+                (s.start, s.end, str(s.style)) for s in spans
+            ]
+            triples.append((c.chunk_seq, body_text, styled_spans))
         return build_file_view(triples)
 
     def _activate_flat_buffer(self, buf: LineBufferPreview) -> None:
