@@ -446,7 +446,7 @@ def _make_open_collection_screen(name: str) -> Callable[[AcornApp], None]:
             SettingsScreen(
                 breadcrumb=("Collections", name),
                 items=items,
-                root_provider=_provider_root,
+                provider=lambda a, _n=name: tuple(_provider_collection(a, _n)),
             )
         )
 
@@ -462,7 +462,7 @@ def _make_open_sources_screen(name: str) -> Callable[[AcornApp], None]:
             SettingsScreen(
                 breadcrumb=("Collections", name, "Sources"),
                 items=items,
-                root_provider=_provider_root,
+                provider=lambda a, _n=name: tuple(_provider_sources(a, _n)),
             )
         )
 
@@ -567,10 +567,12 @@ def _provider_collection(app: AcornApp, name: str) -> tuple[MenuItem, ...]:
             kind=KIND_EXTERNAL,
             external=_make_open_sources_screen(name),
             value_getter=(
-                lambda n: lambda app: (
-                    f"{len(app._config.collections[n].sources)} source(s)"  # type: ignore[attr-defined]
-                    if app._config and n in app._config.collections  # type: ignore[attr-defined]
-                    else ""
+                lambda n: (
+                    lambda app: (
+                        f"{len(app._config.collections[n].sources)} source(s)"  # type: ignore[attr-defined]
+                        if app._config and n in app._config.collections  # type: ignore[attr-defined]
+                        else ""
+                    )
                 )
             )(name),
         ),
@@ -580,10 +582,12 @@ def _provider_collection(app: AcornApp, name: str) -> tuple[MenuItem, ...]:
             kind=KIND_PICKER,
             choices_provider=_choices_ranking,
             picker_getter=(
-                lambda n: lambda app: (
-                    app._config.collections[n].ranking_profile  # type: ignore[attr-defined]
-                    if app._config and n in app._config.collections  # type: ignore[attr-defined]
-                    else ""
+                lambda n: (
+                    lambda app: (
+                        app._config.collections[n].ranking_profile  # type: ignore[attr-defined]
+                        if app._config and n in app._config.collections  # type: ignore[attr-defined]
+                        else ""
+                    )
                 )
             )(name),
             picker_setter=(
