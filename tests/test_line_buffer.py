@@ -314,3 +314,136 @@ def test_file_view_dataclass_defaults() -> None:
     assert fv.widest_line == 0
     assert fv.chunk_to_range == {}
     assert fv.match_lines == set()
+
+
+# ── Wrap mode (PDF long-line story) ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_widget_wrap_mode_splits_long_lines_to_visual_rows() -> None:
+    """When wrap is enabled and a logical line is wider than the
+    viewport, the widget reports more visual rows than logical lines
+    and projects each logical row onto its first visual row."""
+    from textual.app import App, ComposeResult
+
+    class _Host(App[None]):
+        def compose(self) -> ComposeResult:
+            yield LineBufferPreview(id="buf", wrap=True)
+
+    app = _Host()
+    async with app.run_test(size=(20, 5)) as pilot:
+        await pilot.pause()
+        buf = app.query_one(LineBufferPreview)
+        # Tall enough that there's content past the 5-row viewport so
+        # scroll_to_line can actually move (otherwise the scroll clamps
+        # to 0 because everything fits).
+        long = "x" * 200
+        padding = "\n".join(f"pad-{i}" for i in range(20))
+        fv = build_file_view([_chunk(0, long + "\nshort\n" + padding)])
+        buf.set_file_view(fv)
+        await pilot.pause()
+        # Visual count must exceed logical (long line wraps into several
+        # visual rows; "short" + padding stay one row each).
+        assert buf.visual_line_count > fv.line_count
+        # The logical "short" line still lives at its own visual y;
+        # scrolling to it lands the viewport at that visual row.
+        buf.scroll_to_line(1)
+        await pilot.pause()
+        assert int(buf.scroll_offset.y) == buf._logical_to_visual_y(1)
+
+
+@pytest.mark.asyncio
+async def test_widget_wrap_mode_match_lines_project_to_visual_rows() -> None:
+    """In wrap mode ``match_lines`` returns the visual row indices that
+    contain a match — not the logical line indices. The scrollbar's
+    line-precise math expects visual offsets so this is the right
+    interpretation."""
+    from textual.app import App, ComposeResult
+
+    class _Host(App[None]):
+        def compose(self) -> ComposeResult:
+            yield LineBufferPreview(id="buf", wrap=True)
+
+    app = _Host()
+    async with app.run_test(size=(20, 10)) as pilot:
+        await pilot.pause()
+        buf = app.query_one(LineBufferPreview)
+        # Make a chunk whose first logical line is long enough to wrap
+        # AND a later logical line contains the match.
+        long_prefix = "x" * 100
+        body = long_prefix + "\napple match here"
+        # "apple" starts at offset len(long_prefix) + 1.
+        match_start = len(long_prefix) + 1
+        fv = build_file_view([_chunk(5, body, (match_start, match_start + 5))])
+        buf.set_file_view(fv)
+        await pilot.pause()
+        # The logical match line is 1 — but in wrap mode the visual
+        # row index is past the wrap of line 0.
+        assert buf.match_lines == [buf._logical_to_visual_y(1)]
+
+
+@pytest.mark.asyncio
+async def test_widget_set_wrap_toggles_layout() -> None:
+    """``set_wrap`` flips between modes without losing the FileView,
+    and re-renders the cached Strips so the viewport reflects the new
+    layout on the next paint."""
+    from textual.app import App, ComposeResult
+
+    class _Host(App[None]):
+        def compose(self) -> ComposeResult:
+            yield LineBufferPreview(id="buf", wrap=False)
+
+    app = _Host()
+    async with app.run_test(size=(20, 10)) as pilot:
+        await pilot.pause()
+        buf = app.query_one(LineBufferPreview)
+        long = "x" * 100
+        fv = build_file_view([_chunk(0, long + "\nshort")])
+        buf.set_file_view(fv)
+        await pilot.pause()
+        unwrapped_visual_count = buf.visual_line_count
+        assert unwrapped_visual_count == fv.line_count
+        buf.set_wrap(True)
+        await pilot.pause()
+        assert buf.visual_line_count > unwrapped_visual_count
+        buf.set_wrap(False)
+        await pilot.pause()
+        assert buf.visual_line_count == fv.line_count
+
+
+@pytest.mark.asyncio
+async def test_widget_wrap_mode_get_selection_uses_visual_rows() -> None:
+    """Drag-select across wrapped visual rows extracts the wrapped
+    plain text — not the logical-line-indexed text the no-wrap path
+    used to assume."""
+    from textual.app import App, ComposeResult
+
+    class _Host(App[None]):
+        def compose(self) -> ComposeResult:
+            yield LineBufferPreview(id="buf", wrap=True)
+
+    app = _Host()
+    async with app.run_test(size=(20, 10)) as pilot:
+        await pilot.pause()
+        buf = app.query_one(LineBufferPreview)
+        long = "abc" * 20  # 60 chars; wraps at ~18-19 cells in a 20-wide pane.
+        fv = build_file_view([_chunk(0, long)])
+        buf.set_file_view(fv)
+        await pilot.pause()
+        # A selection spanning two visual rows should produce text whose
+        # first row's tail concatenates with the next visual row.
+        from types import SimpleNamespace
+
+        sel = SimpleNamespace(start=(0, 0), end=(1, 5))
+        result = buf.get_selection(sel)  # type: ignore[arg-type]
+        assert result is not None
+        text, ending = result
+        # The first visual row's full text is the first chunk of the
+        # wrap; the second row contributes its first 5 chars. The exact
+        # split depends on Rich's wrap algorithm, so we assert the
+        # extracted text starts at the buffer start and is longer than
+        # one row alone.
+        assert text.startswith("abc")
+        assert ending == "\n"
+        first_row_text = buf._strips[0].text
+        assert len(text) > len(first_row_text)

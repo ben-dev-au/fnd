@@ -132,8 +132,9 @@ def test_render_document_highlights_every_match_across_chunks() -> None:
 
 @pytest.mark.asyncio
 async def test_tui_renders_full_document_when_section_focused(built_index: Path) -> None:
-    """When the cursor lands on a file's section, the preview should mount
-    one Static per chunk (every PDF page) with anchor-phrase highlights."""
+    """Phase 5 contract: focused PDF file mounts ONE LineBufferPreview;
+    every chunk's line range registers in ``chunk_to_range`` and every
+    anchor term carries a match style baked into the FileView's lines."""
     app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -147,23 +148,22 @@ async def test_tui_renders_full_document_when_section_focused(built_index: Path)
         await pilot.press("down")
         await pilot.pause()
 
-        # 12 chunk-header widgets (one per PDF page) should be mounted under
-        # the preview pane. Per-line widgets are mounted alongside.
-        assert len(app._chunk_widgets) == 12
-        # Iterate every preview widget — header + line — and confirm the
-        # anchor terms each carry our explicit highlight style.
-        from rich.text import Text as _Text
-        from textual.widgets import Static
+        # The PDF takes the flat-buffer path; an active LineBufferPreview
+        # holds the whole file.
+        buf = app._active_flat_buffer
+        assert buf is not None, "PDF should mount the flat-buffer preview"
+        fv = buf.file_view
+        assert fv is not None
+        # 12 PDF pages → 12 chunk ranges in the FileView.
+        assert len(fv.chunk_to_range) == 12, fv.chunk_to_range
 
+        # Every anchor term should appear with a baked-in match line
+        # (the line carries the match-line accent style + bold spans).
+        anchor_terms = {"blue", "penguin", "sandwich"}
         seen_terms: set[str] = set()
-        pane = app.query_one("#preview_pane")
-        for w in pane.query(Static):
-            r = getattr(w, "acorn_text", None)
-            if not isinstance(r, _Text):
-                continue
-            for span in r.spans:
-                seg = r.plain[span.start : span.end].lower()
-                if seg in {"blue", "penguin", "sandwich"}:
-                    assert "on #ffd866" in str(span.style)
-                    seen_terms.add(seg)
-        assert seen_terms == {"blue", "penguin", "sandwich"}, seen_terms
+        for li in fv.match_lines:
+            plain = fv.lines[li].plain.lower()
+            for term in anchor_terms:
+                if term in plain:
+                    seen_terms.add(term)
+        assert seen_terms == anchor_terms, seen_terms
