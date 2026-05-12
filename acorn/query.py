@@ -42,6 +42,10 @@ from acorn.schema import (
 
 _SNIPPET_CTX = 240
 _DEFAULT_LIMIT: Final = 10
+# Below this many chunks/file the thread-pool overhead outweighs the
+# decode parallelism — fall back to serial decode regardless of the
+# requested ``max_workers``.
+_PARALLEL_DECODE_THRESHOLD: Final = 50
 
 
 @dataclass(slots=True, frozen=True)
@@ -373,15 +377,52 @@ class Searcher:
                 break
         return out
 
-    def get_file_chunks(self, parent_id: str) -> list[FileChunk]:
+    def _decode_chunk(self, address: object) -> FileChunk:
+        """Decode a single chunk's stored fields at ``address`` into a
+        :class:`FileChunk`. Independent per-address — safe to call from
+        a worker thread because ``self._searcher.doc()`` releases the
+        GIL inside tantivy and ``self._searcher`` is an immutable view
+        over the index segments."""
+        from acorn.struct import decode as decode_body_struct
+
+        doc = self._searcher.doc(address)  # type: ignore[arg-type]
+        body_struct_bytes = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
+        blocks = decode_body_struct(body_struct_bytes) if body_struct_bytes else []
+        body_md_bytes = doc.get_first(F_BODY_MD)  # type: ignore[attr-defined]
+        body_md = body_md_bytes.decode("utf-8") if body_md_bytes else ""
+        return FileChunk(
+            parent_id=_first_str(doc, F_PARENT_ID),
+            path=_first_str(doc, F_PATH),
+            kind=_first_str(doc, F_KIND),
+            page=_first_int(doc, F_PAGE),
+            slide=_first_int(doc, F_SLIDE),
+            heading_path=_first_str(doc, F_HEADING_PATH),
+            chunk_seq=_first_int(doc, F_CHUNK_SEQ),
+            blocks=blocks,
+            page_label=_first_str(doc, F_PAGE_LABEL),
+            body_md=body_md,
+        )
+
+    def get_file_chunks(self, parent_id: str, *, max_workers: int | None = None) -> list[FileChunk]:
         """Return every indexed chunk of the file identified by ``parent_id``,
         ordered by ``chunk_seq``. Used by the TUI for the full-document preview.
 
-        Implementation: query for ``parent_id:<id>`` with a wide limit and
-        decode each chunk's stored body_struct.
-        """
-        from acorn.struct import decode as decode_body_struct
+        ``max_workers`` controls decode parallelism:
 
+        * ``None`` (default) or ``<= 1``: serial decode — the historic
+          behaviour, used by tests and by callers that don't want the
+          thread-pool startup cost.
+        * ``> 1`` *and* chunk count ≥ ``_PARALLEL_DECODE_THRESHOLD``:
+          decode addresses concurrently via a :class:`ThreadPoolExecutor`.
+          Tantivy releases the GIL inside ``Searcher.doc()`` so threads
+          are the right primitive — multiprocessing would force schema /
+          searcher serialisation per worker.
+        * ``> 1`` and chunk count below the threshold: serial decode (the
+          thread-pool overhead is not worth it).
+
+        Implementation: query for ``parent_id:<id>`` with a wide limit
+        then decode each chunk's stored body_struct via :meth:`_decode_chunk`.
+        """
         parsed = self._index.parse_query(
             f'parent_id:"{parent_id}"',
             default_field_names=[F_PARENT_ID],
@@ -389,27 +430,15 @@ class Searcher:
         # 5000 chunks/file is a generous ceiling; phase 12 will revisit for
         # books / very long PDFs.
         result = self._searcher.search(parsed, limit=5000)
-        chunks: list[FileChunk] = []
-        for _score, address in result.hits:
-            doc = self._searcher.doc(address)
-            body_struct_bytes = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
-            blocks = decode_body_struct(body_struct_bytes) if body_struct_bytes else []
-            body_md_bytes = doc.get_first(F_BODY_MD)  # type: ignore[attr-defined]
-            body_md = body_md_bytes.decode("utf-8") if body_md_bytes else ""
-            chunks.append(
-                FileChunk(
-                    parent_id=_first_str(doc, F_PARENT_ID),
-                    path=_first_str(doc, F_PATH),
-                    kind=_first_str(doc, F_KIND),
-                    page=_first_int(doc, F_PAGE),
-                    slide=_first_int(doc, F_SLIDE),
-                    heading_path=_first_str(doc, F_HEADING_PATH),
-                    chunk_seq=_first_int(doc, F_CHUNK_SEQ),
-                    blocks=blocks,
-                    page_label=_first_str(doc, F_PAGE_LABEL),
-                    body_md=body_md,
-                )
-            )
+        addresses = [address for _score, address in result.hits]
+        workers = max_workers or 1
+        if workers > 1 and len(addresses) >= _PARALLEL_DECODE_THRESHOLD:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                chunks = list(pool.map(self._decode_chunk, addresses))
+        else:
+            chunks = [self._decode_chunk(a) for a in addresses]
         chunks.sort(key=lambda c: c.chunk_seq)
         return chunks
 

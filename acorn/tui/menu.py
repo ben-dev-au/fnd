@@ -415,6 +415,22 @@ def _provider_preferences(_app: AcornApp) -> tuple[MenuItem, ...]:
             value_getter=_get_int_default("sections_per_file_max", 200),
             keywords=("section", "cap", "limit"),
         ),
+        MenuItem(
+            id="pref.preview_decode_workers",
+            label="Preview decode workers",
+            description=(
+                "Thread count for parallel chunk decode during preview "
+                "load. tantivy releases the GIL for doc reads, so "
+                "threads help on huge PDFs. 1 = serial; bump (4-8) for "
+                "big files."
+            ),
+            kind=KIND_SCALAR,
+            setting_path="defaults.preview_decode_workers",
+            hint="1-16",
+            coerce=int,
+            value_getter=_get_int_default("preview_decode_workers", 4),
+            keywords=("preview", "decode", "workers", "threads", "parallel"),
+        ),
         header("Display", level=2),
         MenuItem(
             id="pref.highlights",

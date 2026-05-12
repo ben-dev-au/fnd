@@ -1483,11 +1483,16 @@ class AcornApp(App[None]):
         target_parent_id = parent_id
         target_focus = focus_chunk_seq
         searcher = self._searcher
+        # Pull the worker count from config so users can tune the
+        # decode parallelism via Settings without code edits. 1 = serial.
+        decode_workers = (
+            self._config.defaults.preview_decode_workers if self._config is not None else 1
+        )
         app = self
 
         def _load() -> None:
             try:
-                fetched = searcher.get_file_chunks(target_parent_id)
+                fetched = searcher.get_file_chunks(target_parent_id, max_workers=decode_workers)
             except Exception as e:
                 app.call_from_thread(app._on_preview_load_failed, e)
                 return

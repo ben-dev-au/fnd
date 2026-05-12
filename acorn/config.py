@@ -223,6 +223,12 @@ class Defaults(BaseModel):
     # 1.0 = top-scoring section only; 0.0 = every match up to the cap.
     sections_score_threshold: float = 0.5
     sections_per_file_max: int = 200
+    # Worker thread count for parallel chunk decode during preview load.
+    # tantivy's ``Searcher.doc()`` releases the GIL, so threads (not
+    # processes) are the right primitive. 1 = serial decode (back-compat
+    # fallback). Bump for very large PDFs; lower if CPU contention shows
+    # up in profiles.
+    preview_decode_workers: int = 4
 
 
 class Config(BaseModel):
@@ -451,6 +457,9 @@ drill_summary_mode = "always_show"
 # lower toward 0.0 to surface every match (subject to the cap).
 sections_score_threshold = 0.5    # 0.0-1.0
 sections_per_file_max    = 200    # Hard cap (1-2000)
+# Preview decode parallelism. tantivy releases the GIL for doc reads, so
+# threads help on huge PDFs. 1 = serial; raise (4-8) for big files.
+preview_decode_workers   = 4      # 1-16
 
 # A collection groups one or more source directories. The starter
 # collection points at ~/Documents; edit, add more [[sources]] tables,
