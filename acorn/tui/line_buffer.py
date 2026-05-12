@@ -204,6 +204,7 @@ class LineBufferPreview(ScrollView, can_focus=True):
         height: 1fr;
         scrollbar-gutter: stable;
     }
+    LineBufferPreview.-hidden { display: none; }
     LineBufferPreview > .line-buffer--match {
         background: $accent 8%;
     }
