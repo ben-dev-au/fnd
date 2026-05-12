@@ -32,6 +32,7 @@ Design notes:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -50,14 +51,11 @@ if TYPE_CHECKING:
     pass
 
 
-# Per-line accent overlays. Painted at ``render_line`` time via the
-# widget's Textual component classes (which respect the active theme
-# and resolve ``$accent N%`` to a concrete blended color). Rich's
-# ``Style.parse`` rejects ``rgba(...)`` outright, so an earlier
-# attempt to bake the overlays into the Strips via Rich styles
-# produced no visible highlight at all — the component-class route is
-# the right idiom.
-_COMPONENT_MATCH_LINE = "line-buffer--match"
+# Focused-chunk row band. The legacy line-level match overlay
+# (``$accent 8%`` on every row containing a match) used to live here
+# too, but is gone by design: matches are highlighted per-word via
+# Rich styles baked into ``FileView.lines`` by :func:`build_file_view`,
+# which is more readable on documents with dense matches.
 _COMPONENT_FOCUSED_CHUNK = "line-buffer--focused-chunk"
 
 
@@ -100,8 +98,27 @@ class FileView:
         return max((line.cell_len for line in self.lines), default=0)
 
 
+# Match-spans are now styled tuples: ``(byte_start, byte_end, style)``.
+# The previous 2-tuple form (start, end) is still accepted — a missing
+# style is taken to mean ``"bold"`` so legacy tests continue to pass.
+MatchSpan = tuple[int, int] | tuple[int, int, str]
+
+# Default per-word style for 2-tuple match spans (legacy callers that
+# don't pass a colour). Vacuum tests use the 2-tuple form, so this is
+# ``"bold"`` to match the historical behaviour. Production app.py
+# callers pass 3-tuples carrying ``acorn.render.word_highlight_runs``
+# styles (yellow ``#ffd866`` for exact, orange for fuzzy).
+_DEFAULT_MATCH_STYLE = "bold"
+
+
+def _span_parts(span: MatchSpan) -> tuple[int, int, str]:
+    if len(span) == 3:
+        return span[0], span[1], span[2]
+    return span[0], span[1], _DEFAULT_MATCH_STYLE
+
+
 def build_file_view(
-    chunks: list[tuple[int, str, list[tuple[int, int]]]],
+    chunks: Sequence[tuple[int, str, Sequence[MatchSpan]]],
     *,
     insert_chunk_gaps: bool = True,
 ) -> FileView:
@@ -110,18 +127,23 @@ def build_file_view(
     ``chunks`` is a list of ``(chunk_id, chunk_text, match_spans)``:
       * ``chunk_id``: stable identifier from the search index.
       * ``chunk_text``: the decoded chunk body. Splits on ``\\n``.
-      * ``match_spans``: ``(byte_start, byte_end)`` ranges within the
-        chunk text that contain a query match. Each range gets its
-        line(s) tagged in ``match_lines`` and the substring styled
-        bold.
+      * ``match_spans``: list of ``(byte_start, byte_end)`` ranges OR
+        ``(byte_start, byte_end, style)`` triples. Each range is the
+        position of a matched word in the chunk text; the optional
+        style is the Rich-style string applied to that word
+        (e.g. ``"black on #ffd866"``). 2-tuples default to bold so
+        existing callers / tests don't need to change.
+
+    Match highlights are **word-level only** — the lines themselves
+    are not tinted. The widget's row-level overlays remain available
+    via component classes for the focused-chunk band, but a row
+    containing a match does NOT get a full-row background by default.
 
     ``insert_chunk_gaps=True`` adds a blank row between consecutive
     chunks so the user can see where chunks split. The gap row belongs
     to the *following* chunk for offset-mapping purposes.
 
-    Pure function — no widget mounting, no Textual side-effects. Used
-    by the production preview pipeline AND by tests that want to
-    assert on the resulting FileView shape.
+    Pure function — no widget mounting, no Textual side-effects.
     """
     fv = FileView()
     for nth, (chunk_id, chunk_text, match_spans) in enumerate(chunks):
@@ -134,30 +156,29 @@ def build_file_view(
             line_offsets.append((cursor, cursor + len(raw_line), raw_line))
             cursor += len(raw_line) + 1  # +1 for the dropped \n
         chunk_first_match: int | None = None
-        local_match_offsets: list[set[tuple[int, int]]] = [set() for _ in line_offsets]
-        for span_start, span_end in match_spans:
+        # Per-line list of (local_start, local_end, style) — preserves
+        # styles per span so each matched word can render with its own
+        # colour (e.g. fuzzy matches differ from exact matches).
+        local_styled_offsets: list[list[tuple[int, int, str]]] = [[] for _ in line_offsets]
+        for span in match_spans:
+            span_start, span_end, span_style = _span_parts(span)
             for li, (lstart, lend, _) in enumerate(line_offsets):
                 if span_end <= lstart or span_start >= lend:
                     continue
-                clipped = (max(0, span_start - lstart), min(lend - lstart, span_end - lstart))
-                local_match_offsets[li].add(clipped)
+                local_start = max(0, span_start - lstart)
+                local_end = min(lend - lstart, span_end - lstart)
+                local_styled_offsets[li].append((local_start, local_end, span_style))
         chunk_start = len(fv.lines)
         # Chunk-boundary gap row (skipped for the very first chunk).
         if insert_chunk_gaps and nth > 0:
             fv.lines.append(Text(""))
             fv.line_to_chunk.append(chunk_id)
-        for (_, _, raw_line), span_set in zip(line_offsets, local_match_offsets, strict=False):
+        for (_, _, raw_line), styled_spans in zip(line_offsets, local_styled_offsets, strict=False):
             global_line_idx = len(fv.lines)
             t = Text(raw_line)
-            if span_set:
-                # Per-match bold span. Row-level background tint is
-                # applied at render time via the widget's component
-                # class (see :class:`LineBufferPreview`), not baked in
-                # here — Rich rejects ``rgba(...)`` and the legacy
-                # ``$accent N%`` form is only meaningful inside
-                # Textual CSS.
-                for span_start, span_end in span_set:
-                    t.stylize("bold", span_start, span_end)
+            if styled_spans:
+                for span_start, span_end, span_style in styled_spans:
+                    t.stylize(span_style, span_start, span_end)
                 fv.match_lines.add(global_line_idx)
                 if chunk_first_match is None:
                     chunk_first_match = global_line_idx
@@ -191,10 +212,7 @@ class LineBufferPreview(ScrollView, can_focus=True):
 
     ALLOW_SELECT = True
 
-    COMPONENT_CLASSES: ClassVar[set[str]] = {
-        _COMPONENT_MATCH_LINE,
-        _COMPONENT_FOCUSED_CHUNK,
-    }
+    COMPONENT_CLASSES: ClassVar[set[str]] = {_COMPONENT_FOCUSED_CHUNK}
 
     DEFAULT_CSS = """
     LineBufferPreview {
@@ -205,9 +223,6 @@ class LineBufferPreview(ScrollView, can_focus=True):
         scrollbar-gutter: stable;
     }
     LineBufferPreview.-hidden { display: none; }
-    LineBufferPreview > .line-buffer--match {
-        background: $accent 8%;
-    }
     LineBufferPreview > .line-buffer--focused-chunk {
         background: $accent 15%;
     }
@@ -404,9 +419,12 @@ class LineBufferPreview(ScrollView, can_focus=True):
 
     def _row_overlay_style(self, visual_y: int) -> Any:
         """Return the component-class style overlay for this visual row,
-        or ``None`` if the row doesn't need an accent. The focused-chunk
-        overlay takes precedence; otherwise match lines get the lighter
-        tint."""
+        or ``None`` if the row doesn't need an accent.
+
+        Only the focused-chunk band paints at row level. Match
+        highlights are word-level (baked into ``FileView.lines`` at
+        build time), so non-focused rows never receive a row overlay.
+        """
         if self._fv is None:
             return None
         if visual_y >= len(self._visual_to_logical):
@@ -417,8 +435,6 @@ class LineBufferPreview(ScrollView, can_focus=True):
             rng = self._fv.chunk_to_range.get(focused)
             if rng is not None and rng[0] <= logical < rng[1]:
                 return self.get_component_rich_style(_COMPONENT_FOCUSED_CHUNK)
-        if logical in self._fv.match_lines:
-            return self.get_component_rich_style(_COMPONENT_MATCH_LINE)
         return None
 
     # ── Scrollbar override ──────────────────────────────────────
