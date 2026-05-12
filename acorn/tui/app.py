@@ -2426,11 +2426,73 @@ class AcornApp(App[None]):
         else:
             return
         self._ranking_profile = self._resolve_profile()
-        self._refresh_collections_panel()
+        # In-place marker swap on the toggled node instead of
+        # _refresh_collections_panel() — that calls tree.clear() which
+        # resets the cursor to the root every time the user toggles.
+        self._update_collections_panel_node(ev.node)
+        self._refresh_collections_panel_title()
         self._refresh_status()
         self._persist_state()
         if self._current_query:
             self._run_query(self._current_query)
+
+    def _update_collections_panel_node(self, node: Any) -> None:
+        """Swap the marker on a single collection or source node label
+        without rebuilding the tree. Preserves the cursor on the
+        just-toggled row."""
+        data = node.data if isinstance(node.data, dict) else {}
+        kind = data.get("kind")
+        if kind == "collection":
+            name = str(data.get("name") or "")
+            if not name:
+                return
+            cfg = self._config
+            col = cfg.collections.get(name) if cfg else None
+            n_sources = len(col.sources) if col else 0
+            marker = "●" if name in self._collections else "○"
+            label = f"{marker}  {name}  ({n_sources} source{'s' if n_sources != 1 else ''})"
+            node.set_label(_styled_parent_label(label))
+            return
+        if kind == "source":
+            source_id = str(data.get("source_id") or "")
+            if not source_id:
+                return
+            src_marker = "●" if source_id in self._active_sources else "○"
+            current_label = str(node.label)
+            # The source label is "<marker>  <i>. <short>" — preserve the
+            # ordinal and basename, just swap the marker glyph.
+            if len(current_label) > 1 and current_label[0] in ("●", "○"):
+                node.set_label(src_marker + current_label[1:])
+            else:
+                node.set_label(current_label)
+
+    def _refresh_collections_panel_title(self) -> None:
+        """Recompute the panel's border-title counts after a toggle.
+
+        Pulled out so toggle handlers can update the counts without
+        going through the cursor-resetting tree rebuild."""
+        try:
+            tree = self.query_one("#collections_panel_tree", Tree)
+        except Exception:
+            return
+        cfg = self._config
+        names = sorted(cfg.collections.keys()) if cfg else []
+        active_collections = set(self._collections)
+        active_sources = set(self._active_sources)
+        total_source_count = sum(len(cfg.collections[n].sources) for n in names if cfg)
+        active_source_count = 0
+        for n in names:
+            col = cfg.collections[n] if cfg else None
+            if not col:
+                continue
+            for s in col.sources:
+                source_id = str(Path(str(s.path)).expanduser().resolve())
+                if source_id in active_sources:
+                    active_source_count += 1
+        title = f"Collections — {len(active_collections)}/{len(names)} active"
+        if total_source_count and active_source_count:
+            title += f", {active_source_count}/{total_source_count} sources"
+        tree.border_title = title
 
     @on(Tree.NodeExpanded, "#collections_panel_tree")
     def _on_collection_branch_expanded(self, ev: Tree.NodeExpanded[dict[str, object]]) -> None:
@@ -2797,10 +2859,29 @@ class AcornApp(App[None]):
             except Exception as e:
                 self.call_from_thread(self.notify, f"Reindex failed: {e}", severity="error")
                 return
+            self.call_from_thread(self._on_reindex_complete)
             self.call_from_thread(
                 self.notify,
                 f"Indexed {n} chunks for {name}.",
                 severity="information",
             )
 
-        self.run_worker(_run, thread=True, exclusive=False, group=f"reindex-{name}")
+        self.run_worker(_run, thread=True, exclusive=True, group=f"reindex-{name}")
+
+    def _on_reindex_complete(self) -> None:
+        """Swap the in-memory ``Searcher`` for a fresh one after a rebuild.
+
+        The captured ``self._index.searcher()`` inside ``Searcher`` reads
+        from the index generation it was opened against; once the writer
+        commits new chunks, the old searcher still returns hits from the
+        previous generation. Rebuilding the ``Searcher`` is cheap (just
+        reopens the directory) and the in-flight ``_chunk_cache`` is
+        invalidated by ``_run_query`` immediately below so callers don't
+        see ghost rows from the old gen.
+        """
+        try:
+            self._searcher = Searcher(index_dir=self._index_dir)
+        except (FileNotFoundError, RuntimeError):
+            self._searcher = None
+        if self._current_query:
+            self._run_query(self._current_query)

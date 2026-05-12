@@ -155,14 +155,15 @@ async def test_path_validation_inline(tmp_path: Path, built_index: Path) -> None
         await pilot.press("enter")
         await pilot.pause()
         bar = wiz.query_one(EditBar)
-        # Type a path that does not exist.
+        # Type a path that does not exist. Path validation is debounced
+        # to avoid a per-keystroke disk walk, so wait past the timer.
         bar.query_one("#editor_input", Input).value = str(tmp_path / "nope")
-        await pilot.pause()
+        await pilot.pause(EditBar._PATH_VALIDATE_DEBOUNCE_S + 0.05)
         err = bar.query_one(".-edit-error", Static).render()
         assert "does not exist" in str(err).lower()
         # Type a path that does exist.
         bar.query_one("#editor_input", Input).value = str(real_dir)
-        await pilot.pause()
+        await pilot.pause(EditBar._PATH_VALIDATE_DEBOUNCE_S + 0.05)
         err = bar.query_one(".-edit-error", Static).render()
         assert "✓" in str(err) or "1 file" in str(err).lower()
 

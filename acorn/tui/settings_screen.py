@@ -26,6 +26,7 @@ naturally; no pre-popping or manual back stacks.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -198,7 +199,13 @@ class EditBar(Horizontal):
     """
 
     DEFAULT_CSS = """
-    EditBar { dock: bottom; height: 2; padding: 0 1; background: $surface; }
+    EditBar {
+        dock: bottom;
+        height: 2;
+        padding: 0 1;
+        margin-bottom: 1;
+        background: $surface;
+    }
     EditBar.-hidden { display: none; }
     EditBar > Static.-edit-label { color: $text-muted; width: auto; }
     EditBar > Input#editor_input { border: none; padding: 0 1; color: $primary; background: $surface; width: 1fr; }
@@ -219,6 +226,9 @@ class EditBar(Horizontal):
         super().__init__()
         self.add_class("-hidden")
         self._item: MenuItem | None = None
+        # Path-validation debounce: holds the pending Timer so a rapid
+        # keystroke can cancel its predecessor before the iterdir runs.
+        self._validation_timer: Any = None
 
     def compose(self) -> ComposeResult:
         yield Static("", classes="-edit-label")
@@ -276,16 +286,37 @@ class EditBar(Horizontal):
     # paying the cost of counting them all.
     _PATH_ENTRY_CAP: ClassVar[int] = 5_000
 
+    # Delay before a path-validation keystroke runs the iterdir+stat
+    # probe. 250 ms is short enough that a user who pauses to read still
+    # sees feedback, but long enough that a continuous typing burst
+    # never pays the disk cost.
+    _PATH_VALIDATE_DEBOUNCE_S: ClassVar[float] = 0.25
+
     @on(Input.Changed, "#editor_input")
     def _on_input_changed(self, ev: Input.Changed) -> None:
         """For path-typed scalar rows (Add Collection wizard, per-source
-        form), validate on every keystroke and surface ✓/✗ inline in the
-        repurposed error label."""
+        form), schedule a debounced ✓/✗ probe so we don't ``iterdir`` on
+        every keystroke into a large directory like ~/Documents."""
         if self._item is None or self._item.id not in self._PATH_VALIDATE_IDS:
             return
+        if self._validation_timer is not None:
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                self._validation_timer.stop()
+            self._validation_timer = None
+        raw_value = ev.value
+        self._validation_timer = self.set_timer(
+            self._PATH_VALIDATE_DEBOUNCE_S,
+            lambda r=raw_value: self._validate_path(r),
+        )
+
+    def _validate_path(self, value: str) -> None:
+        """Run the actual ✓/✗ probe (called by the debounce timer)."""
+        self._validation_timer = None
         from pathlib import Path as _Path
 
-        raw = ev.value.strip().strip("'\"")
+        raw = value.strip().strip("'\"")
         if not raw:
             self._set_status("", tone="error")
             return
@@ -468,8 +499,24 @@ class SettingsList(Widget, can_focus=True):
             i += direction
         return None
 
-    def watch_cursor_index(self, _old: int, _new: int) -> None:
-        self._render_all()
+    def watch_cursor_index(self, old: int, new: int) -> None:
+        """Move the ``-cursor`` class from the previously-cursored row
+        to the newly-cursored row without re-rendering every row.
+
+        ``_render_all`` rebuilds every row's Rich ``Text`` and updates
+        every ``Static`` — on a long list (Keybindings has ~80 rows) it
+        dominates the cost of a single arrow keystroke. The cursor move
+        only changes one CSS class on two rows; do exactly that.
+        """
+        try:
+            body = self.query_one("#settings_list_body", Vertical)
+        except Exception:
+            return
+        rows = list(body.query(Static))
+        if 0 <= old < len(rows):
+            rows[old].remove_class("-cursor")
+        if 0 <= new < len(rows) and new < len(self._items) and self._items[new].kind != KIND_HEADER:
+            rows[new].add_class("-cursor")
 
     def _post_highlight(self) -> None:
         if 0 <= self.cursor_index < len(self._items):
@@ -629,12 +676,15 @@ class SettingsScreen(Screen[None]):
         *,
         breadcrumb: tuple[str, ...],
         items: tuple[MenuItem, ...],
-        root_provider: Any = None,
+        provider: Callable[[AcornApp], Iterable[MenuItem]] | None = None,
     ) -> None:
         super().__init__()
         self._breadcrumb = breadcrumb
-        self._items: tuple[MenuItem, ...] = items
-        self._root_provider = root_provider
+        self._items: tuple[MenuItem, ...] = tuple(items)
+        # Re-invoked on screen resume so structural edits in a popped
+        # child screen (add/remove source, rename, etc.) appear here
+        # immediately. ``None`` falls back to a value-only re-render.
+        self._provider = provider
         self._filter_active: bool = False
         # Populated during cross-section search: maps id(item) → breadcrumb.
         self._search_breadcrumbs: dict[int, tuple[str, ...]] = {}
@@ -668,18 +718,53 @@ class SettingsScreen(Screen[None]):
             self._render_version_status()
 
     def on_screen_resume(self) -> None:
-        """Re-render trailing values when control returns to this screen.
+        """Refresh items when control returns from a popped child screen.
 
-        Picker / sub-screen edits mutate config from another screen — when
-        they pop, this screen becomes active again but its painted rows
-        still show the pre-edit values. Refreshing here is the cheapest
-        fix and keeps each row's value_getter as the single source of
-        truth (the lambdas already read ``app._config`` lazily).
+        A scalar/picker edit only changes one row's value — re-rendering
+        in place is enough since the row's ``value_getter`` lambda reads
+        config lazily. But a structural edit (adding a source, renaming
+        a collection) changes the *set* of rows, and the cached
+        ``self._items`` list won't reflect it. Re-running the provider
+        is the single source of truth: if it returns a different shape,
+        the new rows appear; if it returns the same shape, only the
+        trailing values needed refreshing.
         """
         import contextlib
 
-        with contextlib.suppress(Exception):
-            self.query_one(SettingsList).refresh_values()
+        if self._provider is None:
+            with contextlib.suppress(Exception):
+                self.query_one(SettingsList).refresh_values()
+            self._refresh_hint_bar()
+            return
+        try:
+            new_items = tuple(self._provider(self.app))  # type: ignore[arg-type]
+        except Exception:
+            with contextlib.suppress(Exception):
+                self.query_one(SettingsList).refresh_values()
+            self._refresh_hint_bar()
+            return
+        try:
+            lst = self.query_one(SettingsList)
+        except Exception:
+            self._refresh_hint_bar()
+            return
+        # Preserve cursor position by item id: a structural edit (add /
+        # remove row) shifts indices, so the closest semantic anchor is
+        # the previously-cursored row's stable id.
+        prev_id: str | None = None
+        if 0 <= lst.cursor_index < len(lst._items):
+            prev_id = lst._items[lst.cursor_index].id
+        self._items = new_items
+        lst.set_items(list(new_items))
+        if prev_id is not None:
+
+            def _restore_cursor() -> None:
+                for i, it in enumerate(lst._items):
+                    if it.id == prev_id:
+                        lst.cursor_index = i
+                        break
+
+            self.call_after_refresh(_restore_cursor)
         self._refresh_hint_bar()
 
     def _render_version_status(self) -> None:
@@ -784,8 +869,7 @@ class SettingsScreen(Screen[None]):
             placeholder = MenuItem(
                 id="search.empty",
                 label=(
-                    f"No matches for '{ev.value.strip()}'. "
-                    "Try shorter terms or press Esc to clear."
+                    f"No matches for '{ev.value.strip()}'. Try shorter terms or press Esc to clear."
                 ),
                 kind=KIND_HEADER,
             )
@@ -913,11 +997,15 @@ class SettingsScreen(Screen[None]):
             return
         if item.kind == KIND_SUBMENU:
             children = item.resolve_children(app)
+
+            def _provider(a: AcornApp, _it: MenuItem = item) -> tuple[MenuItem, ...]:
+                return tuple(_it.resolve_children(a))
+
             self.app.push_screen(
                 SettingsScreen(
                     breadcrumb=(*self._breadcrumb, item.label),
                     items=children,
-                    root_provider=self._root_provider,
+                    provider=_provider,
                 )
             )
 
@@ -1081,34 +1169,47 @@ class PickerScreen(Screen[None]):
         self.query_one("#footer_hints", Static).update(_hint_bar(app, hints))
 
     def _render_options(self) -> None:
+        """First-paint of the picker list. Toggles after mount use
+        ``replace_option_prompt_at_index`` so the cursor is preserved."""
         lst = self.query_one("#picker_list", OptionList)
         lst.clear_options()
         if not self._choices:
             lst.add_option(Option(Text("(no options)", style="dim"), disabled=True))
             return
         for c in self._choices:
-            marker = "✓" if c.value in self._selected else " "
-            t = Text(f"[{marker}] {c.label}")
-            if c.description:
-                t.append(f"   {c.description}", style="dim")
-            lst.add_option(Option(t, id=str(c.value)))
+            lst.add_option(Option(self._render_choice_prompt(c), id=str(c.value)))
 
     @on(OptionList.OptionSelected, "#picker_list")
     def _on_selected(self, ev: OptionList.OptionSelected) -> None:
         if ev.option.id is None:
             return
-        target = next((c for c in self._choices if str(c.value) == ev.option.id), None)
-        if target is None:
+        target_index = next(
+            (i for i, c in enumerate(self._choices) if str(c.value) == ev.option.id),
+            None,
+        )
+        if target_index is None:
             return
+        target = self._choices[target_index]
         if self._item.multi:
             if target.value in self._selected:
                 self._selected.discard(target.value)
             else:
                 self._selected.add(target.value)
-            self._render_options()
+            # In-place update keeps the OptionList cursor on the toggled
+            # row — rebuilding via clear_options + add_option would reset
+            # it to index 0 every time and force the user to re-navigate.
+            lst = self.query_one("#picker_list", OptionList)
+            lst.replace_option_prompt_at_index(target_index, self._render_choice_prompt(target))
             return
         self._commit({target.value})
         self.app.pop_screen()
+
+    def _render_choice_prompt(self, c: ChoiceOption) -> Text:
+        marker = "✓" if c.value in self._selected else " "
+        t = Text(f"[{marker}] {c.label}")
+        if c.description:
+            t.append(f"   {c.description}", style="dim")
+        return t
 
     def action_back(self) -> None:
         if self._item.multi:
@@ -2300,7 +2401,7 @@ def open_settings(app: AcornApp) -> None:
         SettingsScreen(
             breadcrumb=(),
             items=items,
-            root_provider=build_root_items,
+            provider=lambda a: tuple(build_root_items(a)),
         )
     )
 
@@ -2318,6 +2419,6 @@ def open_settings_section(app: AcornApp, section_id: str) -> None:
         SettingsScreen(
             breadcrumb=(label,),
             items=items,
-            root_provider=build_root_items,
+            provider=lambda a, _s=section_id: tuple(section_items(a, _s)),
         )
     )

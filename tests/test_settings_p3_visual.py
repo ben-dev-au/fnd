@@ -427,3 +427,221 @@ async def test_preferences_refreshes_trailing_after_picker_pops(
         assert (
             "always_ellipsis" in rendered_after
         ), f"Trailing did not refresh after picker pop; got: {rendered_after!r}"
+
+
+@pytest.mark.asyncio
+async def test_on_reindex_complete_swaps_searcher(fixtures_dir: Path, tmp_index_dir: Path) -> None:
+    """Regression: after a reindex finishes the in-memory Searcher must
+    be rebuilt — otherwise the captured ``self._index.searcher()`` keeps
+    returning hits from the pre-rebuild generation and the user sees zero
+    results until they restart the app."""
+    from acorn.index import build_index
+    from acorn.tui import AcornApp
+
+    build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
+    app = AcornApp(index_dir=tmp_index_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        original = app._searcher
+        assert original is not None, "Searcher should exist after first mount"
+        app._on_reindex_complete()
+        assert app._searcher is not None
+        assert app._searcher is not original, (
+            "Searcher instance was not replaced — stale searcher would keep "
+            "querying the pre-rebuild index generation"
+        )
+
+
+@pytest.mark.asyncio
+async def test_on_screen_resume_rebuilds_items_from_provider(
+    fixtures_dir: Path, tmp_index_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: when a structural edit lands in a popped child screen
+    (here we simulate it by mutating the live Config and resuming), the
+    parent SettingsScreen must re-walk its provider so newly-added rows
+    appear. The earlier ``refresh_values()``-only path would silently
+    drop the new row until the user fully reopened the screen."""
+    from pathlib import Path as _Path
+
+    from acorn.config import CollectionConfig, Config, SourceConfig
+    from acorn.index import build_index
+    from acorn.tui import AcornApp
+    from acorn.tui.menu import _provider_sources
+    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+
+    build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+
+    cfg = Config(
+        collections={
+            "default": CollectionConfig(sources=[SourceConfig(path=fixtures_dir)]),
+        }
+    )
+    app = AcornApp(index_dir=tmp_index_dir, config=cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Push a Sources sub-screen manually so we control the lifecycle.
+        app.push_screen(
+            SettingsScreen(
+                breadcrumb=("Collections", "default", "Sources"),
+                items=_provider_sources(app, "default"),
+                provider=lambda a: tuple(_provider_sources(a, "default")),
+            )
+        )
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        lst = screen.query_one(SettingsList)
+        before_ids = [it.id for it in lst._items]
+        # Simulate a child screen mutating config: append a second source.
+        cfg.collections["default"].sources.append(SourceConfig(path=_Path(str(tmp_path))))
+        # Fire on_screen_resume directly — equivalent to a child popping.
+        screen.on_screen_resume()
+        await pilot.pause()
+        after_ids = [it.id for it in lst._items]
+        assert len(after_ids) > len(before_ids), (
+            f"Item list did not grow after a structural edit. Before: "
+            f"{before_ids!r}; After: {after_ids!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_picker_toggle_preserves_cursor(fixtures_dir: Path, tmp_index_dir: Path) -> None:
+    """Regression: toggling a multi-select option (file type, excludes
+    preset, etc.) must keep the OptionList cursor on the just-toggled
+    row. The previous implementation called ``clear_options() +
+    rebuild`` which reset the highlight to 0 every time."""
+    from textual.widgets import OptionList
+
+    from acorn.index import build_index
+    from acorn.tui import AcornApp
+    from acorn.tui.menu import (
+        KIND_PICKER,
+        ChoiceOption,
+        MenuItem,
+    )
+    from acorn.tui.settings_screen import PickerScreen
+
+    build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
+    selected: set[str] = set()
+    item = MenuItem(
+        id="x.multi",
+        label="Multi",
+        kind=KIND_PICKER,
+        multi=True,
+        choices_provider=lambda _a: [
+            ChoiceOption(value="a", label="Alpha"),
+            ChoiceOption(value="b", label="Bravo"),
+            ChoiceOption(value="c", label="Charlie"),
+        ],
+        picker_getter=lambda _a: sorted(selected),
+        picker_setter=lambda _a, v: selected.update(v) or None,  # type: ignore[func-returns-value]
+    )
+    app = AcornApp(index_dir=tmp_index_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(PickerScreen(item))
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, PickerScreen)
+        lst = screen.query_one("#picker_list", OptionList)
+        # Move cursor to "Bravo" (index 1) and toggle it.
+        lst.highlighted = 1
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "b" in screen._selected, "expected the picker to register the toggle"
+        assert (
+            lst.highlighted == 1
+        ), f"cursor jumped to {lst.highlighted!r} after toggle; should stay at 1"
+
+
+@pytest.mark.asyncio
+async def test_collections_sidebar_toggle_preserves_cursor(
+    fixtures_dir: Path, tmp_index_dir: Path, tmp_path: Path
+) -> None:
+    """Regression: toggling a collection in the main app's sidebar tree
+    must keep the cursor on the toggled row. The previous implementation
+    called ``_refresh_collections_panel()`` which does ``tree.clear()``
+    and resets the cursor to the root every time."""
+    from textual.widgets import Tree
+
+    from acorn.config import CollectionConfig, Config, SourceConfig
+    from acorn.index import build_index
+    from acorn.tui import AcornApp
+
+    build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
+    cfg = Config(
+        collections={
+            "alpha": CollectionConfig(sources=[SourceConfig(path=fixtures_dir)]),
+            "bravo": CollectionConfig(sources=[SourceConfig(path=fixtures_dir)]),
+        }
+    )
+    app = AcornApp(index_dir=tmp_index_dir, config=cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#collections_panel_tree", Tree)
+        # Move cursor to the second collection node (bravo).
+        bravo = tree.root.children[1]
+        tree.cursor_line = bravo.line
+        await pilot.pause()
+        cursor_before = tree.cursor_line
+        assert cursor_before > 0, "expected cursor to land on a non-root row"
+        # Fire the selection directly — Tree.action_select_cursor in
+        # headless tests doesn't always post NodeSelected via the focus
+        # path. Posting the message exercises the real handler.
+        tree.post_message(Tree.NodeSelected(bravo))
+        await pilot.pause()
+        assert "bravo" in app._collections, "toggle did not register"
+        assert (
+            tree.cursor_line == cursor_before
+        ), f"cursor moved from {cursor_before} to {tree.cursor_line} after a single toggle"
+        # Label marker should now read ● (active) for bravo.
+        label_str = str(bravo.label)
+        assert label_str.startswith("●"), f"expected ● marker after toggle; got {label_str!r}"
+
+
+@pytest.mark.asyncio
+async def test_cursor_move_does_not_call_render_all(
+    fixtures_dir: Path, tmp_index_dir: Path
+) -> None:
+    """Regression / perf: arrow-key cursor movement must NOT call
+    SettingsList._render_all — that path rebuilds every row's Rich
+    Text and was the dominant per-keystroke cost on long lists like
+    Keybindings."""
+    from acorn.index import build_index
+    from acorn.tui import AcornApp
+    from acorn.tui.menu import SECTION_KEYBINDINGS
+    from acorn.tui.settings_screen import (
+        SettingsList,
+        SettingsScreen,
+        open_settings_section,
+    )
+
+    build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
+    app = AcornApp(index_dir=tmp_index_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        open_settings_section(app, SECTION_KEYBINDINGS)
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        lst = screen.query_one(SettingsList)
+        counter = {"n": 0}
+        orig = lst._render_all
+
+        def _counting_render() -> None:
+            counter["n"] += 1
+            orig()
+
+        # Track calls to _render_all across a cursor walk.
+        lst._render_all = _counting_render  # type: ignore[method-assign]
+        baseline = counter["n"]
+        for _ in range(10):
+            lst.cursor_index += 1
+        await pilot.pause()
+        assert counter["n"] == baseline, (
+            f"watch_cursor_index called _render_all "
+            f"{counter['n'] - baseline} times across 10 cursor moves; "
+            "should be zero — only -cursor class toggles, no row rerenders"
+        )
