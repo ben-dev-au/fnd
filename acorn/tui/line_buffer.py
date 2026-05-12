@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.console import Console
 from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.geometry import Size
@@ -216,7 +217,6 @@ class LineBufferPreview(ScrollView, can_focus=True):
 
     DEFAULT_CSS = """
     LineBufferPreview {
-        background: $surface;
         color: $text;
         width: 1fr;
         height: 1fr;
@@ -405,13 +405,16 @@ class LineBufferPreview(ScrollView, can_focus=True):
         scroll_x, _ = self.scroll_offset
         scroll_y = int(self.scroll_offset.y)
         line_idx = scroll_y + y
+        # Pad with a null (no-bg) Style so the parent pane's
+        # background shows through behind the text. ``self.rich_style``
+        # would resolve to ``$surface`` and bake that under every cell,
+        # making the buffer visibly tinted against the rest of the
+        # screen — which is the bug the user kept seeing.
+        null_fill = Style()
         if not (0 <= line_idx < len(self._strips)):
-            return Strip.blank(self.size.width, self.rich_style)
-        # Resolve the per-row accent overlay (focused chunk wins over
-        # match line; both compose with the strip's own foreground
-        # styles via Rich's standard background-overlay semantics).
+            return Strip.blank(self.size.width, null_fill)
         overlay = self._row_overlay_style(line_idx)
-        fill_style = overlay if overlay is not None else self.rich_style
+        fill_style = overlay if overlay is not None else null_fill
         strip = self._strips[line_idx].crop_extend(scroll_x, scroll_x + self.size.width, fill_style)
         if overlay is not None:
             strip = strip.apply_style(overlay)
