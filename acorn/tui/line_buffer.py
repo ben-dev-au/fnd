@@ -38,7 +38,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.console import Console
 from rich.segment import Segment
-from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.geometry import Size
@@ -217,6 +216,7 @@ class LineBufferPreview(ScrollView, can_focus=True):
 
     DEFAULT_CSS = """
     LineBufferPreview {
+        background: $surface;
         color: $text;
         width: 1fr;
         height: 1fr;
@@ -405,16 +405,16 @@ class LineBufferPreview(ScrollView, can_focus=True):
         scroll_x, _ = self.scroll_offset
         scroll_y = int(self.scroll_offset.y)
         line_idx = scroll_y + y
-        # Pad with a null (no-bg) Style so the parent pane's
-        # background shows through behind the text. ``self.rich_style``
-        # would resolve to ``$surface`` and bake that under every cell,
-        # making the buffer visibly tinted against the rest of the
-        # screen — which is the bug the user kept seeing.
-        null_fill = Style()
+        # Pad with ``self.rich_style`` so blank cells paint the
+        # widget's ``$surface`` background — same colour the
+        # structural Markdown widget paints under its own content.
+        # Using a null Style here makes the buffer show the darker
+        # screen ``$background`` instead, which is the wrong colour
+        # against MD / DOCX previews.
         if not (0 <= line_idx < len(self._strips)):
-            return Strip.blank(self.size.width, null_fill)
+            return Strip.blank(self.size.width, self.rich_style)
         overlay = self._row_overlay_style(line_idx)
-        fill_style = overlay if overlay is not None else null_fill
+        fill_style = overlay if overlay is not None else self.rich_style
         strip = self._strips[line_idx].crop_extend(scroll_x, scroll_x + self.size.width, fill_style)
         if overlay is not None:
             strip = strip.apply_style(overlay)
