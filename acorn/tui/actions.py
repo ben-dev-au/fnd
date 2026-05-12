@@ -183,7 +183,7 @@ REGISTRY: tuple[Action, ...] = (
     ),
     Action(
         id="show_explain_overlay",
-        description=("Show JSON trace for the latest search " "(regime, sub-queries, RRF math)."),
+        description=("Show JSON trace for the latest search (regime, sub-queries, RRF math)."),
         command="explain",
         footer_label="Explain",
         show_in_footer=False,  # palette-only debugging surface

@@ -41,6 +41,7 @@ def search_layered(
     query: str,
     limit: int,
     sections_per_file: int = ...,
+    sections_score_threshold: float = ...,
     collection: str | None = ...,
     synonyms: SynonymTable | None = ...,
     metadata_filter: str | None = ...,
@@ -58,6 +59,7 @@ def search_layered(
     query: str,
     limit: int,
     sections_per_file: int = ...,
+    sections_score_threshold: float = ...,
     collection: str | None = ...,
     synonyms: SynonymTable | None = ...,
     metadata_filter: str | None = ...,
@@ -74,6 +76,7 @@ def search_layered(
     query: str,
     limit: int,
     sections_per_file: int = 10,
+    sections_score_threshold: float = 0.0,
     collection: str | None = None,
     synonyms: SynonymTable | None = None,
     metadata_filter: str | None = None,
@@ -183,7 +186,12 @@ def search_layered(
         assert isinstance(profile, RankingProfile)
         hits = rerank_hits(hits, profile=profile, query=query)
 
-    groups = group_by_file(hits, limit=limit, sections_per_file=sections_per_file)
+    groups = group_by_file(
+        hits,
+        limit=limit,
+        sections_per_file=sections_per_file,
+        score_threshold=sections_score_threshold,
+    )
 
     if with_trace:
         trace = SearchTrace(

@@ -141,7 +141,7 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
         with Vertical(id="recovery_box"):
             yield Static("Acorn could not load your config.", id="recovery_title")
             yield Static(
-                f"File: {self._config_path}\n" "Pick an action below to fix or reset it.",
+                f"File: {self._config_path}\nPick an action below to fix or reset it.",
                 id="recovery_intro",
             )
             yield Static(self._error_text, id="recovery_error")
