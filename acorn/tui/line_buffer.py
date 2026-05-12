@@ -504,10 +504,13 @@ class LineBufferPreview(ScrollView, can_focus=True):
         self._visual_to_logical = v2l
         self._logical_to_visual_start = l2vs
         if wrap_width > 0:
-            # Wrapping forces every visual row to fit inside the viewport
-            # — horizontal scroll is meaningless, so report a width of 1
-            # (Textual clamps to viewport on its own from there).
-            self._base_width = max(1, wrap_width)
+            # Wrap is on: every visual row already fits in the
+            # viewport, so report a 1-cell virtual width. Anything
+            # wider can trigger Textual's horizontal scrollbar to
+            # paint a one-row bar across the bottom of the pane —
+            # which on a dark theme renders as a vivid ``$primary``
+            # band the user reads as a chunk boundary.
+            self._base_width = 1
         else:
             self._base_width = max(fv.widest_line, 1)
         self.virtual_size = Size(self._base_width, len(strips))
