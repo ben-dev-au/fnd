@@ -87,6 +87,15 @@ _PREVIEW_CACHE_MIN_CHUNKS = 1
 # feedback before the background fill starts.
 _VISIBLE_FIRST_ABOVE = 7
 _VISIBLE_FIRST_BELOW = 7
+# Lazy-mount budget. The background fill stops at focused ± this many
+# chunks instead of mounting the whole document. For a 5000-chunk PDF
+# that turns a multi-minute mount into a bounded one (and keeps the
+# steady-state DOM small enough that post-load navigation stays
+# snappy). If the user wants a section outside the buffer, they click
+# it in the results tree — ``_dispatch_preview_mount`` resumes the
+# task with a new focus, Phase 1a mounts the requested chunk, and
+# Phase 2 extends the buffer around it.
+_BACKGROUND_FILL_RADIUS = 200
 
 
 class ResultsTree(Tree[dict[str, Any]]):
@@ -1774,9 +1783,12 @@ class AcornApp(App[None]):
             self._update_progress_bar(progress=len(container.mounted_indices))
             await asyncio.sleep(0)
 
-            # Phase 2a: background fill BELOW the window, in order.
-            # No scroll shift since these append below visible content.
-            for i in range(win_end, len(chunks)):
+            # Phase 2a: background fill BELOW the window, capped at the
+            # lazy-mount radius. Mounting every chunk of a 5000-chunk
+            # PDF takes minutes AND keeps the post-load DOM big enough
+            # to make navigation laggy; the radius bounds both costs.
+            below_end = min(len(chunks), focus_idx + 1 + _BACKGROUND_FILL_RADIUS)
+            for i in range(win_end, below_end):
                 if i in container.mounted_indices:
                     continue
                 self._mount_chunk_into(container, chunks[i], i, chunks)
@@ -1787,12 +1799,12 @@ class AcornApp(App[None]):
                 await asyncio.sleep(0)
             await asyncio.sleep(0)
 
-            # Phase 2b: hidden-prepend ABOVE the window. Each newly-
-            # mounted widget gets ``display = False`` immediately, so
-            # it takes no layout space and the focused chunk doesn't
-            # drift while the rest of the doc loads. Yields are larger
-            # here because hidden widgets cost almost nothing to add.
-            for i in range(win_start - 1, -1, -1):
+            # Phase 2b: hidden-prepend ABOVE the window, capped at the
+            # same radius. Each newly-mounted widget gets ``display =
+            # False`` immediately, so it takes no layout space and the
+            # focused chunk doesn't drift while the rest mounts.
+            above_start = max(0, focus_idx - _BACKGROUND_FILL_RADIUS)
+            for i in range(win_start - 1, above_start - 1, -1):
                 if i in container.mounted_indices:
                     continue
                 before = set(container.children)
