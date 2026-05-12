@@ -211,6 +211,94 @@ async def test_cursor_between_sections_calls_scroll_to_chunk_each_time(
 
 
 @pytest.mark.asyncio
+async def test_only_one_flat_buffer_is_visible_at_a_time(
+    multi_match_pdf_index: Path,
+) -> None:
+    """User reported each chunk getting its own scrollbar section after
+    Phase 5 landed. Root cause: LineBufferPreview had no
+    ``.-hidden`` CSS rule, so the ``-hidden`` class
+    ``_activate_flat_buffer`` adds didn't actually remove non-active
+    buffers from the layout — they stacked in the pane, each with
+    their own scrollbar. Pin the invariant: at most ONE buffer in the
+    pane is visible (display != none) at any time."""
+    app = AcornApp(index_dir=multi_match_pdf_index, initial_query="zebra")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#results_pane", Tree)
+        first = next(iter(tree.root.children))
+        first.expand()
+        await pilot.pause()
+        tree.focus()
+        for _ in range(3):
+            await pilot.press("down")
+            await pilot.pause()
+        pane = app.query_one("#preview_pane")
+        # Count buffers that are actually rendered (not display:none).
+        visible_buffers = [b for b in pane.query(LineBufferPreview) if b.display]
+        assert (
+            len(visible_buffers) <= 1
+        ), f"expected ≤1 visible LineBufferPreview, got {len(visible_buffers)}"
+
+
+@pytest.mark.asyncio
+async def test_switching_md_to_pdf_hides_structural_container(
+    cfg: Config, md_index: Path, pdf_index: Path
+) -> None:
+    """Symmetric activator check: when the user switches from a MD
+    file (structural path) to a PDF (flat path), the previous
+    PreviewContainer must hide so the two pipelines don't overlap on
+    screen. Bug was both visible at once because the old activators
+    only hid widgets of their own kind."""
+    # Build a combined index with both kinds.
+    # Use the pdf_index fixture's data alongside MD content.
+    import shutil
+
+    workspace = pdf_index.parent / "combined_workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    notes = workspace / "notes"
+    notes.mkdir(parents=True, exist_ok=True)
+    (notes / "n.md").write_text(
+        "# Title\n\n## Section\n\nblue penguin sandwich anchor.\n",
+        encoding="utf-8",
+    )
+    papers = workspace / "papers"
+    papers.mkdir(parents=True, exist_ok=True)
+    # Copy the fixture PDF in alongside the MD.
+    fixtures_pdf = next(pdf_index.parent.glob("**/test.pdf"), None)
+    if fixtures_pdf is not None:
+        shutil.copy(fixtures_pdf, papers / "test.pdf")
+
+    combined_index = pdf_index.parent / "combined_index"
+    combined_index.mkdir(parents=True, exist_ok=True)
+    from acorn.index import build_index as _build
+
+    _build(roots=[workspace], index_dir=combined_index, collection="default")
+
+    app = AcornApp(index_dir=combined_index, initial_query="blue penguin sandwich")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#results_pane", Tree)
+        # Walk the first two file rows, expanding each and stepping to
+        # its first section. This guarantees we exercise both pipelines.
+        for child in list(tree.root.children)[:2]:
+            child.expand()
+            await pilot.pause()
+            tree.move_cursor(child.children[0] if child.children else child)
+            await pilot.pause()
+
+        pane = app.query_one("#preview_pane")
+        from acorn.tui.app import PreviewContainer
+
+        visible_buffers = [b for b in pane.query(LineBufferPreview) if b.display]
+        visible_containers = [c for c in pane.query(PreviewContainer) if c.display]
+        # Exactly one preview widget visible across BOTH pipelines.
+        assert len(visible_buffers) + len(visible_containers) <= 1, (
+            f"both pipelines left widgets visible: "
+            f"{len(visible_buffers)} buffers + {len(visible_containers)} containers"
+        )
+
+
+@pytest.mark.asyncio
 async def test_flat_buffer_cache_hit_reuses_widget(pdf_index: Path) -> None:
     """Re-cursoring back onto the same PDF doesn't remount — the
     cached LineBufferPreview is flipped visible again."""

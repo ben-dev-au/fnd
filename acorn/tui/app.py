@@ -1785,13 +1785,23 @@ class AcornApp(App[None]):
             bar.update(progress=progress)
 
     def _activate_preview_container(self, container: PreviewContainer) -> None:
-        """Make ``container`` the visible preview; hide all others."""
+        """Make ``container`` the visible preview; hide all others.
+
+        Symmetric with :meth:`_activate_flat_buffer` — hides every
+        sibling preview widget regardless of pipeline (PreviewContainer
+        for the structural Markdown path, LineBufferPreview for the
+        flat-buffer path) so PDF↔MD switching never leaves a stale
+        widget visible alongside the new one.
+        """
         for child in self.query(PreviewContainer):
             if child is container:
                 child.remove_class("-hidden")
             else:
                 child.add_class("-hidden")
+        for child in self.query(LineBufferPreview):
+            child.add_class("-hidden")
         self._active_preview = container
+        self._active_flat_buffer = None
         self._preview_parent_id = container.parent_doc_id
         # Update the legacy aliases that other code paths read from.
         self._chunk_widgets = container.chunk_widgets
