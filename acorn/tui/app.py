@@ -1659,9 +1659,12 @@ class AcornApp(App[None]):
         # Cold path: build the FileView from decoded chunks, mount a
         # fresh LineBufferPreview.
         pane = self.query_one("#preview_pane", VerticalScroll)
-        # Drop the placeholder if it's still mounted.
+        # Drop the placeholder Static if it's still mounted. The
+        # placeholder uses ``id="placeholder"`` (not a CSS class), so
+        # match by id — the old class-based check never fired and
+        # left the "Type a query…" Static stacked above the buffer.
         for w in list(pane.children):
-            if isinstance(w, Static) and "placeholder" in w.classes:
+            if isinstance(w, Static) and w.id == "placeholder":
                 with contextlib.suppress(Exception):
                     w.remove()
 
@@ -1886,7 +1889,11 @@ class AcornApp(App[None]):
 
         # Make sure container is mounted in the pane and active.
         if container.parent is None:
-            await pane.remove_children(".placeholder")
+            # ``#placeholder`` id selector — the Static was yielded
+            # with ``id="placeholder"`` and has no CSS class of the
+            # same name. The legacy ``.placeholder`` selector silently
+            # matched nothing.
+            await pane.remove_children("#placeholder")
             pane.mount(container)
         self._activate_preview_container(container)
         self._refresh_match_scrollbar(chunks)
