@@ -34,6 +34,7 @@ Two marker-mapping modes coexist:
 
 from __future__ import annotations
 
+import contextlib
 from math import ceil
 from typing import TYPE_CHECKING, Any
 
@@ -243,6 +244,23 @@ class MatchAwareScroll(VerticalScroll):
     ``vertical_scrollbar`` property; we override the property so the
     bar widget is a :class:`MatchAwareScrollBar` from first construction.
     """
+
+    def watch_has_focus(self, has_focus: bool) -> None:
+        """Skip Textual's default behaviour of reapplying CSS to every
+        descendant when this widget gains or loses focus.
+
+        The stock ``Widget.watch_has_focus`` calls
+        ``self.update_node_styles()``, which walks the whole subtree and
+        reapplies CSS to every node (every chunk widget, MarkdownBlock,
+        flat-buffer line). That walk is the dominant cost when the user
+        Tab-cycles in or out of the preview pane on a large document.
+
+        None of this pane's descendants have CSS rules that depend on
+        the pane's ``:focus`` state, so we apply styles to just this
+        node — the focus-indicator border on the pane itself.
+        """
+        with contextlib.suppress(Exception):
+            self.app.stylesheet.apply(self)
 
     @property
     def vertical_scrollbar(self) -> ScrollBar:

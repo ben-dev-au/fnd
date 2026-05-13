@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.console import Console
 from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.geometry import Size
@@ -216,7 +217,6 @@ class LineBufferPreview(ScrollView, can_focus=True):
 
     DEFAULT_CSS = """
     LineBufferPreview {
-        background: $surface;
         color: $text;
         width: 1fr;
         height: 1fr;
@@ -257,35 +257,51 @@ class LineBufferPreview(ScrollView, can_focus=True):
         # scroll.
         self._wrap: bool = wrap
         # Width the cached Strips were wrapped to. ``0`` = unwrapped.
-        # Tracked separately from ``self.size.width`` so ``on_resize``
-        # can short-circuit when the width didn't actually change.
         self._wrap_width: int = 0
+        # Deferred scroll target — re-applied once the buffer has a real viewport.
+        self._pending_scroll_line: int | None = None
+        self._pending_scroll_center: bool = False
 
     # ── Public API ──────────────────────────────────────────────
 
     def set_file_view(self, fv: FileView) -> None:
-        """Install ``fv``, rebuild cached Strips, reset scroll.
-
-        Also pushes the line-precise match positions onto the widget's
-        own scrollbar (a :class:`MatchAwareScrollBar`) so the bar
-        markers update in lockstep with the buffer's content — the
-        host never has to wire scrollbar data through separately.
-
-        Safe to call before the widget has been laid out: when wrap is
-        enabled but ``size.width`` is still 0 (typical immediately
-        after ``mount``) the first rebuild produces unwrapped strips
-        and a deferred ``call_after_refresh`` re-runs the rebuild once
-        the layout pass has assigned a real width.
-        """
+        """Install ``fv``, rebuild Strips on the main thread, reset scroll."""
         self._fv = fv
         self._focused_chunk = None
+        self._pending_scroll_line = None
+        self._pending_scroll_center = False
         self._rebuild_strips()
         self.scroll_to(0, 0, animate=False, immediate=True)
         self._refresh_match_scrollbar()
         self.refresh()
         if self._wrap and self.size.width == 0:
-            # Schedule a post-layout rebuild so wrap actually fires on
-            # the first paint after mount.
+            self.call_after_refresh(self._rebuild_after_layout)
+
+    def set_prebuilt_view(
+        self,
+        fv: FileView,
+        strips: list[Strip],
+        visual_to_logical: list[int],
+        logical_to_visual_start: list[int],
+        *,
+        wrap_width: int,
+        base_width: int,
+    ) -> None:
+        """Install a worker-prerendered view; re-wrap if viewport width differs."""
+        self._fv = fv
+        self._focused_chunk = None
+        self._pending_scroll_line = None
+        self._pending_scroll_center = False
+        self._strips = strips
+        self._visual_to_logical = visual_to_logical
+        self._logical_to_visual_start = logical_to_visual_start
+        self._base_width = base_width
+        self._wrap_width = wrap_width
+        self.virtual_size = Size(base_width, len(strips))
+        self.scroll_to(0, 0, animate=False, immediate=True)
+        self._refresh_match_scrollbar()
+        self.refresh()
+        if self._wrap:
             self.call_after_refresh(self._rebuild_after_layout)
 
     def _rebuild_after_layout(self) -> None:
@@ -295,6 +311,7 @@ class LineBufferPreview(ScrollView, can_focus=True):
             self._rebuild_strips()
             self._refresh_match_scrollbar()
             self.refresh()
+        self._apply_pending_scroll()
 
     def _refresh_match_scrollbar(self) -> None:
         bar = self.vertical_scrollbar
@@ -318,24 +335,33 @@ class LineBufferPreview(ScrollView, can_focus=True):
             self.refresh()
 
     def scroll_to_line(self, line_index: int, *, center: bool = False) -> None:
-        """Move the viewport so the logical line at ``line_index`` is visible.
+        """Scroll the viewport so ``line_index`` is at the top (or centred).
 
-        ``center=False`` (default) puts the line at the top of the
-        viewport — matches the legacy ``scroll_to_widget(top=True)``
-        behaviour. ``center=True`` vertically centres the line so the
-        user has context above and below.
-
-        With wrap enabled the logical index is translated to its first
-        visual row before scrolling — the user still sees the wrapped
-        line top-of-viewport, not whichever visual row happened to
-        carry the match span.
+        Safe before layout: the target is remembered and re-applied once
+        the buffer has a real viewport.
         """
         if self._fv is None or self._fv.line_count == 0:
             return
         line_index = max(0, min(line_index, self._fv.line_count - 1))
+        self._pending_scroll_line = line_index
+        self._pending_scroll_center = center
+        self._apply_pending_scroll()
+
+    def _apply_pending_scroll(self, retries: int = 8) -> None:
+        line_index = self._pending_scroll_line
+        if line_index is None or self._fv is None:
+            return
+        if self.size.height <= 0 or not self._logical_to_visual_start:
+            if retries > 0:
+                self.call_after_refresh(self._apply_pending_scroll, retries - 1)
+            return
         visual_y = self._logical_to_visual_y(line_index)
-        target = max(0, visual_y - self.size.height // 2) if center else visual_y
+        target = (
+            max(0, visual_y - self.size.height // 2) if self._pending_scroll_center else visual_y
+        )
         self.scroll_to(y=target, animate=False, immediate=True)
+        self._pending_scroll_line = None
+        self._pending_scroll_center = False
 
     def scroll_to_chunk(
         self,
@@ -360,13 +386,7 @@ class LineBufferPreview(ScrollView, can_focus=True):
             self.scroll_to_line(target, center=center)
 
     def set_focused_chunk(self, chunk_id: int | None) -> None:
-        """Paint the focused-chunk accent band over ``chunk_id`` and
-        clear it from the previously focused one.
-
-        Cheap — just flips the focused id and asks the widget to repaint.
-        The actual overlay style is applied in :meth:`render_line` via
-        a component class, so no Strip rebuild is needed.
-        """
+        """Move the focused-chunk accent band; no Strip rebuild."""
         if self._focused_chunk == chunk_id or self._fv is None:
             return
         self._focused_chunk = chunk_id
@@ -374,25 +394,14 @@ class LineBufferPreview(ScrollView, can_focus=True):
 
     @property
     def match_lines(self) -> list[int]:
-        """Sorted **visual** row indices containing matches.
-
-        With wrap disabled each logical line is one visual row, so this
-        is identical to ``sorted(fv.match_lines)``. With wrap enabled
-        each match's logical line is mapped to its first visual row —
-        which is the row the scrollbar marker should point at so the
-        thumb lands on a row that visibly contains the match.
-        """
+        """Sorted visual row indices containing matches (one per logical hit)."""
         if self._fv is None:
             return []
         return sorted({self._logical_to_visual_y(li) for li in self._fv.match_lines})
 
     @property
     def visual_line_count(self) -> int:
-        """Number of visual rows in the cached buffer. Equals
-        ``fv.line_count`` when wrap is off; ≥ ``fv.line_count`` when
-        wrap is on. The scrollbar's ``total_lines`` should use this
-        value (not ``fv.line_count``) so markers project onto the
-        actual visual track."""
+        """Number of visual rows in the cached buffer (≥ ``fv.line_count`` when wrapped)."""
         return len(self._strips)
 
     @property
@@ -405,20 +414,25 @@ class LineBufferPreview(ScrollView, can_focus=True):
         scroll_x, _ = self.scroll_offset
         scroll_y = int(self.scroll_offset.y)
         line_idx = scroll_y + y
-        # Pad with ``self.rich_style`` so blank cells paint the
-        # widget's ``$surface`` background — same colour the
-        # structural Markdown widget paints under its own content.
-        # Using a null Style here makes the buffer show the darker
-        # screen ``$background`` instead, which is the wrong colour
-        # against MD / DOCX previews.
+        base = self.rich_style
         if not (0 <= line_idx < len(self._strips)):
-            return Strip.blank(self.size.width, self.rich_style)
+            return Strip.blank(self.size.width, base)
         overlay = self._row_overlay_style(line_idx)
-        fill_style = overlay if overlay is not None else self.rich_style
-        strip = self._strips[line_idx].crop_extend(scroll_x, scroll_x + self.size.width, fill_style)
-        if overlay is not None:
-            strip = strip.apply_style(overlay)
-        return strip
+        composed_base = base if overlay is None else (base + overlay)
+        strip = self._strips[line_idx].crop_extend(
+            scroll_x, scroll_x + self.size.width, composed_base
+        )
+        # Composite every cell on ``composed_base`` so plain-text
+        # segments (bgcolor=None straight out of Rich) paint at the
+        # widget's cascaded bg — without this, those cells fall through
+        # to whatever the terminal's default is (Tokyo Night terminal bg
+        # = ``#1a1b26``), producing a darker stripe under the text while
+        # the padding shows ``$surface``. ``composed_base + seg.style``
+        # combines them in the right direction: any explicit bg on the
+        # segment (e.g. match-highlight yellow) overrides ``composed_base``.
+        return Strip(
+            Segment(seg.text, composed_base + (seg.style or Style()), seg.control) for seg in strip
+        )
 
     def _row_overlay_style(self, visual_y: int) -> Any:
         """Return the component-class style overlay for this visual row,
@@ -463,9 +477,7 @@ class LineBufferPreview(ScrollView, can_focus=True):
     # ── Resize hook ─────────────────────────────────────────────
 
     def on_resize(self, event: events.Resize) -> None:
-        """Re-wrap to viewport width when wrap is enabled and the width
-        actually changed. Skips the rebuild in the (very common) case
-        where only the height moved."""
+        """Re-wrap on width change; re-apply pending scroll on height change."""
         if (
             self._wrap
             and self._fv is not None
@@ -475,15 +487,13 @@ class LineBufferPreview(ScrollView, can_focus=True):
             self._rebuild_strips()
             self._refresh_match_scrollbar()
             self.refresh()
+        if event.size.height > 0:
+            self._apply_pending_scroll()
 
     # ── Rendering helpers ───────────────────────────────────────
 
     def _logical_to_visual_y(self, logical_index: int) -> int:
-        """Translate a logical line index to its first visual row.
-
-        Out-of-range indices clamp; an empty buffer returns 0 so
-        callers don't need defensive checks of their own.
-        """
+        """Logical line index → first visual row (clamped)."""
         if not self._logical_to_visual_start:
             return 0
         if logical_index <= 0:
@@ -493,17 +503,7 @@ class LineBufferPreview(ScrollView, can_focus=True):
         return self._logical_to_visual_start[logical_index]
 
     def _rebuild_strips(self) -> None:
-        """Render every logical line to one or more cached Strips.
-
-        Owns the bookkeeping for both wrap modes: populates
-        ``_strips``, ``_visual_to_logical``, and
-        ``_logical_to_visual_start`` in one pass; resets ``virtual_size``
-        so the scrollbar sizes itself correctly for the new visual
-        count. Per-row accent overlays (match line, focused chunk) are
-        applied at render time in :meth:`render_line` via component
-        classes — keeping the strips style-neutral here means a focus
-        change doesn't require a full rebuild.
-        """
+        """Render every logical line to cached Strips for the current wrap."""
         fv = self._fv
         if fv is None:
             self._strips = []
@@ -513,8 +513,6 @@ class LineBufferPreview(ScrollView, can_focus=True):
             self.virtual_size = Size(0, 0)
             return
 
-        # Wrap width: 0 = no wrap (legacy behaviour, used by tests).
-        # > 0 = wrap to that width; tracks the viewport size.
         wrap_width = self.size.width if self._wrap and self.size.width > 0 else 0
         self._wrap_width = wrap_width
 
@@ -522,16 +520,9 @@ class LineBufferPreview(ScrollView, can_focus=True):
         self._strips = strips
         self._visual_to_logical = v2l
         self._logical_to_visual_start = l2vs
-        if wrap_width > 0:
-            # Wrap is on: every visual row already fits in the
-            # viewport, so report a 1-cell virtual width. Anything
-            # wider can trigger Textual's horizontal scrollbar to
-            # paint a one-row bar across the bottom of the pane —
-            # which on a dark theme renders as a vivid ``$primary``
-            # band the user reads as a chunk boundary.
-            self._base_width = 1
-        else:
-            self._base_width = max(fv.widest_line, 1)
+        # Report 1-cell virtual width when wrap is on so Textual doesn't
+        # paint a phantom horizontal scrollbar.
+        self._base_width = 1 if wrap_width > 0 else max(fv.widest_line, 1)
         self.virtual_size = Size(self._base_width, len(strips))
 
     @staticmethod
@@ -540,18 +531,8 @@ class LineBufferPreview(ScrollView, can_focus=True):
         *,
         wrap_width: int,
     ) -> tuple[list[Strip], list[int], list[int]]:
-        """Render ``lines`` to Strips, splitting at ``\\n`` segments.
-
-        ``wrap_width`` of 0 disables wrapping (single visual row per
-        logical line). A positive value wraps via Rich's overflow=fold
-        path, producing one Strip per visual row and recording the
-        logical-to-visual mapping.
-
-        Returns ``(strips, visual_to_logical, logical_to_visual_start)``.
-        ``logical_to_visual_start`` is parallel to ``lines`` (one entry
-        per logical line); empty logical lines still consume one
-        visual row so ``v2l`` and ``l2vs`` always agree.
-        """
+        """Render lines to Strips. ``wrap_width=0`` disables wrapping.
+        Returns (strips, visual_to_logical, logical_to_visual_start)."""
         if wrap_width > 0:
             console = Console(width=wrap_width, file=None, force_terminal=False)
             opts = console.options.update(max_width=wrap_width, overflow="fold", no_wrap=False)

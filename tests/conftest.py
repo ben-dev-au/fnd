@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -31,3 +32,26 @@ def isolated_ui_state(  # pyright: ignore[reportUnusedFunction]
     p = tmp_path / "ui_state" / "scope.toml"
     monkeypatch.setattr("acorn.state._state_path", lambda: p)
     return p
+
+
+@pytest.fixture(autouse=True)
+def _quiet_preview_load_paths() -> Generator[None, None, None]:  # pyright: ignore[reportUnusedFunction]
+    """Pin debounce + prefetch to 0 so cold-load assertions don't race
+    the background worker. Pydantic v2 caches validators at class
+    definition, so flipping ``model_fields[..].default`` needs
+    ``model_rebuild(force=True)`` to take effect."""
+    from acorn.config import Defaults
+
+    debounce_field = Defaults.model_fields["preview_load_debounce_ms"]
+    prefetch_field = Defaults.model_fields["preview_prefetch_count"]
+    debounce_original = debounce_field.default
+    prefetch_original = prefetch_field.default
+    debounce_field.default = 0
+    prefetch_field.default = 0
+    Defaults.model_rebuild(force=True)
+    try:
+        yield
+    finally:
+        debounce_field.default = debounce_original
+        prefetch_field.default = prefetch_original
+        Defaults.model_rebuild(force=True)

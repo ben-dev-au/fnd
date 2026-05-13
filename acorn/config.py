@@ -229,6 +229,18 @@ class Defaults(BaseModel):
     # fallback). Bump for very large PDFs; lower if CPU contention shows
     # up in profiles.
     preview_decode_workers: int = 4
+    # Idle delay before a results-tree cursor move triggers a preview
+    # load. Rapid arrow-key sweeps no longer kick off a decode at each
+    # intermediate row — only the final position loads, so scrolling
+    # down a long results list stays fluid. 0 = load instantly (legacy
+    # behaviour). Typical 100–250 ms.
+    preview_load_debounce_ms: int = 150
+    # Number of top result files to decode + prebuild a flat-buffer
+    # bundle for in the background as soon as a search returns. Lets
+    # a cursor move to any of those results land on an already-warm
+    # cache. 0 disables prefetch entirely (useful in tests or on
+    # very large corpora where the prefetch wastes work).
+    preview_prefetch_count: int = 5
 
 
 class Config(BaseModel):
@@ -460,6 +472,13 @@ sections_per_file_max    = 200    # Hard cap (1-2000)
 # Preview decode parallelism. tantivy releases the GIL for doc reads, so
 # threads help on huge PDFs. 1 = serial; raise (4-8) for big files.
 preview_decode_workers   = 4      # 1-16
+# Idle delay before a results-tree cursor move triggers a preview load.
+# Rapid arrow-key sweeps skip intermediate rows; only the final position
+# loads. 0 = load instantly. Typical range 100-250.
+preview_load_debounce_ms = 150    # ms, 0-1000
+# Number of top result files to decode + prebuild a flat-buffer bundle
+# for in the background as soon as a search returns. 0 disables prefetch.
+preview_prefetch_count   = 5      # 0-20
 
 # A collection groups one or more source directories. The starter
 # collection points at ~/Documents; edit, add more [[sources]] tables,

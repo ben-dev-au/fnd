@@ -87,17 +87,7 @@ def apply_stem_highlights(rendered: Text, term_stems: set[str]) -> bool:
 
 
 def apply_match_highlights(rendered: Text, spec: MatchSpec) -> bool:
-    """Stylize every word in ``rendered`` whose stem matches the
-    :class:`acorn.matching.MatchSpec`. Catches fuzzy-AUTO and synonym
-    variants in addition to literal stems.
-
-    Char-level colour split: literal / synonym matches paint the whole
-    word yellow (no mismatch information to convey — same meaning).
-    Fuzzy-only matches align the doc word against the closest typed
-    query term and paint matching chars yellow, divergent chars
-    orange, so the user can read at a glance which letter was the
-    typo or insertion that pushed the word out of the literal pass.
-    """
+    """Stylize every matching word in ``rendered`` via word_highlight_runs."""
     if spec.is_empty:
         return False
     found = False
@@ -114,22 +104,7 @@ def apply_match_highlights(rendered: Text, spec: MatchSpec) -> bool:
 
 
 def word_highlight_runs(word: str, spec: MatchSpec) -> list[tuple[int, int, str]]:
-    """Return the per-char highlight runs for ``word`` against ``spec``.
-
-    Each run is ``(start_offset, end_offset, style_string)`` relative
-    to ``word``. Empty list means no highlight (no match). For exact-
-    or synonym-stem matches the function returns one yellow run
-    covering the whole word; for fuzzy-AUTO matches it returns one or
-    more runs split by Levenshtein alignment against the closest typed
-    term — yellow for matching chars, orange for substitutions /
-    insertions.
-
-    Used by both renderers (Markdown widget spans and per-line plain
-    Rich Text) so the visual treatment is identical.
-    """
-    from acorn.matching import (
-        _STEMMER as _MATCH_STEMMER,
-    )
+    """Per-char highlight runs for ``word``: yellow on aligning chars, orange on divergent."""
     from acorn.matching import (
         align_doc_word,
         closest_raw_term,
@@ -140,11 +115,6 @@ def word_highlight_runs(word: str, spec: MatchSpec) -> list[tuple[int, int, str]
         return []
     if not word_matches(word, spec):
         return []
-    stem = _MATCH_STEMMER.stemWord(word.lower())
-    # Exact-stem (literal / phrase / synonym) → whole word yellow.
-    if stem in spec.exact_stems:
-        return [(0, len(word), HIGHLIGHT_STYLE)]
-    # Fuzzy-only → align against closest typed term.
     raw = closest_raw_term(word, spec)
     if raw is None:
         return [(0, len(word), HIGHLIGHT_STYLE)]

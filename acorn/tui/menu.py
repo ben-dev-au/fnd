@@ -375,6 +375,20 @@ def _provider_preferences(_app: AcornApp) -> tuple[MenuItem, ...]:
             keywords=("debounce", "delay"),
         ),
         MenuItem(
+            id="pref.preview_load_debounce_ms",
+            label="Preview load debounce (ms)",
+            description=(
+                "Idle delay before a results-tree cursor move triggers a preview "
+                "load. Lets you sweep down the list without freezing at each row."
+            ),
+            kind=KIND_SCALAR,
+            setting_path="defaults.preview_load_debounce_ms",
+            hint="0-1000",
+            coerce=int,
+            value_getter=_get_int_default("preview_load_debounce_ms", 150),
+            keywords=("preview", "debounce", "delay", "load"),
+        ),
+        MenuItem(
             id="pref.preview_chunks",
             label="Preview chunks",
             description="How many chunks to render in the preview pane (1-50).",
