@@ -15,6 +15,7 @@ phase 7 adds reranker live-tuning.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from collections import OrderedDict
 from pathlib import Path
@@ -25,6 +26,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.content import Span
+from textual.strip import Strip
 from textual.widget import Widget
 from textual.widgets import (
     Input,
@@ -744,6 +746,10 @@ class AcornApp(App[None]):
        size to their content so each panel stays exactly as tall as
        its rows demand. */
     #results_column { width: 1fr; height: 1fr; }
+    /* Cancel Textual's focused-Tree tint — border colour is the focus signal. */
+    #results_column Tree {
+        background-tint: transparent;
+    }
     #results_pane {
         width: 100%; height: 1fr;
         border: round $primary 50%;
@@ -796,7 +802,8 @@ class AcornApp(App[None]):
         border: round $primary 50%;
         padding: 0 0 0 1;
     }
-    #preview_pane:focus-within { border: round $accent; }
+    /* Class-toggled focus border — :focus-within would re-style every descendant. */
+    #preview_pane.-focused { border: round $accent; }
     /* While a partial mount is in flight we hide the scrollbar (its
        virtual size keeps growing as chunks land, so the thumb would
        jitter). Programmatic ``scroll_to_widget`` calls during phase 2b
@@ -860,33 +867,38 @@ class AcornApp(App[None]):
     ) -> None:
         super().__init__()
         self._index_dir = index_dir or default_index_dir()
-        # Active collections — list[] supports multi-select via the picker.
-        # Empty list = "all collections" (no scope filter). When the user
-        # didn't pass --collection, restore the last persisted scope so
-        # the TUI starts where they left it.
+        # Sidebar panel state — always loaded from disk so user-tuned
+        # collapse / expand state survives the next launch, even when
+        # ``--collection`` is passed. The CLI flag overrides search
+        # *scope* (which collections / sources are active), NOT the
+        # *panel layout* (which sidebar containers are collapsed-to-
+        # header, which collection rows are expanded). Earlier versions
+        # zeroed every persisted set on the ``--collection`` branch and
+        # silently dropped the user's panel layout after a single launch
+        # with a flag.
+        from acorn.state import load as _load_state
+
+        saved = _load_state()
+        self._collapsed_panels: set[str] = set(saved.collapsed_panels)
+        self._expanded_collections: set[str] = set(saved.expanded_collections)
+        # Prune unknown branch names so a renamed branch doesn't get
+        # stuck "expanded" forever.
+        self._expanded_filter_branches: set[str] = {
+            b for b in saved.expanded_filter_branches if b in ("kinds", "date")
+        }
+        # Scope (collections / sources / filters) — override when
+        # ``--collection`` was passed, otherwise restore the persisted
+        # scope so the TUI starts where the user left it.
         if collection:
             self._collections: list[str] = [collection]
-            self._collapsed_panels: set[str] = set()
             self._active_sources: list[str] = []
             self._filter_kinds: list[str] = []
             self._filter_date: str = "any"
-            self._expanded_collections: set[str] = set()
-            self._expanded_filter_branches: set[str] = set()
         else:
-            from acorn.state import load as _load_state
-
-            saved = _load_state()
             self._collections = list(saved.collections)
-            self._collapsed_panels = set(saved.collapsed_panels)
             self._active_sources = list(saved.sources)
             self._filter_kinds = list(saved.filter_kinds)
             self._filter_date = saved.filter_date or "any"
-            self._expanded_collections = set(saved.expanded_collections)
-            # Prune unknown branch names so a renamed branch doesn't get
-            # stuck "expanded" forever.
-            self._expanded_filter_branches = {
-                b for b in saved.expanded_filter_branches if b in ("kinds", "date")
-            }
         self._initial_query = initial_query
         self._searcher: Searcher | None = None
         self._current_query: str = ""
@@ -960,16 +972,21 @@ class AcornApp(App[None]):
         # The parent_id whose chunks are currently mounted in the preview
         # pane (so we don't re-mount when cursor moves within the same file).
         self._preview_parent_id: str | None = None
-        # Preview-load progress: ``(loaded, total)`` while a chunk-decode +
-        # mount worker is running, ``None`` otherwise (UX-pass-4 §4).
-        # ``total`` is ``None`` during the indeterminate decode phase (the
-        # ProgressBar widget at the top of the pane carries the visible
-        # signal); switches to the actual count once chunks arrive.
+        # (loaded, total) while a chunk-decode + mount worker is running.
         self._preview_load_progress: tuple[int, int | None] | None = None
-        # Strong reference to the in-flight preview-mount task so the
-        # event loop doesn't garbage-collect it mid-run (asyncio task
-        # refs are weak — GC == cancellation).
+        # Strong ref so the event loop doesn't GC the in-flight mount task.
         self._preview_mount_task: object | None = None
+        # Prebuilt flat-buffer bundles keyed by (parent_id, query_sig).
+        # Cleared on query change — highlight spans are baked in at build time.
+        self._prebuilt_cache: dict[
+            tuple[str, str],
+            tuple[FileView, list[Strip], list[int], list[int], int, int],
+        ] = {}
+        # Debounced preview load — latest target + Timer.
+        from typing import Any as _Any
+
+        self._preview_load_timer: _Any | None = None
+        self._preview_load_target: tuple[str, int] | None = None
 
     # ── Layout ────────────────────────────────────────────────────
 
@@ -1032,6 +1049,10 @@ class AcornApp(App[None]):
         # Collections parents stay cursor-selectable so Enter still toggles
         # the whole collection (`_on_collections_panel_selected`).
         ctree._skip_expanded_parents = False  # type: ignore[attr-defined]
+        # Enter must not auto-expand — that fires NodeExpanded and
+        # persists state the user didn't ask for. Right still expands
+        # via action_tree_smart_expand.
+        ctree.auto_expand = False
         self._refresh_collections_panel()
         # Filters panel — kind/date selectors that compose into the query.
         ftree = self.query_one("#filters_panel_tree", Tree)
@@ -1041,22 +1062,15 @@ class AcornApp(App[None]):
         # past them when expanded.
         ftree._skip_expanded_parents = True  # type: ignore[attr-defined]
         self._refresh_filters_panel()
-        # Restore any panels the user collapsed-to-header in a previous
-        # session.
+        # Restore persisted panel collapse-to-header.
         import contextlib
 
         for panel_id in self._collapsed_panels:
             with contextlib.suppress(Exception):
                 self.query_one(f"#{panel_id}").add_class("collapsed")
-        # Initial border titles — refreshed live as the user searches.
         self._refresh_status()
         if self._initial_query:
             self._run_query(self._initial_query)
-        # When the CLI handed us a query that produced results,
-        # ``_refresh_results_tree`` already focused the results pane and
-        # parked the cursor on the top hit; the user's first keypress
-        # should advance through results instead of appending characters
-        # to the search bar.
         if not self._initial_query or not self._groups:
             self.query_one("#query_bar", Input).focus()
 
@@ -1209,11 +1223,19 @@ class AcornApp(App[None]):
                 render_hint_bar(self._FOOTER_ANCHORS, contextual)
             )
 
-    def on_descendant_focus(self) -> None:  # Textual fires this on focus changes
+    def on_descendant_focus(self) -> None:
         self._refresh_footer_hints()
-        # ``ResultsTree.validate_cursor_line`` keeps the cursor off
-        # expanded parents at the moment of any cursor_line change, so
-        # no on-focus bounce is needed.
+        # Toggle the focus-border class without triggering a subtree style walk.
+        try:
+            pane = self.query_one("#preview_pane")
+        except Exception:
+            return
+        in_preview = self._focus_context() == "preview"
+        has_focus_class = "-focused" in pane.classes
+        if in_preview == has_focus_class:
+            return
+        pane.set_class(in_preview, "-focused", update=False)
+        self.app.stylesheet.apply(pane)
 
     def on_key(self, event: events.Key) -> None:
         """Repurpose Up/Down to navigate between sidebar panels when the
@@ -1329,6 +1351,9 @@ class AcornApp(App[None]):
         import contextlib
 
         self._chunk_cache.clear()
+        # Bundles bake highlight spans from the previous query, so they
+        # go stale at the same moment the chunk cache does.
+        self._prebuilt_cache.clear()
         self._cancel_preview_mount_task()
         evicted = self._preview_cache.clear()
         for old in evicted:
@@ -1357,6 +1382,9 @@ class AcornApp(App[None]):
         self._preview_parent_id = None
         self._hide_progress_bar()
         self._refresh_results_tree()
+        # Warm caches for the top results so cursor moves down the
+        # list land on instant mount paths instead of cold decodes.
+        self._prefetch_top_results()
 
     def _search_layered(
         self,
@@ -1413,6 +1441,10 @@ class AcornApp(App[None]):
         visible — saves a keypress and makes the locator format
         discoverable on first launch.
         """
+        # Cancel any debounced preview load from the previous result
+        # set — its parent_id may no longer be a hit, and the new
+        # cursor placement below will arm a fresh timer.
+        self._cancel_pending_preview_load()
         tree = self.query_one("#results_pane", Tree)
         tree.clear()
         max_score = max((g.top_score for g in self._groups), default=0.0)
@@ -1430,36 +1462,71 @@ class AcornApp(App[None]):
         self._refresh_status()
         if self._groups:
             tree.focus()
-            # Drop the cursor onto the first hit of the auto-expanded top
-            # file — the preview already renders that hit, so leaving the
-            # cursor on the parent file row would force a redundant Down
-            # keypress before navigation actually advances to a new match.
-            # ``cursor_line = 1`` lands on line 1 (root is hidden, line 0
-            # is the top file, line 1 is its first child) without needing
-            # the per-node line index that ``move_cursor`` relies on —
-            # which isn't built until the next render tick.
+            # Park cursor on the first hit so the preview already shows the match.
             top_file = tree.root.children[0]
             if top_file.children:
                 tree.cursor_line = 1
+            # Dispatch explicitly — NodeHighlighted is suppressed when
+            # cursor_line lands on the same index as before.
+            top_group = self._groups[0]
+            top_hit = top_group.hits[0] if top_group.hits else None
+            self._schedule_preview_load(
+                top_group.parent_id,
+                top_hit.chunk_seq if top_hit else 0,
+            )
 
     # ── Preview ───────────────────────────────────────────────────
 
     @on(Tree.NodeHighlighted)
     def _on_tree_highlight(self, ev: Tree.NodeHighlighted[Any]) -> None:
-        # ``ResultsTree.validate_cursor_line`` already keeps the cursor
-        # off expanded parents, so by the time NodeHighlighted fires the
-        # cursor is guaranteed to be on a selectable row. No bounce
-        # needed here — just dispatch the preview render.
         data: Any = ev.node.data
         if not isinstance(data, dict):
             return
-        if data.get("kind") == "section":
+        kind = data.get("kind")
+        if kind == "section":
             hit: Hit = data["hit"]
-            self._render_full_doc(hit.parent_id, focus_chunk_seq=hit.chunk_seq)
-        elif data.get("kind") == "file":
+            self._schedule_preview_load(hit.parent_id, hit.chunk_seq)
+        elif kind == "file":
             g: FileGroup = data["group"]
             top = g.hits[0] if g.hits else None
-            self._render_full_doc(g.parent_id, focus_chunk_seq=top.chunk_seq if top else 0)
+            self._schedule_preview_load(g.parent_id, top.chunk_seq if top else 0)
+
+    def _schedule_preview_load(self, parent_id: str, focus_chunk_seq: int) -> None:
+        """Debounce a cursor-move → preview-load; coalesces rapid arrow sweeps."""
+        self._preview_load_target = (parent_id, focus_chunk_seq)
+        if self._config is not None:
+            delay_ms = self._config.defaults.preview_load_debounce_ms
+        else:
+            from acorn.config import Defaults
+
+            delay_ms = Defaults().preview_load_debounce_ms
+        if delay_ms <= 0:
+            self._fire_pending_preview_load()
+            return
+        if self._preview_load_timer is not None:
+            with contextlib.suppress(Exception):
+                self._preview_load_timer.stop()
+        self._preview_load_timer = self.set_timer(
+            delay_ms / 1000.0,
+            self._fire_pending_preview_load,
+            name="preview-load-debounce",
+        )
+
+    def _fire_pending_preview_load(self) -> None:
+        self._preview_load_timer = None
+        target = self._preview_load_target
+        if target is None:
+            return
+        self._preview_load_target = None
+        parent_id, focus_chunk_seq = target
+        self._render_full_doc(parent_id, focus_chunk_seq=focus_chunk_seq)
+
+    def _cancel_pending_preview_load(self) -> None:
+        if self._preview_load_timer is not None:
+            with contextlib.suppress(Exception):
+                self._preview_load_timer.stop()
+            self._preview_load_timer = None
+        self._preview_load_target = None
 
     def _render_full_doc(self, parent_id: str, *, focus_chunk_seq: int) -> None:
         """Render the full document for ``parent_id`` as one widget per
@@ -1479,26 +1546,37 @@ class AcornApp(App[None]):
         """
         import asyncio
 
+        # Any pending debounce timer is now moot — we're committing to
+        # a load. Cancel so a late-firing timer can't race the current
+        # dispatch and clobber it with a stale target.
+        self._cancel_pending_preview_load()
+
         if self._searcher is None:
             return
 
         chunks = self._chunk_cache.get(parent_id)
         if chunks is not None:
-            # We have decoded data — go to the mount path.
-            self._dispatch_preview_mount(parent_id, focus_chunk_seq, chunks)
+            # We have decoded data — go to the mount path. If the
+            # prefetch worker (or an earlier load) has already built
+            # the flat-path bundle for this (file, query) pair, pass
+            # it through so the dispatcher skips the main-thread
+            # FileView + strip rebuild entirely.
+            query_sig = self._current_query_signature()
+            prebuilt = self._prebuilt_cache.get((parent_id, query_sig))
+            self._dispatch_preview_mount(parent_id, focus_chunk_seq, chunks, prebuilt=prebuilt)
             return
 
         # Need to decode first. The bar appears immediately; the worker
         # decodes off-thread and its callback re-enters via the chunk
         # data path.
         self._cancel_preview_mount_task()
-        # Hide the previously-active container so the user sees a clean
-        # "loading" state during the decode. Without this, large files
-        # (e.g. a 1000-page PDF with thousands of chunks) keep showing
-        # the previous file's content for the full decode wall-clock,
-        # making the click look unresponsive.
-        if self._active_preview is not None and self._active_preview.parent_doc_id != parent_id:
-            self._active_preview.add_class("-hidden")
+        # Keep the previously-active content visible during the decode
+        # rather than blanking the pane: the always-on progress bar at
+        # the top of the column is the user-visible loading signal, and
+        # the debounced cursor-move dispatch means the user has already
+        # committed to this file before we land here. The flat-buffer
+        # ``_activate_flat_buffer`` / structural ``_activate_preview_container``
+        # paths swap visibility atomically once the new content is ready.
         self._show_progress_bar(total=None)
 
         target_parent_id = parent_id
@@ -1509,6 +1587,19 @@ class AcornApp(App[None]):
         decode_workers = (
             self._config.defaults.preview_decode_workers if self._config is not None else 1
         )
+        # Estimate the wrap width the eventual ``LineBufferPreview``
+        # will be laid out at, so the worker can pre-render Strips at
+        # the correct width and avoid a main-thread rewrap on first
+        # paint. ``content_size`` excludes the pane's padding; the
+        # buffer itself reserves one extra column for its own
+        # ``scrollbar-gutter: stable``. If the estimate ends up wrong
+        # (e.g. the user resizes the terminal between dispatch and
+        # paint) ``_rebuild_after_layout`` will catch it.
+        try:
+            pane_widget = self.query_one("#preview_pane", VerticalScroll)
+            estimated_wrap_width = max(1, pane_widget.content_size.width - 1)
+        except Exception:
+            estimated_wrap_width = 0
         app = self
 
         def _load() -> None:
@@ -1517,11 +1608,36 @@ class AcornApp(App[None]):
             except Exception as e:
                 app.call_from_thread(app._on_preview_load_failed, e)
                 return
+            # For the flat-buffer path (PDF / TXT) the FileView build —
+            # which computes per-chunk match spans and stitches the
+            # global line buffer — and the per-line ``rich.Console.render``
+            # pass are pure-Python data work that easily dominate the
+            # main-thread cost on large documents. Do both here in the
+            # worker so the UI stays responsive during the decode +
+            # assemble phase. Structural formats (md / docx / pptx)
+            # skip this path; their mount path is per-chunk.
+            prebuilt: tuple[FileView, list[Strip], list[int], list[int], int, int] | None = None
+            try:
+                if fetched and choose_preview_mode(fetched) == "flat":
+                    fv = app._build_file_view_for_chunks(fetched)
+                    wrap_width = estimated_wrap_width if estimated_wrap_width > 0 else 0
+                    strips, v2l, l2vs = LineBufferPreview._render_lines(
+                        fv.lines, wrap_width=wrap_width
+                    )
+                    base_width = 1 if wrap_width > 0 else max(fv.widest_line, 1)
+                    prebuilt = (fv, strips, v2l, l2vs, wrap_width, base_width)
+            except Exception:
+                # Prebuild is best-effort: any failure falls back to
+                # the main-thread build path inside
+                # ``_dispatch_flat_buffer_mount``. We don't surface
+                # this to the user.
+                prebuilt = None
             app.call_from_thread(
                 app._on_preview_chunks_loaded,
                 target_parent_id,
                 target_focus,
                 fetched,
+                prebuilt,
             )
 
         _ = asyncio.get_event_loop()  # ensure a loop exists for the callback
@@ -1532,10 +1648,18 @@ class AcornApp(App[None]):
         parent_id: str,
         focus_chunk_seq: int,
         chunks: list[FileChunk],
+        *,
+        prebuilt: tuple[FileView, list[Strip], list[int], list[int], int, int] | None = None,
     ) -> None:
         """Decide which mount path to take given the (parent_id, query)
         cache state. Always synchronous in its decision so the bar can
-        appear instantly when there's actual work to do."""
+        appear instantly when there's actual work to do.
+
+        ``prebuilt`` is an optional flat-path bundle (FileView +
+        pre-rendered Strips + wrap metadata) already assembled off the
+        main thread; the flat dispatcher installs it directly instead
+        of rebuilding here.
+        """
         import asyncio
 
         # Phase 5 redesign: route by format. PDF / TXT take the flat-
@@ -1543,7 +1667,7 @@ class AcornApp(App[None]):
         # scrollbar markers). MD / DOCX / PPTX stay on the structural
         # Markdown widget below.
         if choose_preview_mode(chunks) == "flat":
-            self._dispatch_flat_buffer_mount(parent_id, focus_chunk_seq, chunks)
+            self._dispatch_flat_buffer_mount(parent_id, focus_chunk_seq, chunks, prebuilt=prebuilt)
             return
 
         query_sig = self._current_query_signature()
@@ -1627,6 +1751,8 @@ class AcornApp(App[None]):
         parent_id: str,
         focus_chunk_seq: int,
         chunks: list[FileChunk],
+        *,
+        prebuilt: tuple[FileView, list[Strip], list[int], list[int], int, int] | None = None,
     ) -> None:
         """Flat-buffer mount path — one :class:`LineBufferPreview`
         widget per file. No multi-phase mount, no per-chunk widget
@@ -1635,8 +1761,9 @@ class AcornApp(App[None]):
         pass too.
 
         Cache hits flip ``-hidden`` on the previously-cached widget
-        and scroll to the focus; cold loads build a fresh FileView,
-        mount a new widget, and install the view.
+        and scroll to the focus; cold loads either install a worker-
+        prebuilt bundle (``prebuilt``) directly, or rebuild on the
+        main thread as a fallback.
         """
         import contextlib
 
@@ -1668,22 +1795,39 @@ class AcornApp(App[None]):
                 with contextlib.suppress(Exception):
                     w.remove()
 
-        fv = self._build_file_view_for_chunks(chunks)
         buf = LineBufferPreview(wrap=True)
         pane.mount(buf)
         self._activate_flat_buffer(buf)
-        # Defer the FileView install one refresh cycle so the buffer
-        # has a real ``size.width`` by the time wrap-mode strips are
-        # built. Otherwise the first paint runs unwrapped, and the
-        # follow-up resize re-wrap shifts the scroll position out
-        # from under the user's selected match.
         target_seq = focus_chunk_seq
 
-        def _install() -> None:
-            buf.set_file_view(fv)
+        if prebuilt is not None:
+            # Worker pre-rendered everything: install the bundle
+            # synchronously so the very first paint shows real content.
+            # The ``_rebuild_after_layout`` follow-up scheduled inside
+            # ``set_prebuilt_view`` will re-wrap if the actual viewport
+            # width disagrees with the worker's estimate.
+            fv, strips, v2l, l2vs, wrap_width, base_width = prebuilt
+            buf.set_prebuilt_view(
+                fv,
+                strips,
+                v2l,
+                l2vs,
+                wrap_width=wrap_width,
+                base_width=base_width,
+            )
             buf.scroll_to_chunk(target_seq, prefer_first_match=True)
+        else:
+            # No prebuild (worker fell back, or some other path): do
+            # the FileView build on the main thread and defer the
+            # install one refresh cycle so the buffer has a real
+            # ``size.width`` by the time wrap-mode strips are built.
+            fv = self._build_file_view_for_chunks(chunks)
 
-        self.call_after_refresh(_install)
+            def _install() -> None:
+                buf.set_file_view(fv)
+                buf.scroll_to_chunk(target_seq, prefer_first_match=True)
+
+            self.call_after_refresh(_install)
 
         # LRU-cache the buffer so revisits within the same query are
         # instant (display flip only).
@@ -1842,17 +1986,131 @@ class AcornApp(App[None]):
         parent_id: str,
         focus_chunk_seq: int,
         chunks: list[FileChunk],
+        prebuilt: tuple[FileView, list[Strip], list[int], list[int], int, int] | None = None,
     ) -> None:
         """Worker callback. Caches chunk data; hands off to the same
-        mount path the cache-hit case uses."""
+        mount path the cache-hit case uses. ``prebuilt`` is an
+        optional flat-path bundle (FileView + pre-rendered Strips +
+        wrap metadata) assembled in the worker thread — used directly
+        by the flat dispatcher to skip the main-thread rebuild."""
         self._chunk_cache[parent_id] = chunks
+        if prebuilt is not None:
+            # Cache the bundle so a later visit to the same file in the
+            # same query can install it without re-decoding or re-
+            # rendering. Same key as ``_flat_buffer_cache``.
+            self._prebuilt_cache[(parent_id, self._current_query_signature())] = prebuilt
         if not chunks:
             # Empty file — hide bar, leave pane blank.
             self._hide_progress_bar()
             self._preview_parent_id = parent_id
             self._refresh_status()
             return
-        self._dispatch_preview_mount(parent_id, focus_chunk_seq, chunks)
+        self._dispatch_preview_mount(parent_id, focus_chunk_seq, chunks, prebuilt=prebuilt)
+
+    def _prefetch_top_results(self) -> None:
+        """Background-decode + prebuild bundles for the top-N result
+        files so a cursor move to any of them lands on a pre-warmed
+        cache (``_chunk_cache`` + ``_prebuilt_cache``) and the mount
+        path stays on the instant track.
+
+        Cheap and best-effort: skips parent_ids already cached, runs
+        in a single worker thread that walks the targets sequentially,
+        and bails on any error per target without surfacing it. Cancels
+        cleanly when a new query rebuilds the results — the prior
+        prefetch is in the ``preview-prefetch`` exclusive group and
+        gets stopped when the next call replaces it.
+
+        N is controlled by ``defaults.preview_prefetch_count``;
+        setting it to 0 disables prefetch entirely.
+        """
+        if self._searcher is None or not self._groups:
+            return
+        if self._config is not None:
+            n = self._config.defaults.preview_prefetch_count
+        else:
+            from acorn.config import Defaults
+
+            n = Defaults().preview_prefetch_count
+        if n <= 0:
+            return
+        targets: list[tuple[str, int]] = []
+        seen: set[str] = set()
+        for g in self._groups:
+            if g.parent_id in seen:
+                continue
+            seen.add(g.parent_id)
+            if g.parent_id in self._chunk_cache:
+                continue
+            focus = g.hits[0].chunk_seq if g.hits else 0
+            targets.append((g.parent_id, focus))
+            if len(targets) >= n:
+                break
+        if not targets:
+            return
+
+        searcher = self._searcher
+        decode_workers = (
+            self._config.defaults.preview_decode_workers if self._config is not None else 1
+        )
+        try:
+            pane_widget = self.query_one("#preview_pane", VerticalScroll)
+            estimated_wrap_width = max(1, pane_widget.content_size.width - 1)
+        except Exception:
+            estimated_wrap_width = 0
+        query_sig = self._current_query_signature()
+        app = self
+
+        def _prefetch() -> None:
+            for parent_id, _focus in targets:
+                # Honour cancellation between targets — the worker
+                # framework sets a flag on task cancel.
+                try:
+                    fetched = searcher.get_file_chunks(parent_id, max_workers=decode_workers)
+                except Exception:
+                    continue
+                # Hand the chunks to the main thread for caching.
+                app.call_from_thread(app._record_prefetched_chunks, parent_id, fetched)
+                if not fetched or choose_preview_mode(fetched) != "flat":
+                    continue
+                try:
+                    fv = app._build_file_view_for_chunks(fetched)
+                    wrap_width = estimated_wrap_width if estimated_wrap_width > 0 else 0
+                    strips, v2l, l2vs = LineBufferPreview._render_lines(
+                        fv.lines, wrap_width=wrap_width
+                    )
+                    base_width = 1 if wrap_width > 0 else max(fv.widest_line, 1)
+                except Exception:
+                    continue
+                bundle = (fv, strips, v2l, l2vs, wrap_width, base_width)
+                app.call_from_thread(app._record_prefetched_bundle, parent_id, query_sig, bundle)
+
+        self.run_worker(
+            _prefetch,
+            thread=True,
+            exclusive=True,
+            group="preview-prefetch",
+            description="prefetching top-N preview bundles",
+        )
+
+    def _record_prefetched_chunks(self, parent_id: str, chunks: list[FileChunk]) -> None:
+        """Main-thread sink for prefetch worker chunk results. Stored
+        only if not already present so a concurrent user-initiated
+        load (which would have richer state) wins."""
+        if parent_id not in self._chunk_cache:
+            self._chunk_cache[parent_id] = chunks
+
+    def _record_prefetched_bundle(
+        self,
+        parent_id: str,
+        query_sig: str,
+        bundle: tuple[FileView, list[Strip], list[int], list[int], int, int],
+    ) -> None:
+        """Main-thread sink for prefetch worker flat-buffer bundles.
+        Drops the bundle if the active query has moved on since the
+        worker started (signatures wouldn't match)."""
+        if query_sig != self._current_query_signature():
+            return
+        self._prebuilt_cache[(parent_id, query_sig)] = bundle
 
     async def _mount_chunks_async(
         self,
@@ -2010,18 +2268,34 @@ class AcornApp(App[None]):
                     old.remove()
             if container.is_complete:
                 self._hide_progress_bar()
-                # Re-anchor scroll to the user's selected chunk AFTER
-                # the reveal + bar-hide layout changes have queued.
-                # We don't trust ``virtual_region.y`` to be fresh yet,
-                # so chain two ``call_after_refresh``s — that buys a
-                # full extra render cycle for layout to finish before
-                # the actual ``scroll_to_widget`` call fires.
-                target_seq = focus_chunk_seq
+            # Re-anchor scroll to the user's selected chunk AFTER the
+            # reveal + bar-hide layout changes have queued. The Phase-
+            # 1a scroll inside the mount loop fires before any above-
+            # window chunks have been inserted, so the focused chunk
+            # widget was at y=0 then; by the time we land here it's
+            # been shifted down by the mounts that came after. Without
+            # a re-anchor the pane shows the prefix of the document
+            # instead of the user's first match.
+            #
+            # Earlier this re-anchor was gated on ``is_complete`` —
+            # which silently dropped it on every partial mount (large
+            # PDFs / md files past the ``_BACKGROUND_FILL_RADIUS``
+            # cap). The visible symptom: cursor moves to a result file
+            # and the preview parks at the file top until the user
+            # navigates away and back. Always re-anchor; the cost is
+            # one extra ``scroll_to_widget`` against an already-
+            # mounted widget.
+            #
+            # We don't trust ``virtual_region.y`` to be fresh yet, so
+            # chain two ``call_after_refresh``s — that buys a full
+            # extra render cycle for layout to finish before the
+            # actual ``scroll_to_widget`` call fires.
+            target_seq = focus_chunk_seq
 
-                def _schedule_anchor() -> None:
-                    self.call_after_refresh(self._scroll_preview_to_chunk, target_seq)
+            def _schedule_anchor() -> None:
+                self.call_after_refresh(self._scroll_preview_to_chunk, target_seq)
 
-                self.call_after_refresh(_schedule_anchor)
+            self.call_after_refresh(_schedule_anchor)
             # Partial mounts leave the bar visible — a revisit will
             # resume from ``mounted_indices`` and the bar reflects
             # progress.
@@ -2183,29 +2457,46 @@ class AcornApp(App[None]):
         self._match_targets[c.chunk_seq] = md_widget
 
     def _scroll_preview_to_chunk(self, focus_chunk_seq: int) -> None:
-        # Flat-buffer path: the widget owns its own scroll and knows
-        # how to land on the matched line within a chunk.
         if self._active_flat_buffer is not None:
             self._active_flat_buffer.scroll_to_chunk(focus_chunk_seq, prefer_first_match=True)
             return
         header = self._chunk_widgets.get(focus_chunk_seq)
-        target = self._match_targets.get(focus_chunk_seq) or header
-        if target is None:
+        if header is None:
             return
-        # Mark the focused chunk's header so single-line plain chunks
-        # (PDF / TXT) get a subtle accent band on the matched line.
-        # Skip the marker on AcornMarkdown widgets because the tinted
-        # background reads as an "ugly brown" overlay across the whole
-        # rendered chunk — for markdown chunks the per-word search
-        # highlight is already the visual indicator.
         for w in self._chunk_widgets.values():
             w.remove_class("chunk-section-focused")
-        if header is not None and not isinstance(header, AcornMarkdown):
+        if not isinstance(header, AcornMarkdown):
             header.add_class("chunk-section-focused")
-        # Defer scroll until layout has settled (mount → reflow → measure).
-        self.call_after_refresh(self._do_scroll_to_widget, target)
+        self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq)
 
-    def _do_scroll_to_widget(self, widget: Static) -> None:
+    def _do_scroll_to_chunk(self, focus_chunk_seq: int, retries: int = 30) -> None:
+        # Resolve target at fire time: AcornMarkdown.first_match_block
+        # is populated async by build_from_token, so capturing earlier
+        # races the build and lands on chunk top.
+        header = self._chunk_widgets.get(focus_chunk_seq)
+        if header is None:
+            return
+        target: Widget = self._match_targets.get(focus_chunk_seq) or header
+        if isinstance(target, AcornMarkdown):
+            inner = target.first_match_block
+            if inner is None and retries > 0:
+                self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq, retries - 1)
+                return
+            if inner is not None:
+                target = inner
+        if target.region.height == 0 and retries > 0:
+            self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq, retries - 1)
+            return
+        pane = self.query_one("#preview_pane", VerticalScroll)
+        pane.scroll_to_widget(target, top=True, animate=False)
+
+    def _do_scroll_to_widget(self, widget: Widget, retries: int = 8) -> None:
+        # Retry while the widget's region is unknown — scroll_to_widget
+        # returns False without scrolling when virtual_region.size is
+        # empty, which is the normal state immediately after mount.
+        if widget.region.height == 0 and retries > 0:
+            self.call_after_refresh(self._do_scroll_to_widget, widget, retries - 1)
+            return
         pane = self.query_one("#preview_pane", VerticalScroll)
         pane.scroll_to_widget(widget, top=True, animate=False)
 
@@ -2410,6 +2701,7 @@ class AcornApp(App[None]):
         # chunks, kill any in-flight mount worker, drop cached
         # PreviewContainers from the DOM, reset alias maps.
         self._chunk_cache.clear()
+        self._prebuilt_cache.clear()
         self._cancel_preview_mount_task()
         evicted = self._preview_cache.clear()
         for old in evicted:
@@ -2467,6 +2759,48 @@ class AcornApp(App[None]):
         """Single-key teleport from anywhere → collections sidebar panel."""
         self.query_one("#collections_panel_tree", Tree).focus()
 
+    def _clear_query_results(self) -> None:
+        """Drop the current result set and preview without re-running.
+
+        Used when the user changes scope (toggles a collection) and the
+        existing results are about to go stale — but we don't want to
+        steal focus or thrash through a fresh search until the user
+        explicitly asks for one. Mirrors the cache invalidation in
+        ``_run_query`` minus the actual search call and the
+        ``tree.focus()`` step inside ``_refresh_results_tree``.
+        """
+        import contextlib
+
+        self._groups = []
+        self._chunk_cache.clear()
+        self._prebuilt_cache.clear()
+        self._cancel_preview_mount_task()
+        self._cancel_pending_preview_load()
+        evicted = self._preview_cache.clear()
+        for old in evicted:
+            with contextlib.suppress(Exception):
+                old.remove()
+        if self._active_preview is not None and self._active_preview.parent is not None:
+            with contextlib.suppress(Exception):
+                self._active_preview.remove()
+        self._active_preview = None
+        for buf in list(self._flat_buffer_cache.values()):
+            with contextlib.suppress(Exception):
+                buf.remove()
+        self._flat_buffer_cache.clear()
+        if self._active_flat_buffer is not None and self._active_flat_buffer.parent is not None:
+            with contextlib.suppress(Exception):
+                self._active_flat_buffer.remove()
+        self._active_flat_buffer = None
+        self._chunk_widgets = {}
+        self._match_targets = {}
+        self._preview_parent_id = None
+        self._hide_progress_bar()
+        # Rebuild the results tree (now empty). The empty-groups branch
+        # in ``_refresh_results_tree`` skips ``tree.focus()``, so focus
+        # stays in the panel the user is currently driving.
+        self._refresh_results_tree()
+
     def _persist_state(self) -> None:
         """Save the current scope + panel state to disk so the next
         launch starts where the user left off."""
@@ -2486,6 +2820,46 @@ class AcornApp(App[None]):
 
     # ── Collections panel (UX-D) ─────────────────────────────────
 
+    def _collection_source_ids(self, name: str) -> list[str]:
+        """Resolved source IDs for a collection, in declaration order."""
+        cfg = self._config
+        if cfg is None:
+            return []
+        col = cfg.collections.get(name)
+        if col is None:
+            return []
+        return [str(Path(str(s.path)).expanduser().resolve()) for s in col.sources]
+
+    def _collection_marker(self, name: str) -> str:
+        """Tri-state marker for the collection row: full / partial / empty.
+
+        ``_collections`` membership is the primary "whole collection in
+        scope" signal — it's set by the CLI ``--collection`` flag,
+        persisted scope, and the UI toggle handler — and reads as ●
+        full. The per-source ``_active_sources`` set carries the
+        finer-grained on/off bits for individual rows and produces the
+        ◐ partial state when only some sources are active.
+
+        The toggle handler keeps these in sync (it removes the parent
+        from ``_collections`` when a single source is turned off, and
+        re-adds it when every sibling is back on), so the only paths
+        that land in "collection in ``_collections`` but no sources in
+        ``_active_sources``" are the CLI flag and the legacy persisted
+        scope — both of which the user explicitly wants displayed as ●.
+        """
+        if name in self._collections:
+            return "●"
+        source_ids = self._collection_source_ids(name)
+        if not source_ids:
+            return "○"
+        active_sources = set(self._active_sources)
+        n_active = sum(1 for sid in source_ids if sid in active_sources)
+        if n_active == 0:
+            return "○"
+        if n_active == len(source_ids):
+            return "●"
+        return "◐"
+
     def _refresh_collections_panel(self) -> None:
         """Repopulate the lazygit-style collections panel from the loaded
         Config, marking active collections AND active sources within
@@ -2503,7 +2877,6 @@ class AcornApp(App[None]):
             except Exception:
                 cfg = None
         names = sorted(cfg.collections.keys()) if cfg else []
-        active_collections = set(self._collections)
         active_sources = set(self._active_sources)
         # Drop persisted expand entries for collections that no longer
         # exist so the saved set stays bounded over time.
@@ -2512,9 +2885,12 @@ class AcornApp(App[None]):
         tree.clear()
         active_source_count = 0
         total_source_count = 0
+        n_full_collections = 0
         for name in names:
             col = cfg.collections[name] if cfg else None
-            marker = "●" if name in active_collections else "○"
+            marker = self._collection_marker(name)
+            if marker == "●":
+                n_full_collections += 1
             n_sources = len(col.sources) if col else 0
             total_source_count += n_sources
             label = f"{marker}  {name}  ({n_sources} source{'s' if n_sources != 1 else ''})"
@@ -2524,9 +2900,15 @@ class AcornApp(App[None]):
                 expand=name in self._expanded_collections,
             )
             if col:
+                # When the whole collection is in scope (CLI flag,
+                # persisted scope, or "all sources on" toggle), each
+                # source is implicitly active — the per-source toggle
+                # only fills in granular off-bits within an explicitly
+                # full collection.
+                collection_full = name in self._collections
                 for i, s in enumerate(col.sources):
                     source_id = str(Path(str(s.path)).expanduser().resolve())
-                    src_active = source_id in active_sources
+                    src_active = collection_full or source_id in active_sources
                     if src_active:
                         active_source_count += 1
                     src_marker = "●" if src_active else "○"
@@ -2540,7 +2922,7 @@ class AcornApp(App[None]):
                             "source_id": source_id,
                         },
                     )
-        title = f"Collections — {len(active_collections)}/{len(names)} active"
+        title = f"Collections — {n_full_collections}/{len(names)} active"
         if total_source_count and active_source_count:
             title += f", {active_source_count}/{total_source_count} sources"
         tree.border_title = title
@@ -2646,86 +3028,187 @@ class AcornApp(App[None]):
 
     @on(Tree.NodeSelected, "#collections_panel_tree")
     def _on_collections_panel_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
-        """Enter on a collection node toggles the collection's scope.
-        Enter on a source node toggles that single source's scope.
-        Per the user's explicit request: Enter, not Space."""
+        """Enter on a collection node toggles the whole collection's
+        scope (all sources at once); Enter on a single source row
+        toggles that source independently. Source toggles bubble up so
+        the parent collection marker reads ●/◐/○ — full / partial /
+        empty — depending on how many of its sources are now active.
+
+        Both toggle paths read "currently on" from BOTH state signals
+        (``_collections`` membership + per-source ``_active_sources``)
+        so the visible marker drives the toggle direction, even from
+        the legacy / CLI-flag entry case where ``_collections`` has the
+        collection but ``_active_sources`` hasn't been populated yet.
+        """
         data = ev.node.data or {}
         kind = data.get("kind")
         if kind == "collection":
             name = str(data.get("name") or "")
             if not name:
                 return
-            if name in self._collections:
-                self._collections.remove(name)
+            source_ids = self._collection_source_ids(name)
+            # ``name in _collections`` means "whole collection in scope"
+            # — either the user just toggled it via the UI (which also
+            # filled ``_active_sources``) or the scope arrived from
+            # ``--collection`` / legacy persisted state (no per-source
+            # bits). Either way the marker reads ● and Enter should
+            # turn it off.
+            currently_full = name in self._collections or (
+                bool(source_ids) and all(sid in self._active_sources for sid in source_ids)
+            )
+            if currently_full:
+                if name in self._collections:
+                    self._collections.remove(name)
+                if source_ids:
+                    keep = set(self._active_sources) - set(source_ids)
+                    # Preserve the user's relative ordering of the kept
+                    # sources (set difference loses it).
+                    self._active_sources = [s for s in self._active_sources if s in keep]
             else:
-                self._collections.append(name)
+                if name not in self._collections:
+                    self._collections.append(name)
+                for sid in source_ids:
+                    if sid not in self._active_sources:
+                        self._active_sources.append(sid)
         elif kind == "source":
             source_id = str(data.get("source_id") or "")
             if not source_id:
                 return
+            parent_name = str(data.get("collection") or "")
+            sibling_ids = self._collection_source_ids(parent_name) if parent_name else []
+            # Normalise the "_collections-only" entry case (CLI flag,
+            # legacy persisted scope) before deciding the toggle: a
+            # source row reads ● when the parent collection is in
+            # ``_collections``, so flesh out ``_active_sources`` to
+            # match before flipping a single bit. The very next branch
+            # will pop the toggled source back off, leaving every
+            # untouched sibling in ``_active_sources`` — the partial
+            # state the user expected to land in.
+            if parent_name and parent_name in self._collections and sibling_ids:
+                for sid in sibling_ids:
+                    if sid not in self._active_sources:
+                        self._active_sources.append(sid)
             if source_id in self._active_sources:
                 self._active_sources.remove(source_id)
+                # Source went off — the parent collection can no longer
+                # be "fully on" by the per-source rule. Drop it from
+                # ``_collections`` so the search scope reflects what
+                # the user sees (partial / empty marker, not a full
+                # collection filter).
+                if parent_name and parent_name in self._collections:
+                    self._collections.remove(parent_name)
             else:
                 self._active_sources.append(source_id)
+                # Source went on — if that was the last off source in
+                # its collection, the collection is now fully on.
+                if (
+                    parent_name
+                    and sibling_ids
+                    and all(sid in self._active_sources for sid in sibling_ids)
+                    and parent_name not in self._collections
+                ):
+                    self._collections.append(parent_name)
         else:
             return
         self._ranking_profile = self._resolve_profile()
-        # In-place marker swap on the toggled node instead of
-        # _refresh_collections_panel() — that calls tree.clear() which
-        # resets the cursor to the root every time the user toggles.
+        # In-place marker swap on the toggled node (+ siblings whose
+        # markers depend on the same source state) instead of
+        # ``_refresh_collections_panel()``, which calls ``tree.clear()``
+        # and resets the cursor to the root every time the user
+        # toggles.
         self._update_collections_panel_node(ev.node)
         self._refresh_collections_panel_title()
         self._refresh_status()
         self._persist_state()
-        if self._current_query:
-            self._run_query(self._current_query)
+        # Don't auto-rerun the active query: the user may be batch-
+        # toggling several collections, and each rerun would shift focus
+        # to the results pane (via _refresh_results_tree.focus()) and
+        # interrupt the run. Drop the now-stale results so it's obvious
+        # the next Enter in the query bar re-runs against the new scope;
+        # keep _current_query so the user's last query is recallable in
+        # the input.
+        if self._current_query and self._groups:
+            self._clear_query_results()
 
     def _update_collections_panel_node(self, node: Any) -> None:
-        """Swap the marker on a single collection or source node label
-        without rebuilding the tree. Preserves the cursor on the
-        just-toggled row."""
+        """Swap the marker on a toggled node + cascade to dependent rows.
+
+        Preserves cursor (no ``tree.clear()`` involved). When a
+        collection row is toggled, every source child marker is
+        repainted too. When a source row is toggled, the parent
+        collection's marker is recomputed so its tri-state (●/◐/○)
+        reads the new source state.
+        """
         data = node.data if isinstance(node.data, dict) else {}
         kind = data.get("kind")
         if kind == "collection":
             name = str(data.get("name") or "")
             if not name:
                 return
-            cfg = self._config
-            col = cfg.collections.get(name) if cfg else None
-            n_sources = len(col.sources) if col else 0
-            marker = "●" if name in self._collections else "○"
-            label = f"{marker}  {name}  ({n_sources} source{'s' if n_sources != 1 else ''})"
-            node.set_label(_styled_parent_label(label))
+            self._repaint_collection_node(node, name)
+            for child in node.children:
+                self._repaint_source_node(child)
             return
         if kind == "source":
-            source_id = str(data.get("source_id") or "")
-            if not source_id:
+            self._repaint_source_node(node)
+            parent = node.parent
+            if parent is None:
                 return
-            src_marker = "●" if source_id in self._active_sources else "○"
-            current_label = str(node.label)
-            # The source label is "<marker>  <i>. <short>" — preserve the
-            # ordinal and basename, just swap the marker glyph.
-            if len(current_label) > 1 and current_label[0] in ("●", "○"):
-                node.set_label(src_marker + current_label[1:])
-            else:
-                node.set_label(current_label)
+            parent_data = parent.data if isinstance(parent.data, dict) else {}
+            parent_name = str(parent_data.get("name") or "")
+            if parent_name:
+                self._repaint_collection_node(parent, parent_name)
+
+    def _repaint_collection_node(self, node: Any, name: str) -> None:
+        cfg = self._config
+        col = cfg.collections.get(name) if cfg else None
+        n_sources = len(col.sources) if col else 0
+        marker = self._collection_marker(name)
+        label = f"{marker}  {name}  ({n_sources} source{'s' if n_sources != 1 else ''})"
+        node.set_label(_styled_parent_label(label))
+
+    def _repaint_source_node(self, node: Any) -> None:
+        data = node.data if isinstance(node.data, dict) else {}
+        source_id = str(data.get("source_id") or "")
+        if not source_id:
+            return
+        parent_name = str(data.get("collection") or "")
+        # Mirror the rule used in ``_refresh_collections_panel``: when
+        # the parent collection is in ``_collections`` (CLI / persisted /
+        # toggled-on whole-collection), every child source reads as ●
+        # even if ``_active_sources`` is empty.
+        collection_full = bool(parent_name) and parent_name in self._collections
+        src_marker = "●" if collection_full or source_id in self._active_sources else "○"
+        current_label = str(node.label)
+        # The source label is "<marker>  <i>. <short>" — preserve the
+        # ordinal and basename, just swap the marker glyph.
+        if len(current_label) > 1 and current_label[0] in ("●", "○"):
+            node.set_label(src_marker + current_label[1:])
+        else:
+            node.set_label(current_label)
 
     def _refresh_collections_panel_title(self) -> None:
         """Recompute the panel's border-title counts after a toggle.
 
         Pulled out so toggle handlers can update the counts without
-        going through the cursor-resetting tree rebuild."""
+        going through the cursor-resetting tree rebuild. The "active"
+        collection count tracks rows that paint as ``●`` (full) — the
+        same per-source rule the row marker uses — so the title and
+        the row glyphs always agree.
+        """
         try:
             tree = self.query_one("#collections_panel_tree", Tree)
         except Exception:
             return
         cfg = self._config
         names = sorted(cfg.collections.keys()) if cfg else []
-        active_collections = set(self._collections)
         active_sources = set(self._active_sources)
         total_source_count = sum(len(cfg.collections[n].sources) for n in names if cfg)
         active_source_count = 0
+        n_full_collections = 0
         for n in names:
+            if self._collection_marker(n) == "●":
+                n_full_collections += 1
             col = cfg.collections[n] if cfg else None
             if not col:
                 continue
@@ -2733,7 +3216,7 @@ class AcornApp(App[None]):
                 source_id = str(Path(str(s.path)).expanduser().resolve())
                 if source_id in active_sources:
                     active_source_count += 1
-        title = f"Collections — {len(active_collections)}/{len(names)} active"
+        title = f"Collections — {n_full_collections}/{len(names)} active"
         if total_source_count and active_source_count:
             title += f", {active_source_count}/{total_source_count} sources"
         tree.border_title = title
