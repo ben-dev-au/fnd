@@ -2478,22 +2478,67 @@ class AcornApp(App[None]):
             return
         target: Widget = self._match_targets.get(focus_chunk_seq) or header
         if isinstance(target, AcornMarkdown):
-            inner = target.first_match_block
+            chunk_md = target
+            inner = chunk_md.first_match_block
             if inner is None and retries > 0:
                 self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq, retries - 1)
                 return
-            # Table cells (TH/TD) live under a MarkdownTable which paints
-            # via a single Rich renderable; the per-cell widgets exist
-            # for highlight tracking but never get a real region, so
-            # scroll_to_widget on them no-ops. Fall back to the chunk
-            # widget — it has a real region and covers the table.
-            if inner is not None and inner.region.height > 0:
-                target = inner
+            if inner is not None:
+                target = self._scroll_proxy_for(inner, chunk=chunk_md)
         if target.region.height == 0 and retries > 0:
             self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq, retries - 1)
             return
         pane = self.query_one("#preview_pane", VerticalScroll)
         pane.scroll_to_widget(target, top=True, animate=False)
+
+    def _scroll_proxy_for(self, inner: Widget, *, chunk: AcornMarkdown) -> Widget:
+        """Resolve a scroll target for an ``AcornMarkdown.first_match_block``.
+
+        Most blocks (Paragraph / H#, ListItem, BlockQuote) have valid
+        regions — use them directly. Table cells (TH/TD) carry the
+        highlight bookkeeping but never get laid out: the parent
+        ``MarkdownTable`` composes a ``MarkdownTableContent`` whose
+        ``MarkdownTableCellContents`` children render in a grid. For
+        that case, find the cell widget that holds the matched
+        ``Content`` and scroll to it directly. Bounded by the number
+        of cells in the chunk's tables — no full descendant walk.
+        """
+        if inner.region.height > 0:
+            return inner
+        from textual.widgets._markdown import MarkdownTable, MarkdownTableContent
+
+        target_content = getattr(inner, "_content", None)
+        if target_content is None:
+            return chunk
+        target_plain = getattr(target_content, "plain", None)
+        # Remember the first MarkdownTable in document order as the
+        # fallback: if cell-level lookup misses (Textual internals
+        # vary), at least scrolling to the table itself is closer than
+        # the chunk top.
+        first_table: Widget | None = None
+        for child in chunk.children:
+            if not isinstance(child, MarkdownTable):
+                continue
+            if first_table is None and child.region.height > 0:
+                first_table = child
+            tcontent: MarkdownTableContent | None = None
+            for grand in child.children:
+                if isinstance(grand, MarkdownTableContent):
+                    tcontent = grand
+                    break
+            if tcontent is None:
+                continue
+            for cell in tcontent.children:
+                cell_content = getattr(cell, "content", None)
+                if cell_content is target_content:
+                    return cell if cell.region.height > 0 else child
+                if (
+                    target_plain
+                    and cell_content is not None
+                    and getattr(cell_content, "plain", None) == target_plain
+                ):
+                    return cell if cell.region.height > 0 else child
+        return first_table or chunk
 
     def _do_scroll_to_widget(self, widget: Widget, retries: int = 8) -> None:
         # Retry while the widget's region is unknown — scroll_to_widget
