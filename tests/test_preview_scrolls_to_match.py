@@ -131,6 +131,44 @@ async def test_navigating_down_results_scrolls_each_preview(
 
 
 @pytest.mark.asyncio
+async def test_md_preview_scrolls_when_first_match_is_in_a_table(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Table cells (AcornMarkdownTH/TD) have zero region because the
+    parent MarkdownTable paints as a single Rich renderable. When the
+    first match lands inside a table the scroll must fall back to the
+    chunk widget, not no-op against the zero-region cell."""
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    body = ["# Top", "Intro paragraph.", ""]
+    for i in range(40):
+        body.extend([f"Filler paragraph {i}.", ""])
+    body.extend(
+        [
+            "## A section with a table",
+            "",
+            "| Attack | Notes |",
+            "| ------ | ----- |",
+            "| Phishing | Attackers compromise users via fake portals. |",
+            "| Malware  | Targets endpoints. |",
+            "",
+            "Tail paragraph.",
+        ]
+    )
+    (notes / "tables.md").write_text("\n".join(body), encoding="utf-8")
+    build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
+
+    app = AcornApp(index_dir=tmp_index_dir, initial_query="compromise")
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one("#preview_pane", VerticalScroll)
+        for _ in range(80):
+            await pilot.pause()
+            if pane.scroll_y > 0:
+                break
+        assert pane.scroll_y > 0, f"scroll_y={pane.scroll_y}"
+
+
+@pytest.mark.asyncio
 async def test_md_scroll_with_varied_constructs(tmp_path: Path, tmp_index_dir: Path) -> None:
     """Frontmatter, headings, lists, tables, code blocks, blockquotes —
     the match must still find its block."""
