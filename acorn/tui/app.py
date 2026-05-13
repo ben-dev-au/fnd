@@ -2482,7 +2482,12 @@ class AcornApp(App[None]):
             if inner is None and retries > 0:
                 self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq, retries - 1)
                 return
-            if inner is not None:
+            # Table cells (TH/TD) live under a MarkdownTable which paints
+            # via a single Rich renderable; the per-cell widgets exist
+            # for highlight tracking but never get a real region, so
+            # scroll_to_widget on them no-ops. Fall back to the chunk
+            # widget — it has a real region and covers the table.
+            if inner is not None and inner.region.height > 0:
                 target = inner
         if target.region.height == 0 and retries > 0:
             self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq, retries - 1)
