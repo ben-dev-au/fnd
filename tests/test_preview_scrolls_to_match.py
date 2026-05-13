@@ -123,7 +123,10 @@ async def test_navigating_down_results_scrolls_each_preview(
             rtree.focus()
             await pilot.pause()
             rtree.cursor_line = rtree.cursor_line + 1 if i > 0 else 1
-            for _ in range(40):
+            # Each file switch resets scroll_y to 0 while the new
+            # PreviewContainer mounts; wait long enough for layout +
+            # the end-of-mount re-anchor to fire.
+            for _ in range(120):
                 await pilot.pause()
                 if pane.scroll_y > 0:
                     break
