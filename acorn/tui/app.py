@@ -2467,9 +2467,19 @@ class AcornApp(App[None]):
         yields to user-side mount first."""
         q = self._prefetch_sink_queue
         if q is None:
+            self._diag_log(
+                f"prefetch_mount_structural SKIPPED no-queue parent={parent_id[:8]}"
+            )
             return
         if query_sig != self._current_query_signature():
+            self._diag_log(
+                f"prefetch_mount_structural SKIPPED stale-sig parent={parent_id[:8]}"
+            )
             return
+        self._diag_log(
+            f"prefetch_mount_structural QUEUED parent={parent_id[:8]} "
+            f"focus={focus_chunk_seq} qsize_before={q.qsize()}"
+        )
 
         async def _job() -> None:
             await self._prefetch_mount_structural_async(
@@ -2486,14 +2496,26 @@ class AcornApp(App[None]):
         focus_chunk_seq: int,
     ) -> None:
         if query_sig != self._current_query_signature():
+            self._diag_log(
+                f"prefetch_mount_structural_async SKIPPED stale-sig "
+                f"parent={parent_id[:8]}"
+            )
             return
         if self._preview_cache.get(parent_id, query_sig) is not None:
+            self._diag_log(
+                f"prefetch_mount_structural_async SKIPPED already-cached "
+                f"parent={parent_id[:8]}"
+            )
             return
         if (
             self._active_preview is not None
             and self._active_preview.parent_doc_id == parent_id
             and self._active_preview.query_signature == query_sig
         ):
+            self._diag_log(
+                f"prefetch_mount_structural_async SKIPPED already-active "
+                f"parent={parent_id[:8]}"
+            )
             return
         import asyncio
         import contextlib
@@ -2501,7 +2523,14 @@ class AcornApp(App[None]):
         try:
             pane = self.query_one("#preview_pane", VerticalScroll)
         except Exception:
+            self._diag_log(
+                f"prefetch_mount_structural_async SKIPPED no-pane "
+                f"parent={parent_id[:8]}"
+            )
             return
+        self._diag_log(
+            f"prefetch_mount_structural_async STARTING parent={parent_id[:8]}"
+        )
         container = PreviewContainer(
             parent_doc_id=parent_id,
             query_signature=query_sig,
@@ -2622,13 +2651,20 @@ class AcornApp(App[None]):
         assert q is not None
         while True:
             job = await q.get()
+            self._diag_log(f"drainer JOB pulled qsize={q.qsize()}")
+            wait_iters = 0
             # Cooperative wait — user-side mount always preempts.
             while self._user_mount_in_flight():
+                wait_iters += 1
                 await asyncio.sleep(0.05)
+            if wait_iters > 0:
+                self._diag_log(
+                    f"drainer JOB started after {wait_iters * 50}ms wait"
+                )
             try:
                 await job()
-            except Exception:
-                pass
+            except Exception as e:
+                self._diag_log(f"drainer JOB threw: {type(e).__name__}: {e}")
             with contextlib.suppress(Exception):
                 q.task_done()
             await asyncio.sleep(0)
