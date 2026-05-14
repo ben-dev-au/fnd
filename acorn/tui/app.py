@@ -101,7 +101,10 @@ _VISIBLE_FIRST_BELOW = 7
 # it in the results tree — ``_dispatch_preview_mount`` resumes the
 # task with a new focus, Phase 1a mounts the requested chunk, and
 # Phase 2 extends the buffer around it.
-_BACKGROUND_FILL_RADIUS = 200
+# Per-chunk widget construction holds the loop ~5-50 ms each; 30
+# chunks per side bounds the tail mount enough to keep the UI
+# responsive. Resume path handles clicks outside the bound.
+_BACKGROUND_FILL_RADIUS = 30
 
 
 class ResultsTree(Tree[dict[str, Any]]):
@@ -161,17 +164,8 @@ class PreviewContainer(Container):
     resumed on revisit.
     """
 
-    # ``display: none`` here is load-bearing. The previous "L2
-    # Absolute-Hidden" protocol (visibility:hidden + position:absolute)
-    # kept invisible PreviewContainers in their parent's vertical flow
-    # — VerticalScroll then split the pane's height across every
-    # cached container, leaving the visible LineBufferPreview with
-    # ``size.height = 1``. That was the "PDF only shows a single line"
-    # symptom: the pane was sharing 38 rows across ~30 hidden
-    # containers + 1 visible flat buffer, so each got ~1 row. Verified
-    # empirically by tests/perf/auto_test.py — with L2 the flat
-    # buffer's post-layout size is (91, 1); with display:none it's
-    # (91, 35).
+    # display:none required; visibility:hidden leaves containers in
+    # vertical flow and collapses the active LineBufferPreview height.
     DEFAULT_CSS = """
     PreviewContainer { width: 100%; height: auto; }
     PreviewContainer.-hidden { display: none; }
@@ -1569,6 +1563,13 @@ class AcornApp(App[None]):
 
     def _schedule_preview_load(self, parent_id: str, focus_chunk_seq: int) -> None:
         """Debounce a cursor-move → preview-load; coalesces rapid arrow sweeps."""
+        # Preempt stale tail-mount on the previous file so the loop is
+        # free during the debounce window.
+        active_parent = (
+            self._active_preview.parent_doc_id if self._active_preview is not None else None
+        )
+        if active_parent is not None and active_parent != parent_id:
+            self._cancel_preview_mount_task()
         self._preview_load_target = (parent_id, focus_chunk_seq)
         if self._config is not None:
             delay_ms = self._config.defaults.preview_load_debounce_ms
@@ -1839,37 +1840,22 @@ class AcornApp(App[None]):
         if cached is not None and (
             cached.is_complete or (reveal_first and focus_chunk_seq in cached.chunk_widgets)
         ):
-            # Reveal-first: -pre-reveal (visibility:hidden) leaves the
-            # widget out of the compositor's spatial map, so child
-            # regions stay (0,0,0,0). The 30-retry scroll-to-chunk
-            # chain in _finalize_pre_reveal then burns ~500 ms waiting
-            # for regions that won't exist until the widget is fully
-            # visible. Reveal first so layout propagates; one refresh
-            # later, scroll lands. For partial containers the rest of
-            # the chunks fill in via a background resume task while
-            # the user already sees the focused window.
+            # Reveal-first: activate visible, scroll on the next two
+            # ticks once child regions are populated.
             if reveal_first:
                 self._activate_preview_container(cached, pre_reveal=False)
                 self._refresh_match_scrollbar(chunks)
-                # Two-tick scroll: one tick for the visibility flip to
-                # propagate through the compositor, a second for child
-                # regions to be sized. Without the second hop the scroll
-                # occasionally lands at the chunk's top edge instead of
-                # the matched paragraph because region geometry is still
-                # (0,0,0,0) when scroll fires.
+                # Two-tick scroll so child regions are sized before
+                # _do_scroll_to_chunk queries them.
                 self.call_after_refresh(
                     self.call_after_refresh,
                     self._scroll_preview_to_chunk,
                     focus_chunk_seq,
                 )
                 if not cached.is_complete:
-                    # Resume the remaining mounts in the background so the
-                    # rest of the file fills in while the user reads.
-                    # Suppress the task's internal scroll attempts —
-                    # the chained call_after_refresh above is the
-                    # canonical scroll for this cache-hit. Three
-                    # competing scrolls during background fill cause
-                    # visible jumps as widget y drifts.
+                    # Resume the partial mount in the background; the
+                    # scroll above is canonical so suppress the task's
+                    # own scroll attempts.
                     import asyncio as _asyncio
 
                     self._preview_mount_task = _asyncio.create_task(
@@ -2201,34 +2187,7 @@ class AcornApp(App[None]):
         self._match_targets = container.match_targets
 
     def _finalize_pre_reveal(self, container: PreviewContainer, focus_chunk_seq: int) -> None:
-        """Lift ``-pre-reveal`` once the focused chunk is ready, then
-        scroll to it.
-
-        Earlier this method ran scroll first with ``on_done=_reveal``,
-        but that deadlocked: while ``-pre-reveal`` (visibility:hidden)
-        is on the container, Textual's compositor doesn't include
-        descendants in its ``_full_map`` (textual/_compositor.py:731 —
-        ``elif visible:``). ``target.region`` stays NULL_REGION for
-        the whole retry budget (~1.5 s in real TUI), then scroll
-        fires anyway against zero geometry and lands at the doc top.
-        The mount task's finally-block re-anchor eventually corrects
-        it ~700 ms later — total ~2.2 s of "wait + jump + jump".
-
-        A previous attempt (commit c4a07d7, reverted in a10b7ff)
-        lifted ``-pre-reveal`` immediately then scheduled scroll
-        via ``call_after_refresh``. That broke first-file loads
-        because the focused chunk widget was in the tree but its
-        compose() hadn't run yet — user saw an empty visible
-        container.
-
-        This version polls for ``first_match_block`` (the signal
-        that AcornMarkdown's compose finished) up to a bounded
-        retry budget, THEN lifts ``-pre-reveal`` and schedules scroll
-        on a two-tick chain (giving the compositor one tick to
-        rebuild ``_full_map`` with the now-visible widgets, then
-        one tick for ``_do_scroll_to_chunk`` to query a populated
-        ``target.region``).
-        """
+        """Lift ``-pre-reveal`` once focused chunk's compose is ready, then scroll."""
         import time
 
         t0 = time.perf_counter()
@@ -2246,9 +2205,6 @@ class AcornApp(App[None]):
         retries: int,
         t0: float,
     ) -> None:
-        """One polling iteration of finalize. Lifts the class once the
-        focused chunk's compose is done, or once retry budget is
-        exhausted (failsafe — better a brief flash than a hang)."""
         import time
 
         from acorn.tui import _perf
@@ -2366,6 +2322,24 @@ class AcornApp(App[None]):
         in the result list instead of starting from the top — lets the
         buffer follow the user when they navigate past the initial range.
         """
+        # Discard mount jobs queued for the previous anchor — stale
+        # work would otherwise keep the drainer (and the asyncio loop)
+        # busy across navigation.
+        q = self._prefetch_sink_queue
+        if q is not None:
+            import contextlib as _contextlib
+
+            drained = 0
+            while True:
+                try:
+                    q.get_nowait()
+                except Exception:
+                    break
+                with _contextlib.suppress(Exception):
+                    q.task_done()
+                drained += 1
+            if drained:
+                self._diag_log(f"prefetch_top drained_stale_jobs={drained}")
         if self._searcher is None or not self._groups:
             return
         if self._config is not None:
@@ -2750,7 +2724,9 @@ class AcornApp(App[None]):
                     with contextlib.suppress(Exception), _perf.span("prefetch_await_build", idx=i):
                         async with md_widget.lock:
                             pass
-                await asyncio.sleep(0)
+                # Real wall-clock yield so input/redraw events get
+                # processing time between heavy mounts.
+                await asyncio.sleep(0.002)
         finally:
             _perf.mark(
                 "prefetch_loop_end",
@@ -2911,10 +2887,8 @@ class AcornApp(App[None]):
                     continue
                 self._mount_chunk_into(container, chunks[i], i, chunks)
                 self._update_progress_bar(progress=len(container.mounted_indices))
-                # Yield every chunk so a slow mount can't peg the UI
-                # thread between yields. asyncio.sleep(0) hands control
-                # back to the loop so pending key/redraw events run.
-                await asyncio.sleep(0)
+                # Wall-clock yield — see prefetch loop.
+                await asyncio.sleep(0.002)
             await asyncio.sleep(0)
 
             # Phase 2b: hidden-prepend ABOVE the window, capped at the
@@ -2933,21 +2907,23 @@ class AcornApp(App[None]):
                         w.display = False
                         hidden_widgets.append(w)
                 self._update_progress_bar(progress=len(container.mounted_indices))
-                await asyncio.sleep(0)
+                # Wall-clock yield — see prefetch loop.
+                await asyncio.sleep(0.002)
 
-            # Reveal hidden widgets in small batches so the layout
-            # adjustment lands gradually instead of as one big punch.
-            # A single bulk reveal of 200+ widgets can stall the UI for
-            # tens of ms AND visibly resize/shift the preview. Batching
-            # with yields lets Textual process input/redraws between
-            # batches.
+            # Reveal + anchor in one synchronous block so Textual
+            # folds both layout changes into a single paint — no
+            # visible "shift down then scroll back up" sequence.
             if hidden_widgets:
-                reveal_batch = 8
-                for idx in range(0, len(hidden_widgets), reveal_batch):
-                    for w in hidden_widgets[idx : idx + reveal_batch]:
-                        w.display = True
-                    await asyncio.sleep(0)
+                for w in hidden_widgets:
+                    w.display = True
                 hidden_widgets.clear()
+                if not skip_internal_scrolls:
+                    focused_widget = container.chunk_widgets.get(focus_chunk_seq)
+                    if focused_widget is not None:
+                        with contextlib.suppress(Exception):
+                            pane.scroll_to_widget(
+                                focused_widget, top=True, animate=False, immediate=True
+                            )
         finally:
             # Always reveal any widgets we hid; a cancelled task that
             # left them hidden would leak a half-displayed container
