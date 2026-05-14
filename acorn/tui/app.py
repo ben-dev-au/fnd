@@ -1542,12 +1542,12 @@ class AcornApp(App[None]):
             return
         self._preview_load_target = None
         parent_id, focus_chunk_seq = target
-        # Re-anchor prefetch around where the cursor actually settled, not
-        # every keystroke along the way. Only when cursor lands on a result
-        # we haven't started decoding yet — otherwise the user-side render
-        # will warm it directly.
-        if parent_id not in self._chunk_cache:
-            self._prefetch_top_results(anchor_parent_id=parent_id)
+        # Re-anchor prefetch around where the cursor actually settled
+        # every time, not only on cache miss. Cursor-following: window
+        # follows the user instead of waiting for them to outrun it.
+        # Prefetch is an exclusive-group worker so the previous run is
+        # cancelled cleanly.
+        self._prefetch_top_results(anchor_parent_id=parent_id)
         self._render_full_doc(parent_id, focus_chunk_seq=focus_chunk_seq)
 
     def _cancel_pending_preview_load(self) -> None:
