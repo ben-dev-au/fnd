@@ -45,6 +45,9 @@ def choose_preview_mode(chunks: list[FileChunk]) -> PreviewMode:
     handful of stale-body chunks) keep their structural path; pure
     text/PDF files take the flat path.
     """
+    import os
+    if os.environ.get("ACORN_FORCE_FLAT") == "1":
+        return "flat"
     for c in chunks:
         if c.kind in _MARKDOWN_RENDERED_KINDS and c.body_md:
             return "structural"
