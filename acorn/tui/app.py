@@ -81,7 +81,7 @@ _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 # mounted widget tree alive in a per-file Container; switching files is
 # then a single class-toggle. Bounded by LRU + a chunk-count threshold so
 # small files (which mount instantly anyway) don't bloat memory.
-_PREVIEW_CACHE_MAX_FILES = 8
+_PREVIEW_CACHE_MAX_FILES = 64
 # Cache *every* complete file (1+ chunks) so revisits are O(1) and old
 # containers get LRU-evicted+removed from the DOM. The previous threshold
 # of 30 meant short markdown files never made it to the cache, never got
