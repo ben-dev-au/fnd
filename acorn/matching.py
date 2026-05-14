@@ -22,17 +22,23 @@ Public surface:
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 
 import snowballstemmer
 
 from acorn.synonyms import SynonymTable, expand
 
-_STEMMER = snowballstemmer.stemmer("english")
+# snowballstemmer holds per-call cursor state; not thread-safe.
+_STEMMER_LOCAL = threading.local()
 
 
 def _stem(word: str) -> str:
-    return _STEMMER.stemWord(word.lower())
+    stemmer = getattr(_STEMMER_LOCAL, "instance", None)
+    if stemmer is None:
+        stemmer = snowballstemmer.stemmer("english")
+        _STEMMER_LOCAL.instance = stemmer
+    return stemmer.stemWord(word.lower())
 
 
 def auto_fuzzy_distance(stem: str) -> int:

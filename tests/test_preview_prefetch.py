@@ -114,3 +114,125 @@ async def test_query_change_clears_prebuilt_cache(
         app._run_query("different")
         await pilot.pause()
         assert app._prebuilt_cache == {}
+
+
+@pytest.mark.asyncio
+async def test_prefetch_premounts_flat_buffer_widget(
+    two_file_index: Path, cfg_with_prefetch: Config
+) -> None:
+    """Prefetch pre-mounts a hidden LineBufferPreview into _flat_buffer_cache."""
+    import asyncio
+
+    app = AcornApp(index_dir=two_file_index, config=cfg_with_prefetch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._run_query("results")
+        sig = app._current_query_signature()
+        flat_parents: set[str] = set()
+        for _ in range(40):
+            await pilot.pause()
+            await asyncio.sleep(0.05)
+            flat_parents = {
+                g.parent_id
+                for g in app._groups
+                if g.path.lower().endswith((".pdf", ".txt"))
+            }
+            if flat_parents and any(
+                (pid, sig) in app._flat_buffer_cache for pid in flat_parents
+            ):
+                break
+        if not flat_parents:
+            pytest.skip("no flat-path results in fixture corpus for this query")
+        prefetched = [pid for pid in flat_parents if (pid, sig) in app._flat_buffer_cache]
+        assert prefetched, f"prefetch failed to pre-mount any flat widget; flat={flat_parents}"
+        for pid in prefetched:
+            buf = app._flat_buffer_cache[(pid, sig)]
+            assert "-hidden" in buf.classes, f"prefetched widget for {pid} not hidden"
+
+
+@pytest.fixture
+def multi_md_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
+    """Three matching md files. The top-rank user-loads; the rest are pure
+    prefetch territory."""
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    for label in ("alpha", "beta", "gamma"):
+        body = ["# Top heading", "Lead-in text."]
+        for i in range(40):
+            body.extend([f"## Section {i}", f"Filler text in section {i}."])
+        body.extend(["## Anchor section", f"prefetch-anchor mention in {label}."])
+        (notes / f"{label}.md").write_text("\n".join(body), encoding="utf-8")
+    build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
+    return tmp_index_dir
+
+
+@pytest.mark.asyncio
+async def test_prefetch_premounts_structural_container(multi_md_index: Path) -> None:
+    """Prefetch pre-mounts a hidden PreviewContainer into _preview_cache for
+    structural files the user hasn't selected yet."""
+    import asyncio
+
+    cfg = Config(
+        defaults=Defaults(preview_prefetch_count=3, preview_load_debounce_ms=0),
+        ranking={"default": RankingProfileConfig()},
+    )
+    app = AcornApp(index_dir=multi_md_index, config=cfg, collection="notes")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._run_query("prefetch-anchor")
+        sig = app._current_query_signature()
+        for _ in range(80):
+            await pilot.pause()
+            await asyncio.sleep(0.05)
+            if len(app._groups) >= 3:
+                non_top = [g.parent_id for g in app._groups[1:]]
+                if all(
+                    app._preview_cache.get(pid, sig) is not None for pid in non_top
+                ):
+                    break
+        assert len(app._groups) >= 3, "expected three md results in this corpus"
+        non_top = [g.parent_id for g in app._groups[1:]]
+        for pid in non_top:
+            cont = app._preview_cache.get(pid, sig)
+            assert cont is not None, f"prefetch failed to pre-mount {pid}"
+            assert "-hidden" in cont.classes, f"prefetched {pid} not hidden"
+            assert cont.mounted_indices, f"prefetched {pid} has no mounted chunks"
+
+
+@pytest.mark.asyncio
+async def test_user_selection_of_prefetched_container_runs_to_completion(
+    multi_md_index: Path,
+) -> None:
+    """Selecting a prefetched container completes the mount (regression for
+    a prefetch/user-side mount race that stalled at the visible window)."""
+    import asyncio
+
+    cfg = Config(
+        defaults=Defaults(preview_prefetch_count=10, preview_load_debounce_ms=0),
+        ranking={"default": RankingProfileConfig()},
+    )
+    app = AcornApp(index_dir=multi_md_index, config=cfg, collection="notes")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app._run_query("prefetch-anchor")
+        for _ in range(60):
+            await pilot.pause()
+            await asyncio.sleep(0.05)
+        assert len(app._groups) >= 3
+        target = app._groups[1]
+        target_focus = target.hits[0].chunk_seq if target.hits else 0
+        app._render_full_doc(target.parent_id, focus_chunk_seq=target_focus)
+        for _ in range(80):
+            await pilot.pause()
+            await asyncio.sleep(0.05)
+            if app._active_preview and app._active_preview.is_complete:
+                break
+        ap = app._active_preview
+        assert ap is not None, "user-side mount produced no active preview"
+        assert ap.parent_doc_id == target.parent_id
+        assert ap.is_complete, (
+            f"user-side mount stalled at {len(ap.mounted_indices)}/{ap.total_chunks}"
+        )
+        pane = app.query_one("#preview_pane")
+        placeholders = [w for w in pane.children if getattr(w, "id", None) == "placeholder"]
+        assert not placeholders, "placeholder still in pane after preview activated"

@@ -35,7 +35,7 @@ def isolated_ui_state(  # pyright: ignore[reportUnusedFunction]
 
 
 @pytest.fixture(autouse=True)
-def _quiet_preview_load_paths() -> Generator[None, None, None]:  # pyright: ignore[reportUnusedFunction]
+def _quiet_preview_load_paths() -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
     """Pin debounce + prefetch to 0 so cold-load assertions don't race
     the background worker. Pydantic v2 caches validators at class
     definition, so flipping ``model_fields[..].default`` needs
