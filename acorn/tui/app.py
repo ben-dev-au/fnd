@@ -1820,11 +1820,35 @@ class AcornApp(App[None]):
                     cached = c
                     break
 
-        if cached is not None and cached.is_complete:
-            # Pre-reveal: layout the new container hidden, scroll, then paint.
-            # Show the strip during the reveal cycle so the user sees feedback
-            # for the layout/scroll latency; _finalize_pre_reveal closes it
-            # via the on_done callback once the scroll has landed.
+        import os
+        reveal_first = os.environ.get("ACORN_REVEAL_FIRST") == "1"
+        if cached is not None and (
+            cached.is_complete
+            or (reveal_first and focus_chunk_seq in cached.chunk_widgets)
+        ):
+            # Reveal-first: -pre-reveal (visibility:hidden) leaves the
+            # widget out of the compositor's spatial map, so child
+            # regions stay (0,0,0,0). The 30-retry scroll-to-chunk
+            # chain in _finalize_pre_reveal then burns ~500 ms waiting
+            # for regions that won't exist until the widget is fully
+            # visible. Reveal first so layout propagates; one refresh
+            # later, scroll lands. For partial containers the rest of
+            # the chunks fill in via a background resume task while
+            # the user already sees the focused window.
+            if reveal_first:
+                self._activate_preview_container(cached, pre_reveal=False)
+                self._refresh_match_scrollbar(chunks)
+                self.call_after_refresh(
+                    self._scroll_preview_to_chunk, focus_chunk_seq
+                )
+                if not cached.is_complete:
+                    # Resume the remaining mounts in the background so the
+                    # rest of the file fills in while the user reads.
+                    import asyncio as _asyncio
+                    self._preview_mount_task = _asyncio.create_task(
+                        self._mount_chunks_async(parent_id, focus_chunk_seq, chunks, cached)
+                    )
+                return
             self._activate_preview_container(cached, pre_reveal=True)
             self._refresh_match_scrollbar(chunks)
             self._show_progress_bar(total=1, progress=0, phase="rendering…")
@@ -2491,6 +2515,8 @@ class AcornApp(App[None]):
         import asyncio
         import contextlib
 
+        from acorn.tui import _perf
+
         focus_idx = next(
             (i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq),
             0,
@@ -2503,6 +2529,12 @@ class AcornApp(App[None]):
         radius = max(_VISIBLE_FIRST_ABOVE, _VISIBLE_FIRST_BELOW)
         win_start = max(0, focus_idx - radius)
         win_end = min(len(chunks), focus_idx + radius + 1)
+        _perf.mark(
+            "prefetch_loop_start",
+            parent_id=parent_id, focus_idx=focus_idx,
+            win=(win_start, win_end), total_chunks=len(chunks),
+        )
+        n_mounted = 0
         try:
             for i in range(win_start, win_end):
                 if query_sig != self._current_query_signature():
@@ -2514,11 +2546,32 @@ class AcornApp(App[None]):
                 if self._user_mount_in_flight():
                     return
                 try:
-                    self._mount_chunk_into(container, chunks[i], i, chunks)
+                    with _perf.span("prefetch_mount_one", idx=i):
+                        self._mount_chunk_into(container, chunks[i], i, chunks)
+                    n_mounted += 1
                 except Exception:
                     continue
+                # Wait for the chunk widget's async build to complete so
+                # ``first_match_block`` and child regions resolve before
+                # a user-side click adopts this pre-mount. Without this
+                # wait, the click path's retry chain consumes ~500 ms
+                # polling for a build that's still running.
+                seq = chunks[i].chunk_seq
+                md_widget = container.chunk_widgets.get(seq)
+                if md_widget is not None and isinstance(md_widget, AcornMarkdown):
+                    with contextlib.suppress(Exception), _perf.span(
+                        "prefetch_await_build", idx=i
+                    ):
+                        async with md_widget.lock:
+                            pass
                 await asyncio.sleep(0)
         finally:
+            _perf.mark(
+                "prefetch_loop_end",
+                parent_id=parent_id, n_mounted=n_mounted,
+                mounted_indices_size=len(container.mounted_indices),
+                is_complete=container.is_complete,
+            )
             evicted = self._preview_cache.put(container, protect=self._active_preview)
             for old in evicted:
                 with contextlib.suppress(Exception):

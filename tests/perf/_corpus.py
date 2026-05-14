@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-MATCH_TOKEN = "__BENCH_MATCH__"
+MATCH_TOKEN = "bencharkermarkermark"  # plain word; markdown won't interpret it
 
 Profile = Literal["small", "heavy", "table_heavy", "fence_heavy"]
 
