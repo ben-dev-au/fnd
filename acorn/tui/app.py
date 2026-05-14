@@ -1565,6 +1565,8 @@ class AcornApp(App[None]):
            first; its callback enters step 3.
         """
         import asyncio
+        from acorn.tui import _perf
+        _perf.mark("click_to_display_start", parent_id=parent_id, focus_seq=focus_chunk_seq)
 
         # Any pending debounce timer is now moot — we're committing to
         # a load. Cancel so a late-firing timer can't race the current
@@ -1706,6 +1708,12 @@ class AcornApp(App[None]):
         ):
             container = self._active_preview
             if container.is_complete or focus_chunk_seq in container.chunk_widgets:
+                from acorn.tui import _perf
+                _perf.mark(
+                    "click_to_display_end",
+                    parent_id=parent_id,
+                    path="already_active_scroll_only",
+                )
                 self._scroll_preview_to_chunk(focus_chunk_seq)
                 return
             self._cancel_preview_mount_task()
@@ -1900,6 +1908,7 @@ class AcornApp(App[None]):
         """Show ``buf`` and hide every other preview widget (structural
         containers and other flat buffers) so only one file is on
         screen at a time."""
+        from acorn.tui import _perf
         self._clear_pane_placeholder()
         for child in self.query(PreviewContainer):
             child.add_class("-hidden")
@@ -1914,6 +1923,11 @@ class AcornApp(App[None]):
         # call can't accidentally try to scroll to a now-orphaned widget.
         self._chunk_widgets = {}
         self._match_targets = {}
+        _perf.mark(
+            "click_to_display_end",
+            parent_id=getattr(buf, "parent_doc_id", None),
+            path="flat_activate",
+        )
 
     def _current_query_signature(self) -> str:
         """Stable signature for the current query — match-bearing
@@ -1985,6 +1999,7 @@ class AcornApp(App[None]):
         ``pre_reveal=True`` the container is laid out but invisible
         (visibility: hidden) until ``_finalize_pre_reveal`` lands the
         scroll — no flash to file-top before the jump-to-match."""
+        from acorn.tui import _perf
         self._clear_pane_placeholder()
         for child in self.query(PreviewContainer):
             if child is container:
@@ -2000,6 +2015,12 @@ class AcornApp(App[None]):
             child.add_class("-hidden")
         self._active_preview = container
         self._active_flat_buffer = None
+        if not pre_reveal:
+            _perf.mark(
+                "click_to_display_end",
+                parent_id=container.parent_doc_id,
+                path="structural_immediate",
+            )
         self._preview_parent_id = container.parent_doc_id
         self._chunk_widgets = container.chunk_widgets
         self._match_targets = container.match_targets
@@ -2016,9 +2037,17 @@ class AcornApp(App[None]):
             f"parent_id={container.parent_doc_id}"
         )
 
+        from acorn.tui import _perf
+
         def _reveal() -> None:
             container.remove_class("-pre-reveal")
             self._hide_progress_bar()
+            _perf.mark(
+                "click_to_display_end",
+                parent_id=container.parent_doc_id,
+                focus_seq=focus_chunk_seq,
+                path="warm_pre_reveal",
+            )
             self._diag_log(
                 f"finalize_pre_reveal done seq={focus_chunk_seq} "
                 f"elapsed_ms={(time.perf_counter() - t0) * 1000:.1f}"
