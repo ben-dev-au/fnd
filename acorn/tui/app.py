@@ -162,19 +162,22 @@ class PreviewContainer(Container):
     resumed on revisit.
     """
 
-    DEFAULT_CSS = """
-    PreviewContainer { width: 100%; height: auto; }
-    /* L2 Absolute-Hidden: prefetched/inactive containers stay in
-       layout (so arrange cache survives) but are removed from parent
-       flow (position: absolute) and not painted (visibility: hidden).
-       Reveal is then a class-removal: cache hits, no relayout cost. */
-    PreviewContainer.-hidden {
-        position: absolute;
-        width: 100%;
-        height: 100%;
-        visibility: hidden;
-    }
-    PreviewContainer.-pre-reveal { visibility: hidden; }
+    import os as _os
+    if _os.environ.get("ACORN_DISABLE_L2") == "1":
+        # Pre-investigation behaviour for A/B verification on real corpora.
+        _HIDDEN_RULE = "PreviewContainer.-hidden { display: none; }"
+    else:
+        _HIDDEN_RULE = (
+            "PreviewContainer.-hidden { "
+            "position: absolute; width: 100%; height: 100%; "
+            "visibility: hidden; "
+            "}"
+        )
+
+    DEFAULT_CSS = f"""
+    PreviewContainer {{ width: 100%; height: auto; }}
+    {_HIDDEN_RULE}
+    PreviewContainer.-pre-reveal {{ visibility: hidden; }}
     """
 
     def __init__(
