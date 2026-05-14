@@ -1,5 +1,104 @@
 # Preview perf — focused investigation
 
+## ✅ Progress since 2026-05-14 handoff (current state)
+
+Defaults that ship in this branch now:
+
+- `_PREVIEW_CACHE_MAX_FILES = 64`
+- Reveal-first cache-hit path (was env-gated by `ACORN_REVEAL_FIRST`, still
+  is — production wiring tracked under "remaining work")
+- **W3 DataTable on by default** for markdown tables (`AcornMarkdownTableDT`).
+  Opt out: `ACORN_NO_W3=1`.
+- **Structural pre-mount on by default** (`_prefetch_mount_structural`).
+  Opt out: `ACORN_NO_PREMOUNT=1`.
+- `_BACKGROUND_FILL_RADIUS = 10` (was 200)
+- `_PREFETCH_MOUNT_RADIUS = 0` (was implicit 7)
+- `_md_hybrid.py` (W-Hybrid) stays opt-in (`ACORN_W_HYBRID=1`) —
+  drops per-heading CSS, fence focus, link clicks. Not the default.
+
+### Resolved issues (empirically verified via the harnesses)
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Cold path 1500-1800 ms with `miss=zero-region` retries-used=30 | `_finalize_pre_reveal` ran scroll first → retry chain deadlocked while `-pre-reveal` kept regions NULL_REGION | `_do_finalize_pre_reveal` polls `first_match_block`, lifts class, schedules scroll on a two-tick chain |
+| 2-3 scrolls per cached click, "loads then jumps" | Reveal-first scheduled the canonical scroll then the resume task's Phase 1a + finally re-anchor competed | `skip_internal_scrolls=True` on the resume task; finally-block re-anchor removed (inline reveal+anchor at end of Phase 2b is canonical) |
+| "PDF shows a single line" | `PreviewContainer.-hidden` used `visibility:hidden + position:absolute`; hidden containers stayed in vertical flow, splitting pane height | `display:none` on `.-hidden` (verified via bench_input_lag DOM stats) |
+| Cold-load shift during Phase 2b reveal | Reveal happened in batches with yields between, each batch painted the focused chunk drifting down | Reveal all + scroll-to-widget inline in one block — Textual folds both into one paint |
+| Wrong position on first flat (PDF) load | `_apply_pending_scroll` race with `on_resize`: scrolled to stale visual_y when wrap_width changed | `_apply_pending_scroll` now triggers `_rebuild_strips` if wrap_width differs from current size.width before computing visual_y |
+| "Key presses lag even with `q`" | Pre-mounting structural widgets balloons DOM to ~3000 widgets per session; every compositor refresh walks the tree. pilot.pause was 80 ms median | W3 DataTable on by default collapses 50 widgets per table to 1. Pause drops to 24 ms median, DOM to ~130 widgets |
+| Constant lag from queued prefetch jobs after navigation | Old jobs kept draining for files the user had navigated past | `_prefetch_top_results` drains the sink queue before queueing new jobs |
+| Background mount blocking input | `asyncio.sleep(0)` between mounts only yields one iteration; input pump can't drain | Real wall-clock yield (`asyncio.sleep(0.002)`) in prefetch/Phase 2 loops |
+| Mount task hogged loop during arrow nav | Previous file's tail mount kept running through the debounce window | `_schedule_preview_load` preemptively cancels the in-flight mount when cursor moves to a different file |
+
+### Measured behaviour (auto_test.py + bench_input_lag.py)
+
+| Metric | Old (pre-investigation) | Current default |
+|---|---|---|
+| pilot.pause median (idle) | 80 ms | **24 ms** |
+| pilot.pause p95 | 160 ms | 25 ms |
+| Cold-path elapsed (auto_test, md) | ~1500 ms | ~150-400 ms |
+| Cold clicks hitting zero-region | yes | 0/N |
+| Cached structural avg scrolls/click | 2-3 | **1.0** |
+| Flat (PDF) post-layout size | (91, 1) | (91, 35) |
+| DOM widget count after 6 clicks | ~3000 | ~130 |
+
+### W3 DataTable scroll-to-match
+
+`AcornMarkdownTableDT.compose` now registers itself as the parent
+`AcornMarkdown._first_match_block` when a matched cell exists.
+`_scroll_proxy_for` detects an `AcornMarkdownTableDT` target and
+calls `DataTable.move_cursor(row, column, scroll=True)` so the
+matched cell scrolls into view. Cell text already carries the
+match spans (baked via `_apply_highlights_after_build` on
+`AcornMarkdownTH/TD` before W3 compose intercepts).
+
+### Remaining work / open trade-offs
+
+- **W-Hybrid is opt-in and known to drop formatting.** Per-heading CSS
+  (margins, content-align, level-specific colour/background) is lost
+  because text runs collapse to a single Static. Fence focus + horizontal
+  scroll also lost. Workarounds documented below (link-click recovery,
+  fence-focus wrapper) — none implemented yet. **Default path stays on
+  W3 + legacy AcornMarkdown for headings/paragraphs/fences.**
+- `_md_flat.py` (W8 styled) and `_md_hybrid.py` remain available
+  behind their flags for future experimentation; not currently the
+  default.
+- `_PREFETCH_MOUNT_RADIUS = 0` means prefetch only mounts the
+  focused chunk per file. Click expands via `_mount_chunks_async`
+  Phase 1b/2. Bumping the radius re-introduces DOM bloat —
+  measured tradeoff visible via `bench_input_lag.py`.
+- Cold-path elapsed has variance (45 ms-400 ms in synthetic harness);
+  the heavy end is per-chunk markdown widget construction cost. Not
+  yet investigated whether further chunk lightening (W-Hybrid for the
+  active chunk only? lazy block-widget creation?) would help.
+
+### Env flags (current usage)
+
+```
+ACORN_REVEAL_FIRST=1    # warm cache-hit reveal-first (still env-gated)
+ACORN_NO_W3=1           # opt out of W3 DataTable (back to MarkdownTH/TD)
+ACORN_NO_PREMOUNT=1     # opt out of structural widget pre-mount
+ACORN_W_HYBRID=1        # full hybrid chunk widget (drops formatting)
+ACORN_W3_DATATABLE=1    # legacy alias — superseded by ACORN_NO_W3 (negated)
+ACORN_FORCE_FLAT=1      # route md through the flat path
+ACORN_PREVIEW_DIAG=1    # writes /tmp/acorn-preview-diag.log
+ACORN_PERF=1            # writes _perf records (separate channel)
+```
+
+### Harnesses (current)
+
+- `tests/perf/auto_test.py` — drives the app via Pilot, clicks first
+  10 results, parses diag for cold elapsed / scroll counts / flat
+  post-layout size. Run with `./.venv/bin/python tests/perf/auto_test.py`.
+- `tests/perf/bench_input_lag.py` — measures `pilot.pause()` wall-time
+  across boot/click/idle phases vs `asyncio.sleep(0)` to separate
+  event-loop blocking from compositor-walk cost. Also reports DOM
+  widget count.
+
+---
+
+
+
 Scope is tight on purpose: validate every option that could close the
 gap between current click-to-display latency and "feels instant",
 without rebuilding what already works.

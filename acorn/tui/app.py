@@ -399,9 +399,12 @@ class AcornMarkdownTableDT(MarkdownTable):
     """
 
     def compose(self):  # type: ignore[override]
+        # W3 is the default — a single DataTable per markdown table
+        # collapses ~50 widgets per table (MarkdownTH/TD/TR/...) into 1.
+        # Opt out with ACORN_NO_W3=1 for the legacy widget-per-cell path.
         import os
 
-        if os.environ.get("ACORN_W3_DATATABLE") != "1":
+        if os.environ.get("ACORN_NO_W3") == "1":
             yield from super().compose()
             return
         from textual.coordinate import Coordinate
@@ -419,6 +422,14 @@ class AcornMarkdownTableDT(MarkdownTable):
         match_coord = _find_first_match_coord_in_table(headers, rows)
         if match_coord is not None:
             dt._acorn_match_coord = Coordinate(*match_coord)  # type: ignore[attr-defined]
+            # W3's compose bypasses MarkdownTH/TD widgets, so the
+            # _HighlightingBlockMixin's build_from_token never fires
+            # for matched cells and the parent AcornMarkdown's
+            # _first_match_block stays unset. Register THIS table
+            # widget directly so scroll-to-chunk can resolve a target.
+            md = self._markdown
+            if isinstance(md, AcornMarkdown) and md._first_match_block is None:
+                md._first_match_block = self
         yield dt
 
 
@@ -2216,7 +2227,7 @@ class AcornApp(App[None]):
 
         header = container.chunk_widgets.get(focus_chunk_seq)
         compose_done = True
-        if isinstance(header, AcornMarkdown):
+        if header is not None and hasattr(header, "first_match_block"):
             compose_done = header.first_match_block is not None
         if not compose_done and retries > 0:
             self.call_after_refresh(
@@ -2579,12 +2590,13 @@ class AcornApp(App[None]):
         chunks: list[FileChunk],
         focus_chunk_seq: int,
     ) -> None:
-        """Queue a hidden structural pre-mount (off by default; see
-        bench_input_lag — pre-mounting balloons the DOM and triples
-        compositor refresh time)."""
+        """Queue a hidden structural pre-mount so cached clicks land
+        as a visibility flip. Safe to default-on now that W3 collapses
+        per-cell widgets — see bench_input_lag for the DOM-size
+        breakdown. Opt out with ACORN_NO_PREMOUNT=1."""
         import os as _os
 
-        if _os.environ.get("ACORN_PREMOUNT") != "1":
+        if _os.environ.get("ACORN_NO_PREMOUNT") == "1":
             return
         q = self._prefetch_sink_queue
         if q is None:
@@ -3220,6 +3232,8 @@ class AcornApp(App[None]):
             return
         for w in self._chunk_widgets.values():
             w.remove_class("chunk-section-focused")
+        # Apply focused band to chunks that don't already manage their
+        # own focus highlight (AcornMarkdown handles that internally).
         if not isinstance(header, AcornMarkdown):
             header.add_class("chunk-section-focused")
         self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq, 30, on_done)
@@ -3243,8 +3257,8 @@ class AcornApp(App[None]):
         path = "match_targets" if focus_chunk_seq in self._match_targets else "header"
         fallback_fired = False
         first_match_seen = False
-        if isinstance(target, AcornMarkdown):
-            chunk_md = target
+        chunk_md = target if hasattr(target, "first_match_block") else None
+        if chunk_md is not None:
             inner = chunk_md.first_match_block
             if inner is None and retries > 0:
                 self.call_after_refresh(
@@ -3253,13 +3267,13 @@ class AcornApp(App[None]):
                 return
             if inner is not None:
                 first_match_seen = True
-                target = self._scroll_proxy_for(inner, chunk=chunk_md)
+                target = self._scroll_proxy_for(inner, chunk=chunk_md) if isinstance(chunk_md, AcornMarkdown) else inner
                 path = f"first_match_block({type(inner).__name__})"
             else:
                 # first_match_block never resolved; descend into the chunk
                 # for any widget whose text carries the query.
                 fallback_fired = True
-                target = self._fallback_match_target(chunk_md)
+                target = self._fallback_match_target(chunk_md) if isinstance(chunk_md, AcornMarkdown) else chunk_md
                 landed_on_chunk = target is chunk_md
                 self._diag_log(
                     f"do_scroll seq={focus_chunk_seq} fallback=descendant-scan "
@@ -3321,6 +3335,22 @@ class AcornApp(App[None]):
         ``Content`` and scroll to it directly. Bounded by the number
         of cells in the chunk's tables — no full descendant walk.
         """
+        # W3 path: the inner is the AcornMarkdownTableDT itself (which
+        # registered itself as first_match_block). Scroll the DataTable
+        # to the matched cell so the user lands on the actual match.
+        if isinstance(inner, AcornMarkdownTableDT):
+            from textual.widgets import DataTable
+
+            for child in inner.children:
+                if isinstance(child, DataTable):
+                    coord = getattr(child, "_acorn_match_coord", None)
+                    if coord is not None:
+                        with contextlib.suppress(Exception):
+                            child.move_cursor(
+                                row=coord.row, column=coord.column, scroll=True
+                            )
+                    return child
+            return inner
         if inner.region.height > 0:
             return inner
         from textual.widgets._markdown import MarkdownTable, MarkdownTableContent
