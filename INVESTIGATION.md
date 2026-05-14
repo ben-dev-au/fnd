@@ -186,7 +186,122 @@ worst case the user complained about); B hits "instant" but compromises.
   GC) plus widget-reduction options means gen2 pressure is less
   relevant. Lowest priority, still deferred.
 
-### 🏆 Warm reveal-first: solved (the no-compromise instant answer)
+### ⚠️ CRITICAL HANDOFF NOTES (2026-05-14 evening, before context compact)
+
+**State of branch:** `investigation/preview-perf-2026-05-14` at commit
+`e163b25`. Feature branch untouched.
+
+**The actual fix that mattered, finally:** `_PREVIEW_CACHE_MAX_FILES`
+was 8 while prefetch reaches 10+ files and F2/F3 cursor-following
+extends that to 20+. Pre-mounted containers were being LRU-evicted
+before the user clicked them. Every "warm" theory I had was correct
+in mechanism but starved of cache entries to serve. Bumped to 64 in
+commit `e163b25`. Diag now shows 11/12 clicks `cached=yes` with
+`focus_in_widgets=True` and `reveal_first_env=True`.
+
+**Remaining real-world lag (per user, after cache fix landed):**
+"laggy UI very much unchanged" + "preview jumped a bit and sized,
+didn't always show the match". Root causes I've identified but
+NOT yet fixed:
+
+1. **Cache-hit reveal-first kicks off `_mount_chunks_async` to fill
+   partial containers in the background.** That async task takes 2-3s
+   and runs on the same asyncio loop → UI lag continues even after
+   the visibility flip is "instant". The flip is sub-100 ms; the
+   tail mount work hogs the event loop afterwards. Fixes to consider:
+   - Yield more aggressively inside `_mount_chunks_async`'s phase
+     2a/2b loops (await asyncio.sleep(0) between every chunk).
+   - Or fully complete the pre-mount during prefetch (no partial
+     containers — bigger pre-mount cost up front, instant warm
+     forever).
+   - Or skip the resume entirely when cache-hit, accept the
+     container as-is (incomplete-but-shown).
+
+2. **"Preview jumped a bit and sized"** — as remaining chunks
+   mount into the partial container, layout shifts, the
+   user-perceived scroll position moves. Need to either:
+   - Mount additional chunks BELOW the visible window first (no
+     shift), then above with the existing display:none-then-reveal
+     trick.
+   - Or eliminate the partial-resume entirely.
+
+3. **"Didn't always show the match"** — same retry-chain issue from
+   `_do_scroll_to_chunk` waiting on `region.height > 0`. With
+   cache-hit reveal-first, the container is visible immediately,
+   but child regions may still be 0 for one refresh tick. Scroll
+   schedule via `call_after_refresh` may fire too early.
+
+**What's been validated empirically on real corpus:**
+
+| claim | status |
+|---|---|
+| Prefetch decode + chunk_cache | ✅ firing (38 prefetch_one done in user's diag) |
+| F2/F3 cursor-following | ✅ anchor changes correctly with navigation |
+| Widget pre-mount in background | ✅ 21 prefetch_loop_start/_end pairs |
+| Cache size adequate (was 8, now 64) | ✅ 11/12 clicks now cache_hit |
+| Warm cache-hit reveal-first activates fast | ✅ flip itself is fast |
+| Tail mount cost stops the UI from being snappy | 🔴 unresolved |
+| First-match scroll precision after reveal-first | 🔴 unresolved |
+| Layout-shift during partial-resume mount | 🔴 unresolved |
+
+**What was claimed but turned out to be misleading:**
+
+- "L2 50% reduction" — measured on a synthetic bench whose match
+  token (`__BENCH_MATCH__`) was being parsed as markdown bold,
+  so `first_match_block` never resolved and both baseline and L2
+  burned the retry chain. Real-world magnitude is unverified.
+- "Warm reveal-first sub-100 ms" — only measured with synthetic
+  pre-mount; the path didn't actually fire in real use until the
+  cache size was bumped. Now that it does fire, the *visibility
+  flip* IS fast but the tail mount work negates the user-perceived
+  benefit.
+- "Cold reveal-first 14 ms" — the click_to_display_end mark fired
+  before any content was visible. Reverted.
+
+**Env vars currently usable:**
+
+```
+ACORN_REVEAL_FIRST=1     # warm cache-hit goes through visibility flip path
+ACORN_DISABLE_L2=1       # restore original display:none CSS for A/B
+ACORN_W_HYBRID=1         # consolidated chunk widget (text Static + DataTable + Syntax)
+ACORN_FORCE_FLAT=1       # md routes through flat path
+ACORN_FLAT_MD_STYLED=1   # flat path uses rich.markdown rendering
+ACORN_W3_DATATABLE=1     # markdown table → single DataTable widget
+ACORN_PREVIEW_DIAG=1     # writes /tmp/acorn-preview-diag.log
+ACORN_PERF=1             # writes _perf records (separate channel)
+```
+
+**Next session priorities (in order):**
+
+1. Verify the user-visible result of the cache-bump + ACORN_REVEAL_FIRST=1
+   combination. The diag shows cache hits — does the FLIP itself feel
+   fast even if tail mount is laggy? If yes, attack tail mount cost
+   next. If no, the visibility flip + scroll path still has issues.
+2. Make `_mount_chunks_async` yield aggressively so background fill
+   doesn't lock up the UI. `await asyncio.sleep(0)` after every chunk
+   mount in phases 2a/2b. Maybe `await asyncio.sleep(0.005)` for
+   stronger yielding.
+3. Fix scroll-to-match precision in the reveal-first branch — the
+   `_scroll_preview_to_chunk` via call_after_refresh may fire before
+   regions populate. Possible: chain two `call_after_refresh` calls
+   to give layout one extra tick.
+4. Consider eliminating partial pre-mount — pre-mount the WHOLE file
+   during prefetch (subject to memory cap). Removes the laggy tail
+   mount problem entirely. Memory cost: 64 cached files × 50-200
+   chunks each × ~50 widgets per chunk = 100k-600k widgets. Probably
+   too much. Compromise: pre-mount focus + larger radius (e.g. 30
+   chunks instead of 7), bounded by total file size.
+5. Once cold + warm both feel snappy, validate W-Hybrid on user's
+   real corpus (still untested on real files).
+
+**The user's pushback was correct throughout.** Their tests proved
+the synthetic benchmark numbers were misleading and the warm path
+wasn't actually firing. Every "improvement" I claimed was unverified
+on real corpus until they ran the diag. Honor that going forward.
+
+---
+
+
 
 **Status:** prototype landed (commit `acorn/tui/app.py` + warm benchmark
 results in `tests/perf/results/warm_reveal_first_v2.json`). Behind
