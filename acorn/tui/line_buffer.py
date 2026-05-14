@@ -381,6 +381,14 @@ class LineBufferPreview(ScrollView, can_focus=True):
             if retries > 0:
                 self.call_after_refresh(self._apply_pending_scroll, retries - 1)
             return
+        # Ensure strips reflect the current viewport width before
+        # computing visual_y — otherwise a prebuilt-view install at
+        # one wrap width followed by a layout at a different width
+        # races on_resize and scrolls to a stale visual_y.
+        if self._wrap and self.size.width > 0 and self.size.width != self._wrap_width:
+            self._rebuild_strips()
+            self._refresh_match_scrollbar()
+            self.refresh()
         visual_y = self._logical_to_visual_y(line_index)
         target = (
             max(0, visual_y - self.size.height // 2) if self._pending_scroll_center else visual_y
