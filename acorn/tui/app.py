@@ -2257,16 +2257,23 @@ class AcornApp(App[None]):
                 start_idx = max(0, anchor_idx - half)
         targets: list[tuple[str, int]] = []
         seen: set[str] = set()
+        already_cached: list[str] = []
         for g in self._groups[start_idx:]:
             if g.parent_id in seen:
                 continue
             seen.add(g.parent_id)
             if g.parent_id in self._chunk_cache:
+                already_cached.append(g.parent_id[:8])
                 continue
             focus = g.hits[0].chunk_seq if g.hits else 0
             targets.append((g.parent_id, focus))
             if len(targets) >= n:
                 break
+        self._diag_log(
+            f"prefetch_top n={n} anchor={anchor_parent_id[:8] if anchor_parent_id else None} "
+            f"start_idx={start_idx} targets={[t[0][:8] for t in targets]} "
+            f"already_cached={already_cached}"
+        )
         if not targets:
             return
 
@@ -2283,18 +2290,34 @@ class AcornApp(App[None]):
         app = self
 
         def _prefetch_one(parent_id: str, focus_seq: int) -> None:
+            import time as _time
+            t0 = _time.perf_counter()
             try:
                 fetched = searcher.get_file_chunks(parent_id, max_workers=decode_workers)
             except Exception:
+                app.call_from_thread(
+                    app._diag_log,
+                    f"prefetch_one decode FAILED parent={parent_id[:8]}",
+                )
                 return
+            decode_ms = (_time.perf_counter() - t0) * 1000.0
             # Stale-query guard: if the user has moved on, drop the
             # work without scheduling any main-thread sinks.
             if query_sig != app._current_query_signature():
+                app.call_from_thread(
+                    app._diag_log,
+                    f"prefetch_one stale parent={parent_id[:8]} decode_ms={decode_ms:.0f}",
+                )
                 return
             app.call_from_thread(app._record_prefetched_chunks, parent_id, fetched)
             if not fetched:
                 return
             mode = choose_preview_mode(fetched)
+            app.call_from_thread(
+                app._diag_log,
+                f"prefetch_one done parent={parent_id[:8]} decode_ms={decode_ms:.0f} "
+                f"chunks={len(fetched)} mode={mode} focus_seq={focus_seq}",
+            )
             if mode == "flat":
                 try:
                     fv = app._build_file_view_for_chunks(fetched)
