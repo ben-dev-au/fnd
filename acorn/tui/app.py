@@ -101,10 +101,15 @@ _VISIBLE_FIRST_BELOW = 7
 # it in the results tree — ``_dispatch_preview_mount`` resumes the
 # task with a new focus, Phase 1a mounts the requested chunk, and
 # Phase 2 extends the buffer around it.
-# Per-chunk widget construction holds the loop ~5-50 ms each; 30
-# chunks per side bounds the tail mount enough to keep the UI
-# responsive. Resume path handles clicks outside the bound.
-_BACKGROUND_FILL_RADIUS = 30
+# Each chunk produces ~50-200 sub-widgets (markdown blocks).
+# Background fill expands DOM linearly; with prefetch caching many
+# files, the cumulative widget count makes every refresh slow.
+# 10 covers a viewport of scroll; resume path handles further.
+_BACKGROUND_FILL_RADIUS = 10
+
+# Prefetch mounts a tiny window so the DOM stays small even with
+# many files prefetched. User-side mount expands on click.
+_PREFETCH_MOUNT_RADIUS = 0
 
 
 class ResultsTree(Tree[dict[str, Any]]):
@@ -2574,8 +2579,13 @@ class AcornApp(App[None]):
         chunks: list[FileChunk],
         focus_chunk_seq: int,
     ) -> None:
-        """Queue a hidden structural pre-mount. Drainer runs it serially and
-        yields to user-side mount first."""
+        """Queue a hidden structural pre-mount (off by default; see
+        bench_input_lag — pre-mounting balloons the DOM and triples
+        compositor refresh time)."""
+        import os as _os
+
+        if _os.environ.get("ACORN_PREMOUNT") != "1":
+            return
         q = self._prefetch_sink_queue
         if q is None:
             self._diag_log(f"prefetch_mount_structural SKIPPED no-queue parent={parent_id[:8]}")
@@ -2677,14 +2687,10 @@ class AcornApp(App[None]):
             (i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq),
             0,
         )
-        # Prefetch only mounts the focused chunk + ~one viewport of context.
-        # The user-side resume path in _mount_chunks_async fills the rest if
-        # they actually open this file. Mounting all 200 chunks * 10 files
-        # at 100ms each = minutes of background layout work that starves the
-        # UI; bounded prefetch keeps the warm-cache benefit without that.
-        radius = max(_VISIBLE_FIRST_ABOVE, _VISIBLE_FIRST_BELOW)
-        win_start = max(0, focus_idx - radius)
-        win_end = min(len(chunks), focus_idx + radius + 1)
+        # Prefetch only mounts a tiny window around the focused chunk
+        # so the DOM stays small. User-side resume expands on click.
+        win_start = max(0, focus_idx - _PREFETCH_MOUNT_RADIUS)
+        win_end = min(len(chunks), focus_idx + _PREFETCH_MOUNT_RADIUS + 1)
         _perf.mark(
             "prefetch_loop_start",
             parent_id=parent_id,
