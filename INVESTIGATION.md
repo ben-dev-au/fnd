@@ -169,24 +169,70 @@ worst case the user complained about); B hits "instant" but compromises.
   GC) plus widget-reduction options means gen2 pressure is less
   relevant. Lowest priority, still deferred.
 
+### Warm-state measurement attempt — anomaly worth flagging
+
+Modified the harness to wait for the WIP's existing structural
+pre-mount path (`_prefetch_mount_structural`) to complete before
+firing the measured load. Result on heavy md: **1.8 s** — *slower*
+than cold L2 (563 ms). That's wrong if pre-mount is doing its job.
+
+The path label shows `warm_pre_reveal`, so we ARE going through
+the cache-hit pre-reveal branch in `_dispatch_preview_mount`. The
+cost is inside `_do_scroll_to_chunk`'s 30-retry chain waiting for
+`region.height > 0` after the visibility flip from absolute-hidden
+to visible.
+
+Two hypotheses:
+
+1. **Harness bug.** My "pre-mount complete" wait condition is
+   `_preview_cache.get(parent_id, sig).is_complete`. That resolves
+   when the chunk widgets are mounted, but Textual may not have
+   propagated their regions through the spatial map yet. The
+   measured load races pending layout work.
+2. **Real code bug.** Pre-mounted absolute-hidden widgets get
+   `arrange()` called (V2 confirmed) but their **regions are not
+   populated in the spatial map** until they paint. The visibility
+   flip triggers spatial-map population, which takes one or more
+   refresh ticks. `_do_scroll_to_chunk` retries every tick until
+   `region.height > 0` — 30 retries adds up.
+
+If (2) is the cause, the existing pre-mount machinery doesn't
+actually save reveal latency the way it should, regardless of L2.
+That would explain why L2 alone gives 50% reduction (data-warm
+helps via skipping decode) but doesn't deliver "instant reveal"
+even when widget mounts have already happened.
+
+**This is the highest-value open thread for next session.** If
+solvable, "pre-mount + flip" is the no-functional-loss "instant"
+option. If unsolvable, we fall back to the W-Hybrid / W8 trade-off.
+
 ### Open prototypes for tomorrow / next session
 
 In priority order for the "fast AND functional" goal:
 
-1. **Background widget pre-build cache** — if every prefetched file
-   has its widget tree pre-mounted behind absolute-hidden, click-to-
-   display is a class flip (sub-50 ms) with **zero** functional cost.
-   Needs investigation of the prefetch path's mount lifecycle.
+1. **Diagnose the pre-mount warm-path anomaly above.**
+   - Instrument `_do_scroll_to_chunk` retry count + why
+     `region.height == 0` after activation.
+   - Test hypothesis: pre-compute scroll target before the
+     visibility flip (read child regions while still hidden, set
+     scroll position, then flip). If this works, "pre-mount + L2 +
+     pre-compute-scroll" should deliver sub-100 ms warm clicks
+     with zero functional cost.
 2. **W-Hybrid fence-focus recovery** — wrap each Syntax in a
    `ScrollableContainer(can_focus=True)`. Adds 30 widgets to
    fence_heavy but those are simple containers, not block trees.
 3. **W-Hybrid link-click wiring** — 30 LOC; restores inline link
-   click handling. Recovery is mechanically straightforward.
-4. **W-Hybrid for docx/pptx** — current prototype is md-only. They
-   also go through the structural path and would benefit.
-5. **Smarter async mount** — synchronously mount the focused chunk
-   only; lazy-mount the rest. Lowers first-paint without an
+   click handling via `action_link` on AcornChunkHybrid.
+4. **W-Hybrid for docx/pptx** — current prototype is md-only.
+5. **Aggressive prefetch** — once the warm path is genuinely fast,
+   widen prefetch_count or pre-decode all files at startup to keep
+   every clickable result "warm".
+6. **Smarter async mount** — synchronously mount the focused chunk
+   only; lazy-mount the rest. Lowers first-paint without
    architecture change.
+7. **Pre-rendered cache at index time** — store rich.markdown
+   rendered lines in the index; load straight to flat path.
+   Eliminates rich.markdown cost entirely on subsequent runs.
 
 ## Exit criteria per prototype
 
