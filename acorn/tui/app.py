@@ -399,9 +399,7 @@ class AcornMarkdownTableDT(MarkdownTable):
     """
 
     def compose(self):  # type: ignore[override]
-        # W3 is the default — a single DataTable per markdown table
-        # collapses ~50 widgets per table (MarkdownTH/TD/TR/...) into 1.
-        # Opt out with ACORN_NO_W3=1 for the legacy widget-per-cell path.
+        # Opt out with ACORN_NO_W3=1 to fall back to widget-per-cell.
         import os
 
         if os.environ.get("ACORN_NO_W3") == "1":
@@ -414,10 +412,8 @@ class AcornMarkdownTableDT(MarkdownTable):
         self._headers = headers
         self._rows = rows
         dt: DataTable = DataTable(cursor_type="none", zebra_stripes=False)
-        # DataTable expects rich.Text (or str) — passing textual.Content
-        # measures to 1-char-wide columns because Content doesn't expose
-        # the cell-length hints DataTable needs. Convert to rich.Text,
-        # carrying highlight spans across so matched cells stay marked.
+        # Content → rich.Text: DataTable's auto-width measure only
+        # handles str/Text; Content collapses to 1-cell columns.
         if headers:
             dt.add_columns(*(_content_to_text(h) for h in headers))
         for row in rows:
@@ -426,11 +422,8 @@ class AcornMarkdownTableDT(MarkdownTable):
         match_coord = _find_first_match_coord_in_table(headers, rows)
         if match_coord is not None:
             dt._acorn_match_coord = Coordinate(*match_coord)  # type: ignore[attr-defined]
-            # W3's compose bypasses MarkdownTH/TD widgets, so the
-            # _HighlightingBlockMixin's build_from_token never fires
-            # for matched cells and the parent AcornMarkdown's
-            # _first_match_block stays unset. Register THIS table
-            # widget directly so scroll-to-chunk can resolve a target.
+            # Register self as parent's first_match_block — TH/TD
+            # widgets are bypassed so _record_first_match never fires.
             md = self._markdown
             if isinstance(md, AcornMarkdown) and md._first_match_block is None:
                 md._first_match_block = self
@@ -438,9 +431,7 @@ class AcornMarkdownTableDT(MarkdownTable):
 
 
 def _content_to_text(c: Any) -> "Text":
-    """Convert a textual ``Content`` to a rich ``Text`` carrying its
-    highlight spans. DataTable's column-width measurement only fires
-    for str / rich.Text; Content objects collapse to 1-char columns."""
+    """Convert textual.Content → rich.Text, preserving highlight spans."""
     from rich.text import Text
 
     plain = getattr(c, "plain", None)
@@ -1824,14 +1815,17 @@ class AcornApp(App[None]):
                 )
                 self._scroll_preview_to_chunk(focus_chunk_seq)
                 return
+            # Same-file resume: scroll-between-matches expects no bar.
             self._cancel_preview_mount_task()
-            self._show_progress_bar(
-                total=len(chunks),
-                progress=len(container.mounted_indices),
-                phase="mounting…",
-            )
+            self._hide_progress_bar()
             self._preview_mount_task = asyncio.create_task(
-                self._mount_chunks_async(parent_id, focus_chunk_seq, chunks, container)
+                self._mount_chunks_async(
+                    parent_id,
+                    focus_chunk_seq,
+                    chunks,
+                    container,
+                    silent=True,
+                )
             )
             return
 
@@ -2829,6 +2823,7 @@ class AcornApp(App[None]):
         container: PreviewContainer,
         *,
         skip_internal_scrolls: bool = False,
+        silent: bool = False,
     ) -> None:
         """Visible-first mount + hidden-prepend background fill.
 
