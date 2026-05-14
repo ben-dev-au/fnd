@@ -145,17 +145,23 @@ async def _run_one(
             # Fire a query so prefetch runs against this file.
             app._run_query(_corpus.MATCH_TOKEN)
             await _wait_for_results(app, pilot)
-            # Wait for prefetch to warm the chunk cache.
-            for _ in range(40):
+            # Wait for chunk cache + structural pre-mount (a hidden
+            # PreviewContainer for the target with all chunks mounted).
+            from acorn.tui.app import PreviewContainer
+            sig = app._current_query_signature()
+            premount_seen = False
+            for _ in range(80):
                 await pilot.pause()
                 await asyncio.sleep(0.05)
-                if parent_id in app._chunk_cache:
+                cont = app._preview_cache.get(parent_id, sig)
+                if cont is not None and getattr(cont, "is_complete", False):
+                    premount_seen = True
                     break
             # Also wait for the auto-load triggered by _run_query to
-            # settle, so its end mark doesn't pollute our measurement.
+            # settle so its end mark doesn't pollute our measurement.
             await _wait_for_display_end(timeout=10.0)
             await pilot.pause()
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.2)
 
         # Reset marks; we measure ONLY this load.
         _perf.reset()
