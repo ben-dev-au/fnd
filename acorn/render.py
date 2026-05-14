@@ -10,6 +10,7 @@ adds match-cluster minimap.
 from __future__ import annotations
 
 import re
+import threading
 from typing import TYPE_CHECKING, Any
 
 import snowballstemmer
@@ -22,12 +23,10 @@ if TYPE_CHECKING:
 
 _HEADING_KINDS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 
-# The Tantivy index uses ``en_stem`` (Snowball English) for the body field,
-# so a query for "penfold" matches both "penfold" and "penfolds". The preview
-# highlighter must agree: stem each query term and each document word, then
-# highlight by stem-equality. (Phase 5.9 — fixes user-reported bug where
-# "penfolds" matched "penfold" in results but didn't highlight.)
-_STEMMER = snowballstemmer.stemmer("english")
+# Stem each query term and each document word so "penfold" highlights for
+# both "penfold" and "penfolds" (Tantivy's en_stem on F_BODY).
+# threading.local: snowballstemmer instances aren't thread-safe.
+_STEMMER_LOCAL = threading.local()
 HIGHLIGHT_STYLE = "bold black on #ffd866"
 # Mismatch overlay for fuzzy-pass hits — orange so the eye can read
 # at a glance which char(s) in a near-match diverge from what the user
@@ -37,7 +36,11 @@ MISMATCH_STYLE = "bold black on #ff9e64"
 
 
 def _stem(word: str) -> str:
-    return _STEMMER.stemWord(word.lower())
+    s = getattr(_STEMMER_LOCAL, "instance", None)
+    if s is None:
+        s = snowballstemmer.stemmer("english")
+        _STEMMER_LOCAL.instance = s
+    return s.stemWord(word.lower())
 
 
 def _term_stems(terms: list[str]) -> set[str]:

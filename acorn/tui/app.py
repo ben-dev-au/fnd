@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import re
 from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -31,7 +32,6 @@ from textual.widget import Widget
 from textual.widgets import (
     Input,
     Markdown,
-    ProgressBar,
     Static,
     Tree,
 )
@@ -66,6 +66,7 @@ from acorn.tui.actions import REGISTRY, Keymap, load_keymap
 from acorn.tui.line_buffer import FileView, LineBufferPreview, build_file_view
 from acorn.tui.preview_dispatcher import choose_preview_mode
 from acorn.tui.preview_scrollbar import MatchAwareScroll
+from acorn.tui.progress import AcornProgressBar, ProgressFacility, ProgressSession
 
 _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 
@@ -162,6 +163,7 @@ class PreviewContainer(Container):
     DEFAULT_CSS = """
     PreviewContainer { width: 100%; height: auto; }
     PreviewContainer.-hidden { display: none; }
+    PreviewContainer.-pre-reveal { visibility: hidden; }
     """
 
     def __init__(
@@ -211,10 +213,15 @@ class PreviewCache:
             self._cache.move_to_end(key)
         return container
 
-    def put(self, container: PreviewContainer) -> list[PreviewContainer]:
-        """Cache ``container`` (only if it meets the size threshold) and
-        return any LRU-evicted containers the caller must remove from the
-        DOM."""
+    def put(
+        self,
+        container: PreviewContainer,
+        *,
+        protect: PreviewContainer | None = None,
+    ) -> list[PreviewContainer]:
+        """Cache ``container`` and return any LRU-evicted containers
+        for the caller to remove. ``protect`` is skipped during eviction
+        so prefetch can't drop the currently-active preview."""
         if container.total_chunks < self.min_chunks:
             return []
         key = (container.parent_doc_id, container.query_signature)
@@ -222,8 +229,14 @@ class PreviewCache:
         self._cache.move_to_end(key)
         evicted: list[PreviewContainer] = []
         while len(self._cache) > self.max_files:
-            _, old = self._cache.popitem(last=False)
-            evicted.append(old)
+            for k, old in self._cache.items():
+                if old is protect:
+                    continue
+                evicted.append(old)
+                del self._cache[k]
+                break
+            else:
+                break
         return evicted
 
     def clear(self) -> list[PreviewContainer]:
@@ -793,9 +806,9 @@ class AcornApp(App[None]):
         scrollbar-size-vertical: 0;
         scrollbar-size-horizontal: 0;
     }
-    /* Right-side preview column: always-on ProgressBar above, scrollable
-       preview pane below. Column width matches what #preview_pane used
-       to claim directly. */
+    /* Right-side preview column: just the scrollable pane now. The
+       progress strip moved to app level (above the footer hints) so
+       toggling it doesn't reflow the preview. */
     #preview_column { width: 2fr; height: 1fr; }
     #preview_pane {
         width: 100%; height: 1fr;
@@ -810,18 +823,6 @@ class AcornApp(App[None]):
        still need to work — using ``overflow-y: hidden`` would prevent
        that, so we only suppress the bar's chrome, not scrolling. */
     #preview_pane.is-loading { scrollbar-size-vertical: 0; }
-    /* Preview-load progress bar — sibling of the pane (NOT inside it),
-       always present, hidden via class. Show/hide is a single class
-       toggle, no DOM mount races. */
-    .preview-progress {
-        width: 100%;
-        height: 1;
-        margin: 0 1 0 1;
-        background: transparent;
-    }
-    .preview-progress.-hidden { display: none; }
-    .preview-progress Bar { width: 1fr; color: $accent; }
-    .preview-progress PercentageStatus { color: $text-muted; padding: 0 0 0 1; }
     .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
     .chunk-section { padding: 0 0 1 0; height: auto; }
     .chunk-line { padding: 0 0 0 0; height: auto; }
@@ -845,6 +846,7 @@ class AcornApp(App[None]):
     BINDINGS = [  # noqa: RUF012 — Textual's App.BINDINGS expects a class-level list literal
         Binding("ctrl+c", "quit", "Quit", show=False),
         Binding("escape", "escape_back", "Back", show=False),
+        Binding("ctrl+shift+d", "diag_dump_preview", "Dump preview widget tree", show=False),
         *(
             Binding(
                 key,
@@ -987,6 +989,17 @@ class AcornApp(App[None]):
 
         self._preview_load_timer: _Any | None = None
         self._preview_load_target: tuple[str, int] | None = None
+        self._progress = ProgressFacility(self)
+        # Single-consumer drainer serializes prefetch widget-mounts.
+        import asyncio as _asyncio
+        from typing import Any as _Any
+
+        self._prefetch_sink_queue: _asyncio.Queue[_Any] | None = None
+        self._prefetch_sink_drainer: _Any | None = None
+
+    def open_progress(self, phase: str = "", *, total: int = 1) -> ProgressSession:
+        """Open a new ProgressSession. Use as a context manager."""
+        return self._progress.open(phase, total=total)
 
     # ── Layout ────────────────────────────────────────────────────
 
@@ -1005,30 +1018,30 @@ class AcornApp(App[None]):
                 # Modified headers behave the same as file rows.
                 yield Tree("Collections", id="collections_panel_tree")
                 yield ResultsTree("Filters", id="filters_panel_tree")
-            # Right column: always-on ProgressBar above the preview pane
-            # (UX-pass-4 §4 follow-up). Keeping the bar OUTSIDE the
-            # scrollable pane means its visibility is a single class
-            # toggle — no mount/remove DOM races, no waiting on
-            # remove_children to drain. Bar starts hidden.
-            with Vertical(id="preview_column"):
-                yield ProgressBar(
-                    total=None,
-                    show_eta=False,
-                    show_percentage=True,
-                    classes="preview-progress -hidden",
-                    id="preview_progress_bar",
-                )
-                # Preview pane: MatchAwareScroll = VerticalScroll with a
-                # custom scrollbar that overlays chunk-match markers on
-                # the track. Per-file Containers hold the actual chunk
-                # widgets so cache hits are O(1) display flips.
-                with MatchAwareScroll(id="preview_pane"):
-                    yield Static("Type a query and press Enter.", id="placeholder")
+            # Right column: preview pane only. The progress strip lives
+            # at app level (below) so it can be shared by every long
+            # operation (preview load, indexing, cache rebuild) without
+            # a layout shift in the preview pane each time it toggles.
+            # Preview pane: MatchAwareScroll = VerticalScroll with a
+            # custom scrollbar that overlays chunk-match markers on
+            # the track. Per-file Containers hold the actual chunk
+            # widgets so cache hits are O(1) display flips.
+            with Vertical(id="preview_column"), MatchAwareScroll(id="preview_pane"):
+                yield Static("Type a query and press Enter.", id="placeholder")
+        # App-level progress strip — one row, full width, hidden via
+        # ``visibility: hidden`` so the row occupancy is stable across
+        # show / hide (no preview reflow). Driven by ``ProgressFacility``.
+        yield AcornProgressBar()
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
         # Tokyo-night theme: muted blue/teal pastel palette per user request.
         self.theme = "tokyo-night"
+        import asyncio as _asyncio
+
+        self._prefetch_sink_queue = _asyncio.Queue()
+        self._prefetch_sink_drainer = _asyncio.create_task(self._drain_prefetch_sinks())
+
         try:
             self._searcher = Searcher(index_dir=self._index_dir)
         except (FileNotFoundError, RuntimeError):
@@ -1382,9 +1395,10 @@ class AcornApp(App[None]):
         self._preview_parent_id = None
         self._hide_progress_bar()
         self._refresh_results_tree()
-        # Warm caches for the top results so cursor moves down the
-        # list land on instant mount paths instead of cold decodes.
-        self._prefetch_top_results()
+        # Defer prefetch start so the top result's user-side render gets the
+        # main thread to itself for the first ~half-second. Without the
+        # delay, 10 parallel prefetch mount tasks starve the auto-load.
+        self.set_timer(0.5, self._prefetch_top_results, name="prefetch-defer")
 
     def _search_layered(
         self,
@@ -1519,6 +1533,12 @@ class AcornApp(App[None]):
             return
         self._preview_load_target = None
         parent_id, focus_chunk_seq = target
+        # Re-anchor prefetch around where the cursor actually settled, not
+        # every keystroke along the way. Only when cursor lands on a result
+        # we haven't started decoding yet — otherwise the user-side render
+        # will warm it directly.
+        if parent_id not in self._chunk_cache:
+            self._prefetch_top_results(anchor_parent_id=parent_id)
         self._render_full_doc(parent_id, focus_chunk_seq=focus_chunk_seq)
 
     def _cancel_pending_preview_load(self) -> None:
@@ -1571,13 +1591,13 @@ class AcornApp(App[None]):
         # data path.
         self._cancel_preview_mount_task()
         # Keep the previously-active content visible during the decode
-        # rather than blanking the pane: the always-on progress bar at
-        # the top of the column is the user-visible loading signal, and
-        # the debounced cursor-move dispatch means the user has already
-        # committed to this file before we land here. The flat-buffer
+        # rather than blanking the pane. The app-level progress strip
+        # is the user-visible loading signal, and the debounced cursor-
+        # move dispatch means the user has already committed to this
+        # file before we land here. The flat-buffer
         # ``_activate_flat_buffer`` / structural ``_activate_preview_container``
         # paths swap visibility atomically once the new content is ready.
-        self._show_progress_bar(total=None)
+        self._show_progress_bar(total=1, phase="decoding…")
 
         target_parent_id = parent_id
         target_focus = focus_chunk_seq
@@ -1692,6 +1712,7 @@ class AcornApp(App[None]):
             self._show_progress_bar(
                 total=len(chunks),
                 progress=len(container.mounted_indices),
+                phase="mounting…",
             )
             self._preview_mount_task = asyncio.create_task(
                 self._mount_chunks_async(parent_id, focus_chunk_seq, chunks, container)
@@ -1699,32 +1720,45 @@ class AcornApp(App[None]):
             return
 
         self._cancel_preview_mount_task()
-        # Sweep any PreviewContainer in the preview pane that isn't tracked
-        # by the LRU cache. This catches containers whose mount was
-        # cancelled before completion (rapid file switching) — those
-        # never reached ``_preview_cache.put`` and would otherwise
-        # accumulate, slowing every subsequent ``_activate_preview_container``
-        # walk in proportion to the leak count.
+        # Sweep stranded containers — but preserve any still being filled by
+        # a prefetch task. Removing those would orphan the task and trigger
+        # a MountError on its next mount-before call.
         import contextlib as _contextlib
 
         cached_containers = set(self._preview_cache._cache.values())
         for stranded in list(self.query(PreviewContainer)):
-            if stranded not in cached_containers:
-                with _contextlib.suppress(Exception):
-                    stranded.remove()
+            if stranded in cached_containers:
+                continue
+            pfetch = getattr(stranded, "_prefetch_task", None)
+            if pfetch is not None and not pfetch.done():
+                continue
+            with _contextlib.suppress(Exception):
+                stranded.remove()
         if self._active_preview is not None and self._active_preview not in cached_containers:
             self._active_preview = None
+        # Adopt a still-in-flight prefetched container for this key so the
+        # cold branch resumes it; _mount_chunks_async cancels its prefetch
+        # task first to avoid concurrent-mount races.
         cached = self._preview_cache.get(parent_id, query_sig)
+        if cached is None:
+            for c in self.query(PreviewContainer):
+                if (
+                    c.parent_doc_id == parent_id
+                    and c.query_signature == query_sig
+                    and c not in cached_containers
+                ):
+                    cached = c
+                    break
 
         if cached is not None and cached.is_complete:
-            # Instant return — flip the active container, scroll, hide bar.
-            # The match-scrollbar marker map is per-file, so a cache hit
-            # still has to refresh it; otherwise the previous file's map
-            # bleeds through and shows phantom marks across the whole bar.
-            self._activate_preview_container(cached)
+            # Pre-reveal: layout the new container hidden, scroll, then paint.
+            # Show the strip during the reveal cycle so the user sees feedback
+            # for the layout/scroll latency; _finalize_pre_reveal closes it
+            # via the on_done callback once the scroll has landed.
+            self._activate_preview_container(cached, pre_reveal=True)
             self._refresh_match_scrollbar(chunks)
-            self._scroll_preview_to_chunk(focus_chunk_seq)
-            self._hide_progress_bar()
+            self._show_progress_bar(total=1, progress=0, phase="rendering…")
+            self.call_after_refresh(self._finalize_pre_reveal, cached, focus_chunk_seq)
             return
 
         # Either no container yet OR a partially-mounted one (resume).
@@ -1741,6 +1775,7 @@ class AcornApp(App[None]):
         self._show_progress_bar(
             total=len(chunks),
             progress=len(container.mounted_indices),
+            phase="mounting…",
         )
         self._preview_mount_task = asyncio.create_task(
             self._mount_chunks_async(parent_id, focus_chunk_seq, chunks, container)
@@ -1783,30 +1818,22 @@ class AcornApp(App[None]):
             self._refresh_status()
             return
 
-        # Cold path: build the FileView from decoded chunks, mount a
-        # fresh LineBufferPreview.
+        # Cold path: mount the buffer hidden, install with scroll at the
+        # match, then reveal — first paint is already at the right offset.
         pane = self.query_one("#preview_pane", VerticalScroll)
-        # Drop the placeholder Static if it's still mounted. The
-        # placeholder uses ``id="placeholder"`` (not a CSS class), so
-        # match by id — the old class-based check never fired and
-        # left the "Type a query…" Static stacked above the buffer.
         for w in list(pane.children):
             if isinstance(w, Static) and w.id == "placeholder":
                 with contextlib.suppress(Exception):
                     w.remove()
 
         buf = LineBufferPreview(wrap=True)
+        buf.add_class("-hidden")
         pane.mount(buf)
-        self._activate_flat_buffer(buf)
         target_seq = focus_chunk_seq
 
         if prebuilt is not None:
-            # Worker pre-rendered everything: install the bundle
-            # synchronously so the very first paint shows real content.
-            # The ``_rebuild_after_layout`` follow-up scheduled inside
-            # ``set_prebuilt_view`` will re-wrap if the actual viewport
-            # width disagrees with the worker's estimate.
             fv, strips, v2l, l2vs, wrap_width, base_width = prebuilt
+            focus_line = self._focus_line_for_chunk(fv, target_seq)
             buf.set_prebuilt_view(
                 fv,
                 strips,
@@ -1814,23 +1841,21 @@ class AcornApp(App[None]):
                 l2vs,
                 wrap_width=wrap_width,
                 base_width=base_width,
+                initial_focus_line=focus_line,
             )
-            buf.scroll_to_chunk(target_seq, prefer_first_match=True)
+            self._activate_flat_buffer(buf)
         else:
-            # No prebuild (worker fell back, or some other path): do
-            # the FileView build on the main thread and defer the
-            # install one refresh cycle so the buffer has a real
-            # ``size.width`` by the time wrap-mode strips are built.
+            # Build on the main thread and defer one refresh cycle so the
+            # buffer has a real size.width when wrap-mode strips are built.
             fv = self._build_file_view_for_chunks(chunks)
+            focus_line = self._focus_line_for_chunk(fv, target_seq)
 
             def _install() -> None:
-                buf.set_file_view(fv)
-                buf.scroll_to_chunk(target_seq, prefer_first_match=True)
+                buf.set_file_view(fv, initial_focus_line=focus_line)
+                self._activate_flat_buffer(buf)
 
             self.call_after_refresh(_install)
 
-        # LRU-cache the buffer so revisits within the same query are
-        # instant (display flip only).
         self._flat_buffer_cache[cache_key] = buf
         self._flat_buffer_cache.move_to_end(cache_key)
         while len(self._flat_buffer_cache) > _PREVIEW_CACHE_MAX_FILES:
@@ -1841,6 +1866,18 @@ class AcornApp(App[None]):
         self._hide_progress_bar()
         self._preview_parent_id = parent_id
         self._refresh_status()
+
+    @staticmethod
+    def _focus_line_for_chunk(fv: FileView, chunk_id: int) -> int | None:
+        """First matched line in ``chunk_id``, falling back to chunk start.
+        Mirrors LineBufferPreview.scroll_to_chunk so the synchronous
+        pre-paint scroll lands at the same place the deferred call did."""
+        target = fv.first_hit_line_in_chunk.get(chunk_id)
+        if target is None:
+            rng = fv.chunk_to_range.get(chunk_id)
+            if rng is not None:
+                target = rng[0]
+        return target
 
     def _build_file_view_for_chunks(self, chunks: list[FileChunk]) -> FileView:
         """Convert decoded chunks into a :class:`FileView` for the flat
@@ -1863,6 +1900,7 @@ class AcornApp(App[None]):
         """Show ``buf`` and hide every other preview widget (structural
         containers and other flat buffers) so only one file is on
         screen at a time."""
+        self._clear_pane_placeholder()
         for child in self.query(PreviewContainer):
             child.add_class("-hidden")
         for child in self.query(LineBufferPreview):
@@ -1884,79 +1922,109 @@ class AcornApp(App[None]):
         biases snippet selection (UX-pass-4 §3)."""
         return f"{self._current_query}|{self._current_intent or ''}"
 
-    def _show_progress_bar(self, *, total: int | None, progress: int = 0) -> None:
-        """Show the always-on ProgressBar at the top of the preview
-        column. ``total=None`` switches it to indeterminate (animated)
-        mode for the decode phase; a real total switches to determinate
-        with the percentage label visible."""
+    def _show_progress_bar(
+        self,
+        *,
+        total: int | None,
+        progress: int = 0,
+        phase: str | None = None,
+    ) -> None:
+        """Open or update the progress session for a preview load. Determinate
+        only — ``total=None`` is treated as ``total=1`` so the indeterminate
+        red pulse never paints."""
+        total_eff = total if (total is not None and total > 0) else 1
+        s = self._progress.active
+        if s is None or s.closed:
+            s = self._progress.open(phase or "loading…", total=total_eff)
+        else:
+            if phase is not None:
+                s.set_phase(phase)
+            s.set_total(total_eff)
+        s.set_progress(progress)
         import contextlib
 
-        try:
-            bar = self.query_one("#preview_progress_bar", ProgressBar)
-        except Exception:
-            return
+        # Pane's own scrollbar would jitter as virtual_size grows; the strip
+        # below the layout carries the loading signal instead.
         with contextlib.suppress(Exception):
-            bar.update(total=total, progress=progress)
-        bar.remove_class("-hidden")
-        # Lock pane scrolling while a mount is in flight; the bar +
-        # match-scrollbar markers tell the user where things are
-        # without them needing to scroll.
-        try:
-            pane = self.query_one("#preview_pane", VerticalScroll)
-            pane.add_class("is-loading")
-        except Exception:
-            pass
+            self.query_one("#preview_pane", VerticalScroll).add_class("is-loading")
 
     def _hide_progress_bar(self) -> None:
-        """Hide the always-on ProgressBar and re-enable pane scrolling."""
+        """Close the active session + re-enable pane scrolling. Idempotent."""
+        s = self._progress.active
+        if s is not None and not s.closed:
+            s.close()
         import contextlib
 
-        try:
-            bar = self.query_one("#preview_progress_bar", ProgressBar)
-        except Exception:
-            return
-        bar.add_class("-hidden")
         with contextlib.suppress(Exception):
-            bar.update(total=None, progress=0)
-        try:
-            pane = self.query_one("#preview_pane", VerticalScroll)
-            pane.remove_class("is-loading")
-        except Exception:
-            pass
+            self.query_one("#preview_pane", VerticalScroll).remove_class("is-loading")
 
     def _update_progress_bar(self, progress: int) -> None:
-        """Bump the always-on ProgressBar's current progress."""
+        s = self._progress.active
+        if s is not None and not s.closed:
+            s.set_progress(progress)
+
+    def _clear_pane_placeholder(self) -> None:
+        """Drop the empty-state Static. Called by every activate path so the
+        placeholder never paints above a real preview."""
         import contextlib
 
-        try:
-            bar = self.query_one("#preview_progress_bar", ProgressBar)
-        except Exception:
-            return
         with contextlib.suppress(Exception):
-            bar.update(progress=progress)
+            pane = self.query_one("#preview_pane", VerticalScroll)
+            for w in list(pane.children):
+                if isinstance(w, Static) and w.id == "placeholder":
+                    with contextlib.suppress(Exception):
+                        w.remove()
 
-    def _activate_preview_container(self, container: PreviewContainer) -> None:
-        """Make ``container`` the visible preview; hide all others.
-
-        Symmetric with :meth:`_activate_flat_buffer` — hides every
-        sibling preview widget regardless of pipeline (PreviewContainer
-        for the structural Markdown path, LineBufferPreview for the
-        flat-buffer path) so PDF↔MD switching never leaves a stale
-        widget visible alongside the new one.
-        """
+    def _activate_preview_container(
+        self,
+        container: PreviewContainer,
+        *,
+        pre_reveal: bool = False,
+    ) -> None:
+        """Make ``container`` the only visible preview. With
+        ``pre_reveal=True`` the container is laid out but invisible
+        (visibility: hidden) until ``_finalize_pre_reveal`` lands the
+        scroll — no flash to file-top before the jump-to-match."""
+        self._clear_pane_placeholder()
         for child in self.query(PreviewContainer):
             if child is container:
                 child.remove_class("-hidden")
+                if pre_reveal:
+                    child.add_class("-pre-reveal")
+                else:
+                    child.remove_class("-pre-reveal")
             else:
                 child.add_class("-hidden")
+                child.remove_class("-pre-reveal")
         for child in self.query(LineBufferPreview):
             child.add_class("-hidden")
         self._active_preview = container
         self._active_flat_buffer = None
         self._preview_parent_id = container.parent_doc_id
-        # Update the legacy aliases that other code paths read from.
         self._chunk_widgets = container.chunk_widgets
         self._match_targets = container.match_targets
+
+    def _finalize_pre_reveal(
+        self, container: PreviewContainer, focus_chunk_seq: int
+    ) -> None:
+        """Scroll the new container to the focused chunk and then drop
+        ``-pre-reveal`` so it paints at the match, not at the file top."""
+        import time
+        t0 = time.perf_counter()
+        self._diag_log(
+            f"finalize_pre_reveal start seq={focus_chunk_seq} "
+            f"parent_id={container.parent_doc_id}"
+        )
+
+        def _reveal() -> None:
+            container.remove_class("-pre-reveal")
+            self._hide_progress_bar()
+            self._diag_log(
+                f"finalize_pre_reveal done seq={focus_chunk_seq} "
+                f"elapsed_ms={(time.perf_counter() - t0) * 1000:.1f}"
+            )
+
+        self._scroll_preview_to_chunk(focus_chunk_seq, on_done=_reveal)
 
     def _cancel_preview_mount_task(self) -> None:
         """Cancel any in-flight mount task. The cancelled task's
@@ -1975,6 +2043,27 @@ class AcornApp(App[None]):
             with contextlib.suppress(Exception):
                 task.cancel()  # type: ignore[attr-defined]
         self._preview_mount_task = None
+
+    async def _cancel_prefetch_task_on(self, container: PreviewContainer) -> None:
+        """Cancel + await any background prefetch task on ``container``
+        so the user-side mount doesn't race it and trip MountError."""
+        import asyncio
+        import contextlib
+
+        task = getattr(container, "_prefetch_task", None)
+        if task is None:
+            return
+        try:
+            if task.done():
+                container._prefetch_task = None  # type: ignore[attr-defined]
+                return
+        except Exception:
+            container._prefetch_task = None  # type: ignore[attr-defined]
+            return
+        task.cancel()
+        with contextlib.suppress(BaseException):
+            await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
+        container._prefetch_task = None  # type: ignore[attr-defined]
 
     def _on_preview_load_failed(self, exc: BaseException) -> None:
         """Worker error callback. Hide the bar, surface a notify."""
@@ -2007,21 +2096,14 @@ class AcornApp(App[None]):
             return
         self._dispatch_preview_mount(parent_id, focus_chunk_seq, chunks, prebuilt=prebuilt)
 
-    def _prefetch_top_results(self) -> None:
-        """Background-decode + prebuild bundles for the top-N result
-        files so a cursor move to any of them lands on a pre-warmed
-        cache (``_chunk_cache`` + ``_prebuilt_cache``) and the mount
-        path stays on the instant track.
+    def _prefetch_top_results(self, *, anchor_parent_id: str | None = None) -> None:
+        """Decode + pre-mount widgets for an N-result window so cursor moves
+        land on cache hits. ``preview_prefetch_count`` = N; 0 disables.
+        Parallelism bounded by ``preview_decode_workers``.
 
-        Cheap and best-effort: skips parent_ids already cached, runs
-        in a single worker thread that walks the targets sequentially,
-        and bails on any error per target without surfacing it. Cancels
-        cleanly when a new query rebuilds the results — the prior
-        prefetch is in the ``preview-prefetch`` exclusive group and
-        gets stopped when the next call replaces it.
-
-        N is controlled by ``defaults.preview_prefetch_count``;
-        setting it to 0 disables prefetch entirely.
+        ``anchor_parent_id`` centres the window around the cursor's position
+        in the result list instead of starting from the top — lets the
+        buffer follow the user when they navigate past the initial range.
         """
         if self._searcher is None or not self._groups:
             return
@@ -2033,9 +2115,21 @@ class AcornApp(App[None]):
             n = Defaults().preview_prefetch_count
         if n <= 0:
             return
+        # Build the candidate window. With no anchor we walk from rank 0;
+        # with an anchor we start ~N/2 above its position so we cover both
+        # directions of likely navigation.
+        start_idx = 0
+        if anchor_parent_id is not None:
+            anchor_idx = next(
+                (i for i, g in enumerate(self._groups) if g.parent_id == anchor_parent_id),
+                -1,
+            )
+            if anchor_idx >= 0:
+                half = max(1, n // 2)
+                start_idx = max(0, anchor_idx - half)
         targets: list[tuple[str, int]] = []
         seen: set[str] = set()
-        for g in self._groups:
+        for g in self._groups[start_idx:]:
             if g.parent_id in seen:
                 continue
             seen.add(g.parent_id)
@@ -2060,18 +2154,20 @@ class AcornApp(App[None]):
         query_sig = self._current_query_signature()
         app = self
 
-        def _prefetch() -> None:
-            for parent_id, _focus in targets:
-                # Honour cancellation between targets — the worker
-                # framework sets a flag on task cancel.
-                try:
-                    fetched = searcher.get_file_chunks(parent_id, max_workers=decode_workers)
-                except Exception:
-                    continue
-                # Hand the chunks to the main thread for caching.
-                app.call_from_thread(app._record_prefetched_chunks, parent_id, fetched)
-                if not fetched or choose_preview_mode(fetched) != "flat":
-                    continue
+        def _prefetch_one(parent_id: str, focus_seq: int) -> None:
+            try:
+                fetched = searcher.get_file_chunks(parent_id, max_workers=decode_workers)
+            except Exception:
+                return
+            # Stale-query guard: if the user has moved on, drop the
+            # work without scheduling any main-thread sinks.
+            if query_sig != app._current_query_signature():
+                return
+            app.call_from_thread(app._record_prefetched_chunks, parent_id, fetched)
+            if not fetched:
+                return
+            mode = choose_preview_mode(fetched)
+            if mode == "flat":
                 try:
                     fv = app._build_file_view_for_chunks(fetched)
                     wrap_width = estimated_wrap_width if estimated_wrap_width > 0 else 0
@@ -2080,9 +2176,37 @@ class AcornApp(App[None]):
                     )
                     base_width = 1 if wrap_width > 0 else max(fv.widest_line, 1)
                 except Exception:
-                    continue
+                    return
                 bundle = (fv, strips, v2l, l2vs, wrap_width, base_width)
-                app.call_from_thread(app._record_prefetched_bundle, parent_id, query_sig, bundle)
+                app.call_from_thread(
+                    app._record_prefetched_bundle, parent_id, query_sig, bundle
+                )
+                app.call_from_thread(
+                    app._prefetch_mount_flat, parent_id, query_sig, bundle, focus_seq
+                )
+            else:
+                app.call_from_thread(
+                    app._prefetch_mount_structural,
+                    parent_id, query_sig, list(fetched), focus_seq,
+                )
+
+        def _prefetch() -> None:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            workers = max(1, decode_workers)
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                futures = [
+                    ex.submit(_prefetch_one, pid, focus) for pid, focus in targets
+                ]
+                for f in as_completed(futures):
+                    # Drop everything on query change — _run_query has cleared
+                    # caches and any in-flight work here is stale.
+                    if query_sig != app._current_query_signature():
+                        for other in futures:
+                            other.cancel()
+                        return
+                    with contextlib.suppress(Exception):
+                        f.result()
 
         self.run_worker(
             _prefetch,
@@ -2111,6 +2235,220 @@ class AcornApp(App[None]):
         if query_sig != self._current_query_signature():
             return
         self._prebuilt_cache[(parent_id, query_sig)] = bundle
+
+    def _prefetch_mount_flat(
+        self,
+        parent_id: str,
+        query_sig: str,
+        bundle: tuple[FileView, list[Strip], list[int], list[int], int, int],
+        focus_chunk_seq: int,
+    ) -> None:
+        """Queue a hidden flat-buffer pre-mount. Actual mount runs on the
+        drainer so it can't race the user-side render."""
+        q = self._prefetch_sink_queue
+        if q is None:
+            return
+        if query_sig != self._current_query_signature():
+            return
+
+        async def _job() -> None:
+            await self._prefetch_mount_flat_async(
+                parent_id, query_sig, bundle, focus_chunk_seq
+            )
+
+        q.put_nowait(_job)
+
+    async def _prefetch_mount_flat_async(
+        self,
+        parent_id: str,
+        query_sig: str,
+        bundle: tuple[FileView, list[Strip], list[int], list[int], int, int],
+        focus_chunk_seq: int,
+    ) -> None:
+        if query_sig != self._current_query_signature():
+            return
+        cache_key = (parent_id, query_sig)
+        if cache_key in self._flat_buffer_cache:
+            return
+        if self._active_flat_buffer is not None and self._preview_parent_id == parent_id:
+            return
+        import contextlib
+
+        try:
+            pane = self.query_one("#preview_pane", VerticalScroll)
+        except Exception:
+            return
+        fv, strips, v2l, l2vs, wrap_width, base_width = bundle
+        buf = LineBufferPreview(wrap=True)
+        buf.add_class("-hidden")
+        mount_awaitable: object | None = None
+        with contextlib.suppress(Exception):
+            mount_awaitable = pane.mount(buf)
+        if mount_awaitable is not None:
+            with contextlib.suppress(Exception):
+                await mount_awaitable  # type: ignore[misc]
+        focus_line = self._focus_line_for_chunk(fv, focus_chunk_seq)
+        with contextlib.suppress(Exception):
+            buf.set_prebuilt_view(
+                fv, strips, v2l, l2vs,
+                wrap_width=wrap_width,
+                base_width=base_width,
+                initial_focus_line=focus_line,
+            )
+        self._flat_buffer_cache[cache_key] = buf
+        self._flat_buffer_cache.move_to_end(cache_key)
+        while len(self._flat_buffer_cache) > _PREVIEW_CACHE_MAX_FILES:
+            _, evicted = self._flat_buffer_cache.popitem(last=False)
+            with contextlib.suppress(Exception):
+                evicted.remove()
+
+    def _prefetch_mount_structural(
+        self,
+        parent_id: str,
+        query_sig: str,
+        chunks: list[FileChunk],
+        focus_chunk_seq: int,
+    ) -> None:
+        """Queue a hidden structural pre-mount. Drainer runs it serially and
+        yields to user-side mount first."""
+        q = self._prefetch_sink_queue
+        if q is None:
+            return
+        if query_sig != self._current_query_signature():
+            return
+
+        async def _job() -> None:
+            await self._prefetch_mount_structural_async(
+                parent_id, query_sig, chunks, focus_chunk_seq
+            )
+
+        q.put_nowait(_job)
+
+    async def _prefetch_mount_structural_async(
+        self,
+        parent_id: str,
+        query_sig: str,
+        chunks: list[FileChunk],
+        focus_chunk_seq: int,
+    ) -> None:
+        if query_sig != self._current_query_signature():
+            return
+        if self._preview_cache.get(parent_id, query_sig) is not None:
+            return
+        if (
+            self._active_preview is not None
+            and self._active_preview.parent_doc_id == parent_id
+            and self._active_preview.query_signature == query_sig
+        ):
+            return
+        import asyncio
+        import contextlib
+
+        try:
+            pane = self.query_one("#preview_pane", VerticalScroll)
+        except Exception:
+            return
+        container = PreviewContainer(
+            parent_doc_id=parent_id,
+            query_signature=query_sig,
+            total_chunks=len(chunks),
+        )
+        container.add_class("-hidden")
+        mount_awaitable: object | None = None
+        with contextlib.suppress(Exception):
+            mount_awaitable = pane.mount(container)
+        if mount_awaitable is not None:
+            with contextlib.suppress(Exception):
+                await mount_awaitable  # type: ignore[misc]
+
+        sub_task = asyncio.create_task(
+            self._prefetch_mount_chunk_loop(
+                parent_id, query_sig, focus_chunk_seq, chunks, container
+            )
+        )
+        # Exposing the sub-task as _prefetch_task lets the user-side adopt
+        # branch (_cancel_prefetch_task_on) await its cancellation cleanly.
+        container._prefetch_task = sub_task  # type: ignore[attr-defined]
+        try:
+            await sub_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
+    async def _prefetch_mount_chunk_loop(
+        self,
+        parent_id: str,
+        query_sig: str,
+        focus_chunk_seq: int,
+        chunks: list[FileChunk],
+        container: PreviewContainer,
+    ) -> None:
+        import asyncio
+        import contextlib
+
+        focus_idx = next(
+            (i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq),
+            0,
+        )
+        # Prefetch only mounts the focused chunk + ~one viewport of context.
+        # The user-side resume path in _mount_chunks_async fills the rest if
+        # they actually open this file. Mounting all 200 chunks * 10 files
+        # at 100ms each = minutes of background layout work that starves the
+        # UI; bounded prefetch keeps the warm-cache benefit without that.
+        radius = max(_VISIBLE_FIRST_ABOVE, _VISIBLE_FIRST_BELOW)
+        win_start = max(0, focus_idx - radius)
+        win_end = min(len(chunks), focus_idx + radius + 1)
+        try:
+            for i in range(win_start, win_end):
+                if query_sig != self._current_query_signature():
+                    return
+                if i in container.mounted_indices:
+                    continue
+                # Bail out the moment user-side mount lights up: prefetch is
+                # background warming, foreground always wins.
+                if self._user_mount_in_flight():
+                    return
+                try:
+                    self._mount_chunk_into(container, chunks[i], i, chunks)
+                except Exception:
+                    continue
+                await asyncio.sleep(0)
+        finally:
+            evicted = self._preview_cache.put(container, protect=self._active_preview)
+            for old in evicted:
+                with contextlib.suppress(Exception):
+                    old.remove()
+
+    def _user_mount_in_flight(self) -> bool:
+        task = self._preview_mount_task
+        if task is None:
+            return False
+        try:
+            return not task.done()  # type: ignore[attr-defined]
+        except Exception:
+            return False
+
+    async def _drain_prefetch_sinks(self) -> None:
+        """Single-consumer drainer. Runs prefetch widget-mount jobs one at a
+        time and yields to user-side mount before each."""
+        import asyncio
+        import contextlib
+
+        q = self._prefetch_sink_queue
+        assert q is not None
+        while True:
+            job = await q.get()
+            # Cooperative wait — user-side mount always preempts.
+            while self._user_mount_in_flight():
+                await asyncio.sleep(0.05)
+            try:
+                await job()
+            except Exception:
+                pass
+            with contextlib.suppress(Exception):
+                q.task_done()
+            await asyncio.sleep(0)
 
     async def _mount_chunks_async(
         self,
@@ -2149,15 +2487,15 @@ class AcornApp(App[None]):
 
         pane = self.query_one("#preview_pane", VerticalScroll)
 
-        # Make sure container is mounted in the pane and active.
+        needs_pre_reveal = container.parent is None or container.has_class("-hidden")
         if container.parent is None:
-            # ``#placeholder`` id selector — the Static was yielded
-            # with ``id="placeholder"`` and has no CSS class of the
-            # same name. The legacy ``.placeholder`` selector silently
-            # matched nothing.
             await pane.remove_children("#placeholder")
-            pane.mount(container)
-        self._activate_preview_container(container)
+            await pane.mount(container)
+        else:
+            await pane.remove_children("#placeholder")
+        await self._cancel_prefetch_task_on(container)
+        self._activate_preview_container(container, pre_reveal=needs_pre_reveal)
+        cold_mount = needs_pre_reveal
         self._refresh_match_scrollbar(chunks)
 
         # Establish the focused window indices (clamped to chunks).
@@ -2182,13 +2520,20 @@ class AcornApp(App[None]):
             # progress bar while neighbouring chunks slowly fill in.
             if focus_idx not in container.mounted_indices:
                 self._mount_chunk_into(container, chunks[focus_idx], focus_idx, chunks)
-            self._scroll_preview_to_chunk(focus_chunk_seq)
+            if cold_mount:
+                # ``_finalize_pre_reveal`` owns the scroll AND the
+                # reveal in a single chained call (scroll lands via
+                # ``on_done`` → ``-pre-reveal`` lifts). Calling
+                # ``_scroll_preview_to_chunk`` separately here would
+                # queue a duplicate ``_do_scroll_to_chunk`` retry
+                # cascade and starve the test pilot's idle detector.
+                self.call_after_refresh(self._finalize_pre_reveal, container, focus_chunk_seq)
+            else:
+                self._scroll_preview_to_chunk(focus_chunk_seq)
             self._update_progress_bar(progress=len(container.mounted_indices))
             await asyncio.sleep(0)
 
-            # Phase 1b: mount the rest of the visible window. Closest-to-
-            # focus first, alternating below/above, so chunks adjacent to
-            # the user's eye fill in before the edges of the viewport.
+            # Phase 1b: mount the visible window. Closest-to-focus first.
             max_offset = max(focus_idx - win_start, win_end - 1 - focus_idx)
             for offset in range(1, max_offset + 1):
                 below = focus_idx + offset
@@ -2261,8 +2606,10 @@ class AcornApp(App[None]):
             # in ``_dispatch_preview_mount`` skips already-mounted
             # indices so partial-cache hits paint the previously-
             # mounted region instantly and continue the fill in the
-            # background.
-            evicted = self._preview_cache.put(container)
+            # background. The container we just mounted IS the active one,
+            # so it's protected from its own eviction by definition (it just
+            # got moved to the MRU slot).
+            evicted = self._preview_cache.put(container, protect=container)
             for old in evicted:
                 with contextlib.suppress(Exception):
                     old.remove()
@@ -2415,8 +2762,16 @@ class AcornApp(App[None]):
                 first_match = line_w
         if first_widget is None:
             return
-        self._chunk_widgets[c.chunk_seq] = first_widget
-        self._match_targets[c.chunk_seq] = first_match or first_widget
+        # Write to the owning container only. The app-level alias dicts get
+        # refreshed by _activate_preview_container so writing here would
+        # corrupt whichever container is currently active (esp. during
+        # concurrent prefetch on a different file).
+        if isinstance(parent, PreviewContainer):
+            parent.chunk_widgets[c.chunk_seq] = first_widget
+            parent.match_targets[c.chunk_seq] = first_match or first_widget
+        else:
+            self._chunk_widgets[c.chunk_seq] = first_widget
+            self._match_targets[c.chunk_seq] = first_match or first_widget
 
     def _mount_structured_chunk(
         self,
@@ -2449,47 +2804,176 @@ class AcornApp(App[None]):
             classes="chunk-section chunk-md-body chunk-first",
         )
         parent.mount(md_widget, before=before)
-        self._chunk_widgets[c.chunk_seq] = md_widget
-        # ``first_match_block`` is populated by the highlight-aware
-        # subclasses during build_from_token, which fires after mount
-        # but before the user can interact, so this is set by the
-        # time the next scroll-to-match request lands.
-        self._match_targets[c.chunk_seq] = md_widget
+        # See _mount_plain_chunk for why we write only to the owning
+        # container (concurrent prefetch on a different file would
+        # otherwise overwrite the active container's dict).
+        if isinstance(parent, PreviewContainer):
+            parent.chunk_widgets[c.chunk_seq] = md_widget
+            parent.match_targets[c.chunk_seq] = md_widget
+        else:
+            self._chunk_widgets[c.chunk_seq] = md_widget
+            self._match_targets[c.chunk_seq] = md_widget
 
-    def _scroll_preview_to_chunk(self, focus_chunk_seq: int) -> None:
+    def _diag_log(self, msg: str) -> None:
+        # ACORN_PREVIEW_DIAG=1 appends to /tmp/acorn-preview-diag.log.
+        # Investigation-only; remove once findings recorded.
+        import os
+        if not os.environ.get("ACORN_PREVIEW_DIAG"):
+            return
+        try:
+            with open("/tmp/acorn-preview-diag.log", "a") as f:
+                f.write(msg + "\n")
+        except Exception:
+            pass
+
+    def action_diag_dump_preview(self) -> None:
+        # Walks the active preview and writes a per-type widget count
+        # to /tmp/acorn-preview-diag.log. Always on (ignores the
+        # env-var gate the log writes use) so a one-key tap works.
+        from collections import Counter
+        lines: list[str] = ["--- dump_preview ---"]
+        active = self._active_preview
+        flat = self._active_flat_buffer
+        if active is None and flat is None:
+            lines.append("no active preview")
+        if active is not None:
+            lines.append(
+                f"structural parent_id={active.parent_doc_id} "
+                f"chunks={len(active.chunk_widgets)}"
+            )
+            total = Counter()
+            for seq, header in active.chunk_widgets.items():
+                per_chunk = Counter()
+                per_chunk[type(header).__name__] += 1
+                for w in header.query("*"):
+                    per_chunk[type(w).__name__] += 1
+                total.update(per_chunk)
+                top = ", ".join(f"{k}={v}" for k, v in per_chunk.most_common(5))
+                lines.append(f"  chunk seq={seq} total={sum(per_chunk.values())} top5: {top}")
+            lines.append(f"structural totals: {dict(total.most_common())}")
+        if flat is not None:
+            lines.append(
+                f"flat parent_id={getattr(flat, 'parent_doc_id', '?')} "
+                f"lines={len(getattr(flat, 'lines', []) or [])}"
+            )
+        try:
+            with open("/tmp/acorn-preview-diag.log", "a") as f:
+                f.write("\n".join(lines) + "\n")
+        except Exception:
+            pass
+        self.notify(
+            f"Dumped preview widget tree → /tmp/acorn-preview-diag.log",
+            timeout=2,
+        )
+
+    def _scroll_preview_to_chunk(
+        self,
+        focus_chunk_seq: int,
+        *,
+        on_done: Callable[[], None] | None = None,
+    ) -> None:
         if self._active_flat_buffer is not None:
             self._active_flat_buffer.scroll_to_chunk(focus_chunk_seq, prefer_first_match=True)
+            if on_done is not None:
+                on_done()
             return
         header = self._chunk_widgets.get(focus_chunk_seq)
         if header is None:
+            if on_done is not None:
+                on_done()
             return
         for w in self._chunk_widgets.values():
             w.remove_class("chunk-section-focused")
         if not isinstance(header, AcornMarkdown):
             header.add_class("chunk-section-focused")
-        self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq)
+        self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq, 30, on_done)
 
-    def _do_scroll_to_chunk(self, focus_chunk_seq: int, retries: int = 30) -> None:
+    def _do_scroll_to_chunk(
+        self,
+        focus_chunk_seq: int,
+        retries: int = 30,
+        on_done: Callable[[], None] | None = None,
+    ) -> None:
         # Resolve target at fire time: AcornMarkdown.first_match_block
         # is populated async by build_from_token, so capturing earlier
         # races the build and lands on chunk top.
         header = self._chunk_widgets.get(focus_chunk_seq)
         if header is None:
+            self._diag_log(f"do_scroll seq={focus_chunk_seq} miss=no-header")
+            if on_done is not None:
+                on_done()
             return
         target: Widget = self._match_targets.get(focus_chunk_seq) or header
+        path = "match_targets" if focus_chunk_seq in self._match_targets else "header"
+        fallback_fired = False
+        first_match_seen = False
         if isinstance(target, AcornMarkdown):
             chunk_md = target
             inner = chunk_md.first_match_block
             if inner is None and retries > 0:
-                self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq, retries - 1)
+                self.call_after_refresh(
+                    self._do_scroll_to_chunk, focus_chunk_seq, retries - 1, on_done
+                )
                 return
             if inner is not None:
+                first_match_seen = True
                 target = self._scroll_proxy_for(inner, chunk=chunk_md)
+                path = f"first_match_block({type(inner).__name__})"
+            else:
+                # first_match_block never resolved; descend into the chunk
+                # for any widget whose text carries the query.
+                fallback_fired = True
+                target = self._fallback_match_target(chunk_md)
+                landed_on_chunk = target is chunk_md
+                self._diag_log(
+                    f"do_scroll seq={focus_chunk_seq} fallback=descendant-scan "
+                    f"result={'chunk-top' if landed_on_chunk else type(target).__name__} "
+                    f"retries_left={retries}"
+                )
+                path = f"fallback({type(target).__name__})"
         if target.region.height == 0 and retries > 0:
-            self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq, retries - 1)
+            self.call_after_refresh(
+                self._do_scroll_to_chunk, focus_chunk_seq, retries - 1, on_done
+            )
             return
+        if target.region.height == 0:
+            self._diag_log(
+                f"do_scroll seq={focus_chunk_seq} miss=zero-region "
+                f"target={type(target).__name__} path={path}"
+            )
         pane = self.query_one("#preview_pane", VerticalScroll)
         pane.scroll_to_widget(target, top=True, animate=False)
+        self._diag_log(
+            f"do_scroll seq={focus_chunk_seq} target={type(target).__name__} "
+            f"path={path} first_match={first_match_seen} fallback={fallback_fired} "
+            f"retries_used={30 - retries}"
+        )
+        if on_done is not None:
+            on_done()
+
+    def _fallback_match_target(self, chunk: AcornMarkdown) -> Widget:
+        """Scan ``chunk``'s descendants for the first widget whose plain text
+        contains a match. Used when no highlight-aware subclass claimed
+        ``first_match_block`` (e.g. matches inside a MarkdownFence)."""
+        spec = self._effective_match_spec
+        if spec.is_empty:
+            return chunk
+        from acorn.render import text_has_any_match
+
+        for w in chunk.query("*"):
+            if w is chunk:
+                continue
+            try:
+                plain = w._content.plain  # type: ignore[attr-defined]
+            except Exception:
+                plain = None
+            if plain is None:
+                # MarkdownFence renders rich.syntax.Syntax — its text lives
+                # on .code attribute set by build_from_token.
+                plain = getattr(w, "code", None)
+            if plain and text_has_any_match(plain, spec) and w.region.height > 0:
+                return w
+        return chunk
 
     def _scroll_proxy_for(self, inner: Widget, *, chunk: AcornMarkdown) -> Widget:
         """Resolve a scroll target for an ``AcornMarkdown.first_match_block``.

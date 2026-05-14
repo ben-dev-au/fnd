@@ -235,12 +235,16 @@ class Defaults(BaseModel):
     # down a long results list stays fluid. 0 = load instantly (legacy
     # behaviour). Typical 100–250 ms.
     preview_load_debounce_ms: int = 150
-    # Number of top result files to decode + prebuild a flat-buffer
-    # bundle for in the background as soon as a search returns. Lets
-    # a cursor move to any of those results land on an already-warm
-    # cache. 0 disables prefetch entirely (useful in tests or on
-    # very large corpora where the prefetch wastes work).
-    preview_prefetch_count: int = 5
+    # Number of top result files to decode + pre-mount widgets for
+    # in the background as soon as a search returns. Covers both
+    # preview pipelines (flat for PDF/TXT, structural for md/docx/
+    # pptx) — a cursor move to any of those files becomes a
+    # visibility flip on the pre-mounted widget, not a fresh mount.
+    # Bumped from 5 to 10 so tapped navigation through the result
+    # list doesn't outpace the prefetcher on small-to-medium files.
+    # 0 disables prefetch entirely (useful in tests or on very
+    # large corpora where the prefetch wastes work).
+    preview_prefetch_count: int = 10
 
 
 class Config(BaseModel):
@@ -476,9 +480,10 @@ preview_decode_workers   = 4      # 1-16
 # Rapid arrow-key sweeps skip intermediate rows; only the final position
 # loads. 0 = load instantly. Typical range 100-250.
 preview_load_debounce_ms = 150    # ms, 0-1000
-# Number of top result files to decode + prebuild a flat-buffer bundle
-# for in the background as soon as a search returns. 0 disables prefetch.
-preview_prefetch_count   = 5      # 0-20
+# Number of top result files to decode + pre-mount widgets for in the
+# background as soon as a search returns. Covers both flat (PDF/TXT)
+# and structural (md/docx/pptx) previews. 0 disables prefetch.
+preview_prefetch_count   = 10     # 0-20
 
 # A collection groups one or more source directories. The starter
 # collection points at ~/Documents; edit, add more [[sources]] tables,

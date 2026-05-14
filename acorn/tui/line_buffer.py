@@ -264,14 +264,21 @@ class LineBufferPreview(ScrollView, can_focus=True):
 
     # ── Public API ──────────────────────────────────────────────
 
-    def set_file_view(self, fv: FileView) -> None:
-        """Install ``fv``, rebuild Strips on the main thread, reset scroll."""
+    def set_file_view(
+        self,
+        fv: FileView,
+        *,
+        initial_focus_line: int | None = None,
+        center: bool = False,
+    ) -> None:
+        """Install ``fv`` and scroll to ``initial_focus_line`` synchronously
+        (or the top if ``None``) so the first paint is at the right offset."""
         self._fv = fv
         self._focused_chunk = None
         self._pending_scroll_line = None
         self._pending_scroll_center = False
         self._rebuild_strips()
-        self.scroll_to(0, 0, animate=False, immediate=True)
+        self._apply_initial_scroll(initial_focus_line, center=center)
         self._refresh_match_scrollbar()
         self.refresh()
         if self._wrap and self.size.width == 0:
@@ -286,8 +293,11 @@ class LineBufferPreview(ScrollView, can_focus=True):
         *,
         wrap_width: int,
         base_width: int,
+        initial_focus_line: int | None = None,
+        center: bool = False,
     ) -> None:
-        """Install a worker-prerendered view; re-wrap if viewport width differs."""
+        """Install a worker-prerendered view, scrolled to
+        ``initial_focus_line`` from the first paint."""
         self._fv = fv
         self._focused_chunk = None
         self._pending_scroll_line = None
@@ -298,11 +308,27 @@ class LineBufferPreview(ScrollView, can_focus=True):
         self._base_width = base_width
         self._wrap_width = wrap_width
         self.virtual_size = Size(base_width, len(strips))
-        self.scroll_to(0, 0, animate=False, immediate=True)
+        self._apply_initial_scroll(initial_focus_line, center=center)
         self._refresh_match_scrollbar()
         self.refresh()
         if self._wrap:
             self.call_after_refresh(self._rebuild_after_layout)
+
+    def _apply_initial_scroll(self, line_index: int | None, *, center: bool) -> None:
+        """Set scroll_offset synchronously from logical_to_visual_start so the
+        first paint lands at ``line_index``. Queues a pending scroll so a
+        post-layout re-wrap can re-apply it if visual_y shifts."""
+        if line_index is None or not self._logical_to_visual_start:
+            self.scroll_to(0, 0, animate=False, immediate=True)
+            return
+        clamped = max(0, min(line_index, max(0, self._fv.line_count - 1) if self._fv else 0))
+        visual_y = self._logical_to_visual_y(clamped)
+        target_y = max(0, visual_y - self.size.height // 2) if center else visual_y
+        self.scroll_to(0, target_y, animate=False, immediate=True)
+        # Re-apply after layout in case the actual viewport width
+        # forces a re-wrap that shifts visual_y.
+        self._pending_scroll_line = clamped
+        self._pending_scroll_center = center
 
     def _rebuild_after_layout(self) -> None:
         if self._fv is None:

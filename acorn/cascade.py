@@ -23,6 +23,7 @@ TUI shows exact matches above fuzzy ones above synonym ones.
 
 from __future__ import annotations
 
+import threading
 from typing import Literal, overload
 
 import snowballstemmer
@@ -43,7 +44,16 @@ from acorn.synonyms import SynonymTable, expand
 # handing it to ``fuzzy_term_query`` — otherwise a 1-edit typo like
 # "Templatas" → ``templatas`` ends up at distance 2 from the indexed
 # ``templat`` and silently drops out of the cascade.
-_FUZZY_STEMMER = snowballstemmer.stemmer("english")
+# threading.local: snowballstemmer instances aren't thread-safe.
+_FUZZY_STEMMER_LOCAL = threading.local()
+
+
+def _fuzzy_stem(term: str) -> str:
+    s = getattr(_FUZZY_STEMMER_LOCAL, "instance", None)
+    if s is None:
+        s = snowballstemmer.stemmer("english")
+        _FUZZY_STEMMER_LOCAL.instance = s
+    return s.stemWord(term.lower())
 
 
 # Cap on dictionary entries scanned per character bucket. F_BODY is
@@ -125,7 +135,7 @@ def _fuzzy_pass(
     # ``term_query``s. This is the same rewrite Lucene applies to
     # ``MultiTermQuery`` so each matched doc lands on BM25 scoring
     # rather than Tantivy's constant-1.0 ``fuzzy_term_query`` output.
-    stems = [_FUZZY_STEMMER.stemWord(t.lower()) for t in terms]
+    stems = [_fuzzy_stem(t) for t in terms]
     distances = [auto_fuzzy_distance(s) for s in stems]
     subqueries: list[tuple[tantivy.Occur, tantivy.Query]] = []
     for stem, dist in zip(stems, distances, strict=True):

@@ -227,3 +227,32 @@ Wrap-up paragraph.
             if pane.scroll_y > 0:
                 break
         assert pane.scroll_y > 0, f"scroll_y={pane.scroll_y}"
+
+
+@pytest.mark.asyncio
+async def test_flat_preview_no_jump_on_install(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Flat buffer must already be scrolled to the match before first paint
+    — no flash to file top + jump-to-match."""
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    lines = [f"filler line {i}" for i in range(200)]
+    lines.append("This is a unicorn-anchor mention deep in the file.")
+    lines += [f"trailing line {i}" for i in range(50)]
+    (notes / "long.txt").write_text("\n".join(lines), encoding="utf-8")
+    build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
+
+    app = AcornApp(index_dir=tmp_index_dir, initial_query="unicorn-anchor")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        active: LineBufferPreview | None = None
+        for _ in range(60):
+            await pilot.pause()
+            active = app._active_flat_buffer
+            if active is not None and active.scroll_y > 0:
+                break
+        assert active is not None, "no active flat buffer"
+        assert active.scroll_y > 0, (
+            f"buffer revealed at scroll_y=0; virtual_size={active.virtual_size}"
+        )
