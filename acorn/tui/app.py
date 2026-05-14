@@ -1938,10 +1938,22 @@ class AcornApp(App[None]):
         # already baked into the cached buffer's scrollbar so no extra
         # refresh is needed.
         cached = self._flat_buffer_cache.get(cache_key)
-        if cached is not None and cached.parent is not None:
+        cache_hit = cached is not None and cached.parent is not None
+        self._diag_log(
+            f"dispatch_flat parent={parent_id[:8]} cached={'yes' if cache_hit else 'no'} "
+            f"focus_seq={focus_chunk_seq} prebuilt={'yes' if prebuilt is not None else 'no'} "
+            f"chunks={len(chunks)}"
+        )
+        if cache_hit:
             self._flat_buffer_cache.move_to_end(cache_key)
             self._activate_flat_buffer(cached)
             cached.scroll_to_chunk(focus_chunk_seq, prefer_first_match=True)
+            self._diag_log(
+                f"dispatch_flat cache_hit parent={parent_id[:8]} "
+                f"virtual_size={cached.virtual_size} size={cached.size} "
+                f"strips_len={len(getattr(cached, '_strips', []))} "
+                f"wrap_width={getattr(cached, '_wrap_width', None)}"
+            )
             self._hide_progress_bar()
             self._preview_parent_id = parent_id
             self._refresh_status()
@@ -1963,6 +1975,11 @@ class AcornApp(App[None]):
         if prebuilt is not None:
             fv, strips, v2l, l2vs, wrap_width, base_width = prebuilt
             focus_line = self._focus_line_for_chunk(fv, target_seq)
+            self._diag_log(
+                f"dispatch_flat prebuilt parent={parent_id[:8]} "
+                f"strips={len(strips)} wrap_width={wrap_width} base_width={base_width} "
+                f"focus_line={focus_line} fv_lines={len(fv.lines)}"
+            )
             buf.set_prebuilt_view(
                 fv,
                 strips,
@@ -1979,9 +1996,19 @@ class AcornApp(App[None]):
             fv = self._build_file_view_for_chunks(chunks)
             focus_line = self._focus_line_for_chunk(fv, target_seq)
 
+            self._diag_log(
+                f"dispatch_flat cold parent={parent_id[:8]} "
+                f"fv_lines={len(fv.lines)} focus_line={focus_line}"
+            )
+
             def _install() -> None:
                 buf.set_file_view(fv, initial_focus_line=focus_line)
                 self._activate_flat_buffer(buf)
+                self._diag_log(
+                    f"dispatch_flat cold_installed parent={parent_id[:8]} "
+                    f"virtual_size={buf.virtual_size} size={buf.size} "
+                    f"strips_len={len(buf._strips)} wrap_width={buf._wrap_width}"
+                )
 
             self.call_after_refresh(_install)
 
@@ -3215,21 +3242,30 @@ class AcornApp(App[None]):
                 )
                 path = f"fallback({type(target).__name__})"
         if target.region.height == 0 and retries > 0:
-            # Pre-reveal deadlock break: while the container has
-            # ``-pre-reveal`` (visibility:hidden) Textual splits the
-            # widget out of the visible map and ``region`` stays
-            # NULL_REGION forever. The retry chain would burn its
-            # whole budget (~1.8 s at ~60 ms/tick) waiting for
-            # geometry that never materialises until we lift the
-            # class. Lift it the first time we notice the deadlock
-            # and continue retrying — layout populates next tick
-            # and scroll lands on the very next attempt.
+            # Pre-reveal deadlock: Textual's compositor only places
+            # currently-visible widgets in its full_map (see
+            # textual/_compositor.py add_widget — `elif visible:`).
+            # While ``-pre-reveal`` (visibility:hidden) is on the
+            # container, no descendant has a region, so
+            # ``target.region`` stays NULL_REGION forever and the
+            # retry chain exhausts its budget.
+            #
+            # Removing the class alone is NOT enough: CSS class
+            # changes flow through Stylesheet.replace_rules →
+            # node.notify_style_update, neither of which sets
+            # ``_layout_required``. The compositor's cached
+            # full_map is never invalidated, so even after the
+            # class lifts the next retry still sees NULL_REGION.
+            # An explicit ``refresh(layout=True)`` flips
+            # ``_layout_required = True`` so the next idle pass
+            # rebuilds the map with the now-visible descendants.
             header_widget = self._chunk_widgets.get(focus_chunk_seq)
             container = header_widget.parent if header_widget is not None else None
             while container is not None and not isinstance(container, PreviewContainer):
                 container = container.parent
             if container is not None and container.has_class("-pre-reveal"):
                 container.remove_class("-pre-reveal")
+                container.refresh(layout=True)
                 self._diag_log(
                     f"do_scroll seq={focus_chunk_seq} pre_reveal_lifted "
                     f"retries_left={retries}"
