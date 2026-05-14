@@ -2902,11 +2902,26 @@ class AcornApp(App[None]):
         lands at the chunk top when nothing matched.
         """
         source = c.body_md or _legacy_blocks_to_md(c.blocks)
-        md_widget = AcornMarkdown(
-            source,
-            match_spec=self._effective_match_spec,
-            classes="chunk-section chunk-md-body chunk-first",
-        )
+        import os
+        if os.environ.get("ACORN_W_HYBRID") == "1":
+            from acorn.tui._md_hybrid import AcornChunkHybrid
+            try:
+                pane_widget = self.query_one("#preview_pane", VerticalScroll)
+                wrap_width = max(20, pane_widget.content_size.width - 1)
+            except Exception:
+                wrap_width = 80
+            md_widget = AcornChunkHybrid(
+                source,
+                match_spec=self._effective_match_spec,
+                wrap_width=wrap_width,
+                classes="chunk-section chunk-md-body chunk-first",
+            )
+        else:
+            md_widget = AcornMarkdown(
+                source,
+                match_spec=self._effective_match_spec,
+                classes="chunk-section chunk-md-body chunk-first",
+            )
         parent.mount(md_widget, before=before)
         # See _mount_plain_chunk for why we write only to the owning
         # container (concurrent prefetch on a different file would
