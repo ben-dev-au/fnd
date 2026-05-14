@@ -2220,6 +2220,41 @@ class AcornApp(App[None]):
 
         self._do_finalize_pre_reveal(container, focus_chunk_seq, retries=10, t0=t0)
 
+    async def _finalize_via_lock(
+        self,
+        container: PreviewContainer,
+        focus_chunk_seq: int,
+        t0: float,
+    ) -> None:
+        """Cold-mount reveal+scroll: await the focused chunk widget's
+        ``lock`` (released when ``build_from_token`` completes), then
+        lift ``-pre-reveal`` and scroll. Runs as a parallel task so
+        Phase 1b/2 mounting continues behind it. Replaces the
+        polling retry chain on heavy md files where the build out-runs
+        the chain budget and the scroll falls back to chunk-top.
+        """
+        import contextlib
+        import time
+
+        from acorn.tui import _perf
+
+        header = container.chunk_widgets.get(focus_chunk_seq)
+        if isinstance(header, AcornMarkdown):
+            with contextlib.suppress(Exception):
+                async with header.lock:
+                    pass
+        wait_ms = (time.perf_counter() - t0) * 1000
+        container.remove_class("-pre-reveal")
+        self._hide_progress_bar()
+        _perf.mark(
+            "click_to_display_end",
+            parent_id=container.parent_doc_id,
+            focus_seq=focus_chunk_seq,
+            path="cold_via_lock",
+        )
+        self.call_after_refresh(self._scroll_preview_to_chunk, focus_chunk_seq)
+        self._diag_log(f"finalize_via_lock done seq={focus_chunk_seq} wait_ms={wait_ms:.1f}")
+
     def _do_finalize_pre_reveal(
         self,
         container: PreviewContainer,
@@ -2898,13 +2933,20 @@ class AcornApp(App[None]):
             if focus_idx not in container.mounted_indices:
                 self._mount_chunk_into(container, chunks[focus_idx], focus_idx, chunks)
             if cold_mount:
-                # ``_finalize_pre_reveal`` owns the scroll AND the
-                # reveal in a single chained call (scroll lands via
-                # ``on_done`` → ``-pre-reveal`` lifts). Calling
-                # ``_scroll_preview_to_chunk`` separately here would
-                # queue a duplicate ``_do_scroll_to_chunk`` retry
-                # cascade and starve the test pilot's idle detector.
-                self.call_after_refresh(self._finalize_pre_reveal, container, focus_chunk_seq)
+                # Event-based finalize: parallel task awaits the focused
+                # chunk widget's lock (build-done signal) instead of
+                # polling. On heavy md files the build out-ran the prior
+                # retry budget and the scroll fell back to chunk-top
+                # (user's "first load not showing match"). Lock-await
+                # is the same mechanism the prefetch loop already uses.
+                import time as _time
+
+                # Reference held on the container so GC doesn't collect
+                # the task mid-await (RUF006). Cleared once it completes.
+                _finalize_task = asyncio.create_task(
+                    self._finalize_via_lock(container, focus_chunk_seq, _time.perf_counter())
+                )
+                container._finalize_task = _finalize_task  # type: ignore[attr-defined]
             elif not skip_internal_scrolls:
                 self._scroll_preview_to_chunk(focus_chunk_seq)
             self._update_progress_bar(progress=len(container.mounted_indices))
