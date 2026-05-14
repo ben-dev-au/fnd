@@ -1903,6 +1903,19 @@ class AcornApp(App[None]):
         the per-word colour (yellow for exact matches, orange for
         fuzzy ones) — agree across pipelines."""
         spec = self._effective_match_spec
+        import os
+        if (
+            os.environ.get("ACORN_FLAT_MD_STYLED") == "1"
+            and chunks
+            and any(c.kind == "md" and c.body_md for c in chunks)
+        ):
+            from acorn.tui._md_flat import build_md_file_view
+            try:
+                pane_widget = self.query_one("#preview_pane", VerticalScroll)
+                wrap_width = max(20, pane_widget.content_size.width - 1)
+            except Exception:
+                wrap_width = 80
+            return build_md_file_view(chunks, spec=spec, wrap_width=wrap_width)
         triples: list[tuple[int, str, list[tuple[int, int] | tuple[int, int, str]]]] = []
         for c in chunks:
             body_text = "\n".join(b.text for b in c.blocks)
