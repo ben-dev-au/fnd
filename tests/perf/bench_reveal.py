@@ -141,12 +141,6 @@ async def _run_one(
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        # Real-world clicks always have a query in flight; set the spec
-        # so the chunk's first_match_block resolves the way it would
-        # after a real _run_query.
-        from acorn.matching import MatchSpec
-        app._current_query = _corpus.MATCH_TOKEN
-        app._current_match_spec = MatchSpec.from_query(_corpus.MATCH_TOKEN)
         if warm == "warm":
             # Fire a query so prefetch runs against this file.
             app._run_query(_corpus.MATCH_TOKEN)
@@ -169,25 +163,12 @@ async def _run_one(
             await pilot.pause()
             await asyncio.sleep(0.2)
 
-        # Find the chunk-seq that actually contains the match token —
-        # real-world clicks always focus the chunk with the hit, not
-        # chunk 0. Bench was lying when focus_chunk_seq=0 missed the
-        # match: first_match_block stayed None, retry chain burned.
-        chunks = app._chunk_cache.get(parent_id)
-        if chunks is None and app._searcher is not None:
-            chunks = app._searcher.get_file_chunks(parent_id, max_workers=4)
-            app._chunk_cache[parent_id] = chunks
-        focus_seq = 0
-        for c in chunks or []:
-            body = c.body_md or "\n".join(b.text for b in c.blocks)
-            if _corpus.MATCH_TOKEN in body:
-                focus_seq = c.chunk_seq
-                break
-
         # Reset marks; we measure ONLY this load.
         _perf.reset()
 
-        app._render_full_doc(parent_id, focus_chunk_seq=focus_seq)
+        # Fire the load directly. focus_chunk_seq=0 is fine — the file
+        # has at least one chunk, and the match is somewhere inside it.
+        app._render_full_doc(parent_id, focus_chunk_seq=0)
 
         landed = await _wait_for_display_end(timeout=15.0)
         await pilot.pause()

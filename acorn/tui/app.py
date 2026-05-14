@@ -2127,18 +2127,8 @@ class AcornApp(App[None]):
     def _finalize_pre_reveal(
         self, container: PreviewContainer, focus_chunk_seq: int
     ) -> None:
-        """Drop ``-pre-reveal`` so child regions populate, then scroll
-        to the focused chunk on the next refresh.
-
-        The previous ordering (scroll → reveal) deadlocked: while
-        ``-pre-reveal`` is on the container, child widgets are
-        visibility:hidden so ``widget.region`` returns NULL_REGION,
-        the 30-retry chain in ``_do_scroll_to_chunk`` exhausts its
-        budget waiting for ``region.height > 0`` (~2.4 s in real TUI
-        per user diag), and reveal happens only after the timeout.
-        Removing ``-pre-reveal`` first costs at most one frame of
-        file-top visibility before scroll lands.
-        """
+        """Scroll the new container to the focused chunk and then drop
+        ``-pre-reveal`` so it paints at the match, not at the file top."""
         import time
         t0 = time.perf_counter()
         self._diag_log(
@@ -2148,10 +2138,9 @@ class AcornApp(App[None]):
 
         from acorn.tui import _perf
 
-        container.remove_class("-pre-reveal")
-        self._hide_progress_bar()
-
-        def _on_scroll_done() -> None:
+        def _reveal() -> None:
+            container.remove_class("-pre-reveal")
+            self._hide_progress_bar()
             _perf.mark(
                 "click_to_display_end",
                 parent_id=container.parent_doc_id,
@@ -2163,11 +2152,7 @@ class AcornApp(App[None]):
                 f"elapsed_ms={(time.perf_counter() - t0) * 1000:.1f}"
             )
 
-        self.call_after_refresh(
-            lambda: self._scroll_preview_to_chunk(
-                focus_chunk_seq, on_done=_on_scroll_done
-            )
-        )
+        self._scroll_preview_to_chunk(focus_chunk_seq, on_done=_reveal)
 
     def _cancel_preview_mount_task(self) -> None:
         """Cancel any in-flight mount task. The cancelled task's
