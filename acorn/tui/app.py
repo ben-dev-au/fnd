@@ -1825,6 +1825,13 @@ class AcornApp(App[None]):
 
         import os
         reveal_first = os.environ.get("ACORN_REVEAL_FIRST") == "1"
+        self._diag_log(
+            f"dispatch_preview cache_check parent={parent_id[:8]} "
+            f"cached={'yes' if cached is not None else 'no'} "
+            f"is_complete={cached.is_complete if cached is not None else None} "
+            f"focus_in_widgets={focus_chunk_seq in cached.chunk_widgets if cached is not None else False} "
+            f"focus_seq={focus_chunk_seq} reveal_first_env={reveal_first}"
+        )
         if cached is not None and (
             cached.is_complete
             or (reveal_first and focus_chunk_seq in cached.chunk_widgets)
@@ -2589,6 +2596,10 @@ class AcornApp(App[None]):
             parent_id=parent_id, focus_idx=focus_idx,
             win=(win_start, win_end), total_chunks=len(chunks),
         )
+        self._diag_log(
+            f"prefetch_loop_start parent={parent_id[:8]} focus={focus_idx} "
+            f"win=({win_start},{win_end}) total_chunks={len(chunks)}"
+        )
         n_mounted = 0
         try:
             for i in range(win_start, win_end):
@@ -2626,6 +2637,11 @@ class AcornApp(App[None]):
                 parent_id=parent_id, n_mounted=n_mounted,
                 mounted_indices_size=len(container.mounted_indices),
                 is_complete=container.is_complete,
+            )
+            self._diag_log(
+                f"prefetch_loop_end parent={parent_id[:8]} n_mounted={n_mounted} "
+                f"mounted_size={len(container.mounted_indices)} "
+                f"is_complete={container.is_complete}"
             )
             evicted = self._preview_cache.put(container, protect=self._active_preview)
             for old in evicted:
