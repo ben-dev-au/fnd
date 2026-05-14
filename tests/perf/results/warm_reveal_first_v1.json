@@ -1,0 +1,121 @@
+{
+  "config": {
+    "profiles": [
+      "small",
+      "heavy",
+      "table_heavy",
+      "fence_heavy"
+    ],
+    "runs": 3
+  },
+  "results": [
+    {
+      "profile": "small",
+      "run": 0,
+      "pre_mount_ms": 25.825291057117283,
+      "click_to_display_ms": 7.975333021022379,
+      "path": "structural_immediate",
+      "n_marks": 2,
+      "notes": ""
+    },
+    {
+      "profile": "small",
+      "run": 1,
+      "pre_mount_ms": 25.043166941031814,
+      "click_to_display_ms": 6.911208969540894,
+      "path": "structural_immediate",
+      "n_marks": 2,
+      "notes": ""
+    },
+    {
+      "profile": "small",
+      "run": 2,
+      "pre_mount_ms": 25.672333082184196,
+      "click_to_display_ms": 6.708791945129633,
+      "path": "structural_immediate",
+      "n_marks": 2,
+      "notes": ""
+    },
+    {
+      "profile": "heavy",
+      "run": 0,
+      "pre_mount_ms": 122.4912079051137,
+      "click_to_display_ms": 871.2865830166265,
+      "path": "warm_pre_reveal",
+      "n_marks": 2,
+      "notes": ""
+    },
+    {
+      "profile": "heavy",
+      "run": 1,
+      "pre_mount_ms": 168.88545802794397,
+      "click_to_display_ms": 934.4949170481414,
+      "path": "warm_pre_reveal",
+      "n_marks": 2,
+      "notes": ""
+    },
+    {
+      "profile": "heavy",
+      "run": 2,
+      "pre_mount_ms": 129.4882909860462,
+      "click_to_display_ms": 931.0245000524446,
+      "path": "warm_pre_reveal",
+      "n_marks": 2,
+      "notes": ""
+    },
+    {
+      "profile": "table_heavy",
+      "run": 0,
+      "pre_mount_ms": 33.82574999704957,
+      "click_to_display_ms": 1517.5472920527682,
+      "path": "warm_pre_reveal",
+      "n_marks": 2,
+      "notes": ""
+    },
+    {
+      "profile": "table_heavy",
+      "run": 1,
+      "pre_mount_ms": 29.924208065494895,
+      "click_to_display_ms": 1777.9594589956105,
+      "path": "warm_pre_reveal",
+      "n_marks": 2,
+      "notes": ""
+    },
+    {
+      "profile": "table_heavy",
+      "run": 2,
+      "pre_mount_ms": 30.26441705878824,
+      "click_to_display_ms": 1678.0430839862674,
+      "path": "warm_pre_reveal",
+      "n_marks": 2,
+      "notes": ""
+    },
+    {
+      "profile": "fence_heavy",
+      "run": 0,
+      "pre_mount_ms": 25.1054170075804,
+      "click_to_display_ms": 869.8220830410719,
+      "path": "warm_pre_reveal",
+      "n_marks": 2,
+      "notes": ""
+    },
+    {
+      "profile": "fence_heavy",
+      "run": 1,
+      "pre_mount_ms": 26.279874960891902,
+      "click_to_display_ms": 581.1677919700742,
+      "path": "warm_pre_reveal",
+      "n_marks": 2,
+      "notes": ""
+    },
+    {
+      "profile": "fence_heavy",
+      "run": 2,
+      "pre_mount_ms": 24.086207966320217,
+      "click_to_display_ms": 556.5529169980437,
+      "path": "warm_pre_reveal",
+      "n_marks": 2,
+      "notes": ""
+    }
+  ]
+}

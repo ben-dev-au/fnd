@@ -218,6 +218,15 @@ In priority order for the "fast AND functional" goal:
      scroll position, then flip). If this works, "pre-mount + L2 +
      pre-compute-scroll" should deliver sub-100 ms warm clicks
      with zero functional cost.
+
+   **User-confirmed combine path** (2026-05-14): pre-mount the
+   **W-Hybrid** widget tree, not the full structural tree. Per-chunk
+   widget count drops from ~50 → 3, so background pre-mount is
+   cheaper. AcornChunkHybrid resolves `first_match_widget`
+   synchronously at compose() time (no async build_from_token race),
+   so scroll-target resolution is deterministic once region.height
+   is non-zero. If pre-mount diagnosis succeeds AND W-Hybrid
+   pre-mounts cleanly, this is the **no-compromise instant** answer.
 2. **W-Hybrid fence-focus recovery** — wrap each Syntax in a
    `ScrollableContainer(can_focus=True)`. Adds 30 widgets to
    fence_heavy but those are simple containers, not block trees.
