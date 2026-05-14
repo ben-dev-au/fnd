@@ -41,16 +41,97 @@ on branch `investigation/preview-perf-2026-05-14`. The feature branch
 
 ## Baseline (commit 32438f5 — feature-branch WIP imported)
 
-See `tests/perf/results/baseline_v1.json`. Filled in once the run
-completes.
+Cold click-to-display (5 runs per profile). Warm is unreliable — see
+"Harness notes" below.
 
-| profile | warm | median ms | p95 ms |
+| profile | median ms | min | max |
 |---|---|---|---|
-| small | cold | _pending_ | _pending_ |
-| heavy | cold | _pending_ | _pending_ |
-| table_heavy | cold | _pending_ | _pending_ |
-| fence_heavy | cold | _pending_ | _pending_ |
-| ... | warm | _pending_ | _pending_ |
+| small | 85 | 84 | 86 |
+| heavy | 1134 | 499 | 1196 |
+| table_heavy | 2284 | 960 | 2563 |
+| fence_heavy | 348 | 306 | 377 |
+
+Variance for heavy + table_heavy was wide (≈2.5× range). Hypothesis:
+async scheduling jitter combined with widget-tree size. The L2
+prototype below tightened the spread, supporting this.
+
+## Results so far
+
+| commit | prototype | small | heavy | table_heavy | fence_heavy |
+|---|---|---|---|---|---|
+| 32438f5 | baseline | 85 | 1134 | 2284 | 348 |
+| 9481f51 | L2 Absolute-Hidden | 84 (-1%) | 563 (-50%) | 1352 (-41%) | 317 (-9%) |
+| 2274e99 | W8 unstyled (force flat) | 15 (-82%) | 31 (-97%) | 25 (-99%) | 15 (-96%) |
+| 7344e34 | W8 styled (rich.markdown) | 19 (-77%) | 114 (-90%) | 126 (-94%) | 263 (-24%) |
+| 34fcb20 | F2/F3 cursor-following prefetch | — | — | — | — |
+
+W8 unstyled is the upper bound (lose all markdown rendering). W8
+styled keeps Rich's markdown formatting (headings, bold, lists, table
+grid, syntax-highlighted code) at a per-fence Pygments cost.
+
+### Did each prototype hit its exit criterion?
+
+| # | criterion | result |
+|---|---|---|
+| 2a — L2 | heavy < 300 ms | **no** (563 ms, but 50% reduction) |
+| 2c' — W8 styled | heavy < 200 ms AND match still lands at first hit | **yes** (114 ms, first-hit line resolution preserved) |
+| 2d — F2/F3 | cursor-following extends prefetch window | shipped as code change; no separate benchmark — depends on a multi-file corpus + Pilot navigation harness that wasn't built today |
+
+### Functional cost of W8 styled
+
+What's lost:
+- Per-block widget tree → no `link_clicked` events on inline links.
+- Code fences render as styled text, not focusable / scrollable
+  inner widgets.
+- Tables render as ASCII grid, not focusable cells (cell-precision
+  scroll becomes line-precision).
+- `MarkdownTableContent` keyline / hover effects gone.
+
+What's preserved:
+- Headings, bold, italic, blockquote styling (via rich.markdown).
+- Bullet / numbered lists.
+- Inline code formatting.
+- Match highlight spans (yellow / orange word-level).
+- Scroll-to-match (line-precision via `first_hit_line_in_chunk`).
+- Syntax-highlighted code (rich.syntax via rich.markdown).
+
+### Combined ship recommendation (pending review)
+
+For a single coherent landing:
+- **W8 styled** as the default md path. Move docx/pptx through it too
+  if the visual fidelity holds (untested today — they have body_md but
+  the rendering may differ).
+- **L2** retained for any chunks that still need the structural path
+  (e.g. if we keep structural as a fallback for docx/pptx).
+- **F2/F3** cursor-following prefetch — separate axis, ships with
+  either.
+
+Estimated combined cold latency on heavy md once W8 lands: ~115 ms.
+
+### Harness notes / gotchas
+
+- Warm-state measurements are unreliable in the current harness. The
+  `_run_query` auto-load fires before the measured load, then
+  prefetch races the measured load. Need a "decode the target then
+  reset perf" pre-warm that avoids `_run_query` entirely.
+- The "already-active scroll-only" path now has a `click_to_display_end`
+  mark; it's effectively 0 ms (just a scroll).
+- High variance on baseline heavy (~2.5× range) appears to be
+  scheduler jitter. L2 collapses this (483-601 vs 499-1196), which is
+  evidence the dominant cost was something L2 fixes (per-widget
+  arrange).
+
+### Not done today
+
+- **W3 DataTable for markdown tables** — W8 obsoletes this for md
+  files. Still potentially useful for docx/pptx if they keep the
+  structural path. Deferred.
+- **2b L2 refinements** (paint-while-hidden, one-frame-flip) — L2
+  alone was insufficient to hit the 300 ms target. W8 styled hits a
+  better target without needing 2b. Deferred.
+- **gc.freeze session test** — V14 (Python 3.14 mostly fixes upstream
+  GC) plus W8 eliminating most widgets means gen2 pressure is
+  irrelevant once W8 ships. Deferred.
 
 ## Exit criteria per prototype
 
