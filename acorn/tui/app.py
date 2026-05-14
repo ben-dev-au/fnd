@@ -162,7 +162,16 @@ class PreviewContainer(Container):
 
     DEFAULT_CSS = """
     PreviewContainer { width: 100%; height: auto; }
-    PreviewContainer.-hidden { display: none; }
+    /* L2 Absolute-Hidden: prefetched/inactive containers stay in
+       layout (so arrange cache survives) but are removed from parent
+       flow (position: absolute) and not painted (visibility: hidden).
+       Reveal is then a class-removal: cache hits, no relayout cost. */
+    PreviewContainer.-hidden {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        visibility: hidden;
+    }
     PreviewContainer.-pre-reveal { visibility: hidden; }
     """
 
