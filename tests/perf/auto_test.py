@@ -35,7 +35,6 @@ os.environ["ACORN_REVEAL_FIRST"] = "1"
 from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
 from acorn.index import build_index  # noqa: E402
 from acorn.tui import AcornApp  # noqa: E402
-
 from tests.perf import _corpus  # noqa: E402
 
 MATCH_TOKEN = _corpus.MATCH_TOKEN
@@ -121,7 +120,9 @@ def parse_diag(text: str) -> list[ClickMetrics]:
                 focus_seq=int(seq_str) if seq_str.isdigit() else None,
                 focus_in_widgets=kv.get("focus_in_widgets") == "True",
                 is_complete=(
-                    None if kv.get("is_complete") in {"None", None} else kv.get("is_complete") == "True"
+                    None
+                    if kv.get("is_complete") in {"None", None}
+                    else kv.get("is_complete") == "True"
                 ),
                 finalize_elapsed_ms=None,
                 finalize_wait_ms=None,
@@ -233,7 +234,7 @@ async def drive_app(corpus_root: Path, *, n_clicks: int = 10) -> str:
         # so the chained call_after_refresh scrolls have time to fire
         # before the next click's cache_check — otherwise the parser
         # attributes them to the wrong click.
-        for i, node in enumerate(results[:n_clicks]):
+        for _i, node in enumerate(results[:n_clicks]):
             # Setting cursor_line fires Tree.NodeHighlighted, which the
             # app's @on handler binds to _schedule_preview_load. Don't
             # also post NodeSelected — that would either no-op (good)
@@ -262,7 +263,11 @@ def summarize(metrics: list[ClickMetrics]) -> str:
     out.append(f"Click summary ({len(metrics)} clicks)")
     out.append(f"{'─' * 80}")
     cold = [m for m in metrics if m.finalize_elapsed_ms is not None]
-    cached_struct = [m for m in metrics if m.path == "structural" and m.cached == "yes" and m.finalize_elapsed_ms is None]
+    cached_struct = [
+        m
+        for m in metrics
+        if m.path == "structural" and m.cached == "yes" and m.finalize_elapsed_ms is None
+    ]
     flat_clicks = [m for m in metrics if m.path == "flat"]
 
     out.append(f"\nCold-path clicks ({len(cold)}):")
@@ -291,8 +296,10 @@ def summarize(metrics: list[ClickMetrics]) -> str:
     out.append(f"\n{'─' * 80}")
     out.append("Headline stats:")
     if cold:
-        max_cold = max(m.finalize_elapsed_ms for m in cold)
-        avg_cold = sum(m.finalize_elapsed_ms for m in cold) / len(cold)
+        max_cold = max(m.finalize_elapsed_ms for m in cold if m.finalize_elapsed_ms is not None)
+        avg_cold = sum(
+            m.finalize_elapsed_ms for m in cold if m.finalize_elapsed_ms is not None
+        ) / len(cold)
         out.append(f"  Cold-path max={max_cold:.0f}ms avg={avg_cold:.0f}ms")
         zero_region_cold = sum(1 for m in cold if m.miss_zero_region)
         out.append(f"  Cold clicks hitting zero-region: {zero_region_cold}/{len(cold)}")

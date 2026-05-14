@@ -23,6 +23,7 @@ import os
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -33,9 +34,8 @@ os.environ.setdefault("ACORN_PERF", "1")
 
 from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
 from acorn.index import _path_parent_id, build_index  # noqa: E402
-from acorn.query import FileGroup, Hit, Searcher  # noqa: E402
+from acorn.query import FileGroup, Hit  # noqa: E402
 from acorn.tui import AcornApp, _perf  # noqa: E402
-
 from tests.perf import _corpus  # noqa: E402
 
 
@@ -50,7 +50,9 @@ class WarmResult:
     notes: str = ""
 
 
-async def _wait_until(predicate, timeout: float = 10.0, step: float = 0.02) -> bool:
+async def _wait_until(
+    predicate: Callable[[], bool], timeout: float = 10.0, step: float = 0.02
+) -> bool:
     deadline = time.perf_counter() + timeout
     while time.perf_counter() < deadline:
         if predicate():
@@ -75,6 +77,7 @@ async def _run_one(*, index_dir: Path, corpus_root: Path, profile: str, run: int
         # Configure the app's match-spec so highlighting + first_match_block
         # resolve as they would after a real _run_query.
         from acorn.matching import MatchSpec
+
         app._current_query = _corpus.MATCH_TOKEN
         app._current_match_spec = MatchSpec.from_query(_corpus.MATCH_TOKEN)
         # Manually populate _chunk_cache (decode synchronously).
@@ -100,11 +103,20 @@ async def _run_one(*, index_dir: Path, corpus_root: Path, profile: str, run: int
                     kind="md",
                     title=target_md.name,
                     top_score=1.0,
-                    hits=[Hit(
-                        score=1.0, parent_id=parent_id, path=str(target_md), kind="md",
-                        page=0, slide=0, heading_path="", title=target_md.name,
-                        snippet="", chunk_seq=focus_seq,
-                    )],
+                    hits=[
+                        Hit(
+                            score=1.0,
+                            parent_id=parent_id,
+                            path=str(target_md),
+                            kind="md",
+                            page=0,
+                            slide=0,
+                            heading_path="",
+                            title=target_md.name,
+                            snippet="",
+                            chunk_seq=focus_seq,
+                        )
+                    ],
                 )
             ]
         sig = app._current_query_signature()
@@ -142,7 +154,9 @@ async def _run_one(*, index_dir: Path, corpus_root: Path, profile: str, run: int
             await pilot.pause()
             await asyncio.sleep(0.01)
             recs = _perf.records()
-            if any(r.get("name") == "click_to_display_end" for r in recs if r.get("kind") == "mark"):
+            if any(
+                r.get("name") == "click_to_display_end" for r in recs if r.get("kind") == "mark"
+            ):
                 break
         recs = _perf.records()
         marks = [r for r in recs if r.get("kind") == "mark"]
@@ -150,11 +164,17 @@ async def _run_one(*, index_dir: Path, corpus_root: Path, profile: str, run: int
         end_rec = next((r for r in marks if r["name"] == "click_to_display_end"), None)
         if start is None or end_rec is None:
             return WarmResult(
-                profile, run, pre_mount_ms, None, None, len(recs),
+                profile,
+                run,
+                pre_mount_ms,
+                None,
+                None,
+                len(recs),
                 "timed out waiting for click_to_display_end",
             )
         return WarmResult(
-            profile=profile, run=run,
+            profile=profile,
+            run=run,
             pre_mount_ms=pre_mount_ms,
             click_to_display_ms=end_rec["t_ms"] - start,
             path=end_rec.get("path"),
@@ -174,8 +194,10 @@ async def _amain(args: argparse.Namespace) -> int:
         for profile in args.profiles:
             for run in range(args.runs):
                 r = await _run_one(
-                    index_dir=idx, corpus_root=tmp_path / "corpus",
-                    profile=profile, run=run,
+                    index_dir=idx,
+                    corpus_root=tmp_path / "corpus",
+                    profile=profile,
+                    run=run,
                 )
                 results.append(r)
                 await asyncio.sleep(0.1)
@@ -196,7 +218,8 @@ async def _amain(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--profiles", nargs="+",
+        "--profiles",
+        nargs="+",
         default=["small", "heavy", "table_heavy", "fence_heavy"],
         choices=["small", "heavy", "table_heavy", "fence_heavy"],
     )

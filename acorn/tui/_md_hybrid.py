@@ -25,7 +25,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from markdown_it import MarkdownIt
-from rich.console import Group
 from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
 from textual.containers import Container
@@ -65,9 +64,7 @@ def _parse_islands(md_text: str) -> list[_IslandRange]:
     return ranges
 
 
-def _split_text_and_islands(
-    md_text: str, islands: list[_IslandRange]
-) -> list[_IslandRange]:
+def _split_text_and_islands(md_text: str, islands: list[_IslandRange]) -> list[_IslandRange]:
     """Given the island ranges, fill in the text ranges between them.
     Returns the full ordered list of ranges covering the whole text.
     """
@@ -116,7 +113,10 @@ def _render_text_run(md_text: str, spec: MatchSpec, wrap_width: int) -> tuple[St
 
     width = max(20, wrap_width)
     console = Console(
-        width=width, force_terminal=True, color_system="truecolor", record=False,
+        width=width,
+        force_terminal=True,
+        color_system="truecolor",
+        record=False,
     )
     md = RichMarkdown(md_text)
     options = console.options.update(width=width)
@@ -135,22 +135,17 @@ def _render_text_run(md_text: str, spec: MatchSpec, wrap_width: int) -> tuple[St
     return static, has_match
 
 
-def _build_table_widget(md_text: str, spec: MatchSpec) -> tuple[DataTable, bool]:
+def _build_table_widget(md_text: str, spec: MatchSpec) -> tuple[DataTable[Text], bool]:
     """Parse a table snippet and build a DataTable widget."""
     parser = MarkdownIt("gfm-like")
     tokens = parser.parse(md_text)
     headers: list[str] = []
     rows: list[list[str]] = []
     current_row: list[str] | None = None
-    in_thead = False
     in_tbody = False
     pending_cell: list[str] = []
     for tok in tokens:
-        if tok.type == "thead_open":
-            in_thead = True
-        elif tok.type == "thead_close":
-            in_thead = False
-        elif tok.type == "tbody_open":
+        if tok.type == "tbody_open":
             in_tbody = True
         elif tok.type == "tbody_close":
             in_tbody = False
@@ -173,7 +168,7 @@ def _build_table_widget(md_text: str, spec: MatchSpec) -> tuple[DataTable, bool]
             if current_row is not None:
                 current_row.append("".join(pending_cell))
             pending_cell = []
-    dt: DataTable = DataTable(cursor_type="none", zebra_stripes=False, show_cursor=False)
+    dt: DataTable[Text] = DataTable(cursor_type="none", zebra_stripes=False, show_cursor=False)
     if headers:
         baked_headers = []
         had_header_match = False
@@ -199,6 +194,7 @@ def _build_table_widget(md_text: str, spec: MatchSpec) -> tuple[DataTable, bool]
         dt.add_row(*baked, height=None)
     if match_coord is not None:
         from textual.coordinate import Coordinate
+
         dt._acorn_match_coord = Coordinate(*match_coord)  # type: ignore[attr-defined]
     return dt, has_match
 
@@ -296,11 +292,8 @@ class AcornChunkHybrid(Container):
         self._first_match_widget: Widget | None = None
 
     def compose(self):
-        widgets, first_idx = build_hybrid_chunk_widgets(
-            self._body_md, self._spec, self._wrap_width
-        )
-        for w in widgets:
-            yield w
+        widgets, first_idx = build_hybrid_chunk_widgets(self._body_md, self._spec, self._wrap_width)
+        yield from widgets
         if first_idx is not None and 0 <= first_idx < len(widgets):
             self._first_match_widget = widgets[first_idx]
 

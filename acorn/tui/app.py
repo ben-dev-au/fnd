@@ -20,7 +20,10 @@ import re
 from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from rich.text import Text
 
 from textual import events, on
 from textual.app import App, ComposeResult
@@ -72,44 +75,19 @@ from acorn.tui.progress import AcornProgressBar, ProgressFacility, ProgressSessi
 _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 
 
-# Preview widget cache (UX-pass-4 §4 hybrid follow-up).
-#
-# Repeat visits to a previously-loaded file should be instant. The decode
-# cache (_chunk_cache) saved the chunk DATA but mounting hundreds of
-# rich-rendered widgets each visit was the actual bottleneck. Keep the
-# mounted widget tree alive in a per-file Container; switching files is
-# then a single class-toggle. Bounded by LRU + a chunk-count threshold so
-# small files (which mount instantly anyway) don't bloat memory.
-_PREVIEW_CACHE_MAX_FILES = 64
-# Cache *every* complete file (1+ chunks) so revisits are O(1) and old
-# containers get LRU-evicted+removed from the DOM. The previous threshold
-# of 30 meant short markdown files never made it to the cache, never got
-# evicted, and stacked up in the preview pane — every file switch then
-# paid an O(N) walk in ``_activate_preview_container`` where N = files
-# visited this session.
+# Preview widget cache. Repeat visits to a previously-loaded file
+# should be instant — keep the mounted widget tree alive in a per-file
+# Container; switching files is then a single class-toggle. LRU-bounded.
+# Sized to the prefetch buffer + a little slack: full-mount means each
+# cached file holds its whole widget tree, so a tight cap keeps DOM
+# bounded without churning files the cursor is heading toward.
+_PREVIEW_CACHE_MAX_FILES = 16
 _PREVIEW_CACHE_MIN_CHUNKS = 1
 # Visible-first mount window — chunks are decoded already, mounting
 # focused ± these counts synchronously gives the user instant viewport
-# feedback before the background fill starts.
+# feedback before the background fill mounts the rest of the file.
 _VISIBLE_FIRST_ABOVE = 7
 _VISIBLE_FIRST_BELOW = 7
-# Lazy-mount budget. The background fill stops at focused ± this many
-# chunks instead of mounting the whole document. For a 5000-chunk PDF
-# that turns a multi-minute mount into a bounded one (and keeps the
-# steady-state DOM small enough that post-load navigation stays
-# snappy). If the user wants a section outside the buffer, they click
-# it in the results tree — ``_dispatch_preview_mount`` resumes the
-# task with a new focus, Phase 1a mounts the requested chunk, and
-# Phase 2 extends the buffer around it.
-# Each chunk produces ~50-200 sub-widgets (markdown blocks).
-# Background fill expands DOM linearly; with prefetch caching many
-# files, the cumulative widget count makes every refresh slow.
-# 10 covers a viewport of scroll; resume path handles further.
-_BACKGROUND_FILL_RADIUS = 10
-
-# Prefetch mounts a tiny window so the DOM stays small even with
-# many files prefetched. User-side mount expands on click.
-_PREFETCH_MOUNT_RADIUS = 0
 
 
 class ResultsTree(Tree[dict[str, Any]]):
@@ -411,7 +389,7 @@ class AcornMarkdownTableDT(MarkdownTable):
         headers, rows = self._get_headers_and_rows()
         self._headers = headers
         self._rows = rows
-        dt: DataTable = DataTable(cursor_type="none", zebra_stripes=False)
+        dt: DataTable[Any] = DataTable(cursor_type="none", zebra_stripes=False)
         # Content → rich.Text: DataTable's auto-width measure only
         # handles str/Text; Content collapses to 1-cell columns.
         if headers:
@@ -430,7 +408,7 @@ class AcornMarkdownTableDT(MarkdownTable):
         yield dt
 
 
-def _content_to_text(c: Any) -> "Text":
+def _content_to_text(c: Any) -> Text:
     """Convert textual.Content → rich.Text, preserving highlight spans."""
     from rich.text import Text
 
@@ -447,7 +425,9 @@ def _content_to_text(c: Any) -> "Text":
     return t
 
 
-def _find_first_match_coord_in_table(headers: list, rows: list[list]) -> tuple[int, int] | None:
+def _find_first_match_coord_in_table(
+    headers: list[Any], rows: list[list[Any]]
+) -> tuple[int, int] | None:
     """Return (row, col) of the first cell whose Content carries any
     highlight span. Header row counts as row -1 (DataTable headers
     have their own coord space); we map header hits to row 0 col c
@@ -1863,28 +1843,32 @@ class AcornApp(App[None]):
         import os
 
         reveal_first = os.environ.get("ACORN_REVEAL_FIRST") == "1"
+        cache_keys = [f"{pid[:8]}/{sig[:6]}" for (pid, sig) in self._preview_cache._cache]
+        dom_keys = [
+            f"{c.parent_doc_id[:8]}/{c.query_signature[:6]}"
+            f"(t={'a' if getattr(c, '_prefetch_task', None) is not None and not c._prefetch_task.done() else 'd'})"  # pyright: ignore[reportAttributeAccessIssue]
+            for c in self.query(PreviewContainer)
+        ]
         self._diag_log(
-            f"dispatch_preview cache_check parent={parent_id[:8]} "
+            f"dispatch_preview cache_check parent={parent_id[:8]} sig={query_sig[:6]} "
             f"cached={'yes' if cached is not None else 'no'} "
             f"is_complete={cached.is_complete if cached is not None else None} "
             f"focus_in_widgets={focus_chunk_seq in cached.chunk_widgets if cached is not None else False} "
-            f"focus_seq={focus_chunk_seq} reveal_first_env={reveal_first}"
+            f"focus_seq={focus_chunk_seq} reveal_first_env={reveal_first} "
+            f"cache_keys={cache_keys} dom_keys={dom_keys}"
         )
         if cached is not None and (
             cached.is_complete or (reveal_first and focus_chunk_seq in cached.chunk_widgets)
         ):
-            # Reveal-first: activate visible, scroll on the next two
-            # ticks once child regions are populated.
+            # Reveal-first: activate visible, scroll on next refresh.
             if reveal_first:
                 self._activate_preview_container(cached, pre_reveal=False)
                 self._refresh_match_scrollbar(chunks)
-                # Two-tick scroll so child regions are sized before
-                # _do_scroll_to_chunk queries them.
-                self.call_after_refresh(
-                    self.call_after_refresh,
-                    self._scroll_preview_to_chunk,
-                    focus_chunk_seq,
-                )
+                # One-tick scroll: _do_scroll_to_chunk's own retry chain
+                # handles any residual region.height==0 race. The prior
+                # two-tick wrapping was wasting a refresh tick (~50-200ms
+                # depending on DOM size) for every cache-hit click.
+                self.call_after_refresh(self._scroll_preview_to_chunk, focus_chunk_seq)
                 if not cached.is_complete:
                     # Resume the partial mount in the background; the
                     # scroll above is canonical so suppress the task's
@@ -1962,6 +1946,7 @@ class AcornApp(App[None]):
             f"chunks={len(chunks)}"
         )
         if cache_hit:
+            assert cached is not None
             self._flat_buffer_cache.move_to_end(cache_key)
             self._activate_flat_buffer(cached)
             cached.scroll_to_chunk(focus_chunk_seq, prefer_first_match=True)
@@ -2218,6 +2203,10 @@ class AcornApp(App[None]):
         self._preview_parent_id = container.parent_doc_id
         self._chunk_widgets = container.chunk_widgets
         self._match_targets = container.match_targets
+        # Cache-hit paths return without _mount_chunks_async (which is
+        # where _refresh_status normally fires at the end); refresh here
+        # so the pane title swaps to the activated file immediately.
+        self._refresh_status()
 
     def _finalize_pre_reveal(self, container: PreviewContainer, focus_chunk_seq: int) -> None:
         """Lift ``-pre-reveal`` once focused chunk's compose is ready, then scroll."""
@@ -2245,7 +2234,7 @@ class AcornApp(App[None]):
         header = container.chunk_widgets.get(focus_chunk_seq)
         compose_done = True
         if header is not None and hasattr(header, "first_match_block"):
-            compose_done = header.first_match_block is not None
+            compose_done = header.first_match_block is not None  # pyright: ignore[reportAttributeAccessIssue]
         if not compose_done and retries > 0:
             self.call_after_refresh(
                 self._do_finalize_pre_reveal,
@@ -2398,11 +2387,22 @@ class AcornApp(App[None]):
         targets: list[tuple[str, int]] = []
         seen: set[str] = set()
         already_cached: list[str] = []
+        query_sig_for_filter = self._current_query_signature()
         for g in self._groups[start_idx:]:
             if g.parent_id in seen:
                 continue
             seen.add(g.parent_id)
-            if g.parent_id in self._chunk_cache:
+            # Filter by preview_cache (widget tree ready), not chunk_cache:
+            # a file whose chunks are cached but whose mount got drained
+            # by a prior cursor move must be re-queued. Also skip if it's
+            # the active preview — that one's owned by the user-side path.
+            in_preview = self._preview_cache.get(g.parent_id, query_sig_for_filter) is not None
+            is_active = (
+                self._active_preview is not None
+                and self._active_preview.parent_doc_id == g.parent_id
+                and self._active_preview.query_signature == query_sig_for_filter
+            )
+            if in_preview or is_active:
                 already_cached.append(g.parent_id[:8])
                 continue
             focus = g.hits[0].chunk_seq if g.hits else 0
@@ -2439,15 +2439,22 @@ class AcornApp(App[None]):
             import time as _time
 
             t0 = _time.perf_counter()
-            try:
-                fetched = searcher.get_file_chunks(parent_id, max_workers=decode_workers)
-            except Exception:
-                app.call_from_thread(
-                    app._diag_log,
-                    f"prefetch_one decode FAILED parent={parent_id[:8]}",
-                )
-                return
-            decode_ms = (_time.perf_counter() - t0) * 1000.0
+            # Reuse cached chunk data if present — only the mount got dropped,
+            # not the decode. Avoids re-running PDF/docx extraction.
+            cached_chunks = app._chunk_cache.get(parent_id)
+            if cached_chunks is not None:
+                fetched = cached_chunks
+                decode_ms = 0.0
+            else:
+                try:
+                    fetched = searcher.get_file_chunks(parent_id, max_workers=decode_workers)
+                except Exception:
+                    app.call_from_thread(
+                        app._diag_log,
+                        f"prefetch_one decode FAILED parent={parent_id[:8]}",
+                    )
+                    return
+                decode_ms = (_time.perf_counter() - t0) * 1000.0
             # Stale-query guard: if the user has moved on, drop the
             # work without scheduling any main-thread sinks.
             if query_sig != app._current_query_signature():
@@ -2716,24 +2723,29 @@ class AcornApp(App[None]):
             (i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq),
             0,
         )
-        # Prefetch only mounts a tiny window around the focused chunk
-        # so the DOM stays small. User-side resume expands on click.
-        win_start = max(0, focus_idx - _PREFETCH_MOUNT_RADIUS)
-        win_end = min(len(chunks), focus_idx + _PREFETCH_MOUNT_RADIUS + 1)
+        total = len(chunks)
+        # Focused-first sweep across the whole file so click-time
+        # navigation never sees an unmounted chunk.
+        order: list[int] = [focus_idx] if 0 <= focus_idx < total else []
+        for off in range(1, total):
+            below = focus_idx + off
+            above = focus_idx - off
+            if below < total:
+                order.append(below)
+            if above >= 0:
+                order.append(above)
         _perf.mark(
             "prefetch_loop_start",
             parent_id=parent_id,
             focus_idx=focus_idx,
-            win=(win_start, win_end),
-            total_chunks=len(chunks),
+            total_chunks=total,
         )
         self._diag_log(
-            f"prefetch_loop_start parent={parent_id[:8]} focus={focus_idx} "
-            f"win=({win_start},{win_end}) total_chunks={len(chunks)}"
+            f"prefetch_loop_start parent={parent_id[:8]} focus={focus_idx} " f"total_chunks={total}"
         )
         n_mounted = 0
         try:
-            for i in range(win_start, win_end):
+            for i in order:
                 if query_sig != self._current_query_signature():
                     return
                 if i in container.mounted_indices:
@@ -2748,19 +2760,16 @@ class AcornApp(App[None]):
                     n_mounted += 1
                 except Exception:
                     continue
-                # Wait for the chunk widget's async build to complete so
-                # ``first_match_block`` and child regions resolve before
-                # a user-side click adopts this pre-mount. Without this
-                # wait, the click path's retry chain consumes ~500 ms
-                # polling for a build that's still running.
+                # Wait for the chunk widget's async build so
+                # ``first_match_block`` resolves before a user-side
+                # click adopts this pre-mount; without this, the click
+                # path's retry chain polls ~500 ms for a still-running build.
                 seq = chunks[i].chunk_seq
                 md_widget = container.chunk_widgets.get(seq)
                 if md_widget is not None and isinstance(md_widget, AcornMarkdown):
                     with contextlib.suppress(Exception), _perf.span("prefetch_await_build", idx=i):
                         async with md_widget.lock:
                             pass
-                # Real wall-clock yield so input/redraw events get
-                # processing time between heavy mounts.
                 await asyncio.sleep(0.002)
         finally:
             _perf.mark(
@@ -2913,26 +2922,24 @@ class AcornApp(App[None]):
             self._update_progress_bar(progress=len(container.mounted_indices))
             await asyncio.sleep(0)
 
-            # Phase 2a: background fill BELOW the window, capped at the
-            # lazy-mount radius. Mounting every chunk of a 5000-chunk
-            # PDF takes minutes AND keeps the post-load DOM big enough
-            # to make navigation laggy; the radius bounds both costs.
-            below_end = min(len(chunks), focus_idx + 1 + _BACKGROUND_FILL_RADIUS)
+            # Phase 2a: background fill BELOW the window to the end of
+            # the file. DOM growth is bounded by the small LRU on
+            # _preview_cache, not a per-file radius. With W3 DataTable
+            # the per-chunk widget cost is low enough that full-file
+            # mount fits inside the input-lag envelope.
+            below_end = len(chunks)
             for i in range(win_end, below_end):
                 if i in container.mounted_indices:
                     continue
                 self._mount_chunk_into(container, chunks[i], i, chunks)
                 self._update_progress_bar(progress=len(container.mounted_indices))
-                # Wall-clock yield — see prefetch loop.
                 await asyncio.sleep(0.002)
             await asyncio.sleep(0)
 
-            # Phase 2b: hidden-prepend ABOVE the window, capped at the
-            # same radius. Each newly-mounted widget gets ``display =
-            # False`` immediately, so it takes no layout space and the
-            # focused chunk doesn't drift while the rest mounts. Yield
-            # per chunk so keystrokes are processed between mounts.
-            above_start = max(0, focus_idx - _BACKGROUND_FILL_RADIUS)
+            # Phase 2b: hidden-prepend ABOVE the window to the start.
+            # display=False keeps the focused chunk anchored while
+            # earlier sections mount.
+            above_start = 0
             for i in range(win_start - 1, above_start - 1, -1):
                 if i in container.mounted_indices:
                     continue
@@ -3182,12 +3189,13 @@ class AcornApp(App[None]):
         # ACORN_PREVIEW_DIAG=1 appends to /tmp/acorn-preview-diag.log.
         # Investigation-only; remove once findings recorded.
         import os
+        import time as _time
 
         if not os.environ.get("ACORN_PREVIEW_DIAG"):
             return
         try:
             with open("/tmp/acorn-preview-diag.log", "a") as f:
-                f.write(msg + "\n")
+                f.write(f"[{_time.monotonic():.3f}] {msg}\n")
         except Exception:
             pass
 
@@ -3277,7 +3285,7 @@ class AcornApp(App[None]):
         first_match_seen = False
         chunk_md = target if hasattr(target, "first_match_block") else None
         if chunk_md is not None:
-            inner = chunk_md.first_match_block
+            inner = chunk_md.first_match_block  # pyright: ignore[reportAttributeAccessIssue]
             if inner is None and retries > 0:
                 self.call_after_refresh(
                     self._do_scroll_to_chunk, focus_chunk_seq, retries - 1, on_done
@@ -3285,13 +3293,21 @@ class AcornApp(App[None]):
                 return
             if inner is not None:
                 first_match_seen = True
-                target = self._scroll_proxy_for(inner, chunk=chunk_md) if isinstance(chunk_md, AcornMarkdown) else inner
+                target = (
+                    self._scroll_proxy_for(inner, chunk=chunk_md)
+                    if isinstance(chunk_md, AcornMarkdown)
+                    else inner
+                )
                 path = f"first_match_block({type(inner).__name__})"
             else:
                 # first_match_block never resolved; descend into the chunk
                 # for any widget whose text carries the query.
                 fallback_fired = True
-                target = self._fallback_match_target(chunk_md) if isinstance(chunk_md, AcornMarkdown) else chunk_md
+                target = (
+                    self._fallback_match_target(chunk_md)
+                    if isinstance(chunk_md, AcornMarkdown)
+                    else chunk_md
+                )
                 landed_on_chunk = target is chunk_md
                 self._diag_log(
                     f"do_scroll seq={focus_chunk_seq} fallback=descendant-scan "
@@ -3364,9 +3380,7 @@ class AcornApp(App[None]):
                     coord = getattr(child, "_acorn_match_coord", None)
                     if coord is not None:
                         with contextlib.suppress(Exception):
-                            child.move_cursor(
-                                row=coord.row, column=coord.column, scroll=True
-                            )
+                            child.move_cursor(row=coord.row, column=coord.column, scroll=True)
                     return child
             return inner
         if inner.region.height > 0:

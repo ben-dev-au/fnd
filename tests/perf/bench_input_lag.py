@@ -24,6 +24,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
@@ -37,7 +38,6 @@ os.environ["ACORN_REVEAL_FIRST"] = "1"
 from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
 from acorn.index import build_index  # noqa: E402
 from acorn.tui import AcornApp  # noqa: E402
-
 from tests.perf import _corpus  # noqa: E402
 
 MATCH_TOKEN = _corpus.MATCH_TOKEN
@@ -74,7 +74,7 @@ class LagSample:
     pause_ms: float
 
 
-async def measure_phase(pilot, phase: str, *, n: int = 20) -> list[LagSample]:
+async def measure_phase(pilot: Any, phase: str, *, n: int = 20) -> list[LagSample]:
     """Take ``n`` measurements of both pilot.pause() and asyncio.sleep(0).
     asyncio.sleep(0) is a near-zero-cost yield; pilot.pause() walks the
     DOM and waits for messages. Comparing reveals whether lag is in the
@@ -93,9 +93,10 @@ async def measure_phase(pilot, phase: str, *, n: int = 20) -> list[LagSample]:
 
 
 async def drive(corpus_root: Path) -> dict[str, list[float]]:
+    import os as _os
+
     from textual.widgets import Tree
 
-    import os as _os
     prefetch = 0 if _os.environ.get("BENCH_NO_PREFETCH") == "1" else 10
     cfg = Config(
         defaults=Defaults(
@@ -148,7 +149,7 @@ async def drive(corpus_root: Path) -> dict[str, list[float]]:
 
         # Click each result; measure lag IMMEDIATELY after click and again
         # after tail-mount should have settled.
-        for i, node in enumerate(results[:6]):
+        for _i, node in enumerate(results[:6]):
             tree.cursor_line = node.line
             # Right after the click: this is when the mount task is busy.
             for s in await measure_phase(pilot, "click_immediate", n=10):
@@ -168,8 +169,6 @@ async def drive(corpus_root: Path) -> dict[str, list[float]]:
 
         # Diagnose: count widgets in the tree.
         screen = app.screen
-        from textual.widget import Widget
-
         widget_count = sum(1 for _ in screen.walk_children(with_self=True))
         preview_pane = app.query_one("#preview_pane")
         pane_descendants = sum(1 for _ in preview_pane.walk_children())

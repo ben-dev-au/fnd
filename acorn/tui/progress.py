@@ -9,7 +9,7 @@ animation drew the eye on every short load.
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from textual.containers import Horizontal
 from textual.widget import Widget
@@ -151,7 +151,7 @@ class ProgressSession:
 class ProgressFacility:
     """Owns the active session and drives the widget. Most-recent wins."""
 
-    def __init__(self, app: App) -> None:
+    def __init__(self, app: App[Any]) -> None:
         self._app = app
         self._active: ProgressSession | None = None
 

@@ -135,7 +135,7 @@ def render(spec: CorpusSpec) -> str:
     for h in range(spec.headings):
         out.append(_heading(2, h))
         out.append("")
-        for p in range(spec.paragraphs_per_heading):
+        for _p in range(spec.paragraphs_per_heading):
             if block_index == spec.match_at_block and not placed_match:
                 out.append(_para(block_index) + " " + MATCH_TOKEN)
                 placed_match = True
@@ -144,22 +144,14 @@ def render(spec: CorpusSpec) -> str:
             out.append("")
             block_index += 1
     for t in range(spec.table_count):
-        embed = (
-            spec.profile == "table_heavy"
-            and t == spec.table_count // 2
-            and not placed_match
-        )
+        embed = spec.profile == "table_heavy" and t == spec.table_count // 2 and not placed_match
         out.extend(_table(spec.table_rows, spec.table_cols, t, embed_match=embed))
         out.append("")
         if embed:
             placed_match = True
         block_index += 1
     for f in range(spec.fence_count):
-        embed = (
-            spec.profile == "fence_heavy"
-            and f == spec.fence_count // 2
-            and not placed_match
-        )
+        embed = spec.profile == "fence_heavy" and f == spec.fence_count // 2 and not placed_match
         out.extend(_fence(spec.fence_lines, f, embed_match=embed))
         out.append("")
         if embed:

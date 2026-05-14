@@ -10,9 +10,10 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from threading import Lock
-from typing import Any, Iterator
+from typing import Any
 
 _ENABLED: bool = os.environ.get("ACORN_PERF") == "1"
 _RECORD: list[dict[str, Any]] = []
@@ -28,11 +29,11 @@ def reset() -> None:
     global _T0
     with _LOCK:
         _RECORD.clear()
-        _T0 = time.perf_counter()
+        _T0 = time.perf_counter()  # pyright: ignore[reportConstantRedefinition]
 
 
 @contextmanager
-def span(name: str, **meta: Any) -> Iterator[None]:
+def span(name: str, **meta: Any) -> Generator[None]:
     if not _ENABLED:
         yield
         return

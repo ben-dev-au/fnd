@@ -34,7 +34,6 @@ os.environ.setdefault("ACORN_PERF", "1")  # auto-enable for this entry point
 from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
 from acorn.index import _path_parent_id, build_index  # noqa: E402
 from acorn.tui import AcornApp, _perf  # noqa: E402
-
 from tests.perf import _corpus  # noqa: E402
 
 WarmState = str  # "cold" | "warm"
@@ -84,7 +83,7 @@ def _extract_click_to_display(records: list[dict[str, Any]]) -> tuple[float | No
     return end_ms - start_ms, path
 
 
-async def _wait_for_results(app: AcornApp, pilot, timeout: float = 5.0) -> None:
+async def _wait_for_results(app: AcornApp, pilot: Any, timeout: float = 5.0) -> None:
     """Pump the loop until ``app._groups`` is non-empty or timeout."""
     deadline = time.perf_counter() + timeout
     while time.perf_counter() < deadline:
@@ -133,8 +132,12 @@ async def _run_one(
     target_md = corpus_root / f"{profile}.md"
     if not target_md.exists():
         return BenchResult(
-            profile=profile, warm=warm, run=run,
-            click_to_display_ms=None, path=None, n_marks=0,
+            profile=profile,
+            warm=warm,
+            run=run,
+            click_to_display_ms=None,
+            path=None,
+            n_marks=0,
             notes=f"corpus file missing: {target_md}",
         )
     parent_id = _path_parent_id(target_md)
@@ -147,15 +150,12 @@ async def _run_one(
             await _wait_for_results(app, pilot)
             # Wait for chunk cache + structural pre-mount (a hidden
             # PreviewContainer for the target with all chunks mounted).
-            from acorn.tui.app import PreviewContainer
             sig = app._current_query_signature()
-            premount_seen = False
             for _ in range(80):
                 await pilot.pause()
                 await asyncio.sleep(0.05)
                 cont = app._preview_cache.get(parent_id, sig)
                 if cont is not None and getattr(cont, "is_complete", False):
-                    premount_seen = True
                     break
             # Also wait for the auto-load triggered by _run_query to
             # settle so its end mark doesn't pollute our measurement.
@@ -177,14 +177,22 @@ async def _run_one(
         records = _perf.records()
         if not landed:
             return BenchResult(
-                profile=profile, warm=warm, run=run,
-                click_to_display_ms=None, path=None, n_marks=len(records),
+                profile=profile,
+                warm=warm,
+                run=run,
+                click_to_display_ms=None,
+                path=None,
+                n_marks=len(records),
                 notes="timed out waiting for click_to_display_end",
             )
         delta_ms, path = _extract_click_to_display(records)
         return BenchResult(
-            profile=profile, warm=warm, run=run,
-            click_to_display_ms=delta_ms, path=path, n_marks=len(records),
+            profile=profile,
+            warm=warm,
+            run=run,
+            click_to_display_ms=delta_ms,
+            path=path,
+            n_marks=len(records),
         )
 
 
@@ -231,9 +239,7 @@ def main(argv: list[str] | None = None) -> int:
         default=["small", "heavy", "table_heavy", "fence_heavy"],
         choices=["small", "heavy", "table_heavy", "fence_heavy"],
     )
-    parser.add_argument(
-        "--warm", nargs="+", default=["cold", "warm"], choices=["cold", "warm"]
-    )
+    parser.add_argument("--warm", nargs="+", default=["cold", "warm"], choices=["cold", "warm"])
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--out", type=str, default=None)
     args = parser.parse_args(argv)
