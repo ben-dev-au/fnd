@@ -161,23 +161,21 @@ class PreviewContainer(Container):
     resumed on revisit.
     """
 
-    import os as _os
-
-    if _os.environ.get("ACORN_DISABLE_L2") == "1":
-        # Pre-investigation behaviour for A/B verification on real corpora.
-        _HIDDEN_RULE = "PreviewContainer.-hidden { display: none; }"
-    else:
-        _HIDDEN_RULE = (
-            "PreviewContainer.-hidden { "
-            "position: absolute; width: 100%; height: 100%; "
-            "visibility: hidden; "
-            "}"
-        )
-
-    DEFAULT_CSS = f"""
-    PreviewContainer {{ width: 100%; height: auto; }}
-    {_HIDDEN_RULE}
-    PreviewContainer.-pre-reveal {{ visibility: hidden; }}
+    # ``display: none`` here is load-bearing. The previous "L2
+    # Absolute-Hidden" protocol (visibility:hidden + position:absolute)
+    # kept invisible PreviewContainers in their parent's vertical flow
+    # — VerticalScroll then split the pane's height across every
+    # cached container, leaving the visible LineBufferPreview with
+    # ``size.height = 1``. That was the "PDF only shows a single line"
+    # symptom: the pane was sharing 38 rows across ~30 hidden
+    # containers + 1 visible flat buffer, so each got ~1 row. Verified
+    # empirically by tests/perf/auto_test.py — with L2 the flat
+    # buffer's post-layout size is (91, 1); with display:none it's
+    # (91, 35).
+    DEFAULT_CSS = """
+    PreviewContainer { width: 100%; height: auto; }
+    PreviewContainer.-hidden { display: none; }
+    PreviewContainer.-pre-reveal { visibility: hidden; }
     """
 
     def __init__(
@@ -1954,6 +1952,18 @@ class AcornApp(App[None]):
                 f"strips_len={len(getattr(cached, '_strips', []))} "
                 f"wrap_width={getattr(cached, '_wrap_width', None)}"
             )
+
+            def _log_after_layout() -> None:
+                self._diag_log(
+                    f"dispatch_flat post_layout parent={parent_id[:8]} "
+                    f"virtual_size={cached.virtual_size} size={cached.size} "
+                    f"scroll_y={int(cached.scroll_offset.y)} "
+                    f"strips_len={len(getattr(cached, '_strips', []))} "
+                    f"wrap_width={getattr(cached, '_wrap_width', None)} "
+                    f"display={cached.display} visible={cached.visible}"
+                )
+
+            self.call_after_refresh(self.call_after_refresh, _log_after_layout)
             self._hide_progress_bar()
             self._preview_parent_id = parent_id
             self._refresh_status()
@@ -2191,8 +2201,34 @@ class AcornApp(App[None]):
         self._match_targets = container.match_targets
 
     def _finalize_pre_reveal(self, container: PreviewContainer, focus_chunk_seq: int) -> None:
-        """Scroll the new container to the focused chunk and then drop
-        ``-pre-reveal`` so it paints at the match, not at the file top."""
+        """Lift ``-pre-reveal`` once the focused chunk is ready, then
+        scroll to it.
+
+        Earlier this method ran scroll first with ``on_done=_reveal``,
+        but that deadlocked: while ``-pre-reveal`` (visibility:hidden)
+        is on the container, Textual's compositor doesn't include
+        descendants in its ``_full_map`` (textual/_compositor.py:731 —
+        ``elif visible:``). ``target.region`` stays NULL_REGION for
+        the whole retry budget (~1.5 s in real TUI), then scroll
+        fires anyway against zero geometry and lands at the doc top.
+        The mount task's finally-block re-anchor eventually corrects
+        it ~700 ms later — total ~2.2 s of "wait + jump + jump".
+
+        A previous attempt (commit c4a07d7, reverted in a10b7ff)
+        lifted ``-pre-reveal`` immediately then scheduled scroll
+        via ``call_after_refresh``. That broke first-file loads
+        because the focused chunk widget was in the tree but its
+        compose() hadn't run yet — user saw an empty visible
+        container.
+
+        This version polls for ``first_match_block`` (the signal
+        that AcornMarkdown's compose finished) up to a bounded
+        retry budget, THEN lifts ``-pre-reveal`` and schedules scroll
+        on a two-tick chain (giving the compositor one tick to
+        rebuild ``_full_map`` with the now-visible widgets, then
+        one tick for ``_do_scroll_to_chunk`` to query a populated
+        ``target.region``).
+        """
         import time
 
         t0 = time.perf_counter()
@@ -2201,23 +2237,55 @@ class AcornApp(App[None]):
             f"parent_id={container.parent_doc_id}"
         )
 
+        self._do_finalize_pre_reveal(container, focus_chunk_seq, retries=10, t0=t0)
+
+    def _do_finalize_pre_reveal(
+        self,
+        container: PreviewContainer,
+        focus_chunk_seq: int,
+        retries: int,
+        t0: float,
+    ) -> None:
+        """One polling iteration of finalize. Lifts the class once the
+        focused chunk's compose is done, or once retry budget is
+        exhausted (failsafe — better a brief flash than a hang)."""
+        import time
+
         from acorn.tui import _perf
 
-        def _reveal() -> None:
-            container.remove_class("-pre-reveal")
-            self._hide_progress_bar()
-            _perf.mark(
-                "click_to_display_end",
-                parent_id=container.parent_doc_id,
-                focus_seq=focus_chunk_seq,
-                path="warm_pre_reveal",
+        header = container.chunk_widgets.get(focus_chunk_seq)
+        compose_done = True
+        if isinstance(header, AcornMarkdown):
+            compose_done = header.first_match_block is not None
+        if not compose_done and retries > 0:
+            self.call_after_refresh(
+                self._do_finalize_pre_reveal,
+                container,
+                focus_chunk_seq,
+                retries - 1,
+                t0,
             )
+            return
+
+        wait_ms = (time.perf_counter() - t0) * 1000
+        container.remove_class("-pre-reveal")
+        self._hide_progress_bar()
+        _perf.mark(
+            "click_to_display_end",
+            parent_id=container.parent_doc_id,
+            focus_seq=focus_chunk_seq,
+            path="warm_pre_reveal",
+        )
+
+        def _scroll_now() -> None:
+            self._scroll_preview_to_chunk(focus_chunk_seq)
             self._diag_log(
                 f"finalize_pre_reveal done seq={focus_chunk_seq} "
-                f"elapsed_ms={(time.perf_counter() - t0) * 1000:.1f}"
+                f"wait_ms={wait_ms:.1f} elapsed_ms={(time.perf_counter() - t0) * 1000:.1f} "
+                f"compose_done={compose_done}"
             )
 
-        self._scroll_preview_to_chunk(focus_chunk_seq, on_done=_reveal)
+        self.call_after_refresh(_scroll_now)
 
     def _cancel_preview_mount_task(self) -> None:
         """Cancel any in-flight mount task. The cancelled task's
@@ -3242,34 +3310,6 @@ class AcornApp(App[None]):
                 )
                 path = f"fallback({type(target).__name__})"
         if target.region.height == 0 and retries > 0:
-            # Pre-reveal deadlock: Textual's compositor only places
-            # currently-visible widgets in its full_map (see
-            # textual/_compositor.py add_widget — `elif visible:`).
-            # While ``-pre-reveal`` (visibility:hidden) is on the
-            # container, no descendant has a region, so
-            # ``target.region`` stays NULL_REGION forever and the
-            # retry chain exhausts its budget.
-            #
-            # Removing the class alone is NOT enough: CSS class
-            # changes flow through Stylesheet.replace_rules →
-            # node.notify_style_update, neither of which sets
-            # ``_layout_required``. The compositor's cached
-            # full_map is never invalidated, so even after the
-            # class lifts the next retry still sees NULL_REGION.
-            # An explicit ``refresh(layout=True)`` flips
-            # ``_layout_required = True`` so the next idle pass
-            # rebuilds the map with the now-visible descendants.
-            header_widget = self._chunk_widgets.get(focus_chunk_seq)
-            container = header_widget.parent if header_widget is not None else None
-            while container is not None and not isinstance(container, PreviewContainer):
-                container = container.parent
-            if container is not None and container.has_class("-pre-reveal"):
-                container.remove_class("-pre-reveal")
-                container.refresh(layout=True)
-                self._diag_log(
-                    f"do_scroll seq={focus_chunk_seq} pre_reveal_lifted "
-                    f"retries_left={retries}"
-                )
             self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq, retries - 1, on_done)
             return
         if target.region.height == 0:
