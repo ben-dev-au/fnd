@@ -57,13 +57,15 @@ prototype below tightened the spread, supporting this.
 
 ## Results so far
 
-| commit | prototype | small | heavy | table_heavy | fence_heavy |
-|---|---|---|---|---|---|
-| 32438f5 | baseline | 85 | 1134 | 2284 | 348 |
-| 9481f51 | L2 Absolute-Hidden | 84 (-1%) | 563 (-50%) | 1352 (-41%) | 317 (-9%) |
-| 2274e99 | W8 unstyled (force flat) | 15 (-82%) | 31 (-97%) | 25 (-99%) | 15 (-96%) |
-| 7344e34 | W8 styled (rich.markdown) | 19 (-77%) | 114 (-90%) | 126 (-94%) | 263 (-24%) |
-| 34fcb20 | F2/F3 cursor-following prefetch | — | — | — | — |
+| commit | prototype | small | heavy | table_heavy | fence_heavy | functional cost |
+|---|---|---|---|---|---|---|
+| 32438f5 | baseline | 85 | 1134 | 2284 | 348 | — |
+| 9481f51 | L2 Absolute-Hidden | 84 (-1%) | 563 (-50%) | 1352 (-41%) | 317 (-9%) | **none** |
+| cc032a2 | W3 DataTable (+L2) | 85 | 692 (-39%) | 505 (-78%) | 357 | minor: cell focus model changes |
+| HEAD | **W-Hybrid (+L2)** | **64 (-24%)** | **272 (-76%)** | **263 (-88%)** | 399 (+15%) | medium: fence focus + per-paragraph DOM |
+| 2274e99 | W8 unstyled (force flat) | 15 (-82%) | 31 (-97%) | 25 (-99%) | 15 (-96%) | very high: no rendering |
+| a6e6519 | W8 styled (rich.markdown) | 19 (-77%) | 114 (-90%) | 126 (-94%) | 263 (-24%) | high: no widgets at all |
+| 34fcb20 | F2/F3 cursor-following prefetch | — | — | — | — | none |
 
 W8 unstyled is the upper bound (lose all markdown rendering). W8
 styled keeps Rich's markdown formatting (headings, bold, lists, table
@@ -97,16 +99,43 @@ What's preserved:
 
 ### Combined ship recommendation (pending review)
 
-For a single coherent landing:
-- **W8 styled** as the default md path. Move docx/pptx through it too
-  if the visual fidelity holds (untested today — they have body_md but
-  the rendering may differ).
-- **L2** retained for any chunks that still need the structural path
-  (e.g. if we keep structural as a fallback for docx/pptx).
-- **F2/F3** cursor-following prefetch — separate axis, ships with
-  either.
+**Updated after W-Hybrid prototype: there's now a viable middle path
+that retains most interactive functionality.**
 
-Estimated combined cold latency on heavy md once W8 lands: ~115 ms.
+Two coherent landing options:
+
+**Option A — W-Hybrid + L2 + F2/F3 (functional)**
+- W-Hybrid per chunk: 1 text Static + 1 DataTable per table + 1
+  Syntax Static per fence. Preserves: cell-precision scroll
+  (DataTable), syntax-highlighted code (Syntax), match highlights,
+  scroll-to-match, link metadata (recoverable via action_link).
+- L2 for any chunks that bypass W-Hybrid.
+- F2/F3 cursor-following prefetch.
+- Estimated heavy cold: ~270 ms. Falls short of W8's 114 ms but
+  preserves what W8 throws away.
+
+**Option B — W8 styled + L2 + F2/F3 (max-speed, max-loss)**
+- W8 styled as the default md path. Loses per-cell focus, fence
+  focus, all per-paragraph widget structure.
+- L2 retained for non-md structural files.
+- F2/F3 cursor-following prefetch.
+- Estimated heavy cold: ~115 ms.
+
+The choice between A and B is a real product decision: speed vs.
+fidelity. A still hits "fast" (300 ms is well under the 2-3 s baseline
+worst case the user complained about); B hits "instant" but compromises.
+
+**Workarounds for W-Hybrid's remaining losses (Option A):**
+- Inline link clicks: recoverable. Rich preserves `Style.link`
+  through `render_lines` (probed today). Wire `action_link` on
+  AcornChunkHybrid to post `Markdown.LinkClicked`. ~30 LOC.
+- Fence focus + horizontal scroll: harder. Real `MarkdownFence`
+  requires a parent Markdown widget. Workarounds: subclass to relax
+  the parent requirement, or wrap Syntax in a focusable
+  ScrollableContainer (one container per fence — adds widget
+  back per fence, but bounded).
+- Per-paragraph fine-grained scroll: lost in both A and B. Chunk-
+  level scroll precision still works.
 
 ### Harness notes / gotchas
 
@@ -123,15 +152,41 @@ Estimated combined cold latency on heavy md once W8 lands: ~115 ms.
 
 ### Not done today
 
-- **W3 DataTable for markdown tables** — W8 obsoletes this for md
-  files. Still potentially useful for docx/pptx if they keep the
-  structural path. Deferred.
-- **2b L2 refinements** (paint-while-hidden, one-frame-flip) — L2
-  alone was insufficient to hit the 300 ms target. W8 styled hits a
-  better target without needing 2b. Deferred.
+- **W3 DataTable standalone** — done as cc032a2. Big win on
+  table_heavy (-78% vs baseline), but its real value is as a
+  component inside W-Hybrid.
+- **2b L2 refinements** (paint-while-hidden, one-frame-flip) — still
+  unexplored. Could push L2-only path closer to a no-functional-loss
+  "instant".
+- **Background widget pre-build cache** — outline only. Pre-mount the
+  full structural widget tree behind L2's absolute-hidden mask, so
+  cold clicks are visibility flips. Equivalent functionality, max
+  speed. Untested; could be the cleanest answer if implementable.
+- **Smarter async mount (focused-chunk-only sync mount)** — push
+  existing _mount_chunks_async further: synchronously mount JUST the
+  focused chunk, lazily mount others post-reveal. Untested.
 - **gc.freeze session test** — V14 (Python 3.14 mostly fixes upstream
-  GC) plus W8 eliminating most widgets means gen2 pressure is
-  irrelevant once W8 ships. Deferred.
+  GC) plus widget-reduction options means gen2 pressure is less
+  relevant. Lowest priority, still deferred.
+
+### Open prototypes for tomorrow / next session
+
+In priority order for the "fast AND functional" goal:
+
+1. **Background widget pre-build cache** — if every prefetched file
+   has its widget tree pre-mounted behind absolute-hidden, click-to-
+   display is a class flip (sub-50 ms) with **zero** functional cost.
+   Needs investigation of the prefetch path's mount lifecycle.
+2. **W-Hybrid fence-focus recovery** — wrap each Syntax in a
+   `ScrollableContainer(can_focus=True)`. Adds 30 widgets to
+   fence_heavy but those are simple containers, not block trees.
+3. **W-Hybrid link-click wiring** — 30 LOC; restores inline link
+   click handling. Recovery is mechanically straightforward.
+4. **W-Hybrid for docx/pptx** — current prototype is md-only. They
+   also go through the structural path and would benefit.
+5. **Smarter async mount** — synchronously mount the focused chunk
+   only; lazy-mount the rest. Lowers first-paint without an
+   architecture change.
 
 ## Exit criteria per prototype
 
