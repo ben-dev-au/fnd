@@ -1,5 +1,83 @@
 # Preview perf — focused investigation
 
+## ⚠️ HANDOFF — pre-compact 2026-05-14 late evening
+
+**Uncommitted in working tree (acorn/tui/app.py):**
+- Silent-mode resume for within-file navigation. `_dispatch_preview_mount` "already active, focus not yet mounted" branch no longer calls `_show_progress_bar`; passes `silent=True` to `_mount_chunks_async`. Tests pass. NOT committed yet pending user sign-off — the user's actual concern was the underlying mounting, not the bar.
+
+**Real outstanding bugs the user reported (NONE FIXED YET — diagnose with the harness first, no speculative edits):**
+
+1. **Mounting happens past file ~10 even when navigating slowly.** This contradicts the cursor-following prefetch design. Expected: `_prefetch_top_results(anchor_parent_id=parent_id)` should re-anchor the prefetch window around the cursor on every settled cursor move; files entering the new window get pre-mounted ahead of click. Observed: mount work fires AT click time well past file 10, suggesting:
+   - Cursor-following may not be re-anchoring as expected, OR
+   - Re-anchoring happens but new files don't get pre-mounted in time (decode + mount latency exceeds nav cadence), OR
+   - My `_PREFETCH_MOUNT_RADIUS = 0` change means prefetch only mounts ONE chunk; first-click then has to do Phase 1b/2 expansion. That's still on-click work, just in `_mount_chunks_async` not the cold path. Possibly that's what the user sees as "mounting".
+   - **First diagnostic step:** add diag logging or a new bench that emits the prefetch window membership across nav events, plus what triggers mount work at click time. DO NOT change code before this surfaces the actual cause.
+
+2. **Markdown formatting "weird"** — user said "it's back... weird..." after the W3 fix. Unclear what's specifically wrong. Need a screenshot or description. Possibly related to W3 DataTable visual style not matching MarkdownTable (no borders, no row wrap).
+
+3. **Tables need row wrap + borders.** User picked **Option C** (set `Text(text, overflow="fold")` on each cell so DataTable's cell renderer wraps). **Verify** DataTable actually honours `Text.overflow` before claiming a fix. If C doesn't work, present A (CSS-only styling) and B (pre-wrap + explicit row heights) as the next options. **Do NOT swap DataTable for another widget without proposing first** — the rich.Table swap was unilateral and got reverted.
+
+**Architectural lessons re-learned this session (now memorialised in user memory):**
+- Build/use a measurement harness BEFORE writing fixes. Every speculative change in this session either failed or got reverted; every fix that landed cleanly came from a number in `bench_input_lag.py` or `auto_test.py`.
+- Don't swap widget types or flip default code paths without proposing options.
+- Multi-paragraph comments are an AI tell. Keep them to one line, load-bearing only.
+
+**Current default behaviour (committed):**
+- W3 DataTable for markdown tables — column-width fix landed (`_content_to_text` Content→Text conversion). Tables render with proper widths now but no borders and no row wrap.
+- Pre-mount structural on by default (`_prefetch_mount_structural` runs unless `ACORN_NO_PREMOUNT=1`).
+- `_BACKGROUND_FILL_RADIUS = 10`, `_PREFETCH_MOUNT_RADIUS = 0`.
+- `_PREVIEW_CACHE_MAX_FILES = 64`.
+- Wall-clock yields (`asyncio.sleep(0.002)`) in Phase 2 + prefetch loops.
+- Drain stale jobs in `_prefetch_top_results`.
+- Preemptive `_cancel_preview_mount_task` in `_schedule_preview_load` on cross-file cursor move.
+- `_apply_pending_scroll` rebuilds strips on wrap-width mismatch (flat-path scroll race fix).
+- Cold-path `_finalize_pre_reveal` polls `first_match_block` then lifts `-pre-reveal` (no retry-chain deadlock).
+- `display:none` for `PreviewContainer.-hidden` (fixes PDF height=1).
+
+**Measured behaviour (auto_test.py + bench_input_lag.py):**
+- pilot.pause median: 24 ms (was 80 ms pre-W3 default)
+- Cached structural scrolls/click: 1.0
+- Cold path elapsed: ~150-400 ms
+- PDF post-layout size: (91, 35) — full pane height
+- 0 zero-region misses on cold clicks
+- DOM size after 6 clicks: ~130 widgets (was 3000)
+
+**Env flags currently usable:**
+```
+ACORN_NO_W3=1            # legacy widget-per-cell tables
+ACORN_NO_PREMOUNT=1      # no structural pre-mount (cold path only)
+ACORN_W_HYBRID=1         # full hybrid chunk widget (drops formatting)
+ACORN_PREMOUNT=1         # legacy alias — now no-op as default is on (just don't set ACORN_NO_PREMOUNT)
+ACORN_REVEAL_FIRST=1     # warm cache-hit reveal-first (still env-gated)
+ACORN_FORCE_FLAT=1       # route md through flat path
+ACORN_PREVIEW_DIAG=1     # writes /tmp/acorn-preview-diag.log
+ACORN_PERF=1             # _perf records
+```
+
+**Harnesses:**
+- `tests/perf/auto_test.py` — cold elapsed, scroll counts, flat post-layout size.
+- `tests/perf/bench_input_lag.py` — pilot.pause vs asyncio.sleep(0) across phases; DOM widget count.
+
+**Recent commits (most recent last):**
+- `c099336` cold-path deadlock break + dedupe warm-path scrolls + PDF wrap guard
+- `dbf1cc0` smoother tail mount + chained scroll on reveal-first
+- `c5da423` force layout on pre-reveal lift + log flat-path (later rolled back inside `dab6a69`)
+- `1787ced` PDF height=1 + cold-path retry chain root causes
+- `db04036` test(perf): harness parses by focus_seq; remove double-fire NodeSelected
+- `072b2d3` kill the journey on cold load + free the loop for input
+- `9771e00` default-off structural pre-mount; new input-lag bench
+- `dab6a69` first-load scroll accuracy on both structural and flat
+- `bbc3001` W3 DataTable + structural pre-mount on by default
+- `3d46048` W3 DataTable column widths — Content → rich.Text conversion
+
+**Next-session priorities (the user's stated ones, in order):**
+1. Diagnose why mounting happens past file ~10 with slow navigation. Build the diagnostic first — don't speculate.
+2. Tables: confirm Option C (overflow="fold" on Text cells) works; if so apply; else propose A/B.
+3. Clarify what "markdown formatting weird" means — screenshot needed.
+4. Commit silent-mount-mode change after item 1 (it may turn out to be unnecessary if mounting itself is fixed).
+
+---
+
 ## ✅ Progress since 2026-05-14 handoff (current state)
 
 Defaults that ship in this branch now:
