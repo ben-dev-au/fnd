@@ -25,11 +25,13 @@ import pytest
 
 @pytest.fixture
 def small_corpus(tmp_path: Path) -> Path:
-    """Ten short markdown files so each one falls comfortably under
-    the pre-fix cache threshold and exercises the LRU eviction path."""
+    """Short markdown files — enough to exceed the LRU cap and exercise
+    eviction."""
+    from acorn.tui.app import _PREVIEW_CACHE_MAX_FILES
+
     root = tmp_path / "corpus"
     root.mkdir()
-    for i in range(10):
+    for i in range(_PREVIEW_CACHE_MAX_FILES + 4):
         (root / f"doc_{i:02d}.md").write_text(
             f"# Title {i}\n\nThis is a short note about apples and oranges. "
             f"It contains apple references for query matching. Document {i}.\n"
@@ -42,8 +44,7 @@ async def test_preview_container_count_bounded_by_cache(
     small_corpus: Path, tmp_index_dir: Path
 ) -> None:
     """Visiting more files than the LRU capacity must NOT grow the DOM
-    unboundedly. With 10 small markdown files visited in sequence, the
-    PreviewContainer count must stay at or below
+    unboundedly. PreviewContainer count must stay at or below
     ``_PREVIEW_CACHE_MAX_FILES``. Pre-fix this grew linearly with visits."""
     from textual.widgets import Tree
 
