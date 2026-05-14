@@ -46,8 +46,10 @@ from textual.widgets._markdown import (
     MarkdownH6,
     MarkdownOrderedListItem,
     MarkdownParagraph,
+    MarkdownTable,
     MarkdownTD,
     MarkdownTH,
+    MarkdownTR,
     MarkdownUnorderedListItem,
 )
 from textual.widgets.tree import TreeNode
@@ -389,6 +391,56 @@ class AcornMarkdownTD(_HighlightingBlockMixin, MarkdownTD):
     pass
 
 
+class AcornMarkdownTableDT(MarkdownTable):
+    """W3 prototype: render a markdown table as a single DataTable
+    widget instead of ~N MarkdownTableCellContents widgets.
+
+    Gated by ``ACORN_W3_DATATABLE=1`` (off => parent's compose runs).
+    """
+
+    def compose(self):  # type: ignore[override]
+        import os
+        if os.environ.get("ACORN_W3_DATATABLE") != "1":
+            yield from super().compose()
+            return
+        from textual.coordinate import Coordinate
+        from textual.widgets import DataTable
+        headers, rows = self._get_headers_and_rows()
+        self._headers = headers
+        self._rows = rows
+        dt: DataTable = DataTable(cursor_type="none", zebra_stripes=False)
+        if headers:
+            dt.add_columns(*[h for h in headers])
+        for row in rows:
+            if row:
+                dt.add_row(*row, height=None)
+        match_coord = _find_first_match_coord_in_table(headers, rows)
+        if match_coord is not None:
+            dt._acorn_match_coord = Coordinate(*match_coord)  # type: ignore[attr-defined]
+        yield dt
+
+
+def _find_first_match_coord_in_table(
+    headers: list, rows: list[list]
+) -> tuple[int, int] | None:
+    """Return (row, col) of the first cell whose Content carries any
+    highlight span. Header row counts as row -1 (DataTable headers
+    have their own coord space); we map header hits to row 0 col c
+    as a best-effort approximation since DataTable cursor doesn't
+    address headers directly.
+    """
+    for col, h in enumerate(headers):
+        spans = getattr(h, "spans", None) or getattr(h, "_spans", None)
+        if spans:
+            return (0, col)
+    for r_idx, row in enumerate(rows):
+        for c_idx, cell in enumerate(row):
+            spans = getattr(cell, "spans", None) or getattr(cell, "_spans", None)
+            if spans:
+                return (r_idx, c_idx)
+    return None
+
+
 class AcornMarkdown(Markdown):
     """Markdown widget with inline search-term highlighting.
 
@@ -428,6 +480,7 @@ class AcornMarkdown(Markdown):
         "list_item_unordered_open": AcornMarkdownUnorderedListItem,
         "th_open": AcornMarkdownTH,
         "td_open": AcornMarkdownTD,
+        "table_open": AcornMarkdownTableDT,
     }
 
     def __init__(
