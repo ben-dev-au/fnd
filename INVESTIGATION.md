@@ -62,10 +62,11 @@ prototype below tightened the spread, supporting this.
 | 32438f5 | baseline | 85 | 1134 | 2284 | 348 | — |
 | 9481f51 | L2 Absolute-Hidden | 84 (-1%) | 563 (-50%) | 1352 (-41%) | 317 (-9%) | **none** |
 | cc032a2 | W3 DataTable (+L2) | 85 | 692 (-39%) | 505 (-78%) | 357 | minor: cell focus model changes |
-| HEAD | **W-Hybrid (+L2)** | **64 (-24%)** | **272 (-76%)** | **263 (-88%)** | 399 (+15%) | medium: fence focus + per-paragraph DOM |
+| d7df711 | W-Hybrid (+L2) | 64 (-24%) | 272 (-76%) | 263 (-88%) | 399 (+15%) | medium: fence focus + per-paragraph DOM |
 | 2274e99 | W8 unstyled (force flat) | 15 (-82%) | 31 (-97%) | 25 (-99%) | 15 (-96%) | very high: no rendering |
 | a6e6519 | W8 styled (rich.markdown) | 19 (-77%) | 114 (-90%) | 126 (-94%) | 263 (-24%) | high: no widgets at all |
 | 34fcb20 | F2/F3 cursor-following prefetch | — | — | — | — | none |
+| **HEAD** | **🏆 Warm reveal-first** (pre-mount + visibility flip, partial-OK) | **8 (-91%)** | **97 (-91%)** | **253 (-89%)** | **86 (-75%)** | **none** |
 
 W8 unstyled is the upper bound (lose all markdown rendering). W8
 styled keeps Rich's markdown formatting (headings, bold, lists, table
@@ -99,10 +100,26 @@ What's preserved:
 
 ### Combined ship recommendation (pending review)
 
-**Updated after W-Hybrid prototype: there's now a viable middle path
-that retains most interactive functionality.**
+**Updated after reveal-first breakthrough: there's now a no-compromise
+instant path. The earlier W-Hybrid / W8 / "pick your trade-off"
+discussion below is preserved for reference but reveal-first
+supersedes both as the default recommendation.**
 
-Two coherent landing options:
+**Option 0 (NEW, recommended) — Reveal-first + L2 + F2/F3 + structural pre-mount**
+- Reveal-first cache-hit path (per the breakthrough section above).
+- L2's Absolute-Hidden CSS for prefetched containers (already in).
+- F2/F3 cursor-following prefetch (already in).
+- Existing structural pre-mount (_prefetch_mount_structural).
+- Measured heavy warm: 97 ms. Functional cost: zero.
+
+Three of four profiles sub-100 ms with full features. The
+"perceptible-flash" caveat above is the only open item.
+
+If you want speed-only without features: W8 styled still applies.
+If you want a middle ground for fence-focus + cell focus without
+reveal-first: W-Hybrid still applies. Both options below.
+
+**Earlier two options (now superseded by Option 0):**
 
 **Option A — W-Hybrid + L2 + F2/F3 (functional)**
 - W-Hybrid per chunk: 1 text Static + 1 DataTable per table + 1
@@ -169,7 +186,77 @@ worst case the user complained about); B hits "instant" but compromises.
   GC) plus widget-reduction options means gen2 pressure is less
   relevant. Lowest priority, still deferred.
 
-### Warm-state measurement attempt — anomaly worth flagging
+### 🏆 Warm reveal-first: solved (the no-compromise instant answer)
+
+**Status:** prototype landed (commit `acorn/tui/app.py` + warm benchmark
+results in `tests/perf/results/warm_reveal_first_v2.json`). Behind
+`ACORN_REVEAL_FIRST=1`. Default behaviour unchanged.
+
+**Measured warm cold (5 runs, median):**
+
+| profile | prior (warm path) | reveal-first | delta |
+|---|---|---|---|
+| small | 85 ms | **8 ms** | -91% |
+| heavy | 985 ms | **97 ms** | -90% |
+| table_heavy | 1660 ms | **253 ms** | -85% |
+| fence_heavy | 645 ms | **86 ms** | -87% |
+
+**Three of four profiles are sub-100 ms. Functional cost: zero.** Full
+structural widget tree intact — link clicks, first_match_block, per-
+block scroll precision, syntax-highlighted scrollable code fences, etc.
+
+**Root cause (now documented):**
+
+- Textual's compositor splits widgets into a `_visible_map` and an
+  `_invisible_widgets` set (`_compositor.py:543`).
+- `widget.region` calls `screen.find_widget(widget)` which looks in
+  the visible map. Invisible widgets raise `NoWidget`, caught by
+  `widget.region` returning `NULL_REGION = Region(0,0,0,0)`.
+- L2's CSS preserves the per-widget *arrange cache* (V4) — that's a
+  CPU saving on visible-tree re-arrange. It does NOT populate the
+  spatial map for invisible widgets. So `widget.region` is `(0,0,0,0)`
+  while the container is `-hidden` *or* `-pre-reveal`.
+- The 30-retry `_do_scroll_to_chunk` waits for `region.height > 0`.
+  With `-pre-reveal` keeping the container invisible, that never
+  resolves — retries exhaust and ~500 ms is burned.
+
+**The fix:**
+
+In `_dispatch_preview_mount` cache-hit branch (gated by
+`ACORN_REVEAL_FIRST=1`):
+
+1. Activate the container with `pre_reveal=False` — full visibility
+   immediately. Layout propagates on the next refresh tick.
+2. Schedule `_scroll_preview_to_chunk` via `call_after_refresh`. The
+   one-frame delay is enough for regions to populate; scroll lands
+   at the correct position on the first try (no retry chain).
+3. If the cached container is *partial* (focused chunk + radius from
+   the prefetch path, but not the full file), kick off a background
+   `_mount_chunks_async` to fill in the rest *after* the user already
+   sees the focused window.
+
+**Production caveat (not measured under Pilot):** the
+"activate-then-scroll" path means there's *one frame* where the
+container is visible at file-top before scroll lands. In Pilot
+test mode this is invisible (<16 ms). On a real TUI it may be
+perceptible as a tiny flash. If that's a real UX problem, the
+mitigation is to give the compositor one synchronous render pass
+*while* the container is in pre-reveal, *then* scroll, *then*
+remove pre-reveal. Needs Textual API exploration.
+
+**Open questions before shipping:**
+
+1. The fence_heavy regression in W-Hybrid was caused by per-fence
+   Pygments setup — does reveal-first eliminate it? Earlier numbers
+   suggest yes (fence_heavy warm 86 ms vs cold L2 317 ms — the
+   pre-mounted Pygments work is amortized).
+2. Combine with W-Hybrid for chunks where DataTable / Static
+   consolidation would further reduce per-chunk widget count?
+   Probably not necessary given reveal-first already hits sub-100 ms
+   on heavy, but worth measuring.
+3. Visible flash in production — needs a manual run to confirm.
+
+### Earlier warm anomaly (now resolved by the above)
 
 Modified the harness to wait for the WIP's existing structural
 pre-mount path (`_prefetch_mount_structural`) to complete before
