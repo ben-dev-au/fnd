@@ -49,7 +49,6 @@ from textual.widgets._markdown import (
     MarkdownTable,
     MarkdownTD,
     MarkdownTH,
-    MarkdownTR,
     MarkdownUnorderedListItem,
 )
 from textual.widgets.tree import TreeNode
@@ -163,6 +162,7 @@ class PreviewContainer(Container):
     """
 
     import os as _os
+
     if _os.environ.get("ACORN_DISABLE_L2") == "1":
         # Pre-investigation behaviour for A/B verification on real corpora.
         _HIDDEN_RULE = "PreviewContainer.-hidden { display: none; }"
@@ -403,11 +403,13 @@ class AcornMarkdownTableDT(MarkdownTable):
 
     def compose(self):  # type: ignore[override]
         import os
+
         if os.environ.get("ACORN_W3_DATATABLE") != "1":
             yield from super().compose()
             return
         from textual.coordinate import Coordinate
         from textual.widgets import DataTable
+
         headers, rows = self._get_headers_and_rows()
         self._headers = headers
         self._rows = rows
@@ -423,9 +425,7 @@ class AcornMarkdownTableDT(MarkdownTable):
         yield dt
 
 
-def _find_first_match_coord_in_table(
-    headers: list, rows: list[list]
-) -> tuple[int, int] | None:
+def _find_first_match_coord_in_table(headers: list, rows: list[list]) -> tuple[int, int] | None:
     """Return (row, col) of the first cell whose Content carries any
     highlight span. Header row counts as row -1 (DataTable headers
     have their own coord space); we map header hits to row 0 col c
@@ -1057,7 +1057,6 @@ class AcornApp(App[None]):
         self._progress = ProgressFacility(self)
         # Single-consumer drainer serializes prefetch widget-mounts.
         import asyncio as _asyncio
-        from typing import Any as _Any
 
         self._prefetch_sink_queue: _asyncio.Queue[_Any] | None = None
         self._prefetch_sink_drainer: _Any | None = None
@@ -1630,7 +1629,9 @@ class AcornApp(App[None]):
            first; its callback enters step 3.
         """
         import asyncio
+
         from acorn.tui import _perf
+
         _perf.mark("click_to_display_start", parent_id=parent_id, focus_seq=focus_chunk_seq)
 
         # Any pending debounce timer is now moot — we're committing to
@@ -1774,6 +1775,7 @@ class AcornApp(App[None]):
             container = self._active_preview
             if container.is_complete or focus_chunk_seq in container.chunk_widgets:
                 from acorn.tui import _perf
+
                 _perf.mark(
                     "click_to_display_end",
                     parent_id=parent_id,
@@ -1824,6 +1826,7 @@ class AcornApp(App[None]):
                     break
 
         import os
+
         reveal_first = os.environ.get("ACORN_REVEAL_FIRST") == "1"
         self._diag_log(
             f"dispatch_preview cache_check parent={parent_id[:8]} "
@@ -1833,8 +1836,7 @@ class AcornApp(App[None]):
             f"focus_seq={focus_chunk_seq} reveal_first_env={reveal_first}"
         )
         if cached is not None and (
-            cached.is_complete
-            or (reveal_first and focus_chunk_seq in cached.chunk_widgets)
+            cached.is_complete or (reveal_first and focus_chunk_seq in cached.chunk_widgets)
         ):
             # Reveal-first: -pre-reveal (visibility:hidden) leaves the
             # widget out of the compositor's spatial map, so child
@@ -1848,13 +1850,22 @@ class AcornApp(App[None]):
             if reveal_first:
                 self._activate_preview_container(cached, pre_reveal=False)
                 self._refresh_match_scrollbar(chunks)
+                # Two-tick scroll: one tick for the visibility flip to
+                # propagate through the compositor, a second for child
+                # regions to be sized. Without the second hop the scroll
+                # occasionally lands at the chunk's top edge instead of
+                # the matched paragraph because region geometry is still
+                # (0,0,0,0) when scroll fires.
                 self.call_after_refresh(
-                    self._scroll_preview_to_chunk, focus_chunk_seq
+                    self.call_after_refresh,
+                    self._scroll_preview_to_chunk,
+                    focus_chunk_seq,
                 )
                 if not cached.is_complete:
                     # Resume the remaining mounts in the background so the
                     # rest of the file fills in while the user reads.
                     import asyncio as _asyncio
+
                     self._preview_mount_task = _asyncio.create_task(
                         self._mount_chunks_async(parent_id, focus_chunk_seq, chunks, cached)
                     )
@@ -1991,12 +2002,14 @@ class AcornApp(App[None]):
         fuzzy ones) — agree across pipelines."""
         spec = self._effective_match_spec
         import os
+
         if (
             os.environ.get("ACORN_FLAT_MD_STYLED") == "1"
             and chunks
             and any(c.kind == "md" and c.body_md for c in chunks)
         ):
             from acorn.tui._md_flat import build_md_file_view
+
             try:
                 pane_widget = self.query_one("#preview_pane", VerticalScroll)
                 wrap_width = max(20, pane_widget.content_size.width - 1)
@@ -2018,6 +2031,7 @@ class AcornApp(App[None]):
         containers and other flat buffers) so only one file is on
         screen at a time."""
         from acorn.tui import _perf
+
         self._clear_pane_placeholder()
         for child in self.query(PreviewContainer):
             child.add_class("-hidden")
@@ -2109,6 +2123,7 @@ class AcornApp(App[None]):
         (visibility: hidden) until ``_finalize_pre_reveal`` lands the
         scroll — no flash to file-top before the jump-to-match."""
         from acorn.tui import _perf
+
         self._clear_pane_placeholder()
         for child in self.query(PreviewContainer):
             if child is container:
@@ -2134,12 +2149,11 @@ class AcornApp(App[None]):
         self._chunk_widgets = container.chunk_widgets
         self._match_targets = container.match_targets
 
-    def _finalize_pre_reveal(
-        self, container: PreviewContainer, focus_chunk_seq: int
-    ) -> None:
+    def _finalize_pre_reveal(self, container: PreviewContainer, focus_chunk_seq: int) -> None:
         """Scroll the new container to the focused chunk and then drop
         ``-pre-reveal`` so it paints at the match, not at the file top."""
         import time
+
         t0 = time.perf_counter()
         self._diag_log(
             f"finalize_pre_reveal start seq={focus_chunk_seq} "
@@ -2301,6 +2315,7 @@ class AcornApp(App[None]):
 
         def _prefetch_one(parent_id: str, focus_seq: int) -> None:
             import time as _time
+
             t0 = _time.perf_counter()
             try:
                 fetched = searcher.get_file_chunks(parent_id, max_workers=decode_workers)
@@ -2339,16 +2354,17 @@ class AcornApp(App[None]):
                 except Exception:
                     return
                 bundle = (fv, strips, v2l, l2vs, wrap_width, base_width)
-                app.call_from_thread(
-                    app._record_prefetched_bundle, parent_id, query_sig, bundle
-                )
+                app.call_from_thread(app._record_prefetched_bundle, parent_id, query_sig, bundle)
                 app.call_from_thread(
                     app._prefetch_mount_flat, parent_id, query_sig, bundle, focus_seq
                 )
             else:
                 app.call_from_thread(
                     app._prefetch_mount_structural,
-                    parent_id, query_sig, list(fetched), focus_seq,
+                    parent_id,
+                    query_sig,
+                    list(fetched),
+                    focus_seq,
                 )
 
         def _prefetch() -> None:
@@ -2356,9 +2372,7 @@ class AcornApp(App[None]):
 
             workers = max(1, decode_workers)
             with ThreadPoolExecutor(max_workers=workers) as ex:
-                futures = [
-                    ex.submit(_prefetch_one, pid, focus) for pid, focus in targets
-                ]
+                futures = [ex.submit(_prefetch_one, pid, focus) for pid, focus in targets]
                 for f in as_completed(futures):
                     # Drop everything on query change — _run_query has cleared
                     # caches and any in-flight work here is stale.
@@ -2413,9 +2427,7 @@ class AcornApp(App[None]):
             return
 
         async def _job() -> None:
-            await self._prefetch_mount_flat_async(
-                parent_id, query_sig, bundle, focus_chunk_seq
-            )
+            await self._prefetch_mount_flat_async(parent_id, query_sig, bundle, focus_chunk_seq)
 
         q.put_nowait(_job)
 
@@ -2451,7 +2463,10 @@ class AcornApp(App[None]):
         focus_line = self._focus_line_for_chunk(fv, focus_chunk_seq)
         with contextlib.suppress(Exception):
             buf.set_prebuilt_view(
-                fv, strips, v2l, l2vs,
+                fv,
+                strips,
+                v2l,
+                l2vs,
                 wrap_width=wrap_width,
                 base_width=base_width,
                 initial_focus_line=focus_line,
@@ -2474,14 +2489,10 @@ class AcornApp(App[None]):
         yields to user-side mount first."""
         q = self._prefetch_sink_queue
         if q is None:
-            self._diag_log(
-                f"prefetch_mount_structural SKIPPED no-queue parent={parent_id[:8]}"
-            )
+            self._diag_log(f"prefetch_mount_structural SKIPPED no-queue parent={parent_id[:8]}")
             return
         if query_sig != self._current_query_signature():
-            self._diag_log(
-                f"prefetch_mount_structural SKIPPED stale-sig parent={parent_id[:8]}"
-            )
+            self._diag_log(f"prefetch_mount_structural SKIPPED stale-sig parent={parent_id[:8]}")
             return
         self._diag_log(
             f"prefetch_mount_structural QUEUED parent={parent_id[:8]} "
@@ -2504,14 +2515,12 @@ class AcornApp(App[None]):
     ) -> None:
         if query_sig != self._current_query_signature():
             self._diag_log(
-                f"prefetch_mount_structural_async SKIPPED stale-sig "
-                f"parent={parent_id[:8]}"
+                f"prefetch_mount_structural_async SKIPPED stale-sig " f"parent={parent_id[:8]}"
             )
             return
         if self._preview_cache.get(parent_id, query_sig) is not None:
             self._diag_log(
-                f"prefetch_mount_structural_async SKIPPED already-cached "
-                f"parent={parent_id[:8]}"
+                f"prefetch_mount_structural_async SKIPPED already-cached " f"parent={parent_id[:8]}"
             )
             return
         if (
@@ -2520,8 +2529,7 @@ class AcornApp(App[None]):
             and self._active_preview.query_signature == query_sig
         ):
             self._diag_log(
-                f"prefetch_mount_structural_async SKIPPED already-active "
-                f"parent={parent_id[:8]}"
+                f"prefetch_mount_structural_async SKIPPED already-active " f"parent={parent_id[:8]}"
             )
             return
         import asyncio
@@ -2531,13 +2539,10 @@ class AcornApp(App[None]):
             pane = self.query_one("#preview_pane", VerticalScroll)
         except Exception:
             self._diag_log(
-                f"prefetch_mount_structural_async SKIPPED no-pane "
-                f"parent={parent_id[:8]}"
+                f"prefetch_mount_structural_async SKIPPED no-pane " f"parent={parent_id[:8]}"
             )
             return
-        self._diag_log(
-            f"prefetch_mount_structural_async STARTING parent={parent_id[:8]}"
-        )
+        self._diag_log(f"prefetch_mount_structural_async STARTING parent={parent_id[:8]}")
         container = PreviewContainer(
             parent_doc_id=parent_id,
             query_signature=query_sig,
@@ -2593,8 +2598,10 @@ class AcornApp(App[None]):
         win_end = min(len(chunks), focus_idx + radius + 1)
         _perf.mark(
             "prefetch_loop_start",
-            parent_id=parent_id, focus_idx=focus_idx,
-            win=(win_start, win_end), total_chunks=len(chunks),
+            parent_id=parent_id,
+            focus_idx=focus_idx,
+            win=(win_start, win_end),
+            total_chunks=len(chunks),
         )
         self._diag_log(
             f"prefetch_loop_start parent={parent_id[:8]} focus={focus_idx} "
@@ -2625,16 +2632,15 @@ class AcornApp(App[None]):
                 seq = chunks[i].chunk_seq
                 md_widget = container.chunk_widgets.get(seq)
                 if md_widget is not None and isinstance(md_widget, AcornMarkdown):
-                    with contextlib.suppress(Exception), _perf.span(
-                        "prefetch_await_build", idx=i
-                    ):
+                    with contextlib.suppress(Exception), _perf.span("prefetch_await_build", idx=i):
                         async with md_widget.lock:
                             pass
                 await asyncio.sleep(0)
         finally:
             _perf.mark(
                 "prefetch_loop_end",
-                parent_id=parent_id, n_mounted=n_mounted,
+                parent_id=parent_id,
+                n_mounted=n_mounted,
                 mounted_indices_size=len(container.mounted_indices),
                 is_complete=container.is_complete,
             )
@@ -2674,9 +2680,7 @@ class AcornApp(App[None]):
                 wait_iters += 1
                 await asyncio.sleep(0.05)
             if wait_iters > 0:
-                self._diag_log(
-                    f"drainer JOB started after {wait_iters * 50}ms wait"
-                )
+                self._diag_log(f"drainer JOB started after {wait_iters * 50}ms wait")
             try:
                 await job()
             except Exception as e:
@@ -2799,7 +2803,8 @@ class AcornApp(App[None]):
             # Phase 2b: hidden-prepend ABOVE the window, capped at the
             # same radius. Each newly-mounted widget gets ``display =
             # False`` immediately, so it takes no layout space and the
-            # focused chunk doesn't drift while the rest mounts.
+            # focused chunk doesn't drift while the rest mounts. Yield
+            # per chunk so keystrokes are processed between mounts.
             above_start = max(0, focus_idx - _BACKGROUND_FILL_RADIUS)
             for i in range(win_start - 1, above_start - 1, -1):
                 if i in container.mounted_indices:
@@ -2811,19 +2816,20 @@ class AcornApp(App[None]):
                         w.display = False
                         hidden_widgets.append(w)
                 self._update_progress_bar(progress=len(container.mounted_indices))
-                if (win_start - i) % 15 == 0:
-                    await asyncio.sleep(0)
-            await asyncio.sleep(0)
+                await asyncio.sleep(0)
 
-            # Reveal every hidden widget in one pass. We don't scroll
-            # here — see the finally block. Hiding the progress bar
-            # also removes the ``is-loading`` class which un-hides the
-            # scrollbar; that itself can shift layout, so we want any
-            # final scroll re-anchor to happen AFTER all of these
-            # layout-affecting changes have settled.
+            # Reveal hidden widgets in small batches so the layout
+            # adjustment lands gradually instead of as one big punch.
+            # A single bulk reveal of 200+ widgets can stall the UI for
+            # tens of ms AND visibly resize/shift the preview. Batching
+            # with yields lets Textual process input/redraws between
+            # batches.
             if hidden_widgets:
-                for w in hidden_widgets:
-                    w.display = True
+                reveal_batch = 8
+                for idx in range(0, len(hidden_widgets), reveal_batch):
+                    for w in hidden_widgets[idx : idx + reveal_batch]:
+                        w.display = True
+                    await asyncio.sleep(0)
                 hidden_widgets.clear()
         finally:
             # Always reveal any widgets we hid; a cancelled task that
@@ -3034,8 +3040,10 @@ class AcornApp(App[None]):
         """
         source = c.body_md or _legacy_blocks_to_md(c.blocks)
         import os
+
         if os.environ.get("ACORN_W_HYBRID") == "1":
             from acorn.tui._md_hybrid import AcornChunkHybrid
+
             try:
                 pane_widget = self.query_one("#preview_pane", VerticalScroll)
                 wrap_width = max(20, pane_widget.content_size.width - 1)
@@ -3068,6 +3076,7 @@ class AcornApp(App[None]):
         # ACORN_PREVIEW_DIAG=1 appends to /tmp/acorn-preview-diag.log.
         # Investigation-only; remove once findings recorded.
         import os
+
         if not os.environ.get("ACORN_PREVIEW_DIAG"):
             return
         try:
@@ -3081,6 +3090,7 @@ class AcornApp(App[None]):
         # to /tmp/acorn-preview-diag.log. Always on (ignores the
         # env-var gate the log writes use) so a one-key tap works.
         from collections import Counter
+
         lines: list[str] = ["--- dump_preview ---"]
         active = self._active_preview
         flat = self._active_flat_buffer
@@ -3112,7 +3122,7 @@ class AcornApp(App[None]):
         except Exception:
             pass
         self.notify(
-            f"Dumped preview widget tree → /tmp/acorn-preview-diag.log",
+            "Dumped preview widget tree → /tmp/acorn-preview-diag.log",
             timeout=2,
         )
 
@@ -3182,9 +3192,7 @@ class AcornApp(App[None]):
                 )
                 path = f"fallback({type(target).__name__})"
         if target.region.height == 0 and retries > 0:
-            self.call_after_refresh(
-                self._do_scroll_to_chunk, focus_chunk_seq, retries - 1, on_done
-            )
+            self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq, retries - 1, on_done)
             return
         if target.region.height == 0:
             self._diag_log(
