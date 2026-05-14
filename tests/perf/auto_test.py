@@ -74,11 +74,12 @@ class ClickMetrics:
     parent: str
     path: str  # "structural"/"flat"
     cached: str  # "yes"/"no"
+    focus_seq: int | None
     focus_in_widgets: bool | None
     is_complete: bool | None
     finalize_elapsed_ms: float | None
     finalize_wait_ms: float | None
-    do_scroll_count: int
+    do_scroll_count: int  # only scrolls matching this click's focus_seq
     do_scroll_retries: list[int]
     do_scroll_max_retries: int
     pre_reveal_lifted: bool  # legacy field — pre-reveal-lift code removed
@@ -112,10 +113,12 @@ def parse_diag(text: str) -> list[ClickMetrics]:
         if "dispatch_preview cache_check" in line:
             close()
             kv = parse_kv(line)
+            seq_str = kv.get("focus_seq", "")
             cur = ClickMetrics(
                 parent=kv.get("parent", "")[:8],
                 path="structural",
                 cached=kv.get("cached", "?"),
+                focus_seq=int(seq_str) if seq_str.isdigit() else None,
                 focus_in_widgets=kv.get("focus_in_widgets") == "True",
                 is_complete=(
                     None if kv.get("is_complete") in {"None", None} else kv.get("is_complete") == "True"
@@ -130,14 +133,15 @@ def parse_diag(text: str) -> list[ClickMetrics]:
                 post_layout_size=None,
                 post_layout_virtual_size=None,
             )
-        elif "dispatch_flat " in line and "cache_hit" not in line and "prebuilt" not in line and "cold" not in line and "post_layout" not in line:
-            # The header line of a flat dispatch
+        elif line.startswith("dispatch_flat parent="):
             close()
             kv = parse_kv(line)
+            seq_str = kv.get("focus_seq", "")
             cur = ClickMetrics(
                 parent=kv.get("parent", "")[:8],
                 path="flat",
                 cached=kv.get("cached", "?"),
+                focus_seq=int(seq_str) if seq_str.isdigit() else None,
                 focus_in_widgets=None,
                 is_complete=None,
                 finalize_elapsed_ms=None,
@@ -159,12 +163,15 @@ def parse_diag(text: str) -> list[ClickMetrics]:
                 if w:
                     cur.finalize_wait_ms = float(w.group(1))
             elif "do_scroll" in line and "retries_used" in line:
-                m = re.search(r"retries_used=(\d+)", line)
-                if m:
-                    used = int(m.group(1))
-                    cur.do_scroll_count += 1
-                    cur.do_scroll_retries.append(used)
-                    cur.do_scroll_max_retries = max(cur.do_scroll_max_retries, used)
+                m_seq = re.search(r"do_scroll seq=(\d+)", line)
+                m_ret = re.search(r"retries_used=(\d+)", line)
+                if m_seq and m_ret and cur.focus_seq is not None:
+                    seq = int(m_seq.group(1))
+                    if seq == cur.focus_seq:
+                        used = int(m_ret.group(1))
+                        cur.do_scroll_count += 1
+                        cur.do_scroll_retries.append(used)
+                        cur.do_scroll_max_retries = max(cur.do_scroll_max_retries, used)
             elif "miss=zero-region" in line:
                 cur.miss_zero_region = True
             elif "pre_reveal_lifted" in line:
@@ -222,18 +229,20 @@ async def drive_app(corpus_root: Path, *, n_clicks: int = 10) -> str:
         # Give prefetch time to start populating cache before first click.
         await asyncio.sleep(0.5)
 
-        # Click each result in sequence. Pause between clicks so each
-        # one fully resolves before the next click overlaps it — the
-        # goal is to measure single-click behaviour cleanly, not
-        # debouncing.
+        # Click each result in sequence. Generous pause between clicks
+        # so the chained call_after_refresh scrolls have time to fire
+        # before the next click's cache_check — otherwise the parser
+        # attributes them to the wrong click.
         for i, node in enumerate(results[:n_clicks]):
+            # Setting cursor_line fires Tree.NodeHighlighted, which the
+            # app's @on handler binds to _schedule_preview_load. Don't
+            # also post NodeSelected — that would either no-op (good)
+            # or fire a duplicate dispatch via Textual's Tree internals.
             tree.cursor_line = node.line
-            await pilot.pause()
-            tree.post_message(Tree.NodeSelected(node))
-            for _ in range(60):
+            for _ in range(100):
                 await pilot.pause()
                 await asyncio.sleep(0.05)
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(1.0)
 
         # Final settle.
         await asyncio.sleep(0.5)
