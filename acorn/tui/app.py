@@ -1685,7 +1685,10 @@ class AcornApp(App[None]):
         # paint) ``_rebuild_after_layout`` will catch it.
         try:
             pane_widget = self.query_one("#preview_pane", VerticalScroll)
-            estimated_wrap_width = max(1, pane_widget.content_size.width - 1)
+            # Floor of 20 — see prefetch _prefetch_top_results for the
+            # PDF-single-column rationale.
+            measured = pane_widget.content_size.width - 1
+            estimated_wrap_width = max(20, measured) if measured > 0 else 0
         except Exception:
             estimated_wrap_width = 0
         app = self
@@ -1864,10 +1867,21 @@ class AcornApp(App[None]):
                 if not cached.is_complete:
                     # Resume the remaining mounts in the background so the
                     # rest of the file fills in while the user reads.
+                    # Suppress the task's internal scroll attempts —
+                    # the chained call_after_refresh above is the
+                    # canonical scroll for this cache-hit. Three
+                    # competing scrolls during background fill cause
+                    # visible jumps as widget y drifts.
                     import asyncio as _asyncio
 
                     self._preview_mount_task = _asyncio.create_task(
-                        self._mount_chunks_async(parent_id, focus_chunk_seq, chunks, cached)
+                        self._mount_chunks_async(
+                            parent_id,
+                            focus_chunk_seq,
+                            chunks,
+                            cached,
+                            skip_internal_scrolls=True,
+                        )
                     )
                 return
             self._activate_preview_container(cached, pre_reveal=True)
@@ -2307,7 +2321,13 @@ class AcornApp(App[None]):
         )
         try:
             pane_widget = self.query_one("#preview_pane", VerticalScroll)
-            estimated_wrap_width = max(1, pane_widget.content_size.width - 1)
+            # Floor of 20 mirrors the cold-load + md-flat paths. Without
+            # it, if the pane isn't laid out at prefetch time (content
+            # width 0–1) every flat-path file gets pre-rendered to
+            # 1-cell strips and paints as a single vertical column on
+            # first reveal — the "PDF only shows a single line" symptom.
+            measured = pane_widget.content_size.width - 1
+            estimated_wrap_width = max(20, measured) if measured > 0 else 0
         except Exception:
             estimated_wrap_width = 0
         query_sig = self._current_query_signature()
@@ -2695,6 +2715,8 @@ class AcornApp(App[None]):
         focus_chunk_seq: int,
         chunks: list[FileChunk],
         container: PreviewContainer,
+        *,
+        skip_internal_scrolls: bool = False,
     ) -> None:
         """Visible-first mount + hidden-prepend background fill.
 
@@ -2767,7 +2789,7 @@ class AcornApp(App[None]):
                 # queue a duplicate ``_do_scroll_to_chunk`` retry
                 # cascade and starve the test pilot's idle detector.
                 self.call_after_refresh(self._finalize_pre_reveal, container, focus_chunk_seq)
-            else:
+            elif not skip_internal_scrolls:
                 self._scroll_preview_to_chunk(focus_chunk_seq)
             self._update_progress_bar(progress=len(container.mounted_indices))
             await asyncio.sleep(0)
@@ -2883,7 +2905,8 @@ class AcornApp(App[None]):
             def _schedule_anchor() -> None:
                 self.call_after_refresh(self._scroll_preview_to_chunk, target_seq)
 
-            self.call_after_refresh(_schedule_anchor)
+            if not skip_internal_scrolls:
+                self.call_after_refresh(_schedule_anchor)
             # Partial mounts leave the bar visible — a revisit will
             # resume from ``mounted_indices`` and the bar reflects
             # progress.
@@ -3192,6 +3215,25 @@ class AcornApp(App[None]):
                 )
                 path = f"fallback({type(target).__name__})"
         if target.region.height == 0 and retries > 0:
+            # Pre-reveal deadlock break: while the container has
+            # ``-pre-reveal`` (visibility:hidden) Textual splits the
+            # widget out of the visible map and ``region`` stays
+            # NULL_REGION forever. The retry chain would burn its
+            # whole budget (~1.8 s at ~60 ms/tick) waiting for
+            # geometry that never materialises until we lift the
+            # class. Lift it the first time we notice the deadlock
+            # and continue retrying — layout populates next tick
+            # and scroll lands on the very next attempt.
+            header_widget = self._chunk_widgets.get(focus_chunk_seq)
+            container = header_widget.parent if header_widget is not None else None
+            while container is not None and not isinstance(container, PreviewContainer):
+                container = container.parent
+            if container is not None and container.has_class("-pre-reveal"):
+                container.remove_class("-pre-reveal")
+                self._diag_log(
+                    f"do_scroll seq={focus_chunk_seq} pre_reveal_lifted "
+                    f"retries_left={retries}"
+                )
             self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq, retries - 1, on_done)
             return
         if target.region.height == 0:
