@@ -2955,38 +2955,14 @@ class AcornApp(App[None]):
                     old.remove()
             if container.is_complete:
                 self._hide_progress_bar()
-            # Re-anchor scroll to the user's selected chunk AFTER the
-            # reveal + bar-hide layout changes have queued. The Phase-
-            # 1a scroll inside the mount loop fires before any above-
-            # window chunks have been inserted, so the focused chunk
-            # widget was at y=0 then; by the time we land here it's
-            # been shifted down by the mounts that came after. Without
-            # a re-anchor the pane shows the prefix of the document
-            # instead of the user's first match.
-            #
-            # Earlier this re-anchor was gated on ``is_complete`` —
-            # which silently dropped it on every partial mount (large
-            # PDFs / md files past the ``_BACKGROUND_FILL_RADIUS``
-            # cap). The visible symptom: cursor moves to a result file
-            # and the preview parks at the file top until the user
-            # navigates away and back. Always re-anchor; the cost is
-            # one extra ``scroll_to_widget`` against an already-
-            # mounted widget.
-            #
-            # We don't trust ``virtual_region.y`` to be fresh yet, so
-            # chain two ``call_after_refresh``s — that buys a full
-            # extra render cycle for layout to finish before the
-            # actual ``scroll_to_widget`` call fires.
-            target_seq = focus_chunk_seq
-
-            def _schedule_anchor() -> None:
-                self.call_after_refresh(self._scroll_preview_to_chunk, target_seq)
-
-            if not skip_internal_scrolls:
-                self.call_after_refresh(_schedule_anchor)
-            # Partial mounts leave the bar visible — a revisit will
-            # resume from ``mounted_indices`` and the bar reflects
-            # progress.
+            # Re-anchor only needed for cancellation case: a successful
+            # Phase 2b reveal+anchor inline already scrolled to the
+            # focused chunk. The inline anchor sees the post-reveal
+            # widget y and lands accurately; an additional chained
+            # anchor here would compete with the inline one and can
+            # land at a slightly different y if Textual processes more
+            # mounts in between, producing the "jump after settle" the
+            # user reports.
             self._refresh_status()
 
     def _mount_chunk_into(
