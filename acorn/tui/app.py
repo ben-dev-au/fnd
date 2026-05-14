@@ -414,11 +414,15 @@ class AcornMarkdownTableDT(MarkdownTable):
         self._headers = headers
         self._rows = rows
         dt: DataTable = DataTable(cursor_type="none", zebra_stripes=False)
+        # DataTable expects rich.Text (or str) — passing textual.Content
+        # measures to 1-char-wide columns because Content doesn't expose
+        # the cell-length hints DataTable needs. Convert to rich.Text,
+        # carrying highlight spans across so matched cells stay marked.
         if headers:
-            dt.add_columns(*[h for h in headers])
+            dt.add_columns(*(_content_to_text(h) for h in headers))
         for row in rows:
             if row:
-                dt.add_row(*row, height=None)
+                dt.add_row(*(_content_to_text(c) for c in row), height=None)
         match_coord = _find_first_match_coord_in_table(headers, rows)
         if match_coord is not None:
             dt._acorn_match_coord = Coordinate(*match_coord)  # type: ignore[attr-defined]
@@ -431,6 +435,25 @@ class AcornMarkdownTableDT(MarkdownTable):
             if isinstance(md, AcornMarkdown) and md._first_match_block is None:
                 md._first_match_block = self
         yield dt
+
+
+def _content_to_text(c: Any) -> "Text":
+    """Convert a textual ``Content`` to a rich ``Text`` carrying its
+    highlight spans. DataTable's column-width measurement only fires
+    for str / rich.Text; Content objects collapse to 1-char columns."""
+    from rich.text import Text
+
+    plain = getattr(c, "plain", None)
+    if plain is None:
+        return Text(str(c))
+    t = Text(plain)
+    spans = getattr(c, "spans", None) or ()
+    for span in spans:
+        try:
+            t.stylize(str(span.style), span.start, span.end)
+        except Exception:
+            continue
+    return t
 
 
 def _find_first_match_coord_in_table(headers: list, rows: list[list]) -> tuple[int, int] | None:
