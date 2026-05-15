@@ -20,7 +20,9 @@ import pytest
 from acorn.tui.line_buffer import (
     FileView,
     LineBufferPreview,
+    RenderedDocument,
     build_file_view,
+    build_rendered_document,
     match_marker_positions,
 )
 
@@ -322,6 +324,125 @@ def test_file_view_dataclass_defaults() -> None:
     assert fv.widest_line == 0
     assert fv.chunk_to_range == {}
     assert fv.match_lines == set()
+    assert fv.structural_map == []
+
+
+# ── Stage 1 (RenderedDocument / structural_map) ────────────────────
+
+
+def test_build_file_view_emits_structural_map_one_chunk() -> None:
+    """One block per chunk, ordered by line_start; ranges match chunk_to_range."""
+    fv = build_file_view(
+        [
+            _chunk(10, "alpha\nbravo\ncharlie"),
+            _chunk(11, "delta\necho"),
+        ]
+    )
+    assert fv.structural_map == [
+        (0, 3, "chunk", 10),
+        (3, 6, "chunk", 11),
+    ]
+    for start, end, _, payload in fv.structural_map:
+        assert isinstance(payload, int)
+        assert fv.chunk_to_range[payload] == (start, end)
+
+
+def test_build_md_file_view_emits_structural_map() -> None:
+    """Markdown flat-renderer agrees with the structural_map contract."""
+    from acorn.extract.base import Block
+    from acorn.matching import MatchSpec
+    from acorn.query import FileChunk
+    from acorn.tui._md_flat import build_md_file_view
+
+    def _md_chunk(seq: int, md: str) -> FileChunk:
+        return FileChunk(
+            parent_id="doc",
+            path="/doc.md",
+            kind="md",
+            page=0,
+            slide=0,
+            heading_path="",
+            chunk_seq=seq,
+            blocks=[Block(kind="p", text=md)],
+            body_md=md,
+        )
+
+    fv = build_md_file_view(
+        [_md_chunk(0, "# Heading\n\nbody"), _md_chunk(1, "second")],
+        spec=MatchSpec(),
+        wrap_width=40,
+    )
+    assert [payload for *_, payload in fv.structural_map] == [0, 1]
+    for start, end, kind, payload in fv.structural_map:
+        assert kind == "chunk"
+        assert isinstance(payload, int)
+        assert fv.chunk_to_range[payload] == (start, end)
+
+
+def test_rendered_document_packs_strips_and_indexes() -> None:
+    """build_rendered_document is the prefetch-bundle constructor —
+    strips and per-row indexes must agree with what set_prebuilt_view
+    consumes."""
+    fv = build_file_view([_chunk(0, "alpha\nbravo\ncharlie")])
+    doc = build_rendered_document(fv, wrap_width=0)
+    assert doc.fv is fv
+    assert len(doc.strips) == len(doc.visual_to_logical) == fv.line_count
+    assert len(doc.logical_to_visual_start) == fv.line_count
+    assert doc.wrap_width == 0
+    assert doc.base_width == max(fv.widest_line, 1)
+    assert doc.match_lines is fv.match_lines
+    assert doc.structural_map is fv.structural_map
+
+
+def test_rendered_document_wraps_long_lines() -> None:
+    """Wrap > 0 produces more visual rows than logical lines for a
+    line wider than the wrap width."""
+    fv = build_file_view([_chunk(0, "x" * 100 + "\nshort")])
+    doc = build_rendered_document(fv, wrap_width=20)
+    assert len(doc.strips) > fv.line_count
+    assert doc.wrap_width == 20
+    assert doc.base_width == 1
+    # logical -> visual start is monotonic and covers every logical line.
+    assert doc.logical_to_visual_start == sorted(doc.logical_to_visual_start)
+
+
+@pytest.mark.asyncio
+async def test_set_prebuilt_view_consumes_rendered_document() -> None:
+    """A widget installed with the RenderedDocument's fields paints the
+    expected line count — the value type is a faithful prebuilt bundle."""
+    from textual.app import App, ComposeResult
+
+    class _Host(App[None]):
+        def compose(self) -> ComposeResult:
+            yield LineBufferPreview(id="buf", wrap=False)
+
+    app = _Host()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        buf = app.query_one(LineBufferPreview)
+        fv = build_file_view([_chunk(0, "\n".join(f"row-{i}" for i in range(40)))])
+        doc = build_rendered_document(fv, wrap_width=0)
+        buf.set_prebuilt_view(
+            doc.fv,
+            doc.strips,
+            doc.visual_to_logical,
+            doc.logical_to_visual_start,
+            wrap_width=doc.wrap_width,
+            base_width=doc.base_width,
+        )
+        await pilot.pause()
+        assert buf.virtual_size.height == len(doc.strips)
+
+
+def test_rendered_document_defaults_empty() -> None:
+    """An empty RenderedDocument is safe to construct + has consistent indexes."""
+    doc = RenderedDocument(fv=FileView())
+    assert doc.strips == []
+    assert doc.visual_to_logical == []
+    assert doc.logical_to_visual_start == []
+    assert doc.base_width == 1
+    assert doc.match_lines == set()
+    assert doc.structural_map == []
 
 
 # ── Wrap mode (PDF long-line story) ─────────────────────────────────
