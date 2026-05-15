@@ -30,7 +30,6 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.content import Span
-from textual.strip import Strip
 from textual.widget import Widget
 from textual.widgets import (
     Input,
@@ -67,7 +66,13 @@ from acorn.render import (
 )
 from acorn.rerank import RankingProfile, profile_from_config
 from acorn.tui.actions import REGISTRY, Keymap, load_keymap
-from acorn.tui.line_buffer import FileView, LineBufferPreview, build_file_view
+from acorn.tui.line_buffer import (
+    FileView,
+    LineBufferPreview,
+    RenderedDocument,
+    build_file_view,
+    build_rendered_document,
+)
 from acorn.tui.preview_dispatcher import choose_preview_mode
 from acorn.tui.preview_scrollbar import MatchAwareScroll
 from acorn.tui.progress import AcornProgressBar, ProgressFacility, ProgressSession
@@ -1056,10 +1061,7 @@ class AcornApp(App[None]):
         self._preview_mount_task: object | None = None
         # Prebuilt flat-buffer bundles keyed by (parent_id, query_sig).
         # Cleared on query change — highlight spans are baked in at build time.
-        self._prebuilt_cache: dict[
-            tuple[str, str],
-            tuple[FileView, list[Strip], list[int], list[int], int, int],
-        ] = {}
+        self._prebuilt_cache: dict[tuple[str, str], RenderedDocument] = {}
         # Debounced preview load — latest target + Timer.
         from typing import Any as _Any
 
@@ -1725,21 +1727,14 @@ class AcornApp(App[None]):
             # worker so the UI stays responsive during the decode +
             # assemble phase. Structural formats (md / docx / pptx)
             # skip this path; their mount path is per-chunk.
-            prebuilt: tuple[FileView, list[Strip], list[int], list[int], int, int] | None = None
+            prebuilt: RenderedDocument | None = None
             try:
                 if fetched and choose_preview_mode(fetched) == "flat":
                     fv = app._build_file_view_for_chunks(fetched)
                     wrap_width = estimated_wrap_width if estimated_wrap_width > 0 else 0
-                    strips, v2l, l2vs = LineBufferPreview._render_lines(
-                        fv.lines, wrap_width=wrap_width
-                    )
-                    base_width = 1 if wrap_width > 0 else max(fv.widest_line, 1)
-                    prebuilt = (fv, strips, v2l, l2vs, wrap_width, base_width)
+                    prebuilt = build_rendered_document(fv, wrap_width=wrap_width)
             except Exception:
-                # Prebuild is best-effort: any failure falls back to
-                # the main-thread build path inside
-                # ``_dispatch_flat_buffer_mount``. We don't surface
-                # this to the user.
+                # Best-effort; fall back to main-thread build inside the dispatcher.
                 prebuilt = None
             app.call_from_thread(
                 app._on_preview_chunks_loaded,
@@ -1758,17 +1753,10 @@ class AcornApp(App[None]):
         focus_chunk_seq: int,
         chunks: list[FileChunk],
         *,
-        prebuilt: tuple[FileView, list[Strip], list[int], list[int], int, int] | None = None,
+        prebuilt: RenderedDocument | None = None,
     ) -> None:
-        """Decide which mount path to take given the (parent_id, query)
-        cache state. Always synchronous in its decision so the bar can
-        appear instantly when there's actual work to do.
-
-        ``prebuilt`` is an optional flat-path bundle (FileView +
-        pre-rendered Strips + wrap metadata) already assembled off the
-        main thread; the flat dispatcher installs it directly instead
-        of rebuilding here.
-        """
+        """Route flat vs structural. ``prebuilt`` is a worker-built bundle for
+        flat path; structural ignores it."""
         import asyncio
 
         # Phase 5 redesign: route by format. PDF / TXT take the flat-
@@ -1926,19 +1914,10 @@ class AcornApp(App[None]):
         focus_chunk_seq: int,
         chunks: list[FileChunk],
         *,
-        prebuilt: tuple[FileView, list[Strip], list[int], list[int], int, int] | None = None,
+        prebuilt: RenderedDocument | None = None,
     ) -> None:
-        """Flat-buffer mount path — one :class:`LineBufferPreview`
-        widget per file. No multi-phase mount, no per-chunk widget
-        tree, no progressive load — once the chunks are decoded the
-        FileView builds in one pass and the widget paints in one
-        pass too.
-
-        Cache hits flip ``-hidden`` on the previously-cached widget
-        and scroll to the focus; cold loads either install a worker-
-        prebuilt bundle (``prebuilt``) directly, or rebuild on the
-        main thread as a fallback.
-        """
+        """Flat-buffer mount path. Cache hit = visibility flip + scroll;
+        cold = mount hidden, install prebuilt (or main-thread rebuild)."""
         import contextlib
 
         query_sig = self._current_query_signature()
@@ -1996,20 +1975,20 @@ class AcornApp(App[None]):
         target_seq = focus_chunk_seq
 
         if prebuilt is not None:
-            fv, strips, v2l, l2vs, wrap_width, base_width = prebuilt
-            focus_line = self._focus_line_for_chunk(fv, target_seq)
+            focus_line = self._focus_line_for_chunk(prebuilt.fv, target_seq)
             self._diag_log(
                 f"dispatch_flat prebuilt parent={parent_id[:8]} "
-                f"strips={len(strips)} wrap_width={wrap_width} base_width={base_width} "
-                f"focus_line={focus_line} fv_lines={len(fv.lines)}"
+                f"strips={len(prebuilt.strips)} wrap_width={prebuilt.wrap_width} "
+                f"base_width={prebuilt.base_width} focus_line={focus_line} "
+                f"fv_lines={len(prebuilt.fv.lines)}"
             )
             buf.set_prebuilt_view(
-                fv,
-                strips,
-                v2l,
-                l2vs,
-                wrap_width=wrap_width,
-                base_width=base_width,
+                prebuilt.fv,
+                prebuilt.strips,
+                prebuilt.visual_to_logical,
+                prebuilt.logical_to_visual_start,
+                wrap_width=prebuilt.wrap_width,
+                base_width=prebuilt.base_width,
                 initial_focus_line=focus_line,
             )
             self._activate_flat_buffer(buf)
@@ -2358,13 +2337,10 @@ class AcornApp(App[None]):
         parent_id: str,
         focus_chunk_seq: int,
         chunks: list[FileChunk],
-        prebuilt: tuple[FileView, list[Strip], list[int], list[int], int, int] | None = None,
+        prebuilt: RenderedDocument | None = None,
     ) -> None:
-        """Worker callback. Caches chunk data; hands off to the same
-        mount path the cache-hit case uses. ``prebuilt`` is an
-        optional flat-path bundle (FileView + pre-rendered Strips +
-        wrap metadata) assembled in the worker thread — used directly
-        by the flat dispatcher to skip the main-thread rebuild."""
+        """Worker callback. Caches chunks + (optional) flat-path bundle;
+        re-enters the mount path."""
         self._chunk_cache[parent_id] = chunks
         if prebuilt is not None:
             # Cache the bundle so a later visit to the same file in the
@@ -2520,17 +2496,11 @@ class AcornApp(App[None]):
                 try:
                     fv = app._build_file_view_for_chunks(fetched)
                     wrap_width = estimated_wrap_width if estimated_wrap_width > 0 else 0
-                    strips, v2l, l2vs = LineBufferPreview._render_lines(
-                        fv.lines, wrap_width=wrap_width
-                    )
-                    base_width = 1 if wrap_width > 0 else max(fv.widest_line, 1)
+                    doc = build_rendered_document(fv, wrap_width=wrap_width)
                 except Exception:
                     return
-                bundle = (fv, strips, v2l, l2vs, wrap_width, base_width)
-                app.call_from_thread(app._record_prefetched_bundle, parent_id, query_sig, bundle)
-                app.call_from_thread(
-                    app._prefetch_mount_flat, parent_id, query_sig, bundle, focus_seq
-                )
+                app.call_from_thread(app._record_prefetched_bundle, parent_id, query_sig, doc)
+                app.call_from_thread(app._prefetch_mount_flat, parent_id, query_sig, doc, focus_seq)
             else:
                 app.call_from_thread(
                     app._prefetch_mount_structural,
@@ -2575,24 +2545,21 @@ class AcornApp(App[None]):
         self,
         parent_id: str,
         query_sig: str,
-        bundle: tuple[FileView, list[Strip], list[int], list[int], int, int],
+        doc: RenderedDocument,
     ) -> None:
-        """Main-thread sink for prefetch worker flat-buffer bundles.
-        Drops the bundle if the active query has moved on since the
-        worker started (signatures wouldn't match)."""
+        """Stash a worker-built bundle if the query is still current."""
         if query_sig != self._current_query_signature():
             return
-        self._prebuilt_cache[(parent_id, query_sig)] = bundle
+        self._prebuilt_cache[(parent_id, query_sig)] = doc
 
     def _prefetch_mount_flat(
         self,
         parent_id: str,
         query_sig: str,
-        bundle: tuple[FileView, list[Strip], list[int], list[int], int, int],
+        doc: RenderedDocument,
         focus_chunk_seq: int,
     ) -> None:
-        """Queue a hidden flat-buffer pre-mount. Actual mount runs on the
-        drainer so it can't race the user-side render."""
+        """Queue a hidden flat-buffer pre-mount; drainer runs it serially."""
         q = self._prefetch_sink_queue
         if q is None:
             return
@@ -2600,7 +2567,7 @@ class AcornApp(App[None]):
             return
 
         async def _job() -> None:
-            await self._prefetch_mount_flat_async(parent_id, query_sig, bundle, focus_chunk_seq)
+            await self._prefetch_mount_flat_async(parent_id, query_sig, doc, focus_chunk_seq)
 
         q.put_nowait(_job)
 
@@ -2608,7 +2575,7 @@ class AcornApp(App[None]):
         self,
         parent_id: str,
         query_sig: str,
-        bundle: tuple[FileView, list[Strip], list[int], list[int], int, int],
+        doc: RenderedDocument,
         focus_chunk_seq: int,
     ) -> None:
         if query_sig != self._current_query_signature():
@@ -2624,7 +2591,6 @@ class AcornApp(App[None]):
             pane = self.query_one("#preview_pane", VerticalScroll)
         except Exception:
             return
-        fv, strips, v2l, l2vs, wrap_width, base_width = bundle
         buf = LineBufferPreview(wrap=True)
         buf.add_class("-hidden")
         mount_awaitable: object | None = None
@@ -2633,15 +2599,15 @@ class AcornApp(App[None]):
         if mount_awaitable is not None:
             with contextlib.suppress(Exception):
                 await mount_awaitable  # type: ignore[misc]
-        focus_line = self._focus_line_for_chunk(fv, focus_chunk_seq)
+        focus_line = self._focus_line_for_chunk(doc.fv, focus_chunk_seq)
         with contextlib.suppress(Exception):
             buf.set_prebuilt_view(
-                fv,
-                strips,
-                v2l,
-                l2vs,
-                wrap_width=wrap_width,
-                base_width=base_width,
+                doc.fv,
+                doc.strips,
+                doc.visual_to_logical,
+                doc.logical_to_visual_start,
+                wrap_width=doc.wrap_width,
+                base_width=doc.base_width,
                 initial_focus_line=focus_line,
             )
         self._flat_buffer_cache[cache_key] = buf
