@@ -110,7 +110,9 @@ async def test_query_change_clears_prebuilt_cache(
         app._run_query("test")
         # Force a bundle into the cache directly so we don't depend
         # on prefetch timing.
-        app._prebuilt_cache[("fake-parent", "old-sig")] = (None, [], [], [], 0, 1)  # type: ignore[arg-type]
+        from acorn.tui.line_buffer import FileView, RenderedDocument
+
+        app._prebuilt_cache[("fake-parent", "old-sig")] = RenderedDocument(fv=FileView())
         app._run_query("different")
         await pilot.pause()
         assert app._prebuilt_cache == {}
