@@ -1035,14 +1035,18 @@ class AcornApp(App[None]):
         # The currently-active PreviewContainer (the one with `-active`
         # class). None until the first file is rendered.
         self._active_preview: PreviewContainer | None = None
-        # Phase 5 flat-buffer pipeline: PDF / TXT files render through
-        # one :class:`LineBufferPreview` widget per file instead of a
-        # per-chunk widget tree. ``_flat_buffer_cache`` is an LRU keyed
-        # the same way as :class:`PreviewCache` so cache-hit semantics
-        # are identical. ``_active_flat_buffer`` mirrors
-        # ``_active_preview`` for the flat path.
-        self._flat_buffer_cache: OrderedDict[tuple[str, str], LineBufferPreview] = OrderedDict()
+        # Per-file flat-buffer value cache (Stage 1c). One shared
+        # LineBufferPreview is mounted on first need and re-installed
+        # via set_prebuilt_view for every (parent_id, query_sig)
+        # activation. ``_active_flat_buffer`` is the shared widget when
+        # flat is the visible preview, else None.
+        self._flat_buffer_cache: OrderedDict[tuple[str, str], RenderedDocument] = OrderedDict()
         self._active_flat_buffer: LineBufferPreview | None = None
+        self._shared_flat_buffer: LineBufferPreview | None = None
+        # (parent_id, query_sig) of whichever RenderedDocument is currently
+        # installed in the shared widget. Lets intra-file navigation skip
+        # set_prebuilt_view and just scroll.
+        self._installed_flat_key: tuple[str, str] | None = None
         # Convenience aliases that point into the active container —
         # legacy code paths (_scroll_preview_to_chunk, etc.) read from
         # these instead of poking at the container directly.
@@ -1456,17 +1460,9 @@ class AcornApp(App[None]):
             with contextlib.suppress(Exception):
                 self._active_preview.remove()
         self._active_preview = None
-        # Same lifecycle for the flat-buffer cache: highlights were
-        # baked from the previous query, so every cached widget is
-        # stale. Drop all of them from the DOM.
-        for buf in list(self._flat_buffer_cache.values()):
-            with contextlib.suppress(Exception):
-                buf.remove()
+        # Highlights baked into every cached doc are stale on query change.
         self._flat_buffer_cache.clear()
-        if self._active_flat_buffer is not None and self._active_flat_buffer.parent is not None:
-            with contextlib.suppress(Exception):
-                self._active_flat_buffer.remove()
-        self._active_flat_buffer = None
+        self._reset_shared_flat_buffer()
         self._chunk_widgets = {}
         self._match_targets = {}
         self._preview_parent_id = None
@@ -1916,114 +1912,99 @@ class AcornApp(App[None]):
         *,
         prebuilt: RenderedDocument | None = None,
     ) -> None:
-        """Flat-buffer mount path. Cache hit = visibility flip + scroll;
-        cold = mount hidden, install prebuilt (or main-thread rebuild)."""
-        import contextlib
-
+        """Flat-buffer mount: resolve doc (cache > prebuilt > main-thread
+        build), install into the shared widget, activate."""
         query_sig = self._current_query_signature()
         cache_key = (parent_id, query_sig)
 
-        # Cache hit: flip visible, scroll, hide bar. Match markers are
-        # already baked into the cached buffer's scrollbar so no extra
-        # refresh is needed.
-        cached = self._flat_buffer_cache.get(cache_key)
-        cache_hit = cached is not None and cached.parent is not None
+        doc = self._flat_buffer_cache.get(cache_key)
+        cache_hit = doc is not None
+        if doc is None:
+            doc = prebuilt
+        if doc is None:
+            try:
+                pane_widget = self.query_one("#preview_pane", VerticalScroll)
+                measured = pane_widget.content_size.width - 1
+                wrap_width = max(20, measured) if measured > 0 else 0
+            except Exception:
+                wrap_width = 0
+            fv = self._build_file_view_for_chunks(chunks)
+            doc = build_rendered_document(fv, wrap_width=wrap_width)
+
+        self._flat_buffer_cache[cache_key] = doc
+        self._flat_buffer_cache.move_to_end(cache_key)
+        while len(self._flat_buffer_cache) > _PREVIEW_CACHE_MAX_FILES:
+            self._flat_buffer_cache.popitem(last=False)
+
+        buf = self._ensure_shared_flat_buffer()
+        if self._installed_flat_key == cache_key:
+            # Same doc already in the widget; intra-file navigation = scroll only.
+            buf.scroll_to_chunk(focus_chunk_seq, prefer_first_match=True)
+        else:
+            self._install_flat_doc(buf, doc, focus_chunk_seq, parent_id=parent_id)
+            self._installed_flat_key = cache_key
+        self._activate_flat_buffer(buf)
         self._diag_log(
-            f"dispatch_flat parent={parent_id[:8]} cached={'yes' if cache_hit else 'no'} "
-            f"focus_seq={focus_chunk_seq} prebuilt={'yes' if prebuilt is not None else 'no'} "
-            f"chunks={len(chunks)}"
+            f"dispatch_flat parent={parent_id[:8]} cache_hit={'yes' if cache_hit else 'no'} "
+            f"prebuilt={'yes' if prebuilt is not None else 'no'} strips={len(doc.strips)} "
+            f"wrap_width={doc.wrap_width} chunks={len(chunks)}"
         )
-        if cache_hit:
-            assert cached is not None
-            self._flat_buffer_cache.move_to_end(cache_key)
-            self._activate_flat_buffer(cached)
-            cached.scroll_to_chunk(focus_chunk_seq, prefer_first_match=True)
-            self._diag_log(
-                f"dispatch_flat cache_hit parent={parent_id[:8]} "
-                f"virtual_size={cached.virtual_size} size={cached.size} "
-                f"strips_len={len(getattr(cached, '_strips', []))} "
-                f"wrap_width={getattr(cached, '_wrap_width', None)}"
-            )
+        self._hide_progress_bar()
+        self._preview_parent_id = parent_id
+        self._refresh_status()
 
-            def _log_after_layout() -> None:
-                self._diag_log(
-                    f"dispatch_flat post_layout parent={parent_id[:8]} "
-                    f"virtual_size={cached.virtual_size} size={cached.size} "
-                    f"scroll_y={int(cached.scroll_offset.y)} "
-                    f"strips_len={len(getattr(cached, '_strips', []))} "
-                    f"wrap_width={getattr(cached, '_wrap_width', None)} "
-                    f"display={cached.display} visible={cached.visible}"
-                )
+    def _ensure_shared_flat_buffer(self) -> LineBufferPreview:
+        """Lazy-mount the single hidden LineBufferPreview under #preview_pane."""
+        import contextlib
 
-            self.call_after_refresh(self.call_after_refresh, _log_after_layout)
-            self._hide_progress_bar()
-            self._preview_parent_id = parent_id
-            self._refresh_status()
-            return
-
-        # Cold path: mount the buffer hidden, install with scroll at the
-        # match, then reveal — first paint is already at the right offset.
+        buf = self._shared_flat_buffer
+        if buf is not None and buf.parent is not None:
+            return buf
         pane = self.query_one("#preview_pane", VerticalScroll)
         for w in list(pane.children):
             if isinstance(w, Static) and w.id == "placeholder":
                 with contextlib.suppress(Exception):
                     w.remove()
-
         buf = LineBufferPreview(wrap=True)
         buf.add_class("-hidden")
         pane.mount(buf)
-        target_seq = focus_chunk_seq
+        self._shared_flat_buffer = buf
+        return buf
 
-        if prebuilt is not None:
-            focus_line = self._focus_line_for_chunk(prebuilt.fv, target_seq)
-            self._diag_log(
-                f"dispatch_flat prebuilt parent={parent_id[:8]} "
-                f"strips={len(prebuilt.strips)} wrap_width={prebuilt.wrap_width} "
-                f"base_width={prebuilt.base_width} focus_line={focus_line} "
-                f"fv_lines={len(prebuilt.fv.lines)}"
-            )
-            buf.set_prebuilt_view(
-                prebuilt.fv,
-                prebuilt.strips,
-                prebuilt.visual_to_logical,
-                prebuilt.logical_to_visual_start,
-                wrap_width=prebuilt.wrap_width,
-                base_width=prebuilt.base_width,
-                initial_focus_line=focus_line,
-            )
-            self._activate_flat_buffer(buf)
-        else:
-            # Build on the main thread and defer one refresh cycle so the
-            # buffer has a real size.width when wrap-mode strips are built.
-            fv = self._build_file_view_for_chunks(chunks)
-            focus_line = self._focus_line_for_chunk(fv, target_seq)
+    def _install_flat_doc(
+        self,
+        buf: LineBufferPreview,
+        doc: RenderedDocument,
+        focus_chunk_seq: int,
+        *,
+        parent_id: str,
+    ) -> None:
+        """Install ``doc`` into ``buf`` scrolled to the focused chunk's match."""
+        focus_line = self._focus_line_for_chunk(doc.fv, focus_chunk_seq)
+        buf.set_prebuilt_view(
+            doc.fv,
+            doc.strips,
+            doc.visual_to_logical,
+            doc.logical_to_visual_start,
+            wrap_width=doc.wrap_width,
+            base_width=doc.base_width,
+            initial_focus_line=focus_line,
+        )
+        buf.parent_doc_id = parent_id  # type: ignore[attr-defined]
 
-            self._diag_log(
-                f"dispatch_flat cold parent={parent_id[:8]} "
-                f"fv_lines={len(fv.lines)} focus_line={focus_line}"
-            )
+    def _reset_shared_flat_buffer(self) -> None:
+        """Hide + clear the shared widget when the value cache is invalidated."""
+        import contextlib
 
-            def _install() -> None:
-                buf.set_file_view(fv, initial_focus_line=focus_line)
-                self._activate_flat_buffer(buf)
-                self._diag_log(
-                    f"dispatch_flat cold_installed parent={parent_id[:8]} "
-                    f"virtual_size={buf.virtual_size} size={buf.size} "
-                    f"strips_len={len(buf._strips)} wrap_width={buf._wrap_width}"
-                )
-
-            self.call_after_refresh(_install)
-
-        self._flat_buffer_cache[cache_key] = buf
-        self._flat_buffer_cache.move_to_end(cache_key)
-        while len(self._flat_buffer_cache) > _PREVIEW_CACHE_MAX_FILES:
-            _, evicted = self._flat_buffer_cache.popitem(last=False)
-            with contextlib.suppress(Exception):
-                evicted.remove()
-
-        self._hide_progress_bar()
-        self._preview_parent_id = parent_id
-        self._refresh_status()
+        self._active_flat_buffer = None
+        self._installed_flat_key = None
+        buf = self._shared_flat_buffer
+        if buf is None:
+            return
+        with contextlib.suppress(Exception):
+            buf.add_class("-hidden")
+        with contextlib.suppress(Exception):
+            buf.clear()
 
     @staticmethod
     def _focus_line_for_chunk(fv: FileView, chunk_id: int) -> int | None:
@@ -2578,44 +2559,18 @@ class AcornApp(App[None]):
         doc: RenderedDocument,
         focus_chunk_seq: int,
     ) -> None:
+        """Stash the prefetched RenderedDocument in the value cache. No mount —
+        user activation installs into the shared widget on click."""
+        _ = focus_chunk_seq  # focus is recomputed at install time
         if query_sig != self._current_query_signature():
             return
         cache_key = (parent_id, query_sig)
         if cache_key in self._flat_buffer_cache:
             return
-        if self._active_flat_buffer is not None and self._preview_parent_id == parent_id:
-            return
-        import contextlib
-
-        try:
-            pane = self.query_one("#preview_pane", VerticalScroll)
-        except Exception:
-            return
-        buf = LineBufferPreview(wrap=True)
-        buf.add_class("-hidden")
-        mount_awaitable: object | None = None
-        with contextlib.suppress(Exception):
-            mount_awaitable = pane.mount(buf)
-        if mount_awaitable is not None:
-            with contextlib.suppress(Exception):
-                await mount_awaitable  # type: ignore[misc]
-        focus_line = self._focus_line_for_chunk(doc.fv, focus_chunk_seq)
-        with contextlib.suppress(Exception):
-            buf.set_prebuilt_view(
-                doc.fv,
-                doc.strips,
-                doc.visual_to_logical,
-                doc.logical_to_visual_start,
-                wrap_width=doc.wrap_width,
-                base_width=doc.base_width,
-                initial_focus_line=focus_line,
-            )
-        self._flat_buffer_cache[cache_key] = buf
+        self._flat_buffer_cache[cache_key] = doc
         self._flat_buffer_cache.move_to_end(cache_key)
         while len(self._flat_buffer_cache) > _PREVIEW_CACHE_MAX_FILES:
-            _, evicted = self._flat_buffer_cache.popitem(last=False)
-            with contextlib.suppress(Exception):
-                evicted.remove()
+            self._flat_buffer_cache.popitem(last=False)
 
     def _prefetch_mount_structural(
         self,
@@ -3653,14 +3608,8 @@ class AcornApp(App[None]):
             with contextlib.suppress(Exception):
                 self._active_preview.remove()
         self._active_preview = None
-        for buf in list(self._flat_buffer_cache.values()):
-            with contextlib.suppress(Exception):
-                buf.remove()
         self._flat_buffer_cache.clear()
-        if self._active_flat_buffer is not None and self._active_flat_buffer.parent is not None:
-            with contextlib.suppress(Exception):
-                self._active_flat_buffer.remove()
-        self._active_flat_buffer = None
+        self._reset_shared_flat_buffer()
         self._chunk_widgets = {}
         self._match_targets = {}
         self._preview_parent_id = None
@@ -3726,14 +3675,8 @@ class AcornApp(App[None]):
             with contextlib.suppress(Exception):
                 self._active_preview.remove()
         self._active_preview = None
-        for buf in list(self._flat_buffer_cache.values()):
-            with contextlib.suppress(Exception):
-                buf.remove()
         self._flat_buffer_cache.clear()
-        if self._active_flat_buffer is not None and self._active_flat_buffer.parent is not None:
-            with contextlib.suppress(Exception):
-                self._active_flat_buffer.remove()
-        self._active_flat_buffer = None
+        self._reset_shared_flat_buffer()
         self._chunk_widgets = {}
         self._match_targets = {}
         self._preview_parent_id = None

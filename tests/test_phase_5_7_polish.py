@@ -148,11 +148,13 @@ async def test_chunk_widgets_rebuild_when_focus_moves_to_different_file(
         await pilot.pause()
         assert app._preview_parent_id is not None
         assert app._preview_parent_id != first_pid, "preview did not rebuild for file 2"
+        # Stage 1c: a single shared LineBufferPreview is reused across files —
+        # what swaps is the installed RenderedDocument (and therefore file_view).
         second_buf = app._active_flat_buffer
         assert second_buf is not None
-        assert second_buf is not first_buf, "active buffer should swap when file changes"
         second_fv = second_buf.file_view
         assert second_fv is not None
+        assert second_fv is not first_fv, "file_view should swap when file changes"
         assert len(second_fv.chunk_to_range) == 12
 
 
