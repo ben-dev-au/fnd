@@ -60,6 +60,10 @@ if TYPE_CHECKING:
 _COMPONENT_FOCUSED_CHUNK = "line-buffer--focused-chunk"
 
 
+# (line_start, line_end_exclusive, kind, payload). Today: kind="chunk", payload=chunk_seq.
+StructuralBlock = tuple[int, int, str, object]
+
+
 @dataclass(slots=True)
 class FileView:
     """Flat, immutable rendering of a file's chunks as a line buffer.
@@ -89,6 +93,8 @@ class FileView:
     # so marker accuracy is bounded by terminal-cell resolution, not
     # chunk granularity.
     match_lines: set[int] = field(default_factory=set)
+    # Per-chunk line ranges, ordered by line_start. Populated by the builders.
+    structural_map: list[StructuralBlock] = field(default_factory=list)
 
     @property
     def line_count(self) -> int:
@@ -187,9 +193,45 @@ def build_file_view(
             fv.line_to_chunk.append(chunk_id)
         chunk_end = len(fv.lines)
         fv.chunk_to_range[chunk_id] = (chunk_start, chunk_end)
+        fv.structural_map.append((chunk_start, chunk_end, "chunk", chunk_id))
         if chunk_first_match is not None:
             fv.first_hit_line_in_chunk[chunk_id] = chunk_first_match
     return fv
+
+
+@dataclass(slots=True)
+class RenderedDocument:
+    """FileView + strips at a specific wrap_width. Cacheable, widget-agnostic."""
+
+    fv: FileView
+    strips: list[Strip] = field(default_factory=list)
+    visual_to_logical: list[int] = field(default_factory=list)
+    logical_to_visual_start: list[int] = field(default_factory=list)
+    # wrap_width=0 means unwrapped; base_width drives horizontal virtual_size.
+    wrap_width: int = 0
+    base_width: int = 1
+
+    @property
+    def match_lines(self) -> set[int]:
+        return self.fv.match_lines
+
+    @property
+    def structural_map(self) -> list[StructuralBlock]:
+        return self.fv.structural_map
+
+
+def build_rendered_document(fv: FileView, *, wrap_width: int) -> RenderedDocument:
+    """Pure: render fv.lines to strips at wrap_width. Safe off-thread."""
+    strips, v2l, l2vs = LineBufferPreview._render_lines(fv.lines, wrap_width=wrap_width)
+    base_width = 1 if wrap_width > 0 else max(fv.widest_line, 1)
+    return RenderedDocument(
+        fv=fv,
+        strips=strips,
+        visual_to_logical=v2l,
+        logical_to_visual_start=l2vs,
+        wrap_width=wrap_width,
+        base_width=base_width,
+    )
 
 
 class LineBufferPreview(ScrollView, can_focus=True):

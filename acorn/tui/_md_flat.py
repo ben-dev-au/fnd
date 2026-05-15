@@ -28,6 +28,7 @@ def _bake_match_spans(line: Text, spec: MatchSpec) -> bool:
         return False
     hit = False
     import re
+
     for m in re.finditer(r"\w+", plain):
         runs = word_highlight_runs(m.group(0), spec)
         for off_s, off_e, style in runs:
@@ -97,6 +98,7 @@ def build_md_file_view(
             fv.line_to_chunk.append(c.chunk_seq)
             cursor += 1
         fv.chunk_to_range[c.chunk_seq] = (chunk_start, cursor)
+        fv.structural_map.append((chunk_start, cursor, "chunk", c.chunk_seq))
         if first_hit_local is not None:
             fv.first_hit_line_in_chunk[c.chunk_seq] = first_hit_local
     return fv
