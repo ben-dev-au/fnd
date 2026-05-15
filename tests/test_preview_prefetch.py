@@ -119,11 +119,14 @@ async def test_query_change_clears_prebuilt_cache(
 
 
 @pytest.mark.asyncio
-async def test_prefetch_premounts_flat_buffer_widget(
+async def test_prefetch_populates_flat_buffer_cache(
     two_file_index: Path, cfg_with_prefetch: Config
 ) -> None:
-    """Prefetch pre-mounts a hidden LineBufferPreview into _flat_buffer_cache."""
+    """Prefetch stashes a RenderedDocument in _flat_buffer_cache so the next user
+    click installs into the shared widget without a fresh build."""
     import asyncio
+
+    from acorn.tui.line_buffer import RenderedDocument
 
     app = AcornApp(index_dir=two_file_index, config=cfg_with_prefetch)
     async with app.run_test() as pilot:
@@ -142,10 +145,11 @@ async def test_prefetch_premounts_flat_buffer_widget(
         if not flat_parents:
             pytest.skip("no flat-path results in fixture corpus for this query")
         prefetched = [pid for pid in flat_parents if (pid, sig) in app._flat_buffer_cache]
-        assert prefetched, f"prefetch failed to pre-mount any flat widget; flat={flat_parents}"
+        assert prefetched, f"prefetch failed to cache any flat doc; flat={flat_parents}"
         for pid in prefetched:
-            buf = app._flat_buffer_cache[(pid, sig)]
-            assert "-hidden" in buf.classes, f"prefetched widget for {pid} not hidden"
+            doc = app._flat_buffer_cache[(pid, sig)]
+            assert isinstance(doc, RenderedDocument)
+            assert doc.strips, f"prefetched doc for {pid} has no strips"
 
 
 @pytest.fixture
