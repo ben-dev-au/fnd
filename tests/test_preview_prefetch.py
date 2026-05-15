@@ -133,13 +133,9 @@ async def test_prefetch_premounts_flat_buffer_widget(
             await pilot.pause()
             await asyncio.sleep(0.05)
             flat_parents = {
-                g.parent_id
-                for g in app._groups
-                if g.path.lower().endswith((".pdf", ".txt"))
+                g.parent_id for g in app._groups if g.path.lower().endswith((".pdf", ".txt"))
             }
-            if flat_parents and any(
-                (pid, sig) in app._flat_buffer_cache for pid in flat_parents
-            ):
+            if flat_parents and any((pid, sig) in app._flat_buffer_cache for pid in flat_parents):
                 break
         if not flat_parents:
             pytest.skip("no flat-path results in fixture corpus for this query")
@@ -186,9 +182,7 @@ async def test_prefetch_premounts_structural_container(multi_md_index: Path) -> 
             await asyncio.sleep(0.05)
             if len(app._groups) >= 3:
                 non_top = [g.parent_id for g in app._groups[1:]]
-                if all(
-                    app._preview_cache.get(pid, sig) is not None for pid in non_top
-                ):
+                if all(app._preview_cache.get(pid, sig) is not None for pid in non_top):
                     break
         assert len(app._groups) >= 3, "expected three md results in this corpus"
         non_top = [g.parent_id for g in app._groups[1:]]
@@ -203,9 +197,14 @@ async def test_prefetch_premounts_structural_container(multi_md_index: Path) -> 
 async def test_user_selection_of_prefetched_container_runs_to_completion(
     multi_md_index: Path,
 ) -> None:
-    """Selecting a prefetched container completes the mount (regression for
-    a prefetch/user-side mount race that stalled at the visible window)."""
+    """Selecting a prefetched container completes mount up to the
+    background-fill radius (regression for a prefetch/user-side mount
+    race that stalled at the visible window — narrower than the radius).
+    With ``_BACKGROUND_FILL_RADIUS = 10`` Phase 2a/2b cap mount at
+    ``focus +/- 10``; full-file completion would need a wider radius."""
     import asyncio
+
+    from acorn.tui.app import _BACKGROUND_FILL_RADIUS
 
     cfg = Config(
         defaults=Defaults(preview_prefetch_count=10, preview_load_debounce_ms=0),
@@ -222,16 +221,43 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
         target = app._groups[1]
         target_focus = target.hits[0].chunk_seq if target.hits else 0
         app._render_full_doc(target.parent_id, focus_chunk_seq=target_focus)
+
+        def _expected_coverage(total: int, focus_idx: int, radius: int) -> int:
+            """Phase 2a+2b coverage: [max(0, focus-r), min(total, focus+r+1))."""
+            return min(total, focus_idx + radius + 1) - max(0, focus_idx - radius)
+
         for _ in range(80):
             await pilot.pause()
             await asyncio.sleep(0.05)
-            if app._active_preview and app._active_preview.is_complete:
+            ap = app._active_preview
+            if ap is None:
+                continue
+            focus_idx = next(
+                (
+                    i
+                    for i, c in enumerate(app._chunk_cache.get(target.parent_id, []))
+                    if c.chunk_seq == target_focus
+                ),
+                0,
+            )
+            expected = _expected_coverage(ap.total_chunks, focus_idx, _BACKGROUND_FILL_RADIUS)
+            if len(ap.mounted_indices) >= expected:
                 break
         ap = app._active_preview
         assert ap is not None, "user-side mount produced no active preview"
         assert ap.parent_doc_id == target.parent_id
-        assert ap.is_complete, (
-            f"user-side mount stalled at {len(ap.mounted_indices)}/{ap.total_chunks}"
+        focus_idx = next(
+            (
+                i
+                for i, c in enumerate(app._chunk_cache.get(target.parent_id, []))
+                if c.chunk_seq == target_focus
+            ),
+            0,
+        )
+        expected = _expected_coverage(ap.total_chunks, focus_idx, _BACKGROUND_FILL_RADIUS)
+        assert len(ap.mounted_indices) >= expected, (
+            f"user-side mount stalled at {len(ap.mounted_indices)}/{ap.total_chunks} "
+            f"(expected at least {expected} from focus +/- {_BACKGROUND_FILL_RADIUS} at idx {focus_idx})"
         )
         pane = app.query_one("#preview_pane")
         placeholders = [w for w in pane.children if getattr(w, "id", None) == "placeholder"]
