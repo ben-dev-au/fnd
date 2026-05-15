@@ -78,16 +78,25 @@ _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 # Preview widget cache. Repeat visits to a previously-loaded file
 # should be instant — keep the mounted widget tree alive in a per-file
 # Container; switching files is then a single class-toggle. LRU-bounded.
-# Sized to the prefetch buffer + a little slack: full-mount means each
-# cached file holds its whole widget tree, so a tight cap keeps DOM
-# bounded without churning files the cursor is heading toward.
-_PREVIEW_CACHE_MAX_FILES = 16
+# See docs/PREVIEW_DOM_PLAN.md for the planned rework that aims to make
+# this cap effectively unlimited via screen-per-file isolation.
+_PREVIEW_CACHE_MAX_FILES = 64
 _PREVIEW_CACHE_MIN_CHUNKS = 1
 # Visible-first mount window — chunks are decoded already, mounting
 # focused ± these counts synchronously gives the user instant viewport
-# feedback before the background fill mounts the rest of the file.
+# feedback before the background fill starts.
 _VISIBLE_FIRST_ABOVE = 7
 _VISIBLE_FIRST_BELOW = 7
+# Lazy-mount budget. Background fill stops at focused ± this many
+# chunks. With W3 DataTable + structural pre-mount default-on, this
+# keeps the cumulative DOM (cache size × chunks per file × widgets
+# per chunk) inside the input-lag envelope. Resume path expands the
+# buffer further if the user navigates past the radius.
+_BACKGROUND_FILL_RADIUS = 10
+# Prefetch mounts only the focused chunk per cached file. User-side
+# resume expands on click via Phase 1b/2. Keeps prefetch DOM
+# contribution at ~1 widget per cached file.
+_PREFETCH_MOUNT_RADIUS = 0
 
 
 class ResultsTree(Tree[dict[str, Any]]):
@@ -2758,29 +2767,25 @@ class AcornApp(App[None]):
             (i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq),
             0,
         )
-        total = len(chunks)
-        # Focused-first sweep across the whole file so click-time
-        # navigation never sees an unmounted chunk.
-        order: list[int] = [focus_idx] if 0 <= focus_idx < total else []
-        for off in range(1, total):
-            below = focus_idx + off
-            above = focus_idx - off
-            if below < total:
-                order.append(below)
-            if above >= 0:
-                order.append(above)
+        # Prefetch only mounts a tiny window around the focused chunk
+        # so the DOM stays small across many cached files. User-side
+        # resume expands on click via Phase 1b/2.
+        win_start = max(0, focus_idx - _PREFETCH_MOUNT_RADIUS)
+        win_end = min(len(chunks), focus_idx + _PREFETCH_MOUNT_RADIUS + 1)
         _perf.mark(
             "prefetch_loop_start",
             parent_id=parent_id,
             focus_idx=focus_idx,
-            total_chunks=total,
+            win=(win_start, win_end),
+            total_chunks=len(chunks),
         )
         self._diag_log(
-            f"prefetch_loop_start parent={parent_id[:8]} focus={focus_idx} " f"total_chunks={total}"
+            f"prefetch_loop_start parent={parent_id[:8]} focus={focus_idx} "
+            f"win=({win_start},{win_end}) total_chunks={len(chunks)}"
         )
         n_mounted = 0
         try:
-            for i in order:
+            for i in range(win_start, win_end):
                 if query_sig != self._current_query_signature():
                     return
                 if i in container.mounted_indices:
@@ -2964,12 +2969,11 @@ class AcornApp(App[None]):
             self._update_progress_bar(progress=len(container.mounted_indices))
             await asyncio.sleep(0)
 
-            # Phase 2a: background fill BELOW the window to the end of
-            # the file. DOM growth is bounded by the small LRU on
-            # _preview_cache, not a per-file radius. With W3 DataTable
-            # the per-chunk widget cost is low enough that full-file
-            # mount fits inside the input-lag envelope.
-            below_end = len(chunks)
+            # Phase 2a: background fill BELOW the window, capped at the
+            # lazy-mount radius. Mounting every chunk of a 5000-chunk
+            # PDF takes minutes AND inflates DOM enough to break the
+            # input-lag envelope; the radius bounds both.
+            below_end = min(len(chunks), focus_idx + 1 + _BACKGROUND_FILL_RADIUS)
             for i in range(win_end, below_end):
                 if i in container.mounted_indices:
                     continue
@@ -2978,10 +2982,10 @@ class AcornApp(App[None]):
                 await asyncio.sleep(0.002)
             await asyncio.sleep(0)
 
-            # Phase 2b: hidden-prepend ABOVE the window to the start.
-            # display=False keeps the focused chunk anchored while
-            # earlier sections mount.
-            above_start = 0
+            # Phase 2b: hidden-prepend ABOVE the window, capped at the
+            # same radius. display=False keeps the focused chunk
+            # anchored while earlier sections mount.
+            above_start = max(0, focus_idx - _BACKGROUND_FILL_RADIUS)
             for i in range(win_start - 1, above_start - 1, -1):
                 if i in container.mounted_indices:
                     continue

@@ -184,7 +184,9 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
         # Should be cached now (60+ chunks, above min threshold).
         cached = app._preview_cache.get(big_group.parent_id, app._current_query_signature())
         assert cached is not None
-        assert cached.is_complete
+        # Mount is radius-bounded (Phase 2a/2b cap at _BACKGROUND_FILL_RADIUS).
+        # The contract this test guards is "revisit hits the same cached
+        # container" (line 201 below), not full-file completion.
         big_container = cached
         # Switch to small; no new mount task expected for big when we
         # come back (it's complete and cached).
