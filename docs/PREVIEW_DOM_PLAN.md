@@ -292,6 +292,91 @@ and `tests/perf/bench_input_lag.py`:
 If gates pass at `LRU_CAP = 16+` → **ship and stop here**. Stages 4–5
 remain available but unnecessary.
 
+### Stage 3a — Layout + navigation fixes for the structural preview (~0.5 d)
+
+Three independent fixes landed together because reproducing the
+user-visible "Workshop content cut off + match navigation jumps to
+unrelated area" symptoms required all three.
+
+**A. Container content-height clip.** `PreviewContainer` is the
+scrollable canvas inside `#preview_pane`. Textual's
+`VerticalLayout.get_content_height` has a shortcut for "all children
+are dynamic-height" that arranges them inside `container.height` —
+fine for nested flex layouts, wrong here because the parent IS the
+scrollable. The shortcut clamped the container's height to ~433 cells
+even when its children summed to 1117, so anything past that y was
+positioned in widget coords but unreachable via scroll (chunks beyond
+the clip line rendered as a hard wall).
+
+Fix: override `PreviewContainer.get_content_height` to arrange with
+`Size(width, 0)`, forcing the non-shortcut branch. Each chunk widget
+then reports its full intrinsic height and the pane's virtual_size
+matches the content.
+
+**B. First-paint scroll lands at the wrong y.** `_finalize_via_lock`
+awaited only the focus chunk's `build_done` before revealing +
+scrolling. Sibling chunks above the focus were still height=0 at
+scroll time; the scroll lands at the focus's then-stale virtual_y,
+then those siblings finish building, layout shifts, and the focus
+ends up off-screen — the "match flashes for a frame then jumps to an
+unrelated area" symptom.
+
+Fix in `_finalize_via_lock`:
+
+1. Await the focus chunk's `build_done`.
+2. Collect every above-the-focus FNDMarkdown that's been mounted by
+   phase 1b (must collect *after* the focus build resolves so the
+   siblings are already in `chunk_widgets`).
+3. Await each sibling's `build_done`.
+4. Yield + `container.refresh(layout=True)` in a loop, up to 20
+   cycles, until the focus chunk's `region.height` is non-zero — the
+   compositor's coordinate pass runs on the next refresh cycle, not
+   synchronously with build_done.
+5. Then remove `-pre-reveal` and schedule the scroll.
+
+**C. Scroll-driven lazy mount.** Even with the clip and finalize
+fixes, the mounted set was still capped at focus ± `_VISIBLE_FIRST_*`
+because `_BACKGROUND_FILL_RADIUS=3` is below the visible-window radius,
+making the phase 2a/2b background-fill loops dead code at runtime.
+Scrolling past the visible window hit a hard wall; chunks left in
+gaps between two focus points (e.g., a low-index hit followed by a
+high-index hit) never mounted at all.
+
+`MatchAwareScroll.watch_scroll_y` now notifies the app on scroll
+changes. `FNDApp._check_preview_lazy_mount` (debounced 120 ms) finds
+the chunk widget at the viewport's top / bottom edge and, when the
+user is within `_LAZY_MOUNT_TRIGGER_MARGIN` cells of that chunk's
+boundary AND the immediately-adjacent chunk in document order is
+unmounted, schedules a `_lazy_mount_batch` task to mount the next
+`_LAZY_MOUNT_BATCH` chunks. Below-direction batches just append.
+Above-direction batches mount hidden + reveal; viewport-anchor
+preservation via virtual_region delta proved unreliable post-reveal
+(returns 0 on consecutive batches even after refresh), so the
+prepended chunks land at the top of the user's viewport — which IS
+the right UX when they just scrolled up to the wall trying to see
+what's above.
+
+`_suppress_lazy_mount_briefly` (400 ms gate) is set before every
+programmatic scroll (`_do_scroll_to_chunk`, `_do_scroll_to_widget`,
+phase 2b reveal-anchor) so the navigation's own scroll-to-widget
+doesn't trip the watcher and compete with the anchor.
+
+Adjacency check (`bottom_idx + 1 not in mounted`) means the trigger
+only fires when the user is genuinely about to cross from a mounted
+chunk into an unmounted neighbour; long contiguous mounted spans
+don't cascade-mount the rest of the file.
+
+**Why outside the main staging.** Stage 3 (Screen-per-file LRU) is
+deferred for the architecture-mismatch reason in the session-state
+memory; these fixes hold the UX bar until Stage 3 is viable. All
+three are localised to the structural-preview path and don't touch
+the flat-buffer pipeline.
+
+**Decision gate.** Constraint (D) — preview pre-mount must not block
+the event loop. Each lazy-mount batch awaits `FNDMarkdown.build_done`
+between mounts, and there is at most one lazy-mount task in flight
+per active container.
+
 ### Stage 4 (conditional) — Two-tier focused/flat for structural (~1–2 w)
 
 Take only if Stage 3 doesn't move the needle enough, or if user-

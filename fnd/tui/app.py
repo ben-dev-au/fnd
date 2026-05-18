@@ -92,16 +92,23 @@ _PREVIEW_CACHE_MIN_CHUNKS = 1
 # feedback before the background fill starts.
 _VISIBLE_FIRST_ABOVE = 7
 _VISIBLE_FIRST_BELOW = 7
-# Lazy-mount budget. Background fill stops at focused ± this many
-# chunks. With W3 DataTable + structural pre-mount default-on, this
-# keeps the cumulative DOM (cache size × chunks per file × widgets
-# per chunk) inside the input-lag envelope. Resume path expands the
-# buffer further if the user navigates past the radius.
+# Background-fill bound, applied beyond the ±_VISIBLE_FIRST_* window
+# during the initial cold mount. At < _VISIBLE_FIRST_* the phase 2a/2b
+# loops are no-ops; the scroll-driven lazy mount picks up from the
+# visible-window boundary instead. Raise to e.g. 10 for a small static
+# buffer before lazy-mount engages (Stage 0a in PREVIEW_DOM_PLAN.md);
+# the trade-off is a small cold-mount cost per cached file.
 _BACKGROUND_FILL_RADIUS = 3
 # Prefetch mounts only the focused chunk per cached file. User-side
 # resume expands on click via Phase 1b/2. Keeps prefetch DOM
 # contribution at ~1 widget per cached file.
 _PREFETCH_MOUNT_RADIUS = 0
+# Scroll-driven lazy mount. When the user scrolls within this many
+# cells of the boundary of the mounted region, the next batch is
+# mounted on demand. Lets long files behave like a continuous document
+# without forcing the initial mount to cover everything.
+_LAZY_MOUNT_TRIGGER_MARGIN = 30
+_LAZY_MOUNT_BATCH = 3
 
 
 class ResultsTree(Tree[dict[str, Any]]):
@@ -189,6 +196,23 @@ class PreviewContainer(Container):
     @property
     def is_complete(self) -> bool:
         return len(self.mounted_indices) >= self.total_chunks
+
+    def get_content_height(self, container, viewport, width):  # type: ignore[no-untyped-def]
+        # Textual's VerticalLayout has an "all children are dynamic
+        # height" shortcut that arranges them inside ``container.height``
+        # — fine for flex-style nested containers, wrong here because
+        # this widget is the scrollable canvas of #preview_pane. The
+        # shortcut caps total height at the pane's viewport height
+        # (~19 cells), so chunks past that y are positioned in widget
+        # coords but unreachable via scroll. Force the non-shortcut
+        # branch by arranging with height=0, which lets each FNDMarkdown
+        # child report its full intrinsic height.
+        if not self._nodes:
+            return 0
+        from textual.geometry import Size as _Size
+
+        arrangement = self.arrange(_Size(width, 0))
+        return arrangement.total_region.height
 
 
 class PreviewCache:
@@ -1188,6 +1212,18 @@ class FNDApp(App[None]):
         self._preview_load_progress: tuple[int, int | None] | None = None
         # Strong ref so the event loop doesn't GC the in-flight mount task.
         self._preview_mount_task: object | None = None
+        # In-flight lazy-mount task (driven by scroll). One at a time;
+        # cleared on file switch alongside ``_preview_mount_task``.
+        self._lazy_mount_task: object | None = None
+        # Monotonic-time gate. Programmatic scrolls (navigation anchor,
+        # finalize reveal) push this forward so the watcher doesn't
+        # interpret their own scroll changes as user intent and fire a
+        # competing mount that yanks the focused chunk off-screen.
+        self._lazy_mount_suppressed_until: float = 0.0
+        # Debounce timer so rapid scroll bursts collapse to a single
+        # check at the tail end — protects programmatic intermediate
+        # scrolls AND smooths user wheel/key scroll bursts.
+        self._lazy_mount_check_timer: object | None = None
         # Prebuilt flat-buffer bundles keyed by (parent_id, query_sig).
         # Cleared on query change — highlight spans are baked in at build time.
         self._prebuilt_cache: dict[tuple[str, str], RenderedDocument] = {}
@@ -1574,6 +1610,7 @@ class FNDApp(App[None]):
         # go stale at the same moment the chunk cache does.
         self._prebuilt_cache.clear()
         self._cancel_preview_mount_task()
+        self._cancel_lazy_mount_task()
         evicted = self._preview_cache.clear()
         for old in evicted:
             with contextlib.suppress(Exception):
@@ -1712,6 +1749,7 @@ class FNDApp(App[None]):
         )
         if active_parent is not None and active_parent != parent_id:
             self._cancel_preview_mount_task()
+            self._cancel_lazy_mount_task()
         self._preview_load_target = (parent_id, focus_chunk_seq)
         if self._config is not None:
             delay_ms = self._config.defaults.preview_load_debounce_ms
@@ -1914,7 +1952,10 @@ class FNDApp(App[None]):
                 self._scroll_preview_to_chunk(focus_chunk_seq)
                 return
             # Same-file resume: scroll-between-matches expects no bar.
+            # Cancel any in-flight lazy-mount on this container — its
+            # scroll-compensate would compete with the resume's anchor.
             self._cancel_preview_mount_task()
+            self._cancel_lazy_mount_task()
             self._hide_progress_bar()
             self._preview_mount_task = asyncio.create_task(
                 self._mount_chunks_async(
@@ -2322,26 +2363,65 @@ class FNDApp(App[None]):
         *,
         path: str = "cold_via_lock",
     ) -> None:
-        """Event-trigger on the focused chunk's ``build_done``
-        ``asyncio.Event`` (set by ``FNDMarkdown._on_mount`` after
-        ``Markdown.update`` returns — i.e. every block widget mounted),
-        then schedule the scroll. Used for cold mount and warm same-
-        file resume; both land on a freshly-mounted chunk and would
-        otherwise race layout. Polling-free direct trigger."""
+        """Wait for *every* chunk above the focus in the mounted window
+        to finish building before revealing + scrolling. Awaiting only
+        the focus chunk's ``build_done`` (the previous behaviour) let
+        the scroll land while siblings above were still height=0; once
+        those grew, the focus chunk's virtual_y shifted and the user
+        saw the correct match flash, then jump to an unrelated area.
+        Waiting for the above-siblings means the focus chunk's
+        virtual_y is final at scroll time."""
         import asyncio
         import time
 
         from fnd.tui import _perf
 
         header = container.chunk_widgets.get(focus_chunk_seq)
-        if isinstance(header, FNDMarkdown):
+        # Step 1: wait for focus chunk's build. By the time it resolves,
+        # the parent mount task has run phase 1b synchronously, so the
+        # full visible window is in chunk_widgets.
+        try:
+            async with asyncio.timeout(8.0):
+                if isinstance(header, FNDMarkdown):
+                    await header.build_done.wait()
+        except TimeoutError:
+            self._diag_log(
+                f"finalize_via_lock focus build_done timeout seq={focus_chunk_seq} path={path}"
+            )
+        # Step 2: now wait for every above-the-focus FNDMarkdown to
+        # finish building. Their heights drive the focus chunk's
+        # virtual_y; without this wait the scroll lands while siblings
+        # are still height=0, and the user sees the correct match for
+        # one frame before layout shifts under them.
+        above_widgets: list[FNDMarkdown] = [
+            w
+            for seq, w in container.chunk_widgets.items()
+            if seq < focus_chunk_seq and isinstance(w, FNDMarkdown)
+        ]
+        if above_widgets:
             try:
                 async with asyncio.timeout(8.0):
-                    await header.build_done.wait()
+                    await asyncio.gather(*(w.build_done.wait() for w in above_widgets))
             except TimeoutError:
                 self._diag_log(
-                    f"finalize_via_lock build_done timeout seq={focus_chunk_seq} path={path}"
+                    f"finalize_via_lock above build_done timeout "
+                    f"seq={focus_chunk_seq} above_count={len(above_widgets)} path={path}"
                 )
+        # Yield + refresh so Textual's compositor recomputes each
+        # built widget's region — build_done fires when Markdown.update
+        # returns, but the compositor's coordinate pass runs on the
+        # next refresh cycle. Scrolling before that means the focus
+        # chunk's region.y is still stale (often 0), the user sees
+        # the correct match for one paint then jumps as layout settles.
+        # On heavy md (large tables, fences) a single refresh tick
+        # isn't enough — keep yielding until the focus chunk's
+        # region.height is non-zero (capped so we don't hang).
+        for _ in range(20):
+            await asyncio.sleep(0)
+            container.refresh(layout=True)
+            await asyncio.sleep(0)
+            if isinstance(header, FNDMarkdown) and header.region.height > 0:
+                break
         wait_ms = (time.perf_counter() - t0) * 1000
         container.remove_class("-pre-reveal")
         self._hide_progress_bar()
@@ -2353,7 +2433,8 @@ class FNDApp(App[None]):
         )
         self.call_after_refresh(self._scroll_preview_to_chunk, focus_chunk_seq)
         self._diag_log(
-            f"finalize_via_lock done seq={focus_chunk_seq} path={path} wait_ms={wait_ms:.1f}"
+            f"finalize_via_lock done seq={focus_chunk_seq} path={path} "
+            f"wait_ms={wait_ms:.1f} above_waited={len(above_widgets)}"
         )
 
     def _do_finalize_pre_reveal(
@@ -2418,6 +2499,28 @@ class FNDApp(App[None]):
             with contextlib.suppress(Exception):
                 task.cancel()  # type: ignore[attr-defined]
         self._preview_mount_task = None
+
+    def _cancel_lazy_mount_task(self) -> None:
+        """Drop any in-flight scroll-driven mount task. Called on file
+        switch / query change so the task can't mount stale chunks into
+        a container the user has moved away from."""
+        import contextlib
+
+        if self._lazy_mount_check_timer is not None:
+            with contextlib.suppress(Exception):
+                self._lazy_mount_check_timer.stop()  # type: ignore[attr-defined]
+            self._lazy_mount_check_timer = None
+        task = self._lazy_mount_task
+        if task is None:
+            return
+        try:
+            done = task.done()  # type: ignore[attr-defined]
+        except Exception:
+            done = True
+        if not done:
+            with contextlib.suppress(Exception):
+                task.cancel()  # type: ignore[attr-defined]
+        self._lazy_mount_task = None
 
     async def _cancel_prefetch_task_on(self, container: PreviewContainer) -> None:
         """Cancel + await any background prefetch task on ``container``
@@ -3067,6 +3170,7 @@ class FNDApp(App[None]):
                     focused_widget = container.chunk_widgets.get(focus_chunk_seq)
                     if focused_widget is not None:
                         with contextlib.suppress(Exception):
+                            self._suppress_lazy_mount_briefly()
                             pane.scroll_to_widget(
                                 focused_widget, top=True, animate=False, immediate=True
                             )
@@ -3104,6 +3208,230 @@ class FNDApp(App[None]):
             # mounts in between, producing the "jump after settle" the
             # user reports.
             self._refresh_status()
+
+    def _schedule_preview_lazy_mount_check(self) -> None:
+        """Debounced entry point. Every scroll change re-arms a short
+        timer; only the *last* scroll in a burst actually runs the
+        check. Coalesces programmatic anchor scrolls (which fire one or
+        two watcher trips back-to-back) AND user wheel/key bursts down
+        to a single check at the tail end — no fighting between the
+        navigation's own scroll-to-widget and lazy-mount's compensate."""
+        import contextlib
+
+        if self._lazy_mount_check_timer is not None:
+            with contextlib.suppress(Exception):
+                self._lazy_mount_check_timer.stop()  # type: ignore[attr-defined]
+        self._lazy_mount_check_timer = self.set_timer(
+            0.12, self._check_preview_lazy_mount, name="lazy-mount-debounce"
+        )
+
+    def _suppress_lazy_mount_briefly(self, duration: float = 0.4) -> None:
+        """Push the gate forward so the next ``_check_preview_lazy_mount``
+        runs no-op until ``duration`` seconds have passed. Used by every
+        programmatic scroll site (navigation anchor, finalize reveal,
+        cold-mount scroll) so their own watcher trips don't trigger a
+        lazy mount that would yank scroll position away from the
+        focused chunk."""
+        import time
+
+        deadline = time.monotonic() + duration
+        if deadline > self._lazy_mount_suppressed_until:
+            self._lazy_mount_suppressed_until = deadline
+
+    def _check_preview_lazy_mount(self) -> None:
+        """Scroll watcher entry point (after debounce). Mounts the next
+        batch of chunks in the scroll direction when the viewport
+        approaches a boundary of the chunk currently under it. Looks
+        at the next *unmounted* chunk in document order — so gaps left
+        behind when the user jumps between matches get filled
+        progressively, not just the chunks past the absolute max/min
+        mounted index."""
+        import time
+
+        self._lazy_mount_check_timer = None
+        if time.monotonic() < self._lazy_mount_suppressed_until:
+            return
+        container = self._active_preview
+        if container is None:
+            return
+        chunks = self._chunk_cache.get(container.parent_doc_id)
+        if not chunks or not container.mounted_indices:
+            return
+        if len(container.mounted_indices) >= len(chunks):
+            return
+        # Don't compete with the initial visible-first mount task; it
+        # owns the window and will hand off once it settles.
+        if self._user_mount_in_flight():
+            return
+        task = self._lazy_mount_task
+        if task is not None:
+            try:
+                if not task.done():  # type: ignore[attr-defined]
+                    return
+            except Exception:
+                pass
+        try:
+            pane = self.query_one("#preview_pane", VerticalScroll)
+        except Exception:
+            return
+        if pane.size.height <= 0:
+            return
+
+        scroll_y = float(pane.scroll_y)
+        viewport_h = float(pane.size.height)
+        viewport_bottom = scroll_y + viewport_h
+        margin = float(_LAZY_MOUNT_TRIGGER_MARGIN)
+
+        # Snapshot mounted chunks' virtual-y ranges so we can find the
+        # widgets covering viewport top + bottom in O(mounted) — small
+        # under realistic mount counts.
+        chunk_ranges: list[tuple[int, int, int]] = []
+        for idx in sorted(container.mounted_indices):
+            seq = chunks[idx].chunk_seq
+            widget = container.chunk_widgets.get(seq)
+            if widget is None:
+                continue
+            try:
+                vr = widget.virtual_region  # type: ignore[attr-defined]
+                y0 = int(vr.y)
+                h = int(vr.height)
+            except Exception:
+                continue
+            chunk_ranges.append((idx, y0, y0 + h))
+        if not chunk_ranges:
+            return
+
+        def _covering(y: float) -> tuple[int, int, int] | None:
+            for entry in chunk_ranges:
+                if entry[1] <= y < entry[2]:
+                    return entry
+            return None
+
+        import asyncio
+
+        bottom_cover = _covering(viewport_bottom - 1) or chunk_ranges[-1]
+        bottom_idx, _, bottom_chunk_y1 = bottom_cover
+        # Only fire below if the IMMEDIATE next chunk in document order
+        # is unmounted — otherwise the user is mid-region and can
+        # scroll on through the contiguous mounted span without a wall.
+        next_idx = bottom_idx + 1
+        if (
+            next_idx < len(chunks)
+            and next_idx not in container.mounted_indices
+            and (bottom_chunk_y1 - viewport_bottom) <= margin
+        ):
+            self._lazy_mount_task = asyncio.create_task(
+                self._lazy_mount_batch(container, chunks, start_idx=next_idx, direction="below")
+            )
+            return
+
+        top_cover = _covering(scroll_y) or chunk_ranges[0]
+        top_idx, top_chunk_y0, _ = top_cover
+        prev_idx = top_idx - 1
+        if (
+            prev_idx >= 0
+            and prev_idx not in container.mounted_indices
+            and (scroll_y - top_chunk_y0) <= margin
+        ):
+            self._lazy_mount_task = asyncio.create_task(
+                self._lazy_mount_batch(container, chunks, start_idx=prev_idx, direction="above")
+            )
+
+    async def _lazy_mount_batch(
+        self,
+        container: PreviewContainer,
+        chunks: list[FileChunk],
+        *,
+        start_idx: int,
+        direction: str,
+    ) -> None:
+        """Mount ``_LAZY_MOUNT_BATCH`` chunks starting at ``start_idx``,
+        moving in ``direction``.
+
+        Below: append in document order; no scroll adjustment needed
+        because content grows downward.
+
+        Above: hidden-prepend, await build, reveal. No scroll
+        compensate — anchor preservation via virtual_region delta
+        proved unreliable post-reveal (returns 0 on consecutive
+        above-batches even after refresh), so newly-prepended chunks
+        appear at the top of the visible area, which IS the right UX
+        when the user just scrolled up to the wall.
+
+        ``start_idx`` is the first index to mount in each direction;
+        the loop skips already-mounted indices in case the gap was
+        partially filled by an earlier batch.
+        """
+        import asyncio
+        import contextlib
+
+        if direction == "below":
+            end = min(start_idx + _LAZY_MOUNT_BATCH, len(chunks))
+            for i in range(start_idx, end):
+                if self._active_preview is not container:
+                    return
+                if i in container.mounted_indices:
+                    continue
+                try:
+                    self._mount_chunk_into(container, chunks[i], i, chunks)
+                except Exception:
+                    continue
+                seq = chunks[i].chunk_seq
+                md_widget = container.chunk_widgets.get(seq)
+                if isinstance(md_widget, FNDMarkdown):
+                    with contextlib.suppress(Exception):
+                        async with md_widget.lock:
+                            pass
+                await asyncio.sleep(0)
+            return
+
+        # Mount chunks [start_idx, start_idx-1, …, start_idx-batch+1]
+        # in reverse so each new widget lands BEFORE the anchor in
+        # document order. ``hidden`` MUST be revealed even on cancel,
+        # otherwise a switch-away mid-batch leaves widgets with
+        # ``display=False`` cached on the container; the next visit
+        # paints those rows as blank space → the "Workshop section
+        # only shows the heading" symptom. No scroll compensate —
+        # anchor preservation via virtual_region delta proved
+        # unreliable on consecutive above-batches (returns 0 even
+        # after refresh+sleep), so newly-prepended chunks just
+        # appear at the top of the visible area, which is the right
+        # UX when the user just scrolled up to the wall.
+        end = max(start_idx - _LAZY_MOUNT_BATCH, -1)
+        hidden: list[Widget] = []
+        try:
+            for i in range(start_idx, end, -1):
+                if self._active_preview is not container:
+                    return
+                if i in container.mounted_indices:
+                    continue
+                before_children = set(container.children)
+                try:
+                    self._mount_chunk_into(container, chunks[i], i, chunks)
+                except Exception:
+                    continue
+                for w in container.children:
+                    if w not in before_children:
+                        w.display = False
+                        hidden.append(w)
+                await asyncio.sleep(0.002)
+
+            for w in hidden:
+                if isinstance(w, FNDMarkdown):
+                    with contextlib.suppress(Exception):
+                        async with w.lock:
+                            pass
+
+            for w in hidden:
+                w.display = True
+            hidden.clear()
+        finally:
+            # Cancellation or unexpected return: anything still in
+            # ``hidden`` would otherwise stay invisible on the cached
+            # container.
+            for w in hidden:
+                with contextlib.suppress(Exception):
+                    w.display = True
 
     def _mount_chunk_into(
         self,
@@ -3427,6 +3755,9 @@ class FNDApp(App[None]):
                 f"target={type(target).__name__} path={path}"
             )
         pane = self.query_one("#preview_pane", VerticalScroll)
+        # Brief gate so the resulting watcher trip doesn't fire a lazy
+        # mount that competes with this scroll's anchor.
+        self._suppress_lazy_mount_briefly()
         pane.scroll_to_widget(target, top=True, animate=False)
         self._diag_log(
             f"do_scroll seq={focus_chunk_seq} target={type(target).__name__} "
@@ -3531,6 +3862,7 @@ class FNDApp(App[None]):
             self.call_after_refresh(self._do_scroll_to_widget, widget, retries - 1)
             return
         pane = self.query_one("#preview_pane", VerticalScroll)
+        self._suppress_lazy_mount_briefly()
         pane.scroll_to_widget(widget, top=True, animate=False)
 
     # ── Open / peek dispatch ──────────────────────────────────────
@@ -3736,6 +4068,7 @@ class FNDApp(App[None]):
         self._chunk_cache.clear()
         self._prebuilt_cache.clear()
         self._cancel_preview_mount_task()
+        self._cancel_lazy_mount_task()
         evicted = self._preview_cache.clear()
         for old in evicted:
             with contextlib.suppress(Exception):
@@ -3802,6 +4135,7 @@ class FNDApp(App[None]):
         self._chunk_cache.clear()
         self._prebuilt_cache.clear()
         self._cancel_preview_mount_task()
+        self._cancel_lazy_mount_task()
         self._cancel_pending_preview_load()
         evicted = self._preview_cache.clear()
         for old in evicted:

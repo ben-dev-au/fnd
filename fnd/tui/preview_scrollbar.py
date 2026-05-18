@@ -245,6 +245,21 @@ class MatchAwareScroll(VerticalScroll):
     bar widget is a :class:`MatchAwareScrollBar` from first construction.
     """
 
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        # Bubble to the app so it can extend the mounted chunk window
+        # when the viewport approaches a boundary. The app debounces
+        # internally so consecutive watcher trips (e.g., from a
+        # programmatic scroll-to-widget) collapse to a single check.
+        # Missing handler is a silent no-op so this widget stays
+        # usable in isolation.
+        super().watch_scroll_y(old_value, new_value)
+        try:
+            handler = getattr(self.app, "_schedule_preview_lazy_mount_check", None)
+            if handler is not None:
+                handler()
+        except Exception:
+            pass
+
     def watch_has_focus(self, has_focus: bool) -> None:
         """Skip Textual's default behaviour of reapplying CSS to every
         descendant when this widget gains or loses focus.
