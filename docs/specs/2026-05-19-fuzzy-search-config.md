@@ -141,17 +141,23 @@ Action(
     id="toggle_fuzzy",
     description="Toggle auto-fuzzy matching on or off. "
                 "Persists to the config TOML.",
-    default_key="ctrl+t",
+    default_key="ctrl+f",
     command="fuzzy",
     footer_label="Fuzzy",
     show_in_footer=False,
+    priority=True,
 )
 ```
 
-`ctrl+t` (mnemonic: toggle) because Textual's Input widget owns most
-common ctrl-combos (ctrl+a/c/d/e/f/k/u/v/w/x). ctrl+t isn't among
-them, so it bubbles up to the app-level binding even when the query
-bar has focus. Users can rebind via `keybindings.toml`.
+`ctrl+f` for the obvious "f for fuzzy" mnemonic. Textual's Input
+widget binds ctrl+f to "delete right word" by default, so the
+binding is registered with ``priority=True``: a new field on
+:class:`Action` that the BINDINGS comprehension forwards into the
+Textual ``Binding`` constructor. Priority bindings fire before any
+focused widget's own handlers, so the toggle is reachable from the
+query bar (where it matters). Trade-off: users lose Input's ctrl+f
+shortcut; they can rebind toggle_fuzzy via ``keybindings.toml`` if
+they prefer Input's behaviour.
 
 `FNDApp.action_toggle_fuzzy`:
 

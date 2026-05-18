@@ -882,6 +882,13 @@ def _action_show(action_id: str) -> bool:
     return True
 
 
+def _action_priority(action_id: str) -> bool:
+    for a in REGISTRY:
+        if a.id == action_id:
+            return a.priority
+    return False
+
+
 def render_hint_bar(
     anchors: tuple[tuple[str, str], ...],
     contextual: tuple[tuple[str, str], ...] = (),
@@ -1083,6 +1090,7 @@ class FNDApp(App[None]):
                 action_id,
                 _short_label(action_id),
                 show=_action_show(action_id),
+                priority=_action_priority(action_id),
             )
             for key, action_id in load_keymap().bindings.items()
         ),

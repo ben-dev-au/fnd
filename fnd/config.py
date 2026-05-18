@@ -493,7 +493,7 @@ preview_load_debounce_ms = 150    # ms, 0-1000
 # and structural (md/docx/pptx) previews. 0 disables prefetch.
 preview_prefetch_count   = 4      # 0-20
 # Auto-fuzzy in the cascade fallback. Toggle from the TUI with the
-# `toggle_fuzzy` action (default ctrl+t). Per-term `~1` / `~2` in the
+# `toggle_fuzzy` action (default ctrl+f). Per-term `~1` / `~2` in the
 # query overrides this — works even when auto-fuzzy is off.
 fuzzy_enabled            = true
 # Minimum post-stem length for auto-fuzzy. Stems shorter than this

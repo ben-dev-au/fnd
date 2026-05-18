@@ -74,14 +74,15 @@ async def test_toggle_fuzzy_flips_config_and_persists(
 
 
 @pytest.mark.asyncio
-async def test_ctrl_t_fires_toggle_from_query_bar(
+async def test_ctrl_f_fires_toggle_from_query_bar(
     cfg: Config, cfg_path: Path, md_index: Path
 ) -> None:
     """The default binding fires from query-bar focus.
 
-    ``ctrl+t`` is chosen because Textual's Input owns ctrl+a/c/d/e/f/k/
-    u/v/w/x — ctrl+t isn't bound there, so it bubbles up to the app's
-    action."""
+    Textual's Input binds ctrl+f to "delete right word"; the action
+    registry marks this binding ``priority=True`` so it overrides
+    Input's handler and the toggle stays reachable while the query
+    bar is focused."""
     app = FNDApp(index_dir=md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -90,6 +91,6 @@ async def test_ctrl_t_fires_toggle_from_query_bar(
         await pilot.pause()
         assert app._config is not None
         before = app._config.defaults.fuzzy_enabled
-        await pilot.press("ctrl+t")
+        await pilot.press("ctrl+f")
         await pilot.pause()
         assert app._config.defaults.fuzzy_enabled is not before

@@ -40,6 +40,11 @@ class Action:
     # contexts: ``"query"`` (query input focused), ``"results"`` (results
     # tree focused), ``"preview"`` (preview pane focused).
     contexts: tuple[str, ...] = ()
+    # Priority bindings fire before any focused widget's own handlers —
+    # required when the chosen key collides with a Textual widget
+    # default (e.g. Input owns ctrl+f as "delete right word"). Override
+    # with care: it removes the widget's behaviour for that key.
+    priority: bool = False
 
     @property
     def palette_command(self) -> str:
@@ -170,10 +175,14 @@ REGISTRY: tuple[Action, ...] = (
         id="toggle_fuzzy",
         description="Toggle auto-fuzzy matching. Persists to config; "
         "per-term ~N still works when auto-fuzzy is off.",
-        default_key="ctrl+t",
+        default_key="ctrl+f",
         command="fuzzy",
         footer_label="Fuzzy",
         show_in_footer=False,
+        # Textual's Input binds ctrl+f to "delete right word"; we
+        # override so the toggle is reachable while the query bar is
+        # focused (the whole point of this shortcut).
+        priority=True,
     ),
     Action(
         id="open_collections_form",
