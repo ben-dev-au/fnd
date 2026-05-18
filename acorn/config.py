@@ -244,7 +244,7 @@ class Defaults(BaseModel):
     # list doesn't outpace the prefetcher on small-to-medium files.
     # 0 disables prefetch entirely (useful in tests or on very
     # large corpora where the prefetch wastes work).
-    preview_prefetch_count: int = 10
+    preview_prefetch_count: int = 4
 
 
 class Config(BaseModel):
@@ -483,7 +483,7 @@ preview_load_debounce_ms = 150    # ms, 0-1000
 # Number of top result files to decode + pre-mount widgets for in the
 # background as soon as a search returns. Covers both flat (PDF/TXT)
 # and structural (md/docx/pptx) previews. 0 disables prefetch.
-preview_prefetch_count   = 10     # 0-20
+preview_prefetch_count   = 4      # 0-20
 
 # A collection groups one or more source directories. The starter
 # collection points at ~/Documents; edit, add more [[sources]] tables,
