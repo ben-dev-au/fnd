@@ -10,21 +10,31 @@ This module wires three thin subclasses:
 
 * :class:`MatchAwareScrollBarRender` — overrides Textual's renderer to
   swap the blank track glyph for an accent ``▌`` block at every row that
-  maps to a chunk containing a query match.
-* :class:`MatchAwareScrollBar` — passes a per-instance ``match_map`` into
-  the custom renderer (Textual's default ``ScrollBar.render`` instantiates
-  the renderer class without per-instance args).
+  carries a match.
+* :class:`MatchAwareScrollBar` — passes per-instance match data into the
+  custom renderer (Textual's default ``ScrollBar.render`` instantiates the
+  renderer class without per-instance args).
 * :class:`MatchAwareScroll` — a ``VerticalScroll`` whose vertical scrollbar
-  is a :class:`MatchAwareScrollBar`. Exposes ``set_match_map`` so the TUI
-  can update markers whenever the previewed file changes.
+  is a :class:`MatchAwareScrollBar`.
 
-Marker rows are mapped from chunk index proportionally to bar height, so
-a 30-chunk file painted on a 20-row bar still gives a sensible spread of
-indicators.
+Two marker-mapping modes coexist:
+
+* **Line-precise** (preferred, Phase 3 redesign) — driven by
+  ``set_match_lines(lines, total_lines)``. Each match line maps to one
+  exact track cell via ``cell = int(line * track_height / total_lines)``,
+  so a single big chunk and many tiny ones each get a marker at the right
+  visual position. Used by the flat-buffer :class:`LineBufferPreview`
+  pipeline.
+* **Chunk-uniform** (legacy) — driven by ``set_match_map(match_map)``
+  where ``match_map[i]`` flags chunk ``i`` as match-bearing. Each cell on
+  the track resolves back to a chunk index proportionally and paints if
+  that chunk matches. Used by the structural Markdown / docx / pptx
+  preview path until Phase 5 migrates it.
 """
 
 from __future__ import annotations
 
+import contextlib
 from math import ceil
 from typing import TYPE_CHECKING, Any
 
@@ -44,8 +54,18 @@ _MARKER_GLYPH = "▌"
 
 
 class MatchAwareScrollBarRender(ScrollBarRender):
-    """ScrollBarRender that paints accent markers on the track at every
-    row whose proportionally-mapped chunk contains a query match."""
+    """ScrollBarRender that paints accent markers on the track.
+
+    Accepts either of two marker sources (mutually exclusive):
+
+    * Line-precise (Phase 3): ``match_lines`` + ``total_lines``. Each
+      match line maps to one exact track cell.
+    * Chunk-uniform (legacy): ``match_map[i]`` flagging chunk ``i``;
+      track cells proportionally resolve back to chunk indices.
+
+    Passing both is supported but line-precise wins (and ``match_map``
+    is ignored) since it is strictly more accurate.
+    """
 
     def __init__(
         self,
@@ -56,9 +76,34 @@ class MatchAwareScrollBarRender(ScrollBarRender):
         vertical: bool = True,
         style: Any = "bright_magenta on #555555",
         match_map: list[bool] | None = None,
+        match_lines: list[int] | None = None,
+        total_lines: int = 0,
     ) -> None:
         super().__init__(virtual_size, window_size, position, thickness, vertical, style)
         self.match_map: list[bool] = list(match_map or [])
+        self.match_lines: list[int] = list(match_lines or [])
+        self.total_lines: int = max(0, int(total_lines))
+
+    def _marker_cells(self, size: int) -> set[int]:
+        """Resolve the set of track-cell indices that should carry a marker.
+
+        Prefers the line-precise mapping when ``match_lines`` /
+        ``total_lines`` are populated; falls back to the chunk-uniform
+        mapping driven by ``match_map``. Returns an empty set when
+        neither source is available.
+        """
+        if size <= 0:
+            return set()
+        if self.match_lines and self.total_lines > 0:
+            return {
+                min(int(line * size / self.total_lines), size - 1)
+                for line in self.match_lines
+                if 0 <= line < self.total_lines
+            }
+        if not self.match_map:
+            return set()
+        n = len(self.match_map)
+        return {i for i in range(size) if self.match_map[min(int(i * n / size), n - 1)]}
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         size = (
@@ -83,7 +128,8 @@ class MatchAwareScrollBarRender(ScrollBarRender):
             bar_color=_style.color or RichColor.parse("bright_magenta"),
         )
 
-        if not (self.vertical and self.match_map and size > 0):
+        marker_cells = self._marker_cells(size) if self.vertical else set()
+        if not marker_cells:
             yield bar
             return
 
@@ -91,11 +137,9 @@ class MatchAwareScrollBarRender(ScrollBarRender):
         # ``@mouse.down: grab`` meta — leave those untouched so the
         # current scroll position still reads as a thumb.
         segments = list(bar.segments)
-        n = len(self.match_map)
         marker_color = RichColor.parse(_MARKER_COLOR)
         for i, seg in enumerate(segments):
-            chunk_idx = min(int(i * n / size), n - 1)
-            if not self.match_map[chunk_idx]:
+            if i not in marker_cells:
                 continue
             meta: dict[str, Any] = {}
             if seg.style is not None and seg.style.meta:
@@ -111,11 +155,17 @@ class MatchAwareScrollBarRender(ScrollBarRender):
 
 
 class MatchAwareScrollBar(ScrollBar):
-    """ScrollBar that knows which chunks contain query matches.
+    """ScrollBar that knows where in the document the query matched.
+
+    Accepts marker data from either the line-precise pipeline
+    (``set_match_lines``, used by the flat-buffer preview) or the
+    chunk-uniform legacy pipeline (``set_match_map``, used by the
+    structural Markdown preview). When both are set the line-precise
+    data wins inside the renderer.
 
     The default ``ScrollBar`` instantiates its renderer class without
-    per-instance state, so we override ``_render_bar`` to pass ``match_map``
-    through to :class:`MatchAwareScrollBarRender`.
+    per-instance state, so we override ``_render_bar`` to pass the
+    match data through to :class:`MatchAwareScrollBarRender`.
     """
 
     def __init__(
@@ -127,13 +177,48 @@ class MatchAwareScrollBar(ScrollBar):
     ) -> None:
         super().__init__(vertical=vertical, name=name, thickness=thickness)
         self._match_map: list[bool] = []
+        self._match_lines: list[int] = []
+        self._total_lines: int = 0
 
     def set_match_map(self, match_map: list[bool]) -> None:
-        """Replace the chunk-match map and refresh the bar rendering."""
+        """Replace the chunk-match map and refresh the bar rendering.
+
+        Legacy chunk-uniform path retained for the structural preview;
+        new callers should prefer :meth:`set_match_lines` which produces
+        cell-accurate markers regardless of chunk size variance.
+        """
         new_map = list(match_map)
-        if new_map == self._match_map:
+        if new_map == self._match_map and not self._match_lines:
             return
         self._match_map = new_map
+        # A caller that sets a chunk match-map is explicitly NOT using the
+        # line-precise pipeline; clear any stale line data so the renderer
+        # picks the chunk-uniform code path.
+        self._match_lines = []
+        self._total_lines = 0
+        self.refresh()
+
+    def set_match_lines(self, match_lines: list[int], total_lines: int) -> None:
+        """Replace the line-precise marker positions and refresh the bar.
+
+        ``match_lines`` is the sorted list of line indices that contain a
+        match; ``total_lines`` is the file's full line count. Each entry
+        maps to one exact track cell at render time.
+        """
+        new_lines = list(match_lines)
+        new_total = max(0, int(total_lines))
+        if (
+            new_lines == self._match_lines
+            and new_total == self._total_lines
+            and not self._match_map
+        ):
+            return
+        self._match_lines = new_lines
+        self._total_lines = new_total
+        # Same reciprocity as set_match_map: when the line-precise data
+        # is supplied, drop any leftover chunk map so the renderer's
+        # selection between modes is unambiguous.
+        self._match_map = []
         self.refresh()
 
     def _render_bar(self, scrollbar_style: Any) -> Any:
@@ -147,6 +232,8 @@ class MatchAwareScrollBar(ScrollBar):
             vertical=self.vertical,
             style=scrollbar_style,
             match_map=self._match_map,
+            match_lines=self._match_lines,
+            total_lines=self._total_lines,
         )
 
 
@@ -157,6 +244,23 @@ class MatchAwareScroll(VerticalScroll):
     ``vertical_scrollbar`` property; we override the property so the
     bar widget is a :class:`MatchAwareScrollBar` from first construction.
     """
+
+    def watch_has_focus(self, has_focus: bool) -> None:
+        """Skip Textual's default behaviour of reapplying CSS to every
+        descendant when this widget gains or loses focus.
+
+        The stock ``Widget.watch_has_focus`` calls
+        ``self.update_node_styles()``, which walks the whole subtree and
+        reapplies CSS to every node (every chunk widget, MarkdownBlock,
+        flat-buffer line). That walk is the dominant cost when the user
+        Tab-cycles in or out of the preview pane on a large document.
+
+        None of this pane's descendants have CSS rules that depend on
+        the pane's ``:focus`` state, so we apply styles to just this
+        node — the focus-indicator border on the pane itself.
+        """
+        with contextlib.suppress(Exception):
+            self.app.stylesheet.apply(self)
 
     @property
     def vertical_scrollbar(self) -> ScrollBar:
@@ -171,7 +275,17 @@ class MatchAwareScroll(VerticalScroll):
         return scroll_bar
 
     def set_match_map(self, match_map: list[bool]) -> None:
-        """Forward the match map down to the custom scrollbar."""
+        """Forward a chunk-uniform match map down to the custom scrollbar.
+
+        Legacy path used by the structural Markdown preview; flat-buffer
+        callers should use :meth:`set_match_lines` instead.
+        """
         bar = self.vertical_scrollbar
         if isinstance(bar, MatchAwareScrollBar):
             bar.set_match_map(match_map)
+
+    def set_match_lines(self, match_lines: list[int], total_lines: int) -> None:
+        """Forward line-precise marker positions down to the custom scrollbar."""
+        bar = self.vertical_scrollbar
+        if isinstance(bar, MatchAwareScrollBar):
+            bar.set_match_lines(match_lines, total_lines)

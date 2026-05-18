@@ -63,16 +63,17 @@ def _flush_section(
         return None
     body = "\n".join(p for p in body_text_parts if p).strip()
     heading_path = " > ".join(heading_stack)
-    # body for indexing: heading_path + plain body. Even when the visible
-    # body is empty (code-only section), ship the heading text so the
-    # F_BODY field still has something searchable.
-    index_body = f"{heading_path}\n{body}" if heading_path and body else heading_path or body
+    # F_BODY = chunk's own visible text (own heading + paragraphs).
+    # Ancestor heading_path is searched via F_HEADING_PATH as a boost,
+    # NOT baked into body — inheriting parent-heading text into every
+    # descendant's body inflates scores and surfaces chunks whose
+    # visible content has no match.
     return Chunk(
         parent_id=parent_id,
         path=str(path),
         mtime=mtime,
         kind="md",
-        body=index_body,
+        body=body,
         body_struct=blocks.copy(),
         body_md=body_md,
         heading_path=heading_path,
@@ -159,6 +160,11 @@ def extract(path: Path) -> Iterator[Chunk]:
             # Truncate the heading stack to the level above and push.
             heading_stack[pending_heading_level - 1 :] = [text]
             blocks.append(Block(kind=f"h{pending_heading_level}", text=text))
+            # Index the chunk's own heading as part of its searchable
+            # body so a query that matches the heading text returns this
+            # chunk. Ancestor headings live in heading_path (separately
+            # boosted); only this chunk's own heading goes into F_BODY.
+            body_parts.append(text)
             i += 1
             continue
 

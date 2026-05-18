@@ -35,7 +35,7 @@ from typing import Final
 from tantivy import Schema, SchemaBuilder
 
 # Bump on any field-shape change; indexer refuses to open a stale index.
-SCHEMA_VERSION: Final[int] = 5
+SCHEMA_VERSION: Final[int] = 6
 
 # Field-name constants so callers don't sprinkle string literals.
 F_PARENT_ID: Final = "parent_id"
@@ -62,7 +62,7 @@ DEFAULT_SEARCH_FIELDS: Final[list[str]] = [F_BODY, F_TITLE, F_HEADING_PATH, F_PA
 
 # Default per-field boosts applied at parse_query time.
 DEFAULT_FIELD_BOOSTS: Final[dict[str, float]] = {
-    F_HEADING_PATH: 3.0,
+    F_HEADING_PATH: 2.0,
     F_TITLE: 2.5,
     F_PATH_TOKENS: 1.5,
     F_BODY: 1.0,

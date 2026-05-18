@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 import tomllib
 from pathlib import Path
+from typing import Any, Literal
 
 from platformdirs import user_data_dir
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -50,6 +51,48 @@ def default_config_path() -> Path:
 
 
 # ── Schema ──────────────────────────────────────────────────────────────────
+
+# Indexer-supported file types in display order. Used by the Add Source /
+# Add Collection wizards to render the Includes multi-select. Keep this in
+# sync with the kinds the extractor pipeline handles.
+INDEXER_FILETYPES: dict[str, str] = {
+    "md": "Markdown (.md)",
+    "pdf": "PDF (.pdf)",
+    "docx": "Word (.docx)",
+    "pptx": "PowerPoint (.pptx)",
+    "txt": "Plain text (.txt)",
+}
+
+# Exclude presets for the Add Collection wizard's Excludes multi-select. Each
+# preset defines a set of globs and a default toggle state. Presets marked
+# default=True are pre-ticked in the UI.
+EXCLUDES_PRESETS: dict[str, dict[str, Any]] = {
+    "hidden": {
+        "label": "Hidden / system",
+        "globs": ["**/.*", "**/.DS_Store", "**/.git/**"],
+        "default": True,
+    },
+    "node_modules": {
+        "label": "Node modules",
+        "globs": ["**/node_modules/**"],
+        "default": False,
+    },
+    "python_caches": {
+        "label": "Python caches",
+        "globs": ["**/__pycache__/**", "**/*.pyc"],
+        "default": False,
+    },
+    "build_artefacts": {
+        "label": "Build artefacts",
+        "globs": ["**/dist/**", "**/build/**"],
+        "default": False,
+    },
+    "obsidian_meta": {
+        "label": "Obsidian metadata",
+        "globs": ["**/.obsidian/**"],
+        "default": False,
+    },
+}
 
 
 class SourceConfig(BaseModel):
@@ -173,6 +216,35 @@ class Defaults(BaseModel):
     result_limit: int = 200
     preview_chunks: int = 5
     debounce_ms: int = 200
+    drill_summary_mode: Literal["always_show", "smart", "always_ellipsis"] = "always_show"
+    # Per-file match surfacing. Sections are kept when their relevance
+    # score is at least ``sections_score_threshold * file_top_score``,
+    # capped at ``sections_per_file_max`` as a safety net. Threshold of
+    # 1.0 = top-scoring section only; 0.0 = every match up to the cap.
+    sections_score_threshold: float = 0.5
+    sections_per_file_max: int = 200
+    # Worker thread count for parallel chunk decode during preview load.
+    # tantivy's ``Searcher.doc()`` releases the GIL, so threads (not
+    # processes) are the right primitive. 1 = serial decode (back-compat
+    # fallback). Bump for very large PDFs; lower if CPU contention shows
+    # up in profiles.
+    preview_decode_workers: int = 4
+    # Idle delay before a results-tree cursor move triggers a preview
+    # load. Rapid arrow-key sweeps no longer kick off a decode at each
+    # intermediate row — only the final position loads, so scrolling
+    # down a long results list stays fluid. 0 = load instantly (legacy
+    # behaviour). Typical 100–250 ms.
+    preview_load_debounce_ms: int = 150
+    # Number of top result files to decode + pre-mount widgets for
+    # in the background as soon as a search returns. Covers both
+    # preview pipelines (flat for PDF/TXT, structural for md/docx/
+    # pptx) — a cursor move to any of those files becomes a
+    # visibility flip on the pre-mounted widget, not a fresh mount.
+    # Bumped from 5 to 10 so tapped navigation through the result
+    # list doesn't outpace the prefetcher on small-to-medium files.
+    # 0 disables prefetch entirely (useful in tests or on very
+    # large corpora where the prefetch wastes work).
+    preview_prefetch_count: int = 4
 
 
 class Config(BaseModel):
@@ -314,6 +386,54 @@ def write_collection(
     config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
 
 
+def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Config:
+    """Update a single field in the config TOML by dotted path.
+
+    Examples of ``dotted_path``:
+
+    - ``defaults.result_limit``
+    - ``defaults.collection``
+    - ``ranking.default.recency_boost``
+    - ``collections.default.ranking_profile``
+
+    Preserves comments and unrelated tables via ``tomlkit``. The full
+    document is re-validated through :class:`Config` after the in-memory
+    edit; on validation failure the on-disk file is **not** modified and
+    the underlying exception propagates so the caller can surface it.
+    """
+    import tomlkit
+
+    if config_path.exists():
+        doc = tomlkit.parse(config_path.read_text(encoding="utf-8"))
+    else:
+        doc = tomlkit.document()
+
+    parts = [p for p in dotted_path.split(".") if p]
+    if not parts:
+        raise ValueError("dotted_path must contain at least one segment")
+    *parents, leaf = parts
+    cursor: object = doc
+    for p in parents:
+        existing = cursor.get(p) if hasattr(cursor, "get") else None  # type: ignore[union-attr]
+        if existing is None or not hasattr(existing, "get"):
+            new_tbl = tomlkit.table()
+            cursor[p] = new_tbl  # type: ignore[index]
+            cursor = new_tbl
+        else:
+            cursor = existing
+    cursor[leaf] = value  # type: ignore[index]
+
+    # Validate the full document before committing to disk. Re-parsing the
+    # tomlkit dump gives us a plain dict — Pydantic doesn't accept tomlkit's
+    # Item subclasses directly.
+    raw = tomllib.loads(tomlkit.dumps(doc))
+    config = Config.model_validate(raw)
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+    return config
+
+
 def delete_collection(*, config_path: Path, name: str) -> None:
     """Remove ``[collections.<name>]`` and its ``[[sources]]`` array from
     the TOML at ``config_path``. Idempotent: silently no-op if the
@@ -331,16 +451,65 @@ def delete_collection(*, config_path: Path, name: str) -> None:
     config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
 
 
-STARTER_TEMPLATE = """\
-# acorn config — see plan §6 for the full schema.
-# Edit with `acorn config edit`.
+CONFIG_TEMPLATE = """\
+# Acorn configuration. Edit this file directly, or use the in-app
+# Settings menu (open with `:`). Validate with `acorn config validate`.
+# UI-driven edits preserve your comments and formatting.
 
 [defaults]
-collection    = "default"
-result_limit  = 200
+collection    = "default"     # Active collection when --collection is omitted.
+result_limit  = 200           # Max results per query (1-1000).
+preview_chunks = 5            # Chunks rendered in the preview pane (1-50).
+debounce_ms   = 200           # Wait this many ms after the last keystroke (0-2000).
+# How drill-in row trailing summaries render in the Settings menu:
+#   always_show       (default): each row shows its content summary
+#   smart                       : summary only on rows with real content
+#   always_ellipsis             : a dim `…` on every drill row
+drill_summary_mode = "always_show"
+# Per-file match surfacing. Sections in a file are kept when their
+# score is at least ``sections_score_threshold * file_top_score``,
+# capped by ``sections_per_file_max``. 0.5 keeps strong-relative-score
+# matches and drops weak ones; raise toward 1.0 for fewer/stronger hits,
+# lower toward 0.0 to surface every match (subject to the cap).
+sections_score_threshold = 0.5    # 0.0-1.0
+sections_per_file_max    = 200    # Hard cap (1-2000)
+# Preview decode parallelism. tantivy releases the GIL for doc reads, so
+# threads help on huge PDFs. 1 = serial; raise (4-8) for big files.
+preview_decode_workers   = 4      # 1-16
+# Idle delay before a results-tree cursor move triggers a preview load.
+# Rapid arrow-key sweeps skip intermediate rows; only the final position
+# loads. 0 = load instantly. Typical range 100-250.
+preview_load_debounce_ms = 150    # ms, 0-1000
+# Number of top result files to decode + pre-mount widgets for in the
+# background as soon as a search returns. Covers both flat (PDF/TXT)
+# and structural (md/docx/pptx) previews. 0 disables prefetch.
+preview_prefetch_count   = 4      # 0-20
 
-[collections.default]
-roots    = ["~/Documents"]
-# includes = ["**/*.pdf", "**/*.docx", "**/*.pptx", "**/*.md", "**/*.txt"]
+# A collection groups one or more source directories. The starter
+# collection points at ~/Documents; edit, add more [[sources]] tables,
+# or replace it entirely.
+[[collections.default.sources]]
+path = "~/Documents"
+# includes = ["**/*.md", "**/*.pdf", "**/*.docx", "**/*.pptx", "**/*.txt"]
 excludes = ["**/.git/**", "**/.DS_Store", "**/__pycache__/**"]
+# follow_symlinks = false
+# frontmatter_filter = "type:note"  # md sources only — DSL described in docs.
+
+# Example second collection — uncomment to use:
+# [[collections.notes.sources]]
+# path = "~/Documents/Notes"
+# includes = ["*.md", "*.txt"]
+# excludes = [".obsidian/**", "drafts/**"]
+
+# Ranking profiles tune the scorer. Attach to a collection by setting
+# ranking_profile = "<name>" inside that collection's table.
+# [ranking.default]
+# recency_boost      = 0.2       # 0.0 = ignore mtime; higher = boost recent files.
+# recency_half_life  = "365d"
+# filetype_boosts    = { md = 1.0, txt = 0.9, pdf = 0.85 }
+# phrase_proximity   = 0.3
 """
+
+# Backwards-compat alias for any older callers that imported the
+# previous name. Both refer to the same string.
+STARTER_TEMPLATE = CONFIG_TEMPLATE

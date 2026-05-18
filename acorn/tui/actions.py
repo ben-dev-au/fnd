@@ -169,10 +169,10 @@ REGISTRY: tuple[Action, ...] = (
     Action(
         id="open_collections_form",
         description="Open the Collections form (add / edit / delete collections).",
-        default_key="f3",
+        default_key=None,
         command="collections-form",
         footer_label="Manage",
-        show_in_footer=False,  # advanced; F3 listed in help overlay
+        show_in_footer=False,  # advanced; reachable via `:` palette only
     ),
     Action(
         id="open_multi_input",
@@ -183,7 +183,7 @@ REGISTRY: tuple[Action, ...] = (
     ),
     Action(
         id="show_explain_overlay",
-        description=("Show JSON trace for the latest search " "(regime, sub-queries, RRF math)."),
+        description=("Show JSON trace for the latest search (regime, sub-queries, RRF math)."),
         command="explain",
         footer_label="Explain",
         show_in_footer=False,  # palette-only debugging surface

@@ -16,3 +16,5 @@ htmlcov/
 tests/fixtures/.cache/
 # Index data is never committed (lives in user's Library on macOS)
 index/
+# Per-user Claude Code config / scheduled-task state
+.claude/

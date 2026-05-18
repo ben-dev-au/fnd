@@ -142,6 +142,19 @@ def test_auto_subqueries_single_word_skips_phrase() -> None:
     assert sources == ["lex"]
 
 
+def test_auto_subqueries_user_supplied_quotes_skip_auto_phrase() -> None:
+    """When the user already wraps their query in quotes, the lex pass routes
+    that through Tantivy as a PhraseQuery on its own — adding an auto-phrase
+    pass would double-wrap (``""man in the middle""``) and crash the parser.
+    Skip the auto-phrase pass in that case; the lex pass already carries the
+    phrase semantics the user asked for.
+    """
+    subs = auto_subqueries('"man in the middle"', synonyms=None)
+    sources = [s.source for s in subs]
+    assert sources == ["lex"]
+    assert subs[0].query == '"man in the middle"'
+
+
 def test_auto_subqueries_appends_synonym_pass_when_applicable() -> None:
     """When a query term is in a synonym group, a third sub-query (weight
     0.6) carries the expanded form."""

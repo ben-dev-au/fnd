@@ -63,11 +63,20 @@ def tui(
     query: str = typer.Option("", "--query", "-q", help="Initial query to seed the TUI."),
 ) -> None:
     """Launch the interactive TUI."""
-    from acorn.config import load
+    from acorn.config import default_config_path, load
     from acorn.migrate import prompt_and_rebuild_or_exit
     from acorn.tui import AcornApp
+    from acorn.tui.config_recovery_screen import run_recovery
 
-    cfg = load()
+    # Loop so the user can fix the config in-place and immediately retry.
+    while True:
+        try:
+            cfg = load()
+            break
+        except Exception as e:
+            if not run_recovery(e, default_config_path()):
+                raise typer.Exit(code=1) from e
+
     prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg)
 
     AcornApp(collection=collection, initial_query=query, config=cfg).run()
@@ -180,7 +189,7 @@ def config_show() -> None:
 @config_app.command("edit")
 def config_edit() -> None:
     """Open the config TOML in $EDITOR; create from template if missing."""
-    from acorn.config import STARTER_TEMPLATE, app_data_dir, default_config_path
+    from acorn.config import CONFIG_TEMPLATE, app_data_dir, default_config_path
 
     path = default_config_path()
     if not path.exists():
@@ -190,7 +199,7 @@ def config_edit() -> None:
             # Fallback path was returned; create primary instead.
             path = app_data_dir() / "config.toml"
             path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(STARTER_TEMPLATE, encoding="utf-8")
+        path.write_text(CONFIG_TEMPLATE, encoding="utf-8")
         typer.echo(f"wrote starter template to {path}")
 
     editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"

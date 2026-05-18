@@ -67,6 +67,72 @@ def test_renderer_blank_when_no_match_map() -> None:
     assert "▌" not in glyphs, glyphs
 
 
+def test_renderer_line_precise_maps_to_exact_cell() -> None:
+    """Phase 3 contract: a 1000-line file with a single match at line
+    500, painted on a 10-cell track, places exactly one marker — at
+    cell 5 (mid). The chunk-uniform path can't pin this; the line-
+    precise path must."""
+    renderer = MatchAwareScrollBarRender(
+        virtual_size=1000,
+        window_size=20,
+        position=0,
+        thickness=1,
+        vertical=True,
+        style="bright_magenta on #555555",
+        match_lines=[500],
+        total_lines=1000,
+    )
+    glyphs = _render_glyphs(renderer)
+    # 6-cell tall console (per ``_render_glyphs``); the single match line
+    # at position 500/1000 maps to cell int(500 * 6 / 1000) = 3.
+    assert glyphs.count("▌") == 1, glyphs
+    assert glyphs[3] == "▌", glyphs
+
+
+def test_renderer_line_precise_handles_extremes() -> None:
+    """Matches at line 0 and the last line of a buffer land on the
+    first and last track cells respectively, never out of bounds.
+
+    Tested at the ``_marker_cells`` layer because the thumb at the top
+    of the bar occludes cell 0 in ``__rich_console__`` output — that's
+    a thumb-clipping property of the parent ScrollBarRender, not a
+    line-precise mapping property, so we isolate the latter here.
+    """
+    renderer = MatchAwareScrollBarRender(
+        virtual_size=600,
+        window_size=10,
+        position=0,
+        thickness=1,
+        vertical=True,
+        style="bright_magenta on #555555",
+        match_lines=[0, 599],
+        total_lines=600,
+    )
+    assert renderer._marker_cells(size=6) == {0, 5}
+    # Also check a different track height — markers stay within range.
+    cells = renderer._marker_cells(size=20)
+    assert cells == {0, 19}
+
+
+def test_renderer_prefers_line_precise_over_chunk_map() -> None:
+    """When both fields are populated, the line-precise mapping wins
+    — match_map is ignored. Lets callers migrate piecemeal without
+    silently double-counting markers."""
+    renderer = MatchAwareScrollBarRender(
+        virtual_size=600,
+        window_size=10,
+        position=0,
+        thickness=1,
+        vertical=True,
+        style="bright_magenta on #555555",
+        # Chunk map says "every chunk matches"; line-precise says only one.
+        match_map=[True] * 6,
+        match_lines=[0],
+        total_lines=600,
+    )
+    assert renderer._marker_cells(size=6) == {0}
+
+
 @pytest.fixture
 def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     cfg_path = tmp_path / "config.toml"
@@ -138,3 +204,22 @@ async def test_match_map_propagates_to_scrollbar(cfg: Config, md_index: Path) ->
         # At least one chunk should be flagged as match-bearing for
         # ``glimmer`` in the fixture corpus.
         assert any(bar._match_map), bar._match_map
+
+
+def test_set_match_lines_clears_chunk_map_and_vice_versa() -> None:
+    """The two marker sources are mutually exclusive on the widget so
+    the renderer's mode selection is unambiguous."""
+    bar = MatchAwareScrollBar(vertical=True)
+    bar.set_match_map([True, False, True])
+    assert bar._match_map == [True, False, True]
+    assert bar._match_lines == []
+
+    bar.set_match_lines([10, 200, 999], total_lines=1000)
+    assert bar._match_lines == [10, 200, 999]
+    assert bar._total_lines == 1000
+    assert bar._match_map == []
+
+    bar.set_match_map([False, True])
+    assert bar._match_map == [False, True]
+    assert bar._match_lines == []
+    assert bar._total_lines == 0

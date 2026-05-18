@@ -22,7 +22,6 @@ from tantivy import Index
 from acorn.extract.base import Block
 from acorn.schema import (
     DEFAULT_FIELD_BOOSTS,
-    DEFAULT_SEARCH_FIELDS,
     F_BODY_MD,
     F_BODY_STRUCT,
     F_CHUNK_SEQ,
@@ -42,6 +41,10 @@ from acorn.schema import (
 
 _SNIPPET_CTX = 240
 _DEFAULT_LIMIT: Final = 10
+# Below this many chunks/file the thread-pool overhead outweighs the
+# decode parallelism — fall back to serial decode regardless of the
+# requested ``max_workers``.
+_PARALLEL_DECODE_THRESHOLD: Final = 50
 
 
 @dataclass(slots=True, frozen=True)
@@ -226,26 +229,49 @@ class Searcher:
         fuzzy_distance: int = 0,
         intent: str | None = None,
     ) -> list[Hit]:
-        from acorn.query_dsl import preprocess
-        from acorn.schema import F_BODY
+        import tantivy
 
-        full_query = preprocess(query)
+        from acorn.query_dsl import preprocess
+        from acorn.schema import F_BODY, F_HEADING_PATH, F_PATH_TOKENS
+
+        user_query = preprocess(query)
+        full_query = user_query
         if collection:
             full_query = f'collection:"{collection}" AND ({full_query})'
         if active_sources:
             src_clause = " OR ".join(f'source_path:"{s}"' for s in active_sources)
             full_query = f"({src_clause}) AND ({full_query})"
-        parse_kwargs: dict[str, object] = {
-            "default_field_names": DEFAULT_SEARCH_FIELDS,
-            "field_boosts": DEFAULT_FIELD_BOOSTS,
-        }
         # tantivy-py's QueryParser doesn't honour ``term~N`` syntax for
         # tokenized fields, but it accepts a ``fuzzy_fields`` mapping
         # that auto-fuzzes every parsed term against the listed field.
         # ``(prefix, distance, transposition_cost_one)`` per term.
+        body_parse_kwargs: dict[str, object] = {
+            "default_field_names": [F_BODY],
+        }
         if fuzzy_distance > 0:
-            parse_kwargs["fuzzy_fields"] = {F_BODY: (False, fuzzy_distance, True)}
-        parsed = self._index.parse_query(full_query, **parse_kwargs)  # type: ignore[arg-type]
+            body_parse_kwargs["fuzzy_fields"] = {F_BODY: (False, fuzzy_distance, True)}
+        # Must-clause: chunk's visible content (F_BODY) must match. Also
+        # carries collection / source filters. Heading-only ancestor
+        # matches no longer create hits.
+        body_required = self._index.parse_query(full_query, **body_parse_kwargs)  # type: ignore[arg-type]
+        # Should-clause: secondary fields contribute boost to the score
+        # but don't gate visibility. Parsed against the bare user query
+        # so collection/source aren't double-counted.
+        boost_secondary = self._index.parse_query(
+            user_query,
+            default_field_names=[F_HEADING_PATH, F_TITLE, F_PATH_TOKENS],
+            field_boosts={
+                F_HEADING_PATH: DEFAULT_FIELD_BOOSTS[F_HEADING_PATH],
+                F_TITLE: DEFAULT_FIELD_BOOSTS[F_TITLE],
+                F_PATH_TOKENS: DEFAULT_FIELD_BOOSTS[F_PATH_TOKENS],
+            },
+        )
+        parsed = tantivy.Query.boolean_query(
+            [
+                (tantivy.Occur.Must, body_required),
+                (tantivy.Occur.Should, boost_secondary),
+            ]
+        )
         result = self._searcher.search(parsed, limit=limit)
 
         from acorn.struct import decode as decode_body_struct
@@ -373,15 +399,52 @@ class Searcher:
                 break
         return out
 
-    def get_file_chunks(self, parent_id: str) -> list[FileChunk]:
+    def _decode_chunk(self, address: object) -> FileChunk:
+        """Decode a single chunk's stored fields at ``address`` into a
+        :class:`FileChunk`. Independent per-address — safe to call from
+        a worker thread because ``self._searcher.doc()`` releases the
+        GIL inside tantivy and ``self._searcher`` is an immutable view
+        over the index segments."""
+        from acorn.struct import decode as decode_body_struct
+
+        doc = self._searcher.doc(address)  # type: ignore[arg-type]
+        body_struct_bytes = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
+        blocks = decode_body_struct(body_struct_bytes) if body_struct_bytes else []
+        body_md_bytes = doc.get_first(F_BODY_MD)  # type: ignore[attr-defined]
+        body_md = body_md_bytes.decode("utf-8") if body_md_bytes else ""
+        return FileChunk(
+            parent_id=_first_str(doc, F_PARENT_ID),
+            path=_first_str(doc, F_PATH),
+            kind=_first_str(doc, F_KIND),
+            page=_first_int(doc, F_PAGE),
+            slide=_first_int(doc, F_SLIDE),
+            heading_path=_first_str(doc, F_HEADING_PATH),
+            chunk_seq=_first_int(doc, F_CHUNK_SEQ),
+            blocks=blocks,
+            page_label=_first_str(doc, F_PAGE_LABEL),
+            body_md=body_md,
+        )
+
+    def get_file_chunks(self, parent_id: str, *, max_workers: int | None = None) -> list[FileChunk]:
         """Return every indexed chunk of the file identified by ``parent_id``,
         ordered by ``chunk_seq``. Used by the TUI for the full-document preview.
 
-        Implementation: query for ``parent_id:<id>`` with a wide limit and
-        decode each chunk's stored body_struct.
-        """
-        from acorn.struct import decode as decode_body_struct
+        ``max_workers`` controls decode parallelism:
 
+        * ``None`` (default) or ``<= 1``: serial decode — the historic
+          behaviour, used by tests and by callers that don't want the
+          thread-pool startup cost.
+        * ``> 1`` *and* chunk count ≥ ``_PARALLEL_DECODE_THRESHOLD``:
+          decode addresses concurrently via a :class:`ThreadPoolExecutor`.
+          Tantivy releases the GIL inside ``Searcher.doc()`` so threads
+          are the right primitive — multiprocessing would force schema /
+          searcher serialisation per worker.
+        * ``> 1`` and chunk count below the threshold: serial decode (the
+          thread-pool overhead is not worth it).
+
+        Implementation: query for ``parent_id:<id>`` with a wide limit
+        then decode each chunk's stored body_struct via :meth:`_decode_chunk`.
+        """
         parsed = self._index.parse_query(
             f'parent_id:"{parent_id}"',
             default_field_names=[F_PARENT_ID],
@@ -389,27 +452,15 @@ class Searcher:
         # 5000 chunks/file is a generous ceiling; phase 12 will revisit for
         # books / very long PDFs.
         result = self._searcher.search(parsed, limit=5000)
-        chunks: list[FileChunk] = []
-        for _score, address in result.hits:
-            doc = self._searcher.doc(address)
-            body_struct_bytes = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
-            blocks = decode_body_struct(body_struct_bytes) if body_struct_bytes else []
-            body_md_bytes = doc.get_first(F_BODY_MD)  # type: ignore[attr-defined]
-            body_md = body_md_bytes.decode("utf-8") if body_md_bytes else ""
-            chunks.append(
-                FileChunk(
-                    parent_id=_first_str(doc, F_PARENT_ID),
-                    path=_first_str(doc, F_PATH),
-                    kind=_first_str(doc, F_KIND),
-                    page=_first_int(doc, F_PAGE),
-                    slide=_first_int(doc, F_SLIDE),
-                    heading_path=_first_str(doc, F_HEADING_PATH),
-                    chunk_seq=_first_int(doc, F_CHUNK_SEQ),
-                    blocks=blocks,
-                    page_label=_first_str(doc, F_PAGE_LABEL),
-                    body_md=body_md,
-                )
-            )
+        addresses = [address for _score, address in result.hits]
+        workers = max_workers or 1
+        if workers > 1 and len(addresses) >= _PARALLEL_DECODE_THRESHOLD:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                chunks = list(pool.map(self._decode_chunk, addresses))
+        else:
+            chunks = [self._decode_chunk(a) for a in addresses]
         chunks.sort(key=lambda c: c.chunk_seq)
         return chunks
 
@@ -450,14 +501,21 @@ class Searcher:
         return group_by_file(raw, limit=limit, sections_per_file=sections_per_file)
 
 
-def group_by_file(hits: list[Hit], *, limit: int, sections_per_file: int = 5) -> list[FileGroup]:
+def group_by_file(
+    hits: list[Hit],
+    *,
+    limit: int,
+    sections_per_file: int = 5,
+    score_threshold: float = 0.0,
+) -> list[FileGroup]:
     """Bucket a flat ranked Hit list into per-file groups.
 
     Hits keep first-seen order, so passing pre-ranked output (BM25,
     reranked, fusion-fused, cascade-stitched) produces FileGroups in the
-    same order. Up to ``sections_per_file`` ranked sections per file;
-    the file's own ``top_score`` mirrors its first hit so callers can
-    re-sort if needed.
+    same order. Sections are kept when the section's score is at least
+    ``score_threshold * file_top_score`` and the per-file cap
+    ``sections_per_file`` hasn't been hit yet; ``score_threshold = 0``
+    disables the relative filter (cap-only behaviour).
 
     Used both by :meth:`Searcher.search_grouped` and the cascade /
     fusion paths in the TUI's ``_run_query`` so every search path
@@ -474,8 +532,16 @@ def group_by_file(hits: list[Hit], *, limit: int, sections_per_file: int = 5) ->
             bucket.append(h)
     out: list[FileGroup] = []
     for pid in order[:limit]:
-        section_hits = groups[pid][:sections_per_file]
-        top = section_hits[0]
+        all_hits = groups[pid]
+        top = all_hits[0]
+        # Relative-score filter: keep sections whose score is at least
+        # ``threshold * top_score``. Threshold 0 disables (cap-only).
+        if score_threshold > 0.0 and top.score > 0.0:
+            min_score = top.score * score_threshold
+            kept = [h for h in all_hits if h.score >= min_score]
+        else:
+            kept = all_hits
+        section_hits = kept[:sections_per_file]
         out.append(
             FileGroup(
                 parent_id=pid,

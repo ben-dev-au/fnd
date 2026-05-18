@@ -114,10 +114,10 @@ async def test_capital_o_action_open_default_app(
 async def test_chunk_widgets_rebuild_when_focus_moves_to_different_file(
     two_pdf_index: Path,
 ) -> None:
-    """The bug user reported: 'doesn't find the correct section at all in
-    the second matching document'. Switching between two files must drop
-    the previous file's chunk widgets and mount fresh ones for the new
-    file, with a focus marker on the right chunk."""
+    """Phase 5 contract for the same bug ('doesn't find the correct
+    section in the second document'): switching between two PDFs swaps
+    the active LineBufferPreview to the second file's widget, keyed by
+    its parent_id, and the new FileView covers all 12 pages."""
     app = AcornApp(index_dir=two_pdf_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -127,10 +127,6 @@ async def test_chunk_widgets_rebuild_when_focus_moves_to_different_file(
         children = list(tree.root.children)
         assert len(children) == 2, f"expected 2 PDFs in tree, got {len(children)}"
 
-        # Park on file-0's first hit — that's the auto-seated cursor on
-        # launch, but be defensive so a future fixture change with
-        # ``children[0]`` collapsed-by-default doesn't silently flip
-        # this test's preconditions.
         children[0].expand()
         await pilot.pause()
         tree.focus()
@@ -138,11 +134,13 @@ async def test_chunk_widgets_rebuild_when_focus_moves_to_different_file(
         tree.move_cursor(first_leaf_zero)
         await pilot.pause()
         first_pid = app._preview_parent_id
-        first_widgets = dict(app._chunk_widgets)
-        assert len(first_widgets) == 12
+        first_buf = app._active_flat_buffer
+        assert first_buf is not None
+        first_fv = first_buf.file_view
+        assert first_fv is not None
+        assert len(first_fv.chunk_to_range) == 12
 
-        # Now jump to the SECOND PDF's first hit and verify the preview
-        # tears down + rebuilds for it.
+        # Jump to the second PDF.
         children[1].expand()
         await pilot.pause()
         second_leaf_zero = children[1].children[0]
@@ -150,11 +148,14 @@ async def test_chunk_widgets_rebuild_when_focus_moves_to_different_file(
         await pilot.pause()
         assert app._preview_parent_id is not None
         assert app._preview_parent_id != first_pid, "preview did not rebuild for file 2"
-        # Fresh chunks mounted for the new file.
-        assert len(app._chunk_widgets) == 12
-        # And exactly one chunk marked as focused.
-        focused = [w for w in app._chunk_widgets.values() if w.has_class("chunk-section-focused")]
-        assert len(focused) == 1
+        # Stage 1c: a single shared LineBufferPreview is reused across files —
+        # what swaps is the installed RenderedDocument (and therefore file_view).
+        second_buf = app._active_flat_buffer
+        assert second_buf is not None
+        second_fv = second_buf.file_view
+        assert second_fv is not None
+        assert second_fv is not first_fv, "file_view should swap when file changes"
+        assert len(second_fv.chunk_to_range) == 12
 
 
 # ── Footer label dedup ──────────────────────────────────────────────

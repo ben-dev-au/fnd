@@ -184,29 +184,39 @@ async def test_tui_passes_query_to_opener_for_skim_search(
 
 
 @pytest.mark.asyncio
-async def test_escape_dismisses_help_overlay(built_index: Path) -> None:
+async def test_escape_closes_help_menu(built_index: Path) -> None:
+    """Help (`?`) opens the Settings menu pre-navigated to Keybindings;
+    Esc walks the user back to the main app."""
+    from acorn.tui.settings_screen import SettingsScreen
+
     app = AcornApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_show_help()
         await pilot.pause()
-        assert app.query("#help_overlay")
+        assert isinstance(app.screen, SettingsScreen)
+        # Pop Keybindings → root → main app.
         await pilot.press("escape")
         await pilot.pause()
-        assert not app.query("#help_overlay")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, SettingsScreen)
 
 
 @pytest.mark.asyncio
-async def test_escape_dismisses_command_palette(built_index: Path) -> None:
+async def test_escape_closes_settings_menu(built_index: Path) -> None:
+    """`:` opens the unified Settings menu; Esc closes it."""
+    from acorn.tui.settings_screen import SettingsScreen
+
     app = AcornApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
         await pilot.pause()
-        assert app.query("#cmd_palette")
+        assert isinstance(app.screen, SettingsScreen)
         await pilot.press("escape")
         await pilot.pause()
-        assert not app.query("#cmd_palette")
+        assert not isinstance(app.screen, SettingsScreen)
 
 
 # ── Theme applied ───────────────────────────────────────────────────
@@ -226,8 +236,9 @@ async def test_theme_is_set_on_mount(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_chunk_widgets_mounted_per_pdf_page(built_index: Path) -> None:
-    """Phase 5.7 model: per-chunk Static widgets give precise scroll targets.
-    A 12-page PDF should mount 12 chunk widgets, indexed by chunk_seq."""
+    """Phase 5 model: PDFs mount through the flat-buffer pipeline.
+    The widget owns a FileView whose ``chunk_to_range`` covers every
+    page; the focused chunk's first-match line is the scroll target."""
     app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -241,9 +252,11 @@ async def test_chunk_widgets_mounted_per_pdf_page(built_index: Path) -> None:
         await pilot.press("down")
         await pilot.pause()
 
-        # 12 chunk widgets keyed by chunk_seq 0..11.
-        assert len(app._chunk_widgets) == 12
-        assert set(app._chunk_widgets) == set(range(12))
-        # The focused chunk should carry the focused-class visual marker.
-        focused = [w for w in app._chunk_widgets.values() if w.has_class("chunk-section-focused")]
-        assert len(focused) == 1, f"expected exactly one focused chunk, got {len(focused)}"
+        buf = app._active_flat_buffer
+        assert buf is not None, "PDF should mount the flat-buffer preview"
+        fv = buf.file_view
+        assert fv is not None
+        # 12 PDF pages → 12 chunk ranges, keyed by chunk_seq 0..11.
+        assert set(fv.chunk_to_range) == set(range(12))
+        # The focused chunk has a recorded first-match line.
+        assert fv.first_hit_line_in_chunk, fv.first_hit_line_in_chunk
