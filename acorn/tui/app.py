@@ -85,7 +85,7 @@ _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 # Container; switching files is then a single class-toggle. LRU-bounded.
 # See docs/PREVIEW_DOM_PLAN.md for the planned rework that aims to make
 # this cap effectively unlimited via screen-per-file isolation.
-_PREVIEW_CACHE_MAX_FILES = 64
+_PREVIEW_CACHE_MAX_FILES = 4
 _PREVIEW_CACHE_MIN_CHUNKS = 1
 # Visible-first mount window — chunks are decoded already, mounting
 # focused ± these counts synchronously gives the user instant viewport
