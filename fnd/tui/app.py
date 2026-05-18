@@ -4021,7 +4021,10 @@ class FNDApp(App[None]):
           leaving the cursor on the parent file row would force a wasted
           Down keypress before a fresh match comes into view).
         - Already-expanded branch → move cursor to its first child.
-        - Leaf / no children → no-op.
+        - Leaf in the results tree → bridge focus to the preview pane
+          (the user has already pinned the match; the next natural move
+          is to start reading).
+        - Leaf elsewhere / no children → no-op.
         """
         tree = self._focused_tree()
         if tree is None:
@@ -4034,6 +4037,8 @@ class FNDApp(App[None]):
             return
         node = tree.cursor_node
         if node is None or not node.children:
+            if node is not None and tree.id == "results_pane":
+                self.action_focus_preview_pane()
             return
         if not node.is_expanded:
             node.expand()

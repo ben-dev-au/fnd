@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any
 from rich.color import Color as RichColor
 from rich.segment import Segment, Segments
 from rich.style import Style as RichStyle
+from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.scrollbar import ScrollBar, ScrollBarRender
 
@@ -245,6 +246,15 @@ class MatchAwareScroll(VerticalScroll):
     bar widget is a :class:`MatchAwareScrollBar` from first construction.
     """
 
+    # Bridge focus back to the results tree when the user is already
+    # parked at scroll_x = 0 (the preview wraps to width, so horizontal
+    # scroll is essentially always 0 in practice). Overrides the parent
+    # ``scroll_left`` binding so a single Left exits the pane instead of
+    # paging horizontally into empty space.
+    BINDINGS = [  # noqa: RUF012 — Textual widget BINDINGS expects a class-level list
+        Binding("left", "bridge_left", "Focus results", show=False),
+    ]
+
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         # Bubble to the app so it can extend the mounted chunk window
         # when the viewport approaches a boundary. The app debounces
@@ -304,3 +314,15 @@ class MatchAwareScroll(VerticalScroll):
         bar = self.vertical_scrollbar
         if isinstance(bar, MatchAwareScrollBar):
             bar.set_match_lines(match_lines, total_lines)
+
+    def action_bridge_left(self) -> None:
+        """Left-arrow: hand focus to the results tree, or fall back to
+        horizontal scroll when the pane actually has somewhere to go."""
+        if self.scroll_x > 0:
+            self.scroll_left()
+            return
+        try:
+            results = self.app.query_one("#results_pane")
+        except Exception:
+            return
+        results.focus()
