@@ -74,9 +74,11 @@ def _terms_with_fuzzy(query: str) -> list[tuple[str, int | None]]:
 ```
 
 The parser strips operators / field qualifiers / range syntax (same
-as `_terms_from_query`), then for each surviving token splits on a
-trailing `~\d?` regex. Phrase-proximity (`"a b"~N`) is excluded by
-running the strip *after* dropping quoted phrases. `~N` is clamped to
+as `_terms_from_query`), but for each surviving token matches an
+optional trailing `~\d` modifier. Phrase-proximity (`"a b"~N`) is
+excluded because quoted phrases are stripped before per-token
+parsing. Bare `~` with no digit is not recognized as a fuzzy opt-in
+(the `~` is dropped, term treated as exact). `~N` is clamped to
 `{1, 2}` (tantivy's distance cap).
 
 `_fuzzy_pass` gains two parameters:
@@ -86,7 +88,7 @@ def _fuzzy_pass(
     searcher, *, query, limit, collection,
     active_sources=None, intent=None,
     auto_fuzzy_enabled: bool = True,
-    min_term_chars: int = 3,
+    min_term_chars: int = 0,
 ) -> list[Hit]: ...
 ```
 
@@ -139,16 +141,17 @@ Action(
     id="toggle_fuzzy",
     description="Toggle auto-fuzzy matching on or off. "
                 "Persists to the config TOML.",
-    default_key="ctrl+f",
+    default_key="ctrl+t",
     command="fuzzy",
     footer_label="Fuzzy",
     show_in_footer=False,
 )
 ```
 
-`ctrl+f` because it survives Input focus (Textual doesn't consume
-control combos for plain Input widgets) and is mnemonic. Users can
-rebind via `keybindings.toml`.
+`ctrl+t` (mnemonic: toggle) because Textual's Input widget owns most
+common ctrl-combos (ctrl+a/c/d/e/f/k/u/v/w/x). ctrl+t isn't among
+them, so it bubbles up to the app-level binding even when the query
+bar has focus. Users can rebind via `keybindings.toml`.
 
 `FNDApp.action_toggle_fuzzy`:
 

@@ -1550,8 +1550,12 @@ class FNDApp(App[None]):
         # cascade's match semantics. Every preview render this query
         # drives reads from this single spec so the highlight rules
         # never drift from the search rules.
+        defaults = self._config.defaults if self._config else None
         self._current_match_spec = MatchSpec.from_query(
-            lexical, synonyms=self._synonyms, fuzzy=True
+            lexical,
+            synonyms=self._synonyms,
+            auto_fuzzy=defaults.fuzzy_enabled if defaults else True,
+            min_term_chars=defaults.fuzzy_min_term_chars if defaults else 0,
         )
         # Phase F: build the filter scaffolding (kind:, mtime:) and
         # multi-collection scope (c:) as a SEPARATE prefix. The lexical
@@ -1665,6 +1669,7 @@ class FNDApp(App[None]):
             if filter_prefix
             else self._searcher
         )
+        defaults = self._config.defaults if self._config else None
         groups, trace = search_layered(
             searcher,  # type: ignore[arg-type]
             query=lexical,
@@ -1677,6 +1682,8 @@ class FNDApp(App[None]):
             active_sources=active_sources,
             intent=self._current_intent,
             profile=self._ranking_profile,
+            auto_fuzzy_enabled=defaults.fuzzy_enabled if defaults else True,
+            min_term_chars=defaults.fuzzy_min_term_chars if defaults else 0,
             with_trace=True,
         )
         self._latest_trace = trace
@@ -4053,6 +4060,31 @@ class FNDApp(App[None]):
             timeout=1.5,
         )
         self._rerender_current_preview()
+
+    def action_toggle_fuzzy(self) -> None:
+        """Flip ``defaults.fuzzy_enabled`` in the config TOML and re-run
+        the current search so the new state is visible immediately.
+        Per-term ``~N`` modifiers still trigger fuzzy expansion when
+        the toggle is off — only the auto-fuzzy pass is gated."""
+        from fnd.config import default_config_path, write_setting
+
+        current = self._config.defaults.fuzzy_enabled if self._config else True
+        new_value = not current
+        try:
+            self._config = write_setting(
+                config_path=default_config_path(),
+                dotted_path="defaults.fuzzy_enabled",
+                value=new_value,
+            )
+        except Exception as e:
+            self.notify(f"Couldn't toggle fuzzy: {e}", severity="error", timeout=3)
+            return
+        self.notify(
+            "Fuzzy " + ("on" if new_value else "off"),
+            timeout=1.5,
+        )
+        if self._current_query.strip():
+            self._run_query(self._current_query)
 
     def _rerender_current_preview(self) -> None:
         """Drop the preview cache (its widgets carry already-applied

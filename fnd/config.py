@@ -245,6 +245,14 @@ class Defaults(BaseModel):
     # 0 disables prefetch entirely (useful in tests or on very
     # large corpora where the prefetch wastes work).
     preview_prefetch_count: int = 4
+    # Auto-fuzzy matching in the cascade fallback. When False, only
+    # per-term ``~N`` modifiers in the query trigger fuzzy expansion.
+    fuzzy_enabled: bool = True
+    # Minimum post-stem length for auto-fuzzy. Below this, the term is
+    # exact-only. Lucene-AUTO already returns distance 0 for ≤2 char
+    # stems, so values 0-3 are no-ops vs current behavior; 4+ extends
+    # the floor.
+    fuzzy_min_term_chars: int = 3
 
 
 class Config(BaseModel):
@@ -484,6 +492,14 @@ preview_load_debounce_ms = 150    # ms, 0-1000
 # background as soon as a search returns. Covers both flat (PDF/TXT)
 # and structural (md/docx/pptx) previews. 0 disables prefetch.
 preview_prefetch_count   = 4      # 0-20
+# Auto-fuzzy in the cascade fallback. Toggle from the TUI with the
+# `toggle_fuzzy` action (default ctrl+t). Per-term `~1` / `~2` in the
+# query overrides this — works even when auto-fuzzy is off.
+fuzzy_enabled            = true
+# Minimum post-stem length for auto-fuzzy. Stems shorter than this
+# are exact-only. Default 3 matches the built-in AUTO heuristic;
+# raise to 4/5 to suppress fuzzy on common short words.
+fuzzy_min_term_chars     = 3      # 0-10
 
 # A collection groups one or more source directories. The starter
 # collection points at ~/Documents; edit, add more [[sources]] tables,

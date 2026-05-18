@@ -105,10 +105,10 @@ class MatchSpec:
       in the doc.
 
     ``fuzzy_per_stem`` lists ``(stem, max_distance)`` pairs for every
-    query stem whose AUTO distance is non-zero, used to highlight
+    query stem whose resolved distance is non-zero, used to highlight
     fuzzy variants the cascade pass would have surfaced. Empty when
-    fuzzy matching is disabled (e.g. tests that want strict-stem
-    semantics).
+    auto-fuzzy is disabled *and* the query has no explicit ``~N``
+    opt-ins. Sorted by stem so the output is deterministic.
 
     ``raw_terms`` carries the lowercased typed words (plus synonym
     variants) so the highlighter can align a fuzzy-matched doc word
@@ -127,14 +127,22 @@ class MatchSpec:
         query: str,
         *,
         synonyms: SynonymTable | None = None,
-        fuzzy: bool = True,
+        auto_fuzzy: bool = True,
+        min_term_chars: int = 0,
     ) -> MatchSpec:
         """Build a spec from a user query string.
+
+        ``auto_fuzzy`` controls the AUTO heuristic the same way the
+        cascade pass does. ``min_term_chars`` is the post-stem floor
+        below which auto-fuzzy is suppressed. Per-term ``~N`` modifiers
+        in the query always produce fuzzy pairs, regardless of either
+        knob — explicit user opt-in overrides the safety net.
 
         Imports :func:`fnd.render._terms_from_query` lazily to avoid
         a render-side dependency on the parser (render already
         depends on this module via the highlight helpers).
         """
+        from fnd.cascade import _terms_with_fuzzy  # local import: avoid cycle
         from fnd.render import _terms_from_query  # local import: avoid cycle
 
         terms = _terms_from_query(query)
@@ -153,17 +161,25 @@ class MatchSpec:
                     if t:
                         raw.add(t.lower())
                         exact.add(_stem(t))
-        if not fuzzy:
-            return cls(
-                exact_stems=frozenset(exact),
-                fuzzy_per_stem=(),
-                raw_terms=tuple(sorted(raw)),
+        # Explicit per-term ~N — always honoured (user opt-in).
+        explicit_pairs: dict[str, int] = {}
+        for term, dist in _terms_with_fuzzy(query):
+            if dist is None or dist <= 0:
+                continue
+            explicit_pairs[_stem(term.lower())] = max(
+                explicit_pairs.get(_stem(term.lower()), 0), dist
             )
-        # Fuzzy variants: per-stem AUTO distance. Stems with distance 0
-        # don't add anything beyond exact-match, so omit them.
-        fuzzy_pairs = tuple(
-            (s, auto_fuzzy_distance(s)) for s in exact if auto_fuzzy_distance(s) > 0
-        )
+        auto_pairs: dict[str, int] = {}
+        if auto_fuzzy:
+            for s in exact:
+                if len(s) < min_term_chars:
+                    continue
+                d = auto_fuzzy_distance(s)
+                if d > 0:
+                    auto_pairs[s] = d
+        # Explicit wins on collision (user is asserting a distance).
+        merged = {**auto_pairs, **explicit_pairs}
+        fuzzy_pairs = tuple(sorted(merged.items()))
         return cls(
             exact_stems=frozenset(exact),
             fuzzy_per_stem=fuzzy_pairs,

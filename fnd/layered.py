@@ -48,6 +48,8 @@ def search_layered(
     active_sources: list[str] | None = ...,
     intent: str | None = ...,
     profile: object | None = ...,
+    auto_fuzzy_enabled: bool = ...,
+    min_term_chars: int = ...,
     with_trace: Literal[False] = False,
 ) -> list[FileGroup]: ...
 
@@ -66,6 +68,8 @@ def search_layered(
     active_sources: list[str] | None = ...,
     intent: str | None = ...,
     profile: object | None = ...,
+    auto_fuzzy_enabled: bool = ...,
+    min_term_chars: int = ...,
     with_trace: Literal[True],
 ) -> tuple[list[FileGroup], SearchTrace]: ...
 
@@ -83,6 +87,8 @@ def search_layered(
     active_sources: list[str] | None = None,
     intent: str | None = None,
     profile: object | None = None,
+    auto_fuzzy_enabled: bool = True,
+    min_term_chars: int = 0,
     with_trace: bool = False,
 ) -> list[FileGroup] | tuple[list[FileGroup], SearchTrace]:
     """Run the regime-aware search and return ranked :class:`FileGroup`s.
@@ -160,6 +166,8 @@ def search_layered(
                     metadata_filter=metadata_filter,
                     active_sources=active_sources,
                     intent=intent,
+                    auto_fuzzy_enabled=auto_fuzzy_enabled,
+                    min_term_chars=min_term_chars,
                     with_trace=True,
                 )
             else:
@@ -173,6 +181,8 @@ def search_layered(
                     metadata_filter=metadata_filter,
                     active_sources=active_sources,
                     intent=intent,
+                    auto_fuzzy_enabled=auto_fuzzy_enabled,
+                    min_term_chars=min_term_chars,
                 )
             if len(cascade_hits) > len(hits):
                 hits = cascade_hits

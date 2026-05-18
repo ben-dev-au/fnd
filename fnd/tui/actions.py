@@ -167,6 +167,15 @@ REGISTRY: tuple[Action, ...] = (
         show_in_footer=False,
     ),
     Action(
+        id="toggle_fuzzy",
+        description="Toggle auto-fuzzy matching. Persists to config; "
+        "per-term ~N still works when auto-fuzzy is off.",
+        default_key="ctrl+t",
+        command="fuzzy",
+        footer_label="Fuzzy",
+        show_in_footer=False,
+    ),
+    Action(
         id="open_collections_form",
         description="Open the Collections form (add / edit / delete collections).",
         default_key=None,

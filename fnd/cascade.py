@@ -23,6 +23,7 @@ TUI shows exact matches above fuzzy ones above synonym ones.
 
 from __future__ import annotations
 
+import re
 import threading
 from typing import Literal, overload
 
@@ -32,7 +33,6 @@ import tantivy
 from fnd.explain import CascadePassTrace, CascadeTrace
 from fnd.matching import auto_fuzzy_distance, levenshtein_within
 from fnd.query import Hit, Searcher
-from fnd.render import _terms_from_query
 from fnd.schema import F_BODY, F_META_BLOB, F_PAGE_LABEL, F_PARENT_ID, build_schema
 from fnd.struct import decode as decode_body_struct
 from fnd.synonyms import SynonymTable, expand
@@ -101,6 +101,52 @@ def _fuzzy_term_variants(searcher: Searcher, stem: str, max_dist: int) -> list[s
     return out
 
 
+_FUZZY_TOKEN_RE = re.compile(r"^(\w+)(?:~(\d+)?)?$")
+# Strip ``~N`` (and bare trailing ``~``) only when preceded by a word
+# char — preserves phrase-proximity ``"a b"~3`` (~ after a quote).
+_STRIP_FUZZY_MOD_RE = re.compile(r"(?<=\w)~\d*")
+
+
+def _terms_with_fuzzy(query: str) -> list[tuple[str, int | None]]:
+    """Like :func:`fnd.render._terms_from_query`, but preserves per-term
+    ``~N`` modifiers.
+
+    Returns ``(term, explicit_distance | None)`` tuples. Bare ``~`` with
+    no digit reads as no modifier. ``~N`` is clamped to ``{1, 2}``.
+    Quoted phrases are stripped — proximity (``"a b"~3``) isn't fuzzy.
+    """
+    if not query:
+        return []
+    q = re.sub(r'"[^"]*"', " ", query)  # drop phrases (proximity ≠ fuzzy)
+    q = re.sub(r"\[[^\]]*\]", " ", q)
+    q = re.sub(r"\{\d+\}", " ", q)
+    q = re.sub(r"\bNEAR/\d+\b", " ", q)
+    q = re.sub(r"\b\w+:\S+", " ", q)
+    q = re.sub(r"[+\-()*?]", " ", q)
+    q = re.sub(r"\b(AND|OR|NOT)\b", " ", q)
+    out: list[tuple[str, int | None]] = []
+    for tok in q.split():
+        m = _FUZZY_TOKEN_RE.match(tok)
+        if not m:
+            continue
+        term = m.group(1)
+        dist_str = m.group(2)
+        if dist_str is None or dist_str == "":
+            out.append((term, None))
+        else:
+            out.append((term, min(int(dist_str), 2)))
+    return out
+
+
+def _strip_fuzzy_modifiers(query: str) -> str:
+    """Remove ``~N`` / bare ``~`` after a word char. Used to clean the
+    query before the literal + synonym passes, which submit through
+    tantivy's QueryParser (the parser silently no-ops ``~N`` for
+    indexed-non-fast body fields; we strip to make the literal probe
+    look like the user's intended exact match)."""
+    return _STRIP_FUZZY_MOD_RE.sub("", query)
+
+
 def _fuzzy_pass(
     searcher: Searcher,
     *,
@@ -109,17 +155,28 @@ def _fuzzy_pass(
     collection: str | None,
     active_sources: list[str] | None = None,
     intent: str | None = None,
+    auto_fuzzy_enabled: bool = True,
+    min_term_chars: int = 0,
 ) -> list[Hit]:
-    """Build a Boolean query of fuzzy term queries (distance=1) over the
-    body field, AND-combined so all query terms must fuzzy-match.
+    """Build a Boolean query of fuzzy term queries over the body field,
+    AND-combined so all query terms must fuzzy-match.
 
-    Returns nothing for queries with no plain word terms (operators-only).
+    ``auto_fuzzy_enabled`` gates the AUTO-distance heuristic. When
+    False, only terms with an explicit ``~N`` modifier in the query
+    get expanded; everything else resolves to distance 0. If every
+    term resolves to 0, the pass returns ``[]`` (pass-0 already
+    covered the exact case).
+
+    ``min_term_chars`` is the post-stem length floor for auto-fuzzy.
+    Stems shorter than this skip auto-fuzzy regardless of the AUTO
+    heuristic. Per-term ``~N`` overrides the floor.
+
     ``active_sources`` further narrows the fuzzy pass to chunks indexed
     from a subset of the active collection's sources, so the §9c cascade
     fallback honours the same source-scope as the literal pass.
     """
-    terms = _terms_from_query(query)
-    if not terms:
+    term_dists = _terms_with_fuzzy(query)
+    if not term_dists:
         return []
     schema = build_schema()
     # ``F_BODY`` is en_stem-analyzed, so the on-disk token form for
@@ -131,14 +188,24 @@ def _fuzzy_pass(
     # read as distance 2).
     #
     # We then expand each query stem into the set of indexed stems
-    # within Lucene-AUTO edit distance and OR them as regular
-    # ``term_query``s. This is the same rewrite Lucene applies to
-    # ``MultiTermQuery`` so each matched doc lands on BM25 scoring
-    # rather than Tantivy's constant-1.0 ``fuzzy_term_query`` output.
-    stems = [_fuzzy_stem(t) for t in terms]
-    distances = [auto_fuzzy_distance(s) for s in stems]
+    # within edit distance and OR them as regular ``term_query``s.
+    # This is the same rewrite Lucene applies to ``MultiTermQuery``
+    # so each matched doc lands on BM25 scoring rather than Tantivy's
+    # constant-1.0 ``fuzzy_term_query`` output.
+    stems_with_dists: list[tuple[str, int]] = []
+    for term, explicit in term_dists:
+        stem = _fuzzy_stem(term)
+        if explicit is not None:
+            d = explicit
+        elif auto_fuzzy_enabled and len(stem) >= min_term_chars:
+            d = auto_fuzzy_distance(stem)
+        else:
+            d = 0
+        stems_with_dists.append((stem, d))
+    if all(d == 0 for _, d in stems_with_dists):
+        return []
     subqueries: list[tuple[tantivy.Occur, tantivy.Query]] = []
-    for stem, dist in zip(stems, distances, strict=True):
+    for stem, dist in stems_with_dists:
         variants = _fuzzy_term_variants(searcher, stem, dist)
         if not variants:
             # No indexed stem within distance — the AND of fuzzy term
@@ -241,6 +308,8 @@ def cascade_search(
     metadata_filter: str | None = ...,
     active_sources: list[str] | None = ...,
     intent: str | None = ...,
+    auto_fuzzy_enabled: bool = ...,
+    min_term_chars: int = ...,
     with_trace: Literal[False] = False,
 ) -> list[Hit]: ...
 
@@ -257,6 +326,8 @@ def cascade_search(
     metadata_filter: str | None = ...,
     active_sources: list[str] | None = ...,
     intent: str | None = ...,
+    auto_fuzzy_enabled: bool = ...,
+    min_term_chars: int = ...,
     with_trace: Literal[True],
 ) -> tuple[list[Hit], CascadeTrace]: ...
 
@@ -272,6 +343,8 @@ def cascade_search(
     metadata_filter: str | None = None,
     active_sources: list[str] | None = None,
     intent: str | None = None,
+    auto_fuzzy_enabled: bool = True,
+    min_term_chars: int = 0,
     with_trace: bool = False,
 ) -> list[Hit] | tuple[list[Hit], CascadeTrace]:
     """Run literal → fuzzy → synonym passes until ``threshold`` hits found.
@@ -320,9 +393,15 @@ def cascade_search(
     # contract Searcher.search_grouped used.
     pass_target = limit * 10
 
+    # Literal + synonym passes go through tantivy's QueryParser, which
+    # silently no-ops ``~N`` on indexed-non-fast body fields. Strip the
+    # modifiers so those passes see the user's intended exact spelling;
+    # the fuzzy pass (below) reads them off the original query.
+    literal_query = _strip_fuzzy_modifiers(query)
+
     # Pass 0: literal query through the standard parse_query path.
     raw = searcher._filtered_raw_hits(
-        query,
+        literal_query,
         target=pass_target,
         collection=collection,
         metadata_filter=metadata_filter,
@@ -335,7 +414,7 @@ def cascade_search(
             CascadePassTrace(
                 pass_index=0,
                 name="literal",
-                query=query,
+                query=literal_query,
                 hit_count=len(raw),
                 new_count=new_count,
                 bm25_top=raw[0].score if raw else 0.0,
@@ -354,6 +433,8 @@ def cascade_search(
         collection=collection,
         active_sources=active_sources,
         intent=intent,
+        auto_fuzzy_enabled=auto_fuzzy_enabled,
+        min_term_chars=min_term_chars,
     )
     fuzzy_raw = _apply_metadata_filter(fuzzy_raw, metadata_filter)
     new_count = _ingest(fuzzy_raw, 1)
@@ -373,8 +454,8 @@ def cascade_search(
 
     # Pass 2: synonym expansion through parse_query.
     if synonyms is not None and synonyms.groups:
-        syn_q = expand(query, synonyms)
-        if syn_q != query:
+        syn_q = expand(literal_query, synonyms)
+        if syn_q != literal_query:
             raw = searcher._filtered_raw_hits(
                 syn_q,
                 target=pass_target,

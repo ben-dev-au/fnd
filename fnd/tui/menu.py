@@ -445,6 +445,37 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             value_getter=_get_int_default("preview_decode_workers", 4),
             keywords=("preview", "decode", "workers", "threads", "parallel"),
         ),
+        MenuItem(
+            id="pref.fuzzy_enabled",
+            label="Auto-fuzzy matching",
+            description=(
+                "Widen the cascade fallback to match typo'd query terms. "
+                "Per-term ``~N`` in the query still works when this is off."
+            ),
+            kind=KIND_TOGGLE,
+            toggle_getter=lambda app: (  # type: ignore[arg-type]
+                app._config.defaults.fuzzy_enabled  # type: ignore[attr-defined]
+                if app._config  # type: ignore[attr-defined]
+                else True
+            ),
+            toggle_setter=lambda app, v: _setting_writer("defaults.fuzzy_enabled")(app, v),
+            keywords=("fuzzy", "typo", "search", "match"),
+        ),
+        MenuItem(
+            id="pref.fuzzy_min_term_chars",
+            label="Auto-fuzzy minimum term length",
+            description=(
+                "Minimum post-stem length for auto-fuzzy. Stems shorter "
+                "than this are exact-only. Raise to 4/5 to suppress "
+                "fuzzy on common short words."
+            ),
+            kind=KIND_SCALAR,
+            setting_path="defaults.fuzzy_min_term_chars",
+            hint="0-10",
+            coerce=int,
+            value_getter=_get_int_default("fuzzy_min_term_chars", 3),
+            keywords=("fuzzy", "min", "length", "chars", "floor"),
+        ),
         header("Display", level=2),
         MenuItem(
             id="pref.highlights",

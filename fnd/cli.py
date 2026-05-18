@@ -114,7 +114,8 @@ def search(
     from fnd.migrate import prompt_and_rebuild_or_exit
     from fnd.query import Hit, Searcher
 
-    prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=load())
+    cfg = load()
+    prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg)
 
     searcher = Searcher(index_dir=default_index_dir())
     try:
@@ -130,6 +131,8 @@ def search(
             sections_per_file=5,
             collection=collection,
             metadata_filter=meta,
+            auto_fuzzy_enabled=cfg.defaults.fuzzy_enabled,
+            min_term_chars=cfg.defaults.fuzzy_min_term_chars,
             with_trace=True,
         )
         # Flatten groups → hits in display order; one row per matched section.
