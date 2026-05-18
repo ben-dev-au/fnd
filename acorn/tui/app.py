@@ -97,7 +97,7 @@ _VISIBLE_FIRST_BELOW = 7
 # keeps the cumulative DOM (cache size × chunks per file × widgets
 # per chunk) inside the input-lag envelope. Resume path expands the
 # buffer further if the user navigates past the radius.
-_BACKGROUND_FILL_RADIUS = 10
+_BACKGROUND_FILL_RADIUS = 3
 # Prefetch mounts only the focused chunk per cached file. User-side
 # resume expands on click via Phase 1b/2. Keeps prefetch DOM
 # contribution at ~1 widget per cached file.
