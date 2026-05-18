@@ -155,7 +155,7 @@ async def test_preview_md_renders_table_with_cell_highlight(cfg: Config, table_i
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause(0.3)
+        await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
         tables = list(pane.query(MarkdownTable))
         assert tables, "table chunk should render via MarkdownTable widget"
@@ -225,7 +225,7 @@ async def test_preview_md_fence_no_highlight_inside_code(cfg: Config, fence_inde
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause(0.3)
+        await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
         fences = list(pane.query(MarkdownFence))
         assert fences, "code-only chunk should render via MarkdownFence"
@@ -378,7 +378,7 @@ async def test_pptx_preview_routes_through_acorn_markdown(cfg: Config, pptx_corp
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause(0.3)
+        await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
         assert list(pane.query(AcornMarkdown)), "pptx chunk should mount AcornMarkdown"
         assert list(pane.query(MarkdownTable)), "pptx table should render via MarkdownTable"
@@ -401,7 +401,7 @@ async def test_docx_preview_routes_through_acorn_markdown(cfg: Config, docx_corp
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause(0.3)
+        await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
         assert list(pane.query(AcornMarkdown)), "docx chunk should mount AcornMarkdown"
         assert list(pane.query(MarkdownTable)), "docx table should render via MarkdownTable"

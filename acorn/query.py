@@ -22,7 +22,6 @@ from tantivy import Index
 from acorn.extract.base import Block
 from acorn.schema import (
     DEFAULT_FIELD_BOOSTS,
-    DEFAULT_SEARCH_FIELDS,
     F_BODY_MD,
     F_BODY_STRUCT,
     F_CHUNK_SEQ,
@@ -230,26 +229,49 @@ class Searcher:
         fuzzy_distance: int = 0,
         intent: str | None = None,
     ) -> list[Hit]:
-        from acorn.query_dsl import preprocess
-        from acorn.schema import F_BODY
+        import tantivy
 
-        full_query = preprocess(query)
+        from acorn.query_dsl import preprocess
+        from acorn.schema import F_BODY, F_HEADING_PATH, F_PATH_TOKENS
+
+        user_query = preprocess(query)
+        full_query = user_query
         if collection:
             full_query = f'collection:"{collection}" AND ({full_query})'
         if active_sources:
             src_clause = " OR ".join(f'source_path:"{s}"' for s in active_sources)
             full_query = f"({src_clause}) AND ({full_query})"
-        parse_kwargs: dict[str, object] = {
-            "default_field_names": DEFAULT_SEARCH_FIELDS,
-            "field_boosts": DEFAULT_FIELD_BOOSTS,
-        }
         # tantivy-py's QueryParser doesn't honour ``term~N`` syntax for
         # tokenized fields, but it accepts a ``fuzzy_fields`` mapping
         # that auto-fuzzes every parsed term against the listed field.
         # ``(prefix, distance, transposition_cost_one)`` per term.
+        body_parse_kwargs: dict[str, object] = {
+            "default_field_names": [F_BODY],
+        }
         if fuzzy_distance > 0:
-            parse_kwargs["fuzzy_fields"] = {F_BODY: (False, fuzzy_distance, True)}
-        parsed = self._index.parse_query(full_query, **parse_kwargs)  # type: ignore[arg-type]
+            body_parse_kwargs["fuzzy_fields"] = {F_BODY: (False, fuzzy_distance, True)}
+        # Must-clause: chunk's visible content (F_BODY) must match. Also
+        # carries collection / source filters. Heading-only ancestor
+        # matches no longer create hits.
+        body_required = self._index.parse_query(full_query, **body_parse_kwargs)  # type: ignore[arg-type]
+        # Should-clause: secondary fields contribute boost to the score
+        # but don't gate visibility. Parsed against the bare user query
+        # so collection/source aren't double-counted.
+        boost_secondary = self._index.parse_query(
+            user_query,
+            default_field_names=[F_HEADING_PATH, F_TITLE, F_PATH_TOKENS],
+            field_boosts={
+                F_HEADING_PATH: DEFAULT_FIELD_BOOSTS[F_HEADING_PATH],
+                F_TITLE: DEFAULT_FIELD_BOOSTS[F_TITLE],
+                F_PATH_TOKENS: DEFAULT_FIELD_BOOSTS[F_PATH_TOKENS],
+            },
+        )
+        parsed = tantivy.Query.boolean_query(
+            [
+                (tantivy.Occur.Must, body_required),
+                (tantivy.Occur.Should, boost_secondary),
+            ]
+        )
         result = self._searcher.search(parsed, limit=limit)
 
         from acorn.struct import decode as decode_body_struct
