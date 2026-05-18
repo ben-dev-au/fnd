@@ -511,9 +511,15 @@ class AcornMarkdown(Markdown):
         id: str | None = None,
         classes: str | None = None,
     ) -> None:
+        import asyncio as _asyncio
+
         super().__init__(markdown=markdown, name=name, id=id, classes=classes)
         self.match_spec: MatchSpec = match_spec or MatchSpec()
         self._first_match_block: MarkdownBlock | None = None
+        # Set by ``_on_mount`` after ``super()._on_mount`` (which awaits
+        # ``Markdown.update``) returns. Lets the scroll path event-trigger
+        # on build completion instead of polling.
+        self.build_done: _asyncio.Event = _asyncio.Event()
 
     @property
     def first_match_block(self) -> MarkdownBlock | None:
@@ -521,6 +527,17 @@ class AcornMarkdown(Markdown):
         when the source has no matches. Set by the highlight-aware
         block subclasses during ``build_from_token``."""
         return self._first_match_block
+
+    def update(self, markdown):  # type: ignore[no-untyped-def, override]
+        # Textual's dispatcher walks the MRO and invokes every class's
+        # _on_mount — overriding _on_mount and calling super() ran
+        # Markdown._on_mount twice; the second pass saw _initial_markdown
+        # already consumed and called update("") which removed all
+        # blocks. Hook into update() instead: AwaitComplete's future
+        # fires when parse+mount completes — set build_done from there.
+        aw = super().update(markdown)
+        aw._future.add_done_callback(lambda _: self.build_done.set())  # type: ignore[attr-defined]
+        return aw
 
 
 # Phase F filters: panel layout. ``kinds`` is multi-select (each value
@@ -2194,24 +2211,29 @@ class AcornApp(App[None]):
         container: PreviewContainer,
         focus_chunk_seq: int,
         t0: float,
+        *,
+        path: str = "cold_via_lock",
     ) -> None:
-        """Cold-mount reveal+scroll: await the focused chunk widget's
-        ``lock`` (released when ``build_from_token`` completes), then
-        lift ``-pre-reveal`` and scroll. Runs as a parallel task so
-        Phase 1b/2 mounting continues behind it. Replaces the
-        polling retry chain on heavy md files where the build out-runs
-        the chain budget and the scroll falls back to chunk-top.
-        """
-        import contextlib
+        """Event-trigger on the focused chunk's ``build_done``
+        ``asyncio.Event`` (set by ``AcornMarkdown._on_mount`` after
+        ``Markdown.update`` returns — i.e. every block widget mounted),
+        then schedule the scroll. Used for cold mount and warm same-
+        file resume; both land on a freshly-mounted chunk and would
+        otherwise race layout. Polling-free direct trigger."""
+        import asyncio
         import time
 
         from acorn.tui import _perf
 
         header = container.chunk_widgets.get(focus_chunk_seq)
         if isinstance(header, AcornMarkdown):
-            with contextlib.suppress(Exception):
-                async with header.lock:
-                    pass
+            try:
+                async with asyncio.timeout(8.0):
+                    await header.build_done.wait()
+            except TimeoutError:
+                self._diag_log(
+                    f"finalize_via_lock build_done timeout seq={focus_chunk_seq} path={path}"
+                )
         wait_ms = (time.perf_counter() - t0) * 1000
         container.remove_class("-pre-reveal")
         self._hide_progress_bar()
@@ -2219,10 +2241,12 @@ class AcornApp(App[None]):
             "click_to_display_end",
             parent_id=container.parent_doc_id,
             focus_seq=focus_chunk_seq,
-            path="cold_via_lock",
+            path=path,
         )
         self.call_after_refresh(self._scroll_preview_to_chunk, focus_chunk_seq)
-        self._diag_log(f"finalize_via_lock done seq={focus_chunk_seq} wait_ms={wait_ms:.1f}")
+        self._diag_log(
+            f"finalize_via_lock done seq={focus_chunk_seq} path={path} wait_ms={wait_ms:.1f}"
+        )
 
     def _do_finalize_pre_reveal(
         self,
@@ -2858,23 +2882,27 @@ class AcornApp(App[None]):
             # progress bar while neighbouring chunks slowly fill in.
             if focus_idx not in container.mounted_indices:
                 self._mount_chunk_into(container, chunks[focus_idx], focus_idx, chunks)
-            if cold_mount:
-                # Event-based finalize: parallel task awaits the focused
-                # chunk widget's lock (build-done signal) instead of
-                # polling. On heavy md files the build out-ran the prior
-                # retry budget and the scroll fell back to chunk-top
-                # (user's "first load not showing match"). Lock-await
-                # is the same mechanism the prefetch loop already uses.
+            # Event-based finalize: parallel task awaits the focused
+            # chunk widget's lock (Markdown.update build-done signal)
+            # before scrolling. Replaces the polling retry chain which
+            # raced layout on heavy md (cold) AND lost the scroll on
+            # out-of-window same-file navigation (warm-resume) because
+            # the freshly-mounted chunk's region was still 0 when the
+            # 30-retry budget expired.
+            if cold_mount or not skip_internal_scrolls:
                 import time as _time
 
                 # Reference held on the container so GC doesn't collect
                 # the task mid-await (RUF006). Cleared once it completes.
                 _finalize_task = asyncio.create_task(
-                    self._finalize_via_lock(container, focus_chunk_seq, _time.perf_counter())
+                    self._finalize_via_lock(
+                        container,
+                        focus_chunk_seq,
+                        _time.perf_counter(),
+                        path="cold_via_lock" if cold_mount else "warm_via_lock",
+                    )
                 )
                 container._finalize_task = _finalize_task  # type: ignore[attr-defined]
-            elif not skip_internal_scrolls:
-                self._scroll_preview_to_chunk(focus_chunk_seq)
             self._update_progress_bar(progress=len(container.mounted_indices))
             await asyncio.sleep(0)
 
