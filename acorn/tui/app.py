@@ -397,20 +397,39 @@ class AcornMarkdownTableDT(MarkdownTable):
         if os.environ.get("ACORN_NO_W3") == "1":
             yield from super().compose()
             return
+        from textual.containers import VerticalScroll
         from textual.coordinate import Coordinate
         from textual.widgets import DataTable
 
         headers, rows = self._get_headers_and_rows()
         self._headers = headers
         self._rows = rows
+        header_texts = [_content_to_text(h) for h in headers]
+        row_texts = [[_content_to_text(c) for c in row] for row in rows if row]
         dt: DataTable[Any] = DataTable(cursor_type="none", zebra_stripes=False)
-        # Content → rich.Text: DataTable's auto-width measure only
-        # handles str/Text; Content collapses to 1-cell columns.
-        if headers:
-            dt.add_columns(*(_content_to_text(h) for h in headers))
-        for row in rows:
-            if row:
-                dt.add_row(*(_content_to_text(c) for c in row), height=None)
+        # Compute per-column widths from the pane's content size so wide
+        # cells wrap rather than overflow. Without this, DataTable's
+        # auto_width measures each column at its longest single line —
+        # paragraph cells produce ~700-cell columns that get truncated
+        # to the pane's 91 cells, with no wrap.
+        try:
+            pane = self.app.query_one("#preview_pane", VerticalScroll)
+            avail = max(0, pane.content_size.width - 1)  # -1 for scrollbar
+        except Exception:
+            avail = 0
+        if avail <= 0:
+            # Fallback: app width minus the results-pane column budget.
+            avail = max(40, self.app.size.width - 50)
+        col_widths = _compute_table_col_widths(
+            header_texts, row_texts, available_width=avail, cell_padding=dt.cell_padding
+        )
+        if header_texts and col_widths and len(col_widths) == len(header_texts):
+            for label, w in zip(header_texts, col_widths, strict=True):
+                dt.add_column(label, width=w)
+        elif header_texts:
+            dt.add_columns(*header_texts)
+        for row in row_texts:
+            dt.add_row(*row, height=None)
         match_coord = _find_first_match_coord_in_table(headers, rows)
         if match_coord is not None:
             dt._acorn_match_coord = Coordinate(*match_coord)  # type: ignore[attr-defined]
@@ -437,6 +456,71 @@ def _content_to_text(c: Any) -> Text:
         except Exception:
             continue
     return t
+
+
+def _compute_table_col_widths(
+    header_texts: list[Text],
+    row_texts: list[list[Text]],
+    *,
+    available_width: int,
+    cell_padding: int = 1,
+    min_floor: int = 4,
+) -> list[int]:
+    """Min-content floor + proportional remainder column distribution.
+
+    Each column's min = longest unsplittable word (clamped to ``min_floor``),
+    max = longest single line. If the natural max-widths fit, return them.
+    Otherwise give every column its min, then split remaining space across
+    columns proportional to each column's ``(max - min)`` demand. Padding
+    is subtracted from ``available_width`` before distribution since
+    DataTable adds ``cell_padding`` to each side of every cell at render.
+    """
+    n_cols = len(header_texts)
+    if n_cols == 0 or available_width <= 0:
+        return []
+
+    def _longest_word(s: str) -> int:
+        return max((len(w) for w in s.split()), default=0)
+
+    def _longest_line(s: str) -> int:
+        return max((len(line) for line in (s.splitlines() or [s])), default=0)
+
+    mins = [0] * n_cols
+    maxs = [0] * n_cols
+    for col_idx, h in enumerate(header_texts):
+        plain = h.plain
+        mins[col_idx] = max(mins[col_idx], _longest_word(plain))
+        maxs[col_idx] = max(maxs[col_idx], _longest_line(plain))
+    for row in row_texts:
+        for col_idx, cell in enumerate(row[:n_cols]):
+            plain = cell.plain
+            mins[col_idx] = max(mins[col_idx], _longest_word(plain))
+            maxs[col_idx] = max(maxs[col_idx], _longest_line(plain))
+    mins = [max(min_floor, m) for m in mins]
+
+    inner_avail = available_width - n_cols * (2 * cell_padding)
+    if inner_avail <= 0:
+        return mins
+    if sum(maxs) <= inner_avail:
+        return [max(m, mn) for m, mn in zip(maxs, mins, strict=True)]
+    total_min = sum(mins)
+    if total_min >= inner_avail:
+        # Mins alone exceed budget — scale every column down proportionally
+        # (loses some content, but the only alternative is overflow).
+        scale = inner_avail / total_min
+        return [max(1, int(m * scale)) for m in mins]
+    widths = list(mins)
+    remaining = inner_avail - total_min
+    demand = [max(0, mx - mn) for mx, mn in zip(maxs, mins, strict=True)]
+    total_demand = sum(demand)
+    if total_demand > 0:
+        for i in range(n_cols):
+            widths[i] += int(remaining * demand[i] / total_demand)
+        leftover = inner_avail - sum(widths)
+        if leftover > 0:
+            widest = max(range(n_cols), key=lambda i: demand[i])
+            widths[widest] += leftover
+    return widths
 
 
 def _find_first_match_coord_in_table(
