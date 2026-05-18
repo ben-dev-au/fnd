@@ -388,6 +388,29 @@ class AcornMarkdownTableDT(MarkdownTable):
     widget instead of ~N MarkdownTableCellContents widgets.
 
     Gated by ``ACORN_W3_DATATABLE=1`` (off => parent's compose runs).
+
+    Styling matches Textual's MarkdownTable as closely as DataTable
+    allows: rounded outer border + zebra rows + primary-coloured bold
+    header. The inter-cell keylines that grid-layout MarkdownTableContent
+    gets aren't reachable on DataTable — it renders cells as a single
+    render output, not as keyline-eligible child widgets.
+    """
+
+    DEFAULT_CSS = """
+    AcornMarkdownTableDT {
+        & > DataTable {
+            border: round $foreground 20%;
+            margin: 0 0 1 0;
+            & > .datatable--header {
+                text-style: bold;
+                background: $panel;
+                color: $primary;
+            }
+            & > .datatable--even-row {
+                background: $panel 30%;
+            }
+        }
+    }
     """
 
     def compose(self):  # type: ignore[override]
@@ -406,7 +429,7 @@ class AcornMarkdownTableDT(MarkdownTable):
         self._rows = rows
         header_texts = [_content_to_text(h) for h in headers]
         row_texts = [[_content_to_text(c) for c in row] for row in rows if row]
-        dt: DataTable[Any] = DataTable(cursor_type="none", zebra_stripes=False)
+        dt: DataTable[Any] = DataTable(cursor_type="none", zebra_stripes=True)
         # Compute per-column widths from the pane's content size so wide
         # cells wrap rather than overflow. Without this, DataTable's
         # auto_width measures each column at its longest single line —
@@ -414,12 +437,13 @@ class AcornMarkdownTableDT(MarkdownTable):
         # to the pane's 91 cells, with no wrap.
         try:
             pane = self.app.query_one("#preview_pane", VerticalScroll)
-            avail = max(0, pane.content_size.width - 1)  # -1 for scrollbar
+            # -1 for scrollbar, -2 for DataTable's outer border.
+            avail = max(0, pane.content_size.width - 3)
         except Exception:
             avail = 0
         if avail <= 0:
             # Fallback: app width minus the results-pane column budget.
-            avail = max(40, self.app.size.width - 50)
+            avail = max(40, self.app.size.width - 52)
         col_widths = _compute_table_col_widths(
             header_texts, row_texts, available_width=avail, cell_padding=dt.cell_padding
         )
