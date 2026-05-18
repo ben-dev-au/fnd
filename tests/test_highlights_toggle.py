@@ -75,7 +75,7 @@ async def test_highlights_default_on(cfg: Config, md_index: Path) -> None:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause(0.3)
+        await pilot.pause()
         assert app._highlights_enabled is True
         pane = app.query_one("#preview_pane", VerticalScroll)
         assert _has_highlight_span(pane), "expected highlights on by default"
@@ -90,19 +90,19 @@ async def test_h_key_toggles_highlights_off_then_on(cfg: Config, md_index: Path)
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause(0.3)
+        await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
         assert _has_highlight_span(pane)
 
         # Toggle off.
         await pilot.press("h")
-        await pilot.pause(0.3)
+        await pilot.pause()
         assert app._highlights_enabled is False
         assert not _has_highlight_span(pane), "expected no highlight spans after toggling off"
 
         # Toggle back on — same query, highlights restored.
         await pilot.press("h")
-        await pilot.pause(0.3)
+        await pilot.pause()
         assert app._highlights_enabled is True
         assert _has_highlight_span(pane), "expected highlights restored after toggling back on"
 

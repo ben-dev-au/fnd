@@ -179,16 +179,13 @@ def _flush(
     if not body and not heading_stack:
         return None
     heading_path = " > ".join(heading_stack)
-    text_for_body = (
-        (heading_path + "\n" + body) if heading_path and body else (heading_path or body)
-    )
     body_md = "\n\n".join(line for line in md_lines if line).rstrip()
     return Chunk(
         parent_id=parent_id,
         path=str(path),
         mtime=mtime,
         kind="docx",
-        body=text_for_body,
+        body=body,
         body_struct=blocks.copy(),
         body_md=body_md,
         heading_path=heading_path,
@@ -242,6 +239,9 @@ def extract(path: Path) -> Iterator[Chunk]:
                 if not doc_title and level == 1:
                     doc_title = text
                 blocks.append(Block(kind=f"h{level}", text=text))
+                # Chunk's own heading goes into body_parts so F_BODY
+                # reflects visible content; ancestors live in heading_path.
+                body_parts.append(text)
                 # The heading itself opens the new section's body_md.
                 md_lines.append(f"{'#' * level} {text}")
                 continue
