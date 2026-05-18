@@ -235,6 +235,10 @@ async def test_hint_bar_appends_reveal_when_cursor_on_reveal_capable_row(
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
+        # Bridge focus from the filter Input → list so the hint cluster
+        # reflects the row's affordances rather than the input cluster.
+        await pilot.press("down")
+        await pilot.pause()
         lst = screen.query_one(SettingsList)
         idx = next(i for i, it in enumerate(lst._items) if it.id == "root.open_config_file")
         lst.cursor_index = idx

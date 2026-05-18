@@ -93,7 +93,9 @@ async def test_cursor_skips_headers_on_keybindings(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_left_arrow_pops(built_index: Path) -> None:
-    """`←` is Esc (pop) — back-stack navigation."""
+    """`←` is Esc (pop) — back-stack navigation when the list owns
+    focus. (The filter Input owns Left as text-cursor movement, so
+    arrow down into the list first.)"""
     from fnd.tui.settings_screen import SettingsScreen
 
     app = FNDApp(index_dir=built_index)
@@ -102,6 +104,8 @@ async def test_left_arrow_pops(built_index: Path) -> None:
         app.action_open_command_palette()
         await pilot.pause()
         assert isinstance(app.screen, SettingsScreen)
+        await pilot.press("down")  # bridge from Input → list
+        await pilot.pause()
         await pilot.press("left")
         await pilot.pause()
         assert not isinstance(app.screen, SettingsScreen)

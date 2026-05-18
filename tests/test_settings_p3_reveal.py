@@ -62,6 +62,10 @@ async def test_shift_enter_on_open_config_calls_reveal(built_index: Path) -> Non
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
+        # Bridge focus from the filter Input → list (the new on_mount
+        # focuses the Input so typing immediately filters).
+        await pilot.press("down")
+        await pilot.pause()
         lst = screen.query_one(SettingsList)
         idx = next(i for i, it in enumerate(lst._items) if it.id == "root.open_config_file")
         lst.cursor_index = idx

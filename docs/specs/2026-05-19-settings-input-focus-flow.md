@@ -23,18 +23,27 @@ no schema changes.
 
 ### 1. Focus on open
 
-`SettingsScreen.on_mount` currently calls `lst.focus()`. Change to
-focus the search Input. The list still seeds its cursor on
-``_init_cursor``; only the focused widget changes.
+`SettingsScreen.on_mount` currently calls `lst.focus()` for every
+screen. Change to focus the filter Input *only on the root menu*
+(`_breadcrumb == ()`). Sub-menus (Preferences, Collections,
+Keybindings, …) keep focusing the list — the user already chose what
+they wanted by drilling in, so list-navigation is the dominant intent
+there.
 
 ```python
 def on_mount(self) -> None:
     lst = self.query_one(SettingsList)
     lst.set_items(list(self._items))
-    self.query_one("#settings_search", Input).focus()
-    self._render_footer()
+    if not self._breadcrumb:
+        self.query_one("#settings_search", Input).focus()
+    else:
+        lst.focus()
     ...
 ```
+
+The `/` shortcut still works to focus the filter on demand from any
+screen — sub-menu users who *do* want to filter their current screen
+get it in one keypress.
 
 ### 2. Down from input → list
 
@@ -86,12 +95,15 @@ def action_move(self, delta: int) -> None:
 
 ## Tests
 
-* `screen.focused` is the search Input immediately after mount.
+* Root menu open → `screen.focused` is the search Input.
+* Sub-menu open → `screen.focused` is the SettingsList.
 * Pressing `down` from the Input focuses the SettingsList.
 * Pressing `up` while the list's cursor sits at the topmost
   selectable index focuses the Input (cursor stays where it was).
-* Typing a single letter immediately filters the list — no prior
-  focus shift required.
+* Typing a single letter on root menu open immediately routes to
+  the filter Input — no prior focus shift required.
+* No `-cursor` paint while the Input has focus (CSS gated on
+  `SettingsList:focus`).
 * Regression: pressing `up` while the cursor is NOT at the top
   still moves the cursor up one row (does not jump straight to
   the input).

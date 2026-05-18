@@ -380,7 +380,11 @@ class SettingsList(Widget, can_focus=True):
     SettingsList Static.row { height: 1; padding: 0 1; }
     SettingsList Static.row.-header-1 { padding: 1 0 0 0; height: 2; }
     SettingsList Static.row.-header-2 { padding: 0 0 0 0; }
-    SettingsList Static.row.-cursor { background: $accent 40%; text-style: bold; }
+    /* Only paint the cursor row when the list itself owns focus. When
+       the screen's filter Input is focused, the user is composing a
+       query — a list-cursor highlight at the same time would compete
+       for the eye. */
+    SettingsList:focus Static.row.-cursor { background: $accent 40%; text-style: bold; }
     """
 
     BINDINGS = [  # noqa: RUF012
@@ -528,6 +532,18 @@ class SettingsList(Widget, can_focus=True):
         n = len(self._items)
         if n == 0:
             return
+        # At the topmost selectable row + Up → hand focus to the
+        # screen's filter Input so arrow keys bridge the boundary
+        # both ways (the Input has its own Down handler that
+        # bridges back into the list).
+        if delta == -1:
+            top = self._first_selectable(0, +1)
+            if top is not None and self.cursor_index == top:
+                import contextlib
+
+                with contextlib.suppress(Exception):
+                    self.screen.query_one("#settings_search", Input).focus()
+                return
         i = self.cursor_index + delta
         # Skip headers.
         while 0 <= i < n and self._items[i].kind == KIND_HEADER:
@@ -645,6 +661,11 @@ class SettingsScreen(Screen[None]):
         Binding("escape", "back", "Back", show=False),
         Binding("left", "back", "Back", show=False),
         Binding("slash", "focus_search", "Filter", show=False),
+        # Down from the filter Input → focus the SettingsList. Screen-
+        # level binding works because SettingsList's own Down binding
+        # consumes the key when the list has focus, so this only
+        # fires while the Input is focused (Input has no Down handler).
+        Binding("down", "list_from_input", show=False),
     ]
 
     CSS = """
@@ -711,7 +732,15 @@ class SettingsScreen(Screen[None]):
     def on_mount(self) -> None:
         lst = self.query_one(SettingsList)
         lst.set_items(list(self._items))
-        lst.focus()
+        # Root menu: focus the filter Input so typing immediately
+        # narrows. Sub-menus focus the list — the user just drilled
+        # in deliberately and wants to navigate, not re-filter from
+        # scratch. The `/` shortcut still works to focus the filter
+        # on demand from any screen.
+        if not self._breadcrumb:
+            self.query_one("#settings_search", Input).focus()
+        else:
+            lst.focus()
         self._render_footer()
         self._seed_detail_strip()
         if not self._breadcrumb:
@@ -908,6 +937,14 @@ class SettingsScreen(Screen[None]):
         lst = self.query_one(SettingsList)
         lst.focus()
         lst.action_activate()
+
+    def action_list_from_input(self) -> None:
+        """Bridge Down from the filter Input into the list. Up at the
+        topmost row bridges back (see :meth:`SettingsList.action_move`).
+        Left/Right stay as text-cursor movement inside the Input
+        (Textual default), so the Input still feels like a normal text
+        field."""
+        self.query_one(SettingsList).focus()
 
     # ── Navigation ──────────────────────────────────────────────
 
