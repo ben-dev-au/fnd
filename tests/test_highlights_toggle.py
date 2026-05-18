@@ -15,11 +15,11 @@ import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Tree
 
-from acorn.config import Config, load
-from acorn.index import build_index
-from acorn.render import HIGHLIGHT_STYLE
-from acorn.tui import AcornApp
-from acorn.tui.app import AcornMarkdown
+from fnd.config import Config, load
+from fnd.index import build_index
+from fnd.render import HIGHLIGHT_STYLE
+from fnd.tui import FNDApp
+from fnd.tui.app import FNDMarkdown
 
 
 def _write(p: Path, body: str) -> None:
@@ -37,7 +37,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -53,9 +53,9 @@ def md_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 
 def _has_highlight_span(pane: VerticalScroll) -> bool:
-    """True when at least one block under any AcornMarkdown carries a
+    """True when at least one block under any FNDMarkdown carries a
     highlight span (yellow or orange)."""
-    for md in pane.query(AcornMarkdown):
+    for md in pane.query(FNDMarkdown):
         for block in md.query("MarkdownBlock"):
             content = getattr(block, "_content", None)
             if content is None:
@@ -70,7 +70,7 @@ def _has_highlight_span(pane: VerticalScroll) -> bool:
 async def test_highlights_default_on(cfg: Config, md_index: Path) -> None:
     """Spawning the app with a query yields highlighted spans without
     any user interaction — the default state is "highlights on"."""
-    app = AcornApp(index_dir=md_index, config=cfg, collection="notes", initial_query="templates")
+    app = FNDApp(index_dir=md_index, config=cfg, collection="notes", initial_query="templates")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
@@ -85,7 +85,7 @@ async def test_highlights_default_on(cfg: Config, md_index: Path) -> None:
 async def test_h_key_toggles_highlights_off_then_on(cfg: Config, md_index: Path) -> None:
     """Pressing ``h`` once removes every highlight span; pressing it
     again restores them — same query, no re-search."""
-    app = AcornApp(index_dir=md_index, config=cfg, collection="notes", initial_query="templates")
+    app = FNDApp(index_dir=md_index, config=cfg, collection="notes", initial_query="templates")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
@@ -113,7 +113,7 @@ async def test_h_typed_in_query_bar_does_not_toggle(cfg: Config, md_index: Path)
     bindings fire, so typing ``h`` into the query bar must NOT toggle
     the overlay (otherwise users couldn't search for words containing
     'h')."""
-    app = AcornApp(index_dir=md_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         # Default focus is the query input on launch with no query.

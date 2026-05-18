@@ -1,4 +1,4 @@
-"""Phase 5.5e-1: `acorn config validate` reports filter syntax errors."""
+"""Phase 5.5e-1: `fnd config validate` reports filter syntax errors."""
 
 from __future__ import annotations
 
@@ -8,14 +8,14 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from acorn.cli import app
+from fnd.cli import app
 
 
 def _runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, body: str) -> tuple[CliRunner, Path]:
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(textwrap.dedent(body), encoding="utf-8")
-    monkeypatch.setattr("acorn.cli.default_config_path", lambda: cfg_path)
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.cli.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return CliRunner(), cfg_path
 
 

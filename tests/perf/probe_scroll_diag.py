@@ -1,6 +1,6 @@
-"""Probe — enable ACORN_PREVIEW_DIAG and capture do_scroll log lines.
+"""Probe — enable FND_PREVIEW_DIAG and capture do_scroll log lines.
 
-Runs intra-file navigation, then reads /tmp/acorn-preview-diag.log and
+Runs intra-file navigation, then reads /tmp/fnd-preview-diag.log and
 filters for the do_scroll lines. Used to understand WHY the scroll
 lands at the wrong position.
 
@@ -20,14 +20,14 @@ from pathlib import Path
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-DIAG_PATH = Path("/tmp/acorn-preview-diag.log")
+DIAG_PATH = Path("/tmp/fnd-preview-diag.log")
 if DIAG_PATH.exists():
     DIAG_PATH.unlink()
-os.environ["ACORN_PREVIEW_DIAG"] = "1"
+os.environ["FND_PREVIEW_DIAG"] = "1"
 
-from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
-from acorn.index import build_index  # noqa: E402
-from acorn.tui import AcornApp  # noqa: E402
+from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
+from fnd.index import build_index  # noqa: E402
+from fnd.tui import FNDApp  # noqa: E402
 
 VAULT_ROOT = Path(
     "/Users/BenDavidson/Library/Mobile Documents/iCloud~md~obsidian/Documents/Obsidian Vault"
@@ -55,7 +55,7 @@ def build_vault_subset(root: Path, *, n: int) -> Path:
 
 
 async def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="acorn-diag-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="fnd-diag-") as tmp:
         root = Path(tmp)
         corpus = build_vault_subset(root, n=2)
         index_dir = root / "index"
@@ -65,7 +65,7 @@ async def main() -> int:
             defaults=Defaults(preview_prefetch_count=0, preview_load_debounce_ms=0),
             ranking={"default": RankingProfileConfig()},
         )
-        app = AcornApp(index_dir=index_dir, config=cfg, collection="default", initial_query="the")
+        app = FNDApp(index_dir=index_dir, config=cfg, collection="default", initial_query="the")
         from textual.widgets import Tree  # pyright: ignore[reportMissingImports]
         from textual.widgets.tree import TreeNode  # pyright: ignore[reportMissingImports]
 
@@ -91,7 +91,7 @@ async def main() -> int:
             tree.cursor_line = sections[0].line
             await asyncio.sleep(3.0)
             # Capture which chunks we're going to hit.
-            from acorn.tui.app import AcornMarkdown
+            from fnd.tui.app import FNDMarkdown
 
             _ = TreeNode  # silence pyright on unused-import
             for i, sec in enumerate(sections[:8]):
@@ -107,7 +107,7 @@ async def main() -> int:
                 chunk_md = app._chunk_widgets.get(hit.chunk_seq)
                 fmb = None
                 fmb_y = None
-                if isinstance(chunk_md, AcornMarkdown):
+                if isinstance(chunk_md, FNDMarkdown):
                     inner = chunk_md.first_match_block
                     if inner is not None:
                         fmb = type(inner).__name__

@@ -4,7 +4,7 @@
 
 **Goal:** Bring the settings menu up to the UX described in `docs/specs/2026-05-11-settings-menu-redesign.md` — search-first root with informative rows, cross-section search from any screen, single-screen Add Collection wizard with multi-select pickers, lazygit-style press-key-to-invoke on Keybindings, reveal-in-Finder pattern, and user-configurable drill-cue style.
 
-**Architecture:** Modify the existing `acorn.tui.menu` / `acorn.tui.settings_screen` / `acorn.tui.app` / `acorn.config` modules in place. Add one new widget file (`acorn/tui/widgets/detail_strip.py`) and one new opener helper (`acorn.opener.reveal`). All cross-section search and row rendering stays inside `SettingsScreen` so the menu data model (`menu.py`) remains pure data.
+**Architecture:** Modify the existing `fnd.tui.menu` / `fnd.tui.settings_screen` / `fnd.tui.app` / `fnd.config` modules in place. Add one new widget file (`fnd/tui/widgets/detail_strip.py`) and one new opener helper (`fnd.opener.reveal`). All cross-section search and row rendering stays inside `SettingsScreen` so the menu data model (`menu.py`) remains pure data.
 
 **Tech Stack:** Python 3.13 · Textual ≥ 0.85 · Rich · Pydantic · `pytest` + `pytest-asyncio` + `pytest-textual-snapshot` · `tomlkit` for comment-preserving writes.
 
@@ -29,13 +29,13 @@ Drift, not lack of plan, was what broke the last iteration. Treat these as non-n
 
 | File                                                | Responsibility                                                                                              | Phase introducing change |
 |-----------------------------------------------------|-------------------------------------------------------------------------------------------------------------|--------------------------|
-| `acorn/tui/widgets/__init__.py` *(new)*             | Re-exports `DetailStrip`.                                                                                    | 1                        |
-| `acorn/tui/widgets/detail_strip.py` *(new)*         | `DetailStrip(Widget)` — the 2-line description + metadata area docked at the bottom of every settings screen. | 1                        |
-| `acorn/tui/settings_screen.py`                      | All settings screens, the bottom edit bar, the row renderer, the cross-section search, the wizard.            | 1–5                      |
-| `acorn/tui/menu.py`                                 | Menu data model, providers, kinds, the cross-section walker.                                                 | 1, 2, 3, 4, 5            |
-| `acorn/tui/app.py`                                  | Bindings, hint bar variants, the `action_open_keybindings_file` action, `_close_settings_stack` adjustments. | 1, 4                     |
-| `acorn/config.py`                                   | `INDEXER_FILETYPES` constant; new `Defaults.drill_summary_mode` field; updated `CONFIG_TEMPLATE`.            | 3, 5                     |
-| `acorn/opener.py`                                   | New `reveal(path)` helper.                                                                                   | 4                        |
+| `fnd/tui/widgets/__init__.py` *(new)*             | Re-exports `DetailStrip`.                                                                                    | 1                        |
+| `fnd/tui/widgets/detail_strip.py` *(new)*         | `DetailStrip(Widget)` — the 2-line description + metadata area docked at the bottom of every settings screen. | 1                        |
+| `fnd/tui/settings_screen.py`                      | All settings screens, the bottom edit bar, the row renderer, the cross-section search, the wizard.            | 1–5                      |
+| `fnd/tui/menu.py`                                 | Menu data model, providers, kinds, the cross-section walker.                                                 | 1, 2, 3, 4, 5            |
+| `fnd/tui/app.py`                                  | Bindings, hint bar variants, the `action_open_keybindings_file` action, `_close_settings_stack` adjustments. | 1, 4                     |
+| `fnd/config.py`                                   | `INDEXER_FILETYPES` constant; new `Defaults.drill_summary_mode` field; updated `CONFIG_TEMPLATE`.            | 3, 5                     |
+| `fnd/opener.py`                                   | New `reveal(path)` helper.                                                                                   | 4                        |
 | `tests/test_settings_p3_visual.py` *(new)*          | Phase 1 visual tests.                                                                                        | 1                        |
 | `tests/test_settings_p3_search.py` *(new)*          | Phase 2 cross-section search tests.                                                                          | 2                        |
 | `tests/test_settings_p3_wizard.py` *(new)*          | Phase 3 Add Collection wizard tests.                                                                         | 3                        |
@@ -52,10 +52,10 @@ Make the menu look right. Container hugs content. Detail strip at the bottom of 
 
 This is the phase that should make the root *stop reading as empty* even before any other work lands.
 
-### Task 1 — `INDEXER_FILETYPES` constant lives in `acorn.config`
+### Task 1 — `INDEXER_FILETYPES` constant lives in `fnd.config`
 
 **Files:**
-- Modify: `acorn/config.py`
+- Modify: `fnd/config.py`
 - Test: `tests/test_settings_p3_visual.py` (new)
 
 Used in Phase 3 by the wizard; introduced here because it's a single-source-of-truth constant unrelated to the rest of Phase 1 work. Doing it first means later tasks can import it freely.
@@ -73,7 +73,7 @@ from __future__ import annotations
 def test_indexer_filetypes_exposed_and_complete() -> None:
     """Spec: Add Collection wizard › Includes — file types come from a
     single source of truth, not hardcoded in two places."""
-    from acorn.config import INDEXER_FILETYPES
+    from fnd.config import INDEXER_FILETYPES
 
     # Map of extension -> human label. Order is the order the picker shows.
     assert tuple(INDEXER_FILETYPES) == ("md", "pdf", "docx", "pptx", "txt")
@@ -84,11 +84,11 @@ def test_indexer_filetypes_exposed_and_complete() -> None:
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_settings_p3_visual.py::test_indexer_filetypes_exposed_and_complete -v`
-Expected: FAIL with `ImportError: cannot import name 'INDEXER_FILETYPES' from 'acorn.config'`.
+Expected: FAIL with `ImportError: cannot import name 'INDEXER_FILETYPES' from 'fnd.config'`.
 
 - [ ] **Step 3: Add the constant**
 
-Edit `acorn/config.py`. After the imports and before `class SourceConfig`, add:
+Edit `fnd/config.py`. After the imports and before `class SourceConfig`, add:
 
 ```python
 # Indexer-supported file types in display order. Used by the Add Source /
@@ -111,7 +111,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/config.py tests/test_settings_p3_visual.py
+git add fnd/config.py tests/test_settings_p3_visual.py
 git commit -m "feat(config): expose INDEXER_FILETYPES (Phase 1 · Task 1 · spec §Add Collection)"
 ```
 
@@ -120,7 +120,7 @@ git commit -m "feat(config): expose INDEXER_FILETYPES (Phase 1 · Task 1 · spec
 ### Task 2 — Drop the F3 binding
 
 **Files:**
-- Modify: `acorn/tui/actions.py` (remove `default_key="f3"` from `open_collections_form`)
+- Modify: `fnd/tui/actions.py` (remove `default_key="f3"` from `open_collections_form`)
 - Test: `tests/test_settings_p3_visual.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -130,7 +130,7 @@ Append to `tests/test_settings_p3_visual.py`:
 ```python
 def test_f3_no_longer_in_keymap() -> None:
     """Spec: Locked decisions — F3 dropped."""
-    from acorn.tui.actions import load_keymap
+    from fnd.tui.actions import load_keymap
 
     keymap = load_keymap()
     assert "f3" not in keymap.bindings, (
@@ -145,7 +145,7 @@ Expected: FAIL — F3 is currently bound to `open_collections_form`.
 
 - [ ] **Step 3: Remove F3 from the registry**
 
-In `acorn/tui/actions.py` find the `open_collections_form` Action and change `default_key="f3"` to `default_key=None`:
+In `fnd/tui/actions.py` find the `open_collections_form` Action and change `default_key="f3"` to `default_key=None`:
 
 ```python
 Action(
@@ -166,7 +166,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/actions.py tests/test_settings_p3_visual.py
+git add fnd/tui/actions.py tests/test_settings_p3_visual.py
 git commit -m "feat(keymap): drop F3 binding (Phase 1 · Task 2 · spec §Locked decisions #9)"
 ```
 
@@ -175,8 +175,8 @@ git commit -m "feat(keymap): drop F3 binding (Phase 1 · Task 2 · spec §Locked
 ### Task 3 — `DetailStrip` widget
 
 **Files:**
-- Create: `acorn/tui/widgets/__init__.py`
-- Create: `acorn/tui/widgets/detail_strip.py`
+- Create: `fnd/tui/widgets/__init__.py`
+- Create: `fnd/tui/widgets/detail_strip.py`
 - Test: `tests/test_settings_p3_visual.py`
 
 This widget gets mounted at the bottom of every settings screen (inside the bordered box). Empty by default; populated by the screen calling `strip.set(description, metadata)` when the cursor row changes.
@@ -189,7 +189,7 @@ Append to `tests/test_settings_p3_visual.py`:
 def test_detail_strip_renders_description_and_metadata() -> None:
     """Spec: Visual system › Detail strip — 2 lines, description then
     metadata in $text-muted."""
-    from acorn.tui.widgets.detail_strip import DetailStrip
+    from fnd.tui.widgets.detail_strip import DetailStrip
 
     strip = DetailStrip()
     strip._description = "Result limit (1–1000) — max results returned per query."
@@ -207,19 +207,19 @@ Expected: FAIL — module doesn't exist yet.
 
 - [ ] **Step 3: Create the widgets package init**
 
-Create `acorn/tui/widgets/__init__.py`:
+Create `fnd/tui/widgets/__init__.py`:
 
 ```python
 """TUI widgets shared across settings screens."""
 
-from acorn.tui.widgets.detail_strip import DetailStrip
+from fnd.tui.widgets.detail_strip import DetailStrip
 
 __all__ = ["DetailStrip"]
 ```
 
 - [ ] **Step 4: Create the DetailStrip widget**
 
-Create `acorn/tui/widgets/detail_strip.py`:
+Create `fnd/tui/widgets/detail_strip.py`:
 
 ```python
 """DetailStrip — 2-line description + metadata area at the bottom of
@@ -299,7 +299,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/tui/widgets/ tests/test_settings_p3_visual.py
+git add fnd/tui/widgets/ tests/test_settings_p3_visual.py
 git commit -m "feat(tui): DetailStrip widget (Phase 1 · Task 3 · spec §Visual system › Detail strip)"
 ```
 
@@ -308,7 +308,7 @@ git commit -m "feat(tui): DetailStrip widget (Phase 1 · Task 3 · spec §Visual
 ### Task 4 — Bracketed `[key]` rendering in the row renderer
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (`_render_row` function)
+- Modify: `fnd/tui/settings_screen.py` (`_render_row` function)
 - Test: `tests/test_settings_p3_visual.py`
 
 Keys today render as plain `key.ljust(12)` in dim. Per spec they should render bracketed in `$accent`.
@@ -320,8 +320,8 @@ Append to `tests/test_settings_p3_visual.py`:
 ```python
 def test_row_with_key_renders_bracketed_accent() -> None:
     """Spec: Visual system › Key style — bracketed `[o]` accent."""
-    from acorn.tui.menu import KIND_ACTION, MenuItem
-    from acorn.tui.settings_screen import _render_row
+    from fnd.tui.menu import KIND_ACTION, MenuItem
+    from fnd.tui.settings_screen import _render_row
 
     item = MenuItem(
         id="k.test",
@@ -346,7 +346,7 @@ Expected: FAIL — current renderer outputs raw `o` not `[o]`.
 Find the existing `_render_row` function. Replace the section that handles `item.key` rendering:
 
 ```python
-def _render_row(item: MenuItem, app: AcornApp | None, width: int | None = None) -> Text:
+def _render_row(item: MenuItem, app: FNDApp | None, width: int | None = None) -> Text:
     """Render one menu row as Rich Text.
 
     Layout (left to right):
@@ -400,7 +400,7 @@ Expected: PASS (some Keybindings cursor-skip tests touch the renderer, but they 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py tests/test_settings_p3_visual.py
+git add fnd/tui/settings_screen.py tests/test_settings_p3_visual.py
 git commit -m "feat(settings): bracketed [key] rendering (Phase 1 · Task 4 · spec §Visual system › Key style)"
 ```
 
@@ -409,7 +409,7 @@ git commit -m "feat(settings): bracketed [key] rendering (Phase 1 · Task 4 · s
 ### Task 5 — Container hugs content (`height: auto`, centered, max-width)
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (CSS block on `SettingsScreen`)
+- Modify: `fnd/tui/settings_screen.py` (CSS block on `SettingsScreen`)
 - Test: `tests/test_settings_p3_visual.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -419,7 +419,7 @@ Append to `tests/test_settings_p3_visual.py`:
 ```python
 def test_root_container_hugs_content() -> None:
     """Spec: Visual system › Container — height: auto, not 1fr."""
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd.tui.settings_screen import SettingsScreen
 
     css = SettingsScreen.CSS
     assert "height: auto" in css
@@ -433,7 +433,7 @@ The second assertion is awkward — simpler:
 ```python
 def test_root_container_hugs_content() -> None:
     """Spec: Visual system › Container — height: auto, not 1fr."""
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd.tui.settings_screen import SettingsScreen
 
     css = SettingsScreen.CSS
     # Find the #settings_box rule and check its height.
@@ -491,7 +491,7 @@ Expected: PASS — these tests check behaviour, not sizing.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py tests/test_settings_p3_visual.py
+git add fnd/tui/settings_screen.py tests/test_settings_p3_visual.py
 git commit -m "feat(settings): container hugs content, centered (Phase 1 · Task 5 · spec §Visual system › Container)"
 ```
 
@@ -500,8 +500,8 @@ git commit -m "feat(settings): container hugs content, centered (Phase 1 · Task
 ### Task 6 — Live trailing summaries on root drill rows + DetailStrip mounted
 
 **Files:**
-- Modify: `acorn/tui/menu.py` (root-level `MenuItem`s gain `value_getter` callbacks)
-- Modify: `acorn/tui/settings_screen.py` (mount `DetailStrip`, wire to `Highlighted`)
+- Modify: `fnd/tui/menu.py` (root-level `MenuItem`s gain `value_getter` callbacks)
+- Modify: `fnd/tui/settings_screen.py` (mount `DetailStrip`, wire to `Highlighted`)
 - Test: `tests/test_settings_p3_visual.py`
 
 The root four rows currently show no trailing. Per spec they should show what's inside (Preferences contents, collection count, key count, config path).
@@ -513,8 +513,8 @@ Append to `tests/test_settings_p3_visual.py`:
 ```python
 import pytest
 from pathlib import Path
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -526,9 +526,9 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 @pytest.mark.asyncio
 async def test_root_rows_show_trailing_summaries(built_index: Path) -> None:
     """Spec: IA › Root — every drill row shows what's inside."""
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -548,10 +548,10 @@ async def test_root_rows_show_trailing_summaries(built_index: Path) -> None:
 @pytest.mark.asyncio
 async def test_detail_strip_updates_on_cursor_move(built_index: Path) -> None:
     """Spec: Visual system › Detail strip — populates on focus change."""
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
-    from acorn.tui.widgets import DetailStrip
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.widgets import DetailStrip
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -575,14 +575,14 @@ Expected: both FAIL — root rows have no `value_getter`; no `DetailStrip` mount
 
 - [ ] **Step 3: Add `value_getter` callbacks to root items in `menu.py`**
 
-In `acorn/tui/menu.py`, find `_provider_root` and replace it with:
+In `fnd/tui/menu.py`, find `_provider_root` and replace it with:
 
 ```python
-def _summary_preferences(_app: "AcornApp") -> str:
+def _summary_preferences(_app: "FNDApp") -> str:
     return "Result limit · Debounce · Highlights · Defaults"
 
 
-def _summary_collections(app: "AcornApp") -> str:
+def _summary_collections(app: "FNDApp") -> str:
     cfg = app._config  # type: ignore[attr-defined]
     if cfg is None:
         return ""
@@ -591,21 +591,21 @@ def _summary_collections(app: "AcornApp") -> str:
     return f"{n_collections} collection{'s' if n_collections != 1 else ''} · {n_sources} source{'s' if n_sources != 1 else ''}"
 
 
-def _summary_keybindings(app: "AcornApp") -> str:
-    keymap = app._acorn_keymap  # type: ignore[attr-defined]
+def _summary_keybindings(app: "FNDApp") -> str:
+    keymap = app._fnd_keymap  # type: ignore[attr-defined]
     n_keys = len(keymap.bindings)
     return f"{n_keys} keys across 6 contexts"
 
 
-def _summary_config_path(_app: "AcornApp") -> str:
-    from acorn.config import default_config_path
+def _summary_config_path(_app: "FNDApp") -> str:
+    from fnd.config import default_config_path
 
     p = str(default_config_path())
     # Truncate from the left for display: keep the file name visible.
     return ("…" + p[-50:]) if len(p) > 50 else p
 
 
-def _provider_root(_app: "AcornApp") -> tuple[MenuItem, ...]:
+def _provider_root(_app: "FNDApp") -> tuple[MenuItem, ...]:
     """Root settings menu — short list of categories with informative
     trailing summaries that double as the drill cue."""
     return (
@@ -648,7 +648,7 @@ def _provider_root(_app: "AcornApp") -> tuple[MenuItem, ...]:
 Also extend `MenuItem.trailing_value` (still in `menu.py`) so that `KIND_EXTERNAL` rows call `value_getter` too:
 
 ```python
-def trailing_value(self, app: "AcornApp") -> str:
+def trailing_value(self, app: "FNDApp") -> str:
     try:
         if self.value_getter is not None:
             return self.value_getter(app)
@@ -666,9 +666,9 @@ def trailing_value(self, app: "AcornApp") -> str:
 
 - [ ] **Step 4: Mount `DetailStrip` on `SettingsScreen`**
 
-In `acorn/tui/settings_screen.py`:
+In `fnd/tui/settings_screen.py`:
 
-1. Import: `from acorn.tui.widgets import DetailStrip`.
+1. Import: `from fnd.tui.widgets import DetailStrip`.
 2. In `SettingsScreen.compose`, replace `yield Static("", id="settings_status")` with `yield DetailStrip()`.
 3. Wire it to `SettingsList.Highlighted`:
 
@@ -711,7 +711,7 @@ Expected: all PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add acorn/tui/menu.py acorn/tui/settings_screen.py tests/test_settings_p3_visual.py
+git add fnd/tui/menu.py fnd/tui/settings_screen.py tests/test_settings_p3_visual.py
 git commit -m "feat(settings): root trailing summaries + DetailStrip (Phase 1 · Task 6 · spec §IA › Root)"
 ```
 
@@ -722,7 +722,7 @@ git commit -m "feat(settings): root trailing summaries + DetailStrip (Phase 1 ·
 Stop. Run the full Phase 1 verification before moving on:
 
 - [ ] Spec coverage check: every Phase 1 item from `docs/specs/2026-05-11-settings-menu-redesign.md` § Visual system, § IA › Root, § Locked decisions #6, #9 is implemented.
-- [ ] Manual: `uv run acorn tui` → `:` → confirm:
+- [ ] Manual: `uv run fnd tui` → `:` → confirm:
   - Box is ~8 rows tall, centered, max ~100 chars wide.
   - Each of the four rows shows a dim trailing summary.
   - Detail strip below the list shows the focused row's description + metadata.
@@ -730,7 +730,7 @@ Stop. Run the full Phase 1 verification before moving on:
   - Press `?` → Keybindings opens; keys render as `[/]`, `[Space]`, `[Ctrl+C]` in accent.
   - Press `F3` → no effect.
 - [ ] All tests pass: `uv run pytest tests/test_settings_p3_visual.py tests/test_settings_menu_p2.py tests/test_actions_keymap.py tests/test_phase_5_6_polish.py -v`
-- [ ] Lint clean: `uv run ruff check acorn/ tests/`
+- [ ] Lint clean: `uv run ruff check fnd/ tests/`
 - [ ] **Post a "Phase 1 done vs spec" diff and stop for explicit user sign-off.**
 
 ---
@@ -742,7 +742,7 @@ Typing anywhere filters every leaf in the menu, with breadcrumbs on each result.
 ### Task 7 — `walk_all_sections` walker
 
 **Files:**
-- Modify: `acorn/tui/menu.py`
+- Modify: `fnd/tui/menu.py`
 - Test: `tests/test_settings_p3_search.py` (new)
 
 - [ ] **Step 1: Write the failing test**
@@ -758,8 +758,8 @@ from pathlib import Path
 
 import pytest
 
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -772,9 +772,9 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 async def test_walk_all_sections_includes_every_leaf(built_index: Path) -> None:
     """Spec: Search behaviour › Index — walker covers Preferences,
     Collections, Keybindings, and root-level actions."""
-    from acorn.tui.menu import KIND_HEADER, walk_all_sections
+    from fnd.tui.menu import KIND_HEADER, walk_all_sections
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test():
         all_items = list(walk_all_sections(app))
         labels = {item.label for _path, item in all_items}
@@ -798,10 +798,10 @@ Expected: FAIL — `walk_all_sections` doesn't exist yet.
 
 - [ ] **Step 3: Add the walker to `menu.py`**
 
-At the bottom of `acorn/tui/menu.py`:
+At the bottom of `fnd/tui/menu.py`:
 
 ```python
-def walk_all_sections(app: "AcornApp") -> Iterator[tuple[tuple[str, ...], MenuItem]]:
+def walk_all_sections(app: "FNDApp") -> Iterator[tuple[tuple[str, ...], MenuItem]]:
     """Yield (breadcrumb, leaf) pairs for every selectable item across
     every section. The basis for cross-section search.
 
@@ -828,7 +828,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/menu.py tests/test_settings_p3_search.py
+git add fnd/tui/menu.py tests/test_settings_p3_search.py
 git commit -m "feat(menu): walk_all_sections cross-section walker (Phase 2 · Task 7 · spec §Search › Index)"
 ```
 
@@ -837,7 +837,7 @@ git commit -m "feat(menu): walk_all_sections cross-section walker (Phase 2 · Ta
 ### Task 8 — Scope pseudo-row in search results
 
 **Files:**
-- Modify: `acorn/tui/menu.py`
+- Modify: `fnd/tui/menu.py`
 - Test: `tests/test_settings_p3_search.py`
 
 Searching for "scope" / "active" / "toggle collection" should surface a pseudo-row that points users to the sidebar.
@@ -851,9 +851,9 @@ Append to `tests/test_settings_p3_search.py`:
 async def test_walk_includes_scope_pseudo_row(built_index: Path) -> None:
     """Spec: Use cases › D — pre-empt confusion about active scope by
     surfacing a sidebar pointer in cross-section results."""
-    from acorn.tui.menu import walk_all_sections
+    from fnd.tui.menu import walk_all_sections
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test():
         all_items = list(walk_all_sections(app))
         scope = next(
@@ -875,7 +875,7 @@ Expected: FAIL — no pseudo-row.
 
 - [ ] **Step 3: Add the pseudo-row**
 
-In `acorn/tui/menu.py`, before the `walk_all_sections` function, add:
+In `fnd/tui/menu.py`, before the `walk_all_sections` function, add:
 
 ```python
 def _pseudo_scope_row() -> MenuItem:
@@ -911,7 +911,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/menu.py tests/test_settings_p3_search.py
+git add fnd/tui/menu.py tests/test_settings_p3_search.py
 git commit -m "feat(menu): scope pseudo-row in cross-section walker (Phase 2 · Task 8 · spec §Use cases › D)"
 ```
 
@@ -920,7 +920,7 @@ git commit -m "feat(menu): scope pseudo-row in cross-section walker (Phase 2 · 
 ### Task 9 — Cross-section search on every settings screen
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (replace `_filter_items` with cross-section version; add a wrapper `MenuMatch` dataclass for the breadcrumb)
+- Modify: `fnd/tui/settings_screen.py` (replace `_filter_items` with cross-section version; add a wrapper `MenuMatch` dataclass for the breadcrumb)
 - Test: `tests/test_settings_p3_search.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -934,9 +934,9 @@ async def test_search_on_root_finds_preferences_leaf(built_index: Path) -> None:
     every section, with the breadcrumb on each row."""
     from textual.widgets import Input
 
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -958,9 +958,9 @@ async def test_search_on_keybindings_finds_preference(built_index: Path) -> None
     finds items in other sections."""
     from textual.widgets import Input
 
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_show_help()
@@ -982,16 +982,16 @@ Expected: both FAIL — current search is per-screen.
 
 - [ ] **Step 3: Switch `_filter_items` to use `walk_all_sections`**
 
-In `acorn/tui/settings_screen.py`:
+In `fnd/tui/settings_screen.py`:
 
-1. Import the walker: `from acorn.tui.menu import ..., walk_all_sections`.
+1. Import the walker: `from fnd.tui.menu import ..., walk_all_sections`.
 2. Replace `_filter_items` body:
 
 ```python
 def _filter_items(self, q: str) -> list[MenuItem]:
     """Cross-section: walk every section's leaves, score by substring
     match against label + key + keywords + breadcrumb segments."""
-    from acorn.tui.menu import walk_all_sections
+    from fnd.tui.menu import walk_all_sections
 
     matches: list[tuple[int, MenuItem, tuple[str, ...]]] = []
     for path, item in walk_all_sections(self.app):  # type: ignore[arg-type]
@@ -1060,7 +1060,7 @@ Expected: all PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py tests/test_settings_p3_search.py
+git add fnd/tui/settings_screen.py tests/test_settings_p3_search.py
 git commit -m "feat(settings): cross-section search with breadcrumbs (Phase 2 · Task 9 · spec §Search behaviour)"
 ```
 
@@ -1069,7 +1069,7 @@ git commit -m "feat(settings): cross-section search with breadcrumbs (Phase 2 ·
 ### Task 10 — Inline activation of cross-section results
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (`_activate_item` already dispatches by kind; verify scalars work when the item's parent screen isn't the current one)
+- Modify: `fnd/tui/settings_screen.py` (`_activate_item` already dispatches by kind; verify scalars work when the item's parent screen isn't the current one)
 - Test: `tests/test_settings_p3_search.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -1083,13 +1083,13 @@ async def test_search_match_for_scalar_opens_edit_bar_inline(built_index: Path) 
     open the edit bar on the *current* screen."""
     from textual.widgets import Input
 
-    from acorn.tui.settings_screen import (
+    from fnd.tui.settings_screen import (
         EditBar,
         SettingsList,
         SettingsScreen,
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -1144,7 +1144,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py tests/test_settings_p3_search.py
+git add fnd/tui/settings_screen.py tests/test_settings_p3_search.py
 git commit -m "feat(settings): in-place activation of cross-section search matches (Phase 2 · Task 10 · spec §Search › Activation)"
 ```
 
@@ -1153,7 +1153,7 @@ git commit -m "feat(settings): in-place activation of cross-section search match
 ### Phase 2 verification gate
 
 - [ ] Spec coverage: § Search behaviour fully implemented, including "Cross-section search is global" subsection.
-- [ ] Manual: `uv run acorn tui` → `:` → type `result` → see flat results with breadcrumbs across Preferences. Enter on first match → edit bar opens with `200` populated. Save → trailing value updates back on the root screen after Esc clears the search.
+- [ ] Manual: `uv run fnd tui` → `:` → type `result` → see flat results with breadcrumbs across Preferences. Enter on first match → edit bar opens with `200` populated. Save → trailing value updates back on the root screen after Esc clears the search.
 - [ ] Manual: `?` → type `o ` (with the trailing space) → see only Results-pane keys whose key glyph contains `o`. Pressing Enter on `[o] Open at locator` runs the action and closes the menu.
 - [ ] Manual: `:` → type `scope` → scope pseudo-row appears with sidebar pointer.
 - [ ] Tests: `uv run pytest tests/test_settings_p3_search.py tests/test_settings_p3_visual.py -v` all green.
@@ -1168,7 +1168,7 @@ Single-screen wizard. Name + path + multi-select Includes + preset multi-select 
 ### Task 11 — Excludes presets constant
 
 **Files:**
-- Modify: `acorn/config.py`
+- Modify: `fnd/config.py`
 - Test: `tests/test_settings_p3_wizard.py` (new)
 
 - [ ] **Step 1: Write the failing test**
@@ -1183,7 +1183,7 @@ from __future__ import annotations
 
 def test_excludes_presets_exposed() -> None:
     """Spec: Wizard › Excludes — preset patterns, with safe defaults."""
-    from acorn.config import EXCLUDES_PRESETS
+    from fnd.config import EXCLUDES_PRESETS
 
     assert "hidden" in EXCLUDES_PRESETS
     hidden = EXCLUDES_PRESETS["hidden"]
@@ -1201,7 +1201,7 @@ Expected: FAIL — constant missing.
 
 - [ ] **Step 3: Add `EXCLUDES_PRESETS`**
 
-In `acorn/config.py`, after `INDEXER_FILETYPES`:
+In `fnd/config.py`, after `INDEXER_FILETYPES`:
 
 ```python
 EXCLUDES_PRESETS: dict[str, dict] = {
@@ -1241,7 +1241,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/config.py tests/test_settings_p3_wizard.py
+git add fnd/config.py tests/test_settings_p3_wizard.py
 git commit -m "feat(config): EXCLUDES_PRESETS for wizard (Phase 3 · Task 11 · spec §Wizard › Excludes)"
 ```
 
@@ -1250,8 +1250,8 @@ git commit -m "feat(config): EXCLUDES_PRESETS for wizard (Phase 3 · Task 11 · 
 ### Task 12 — `AddCollectionWizard` screen scaffolding
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (new `AddCollectionWizard` class; deprecate `NewCollectionScreen`)
-- Modify: `acorn/tui/menu.py` (`_make_add_collection` returns the wizard, not the old screen)
+- Modify: `fnd/tui/settings_screen.py` (new `AddCollectionWizard` class; deprecate `NewCollectionScreen`)
+- Modify: `fnd/tui/menu.py` (`_make_add_collection` returns the wizard, not the old screen)
 - Test: `tests/test_settings_p3_wizard.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -1261,8 +1261,8 @@ Append to `tests/test_settings_p3_wizard.py`:
 ```python
 import pytest
 from pathlib import Path
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -1275,15 +1275,15 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 async def test_add_collection_pushes_wizard_with_expected_fields(built_index: Path) -> None:
     """Spec: Wizard › Single screen — Name, Source path, Includes,
     Excludes, Frontmatter filter, Follow symlinks, plus the sample tester."""
-    from acorn.tui.menu import SECTION_COLLECTIONS
-    from acorn.tui.settings_screen import (
+    from fnd.tui.menu import SECTION_COLLECTIONS
+    from fnd.tui.settings_screen import (
         AddCollectionWizard,
         SettingsList,
         SettingsScreen,
         open_settings_section,
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_COLLECTIONS)
@@ -1313,7 +1313,7 @@ Expected: FAIL — `AddCollectionWizard` doesn't exist.
 
 - [ ] **Step 3: Create the wizard class**
 
-In `acorn/tui/settings_screen.py`, add this class near `SourceFormScreen` (so they share patterns):
+In `fnd/tui/settings_screen.py`, add this class near `SourceFormScreen` (so they share patterns):
 
 ```python
 class AddCollectionWizard(Screen[None]):
@@ -1369,7 +1369,7 @@ class AddCollectionWizard(Screen[None]):
         }
 
     def compose(self) -> ComposeResult:
-        from acorn.tui.widgets import DetailStrip
+        from fnd.tui.widgets import DetailStrip
 
         with Vertical(id="settings_box") as box:
             box.border_title = "Add Collection"
@@ -1387,7 +1387,7 @@ class AddCollectionWizard(Screen[None]):
     def on_mount(self) -> None:
         self._populate_fields()
         self.query_one(SettingsList).focus()
-        app: AcornApp = self.app  # type: ignore[assignment]
+        app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
             _hint_bar(
                 app,
@@ -1477,12 +1477,12 @@ class AddCollectionWizard(Screen[None]):
         widgets[(idx + direction) % len(widgets)].focus()
 ```
 
-Then in `acorn/tui/menu.py`, update `_make_add_collection`:
+Then in `fnd/tui/menu.py`, update `_make_add_collection`:
 
 ```python
-def _make_add_collection() -> Callable[["AcornApp"], None]:
-    def _open(app: "AcornApp") -> None:
-        from acorn.tui.settings_screen import AddCollectionWizard
+def _make_add_collection() -> Callable[["FNDApp"], None]:
+    def _open(app: "FNDApp") -> None:
+        from fnd.tui.settings_screen import AddCollectionWizard
 
         app.push_screen(AddCollectionWizard())
 
@@ -1497,7 +1497,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py acorn/tui/menu.py tests/test_settings_p3_wizard.py
+git add fnd/tui/settings_screen.py fnd/tui/menu.py tests/test_settings_p3_wizard.py
 git commit -m "feat(settings): AddCollectionWizard scaffolding (Phase 3 · Task 12 · spec §Add Collection wizard)"
 ```
 
@@ -1506,7 +1506,7 @@ git commit -m "feat(settings): AddCollectionWizard scaffolding (Phase 3 · Task 
 ### Task 13 — Includes / Excludes multi-select pickers
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (wire field activation to launch pickers; convert Includes / Excludes rows to KIND_PICKER)
+- Modify: `fnd/tui/settings_screen.py` (wire field activation to launch pickers; convert Includes / Excludes rows to KIND_PICKER)
 - Test: `tests/test_settings_p3_wizard.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -1517,13 +1517,13 @@ Append to `tests/test_settings_p3_wizard.py`:
 @pytest.mark.asyncio
 async def test_includes_field_opens_filetypes_picker(built_index: Path) -> None:
     """Spec: Wizard › Includes — multi-select of indexer-supported types."""
-    from acorn.tui.settings_screen import (
+    from fnd.tui.settings_screen import (
         AddCollectionWizard,
         PickerScreen,
         SettingsList,
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(AddCollectionWizard())
@@ -1538,7 +1538,7 @@ async def test_includes_field_opens_filetypes_picker(built_index: Path) -> None:
         await pilot.pause()
         assert isinstance(app.screen, PickerScreen)
         # The picker shows the indexer-supported types.
-        from acorn.config import INDEXER_FILETYPES
+        from fnd.config import INDEXER_FILETYPES
 
         choice_values = [c.value for c in app.screen._choices]
         assert set(choice_values) == set(INDEXER_FILETYPES.keys())
@@ -1547,13 +1547,13 @@ async def test_includes_field_opens_filetypes_picker(built_index: Path) -> None:
 @pytest.mark.asyncio
 async def test_excludes_field_opens_presets_picker_with_defaults(built_index: Path) -> None:
     """Spec: Wizard › Excludes — preset multi-select, hidden pre-checked."""
-    from acorn.tui.settings_screen import (
+    from fnd.tui.settings_screen import (
         AddCollectionWizard,
         PickerScreen,
         SettingsList,
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(AddCollectionWizard())
@@ -1577,11 +1577,11 @@ Expected: both FAIL.
 
 - [ ] **Step 3: Convert Includes / Excludes rows to KIND_PICKER**
 
-In `acorn/tui/settings_screen.py`, replace `_build_field_items` rows for `wiz.includes` and `wiz.excludes`:
+In `fnd/tui/settings_screen.py`, replace `_build_field_items` rows for `wiz.includes` and `wiz.excludes`:
 
 ```python
-from acorn.config import EXCLUDES_PRESETS, INDEXER_FILETYPES
-from acorn.tui.menu import ChoiceOption
+from fnd.config import EXCLUDES_PRESETS, INDEXER_FILETYPES
+from fnd.tui.menu import ChoiceOption
 
 # In _build_field_items:
 MenuItem(
@@ -1650,7 +1650,7 @@ Expected: both PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py tests/test_settings_p3_wizard.py
+git add fnd/tui/settings_screen.py tests/test_settings_p3_wizard.py
 git commit -m "feat(settings): wizard multi-select for Includes/Excludes (Phase 3 · Task 13 · spec §Wizard › Includes/Excludes)"
 ```
 
@@ -1659,7 +1659,7 @@ git commit -m "feat(settings): wizard multi-select for Includes/Excludes (Phase 
 ### Task 14 — Live path validation in Source path edit
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (EditBar's path-row variant; show ✓ N files / ✗ does not exist as the user types)
+- Modify: `fnd/tui/settings_screen.py` (EditBar's path-row variant; show ✓ N files / ✗ does not exist as the user types)
 - Test: `tests/test_settings_p3_wizard.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -1670,7 +1670,7 @@ Append to `tests/test_settings_p3_wizard.py`:
 @pytest.mark.asyncio
 async def test_path_validation_inline(tmp_path: Path, built_index: Path) -> None:
     """Spec: Wizard › Source path — live ✓/✗ inline validation."""
-    from acorn.tui.settings_screen import (
+    from fnd.tui.settings_screen import (
         AddCollectionWizard,
         EditBar,
         SettingsList,
@@ -1680,7 +1680,7 @@ async def test_path_validation_inline(tmp_path: Path, built_index: Path) -> None
     real_dir.mkdir()
     (real_dir / "a.md").write_text("hello")
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(AddCollectionWizard())
@@ -1712,7 +1712,7 @@ Expected: FAIL — no live validation yet.
 
 - [ ] **Step 3: Add path validation to `EditBar`**
 
-In `acorn/tui/settings_screen.py`'s `EditBar`:
+In `fnd/tui/settings_screen.py`'s `EditBar`:
 
 ```python
 def on_input_changed(self, ev: Input.Changed) -> None:
@@ -1755,7 +1755,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py tests/test_settings_p3_wizard.py
+git add fnd/tui/settings_screen.py tests/test_settings_p3_wizard.py
 git commit -m "feat(settings): live path validation in wizard (Phase 3 · Task 14 · spec §Wizard › Source path)"
 ```
 
@@ -1764,7 +1764,7 @@ git commit -m "feat(settings): live path validation in wizard (Phase 3 · Task 1
 ### Task 15 — Save + reindex chain on Ctrl+S
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (`AddCollectionWizard.action_save_close`)
+- Modify: `fnd/tui/settings_screen.py` (`AddCollectionWizard.action_save_close`)
 - Test: `tests/test_settings_p3_wizard.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -1775,8 +1775,8 @@ Append to `tests/test_settings_p3_wizard.py`:
 @pytest.mark.asyncio
 async def test_save_writes_collection_and_reindexes(tmp_path, built_index: Path) -> None:
     """Spec: Wizard › Save — write_collection + reindex + drop on per-collection sub-screen."""
-    from acorn.config import EXCLUDES_PRESETS, default_config_path, load
-    from acorn.tui.settings_screen import (
+    from fnd.config import EXCLUDES_PRESETS, default_config_path, load
+    from fnd.tui.settings_screen import (
         AddCollectionWizard,
         SettingsList,
         SettingsScreen,
@@ -1786,7 +1786,7 @@ async def test_save_writes_collection_and_reindexes(tmp_path, built_index: Path)
     real_dir.mkdir()
     (real_dir / "a.md").write_text("# hello")
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         wiz = AddCollectionWizard()
@@ -1823,7 +1823,7 @@ In `AddCollectionWizard`:
 ```python
 def action_save_close(self) -> None:
     from pathlib import Path
-    from acorn.config import (
+    from fnd.config import (
         CollectionConfig,
         EXCLUDES_PRESETS,
         INDEXER_FILETYPES,
@@ -1860,7 +1860,7 @@ def action_save_close(self) -> None:
             if g:
                 excludes_globs.append(g)
 
-    app: AcornApp = self.app  # type: ignore[assignment]
+    app: FNDApp = self.app  # type: ignore[assignment]
     cfg = app._config  # type: ignore[attr-defined]
     if cfg is not None and name in cfg.collections:
         self.notify(f"Collection {name!r} already exists", severity="warning")
@@ -1884,7 +1884,7 @@ def action_save_close(self) -> None:
     app._reindex_collection_async(name)  # type: ignore[attr-defined]
     # Drop wizard, then push the new collection's per-collection sub-screen.
     self.app.pop_screen()
-    from acorn.tui.menu import _make_open_collection_screen
+    from fnd.tui.menu import _make_open_collection_screen
 
     _make_open_collection_screen(name)(app)
 ```
@@ -1902,7 +1902,7 @@ Expected: all green; if existing collection tests reference the old `NewCollecti
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py tests/test_settings_p3_wizard.py
+git add fnd/tui/settings_screen.py tests/test_settings_p3_wizard.py
 git commit -m "feat(settings): wizard save + reindex chain (Phase 3 · Task 15 · spec §Wizard › Save)"
 ```
 
@@ -1924,12 +1924,12 @@ Append to `tests/test_settings_p3_wizard.py`:
 async def test_esc_discards_wizard_with_no_side_effects(built_index: Path) -> None:
     """Spec: Wizard › Esc — cancelling after typing a name does NOT
     create an empty collection."""
-    from acorn.config import default_config_path, load
-    from acorn.tui.settings_screen import AddCollectionWizard
+    from fnd.config import default_config_path, load
+    from fnd.tui.settings_screen import AddCollectionWizard
 
     before = load(default_config_path()).collections.copy()
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         wiz = AddCollectionWizard()
@@ -1975,10 +1975,10 @@ git commit -m "test(settings): verify wizard Esc is side-effect-free (Phase 3 ·
 
 Two related affordances: `Shift+Enter` reveals the file backing a reveal-capable row; a new "Open keybindings file in editor" sibling action lives on the root.
 
-### Task 17 — `acorn.opener.reveal(path)` helper
+### Task 17 — `fnd.opener.reveal(path)` helper
 
 **Files:**
-- Modify: `acorn/opener.py`
+- Modify: `fnd/opener.py`
 - Test: `tests/test_settings_p3_reveal.py` (new)
 
 - [ ] **Step 1: Write the failing test**
@@ -1997,7 +1997,7 @@ from unittest.mock import patch
 
 def test_reveal_runs_open_R_on_macos(tmp_path: Path) -> None:
     """Spec: Reveal-in-Finder — uses `open -R <path>` on macOS."""
-    from acorn import opener
+    from fnd import opener
 
     p = tmp_path / "x.toml"
     p.write_text("")
@@ -2015,9 +2015,9 @@ def test_reveal_runs_open_R_on_macos(tmp_path: Path) -> None:
 Run: `uv run pytest tests/test_settings_p3_reveal.py::test_reveal_runs_open_R_on_macos -v`
 Expected: FAIL — `opener.reveal` doesn't exist.
 
-- [ ] **Step 3: Add `reveal()` to `acorn/opener.py`**
+- [ ] **Step 3: Add `reveal()` to `fnd/opener.py`**
 
-At the end of `acorn/opener.py`:
+At the end of `fnd/opener.py`:
 
 ```python
 def reveal(path: Path | str) -> None:
@@ -2047,7 +2047,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/opener.py tests/test_settings_p3_reveal.py
+git add fnd/opener.py tests/test_settings_p3_reveal.py
 git commit -m "feat(opener): reveal() helper for Shift+Enter reveal-in-Finder (Phase 4 · Task 17 · spec §Reveal pattern)"
 ```
 
@@ -2056,7 +2056,7 @@ git commit -m "feat(opener): reveal() helper for Shift+Enter reveal-in-Finder (P
 ### Task 18 — `Shift+Enter` binding on reveal-capable rows
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (binding on `SettingsList`; `action_reveal` calls `opener.reveal()` for rows with a reveal-capable id)
+- Modify: `fnd/tui/settings_screen.py` (binding on `SettingsList`; `action_reveal` calls `opener.reveal()` for rows with a reveal-capable id)
 - Test: `tests/test_settings_p3_reveal.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -2065,8 +2065,8 @@ Append:
 
 ```python
 import pytest
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -2080,9 +2080,9 @@ async def test_shift_enter_on_open_config_calls_reveal(built_index) -> None:
     """Spec: Reveal pattern — Shift+Enter on the Open config row reveals
     config.toml in Finder."""
     from unittest.mock import patch
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -2094,7 +2094,7 @@ async def test_shift_enter_on_open_config_calls_reveal(built_index) -> None:
             i for i, it in enumerate(lst._items) if it.id == "root.open_config_file"
         )
         lst.cursor_index = idx
-        with patch("acorn.opener.reveal") as mock_reveal:
+        with patch("fnd.opener.reveal") as mock_reveal:
             await pilot.press("shift+enter")
             await pilot.pause()
             mock_reveal.assert_called_once()
@@ -2125,14 +2125,14 @@ def action_reveal(self) -> None:
     path = self._reveal_target(item)
     if path is None:
         return
-    from acorn import opener
+    from fnd import opener
     opener.reveal(path)
 
 def _reveal_target(self, item: MenuItem) -> "Path | None":
     """Return the file path to reveal for ``item``, or None if the row
     isn't reveal-capable."""
     from pathlib import Path
-    from acorn.config import default_config_path
+    from fnd.config import default_config_path
 
     if item.id == "root.open_config_file":
         return default_config_path()
@@ -2149,7 +2149,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py tests/test_settings_p3_reveal.py
+git add fnd/tui/settings_screen.py tests/test_settings_p3_reveal.py
 git commit -m "feat(settings): Shift+Enter reveal binding (Phase 4 · Task 18 · spec §Reveal pattern)"
 ```
 
@@ -2158,8 +2158,8 @@ git commit -m "feat(settings): Shift+Enter reveal binding (Phase 4 · Task 18 ·
 ### Task 19 — `Open keybindings file in editor` root action
 
 **Files:**
-- Modify: `acorn/tui/menu.py` (add a fifth root row)
-- Modify: `acorn/tui/app.py` (add `action_open_keybindings_file`)
+- Modify: `fnd/tui/menu.py` (add a fifth root row)
+- Modify: `fnd/tui/app.py` (add `action_open_keybindings_file`)
 - Test: `tests/test_settings_p3_reveal.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -2170,9 +2170,9 @@ Append:
 @pytest.mark.asyncio
 async def test_root_has_open_keybindings_file(built_index) -> None:
     """Spec: IA › Root — sibling action for the keybindings TOML."""
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -2189,7 +2189,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Add the row and action**
 
-In `acorn/tui/menu.py`, in `_provider_root` after the `Open config file` MenuItem:
+In `fnd/tui/menu.py`, in `_provider_root` after the `Open config file` MenuItem:
 
 ```python
 MenuItem(
@@ -2206,36 +2206,36 @@ MenuItem(
 Add the summary helper:
 
 ```python
-def _summary_keybindings_path(_app: "AcornApp") -> str:
-    from acorn.config import default_config_path
+def _summary_keybindings_path(_app: "FNDApp") -> str:
+    from fnd.config import default_config_path
 
     p = str(default_config_path().parent / "keybindings.toml")
     return ("…" + p[-50:]) if len(p) > 50 else p
 ```
 
-Then in `acorn/tui/app.py`, add `action_open_keybindings_file`. Pattern follows `action_open_config_file`:
+Then in `fnd/tui/app.py`, add `action_open_keybindings_file`. Pattern follows `action_open_config_file`:
 
 ```python
 def action_open_keybindings_file(self) -> None:
     """Drop into $EDITOR on keybindings.toml; reload keymap on save."""
     import os
     import subprocess
-    from acorn.config import default_config_path
+    from fnd.config import default_config_path
 
     path = default_config_path().parent / "keybindings.toml"
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
-        path.write_text("# Acorn user keybinding overrides.\n# [normal]\n# \"j\"    = \"focus_results_pane\"\n", encoding="utf-8")
+        path.write_text("# FND user keybinding overrides.\n# [normal]\n# \"j\"    = \"focus_results_pane\"\n", encoding="utf-8")
     # Pop the settings stack so the editor takes over cleanly.
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd.tui.settings_screen import SettingsScreen
     while isinstance(self.screen, SettingsScreen):
         self.pop_screen()
     editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
     with self.suspend():
         subprocess.call([editor, str(path)])
     # Reload the keymap.
-    from acorn.tui.actions import load_keymap
-    self._acorn_keymap = load_keymap()
+    from fnd.tui.actions import load_keymap
+    self._fnd_keymap = load_keymap()
     self.notify("Reloaded keybindings", timeout=2)
 ```
 
@@ -2247,7 +2247,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/menu.py acorn/tui/app.py tests/test_settings_p3_reveal.py
+git add fnd/tui/menu.py fnd/tui/app.py tests/test_settings_p3_reveal.py
 git commit -m "feat(settings): Open keybindings file action (Phase 4 · Task 19 · spec §IA › Open keybindings file)"
 ```
 
@@ -2270,7 +2270,7 @@ Lazygit-style "press the listed key to run the action" on the Keybindings screen
 ### Task 20 — Press-key-to-invoke on Keybindings
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (`SettingsScreen.on_key` override for Keybindings sub-screen)
+- Modify: `fnd/tui/settings_screen.py` (`SettingsScreen.on_key` override for Keybindings sub-screen)
 - Test: `tests/test_settings_p3_keybindings_invoke.py` (new)
 
 - [ ] **Step 1: Write the failing test**
@@ -2286,8 +2286,8 @@ from pathlib import Path
 
 import pytest
 
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -2301,9 +2301,9 @@ async def test_pressing_key_in_keybindings_invokes_action(built_index: Path) -> 
     """Spec: Keybindings › Press-key-to-invoke — pressing a listed key
     dispatches the action and closes the settings stack."""
     from textual.widgets import Input
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_show_help()
@@ -2323,9 +2323,9 @@ async def test_pressing_key_while_search_focused_does_not_invoke(built_index: Pa
     """Spec: Press-key-to-invoke applies only when the LIST has focus;
     typing in the search filter must not trigger actions."""
     from textual.widgets import Input
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd.tui.settings_screen import SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_show_help()
@@ -2346,7 +2346,7 @@ Expected: both FAIL.
 
 - [ ] **Step 3: Override `on_key` on `SettingsScreen`**
 
-In `acorn/tui/settings_screen.py`'s `SettingsScreen`, add:
+In `fnd/tui/settings_screen.py`'s `SettingsScreen`, add:
 
 ```python
 async def on_key(self, ev: events.Key) -> None:
@@ -2401,7 +2401,7 @@ Expected: both PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py tests/test_settings_p3_keybindings_invoke.py
+git add fnd/tui/settings_screen.py tests/test_settings_p3_keybindings_invoke.py
 git commit -m "feat(settings): press-key-to-invoke on Keybindings (Phase 5 · Task 20 · spec §Keybindings)"
 ```
 
@@ -2410,8 +2410,8 @@ git commit -m "feat(settings): press-key-to-invoke on Keybindings (Phase 5 · Ta
 ### Task 21 — `Defaults.drill_summary_mode` config field
 
 **Files:**
-- Modify: `acorn/config.py` (`Defaults` model)
-- Modify: `acorn/config.py` (`CONFIG_TEMPLATE` — document the new field)
+- Modify: `fnd/config.py` (`Defaults` model)
+- Modify: `fnd/config.py` (`CONFIG_TEMPLATE` — document the new field)
 - Test: `tests/test_settings_p3_keybindings_invoke.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -2421,7 +2421,7 @@ Append:
 ```python
 def test_drill_summary_mode_default_and_validation() -> None:
     """Spec: Drill-cue preference — defaults to always_show; validates set."""
-    from acorn.config import Defaults
+    from fnd.config import Defaults
     from pydantic import ValidationError
 
     d = Defaults()
@@ -2444,7 +2444,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Extend `Defaults`**
 
-In `acorn/config.py`:
+In `fnd/config.py`:
 
 ```python
 from typing import Literal
@@ -2477,7 +2477,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/config.py tests/test_settings_p3_keybindings_invoke.py
+git add fnd/config.py tests/test_settings_p3_keybindings_invoke.py
 git commit -m "feat(config): drill_summary_mode field (Phase 5 · Task 21 · spec §Drill-cue preference)"
 ```
 
@@ -2486,8 +2486,8 @@ git commit -m "feat(config): drill_summary_mode field (Phase 5 · Task 21 · spe
 ### Task 22 — Wire `drill_summary_mode` into row rendering
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (`_render_row` reads the mode and adjusts)
-- Modify: `acorn/tui/menu.py` (add the `drill_summary_mode` picker to Preferences › Display)
+- Modify: `fnd/tui/settings_screen.py` (`_render_row` reads the mode and adjusts)
+- Modify: `fnd/tui/menu.py` (add the `drill_summary_mode` picker to Preferences › Display)
 - Test: `tests/test_settings_p3_keybindings_invoke.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -2499,8 +2499,8 @@ Append:
 async def test_drill_mode_always_ellipsis(built_index: Path, tmp_path: Path) -> None:
     """Spec: Drill-cue preference — `always_ellipsis` mode renders `…`
     instead of content summaries."""
-    from acorn.config import default_config_path, load, write_setting
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.config import default_config_path, load, write_setting
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
     write_setting(
         config_path=default_config_path(),
@@ -2508,7 +2508,7 @@ async def test_drill_mode_always_ellipsis(built_index: Path, tmp_path: Path) -> 
         value="always_ellipsis",
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -2528,10 +2528,10 @@ Expected: FAIL — `trailing_value` ignores the preference.
 
 - [ ] **Step 3: Adjust `MenuItem.trailing_value`**
 
-In `acorn/tui/menu.py`'s `MenuItem.trailing_value`:
+In `fnd/tui/menu.py`'s `MenuItem.trailing_value`:
 
 ```python
-def trailing_value(self, app: "AcornApp") -> str:
+def trailing_value(self, app: "FNDApp") -> str:
     try:
         cfg = getattr(app, "_config", None)
         mode = (
@@ -2564,7 +2564,7 @@ def trailing_value(self, app: "AcornApp") -> str:
     return ""
 ```
 
-Then expose the mode as a picker in Preferences. In `acorn/tui/menu.py`'s `_provider_preferences`, after the `Highlights` toggle and inside the Display sub-group:
+Then expose the mode as a picker in Preferences. In `fnd/tui/menu.py`'s `_provider_preferences`, after the `Highlights` toggle and inside the Display sub-group:
 
 ```python
 MenuItem(
@@ -2596,7 +2596,7 @@ Expected: all green.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/tui/menu.py acorn/tui/settings_screen.py tests/test_settings_p3_keybindings_invoke.py
+git add fnd/tui/menu.py fnd/tui/settings_screen.py tests/test_settings_p3_keybindings_invoke.py
 git commit -m "feat(settings): wire drill_summary_mode into renderer (Phase 5 · Task 22 · spec §Drill-cue preference)"
 ```
 
@@ -2609,7 +2609,7 @@ git commit -m "feat(settings): wire drill_summary_mode into renderer (Phase 5 ·
 - [ ] Manual: `:` → Preferences → Display → `Drill row summaries` → pick "Always show … only" → back to root. Each drill row trailing is `…`. Switch back to "Always show summary" → summaries return.
 - [ ] Tests: `uv run pytest tests/test_settings_p3_keybindings_invoke.py -v` all green.
 - [ ] Tests (whole suite): `uv run pytest tests/ -v 2>&1 | tail -5` all green.
-- [ ] Lint: `uv run ruff check acorn/ tests/`
+- [ ] Lint: `uv run ruff check fnd/ tests/`
 - [ ] **Post Phase 5 done-vs-spec diff. Stop for user sign-off.**
 
 ---
@@ -2637,7 +2637,7 @@ Plan-vs-spec audit (post-write self-review) surfaced nine spec items that the fi
 **Spec:** §IA › Collections sub-screen + §IA › Sources sub-screen
 
 **Files:**
-- Modify: `acorn/tui/menu.py` (`_provider_collections` per-collection rows + `_provider_sources` per-source rows)
+- Modify: `fnd/tui/menu.py` (`_provider_collections` per-collection rows + `_provider_sources` per-source rows)
 - Test: `tests/test_settings_p3_visual.py` (append)
 
 - [ ] **Step 1: Write the failing test**
@@ -2649,9 +2649,9 @@ Append to `tests/test_settings_p3_visual.py`:
 async def test_collection_row_shows_source_count_and_ranking(built_index: Path) -> None:
     """Spec: IA › Collections sub-screen — each collection row's trailing
     shows `<n> source(s) · ranking:<profile>` with scope dot prefix."""
-    from acorn.tui.menu import SECTION_COLLECTIONS, section_items
+    from fnd.tui.menu import SECTION_COLLECTIONS, section_items
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test():
         items = section_items(app, SECTION_COLLECTIONS)
         default = next(it for it in items if it.id == "collections.default")
@@ -2666,13 +2666,13 @@ async def test_collection_row_shows_source_count_and_ranking(built_index: Path) 
 async def test_source_row_shows_filetypes_and_path_warning(tmp_path: Path, built_index: Path) -> None:
     """Spec: IA › Sources sub-screen — source rows show file-types and
     `⚠ path not found` when the path no longer resolves."""
-    from acorn.config import (
+    from fnd.config import (
         CollectionConfig,
         SourceConfig,
         default_config_path,
         write_collection,
     )
-    from acorn.tui.menu import section_items
+    from fnd.tui.menu import section_items
 
     # Make a collection with two sources: one valid, one missing.
     real = tmp_path / "exists"
@@ -2689,7 +2689,7 @@ async def test_source_row_shows_filetypes_and_path_warning(tmp_path: Path, built
         ),
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test():
         items = section_items(app, "collections:probe:sources")
         valid = next(it for it in items if it.id == "source.probe.0")
@@ -2705,11 +2705,11 @@ Expected: both FAIL — provider rows have no `value_getter`.
 
 - [ ] **Step 3: Wire `value_getter` into the collection-row provider**
 
-In `acorn/tui/menu.py`, find `_provider_collections`. For every per-collection `MenuItem` it emits, attach a `value_getter`:
+In `fnd/tui/menu.py`, find `_provider_collections`. For every per-collection `MenuItem` it emits, attach a `value_getter`:
 
 ```python
-def _collection_trailing(name: str) -> Callable[["AcornApp"], str]:
-    def _summary(app: "AcornApp") -> str:
+def _collection_trailing(name: str) -> Callable[["FNDApp"], str]:
+    def _summary(app: "FNDApp") -> str:
         cfg = app._config  # type: ignore[attr-defined]
         if cfg is None or name not in cfg.collections:
             return ""
@@ -2742,8 +2742,8 @@ If `app._active_collections` doesn't exist as an attribute, fall back to checkin
 In `_provider_sources`, attach:
 
 ```python
-def _source_trailing(collection_name: str, idx: int) -> Callable[["AcornApp"], str]:
-    def _summary(app: "AcornApp") -> str:
+def _source_trailing(collection_name: str, idx: int) -> Callable[["FNDApp"], str]:
+    def _summary(app: "FNDApp") -> str:
         cfg = app._config  # type: ignore[attr-defined]
         if cfg is None or collection_name not in cfg.collections:
             return ""
@@ -2788,7 +2788,7 @@ Expected: both PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/tui/menu.py tests/test_settings_p3_visual.py
+git add fnd/tui/menu.py tests/test_settings_p3_visual.py
 git commit -m "feat(menu): collection + source row trailing summaries (Phase 6 · Task 23 · spec §IA Collections/Sources)"
 ```
 
@@ -2799,7 +2799,7 @@ git commit -m "feat(menu): collection + source row trailing summaries (Phase 6 �
 **Spec:** §Design system › Hint bar (four context variants)
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (`_refresh_hint_bar` chooses variant based on focus + cursor row + breadcrumb)
+- Modify: `fnd/tui/settings_screen.py` (`_refresh_hint_bar` chooses variant based on focus + cursor row + breadcrumb)
 - Test: `tests/test_settings_p3_visual.py` (append)
 
 - [ ] **Step 1: Write the failing tests**
@@ -2811,9 +2811,9 @@ Append to `tests/test_settings_p3_visual.py`:
 async def test_hint_bar_appends_reveal_when_cursor_on_reveal_capable_row(built_index: Path) -> None:
     """Spec: Hint bar — append `Shift+⏎ Reveal` when row supports reveal."""
     from textual.widgets import Static
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -2832,9 +2832,9 @@ async def test_hint_bar_appends_reveal_when_cursor_on_reveal_capable_row(built_i
 async def test_hint_bar_keybindings_variant(built_index: Path) -> None:
     """Spec: Hint bar — Keybindings screen shows `⏎ Run · [key] Run directly · Esc Back`."""
     from textual.widgets import Static
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_show_help()
@@ -2855,7 +2855,7 @@ Expected: both FAIL.
 
 - [ ] **Step 3: Add variant logic to `_refresh_hint_bar` (or `on_mount` if static)**
 
-In `acorn/tui/settings_screen.py`'s `SettingsScreen`, add:
+In `fnd/tui/settings_screen.py`'s `SettingsScreen`, add:
 
 ```python
 def _refresh_hint_bar(self) -> None:
@@ -2863,7 +2863,7 @@ def _refresh_hint_bar(self) -> None:
     the cursor row. Called from `_on_item_highlighted`, `on_focus`, and
     `EditBar` open/close events."""
     from textual.widgets import Static
-    app: AcornApp = self.app  # type: ignore[assignment]
+    app: FNDApp = self.app  # type: ignore[assignment]
     focused = self.focused
 
     # Edit-bar open: minimal save/cancel pair.
@@ -2910,7 +2910,7 @@ Expected: both PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py tests/test_settings_p3_visual.py
+git add fnd/tui/settings_screen.py tests/test_settings_p3_visual.py
 git commit -m "feat(settings): contextual hint bar variants (Phase 6 · Task 24 · spec §Hint bar)"
 ```
 
@@ -2921,7 +2921,7 @@ git commit -m "feat(settings): contextual hint bar variants (Phase 6 · Task 24 
 **Spec:** §IA › Add Collection wizard — Includes ("Custom glob… (text input)") + Excludes ("Custom globs… (free text)")
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (`PickerScreen` supports a `custom` row; `AddCollectionWizard._fields` already has `excludes_custom`, add `includes_custom`)
+- Modify: `fnd/tui/settings_screen.py` (`PickerScreen` supports a `custom` row; `AddCollectionWizard._fields` already has `excludes_custom`, add `includes_custom`)
 - Test: `tests/test_settings_p3_wizard.py` (append)
 
 - [ ] **Step 1: Write the failing test**
@@ -2932,13 +2932,13 @@ Append to `tests/test_settings_p3_wizard.py`:
 @pytest.mark.asyncio
 async def test_includes_picker_includes_custom_entry(built_index: Path) -> None:
     """Spec: Wizard › Includes — `Custom glob… (text input)` escape hatch."""
-    from acorn.tui.settings_screen import (
+    from fnd.tui.settings_screen import (
         AddCollectionWizard,
         PickerScreen,
         SettingsList,
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(AddCollectionWizard())
@@ -2962,7 +2962,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Add the custom entry to both pickers**
 
-In `acorn/tui/settings_screen.py`, update `AddCollectionWizard._build_field_items` so the Includes and Excludes `choices_provider` callbacks append a final entry with `value="__custom__"`:
+In `fnd/tui/settings_screen.py`, update `AddCollectionWizard._build_field_items` so the Includes and Excludes `choices_provider` callbacks append a final entry with `value="__custom__"`:
 
 ```python
 choices_provider=lambda _app: [
@@ -2999,7 +2999,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py tests/test_settings_p3_wizard.py
+git add fnd/tui/settings_screen.py tests/test_settings_p3_wizard.py
 git commit -m "feat(settings): custom glob escape hatch in wizard pickers (Phase 6 · Task 25 · spec §Wizard › Includes/Excludes)"
 ```
 
@@ -3010,7 +3010,7 @@ git commit -m "feat(settings): custom glob escape hatch in wizard pickers (Phase
 **Spec:** §IA › Per-source form ("Same shape as the Add Collection wizard, but pre-populated")
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (`SourceFormScreen`)
+- Modify: `fnd/tui/settings_screen.py` (`SourceFormScreen`)
 - Test: `tests/test_settings_p3_wizard.py` (append)
 
 - [ ] **Step 1: Write the failing test**
@@ -3021,14 +3021,14 @@ Append:
 @pytest.mark.asyncio
 async def test_source_form_uses_picker_for_includes(built_index: Path, tmp_path: Path) -> None:
     """Spec: Per-source form — Includes is a multi-select picker, not free text."""
-    from acorn.config import (
+    from fnd.config import (
         CollectionConfig,
         SourceConfig,
         default_config_path,
         write_collection,
     )
-    from acorn.tui.menu import _make_open_source_form
-    from acorn.tui.settings_screen import (
+    from fnd.tui.menu import _make_open_source_form
+    from fnd.tui.settings_screen import (
         PickerScreen,
         SettingsList,
         SourceFormScreen,
@@ -3044,7 +3044,7 @@ async def test_source_form_uses_picker_for_includes(built_index: Path, tmp_path:
         ),
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         _make_open_source_form("probe2", 0)(app)
@@ -3133,7 +3133,7 @@ Expected: PASS — existing tests that assert on field labels still hold; assert
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py tests/test_settings_p3_wizard.py
+git add fnd/tui/settings_screen.py tests/test_settings_p3_wizard.py
 git commit -m "feat(settings): per-source form uses wizard pickers (Phase 6 · Task 26 · spec §Per-source form)"
 ```
 
@@ -3144,7 +3144,7 @@ git commit -m "feat(settings): per-source form uses wizard pickers (Phase 6 · T
 **Spec:** §Search behaviour › Match display ("Bold-substring of the matched query inside the label")
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (`_render_row` accepts an optional `highlight: str` param and bolds the substring)
+- Modify: `fnd/tui/settings_screen.py` (`_render_row` accepts an optional `highlight: str` param and bolds the substring)
 - Test: `tests/test_settings_p3_search.py` (append)
 
 - [ ] **Step 1: Write the failing test**
@@ -3154,8 +3154,8 @@ Append to `tests/test_settings_p3_search.py`:
 ```python
 def test_search_result_label_has_bold_substring_for_query() -> None:
     """Spec: Search › Match display — matched substring is bold inside label."""
-    from acorn.tui.menu import KIND_SCALAR, MenuItem
-    from acorn.tui.settings_screen import _render_row
+    from fnd.tui.menu import KIND_SCALAR, MenuItem
+    from fnd.tui.settings_screen import _render_row
 
     item = MenuItem(id="x", label="Result limit", kind=KIND_SCALAR)
     rendered = _render_row(item, app=None, width=80, highlight="result")
@@ -3178,12 +3178,12 @@ Expected: FAIL.
 
 - [ ] **Step 3: Add `highlight` parameter to `_render_row`**
 
-In `acorn/tui/settings_screen.py`:
+In `fnd/tui/settings_screen.py`:
 
 ```python
 def _render_row(
     item: MenuItem,
-    app: AcornApp | None,
+    app: FNDApp | None,
     width: int | None = None,
     highlight: str | None = None,
 ) -> Text:
@@ -3226,7 +3226,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py tests/test_settings_p3_search.py
+git add fnd/tui/settings_screen.py tests/test_settings_p3_search.py
 git commit -m "feat(settings): bold matched substring in search labels (Phase 6 · Task 27 · spec §Search › Match display)"
 ```
 
@@ -3237,7 +3237,7 @@ git commit -m "feat(settings): bold matched substring in search labels (Phase 6 
 **Spec:** §Search behaviour › Empty-state hint
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (`SettingsList` renders a single placeholder row when filtered list is empty)
+- Modify: `fnd/tui/settings_screen.py` (`SettingsList` renders a single placeholder row when filtered list is empty)
 - Test: `tests/test_settings_p3_search.py` (append)
 
 - [ ] **Step 1: Write the failing test**
@@ -3249,9 +3249,9 @@ Append to `tests/test_settings_p3_search.py`:
 async def test_zero_match_shows_empty_state_hint(built_index: Path) -> None:
     """Spec: Search › Empty-state hint — `No matches for '<q>'` placeholder."""
     from textual.widgets import Input
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -3290,7 +3290,7 @@ def _on_search_changed(self, ev: Input.Changed) -> None:
     self._filter_active = True
     filtered = self._filter_items(q)
     if not filtered:
-        from acorn.tui.menu import KIND_HEADER
+        from fnd.tui.menu import KIND_HEADER
         empty = MenuItem(
             id="search.empty",
             label=f"No matches for '{ev.value.strip()}'. Try shorter terms or press Esc to clear.",
@@ -3311,7 +3311,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py tests/test_settings_p3_search.py
+git add fnd/tui/settings_screen.py tests/test_settings_p3_search.py
 git commit -m "feat(settings): empty-state hint for zero-match search (Phase 6 · Task 28 · spec §Empty-state hint)"
 ```
 
@@ -3322,7 +3322,7 @@ git commit -m "feat(settings): empty-state hint for zero-match search (Phase 6 �
 **Spec:** Locked decision #12 — "Inline errors only — no toast notifications for in-form failures."
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (`AddCollectionWizard.action_save_close`; add `#wizard_error` Static below the form)
+- Modify: `fnd/tui/settings_screen.py` (`AddCollectionWizard.action_save_close`; add `#wizard_error` Static below the form)
 - Test: `tests/test_settings_p3_wizard.py` (append)
 
 - [ ] **Step 1: Write the failing test**
@@ -3334,9 +3334,9 @@ Append to `tests/test_settings_p3_wizard.py`:
 async def test_save_with_missing_name_shows_inline_error(built_index: Path) -> None:
     """Spec: Locked decision #12 — inline error, no toast."""
     from textual.widgets import Static
-    from acorn.tui.settings_screen import AddCollectionWizard
+    from fnd.tui.settings_screen import AddCollectionWizard
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         wiz = AddCollectionWizard()
@@ -3403,7 +3403,7 @@ def action_save_close(self) -> None:
         self._show_error(f"Path does not exist: {p}")
         return
     # … existing duplicate-name check, also via _show_error …
-    app: AcornApp = self.app  # type: ignore[assignment]
+    app: FNDApp = self.app  # type: ignore[assignment]
     cfg = app._config  # type: ignore[attr-defined]
     if cfg is not None and name in cfg.collections:
         self._show_error(f"Collection '{name}' already exists.")
@@ -3419,7 +3419,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py tests/test_settings_p3_wizard.py
+git add fnd/tui/settings_screen.py tests/test_settings_p3_wizard.py
 git commit -m "fix(settings): inline wizard errors instead of notify (Phase 6 · Task 29 · spec §Locked decisions #12)"
 ```
 
@@ -3430,7 +3430,7 @@ git commit -m "fix(settings): inline wizard errors instead of notify (Phase 6 ·
 **Spec:** §Use cases › A4 ("find version / config path" — at the bottom of the root screen)
 
 **Files:**
-- Modify: `acorn/tui/settings_screen.py` (root-only status line below the DetailStrip showing `acorn vX.Y.Z`)
+- Modify: `fnd/tui/settings_screen.py` (root-only status line below the DetailStrip showing `fnd vX.Y.Z`)
 - Test: `tests/test_settings_p3_visual.py` (append)
 
 - [ ] **Step 1: Write the failing test**
@@ -3442,9 +3442,9 @@ Append:
 async def test_root_screen_shows_version_status_line(built_index: Path) -> None:
     """Spec: Use case A4 — version visible at bottom of root menu."""
     from textual.widgets import Static
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd.tui.settings_screen import SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -3452,7 +3452,7 @@ async def test_root_screen_shows_version_status_line(built_index: Path) -> None:
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         status = screen.query_one("#settings_status", Static)
-        from acorn import __version__
+        from fnd import __version__
         assert __version__ in str(status.renderable)
 ```
 
@@ -3474,13 +3474,13 @@ In `on_mount`, when on root:
 
 ```python
 if not self._breadcrumb:
-    from acorn import __version__
+    from fnd import __version__
     self.query_one("#settings_status", Static).update(
-        f"acorn v{__version__}"
+        f"fnd v{__version__}"
     )
 ```
 
-If `acorn.__version__` is missing, expose it via `acorn/__init__.py` (read from `importlib.metadata.version("acorn")` with a fallback constant).
+If `fnd.__version__` is missing, expose it via `fnd/__init__.py` (read from `importlib.metadata.version("fnd")` with a fallback constant).
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -3490,7 +3490,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/settings_screen.py acorn/__init__.py tests/test_settings_p3_visual.py
+git add fnd/tui/settings_screen.py fnd/__init__.py tests/test_settings_p3_visual.py
 git commit -m "feat(settings): version status line on root menu (Phase 6 · Task 30 · spec §Use case A4)"
 ```
 
@@ -3505,9 +3505,9 @@ git commit -m "feat(settings): version status line on root menu (Phase 6 · Task
 - [ ] Manual: `:` → type `result` → first hit shows `**Result** limit` (bold "Result" substring).
 - [ ] Manual: `:` → type `zzzzz` → list shows the placeholder hint.
 - [ ] Manual: `:` → Add collection → Ctrl+S with no name → inline red error appears below the form (no toast).
-- [ ] Manual: `:` → root shows `acorn vX.Y.Z` at the bottom.
+- [ ] Manual: `:` → root shows `fnd vX.Y.Z` at the bottom.
 - [ ] Tests: `uv run pytest tests/test_settings_p3_visual.py tests/test_settings_p3_search.py tests/test_settings_p3_wizard.py tests/test_settings_p3_reveal.py tests/test_settings_p3_keybindings_invoke.py -v`
-- [ ] Lint: `uv run ruff check acorn/ tests/`
+- [ ] Lint: `uv run ruff check fnd/ tests/`
 - [ ] **Post Phase 6 done-vs-spec diff. Stop for user sign-off.**
 
 ---
@@ -3518,7 +3518,7 @@ Before marking the redesign complete, complete the full spec verification list f
 
 ```bash
 uv run pytest tests/ -v
-uv run ruff check acorn/ tests/
+uv run ruff check fnd/ tests/
 ```
 
 Manual walkthrough (every numbered item in the spec's Verification section). For each, paste the observed behaviour into a "done-vs-spec" comment on the PR/branch so the diff is auditable.

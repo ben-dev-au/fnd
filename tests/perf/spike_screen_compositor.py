@@ -39,7 +39,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-# Make `acorn` importable even though we don't use it (keeps the
+# Make `fnd` importable even though we don't use it (keeps the
 # script self-contained and runnable from anywhere via the venv).
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))

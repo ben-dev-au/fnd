@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from acorn.extract.base import Block
-from acorn.render import render
+from fnd.extract.base import Block
+from fnd.render import render
 
 
 def test_headings_render_with_correct_level() -> None:

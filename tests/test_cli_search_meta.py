@@ -1,4 +1,4 @@
-"""Phase 5.5e-2: `acorn search --meta` filters at query time."""
+"""Phase 5.5e-2: `fnd search --meta` filters at query time."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from acorn.cli import app
-from acorn.config import CollectionConfig, SourceConfig
-from acorn.index import build_index_from_config
+from fnd.cli import app
+from fnd.config import CollectionConfig, SourceConfig
+from fnd.index import build_index_from_config
 
 
 def _touch(p: Path, body: str) -> None:
@@ -24,7 +24,7 @@ def cli_corpus(tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPa
     _touch(notes / "other.md", "---\nCourse: Other\n---\n# B\nlightning rod\n")
     cc = CollectionConfig(sources=[SourceConfig(path=notes, includes=["**/*.md"])])
     build_index_from_config(config=cc, collection="notes", index_dir=tmp_index_dir)
-    monkeypatch.setattr("acorn.cli.default_index_dir", lambda: tmp_index_dir)
+    monkeypatch.setattr("fnd.cli.default_index_dir", lambda: tmp_index_dir)
     return tmp_index_dir
 
 

@@ -1,4 +1,4 @@
-"""Phase 5.5e-1: `acorn collection add` writes [[sources]] via tomlkit."""
+"""Phase 5.5e-1: `fnd collection add` writes [[sources]] via tomlkit."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from acorn.cli import app
-from acorn.config import load
+from fnd.cli import app
+from fnd.config import load
 
 
 def _runner_with_config(
@@ -21,8 +21,8 @@ def _runner_with_config(
     else:
         cfg_path.write_text("", encoding="utf-8")
     # Force the CLI to use the temp config file.
-    monkeypatch.setattr("acorn.cli.default_config_path", lambda: cfg_path)
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.cli.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return CliRunner(), cfg_path
 
 

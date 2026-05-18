@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from acorn.config import CollectionConfig, SourceConfig
-from acorn.index import build_index_from_config
-from acorn.query import Searcher
+from fnd.config import CollectionConfig, SourceConfig
+from fnd.index import build_index_from_config
+from fnd.query import Searcher
 
 
 def _touch(p: Path, body: str) -> None:

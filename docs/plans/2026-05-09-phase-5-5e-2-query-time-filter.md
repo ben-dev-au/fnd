@@ -5,7 +5,7 @@
 
 **Goal:** Make the same DSL that 5.5e-1 applied at index time work at query time, by storing frontmatter in a Tantivy `meta_blob` field and post-filtering ranked hits via the same compiled predicate. Inline `[…]` syntax in the query bar plus a `--meta` CLI flag are the user-facing surfaces.
 
-**Architecture:** One new helper module (`acorn/meta_blob.py`) handling JSON serialization with date-roundtrip. `acorn/schema.py` gains a stored `meta_blob` bytes field; the sidecar `.acorn-schema-version` jumps from 1 → 2 so old indexes refuse to load until rebuilt. `acorn/index.py` writes the encoded frontmatter for every md chunk. `acorn/query_dsl.py` gains `split_metadata_filter` to extract one `[…]` clause from a user query. `acorn/query.py:Searcher` accepts a `metadata_filter` kwarg and runs post-filter with oversample-and-retry. The TUI (`acorn/tui/app.py`) splits the user-typed string before submission and surfaces parse errors inline; the CLI (`acorn/cli.py:search`) gains `--meta`.
+**Architecture:** One new helper module (`fnd/meta_blob.py`) handling JSON serialization with date-roundtrip. `fnd/schema.py` gains a stored `meta_blob` bytes field; the sidecar `.fnd-schema-version` jumps from 1 → 2 so old indexes refuse to load until rebuilt. `fnd/index.py` writes the encoded frontmatter for every md chunk. `fnd/query_dsl.py` gains `split_metadata_filter` to extract one `[…]` clause from a user query. `fnd/query.py:Searcher` accepts a `metadata_filter` kwarg and runs post-filter with oversample-and-retry. The TUI (`fnd/tui/app.py`) splits the user-typed string before submission and surfaces parse errors inline; the CLI (`fnd/cli.py:search`) gains `--meta`.
 
 **Tech Stack:** Python 3.13, Tantivy (schema bytes field), stdlib `json` (custom encoder for `datetime.date`), Textual (existing notify mechanism for parse-error feedback), pytest.
 
@@ -15,18 +15,18 @@
 
 | File | Action | Responsibility |
 |---|---|---|
-| `acorn/schema.py` | modify | Add `F_META_BLOB`, declare bytes field, bump `SCHEMA_VERSION` to 2 |
-| `acorn/meta_blob.py` | create | `encode(fm: dict) -> bytes` and `decode(blob: bytes) -> dict` with date-aware JSON round-trip |
-| `acorn/index.py` | modify | Read frontmatter once per file (md only); attach encoded blob to every chunk's document |
-| `acorn/query.py` | modify | `Hit.meta_blob: bytes = b""`; `_raw_hits` populates it; `Searcher.search`/`search_grouped` accept `metadata_filter`; new `_filtered_raw_hits` does oversample-and-retry |
-| `acorn/query_dsl.py` | modify | New `split_metadata_filter(query) -> tuple[str, str \| None]` |
-| `acorn/cli.py` | modify | `acorn search` gains `--meta` option |
-| `acorn/tui/app.py` | modify | `_run_query` splits inline `[…]`, plumbs `metadata_filter`; parse errors via `self.notify(...)` |
+| `fnd/schema.py` | modify | Add `F_META_BLOB`, declare bytes field, bump `SCHEMA_VERSION` to 2 |
+| `fnd/meta_blob.py` | create | `encode(fm: dict) -> bytes` and `decode(blob: bytes) -> dict` with date-aware JSON round-trip |
+| `fnd/index.py` | modify | Read frontmatter once per file (md only); attach encoded blob to every chunk's document |
+| `fnd/query.py` | modify | `Hit.meta_blob: bytes = b""`; `_raw_hits` populates it; `Searcher.search`/`search_grouped` accept `metadata_filter`; new `_filtered_raw_hits` does oversample-and-retry |
+| `fnd/query_dsl.py` | modify | New `split_metadata_filter(query) -> tuple[str, str \| None]` |
+| `fnd/cli.py` | modify | `fnd search` gains `--meta` option |
+| `fnd/tui/app.py` | modify | `_run_query` splits inline `[…]`, plumbs `metadata_filter`; parse errors via `self.notify(...)` |
 | `tests/test_meta_blob.py` | create | Encode/decode round-trips for primitives, lists, dates, empty |
 | `tests/test_schema_meta_blob.py` | create | Schema version bump, refusal of stale sidecar |
 | `tests/test_query_dsl_split.py` | create | `split_metadata_filter` cases (start/middle/end, in phrase, multiple, none) |
 | `tests/test_query_metadata_filter.py` | create | End-to-end: index md with frontmatter → filter at query time → only matches survive; oversample correctness; non-md kind passthrough; bad filter raises FilterError |
-| `tests/test_cli_search_meta.py` | create | `acorn search --meta` CLI behaviour |
+| `tests/test_cli_search_meta.py` | create | `fnd search --meta` CLI behaviour |
 
 Existing tests under `tests/` will continue to pass without changes — the new `meta_blob` field is optional in queries that don't use it. The `tmp_index_dir` fixture is per-test, so the schema-version bump rebuilds fresh per run.
 
@@ -44,7 +44,7 @@ Existing tests under `tests/` will continue to pass without changes — the new 
 ## Task 1: Schema bump + `meta_blob` field
 
 **Files:**
-- Modify: `acorn/schema.py`
+- Modify: `fnd/schema.py`
 - Test: `tests/test_schema_meta_blob.py`
 
 - [ ] **Step 1: Add failing test**
@@ -61,7 +61,7 @@ from pathlib import Path
 import pytest
 from tantivy import Document
 
-from acorn.schema import F_META_BLOB, SCHEMA_VERSION, build_schema
+from fnd.schema import F_META_BLOB, SCHEMA_VERSION, build_schema
 
 
 def test_schema_version_bumped_to_two() -> None:
@@ -84,9 +84,9 @@ def test_schema_accepts_meta_blob_bytes() -> None:
 
 def test_old_index_sidecar_refuses_load(tmp_path: Path) -> None:
     """An index dir with a v1 sidecar must refuse to load under v2."""
-    from acorn.index import _ensure_index
+    from fnd.index import _ensure_index
 
-    sidecar = tmp_path / ".acorn-schema-version"
+    sidecar = tmp_path / ".fnd-schema-version"
     sidecar.write_text("1")
     with pytest.raises(RuntimeError, match="schema version"):
         _ensure_index(tmp_path)
@@ -97,9 +97,9 @@ def test_old_index_sidecar_refuses_load(tmp_path: Path) -> None:
 Run: `uv run pytest tests/test_schema_meta_blob.py -v`
 Expected: 4 failures — `F_META_BLOB` not defined, `SCHEMA_VERSION` is 1, schema doesn't accept the field.
 
-- [ ] **Step 3: Update `acorn/schema.py`**
+- [ ] **Step 3: Update `fnd/schema.py`**
 
-Open `acorn/schema.py`. Make three changes:
+Open `fnd/schema.py`. Make three changes:
 
 1. Bump `SCHEMA_VERSION` from `1` to `2`:
 
@@ -145,16 +145,16 @@ If they all pass: great, schema bump is transparent at the test level.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/schema.py tests/test_schema_meta_blob.py
+git add fnd/schema.py tests/test_schema_meta_blob.py
 git commit -m "feat(schema): phase 5.5e-2 — bump SCHEMA_VERSION to 2 + add meta_blob field"
 ```
 
 ---
 
-## Task 2: `acorn/meta_blob.py` — JSON encode/decode with date round-trip
+## Task 2: `fnd/meta_blob.py` — JSON encode/decode with date round-trip
 
 **Files:**
-- Create: `acorn/meta_blob.py`
+- Create: `fnd/meta_blob.py`
 - Test: `tests/test_meta_blob.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -170,7 +170,7 @@ import datetime as dt
 
 import pytest
 
-from acorn.meta_blob import decode, encode
+from fnd.meta_blob import decode, encode
 
 
 def test_empty_dict_roundtrip() -> None:
@@ -234,11 +234,11 @@ def test_encode_unsupported_type_raises() -> None:
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_meta_blob.py -v`
-Expected: collection ERROR — `ModuleNotFoundError: No module named 'acorn.meta_blob'`.
+Expected: collection ERROR — `ModuleNotFoundError: No module named 'fnd.meta_blob'`.
 
 - [ ] **Step 3: Create the module**
 
-Create `acorn/meta_blob.py`:
+Create `fnd/meta_blob.py`:
 
 ```python
 """Frontmatter ↔ JSON bytes (§5.5e-2).
@@ -253,7 +253,7 @@ so we wrap dates in a small typed envelope::
 
 The decoder restores them via a JSON ``object_hook``. The DSL evaluator
 needs `dt.date` instances on both sides for ordered comparisons (the
-:func:`acorn.filter_dsl._orderable` helper rejects str-vs-date), so the
+:func:`fnd.filter_dsl._orderable` helper rejects str-vs-date), so the
 round-trip is load-bearing — not just cosmetic.
 """
 
@@ -302,7 +302,7 @@ Expected: 9 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/meta_blob.py tests/test_meta_blob.py
+git add fnd/meta_blob.py tests/test_meta_blob.py
 git commit -m "feat(meta_blob): phase 5.5e-2 — JSON encode/decode with date round-trip"
 ```
 
@@ -311,7 +311,7 @@ git commit -m "feat(meta_blob): phase 5.5e-2 — JSON encode/decode with date ro
 ## Task 3: Indexer writes `meta_blob` per md chunk
 
 **Files:**
-- Modify: `acorn/index.py`
+- Modify: `fnd/index.py`
 - Test: `tests/test_index_meta_blob.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -325,11 +325,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from acorn.config import CollectionConfig, SourceConfig
-from acorn.index import build_index_from_config
-from acorn.meta_blob import decode
-from acorn.query import Searcher
-from acorn.schema import F_META_BLOB
+from fnd.config import CollectionConfig, SourceConfig
+from fnd.index import build_index_from_config
+from fnd.meta_blob import decode
+from fnd.query import Searcher
+from fnd.schema import F_META_BLOB
 
 
 def _touch(p: Path, body: str) -> None:
@@ -405,7 +405,7 @@ def _meta_blob_for_first_hit(index_dir: Path, query: str) -> bytes:
     meta_blob until Task 5)."""
     from tantivy import Index
 
-    from acorn.schema import build_schema
+    from fnd.schema import build_schema
     index = Index(build_schema(), path=str(index_dir))
     index.reload()
     searcher = index.searcher()
@@ -442,13 +442,13 @@ After this rewrite, run the tests again — they should now fail because `_doc_f
 
 - [ ] **Step 3: Wire the indexer to write `meta_blob`**
 
-Open `acorn/index.py`. Two changes:
+Open `fnd/index.py`. Two changes:
 
 1. Import the encode helper and the schema constant at the top:
 
 ```python
-from acorn.meta_blob import encode as encode_meta_blob
-from acorn.schema import (
+from fnd.meta_blob import encode as encode_meta_blob
+from fnd.schema import (
     # ... existing list ...
     F_META_BLOB,
     # ...
@@ -478,11 +478,11 @@ def build_index_from_config(
     index_dir: Path,
     rebuild: bool = False,
 ) -> int:
-    from acorn.frontmatter import (
+    from fnd.frontmatter import (
         FrontmatterParseError,
         read_frontmatter_from_file,
     )
-    from acorn.walk import walk_sources
+    from fnd.walk import walk_sources
 
     index = _ensure_index(index_dir)
     writer = index.writer(heap_size=_WRITER_HEAP)
@@ -531,7 +531,7 @@ Expected: all green.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/index.py tests/test_index_meta_blob.py
+git add fnd/index.py tests/test_index_meta_blob.py
 git commit -m "feat(index): phase 5.5e-2 — write frontmatter to meta_blob per md chunk"
 ```
 
@@ -540,7 +540,7 @@ git commit -m "feat(index): phase 5.5e-2 — write frontmatter to meta_blob per 
 ## Task 4: `split_metadata_filter` in `query_dsl.py`
 
 **Files:**
-- Modify: `acorn/query_dsl.py`
+- Modify: `fnd/query_dsl.py`
 - Test: `tests/test_query_dsl_split.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -554,7 +554,7 @@ from __future__ import annotations
 
 import pytest
 
-from acorn.query_dsl import split_metadata_filter
+from fnd.query_dsl import split_metadata_filter
 
 
 def test_no_brackets_returns_query_unchanged() -> None:
@@ -622,7 +622,7 @@ Expected: collection ERROR — `split_metadata_filter` not exported.
 
 - [ ] **Step 3: Implement `split_metadata_filter`**
 
-Append to `acorn/query_dsl.py`:
+Append to `fnd/query_dsl.py`:
 
 ```python
 def split_metadata_filter(query: str) -> tuple[str, str | None]:
@@ -701,7 +701,7 @@ Expected: green.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/query_dsl.py tests/test_query_dsl_split.py
+git add fnd/query_dsl.py tests/test_query_dsl_split.py
 git commit -m "feat(query_dsl): phase 5.5e-2 — split inline [metadata filter] clause"
 ```
 
@@ -710,7 +710,7 @@ git commit -m "feat(query_dsl): phase 5.5e-2 — split inline [metadata filter] 
 ## Task 5: `Searcher.search` / `search_grouped` accept `metadata_filter`
 
 **Files:**
-- Modify: `acorn/query.py`
+- Modify: `fnd/query.py`
 - Test: `tests/test_query_metadata_filter.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -726,10 +726,10 @@ from pathlib import Path
 
 import pytest
 
-from acorn.config import CollectionConfig, SourceConfig
-from acorn.filter_dsl import FilterError
-from acorn.index import build_index_from_config
-from acorn.query import Searcher
+from fnd.config import CollectionConfig, SourceConfig
+from fnd.filter_dsl import FilterError
+from fnd.index import build_index_from_config
+from fnd.query import Searcher
 
 
 def _touch(p: Path, body: str) -> None:
@@ -853,7 +853,7 @@ Expected: failures — `metadata_filter` kwarg not accepted, `Hit.meta_blob` mis
 
 - [ ] **Step 3: Add `meta_blob` to `Hit`**
 
-In `acorn/query.py`, find the `Hit` dataclass and add the field at the end (preserving defaults for back-compat):
+In `fnd/query.py`, find the `Hit` dataclass and add the field at the end (preserving defaults for back-compat):
 
 ```python
 @dataclass(slots=True, frozen=True)
@@ -878,7 +878,7 @@ class Hit:
 
 - [ ] **Step 4: Populate `meta_blob` in `_raw_hits`**
 
-Find `_raw_hits` in `acorn/query.py`. Add the field-read call:
+Find `_raw_hits` in `fnd/query.py`. Add the field-read call:
 
 ```python
             body_struct_bytes = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
@@ -900,27 +900,27 @@ Find `_raw_hits` in `acorn/query.py`. Add the field-read call:
             )
 ```
 
-Add `F_META_BLOB` to the schema imports at the top of `acorn/query.py`.
+Add `F_META_BLOB` to the schema imports at the top of `fnd/query.py`.
 
-The same population must happen in `acorn/cascade.py:_materialize_hits` — find that file and add `meta_blob` there too. Otherwise cascade hits will have empty meta_blob and any metadata filter won't work for cascade results.
+The same population must happen in `fnd/cascade.py:_materialize_hits` — find that file and add `meta_blob` there too. Otherwise cascade hits will have empty meta_blob and any metadata filter won't work for cascade results.
 
-Also: `acorn/fusion.py` uses `Hit` constructor in two helpers (`_with_score`, `_with_pass_index`). Update both to forward `meta_blob=h.meta_blob` so the field doesn't reset to `b""` after fusion.
+Also: `fnd/fusion.py` uses `Hit` constructor in two helpers (`_with_score`, `_with_pass_index`). Update both to forward `meta_blob=h.meta_blob` so the field doesn't reset to `b""` after fusion.
 
-Same for `acorn/rerank.py:_replace_score` — forward `meta_blob=h.meta_blob`.
+Same for `fnd/rerank.py:_replace_score` — forward `meta_blob=h.meta_blob`.
 
 - [ ] **Step 5: Add `_filtered_raw_hits` helper**
 
-Add to `acorn/query.py` (above the `Searcher` class, alongside `_make_snippet`):
+Add to `fnd/query.py` (above the `Searcher` class, alongside `_make_snippet`):
 
 ```python
 def _passes_meta_filter(hit: Hit, predicate) -> bool:  # type: ignore[no-untyped-def]
     """Apply ``predicate`` to a hit's frontmatter. Non-md hits and md
     hits with empty meta_blob bypass the filter entirely (md-only
-    semantics matching :func:`acorn.walk.walk_sources`).
+    semantics matching :func:`fnd.walk.walk_sources`).
     """
     if hit.kind != "md":
         return True
-    from acorn.meta_blob import decode
+    from fnd.meta_blob import decode
 
     fm = decode(hit.meta_blob)
     return predicate(fm)
@@ -941,7 +941,7 @@ Then add a method on `Searcher`:
         filter post-Tantivy with oversample-and-retry."""
         if not metadata_filter:
             return self._raw_hits(query, limit=target, collection=collection)
-        from acorn.filter_dsl import compile_filter
+        from fnd.filter_dsl import compile_filter
 
         predicate = compile_filter(metadata_filter)
         oversample = 1
@@ -992,7 +992,7 @@ In `Searcher.search`:
             metadata_filter=metadata_filter,
         )
         if profile is not None:
-            from acorn.rerank import RankingProfile, rerank_hits
+            from fnd.rerank import RankingProfile, rerank_hits
 
             assert isinstance(profile, RankingProfile)
             raw = rerank_hits(raw, profile=profile, query=query, now=now)
@@ -1031,7 +1031,7 @@ In `Searcher.search_grouped`:
             metadata_filter=metadata_filter,
         )
         if profile is not None:
-            from acorn.rerank import RankingProfile, rerank_hits
+            from fnd.rerank import RankingProfile, rerank_hits
 
             assert isinstance(profile, RankingProfile)
             raw = rerank_hits(raw, profile=profile, query=query, now=now)
@@ -1057,22 +1057,22 @@ If something else broke (e.g., `cascade_search` doesn't return `meta_blob`-popul
 
 - [ ] **Step 9: Lint + types**
 
-Run: `uv run ruff check acorn tests && uv run pyright`
+Run: `uv run ruff check fnd tests && uv run pyright`
 Expected: clean.
 
 - [ ] **Step 10: Commit**
 
 ```bash
-git add acorn/query.py acorn/cascade.py acorn/fusion.py acorn/rerank.py tests/test_query_metadata_filter.py
+git add fnd/query.py fnd/cascade.py fnd/fusion.py fnd/rerank.py tests/test_query_metadata_filter.py
 git commit -m "feat(query): phase 5.5e-2 — metadata_filter post-filter via compile_filter"
 ```
 
 ---
 
-## Task 6: `acorn search --meta` CLI flag
+## Task 6: `fnd search --meta` CLI flag
 
 **Files:**
-- Modify: `acorn/cli.py:search`
+- Modify: `fnd/cli.py:search`
 - Test: `tests/test_cli_search_meta.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -1080,7 +1080,7 @@ git commit -m "feat(query): phase 5.5e-2 — metadata_filter post-filter via com
 Create `tests/test_cli_search_meta.py`:
 
 ```python
-"""Phase 5.5e-2: `acorn search --meta` filters at query time."""
+"""Phase 5.5e-2: `fnd search --meta` filters at query time."""
 
 from __future__ import annotations
 
@@ -1089,9 +1089,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from acorn.cli import app
-from acorn.config import CollectionConfig, SourceConfig
-from acorn.index import build_index_from_config
+from fnd.cli import app
+from fnd.config import CollectionConfig, SourceConfig
+from fnd.index import build_index_from_config
 
 
 def _touch(p: Path, body: str) -> None:
@@ -1108,7 +1108,7 @@ def cli_corpus(
     _touch(notes / "other.md", "---\nCourse: Other\n---\n# B\nlightning rod\n")
     cc = CollectionConfig(sources=[SourceConfig(path=notes, includes=["**/*.md"])])
     build_index_from_config(config=cc, collection="notes", index_dir=tmp_index_dir)
-    monkeypatch.setattr("acorn.cli.default_index_dir", lambda: tmp_index_dir)
+    monkeypatch.setattr("fnd.cli.default_index_dir", lambda: tmp_index_dir)
     return tmp_index_dir
 
 
@@ -1162,9 +1162,9 @@ def test_search_meta_invalid_filter_exits_nonzero(cli_corpus: Path) -> None:
 Run: `uv run pytest tests/test_cli_search_meta.py -v`
 Expected: 3 failures — `--meta` not recognised.
 
-- [ ] **Step 3: Add `--meta` to `acorn search`**
+- [ ] **Step 3: Add `--meta` to `fnd search`**
 
-Open `acorn/cli.py`. Find the `@app.command()` `search` function. Replace it with:
+Open `fnd/cli.py`. Find the `@app.command()` `search` function. Replace it with:
 
 ```python
 @app.command()
@@ -1177,9 +1177,9 @@ def search(
     ),
 ) -> None:
     """Search the index and print ranked file:locator snippets to stdout."""
-    from acorn.config import default_index_dir
-    from acorn.filter_dsl import FilterError
-    from acorn.query import Searcher
+    from fnd.config import default_index_dir
+    from fnd.filter_dsl import FilterError
+    from fnd.query import Searcher
 
     searcher = Searcher(index_dir=default_index_dir())
     try:
@@ -1213,8 +1213,8 @@ Expected: green.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/cli.py tests/test_cli_search_meta.py
-git commit -m "feat(cli): phase 5.5e-2 — acorn search --meta filters at query time"
+git add fnd/cli.py tests/test_cli_search_meta.py
+git commit -m "feat(cli): phase 5.5e-2 — fnd search --meta filters at query time"
 ```
 
 ---
@@ -1222,7 +1222,7 @@ git commit -m "feat(cli): phase 5.5e-2 — acorn search --meta filters at query 
 ## Task 7: TUI plumbs inline `[…]` syntax + parse-error feedback
 
 **Files:**
-- Modify: `acorn/tui/app.py`
+- Modify: `fnd/tui/app.py`
 - Test: `tests/test_tui_metadata_filter.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -1238,9 +1238,9 @@ from pathlib import Path
 
 import pytest
 
-from acorn.config import Config, CollectionConfig, SourceConfig
-from acorn.index import build_index_from_config
-from acorn.tui.app import AcornApp
+from fnd.config import Config, CollectionConfig, SourceConfig
+from fnd.index import build_index_from_config
+from fnd.tui.app import FNDApp
 
 
 def _touch(p: Path, body: str) -> None:
@@ -1267,7 +1267,7 @@ async def test_tui_inline_filter_narrows_results(tui_corpus: Path) -> None:
             )
         }
     )
-    app = AcornApp(
+    app = FNDApp(
         index_dir=tui_corpus, collection="notes", config=cfg
     )
     async with app.run_test() as pilot:
@@ -1291,7 +1291,7 @@ async def test_tui_invalid_filter_does_not_run_search(tui_corpus: Path) -> None:
             )
         }
     )
-    app = AcornApp(
+    app = FNDApp(
         index_dir=tui_corpus, collection="notes", config=cfg
     )
     async with app.run_test() as pilot:
@@ -1313,7 +1313,7 @@ If the TUI exposes a different way to inspect submitted-search results in tests 
 Run: `uv run pytest tests/test_tui_metadata_filter.py -v`
 Expected: 2 failures — TUI doesn't yet split or apply the metadata filter.
 
-- [ ] **Step 3: Update `_run_query` in `acorn/tui/app.py`**
+- [ ] **Step 3: Update `_run_query` in `fnd/tui/app.py`**
 
 Find `_run_query` (around line 243). Modify the body to split + plumb the metadata filter and surface parse errors via `self.notify`:
 
@@ -1321,8 +1321,8 @@ Find `_run_query` (around line 243). Modify the body to split + plumb the metada
     def _run_query(self, query: str) -> None:
         if self._searcher is None:
             return
-        from acorn.filter_dsl import FilterError
-        from acorn.query_dsl import split_metadata_filter
+        from fnd.filter_dsl import FilterError
+        from fnd.query_dsl import split_metadata_filter
 
         try:
             lexical, metadata_filter = split_metadata_filter(query)
@@ -1376,7 +1376,7 @@ If existing TUI snapshot tests break: it's likely because the new `notify` adds 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/tui/app.py tests/test_tui_metadata_filter.py
+git add fnd/tui/app.py tests/test_tui_metadata_filter.py
 git commit -m "feat(tui): phase 5.5e-2 — inline [filter] syntax with notify on parse error"
 ```
 
@@ -1394,7 +1394,7 @@ Expected: all green; ~270 tests after this phase (250 + ~20 new).
 
 - [ ] **Step 2: Lint + types**
 
-Run: `uv run ruff check acorn tests && uv run ruff format --check acorn tests && uv run pyright`
+Run: `uv run ruff check fnd tests && uv run ruff format --check fnd tests && uv run pyright`
 Expected: ruff check clean; ruff format will still flag the two pre-existing files (test_actions_keymap.py, test_phase_5_8_scroll_to_match.py); pyright clean.
 
 - [ ] **Step 3: Manual end-to-end smoke (optional but recommended)**
@@ -1404,14 +1404,14 @@ Skip if you don't have the CLI wired up locally. Otherwise:
 1. Pick a directory with at least one `.md` file containing YAML frontmatter and a phrase you can search for.
 2. Run:
    ```
-   uv run acorn collection add demo --source <vault> --include '**/*.md'
-   uv run acorn collection reindex demo --rebuild  # bumped schema needs --rebuild
-   uv run acorn search "<phrase>" --collection demo
-   uv run acorn search "<phrase>" --collection demo --meta "Course == '<your value>'"
+   uv run fnd collection add demo --source <vault> --include '**/*.md'
+   uv run fnd collection reindex demo --rebuild  # bumped schema needs --rebuild
+   uv run fnd search "<phrase>" --collection demo
+   uv run fnd search "<phrase>" --collection demo --meta "Course == '<your value>'"
    ```
 3. Confirm the second invocation narrows results to notes matching the filter.
 4. Try an invalid filter: `--meta "Course =="`. Confirm exit 1 with a column-aware error.
-5. Launch the TUI: `uv run acorn tui --collection demo`. Type `[Course == '<value>'] <phrase>` and press Enter. Confirm results narrow.
+5. Launch the TUI: `uv run fnd tui --collection demo`. Type `[Course == '<value>'] <phrase>` and press Enter. Confirm results narrow.
 6. Type `[Course ==] <phrase>` (invalid). Confirm a notification surfaces and no search runs.
 
 - [ ] **Step 4: Update task tracker**
@@ -1443,7 +1443,7 @@ git commit -m "docs: phase 5.5e-2 close-out"
 
 - **Type / name consistency**:
   - `F_META_BLOB = "meta_blob"` — used in schema.py, index.py, query.py
-  - `acorn.meta_blob.encode / decode` — bytes ↔ dict
+  - `fnd.meta_blob.encode / decode` — bytes ↔ dict
   - `Hit.meta_blob: bytes = b""` — populated in `_raw_hits`, forwarded by cascade/fusion/rerank constructors
   - `split_metadata_filter(query) -> tuple[str, str | None]` — returns `(lexical, metadata_filter_or_None)`
   - `Searcher.search(*, metadata_filter: str | None = None)` and `search_grouped` — same signature
@@ -1451,7 +1451,7 @@ git commit -m "docs: phase 5.5e-2 close-out"
 
 - **Out of scope (deferred to 5.5e-3)**:
   - TUI Collections form / `F3` binding
-  - `acorn collection rm`
+  - `fnd collection rm`
   - Saved-search persistence verification (the round-trip is automatic via `split_metadata_filter`; phase 11 of the original plan adds the saved-search UI proper)
 
-- **Schema migration note for users**: SCHEMA_VERSION 1 → 2 means existing on-disk indexes refuse to load with a clear "rebuild" message. The user runs `acorn collection reindex <name> --rebuild` for each collection. If `acorn collection reindex --all` doesn't exist yet, that's a 5.5e-3 polish item, not a 5.5e-2 task.
+- **Schema migration note for users**: SCHEMA_VERSION 1 → 2 means existing on-disk indexes refuse to load with a clear "rebuild" message. The user runs `fnd collection reindex <name> --rebuild` for each collection. If `fnd collection reindex --all` doesn't exist yet, that's a 5.5e-3 polish item, not a 5.5e-2 task.

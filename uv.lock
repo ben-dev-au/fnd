@@ -3,78 +3,6 @@ revision = 3
 requires-python = ">=3.13"
 
 [[package]]
-name = "acorn"
-version = "0.0.1"
-source = { editable = "." }
-dependencies = [
-    { name = "loguru" },
-    { name = "markdown-it-py" },
-    { name = "platformdirs" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "pymupdf" },
-    { name = "pymupdf4llm" },
-    { name = "python-docx" },
-    { name = "python-pptx" },
-    { name = "rich" },
-    { name = "snowballstemmer" },
-    { name = "tantivy" },
-    { name = "textual" },
-    { name = "tomlkit" },
-    { name = "typer" },
-    { name = "watchdog" },
-]
-
-[package.optional-dependencies]
-ocr = [
-    { name = "ocrmypdf" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "hypothesis" },
-    { name = "pre-commit" },
-    { name = "pyright" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-textual-snapshot" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "loguru", specifier = ">=0.7" },
-    { name = "markdown-it-py", specifier = ">=3.0" },
-    { name = "ocrmypdf", marker = "extra == 'ocr'", specifier = ">=16" },
-    { name = "platformdirs", specifier = ">=4.2" },
-    { name = "pydantic", specifier = ">=2.7" },
-    { name = "pydantic-settings", specifier = ">=2.4" },
-    { name = "pymupdf", specifier = ">=1.27" },
-    { name = "pymupdf4llm", specifier = ">=0.0.17" },
-    { name = "python-docx", specifier = ">=1.1" },
-    { name = "python-pptx", specifier = ">=1.0" },
-    { name = "rich", specifier = ">=13" },
-    { name = "snowballstemmer", specifier = ">=3.0.1" },
-    { name = "tantivy", specifier = ">=0.25" },
-    { name = "textual", specifier = ">=0.85" },
-    { name = "tomlkit", specifier = ">=0.13" },
-    { name = "typer", specifier = ">=0.12" },
-    { name = "watchdog", specifier = ">=4.0" },
-]
-provides-extras = ["ocr"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "hypothesis", specifier = ">=6.110" },
-    { name = "pre-commit", specifier = ">=3.8" },
-    { name = "pyright", specifier = ">=1.1.380" },
-    { name = "pytest", specifier = ">=8" },
-    { name = "pytest-asyncio", specifier = ">=0.24" },
-    { name = "pytest-textual-snapshot", specifier = ">=1.0" },
-    { name = "ruff", specifier = ">=0.6" },
-]
-
-[[package]]
 name = "annotated-doc"
 version = "0.0.4"
 source = { registry = "https://pypi.org/simple" }
@@ -334,6 +262,78 @@ version = "25.12.19"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e8/2d/d2a548598be01649e2d46231d151a6c56d10b964d94043a335ae56ea2d92/flatbuffers-25.12.19-py2.py3-none-any.whl", hash = "sha256:7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4", size = 26661, upload-time = "2025-12-19T23:16:13.622Z" },
+]
+
+[[package]]
+name = "fnd"
+version = "0.0.1"
+source = { editable = "." }
+dependencies = [
+    { name = "loguru" },
+    { name = "markdown-it-py" },
+    { name = "platformdirs" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pymupdf" },
+    { name = "pymupdf4llm" },
+    { name = "python-docx" },
+    { name = "python-pptx" },
+    { name = "rich" },
+    { name = "snowballstemmer" },
+    { name = "tantivy" },
+    { name = "textual" },
+    { name = "tomlkit" },
+    { name = "typer" },
+    { name = "watchdog" },
+]
+
+[package.optional-dependencies]
+ocr = [
+    { name = "ocrmypdf" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "hypothesis" },
+    { name = "pre-commit" },
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-textual-snapshot" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "loguru", specifier = ">=0.7" },
+    { name = "markdown-it-py", specifier = ">=3.0" },
+    { name = "ocrmypdf", marker = "extra == 'ocr'", specifier = ">=16" },
+    { name = "platformdirs", specifier = ">=4.2" },
+    { name = "pydantic", specifier = ">=2.7" },
+    { name = "pydantic-settings", specifier = ">=2.4" },
+    { name = "pymupdf", specifier = ">=1.27" },
+    { name = "pymupdf4llm", specifier = ">=0.0.17" },
+    { name = "python-docx", specifier = ">=1.1" },
+    { name = "python-pptx", specifier = ">=1.0" },
+    { name = "rich", specifier = ">=13" },
+    { name = "snowballstemmer", specifier = ">=3.0.1" },
+    { name = "tantivy", specifier = ">=0.25" },
+    { name = "textual", specifier = ">=0.85" },
+    { name = "tomlkit", specifier = ">=0.13" },
+    { name = "typer", specifier = ">=0.12" },
+    { name = "watchdog", specifier = ">=4.0" },
+]
+provides-extras = ["ocr"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "hypothesis", specifier = ">=6.110" },
+    { name = "pre-commit", specifier = ">=3.8" },
+    { name = "pyright", specifier = ">=1.1.380" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+    { name = "pytest-textual-snapshot", specifier = ">=1.0" },
+    { name = "ruff", specifier = ">=0.6" },
 ]
 
 [[package]]

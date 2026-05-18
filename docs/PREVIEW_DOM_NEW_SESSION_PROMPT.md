@@ -89,7 +89,7 @@ Performance:
   diagnostic.
 - `auto_test.py` — cold-path elapsed and scroll-count parsing.
 
-Diag log: `/tmp/acorn-preview-diag.log` when `ACORN_PREVIEW_DIAG=1`,
+Diag log: `/tmp/fnd-preview-diag.log` when `FND_PREVIEW_DIAG=1`,
 timestamped with monotonic seconds.
 
 **What NOT to do** (all three external analyses agree these are dead

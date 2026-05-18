@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from acorn.config import SourceConfig, load
+from fnd.config import SourceConfig, load
 
 
 def _write_config(path: Path, text: str) -> Path:

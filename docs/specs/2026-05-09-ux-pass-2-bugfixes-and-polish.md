@@ -14,7 +14,7 @@ Visual references: lazygit's panel layout (narrow left column, dense panels, acc
 
 | # | Item | Phase |
 |---|---|---|
-| 1 | Remove top "acorn   scope: DPC" bar | A |
+| 1 | Remove top "fnd   scope: DPC" bar | A |
 | 2 | Tighter pane padding to match lazygit | A |
 | 3 | Reduce left-column width ratio | A |
 | 4 | Footer: remove pale-blue full-row tint, keep key-glyph highlight | A |
@@ -32,7 +32,7 @@ Phases A–E are sequential; each ends in a commit + screenshot verification.
 
 ## Phase A — layout and density (low risk, high visible value)
 
-**A1. Remove the top status bar.** The "acorn   scope: DPC" row is one wasted line. The active scope is already shown in the Collections panel header (`Collections — 1/2 active`). Drop the `#status_bar` widget; the app title is implicit.
+**A1. Remove the top status bar.** The "fnd   scope: DPC" row is one wasted line. The active scope is already shown in the Collections panel header (`Collections — 1/2 active`). Drop the `#status_bar` widget; the app title is implicit.
 
 **A2. Padding pass.** Lazygit uses `padding: 0 1` on most panels (1 col horizontal, no vertical). We currently use `padding: 1 2` on the preview pane and the default Tree padding inside results / collections. Result: visual gaps at every panel boundary.
 
@@ -49,13 +49,13 @@ Phases A–E are sequential; each ends in a commit + screenshot verification.
 
 ## Phase B — persistence + section collapse
 
-**B1. Persistent scope.** Save the active collections list to `~/Library/Application Support/acorn/state/scope.toml`:
+**B1. Persistent scope.** Save the active collections list to `~/Library/Application Support/fnd/state/scope.toml`:
 
 ```toml
 collections = ["DPC", "papers"]
 ```
 
-Load on `AcornApp.__init__` if no `--collection` arg passed. Save on every toggle in the panel + picker. Tiny TOML file, atomic write (temp + rename) so a crash mid-write can't corrupt it.
+Load on `FNDApp.__init__` if no `--collection` arg passed. Save on every toggle in the panel + picker. Tiny TOML file, atomic write (temp + rename) so a crash mid-write can't corrupt it.
 
 **B2. Section collapse-to-header.** When `Left` is pressed and the cursor is on a panel's *root* node (or already at the panel's outermost level), shrink the panel to header-only — its tree disappears and the panel becomes a 3-line strip (border + title + border). Press `Right` while cursor is on the strip (or `Tab` to it then `Right`) to re-expand.
 
@@ -63,7 +63,7 @@ Mechanism: add a `.collapsed` CSS class to the panel widget; when present, set `
 
 ## Phase C — markdown preview (the big visible win)
 
-**C1. Renderer choice — Rich `Markdown`.** Verified against `glow` in a side-by-side render of a 70-line markdown chunk (`scripts/snap_markdown.py` saves the demo to `/tmp/acorn_md_demo.svg`). All formatting features round-trip correctly: H1–H6 with size differentiation, code blocks with pygments syntax highlighting (`code_theme="monokai"`), Unicode-box tables with column alignment, bullet/numbered lists, blockquotes, bold/italic/strikethrough, horizontal rules, inline code, OSC8 links.
+**C1. Renderer choice — Rich `Markdown`.** Verified against `glow` in a side-by-side render of a 70-line markdown chunk (`scripts/snap_markdown.py` saves the demo to `/tmp/fnd_md_demo.svg`). All formatting features round-trip correctly: H1–H6 with size differentiation, code blocks with pygments syntax highlighting (`code_theme="monokai"`), Unicode-box tables with column alignment, bullet/numbered lists, blockquotes, bold/italic/strikethrough, horizontal rules, inline code, OSC8 links.
 
 Rich vs. glow stylistic differences:
 - Rich centers H1 by default; glow left-aligns. Override via subclassing `Markdown` and replacing the `Heading` element.

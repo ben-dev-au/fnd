@@ -6,7 +6,7 @@ import datetime as dt
 
 import pytest
 
-from acorn.frontmatter import FrontmatterParseError, read_frontmatter_from_text
+from fnd.frontmatter import FrontmatterParseError, read_frontmatter_from_text
 
 
 def test_no_frontmatter_returns_none() -> None:

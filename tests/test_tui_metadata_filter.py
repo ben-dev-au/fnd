@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 from textual.widgets import Input
 
-from acorn.config import CollectionConfig, SourceConfig
-from acorn.index import build_index_from_config
-from acorn.tui import AcornApp
+from fnd.config import CollectionConfig, SourceConfig
+from fnd.index import build_index_from_config
+from fnd.tui import FNDApp
 
 
 def _touch(p: Path, body: str) -> None:
@@ -29,7 +29,7 @@ def tui_corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_tui_inline_filter_narrows_results(tui_corpus: Path) -> None:
-    app = AcornApp(index_dir=tui_corpus, collection="notes")
+    app = FNDApp(index_dir=tui_corpus, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         inp = app.query_one("#query_bar", Input)
@@ -43,7 +43,7 @@ async def test_tui_inline_filter_narrows_results(tui_corpus: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_tui_invalid_filter_does_not_run_search(tui_corpus: Path) -> None:
-    app = AcornApp(index_dir=tui_corpus, collection="notes")
+    app = FNDApp(index_dir=tui_corpus, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         inp = app.query_one("#query_bar", Input)
@@ -56,7 +56,7 @@ async def test_tui_invalid_filter_does_not_run_search(tui_corpus: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_tui_unclosed_bracket_does_not_run_search(tui_corpus: Path) -> None:
-    app = AcornApp(index_dir=tui_corpus, collection="notes")
+    app = FNDApp(index_dir=tui_corpus, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         inp = app.query_one("#query_bar", Input)

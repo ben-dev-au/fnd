@@ -8,9 +8,9 @@ import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Tree
 
-from acorn.index import build_index
-from acorn.tui import AcornApp
-from acorn.tui.line_buffer import LineBufferPreview
+from fnd.index import build_index
+from fnd.tui import FNDApp
+from fnd.tui.line_buffer import LineBufferPreview
 
 
 @pytest.fixture
@@ -21,7 +21,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_flat_preview_scrolls_to_match_on_initial_query(built_index: Path) -> None:
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test(size=(120, 40)) as pilot:
         for _ in range(5):
             await pilot.pause()
@@ -32,7 +32,7 @@ async def test_flat_preview_scrolls_to_match_on_initial_query(built_index: Path)
 
 @pytest.mark.asyncio
 async def test_flat_preview_scrolls_after_second_query(built_index: Path) -> None:
-    app = AcornApp(index_dir=built_index, initial_query="introduction")
+    app = FNDApp(index_dir=built_index, initial_query="introduction")
     async with app.run_test(size=(120, 40)) as pilot:
         for _ in range(5):
             await pilot.pause()
@@ -55,7 +55,7 @@ async def test_md_preview_scrolls_to_match_chunk(tmp_path: Path, tmp_index_dir: 
     (notes / "big.md").write_text("\n".join(lines), encoding="utf-8")
     build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
 
-    app = AcornApp(index_dir=tmp_index_dir, initial_query="unicorn-anchor")
+    app = FNDApp(index_dir=tmp_index_dir, initial_query="unicorn-anchor")
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one("#preview_pane", VerticalScroll)
         for _ in range(80):
@@ -85,7 +85,7 @@ async def test_md_preview_scrolls_when_match_is_in_first_chunk(
     (notes / "sfo.md").write_text("\n".join(body), encoding="utf-8")
     build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
 
-    app = AcornApp(index_dir=tmp_index_dir, initial_query="compromise")
+    app = FNDApp(index_dir=tmp_index_dir, initial_query="compromise")
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one("#preview_pane", VerticalScroll)
         for _ in range(80):
@@ -109,7 +109,7 @@ async def test_navigating_down_results_scrolls_each_preview(
         (notes / f"{label}.md").write_text("\n".join(lines), encoding="utf-8")
     build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
 
-    app = AcornApp(
+    app = FNDApp(
         index_dir=tmp_index_dir,
         initial_query="unicorn-anchor-a unicorn-anchor-b unicorn-anchor-c",
     )
@@ -137,7 +137,7 @@ async def test_navigating_down_results_scrolls_each_preview(
 async def test_md_preview_scrolls_when_first_match_is_in_a_table(
     tmp_path: Path, tmp_index_dir: Path
 ) -> None:
-    """Table cells (AcornMarkdownTH/TD) have zero region because the
+    """Table cells (FNDMarkdownTH/TD) have zero region because the
     parent MarkdownTable paints as a single Rich renderable. When the
     first match lands inside a table the scroll must fall back to the
     chunk widget, not no-op against the zero-region cell."""
@@ -161,7 +161,7 @@ async def test_md_preview_scrolls_when_first_match_is_in_a_table(
     (notes / "tables.md").write_text("\n".join(body), encoding="utf-8")
     build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
 
-    app = AcornApp(index_dir=tmp_index_dir, initial_query="compromise")
+    app = FNDApp(index_dir=tmp_index_dir, initial_query="compromise")
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one("#preview_pane", VerticalScroll)
         for _ in range(80):
@@ -219,7 +219,7 @@ Wrap-up paragraph.
     (notes / "sfo.md").write_text(body, encoding="utf-8")
     build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
 
-    app = AcornApp(index_dir=tmp_index_dir, initial_query="compromise")
+    app = FNDApp(index_dir=tmp_index_dir, initial_query="compromise")
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one("#preview_pane", VerticalScroll)
         for _ in range(80):
@@ -230,9 +230,7 @@ Wrap-up paragraph.
 
 
 @pytest.mark.asyncio
-async def test_flat_preview_no_jump_on_install(
-    tmp_path: Path, tmp_index_dir: Path
-) -> None:
+async def test_flat_preview_no_jump_on_install(tmp_path: Path, tmp_index_dir: Path) -> None:
     """Flat buffer must already be scrolled to the match before first paint
     — no flash to file top + jump-to-match."""
     notes = tmp_path / "notes"
@@ -243,7 +241,7 @@ async def test_flat_preview_no_jump_on_install(
     (notes / "long.txt").write_text("\n".join(lines), encoding="utf-8")
     build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
 
-    app = AcornApp(index_dir=tmp_index_dir, initial_query="unicorn-anchor")
+    app = FNDApp(index_dir=tmp_index_dir, initial_query="unicorn-anchor")
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         active: LineBufferPreview | None = None
@@ -253,6 +251,6 @@ async def test_flat_preview_no_jump_on_install(
             if active is not None and active.scroll_y > 0:
                 break
         assert active is not None, "no active flat buffer"
-        assert active.scroll_y > 0, (
-            f"buffer revealed at scroll_y=0; virtual_size={active.virtual_size}"
-        )
+        assert (
+            active.scroll_y > 0
+        ), f"buffer revealed at scroll_y=0; virtual_size={active.virtual_size}"

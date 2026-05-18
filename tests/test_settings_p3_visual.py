@@ -10,7 +10,7 @@ import pytest
 def test_indexer_filetypes_exposed_and_complete() -> None:
     """Spec: Add Collection wizard › Includes — file types come from a
     single source of truth, not hardcoded in two places."""
-    from acorn.config import INDEXER_FILETYPES
+    from fnd.config import INDEXER_FILETYPES
 
     # Map of extension -> human label. Order is the order the picker shows.
     assert tuple(INDEXER_FILETYPES) == ("md", "pdf", "docx", "pptx", "txt")
@@ -20,7 +20,7 @@ def test_indexer_filetypes_exposed_and_complete() -> None:
 
 def test_f3_no_longer_in_keymap() -> None:
     """Spec: Locked decisions — F3 dropped."""
-    from acorn.tui.actions import load_keymap
+    from fnd.tui.actions import load_keymap
 
     keymap = load_keymap()
     assert (
@@ -31,7 +31,7 @@ def test_f3_no_longer_in_keymap() -> None:
 def test_detail_strip_renders_description_and_metadata() -> None:
     """Spec: Visual system › Detail strip — 2 lines, description then
     metadata in $text-muted."""
-    from acorn.tui.widgets.detail_strip import DetailStrip
+    from fnd.tui.widgets.detail_strip import DetailStrip
 
     strip = DetailStrip()
     strip._description = "Result limit (1–1000) — max results returned per query."
@@ -44,8 +44,8 @@ def test_detail_strip_renders_description_and_metadata() -> None:
 
 def test_row_with_key_renders_bracketed_accent() -> None:
     """Spec: Visual system › Key style — bracketed `[o]` accent."""
-    from acorn.tui.menu import KIND_ACTION, MenuItem
-    from acorn.tui.settings_screen import _render_row
+    from fnd.tui.menu import KIND_ACTION, MenuItem
+    from fnd.tui.settings_screen import _render_row
 
     item = MenuItem(
         id="k.test",
@@ -62,7 +62,7 @@ def test_row_with_key_renders_bracketed_accent() -> None:
 
 def test_root_container_hugs_content() -> None:
     """Spec: Visual system › Container — height: auto, not 1fr."""
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd.tui.settings_screen import SettingsScreen
 
     css = SettingsScreen.CSS
     # Find the #settings_box rule and check its height.
@@ -74,7 +74,7 @@ def test_root_container_hugs_content() -> None:
 
 @pytest.fixture
 def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
-    from acorn.index import build_index
+    from fnd.index import build_index
 
     build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
     return tmp_index_dir
@@ -85,15 +85,15 @@ async def test_root_rows_show_trailing_summaries(
     built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Spec: IA › Root — every drill row shows what's inside (always_show mode)."""
-    from acorn.tui import AcornApp
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
     # Isolate from the user's real config so drill_summary_mode stays at
     # the default "always_show" regardless of what is on disk.
     cfg_path = tmp_path / "config.toml"
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -116,17 +116,17 @@ async def test_collection_row_shows_source_count_and_ranking(
 ) -> None:
     """Spec: IA › Collections sub-screen — each collection row's trailing
     shows source count and `ranking:<profile>` with scope dot prefix."""
-    from acorn.config import (
+    from fnd.config import (
         CollectionConfig,
         SourceConfig,
         write_collection,
     )
-    from acorn.tui import AcornApp
-    from acorn.tui.menu import SECTION_COLLECTIONS, section_items
+    from fnd.tui import FNDApp
+    from fnd.tui.menu import SECTION_COLLECTIONS, section_items
 
     # Isolate config so we have a known "default" collection.
     cfg_path = tmp_path / "config.toml"
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
 
     real = tmp_path / "docs"
     real.mkdir()
@@ -136,9 +136,9 @@ async def test_collection_row_shows_source_count_and_ranking(
         collection=CollectionConfig(sources=[SourceConfig(path=real, includes=["**/*.md"])]),
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test():
-        from acorn.config import load
+        from fnd.config import load
 
         app._config = load()  # type: ignore[attr-defined]
         items = section_items(app, SECTION_COLLECTIONS)
@@ -156,17 +156,17 @@ async def test_source_row_shows_filetypes_and_path_warning(
 ) -> None:
     """Spec: IA › Sources sub-screen — source rows show file-types and
     `⚠ path not found` when the path no longer resolves."""
-    from acorn.config import (
+    from fnd.config import (
         CollectionConfig,
         SourceConfig,
         write_collection,
     )
-    from acorn.tui import AcornApp
-    from acorn.tui.menu import _provider_sources
+    from fnd.tui import FNDApp
+    from fnd.tui.menu import _provider_sources
 
     # Isolate config writes.
     cfg_path = tmp_path / "config.toml"
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
 
     # Make a collection with two sources: one valid, one missing.
     real = tmp_path / "exists"
@@ -183,10 +183,10 @@ async def test_source_row_shows_filetypes_and_path_warning(
         ),
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test():
         # Reload config so the new collection is visible.
-        from acorn.config import load
+        from fnd.config import load
 
         app._config = load()  # type: ignore[attr-defined]
         items = _provider_sources(app, "probe")
@@ -199,11 +199,11 @@ async def test_source_row_shows_filetypes_and_path_warning(
 @pytest.mark.asyncio
 async def test_detail_strip_updates_on_cursor_move(built_index: Path) -> None:
     """Spec: Visual system › Detail strip — populates on focus change."""
-    from acorn.tui import AcornApp
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
-    from acorn.tui.widgets import DetailStrip
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.widgets import DetailStrip
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -225,10 +225,10 @@ async def test_hint_bar_appends_reveal_when_cursor_on_reveal_capable_row(
     built_index: Path,
 ) -> None:
     """Spec: Hint bar — append `Shift+⏎ Reveal` when row supports reveal."""
-    from acorn.tui import AcornApp
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -251,10 +251,10 @@ async def test_hint_bar_appends_reveal_when_cursor_on_reveal_capable_row(
 @pytest.mark.asyncio
 async def test_hint_bar_keybindings_variant(built_index: Path) -> None:
     """Spec: Hint bar — Keybindings screen shows `⏎ Run · [key] Run directly · Esc Back`."""
-    from acorn.tui import AcornApp
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_show_help()
@@ -275,10 +275,10 @@ async def test_hint_bar_search_focused_variant(built_index: Path) -> None:
     """Spec: Hint bar — Search input focused shows results / open-first / clear hints."""
     from textual.widgets import Input
 
-    from acorn.tui import AcornApp
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -297,15 +297,15 @@ async def test_hint_bar_search_focused_variant(built_index: Path) -> None:
 @pytest.mark.asyncio
 async def test_hint_bar_edit_bar_open_variant(built_index: Path) -> None:
     """Spec: Hint bar — Edit-bar open shows `⏎ Save · Esc Cancel`."""
-    from acorn.tui import AcornApp
-    from acorn.tui.settings_screen import EditBar, SettingsScreen
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import EditBar, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         # Open Preferences and drill into a scalar to open the EditBar.
-        from acorn.tui.menu import SECTION_PREFERENCES
-        from acorn.tui.settings_screen import (
+        from fnd.tui.menu import SECTION_PREFERENCES
+        from fnd.tui.settings_screen import (
             SettingsList,
             open_settings_section,
         )
@@ -316,7 +316,7 @@ async def test_hint_bar_edit_bar_open_variant(built_index: Path) -> None:
         assert isinstance(screen, SettingsScreen)
         lst = screen.query_one(SettingsList)
         # Find a KIND_SCALAR row.
-        from acorn.tui.menu import KIND_SCALAR
+        from fnd.tui.menu import KIND_SCALAR
 
         idx = next(i for i, it in enumerate(lst._items) if it.kind == KIND_SCALAR)
         lst.cursor_index = idx
@@ -336,11 +336,11 @@ async def test_root_screen_shows_version_status_line(built_index: Path) -> None:
     """Spec: Use case A4 — version visible at the bottom of the root menu."""
     from textual.widgets import Static
 
-    from acorn import __version__
-    from acorn.tui import AcornApp
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd import __version__
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -355,10 +355,10 @@ async def test_root_screen_shows_version_status_line(built_index: Path) -> None:
 @pytest.mark.asyncio
 async def test_subscreen_omits_version_status(built_index: Path) -> None:
     """Sub-screens don't carry the version line — only the root does."""
-    from acorn.tui import AcornApp
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_show_help()
@@ -384,9 +384,9 @@ async def test_preferences_refreshes_trailing_after_picker_pops(
     summaries) commits the new value via the picker, which pops. The
     parent SettingsScreen must re-render its trailings on resume —
     otherwise the user sees the old value until they leave and return."""
-    from acorn.tui import AcornApp
-    from acorn.tui.menu import SECTION_PREFERENCES
-    from acorn.tui.settings_screen import (
+    from fnd.tui import FNDApp
+    from fnd.tui.menu import SECTION_PREFERENCES
+    from fnd.tui.settings_screen import (
         PickerScreen,
         SettingsList,
         SettingsScreen,
@@ -394,9 +394,9 @@ async def test_preferences_refreshes_trailing_after_picker_pops(
     )
 
     cfg_path = tmp_path / "config.toml"
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PREFERENCES)
@@ -435,11 +435,11 @@ async def test_on_reindex_complete_swaps_searcher(fixtures_dir: Path, tmp_index_
     be rebuilt — otherwise the captured ``self._index.searcher()`` keeps
     returning hits from the pre-rebuild generation and the user sees zero
     results until they restart the app."""
-    from acorn.index import build_index
-    from acorn.tui import AcornApp
+    from fnd.index import build_index
+    from fnd.tui import FNDApp
 
     build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
-    app = AcornApp(index_dir=tmp_index_dir)
+    app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test() as pilot:
         await pilot.pause()
         original = app._searcher
@@ -463,22 +463,22 @@ async def test_on_screen_resume_rebuilds_items_from_provider(
     drop the new row until the user fully reopened the screen."""
     from pathlib import Path as _Path
 
-    from acorn.config import CollectionConfig, Config, SourceConfig
-    from acorn.index import build_index
-    from acorn.tui import AcornApp
-    from acorn.tui.menu import _provider_sources
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.config import CollectionConfig, Config, SourceConfig
+    from fnd.index import build_index
+    from fnd.tui import FNDApp
+    from fnd.tui.menu import _provider_sources
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
     build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
     cfg_path = tmp_path / "config.toml"
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
 
     cfg = Config(
         collections={
             "default": CollectionConfig(sources=[SourceConfig(path=fixtures_dir)]),
         }
     )
-    app = AcornApp(index_dir=tmp_index_dir, config=cfg)
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
         # Push a Sources sub-screen manually so we control the lifecycle.
@@ -514,14 +514,14 @@ async def test_picker_toggle_preserves_cursor(fixtures_dir: Path, tmp_index_dir:
     rebuild`` which reset the highlight to 0 every time."""
     from textual.widgets import OptionList
 
-    from acorn.index import build_index
-    from acorn.tui import AcornApp
-    from acorn.tui.menu import (
+    from fnd.index import build_index
+    from fnd.tui import FNDApp
+    from fnd.tui.menu import (
         KIND_PICKER,
         ChoiceOption,
         MenuItem,
     )
-    from acorn.tui.settings_screen import PickerScreen
+    from fnd.tui.settings_screen import PickerScreen
 
     build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
     selected: set[str] = set()
@@ -538,7 +538,7 @@ async def test_picker_toggle_preserves_cursor(fixtures_dir: Path, tmp_index_dir:
         picker_getter=lambda _a: sorted(selected),
         picker_setter=lambda _a, v: selected.update(v) or None,  # type: ignore[func-returns-value]
     )
-    app = AcornApp(index_dir=tmp_index_dir)
+    app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(PickerScreen(item))
@@ -566,9 +566,9 @@ async def test_collections_sidebar_toggle_preserves_cursor(
     and resets the cursor to the root every time."""
     from textual.widgets import Tree
 
-    from acorn.config import CollectionConfig, Config, SourceConfig
-    from acorn.index import build_index
-    from acorn.tui import AcornApp
+    from fnd.config import CollectionConfig, Config, SourceConfig
+    from fnd.index import build_index
+    from fnd.tui import FNDApp
 
     build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
     cfg = Config(
@@ -577,7 +577,7 @@ async def test_collections_sidebar_toggle_preserves_cursor(
             "bravo": CollectionConfig(sources=[SourceConfig(path=fixtures_dir)]),
         }
     )
-    app = AcornApp(index_dir=tmp_index_dir, config=cfg)
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#collections_panel_tree", Tree)
@@ -609,17 +609,17 @@ async def test_cursor_move_does_not_call_render_all(
     SettingsList._render_all — that path rebuilds every row's Rich
     Text and was the dominant per-keystroke cost on long lists like
     Keybindings."""
-    from acorn.index import build_index
-    from acorn.tui import AcornApp
-    from acorn.tui.menu import SECTION_KEYBINDINGS
-    from acorn.tui.settings_screen import (
+    from fnd.index import build_index
+    from fnd.tui import FNDApp
+    from fnd.tui.menu import SECTION_KEYBINDINGS
+    from fnd.tui.settings_screen import (
         SettingsList,
         SettingsScreen,
         open_settings_section,
     )
 
     build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
-    app = AcornApp(index_dir=tmp_index_dir)
+    app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_KEYBINDINGS)

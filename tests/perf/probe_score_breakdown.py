@@ -18,8 +18,8 @@ from pathlib import Path
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-from acorn.index import build_index  # noqa: E402
-from acorn.schema import (  # noqa: E402
+from fnd.index import build_index  # noqa: E402
+from fnd.schema import (  # noqa: E402
     F_BODY,
     F_CHUNK_SEQ,
     F_HEADING_PATH,
@@ -38,7 +38,7 @@ def main() -> int:
     import tantivy  # pyright: ignore[reportMissingImports]
 
     src = VAULT_ROOT / TARGET_FILE
-    with tempfile.TemporaryDirectory(prefix="acorn-scoreb-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="fnd-scoreb-") as tmp:
         root = Path(tmp)
         corpus = root / "corpus"
         corpus.mkdir(parents=True, exist_ok=True)

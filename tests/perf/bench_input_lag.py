@@ -29,15 +29,15 @@ from typing import Any
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-DIAG_PATH = Path("/tmp/acorn-preview-diag.log")
+DIAG_PATH = Path("/tmp/fnd-preview-diag.log")
 if DIAG_PATH.exists():
     DIAG_PATH.unlink()
-os.environ["ACORN_PREVIEW_DIAG"] = "1"
-os.environ["ACORN_REVEAL_FIRST"] = "1"
+os.environ["FND_PREVIEW_DIAG"] = "1"
+os.environ["FND_REVEAL_FIRST"] = "1"
 
-from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
-from acorn.index import build_index  # noqa: E402
-from acorn.tui import AcornApp  # noqa: E402
+from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
+from fnd.index import build_index  # noqa: E402
+from fnd.tui import FNDApp  # noqa: E402
 from tests.perf import _corpus  # noqa: E402
 
 MATCH_TOKEN = _corpus.MATCH_TOKEN
@@ -110,7 +110,7 @@ async def drive(corpus_root: Path) -> dict[str, list[float]]:
     index_dir.mkdir(parents=True, exist_ok=True)
     build_index(roots=[corpus_root], index_dir=index_dir, collection="default")
 
-    app = AcornApp(
+    app = FNDApp(
         index_dir=index_dir,
         config=cfg,
         collection="default",
@@ -172,7 +172,7 @@ async def drive(corpus_root: Path) -> dict[str, list[float]]:
         widget_count = sum(1 for _ in screen.walk_children(with_self=True))
         preview_pane = app.query_one("#preview_pane")
         pane_descendants = sum(1 for _ in preview_pane.walk_children())
-        from acorn.tui.app import PreviewContainer
+        from fnd.tui.app import PreviewContainer
 
         containers = list(app.query(PreviewContainer))
         hidden_containers = [c for c in containers if c.has_class("-hidden")]
@@ -207,7 +207,7 @@ def summarize(samples: dict[str, list[float]]) -> str:
 
 
 async def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="acorn-lag-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="fnd-lag-") as tmp:
         root = Path(tmp)
         corpus = build_corpus(root)
         samples = await drive(corpus)

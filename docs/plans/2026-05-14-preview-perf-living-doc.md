@@ -15,7 +15,7 @@
   - **report-asserted** — the Gemini or Textual layout-on-reveal report makes
     the claim. I have not verified it against source or by probe.
   - **speculation** — my reasoning, no source/probe evidence.
-- "Confidence in claim accuracy" and "confidence in applicability to acorn"
+- "Confidence in claim accuracy" and "confidence in applicability to fnd"
   are tracked separately. A claim can be true in general (high) and still
   inapplicable to our use case (low).
 
@@ -23,15 +23,15 @@
 
 ## 1. Context & history
 
-`acorn` is a Textual TUI search tool for local document corpora. The preview
+`fnd` is a Textual TUI search tool for local document corpora. The preview
 pane has been rebuilt many times (user-reported: "17 rebuilds"). The current
 shape:
 
 - **Structural path** — `MarkdownDocument` and friends for `.md`, `.docx`,
   `.pptx`. Per-chunk widget tree: ~5–30 block widgets per chunk, ~150 chunks
   per heavy file → ~1000–4000 widgets per preview. Each cell of a markdown
-  table is its own widget. (acorn/tui/app.py).
-- **Flat path** — `LineBufferPreview` (`acorn/tui/line_buffer.py`) for PDF/TXT.
+  table is its own widget. (fnd/tui/app.py).
+- **Flat path** — `LineBufferPreview` (`fnd/tui/line_buffer.py`) for PDF/TXT.
   Single-widget virtualized line buffer; line + span model; native
   `scroll_to_line(line_index, center=True)`.
 - **Prefetch** — `_prefetch_top_results` (`app.py:2010` region) decodes top-N
@@ -101,8 +101,8 @@ These bind every option in this doc and every PR that lands from it.
    resolution logs at info-level when triggered (kind of failure, what was
    tried, what's being used). Applies to preview resolution, prefetch,
    decode, scroll, anywhere we have fallbacks. *Established this session.*
-4. **acorn reindex.** Schema bumps auto-migrate; manual is
-   `acorn collection reindex <name> --rebuild`, not `acorn index --rebuild`.
+4. **fnd reindex.** Schema bumps auto-migrate; manual is
+   `fnd collection reindex <name> --rebuild`, not `fnd index --rebuild`.
 5. **No silent reveal at file-top or chunk-top.** Reveal lands at the
    literal match widget or it doesn't reveal yet. *Established this session.*
 
@@ -138,10 +138,10 @@ Each row: claim → evidence (source + probe) → confidence.
 | **V8** | No public pre-layout / off-screen layout API in Textual. | R-Lay §"Pre-layout API for a widget subtree"; Textual docs lack a `measure()` / `prelayout()` entry. | **source-confirmed** |
 | **V9** | Textual's segment cache survives across visibility transitions, but spatial coordinates do not (for display:none). | R-Gem §"Internal Caching Layers During Display Transitions"; confirmed by V1 (cache invalidated on display flip). | **validated** |
 | **V10** | `Markdown.update(text)` returns an `AwaitComplete` (Textual 8.2.5 `_markdown.py:1363`). Awaiting it guarantees all batched mounts (`BATCH_SIZE=200`, `_markdown.py:1385`) finish. `build_from_token` runs synchronously inside `_parse_markdown` before mount, so `first_match_block` is set by the time the awaitable returns — *for covered subclasses*. **Caveat:** `region.height` still requires layout to run, which happens on the next refresh tick after mount. So an awaited build guarantees the reference is resolved, not that the region is non-zero. | Read of Textual 8.2.5 `_markdown.py:1257-1430`. | **validated** (was U10) |
-| **V11** | Acorn's `_HighlightingBlockMixin` covers exactly: H1–H6, Paragraph, BlockQuote, OrderedListItem, UnorderedListItem, TH, TD (`acorn/tui/app.py:325-422`). Acorn's `AcornMarkdown.BLOCKS` overrides exactly those keys; everything else inherits Textual's defaults. `MarkdownFence` and `code_block` (both map to `MarkdownFence` upstream — `_markdown.py:1009-1010`) are deliberately uncovered (acknowledged in `AcornMarkdown` docstring `app.py:389-392`). | Direct grep + source read. | **validated** (was U11) |
+| **V11** | FND's `_HighlightingBlockMixin` covers exactly: H1–H6, Paragraph, BlockQuote, OrderedListItem, UnorderedListItem, TH, TD (`fnd/tui/app.py:325-422`). FND's `FNDMarkdown.BLOCKS` overrides exactly those keys; everything else inherits Textual's defaults. `MarkdownFence` and `code_block` (both map to `MarkdownFence` upstream — `_markdown.py:1009-1010`) are deliberately uncovered (acknowledged in `FNDMarkdown` docstring `app.py:389-392`). | Direct grep + source read. | **validated** (was U11) |
 | **V12** | `MarkdownFence` content is set via constructor at `_markdown.py:1333` (`fence = fence_class(self, token, token.content.rstrip())`), bypassing `build_from_token` entirely. So matches inside fenced code blocks **cannot** populate `first_match_block` even if the mixin were added — the entry point is different. Any fence-coverage fix needs a fence-specific subclass that overrides the constructor or `on_mount` to apply highlights. | Direct source read. | **validated** |
-| **V13** | 0x7c13's JIT virtualization exists, is public, and is shaped as a wholesale `Markdown` rewrite — not a patch. PR `https://github.com/0x7c13/textual/pull/2` (state OPEN against 0x7c13's fork, not merged upstream). Approach: `Markdown extends ScrollView`; parsed blocks are dataclass objects, not widgets; only visible lines render via `render_line`; binary-search line→block lookup; LRU strip cache. +1324 / -1033 lines on `_markdown.py`. Claimed perf: 2–3 s → 100–200 ms load. **Important consequence for acorn:** this is conceptually identical to what `LineBufferPreview` already does for PDF/TXT — ScrollView + Line API + virtualization. So we don't necessarily need to vendor 0x7c13's fork; we already have the infrastructure. | gh pr view of 0x7c13/textual#2. | **validated** (was U5) |
-| **V14** | Python 3.14's GC changes "mostly solve" the original #6381 stutter (per `timesler` in #6381 thread). Acorn is on 3.13 (`python3.13` in `.venv`). | #6381 thread, gh issue view. | **validated** (relevant to U8) |
+| **V13** | 0x7c13's JIT virtualization exists, is public, and is shaped as a wholesale `Markdown` rewrite — not a patch. PR `https://github.com/0x7c13/textual/pull/2` (state OPEN against 0x7c13's fork, not merged upstream). Approach: `Markdown extends ScrollView`; parsed blocks are dataclass objects, not widgets; only visible lines render via `render_line`; binary-search line→block lookup; LRU strip cache. +1324 / -1033 lines on `_markdown.py`. Claimed perf: 2–3 s → 100–200 ms load. **Important consequence for fnd:** this is conceptually identical to what `LineBufferPreview` already does for PDF/TXT — ScrollView + Line API + virtualization. So we don't necessarily need to vendor 0x7c13's fork; we already have the infrastructure. | gh pr view of 0x7c13/textual#2. | **validated** (was U5) |
+| **V14** | Python 3.14's GC changes "mostly solve" the original #6381 stutter (per `timesler` in #6381 thread). FND is on 3.13 (`python3.13` in `.venv`). | #6381 thread, gh issue view. | **validated** (relevant to U8) |
 
 ### Notable gap between R-Gem claims and my probe
 
@@ -162,7 +162,7 @@ paint, none of which the trick eliminates. **Don't quote sub-10ms as a target.**
 | **U2** | Table cells dominate widget-count cost on the SFO corpus. | my reasoning, R-Lay §"Reduce widget count via composition" | Drives whether DataTable replacement is worth pursuing. | Walk `_active_preview` subtree, count by widget type. ~15 min. |
 | **U3** | Click-to-display worst case is dominated by mount/layout, not decode. | my reasoning | If decode dominates, Absolute-Hidden buys nothing on cold click. | Existing `--profile` plumbing on 3 representative files. ~10 min. |
 | **U4** | DataTable's `cursor_coordinate` + `_scroll_cursor_into_view()` works cleanly with our content-overlay highlight model. | Perplexity answer (no source code probe) | Determines if "one widget per markdown table with cell-precision scroll" is achievable. | Tiny demo: DataTable with manually-baked Rich highlights, drive cursor to a known cell, observe scroll behaviour. ~30 min. |
-| ~~U5~~ | *Moved to V13. Resolved.* Open follow-up: does acorn vendor 0x7c13's fork, or extend the existing flat path (`LineBufferPreview`) to render markdown? See new option **L7/W8** in §7. | — | — | — |
+| ~~U5~~ | *Moved to V13. Resolved.* Open follow-up: does fnd vendor 0x7c13's fork, or extend the existing flat path (`LineBufferPreview`) to render markdown? See new option **L7/W8** in §7. | — | — | — |
 | **U6** | Absolute-Hidden's win on synthetic (~36%) generalises to SFO heavy md (which has more complex table structures). | extrapolation from V5 | Confidence in B as a phase. | After U3 baseline, build a one-off branch with `.preview-cached { position: absolute; visibility: hidden; }`, measure click-to-display delta on SFO. ~1 hr. |
 | **U7** | Prefetch widget pre-mounting (paying layout cost in background) doesn't starve user keystrokes when 10 files × 1000+ widgets are mounted concurrently. | my reasoning + drainer design intent | This is the practical viability of "instant click for prefetched files". | After U6, instrument drainer; rapid-type during prefetch; capture longest event-loop block. ~30 min. |
 | **U8** | gc.freeze() benefit on real corpus is more than the marginal ~8 ms seen on synthetic. | R-Gem §"Overcoming the Python GC Generational Freeze" + V6 | Whether to bother. R-Gem treats it as critical; my probe suggests marginal. | 30-minute usage session with and without `gc.freeze()` post-prefetch, count gen2 GC events + page-stutter perception. |
@@ -189,7 +189,7 @@ something has to descend.
 
 | Option | Description | Confidence | Trade-offs |
 |---|---|---|---|
-| **A1: await build, then one refresh, then resolve** | Replace the 30-retry chain with: `await md.update(text)` (or equivalent post-mount awaitable) → `call_after_refresh` once → resolve `first_match_block`; if None, descendant scan. Reveal logs which path fired. | depends on whether the *acorn* mount path can be reshaped to await the per-chunk Markdown widgets (today it constructs them with `markdown=text` and mounts; the awaitable is fired implicitly via `_on_mount`). | Cleanest reveal shape. Implementation cost: needs `_mount_chunks_async` to await each chunk's `update`-equivalent, OR a separate "build complete" signal on the AcornMarkdown widget. |
+| **A1: await build, then one refresh, then resolve** | Replace the 30-retry chain with: `await md.update(text)` (or equivalent post-mount awaitable) → `call_after_refresh` once → resolve `first_match_block`; if None, descendant scan. Reveal logs which path fired. | depends on whether the *fnd* mount path can be reshaped to await the per-chunk Markdown widgets (today it constructs them with `markdown=text` and mounts; the awaitable is fired implicitly via `_on_mount`). | Cleanest reveal shape. Implementation cost: needs `_mount_chunks_async` to await each chunk's `update`-equivalent, OR a separate "build complete" signal on the FNDMarkdown widget. |
 | **A2: subclass `MarkdownFence` to bake highlights** | Override fence construction (constructor or `on_mount`) to apply highlight spans + register `first_match_block` when the fence content contains a match. | speculation; needs prototype | Closes the V12 gap permanently — fences participate in the same model as paragraphs. Cost: bypassing rich.syntax.Syntax styling within the highlight regions (or layering on top). Tractable scope, not architectural. |
 | **B** | Keep retry chain, but cap at small N (e.g. 3); on exhaustion run `_fallback_match_target`. The existing `_fallback_match_target` already covers fences (via `getattr(w, "code", None)` at `app.py:2889`). | source-confirmed (`_fallback_match_target` already handles fence text) | Minimum change. Ships immediately. Logs make the cost visible. Doesn't address the underlying timing — just bounds it. |
 | **C** | Drop pre-reveal entirely. Show the new container immediately; let the user see it scroll. | speculation | Eliminates S1. But: every load now has a visible mid-paint scroll jump (S5 reintroduced). |
@@ -216,8 +216,8 @@ something has to descend.
 | **W4: Group inline blocks (R-Lay §3)** | Inline spans (bold/italic/code) already grouped into block widgets by Textual's Markdown. | source-confirmed | Already done. No change available here. |
 | **W5: Pool widget instances (R-Lay §3)** | Reuse widget instances across previews. | report-asserted | Significant lifecycle complexity. R-Gem reports widget pooling shifts garbage but not layout cost. Probably not the main win. |
 | **W6: Render chunk as Rich (P1)** | One widget per chunk, internal Rich rendering. | speculation; previously rejected | Smallest widget count. Loses per-block scroll precision. **Previously implemented and removed** — likely not a path. |
-| **W7: JIT mount per block (P2)** | Same as L6. Listed here too because it addresses widget count without losing features. | ~~U5~~ V13 — exists as 0x7c13/textual#2; not merged upstream; ~1400 LoC rewrite | See L6. Vendoring the fork forks acorn off upstream Textual permanently for the Markdown widget. Likely never merges upstream (changes Markdown's public shape — ScrollView base, dataclass blocks). |
-| **W8 / L7: render markdown via the flat path (extend `LineBufferPreview`)** | Recognition that acorn's flat path **already is** the ScrollView + Line API + virtualization model 0x7c13's fork applies to upstream Markdown. Render md to styled lines (via `rich.markdown.Markdown` → Console capture, or our own walk over markdown-it tokens to Rich segments) and feed into the existing flat buffer. Bake highlights as Rich spans at build time — flat path already does this for PDF/TXT. Single widget per file. | speculation; needs prototype | **Pros:** stays in acorn's existing architecture; single code path for all preview types; eliminates GC stutter + per-block layout cost at the root; we already own the scroll-to-line machinery. **Cons:** loses upstream's `MarkdownFence` scrollable code blocks, link_clicked event, per-block focus, MarkdownTable interactivity. Equivalent to W6 (chunk-Rich) **at the file level**, but cleaner because we don't need a wrapping widget per chunk — just append to the flat buffer. Worth comparing in a Tier-3 prototype against vendoring 0x7c13's fork. |
+| **W7: JIT mount per block (P2)** | Same as L6. Listed here too because it addresses widget count without losing features. | ~~U5~~ V13 — exists as 0x7c13/textual#2; not merged upstream; ~1400 LoC rewrite | See L6. Vendoring the fork forks fnd off upstream Textual permanently for the Markdown widget. Likely never merges upstream (changes Markdown's public shape — ScrollView base, dataclass blocks). |
+| **W8 / L7: render markdown via the flat path (extend `LineBufferPreview`)** | Recognition that fnd's flat path **already is** the ScrollView + Line API + virtualization model 0x7c13's fork applies to upstream Markdown. Render md to styled lines (via `rich.markdown.Markdown` → Console capture, or our own walk over markdown-it tokens to Rich segments) and feed into the existing flat buffer. Bake highlights as Rich spans at build time — flat path already does this for PDF/TXT. Single widget per file. | speculation; needs prototype | **Pros:** stays in fnd's existing architecture; single code path for all preview types; eliminates GC stutter + per-block layout cost at the root; we already own the scroll-to-line machinery. **Cons:** loses upstream's `MarkdownFence` scrollable code blocks, link_clicked event, per-block focus, MarkdownTable interactivity. Equivalent to W6 (chunk-Rich) **at the file level**, but cleaner because we don't need a wrapping widget per chunk — just append to the flat buffer. Worth comparing in a Tier-3 prototype against vendoring 0x7c13's fork. |
 
 ### 7.4 Scroll precision (interacts with 7.3)
 
@@ -232,9 +232,9 @@ something has to descend.
 
 | Option | Description | Confidence | Trade-offs |
 |---|---|---|---|
-| **G1: nothing** | Current. | validated | gen2 pauses possible on long sessions per R-Gem / #6381. Magnitude in acorn unmeasured (**U8**). |
-| **G2: gc.freeze() post-prefetch** | One `gc.collect(); gc.freeze()` after initial prefetch settles. | report-asserted; V6 marginal | Frozen objects never collected. Memory leak if prefetch churns indefinitely. Acorn's LRU bounds prefetch pool, so finite. Behind config flag. |
-| **G3: weakref refactor (maintainer fix per #6381)** | Convert `Styles.node` from strong ref to weakref. Upstream change. | report-asserted | Not actionable in acorn until/unless we vendor a patched Textual or wait for upstream. |
+| **G1: nothing** | Current. | validated | gen2 pauses possible on long sessions per R-Gem / #6381. Magnitude in fnd unmeasured (**U8**). |
+| **G2: gc.freeze() post-prefetch** | One `gc.collect(); gc.freeze()` after initial prefetch settles. | report-asserted; V6 marginal | Frozen objects never collected. Memory leak if prefetch churns indefinitely. FND's LRU bounds prefetch pool, so finite. Behind config flag. |
+| **G3: weakref refactor (maintainer fix per #6381)** | Convert `Styles.node` from strong ref to weakref. Upstream change. | report-asserted | Not actionable in fnd until/unless we vendor a patched Textual or wait for upstream. |
 
 ### 7.6 Cursor-following prefetch (S6 — original plan intent)
 
@@ -248,8 +248,8 @@ something has to descend.
 ### 7.7 Progress UI (S3 — partly addressed by yesterday's plan R1, R5–R7)
 
 Not the focus of this doc, but tracked here for completeness. Yesterday's
-plan proposed a centralised `ProgressFacility` (`acorn/tui/progress.py`,
-already exists in the working tree per `?? acorn/tui/progress.py`). Not
+plan proposed a centralised `ProgressFacility` (`fnd/tui/progress.py`,
+already exists in the working tree per `?? fnd/tui/progress.py`). Not
 re-evaluated this session.
 
 ---
@@ -262,10 +262,10 @@ Sequenced by cost. Each entry: estimated effort, answers, depends-on.
 
 | # | Action | Answers | Status |
 |---|---|---|---|
-| **I1** | `_diag_log` helper + log points in `_do_scroll_to_chunk`, `_fallback_match_target` outcomes, and `_finalize_pre_reveal` start/end timing. Env-gated by `ACORN_PREVIEW_DIAG=1`. | **U1** | **drafted, awaiting user run** (see §8.5) |
-| **I2** | `action_diag_dump_preview` bound to `Ctrl+Shift+D`. Dumps per-chunk + total widget counts to `/tmp/acorn-preview-diag.log`. Always on (no env gate). | **U2** | **drafted, awaiting user run** (see §8.5) |
+| **I1** | `_diag_log` helper + log points in `_do_scroll_to_chunk`, `_fallback_match_target` outcomes, and `_finalize_pre_reveal` start/end timing. Env-gated by `FND_PREVIEW_DIAG=1`. | **U1** | **drafted, awaiting user run** (see §8.5) |
+| **I2** | `action_diag_dump_preview` bound to `Ctrl+Shift+D`. Dumps per-chunk + total widget counts to `/tmp/fnd-preview-diag.log`. Always on (no env gate). | **U2** | **drafted, awaiting user run** (see §8.5) |
 | **I3** | Read `Markdown.update()` source in installed Textual; confirm awaitable + lifecycle. | **U10 → V10** | **done** |
-| **I4** | Grep `_HighlightingBlockMixin` subclasses in `acorn/tui/app.py`; cross-check what's NOT subclassed. | **U11 → V11, V12** | **done** |
+| **I4** | Grep `_HighlightingBlockMixin` subclasses in `fnd/tui/app.py`; cross-check what's NOT subclassed. | **U11 → V11, V12** | **done** |
 
 ### 8.2 Tier 2 — under 1 hour each, measure baseline + validate L2
 
@@ -280,7 +280,7 @@ Sequenced by cost. Each entry: estimated effort, answers, depends-on.
 | # | Action | Answers | Effort |
 |---|---|---|---|
 | **I8** | Build a DataTable demo with manually-baked Rich highlight spans + `cursor_coordinate` cell scroll. Confirm Textual's overlay highlights don't conflict. | **U4** | 30 min |
-| **I9** | Find 0x7c13's code (cited in R-Gem ref 29; not linked in the report — likely in Textual #6381 comments). Read; estimate port effort to acorn. | **U5** | 2–4 hr |
+| **I9** | Find 0x7c13's code (cited in R-Gem ref 29; not linked in the report — likely in Textual #6381 comments). Read; estimate port effort to fnd. | **U5** | 2–4 hr |
 | **I10** | gc.freeze() session test: 30 min real usage with and without. Counter on gen2 GC events; subjective perception of stutters. | **U8** | 1 hr |
 
 ### 8.4 Tier 4 — only after Tier 1–3 returns data
@@ -292,17 +292,17 @@ To be decided based on what we find. Possible items:
 
 ### 8.5 How to run the I1 + I2 diagnostics
 
-Both patches live in the working tree (uncommitted) on `acorn/tui/app.py`.
+Both patches live in the working tree (uncommitted) on `fnd/tui/app.py`.
 22 preview tests pass, import is clean.
 
 **To capture the SFO match path (I1):**
 
 ```
-rm -f /tmp/acorn-preview-diag.log
-ACORN_PREVIEW_DIAG=1 acorn  # or whatever your usual launch is
+rm -f /tmp/fnd-preview-diag.log
+FND_PREVIEW_DIAG=1 fnd  # or whatever your usual launch is
 # type the SFO "compromise" query, let the preview settle
 # (if symptom S1 fires, navigate away and back so the preview loads)
-cat /tmp/acorn-preview-diag.log
+cat /tmp/fnd-preview-diag.log
 ```
 
 Expected log lines per reveal:
@@ -325,7 +325,7 @@ the dump. Repeat for:
 2. A small md file (your pick).
 3. A PDF (the flat path) for comparison.
 
-`/tmp/acorn-preview-diag.log` will contain `--- dump_preview ---` blocks
+`/tmp/fnd-preview-diag.log` will contain `--- dump_preview ---` blocks
 with per-chunk counts and grand totals.
 
 **Reverting:** the diagnostic is contained to:
@@ -334,7 +334,7 @@ with per-chunk counts and grand totals.
 - `Binding("ctrl+shift+d", ...)` line in `BINDINGS`
 - ~25 lines of log calls inside `_do_scroll_to_chunk` and `_finalize_pre_reveal`
 
-A `git diff acorn/tui/app.py` shows the full surface. Easy to revert when
+A `git diff fnd/tui/app.py` shows the full surface. Easy to revert when
 findings are in.
 
 ---
@@ -361,8 +361,8 @@ Once Tier 1 + Tier 2 data is in, the decision tree should be roughly:
 6. **V13 changed the architecture-bet shape.** 0x7c13's fork exists but
    is a ~1400-line wholesale rewrite of Textual's Markdown. The decision
    for the durable path is now between:
-   - **W8/L7** — extend acorn's existing flat path to handle md. Stays
-     within acorn. Loses upstream Markdown's interactive features.
+   - **W8/L7** — extend fnd's existing flat path to handle md. Stays
+     within fnd. Loses upstream Markdown's interactive features.
    - **Vendor 0x7c13's fork** — keeps Markdown widget interactivity.
      Permanently forks from upstream Textual on Markdown rendering. Higher
      maintenance burden (track upstream changes manually).
@@ -384,7 +384,7 @@ Once Tier 1 + Tier 2 data is in, the decision tree should be roughly:
    open-ended. How far down the tree do I keep going before checking back?
 4. **L6/W7 (JIT virtualization):** is this on the table as a multi-week
    investment if the smaller mitigations don't get us there?
-5. **Acorn's preview file size distribution:** the reports assume 4000-widget
+5. **FND's preview file size distribution:** the reports assume 4000-widget
    trees. Is SFO's heavy md actually in that range, or are we below/above?
    (I2 will tell us.)
 6. **Are there other reports / sources you want incorporated?** Perplexity's
@@ -411,8 +411,8 @@ Once Tier 1 + Tier 2 data is in, the decision tree should be roughly:
 | Date | Author | Change |
 |---|---|---|
 | 2026-05-14 | Ben + session | v0 — initial scaffold from session research + both reports read in full. |
-| 2026-05-14 | session (Tier-1 work) | v0.1 — I3 + I4 resolved (U10 → V10, U11 → V11+V12). §7.1 updated to reflect V12 (fences can't participate in `first_match_block` via the mixin path; need fence subclass or descendant scan). I1 + I2 diagnostic patches landed in working tree on `acorn/tui/app.py` (22 preview tests still pass). §8.5 documents how to run them. |
-| 2026-05-14 | session (I9 partial) | v0.2 — I9 partial: located 0x7c13's JIT virtualization (V13 — `0x7c13/textual#2`, OPEN, ~1400 LoC rewrite). Acorn's flat path already implements the same conceptual model. Added option **W8/L7** (extend flat path to markdown) to §7. V14 captures the Python 3.14 GC observation. §9 decision framework restructured to reflect that the architecture-bet question is now "flat-path-for-md vs vendor 0x7c13 vs stay-and-mitigate", not "is JIT feasible". |
+| 2026-05-14 | session (Tier-1 work) | v0.1 — I3 + I4 resolved (U10 → V10, U11 → V11+V12). §7.1 updated to reflect V12 (fences can't participate in `first_match_block` via the mixin path; need fence subclass or descendant scan). I1 + I2 diagnostic patches landed in working tree on `fnd/tui/app.py` (22 preview tests still pass). §8.5 documents how to run them. |
+| 2026-05-14 | session (I9 partial) | v0.2 — I9 partial: located 0x7c13's JIT virtualization (V13 — `0x7c13/textual#2`, OPEN, ~1400 LoC rewrite). FND's flat path already implements the same conceptual model. Added option **W8/L7** (extend flat path to markdown) to §7. V14 captures the Python 3.14 GC observation. §9 decision framework restructured to reflect that the architecture-bet question is now "flat-path-for-md vs vendor 0x7c13 vs stay-and-mitigate", not "is JIT feasible". |
 
 <!-- Add entries here as findings come in. Don't delete refuted claims; update
 their **confidence** and add a 'what changed it' note. -->

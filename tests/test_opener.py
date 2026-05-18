@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from acorn import opener
+from fnd import opener
 
 
 def test_skim_url_simple(tmp_path: Path) -> None:

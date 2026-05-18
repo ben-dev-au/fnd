@@ -1,11 +1,11 @@
 # Phase 5.5e-3 — TUI Collections Form Implementation Plan
 
 
-**Spec:** [`docs/specs/2026-05-09-collection-crud-and-source-filters-design.md`](../specs/2026-05-09-collection-crud-and-source-filters-design.md) — section "TUI (`acorn/tui/collections_screen.py`)".
+**Spec:** [`docs/specs/2026-05-09-collection-crud-and-source-filters-design.md`](../specs/2026-05-09-collection-crud-and-source-filters-design.md) — section "TUI (`fnd/tui/collections_screen.py`)".
 
 **Goal:** Add a full-screen Collections form behind `F3` / `:collections` so users can list, edit, save, and delete collections without leaving the TUI. The form is a thin lens over the user's `config.toml`; saves round-trip via `tomlkit` so hand-authored comments survive.
 
-**Architecture:** A new `acorn/tui/collections_screen.py` module exports `CollectionsScreen(Screen)` — a Textual `Screen` subclass pushed onto the app stack. It composes a left-pane collections list, a right-pane editor showing the selected collection's sources, and pushes a `SourceEditScreen(ModalScreen)` for per-source edits. Save uses a new `acorn/config.py:write_collection` helper (full-collection round-trip via `tomlkit`, complementing the existing `write_collection_source`). Reindex is invoked synchronously after save with a small status-line message; auto-fired only when path / includes / excludes / `frontmatter_filter` changed for any source.
+**Architecture:** A new `fnd/tui/collections_screen.py` module exports `CollectionsScreen(Screen)` — a Textual `Screen` subclass pushed onto the app stack. It composes a left-pane collections list, a right-pane editor showing the selected collection's sources, and pushes a `SourceEditScreen(ModalScreen)` for per-source edits. Save uses a new `fnd/config.py:write_collection` helper (full-collection round-trip via `tomlkit`, complementing the existing `write_collection_source`). Reindex is invoked synchronously after save with a small status-line message; auto-fired only when path / includes / excludes / `frontmatter_filter` changed for any source.
 
 **Tech Stack:** Python 3.13, Textual 0.85+ (Screen, ModalScreen, Input, TextArea, Button, Static), tomlkit, pytest, pytest-asyncio (existing).
 
@@ -18,7 +18,7 @@
 | F3 / `:collections` action | Browse-for-path file picker |
 | Collections list + editor pane | Per-collection ranking-profile dropdown (use `config edit`) |
 | Source-edit modal (path / includes / excludes / filter) | Drag-reorder of sources |
-| Filter parse-status indicator | `acorn collection rm` CLI (form covers it) |
+| Filter parse-status indicator | `fnd collection rm` CLI (form covers it) |
 | "Test against pasted frontmatter" affordance | Multi-collection bulk operations |
 | Save round-trip via tomlkit (preserves comments) | |
 | Delete collection (with confirmation) | |
@@ -31,10 +31,10 @@
 
 | File | Action | Responsibility |
 |---|---|---|
-| `acorn/tui/collections_screen.py` | create | `CollectionsScreen`, `SourceEditScreen`, helper widgets |
-| `acorn/tui/actions.py` | modify | Add `open_collections_form` action |
-| `acorn/tui/app.py` | modify | Implement `action_open_collections_form`; pass `Config` mutation hook back to the main app |
-| `acorn/config.py` | modify | Add `write_collection(*, config_path, collection_name, collection)` (full round-trip); add `delete_collection(*, config_path, name)` |
+| `fnd/tui/collections_screen.py` | create | `CollectionsScreen`, `SourceEditScreen`, helper widgets |
+| `fnd/tui/actions.py` | modify | Add `open_collections_form` action |
+| `fnd/tui/app.py` | modify | Implement `action_open_collections_form`; pass `Config` mutation hook back to the main app |
+| `fnd/config.py` | modify | Add `write_collection(*, config_path, collection_name, collection)` (full round-trip); add `delete_collection(*, config_path, name)` |
 | `tests/test_collections_screen.py` | create | Pilot-based behaviour tests |
 | `tests/test_config_write_collection.py` | create | tomlkit round-trip preserves comments + adjacent tables |
 
@@ -52,9 +52,9 @@
 ## Task 1: Action + F3 binding + screen skeleton
 
 **Files:**
-- Modify: `acorn/tui/actions.py`
-- Create: `acorn/tui/collections_screen.py`
-- Modify: `acorn/tui/app.py` (`action_open_collections_form`)
+- Modify: `fnd/tui/actions.py`
+- Create: `fnd/tui/collections_screen.py`
+- Modify: `fnd/tui/app.py` (`action_open_collections_form`)
 - Test: `tests/test_collections_screen.py`
 
 - [ ] **Step 1: Failing test**
@@ -72,8 +72,8 @@ from pathlib import Path
 import pytest
 from textual.widgets import Static
 
-from acorn.config import Config, load
-from acorn.tui import AcornApp
+from fnd.config import Config, load
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -89,8 +89,8 @@ def cfg_with_one_collection(
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
-    monkeypatch.setattr("acorn.cli.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.cli.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -98,7 +98,7 @@ def cfg_with_one_collection(
 async def test_f3_opens_collections_screen(
     cfg_with_one_collection: Config, tmp_index_dir: Path
 ) -> None:
-    app = AcornApp(index_dir=tmp_index_dir, config=cfg_with_one_collection)
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg_with_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("f3")
@@ -112,7 +112,7 @@ async def test_f3_opens_collections_screen(
 async def test_escape_closes_collections_screen(
     cfg_with_one_collection: Config, tmp_index_dir: Path
 ) -> None:
-    app = AcornApp(index_dir=tmp_index_dir, config=cfg_with_one_collection)
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg_with_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("f3")
@@ -130,7 +130,7 @@ Expected: 2 failures — F3 doesn't open anything yet.
 
 - [ ] **Step 3: Add the action**
 
-Append to the `REGISTRY` tuple in `acorn/tui/actions.py`:
+Append to the `REGISTRY` tuple in `fnd/tui/actions.py`:
 
 ```python
     Action(
@@ -144,14 +144,14 @@ Append to the `REGISTRY` tuple in `acorn/tui/actions.py`:
 
 - [ ] **Step 4: Create the screen skeleton**
 
-Create `acorn/tui/collections_screen.py`:
+Create `fnd/tui/collections_screen.py`:
 
 ```python
 """TUI Collections form (§5.5e-3).
 
 Full-screen Textual ``Screen`` that lists configured collections and lets
 the user edit, add, or delete them without leaving the TUI. Saves persist
-to ``config.toml`` via :func:`acorn.config.write_collection`, which uses
+to ``config.toml`` via :func:`fnd.config.write_collection`, which uses
 ``tomlkit`` so user-authored comments survive the round-trip.
 """
 
@@ -165,7 +165,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Static
 
-from acorn.config import Config
+from fnd.config import Config
 
 
 class CollectionsScreen(Screen[None]):
@@ -199,16 +199,16 @@ class CollectionsScreen(Screen[None]):
         self.dismiss(None)
 ```
 
-- [ ] **Step 5: Wire `action_open_collections_form` in `acorn/tui/app.py`**
+- [ ] **Step 5: Wire `action_open_collections_form` in `fnd/tui/app.py`**
 
-Find the existing action methods (the block of `action_*` methods on `AcornApp`). Add:
+Find the existing action methods (the block of `action_*` methods on `FNDApp`). Add:
 
 ```python
     def action_open_collections_form(self) -> None:
         """Push the Collections screen for browsing / editing collections."""
-        from acorn.config import default_config_path
+        from fnd.config import default_config_path
 
-        from acorn.tui.collections_screen import CollectionsScreen
+        from fnd.tui.collections_screen import CollectionsScreen
 
         # Use the config that was loaded at TUI launch as the starting point;
         # the screen will reload from disk before showing to pick up any
@@ -221,7 +221,7 @@ Find the existing action methods (the block of `action_*` methods on `AcornApp`)
     def _on_collections_form_dismissed(self, _result: object) -> None:
         """The form may have written changes to disk; reload our cached
         Config so subsequent searches use the new collection set."""
-        from acorn.config import load
+        from fnd.config import load
 
         self._config = load()
         # Recompute ranking profile in case the active collection's profile
@@ -243,7 +243,7 @@ Expected: green.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add acorn/tui/actions.py acorn/tui/collections_screen.py acorn/tui/app.py tests/test_collections_screen.py
+git add fnd/tui/actions.py fnd/tui/collections_screen.py fnd/tui/app.py tests/test_collections_screen.py
 git commit -m "feat(tui): phase 5.5e-3 — F3 / :collections opens screen skeleton"
 ```
 
@@ -252,7 +252,7 @@ git commit -m "feat(tui): phase 5.5e-3 — F3 / :collections opens screen skelet
 ## Task 2: Collections list pane
 
 **Files:**
-- Modify: `acorn/tui/collections_screen.py`
+- Modify: `fnd/tui/collections_screen.py`
 - Modify: `tests/test_collections_screen.py`
 
 - [ ] **Step 1: Failing test**
@@ -283,7 +283,7 @@ def cfg_three_collections(
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -291,7 +291,7 @@ def cfg_three_collections(
 async def test_collections_list_shows_each_with_source_count(
     cfg_three_collections: Config, tmp_index_dir: Path
 ) -> None:
-    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg_three_collections)
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("f3")
@@ -354,7 +354,7 @@ Expected: pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/collections_screen.py tests/test_collections_screen.py
+git add fnd/tui/collections_screen.py tests/test_collections_screen.py
 git commit -m "feat(tui): phase 5.5e-3 — collections list pane shows name + source count"
 ```
 
@@ -363,7 +363,7 @@ git commit -m "feat(tui): phase 5.5e-3 — collections list pane shows name + so
 ## Task 3: Editor pane shows selected collection's sources (read-only)
 
 **Files:**
-- Modify: `acorn/tui/collections_screen.py`
+- Modify: `fnd/tui/collections_screen.py`
 - Modify: `tests/test_collections_screen.py`
 
 - [ ] **Step 1: Failing test**
@@ -375,7 +375,7 @@ Append:
 async def test_clicking_collection_shows_its_sources(
     cfg_three_collections: Config, tmp_index_dir: Path
 ) -> None:
-    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg_three_collections)
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("f3")
@@ -517,7 +517,7 @@ Expected: 4 passed.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/tui/collections_screen.py tests/test_collections_screen.py
+git add fnd/tui/collections_screen.py tests/test_collections_screen.py
 git commit -m "feat(tui): phase 5.5e-3 — editor pane shows selected collection's sources"
 ```
 
@@ -526,7 +526,7 @@ git commit -m "feat(tui): phase 5.5e-3 — editor pane shows selected collection
 ## Task 4: Source-edit modal (text inputs + filter parse-status)
 
 **Files:**
-- Modify: `acorn/tui/collections_screen.py`
+- Modify: `fnd/tui/collections_screen.py`
 - Modify: `tests/test_collections_screen.py`
 
 - [ ] **Step 1: Failing test**
@@ -538,7 +538,7 @@ Append:
 async def test_pressing_e_opens_source_edit_modal(
     cfg_three_collections: Config, tmp_index_dir: Path
 ) -> None:
-    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg_three_collections)
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("f3")
@@ -555,7 +555,7 @@ async def test_pressing_e_opens_source_edit_modal(
 async def test_invalid_filter_shows_parse_error(
     cfg_three_collections: Config, tmp_index_dir: Path
 ) -> None:
-    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg_three_collections)
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("f3")
@@ -580,7 +580,7 @@ Expected: 2 new failures (e doesn't do anything, no #source_path_input).
 
 - [ ] **Step 3: Implement `SourceEditScreen` (modal)**
 
-Append to `acorn/tui/collections_screen.py`:
+Append to `fnd/tui/collections_screen.py`:
 
 ```python
 class SourceEditScreen(Screen[dict | None]):
@@ -642,7 +642,7 @@ class SourceEditScreen(Screen[dict | None]):
     def on_input_changed(self, ev) -> None:  # noqa: ANN001
         if ev.input.id != "source_filter_input":
             return
-        from acorn.filter_dsl import parse_or_error
+        from fnd.filter_dsl import parse_or_error
 
         text = ev.value
         status = self.query_one("#filter_parse_status", Static)
@@ -660,7 +660,7 @@ class SourceEditScreen(Screen[dict | None]):
 
     def action_save(self) -> None:
         from textual.widgets import Input
-        from acorn.filter_dsl import parse_or_error
+        from fnd.filter_dsl import parse_or_error
 
         filter_text = self.query_one("#source_filter_input", Input).value.strip()
         if filter_text:
@@ -723,7 +723,7 @@ Add the action method:
     def _apply_source_edit(self, index: int, result: dict | None) -> None:
         if result is None or self._selected is None:
             return
-        from acorn.config import SourceConfig
+        from fnd.config import SourceConfig
 
         c = self._config.collections[self._selected]
         new_source = SourceConfig(
@@ -747,7 +747,7 @@ Expected: 6 passed.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/tui/collections_screen.py tests/test_collections_screen.py
+git add fnd/tui/collections_screen.py tests/test_collections_screen.py
 git commit -m "feat(tui): phase 5.5e-3 — source-edit modal with filter parse status"
 ```
 
@@ -756,7 +756,7 @@ git commit -m "feat(tui): phase 5.5e-3 — source-edit modal with filter parse s
 ## Task 5: Source cursor + add/remove
 
 **Files:**
-- Modify: `acorn/tui/collections_screen.py`
+- Modify: `fnd/tui/collections_screen.py`
 - Modify: `tests/test_collections_screen.py`
 
 - [ ] **Step 1: Failing test**
@@ -768,7 +768,7 @@ Append:
 async def test_a_adds_blank_source_row(
     cfg_three_collections: Config, tmp_index_dir: Path
 ) -> None:
-    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg_three_collections)
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("f3")
@@ -787,7 +787,7 @@ async def test_a_adds_blank_source_row(
 async def test_x_removes_focused_source(
     cfg_three_collections: Config, tmp_index_dir: Path
 ) -> None:
-    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg_three_collections)
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("f3")
@@ -868,7 +868,7 @@ Add actions:
     def _on_new_source_dismissed(self, result: dict | None) -> None:
         if result is None or self._selected is None:
             return
-        from acorn.config import SourceConfig
+        from fnd.config import SourceConfig
 
         c = self._config.collections[self._selected]
         c.sources.append(
@@ -931,7 +931,7 @@ Expected: 8 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/collections_screen.py tests/test_collections_screen.py
+git add fnd/tui/collections_screen.py tests/test_collections_screen.py
 git commit -m "feat(tui): phase 5.5e-3 — source cursor + add / remove / edit"
 ```
 
@@ -940,7 +940,7 @@ git commit -m "feat(tui): phase 5.5e-3 — source cursor + add / remove / edit"
 ## Task 6: "Test against pasted frontmatter" affordance
 
 **Files:**
-- Modify: `acorn/tui/collections_screen.py:SourceEditScreen`
+- Modify: `fnd/tui/collections_screen.py:SourceEditScreen`
 - Modify: `tests/test_collections_screen.py`
 
 - [ ] **Step 1: Failing test**
@@ -952,7 +952,7 @@ Append:
 async def test_pasted_frontmatter_match_indicator(
     cfg_three_collections: Config, tmp_index_dir: Path
 ) -> None:
-    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg_three_collections)
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("f3")
@@ -1022,8 +1022,8 @@ Add a handler that runs when either the filter input or the sample TextArea chan
 
     def _refresh_match_status(self) -> None:
         from textual.widgets import Input, TextArea
-        from acorn.filter_dsl import parse_or_error
-        from acorn.frontmatter import (
+        from fnd.filter_dsl import parse_or_error
+        from fnd.frontmatter import (
             FrontmatterParseError,
             read_frontmatter_from_text,
         )
@@ -1082,7 +1082,7 @@ Expected: 9 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/collections_screen.py tests/test_collections_screen.py
+git add fnd/tui/collections_screen.py tests/test_collections_screen.py
 git commit -m "feat(tui): phase 5.5e-3 — paste-frontmatter live match indicator"
 ```
 
@@ -1091,8 +1091,8 @@ git commit -m "feat(tui): phase 5.5e-3 — paste-frontmatter live match indicato
 ## Task 7: Save round-trip via `tomlkit`
 
 **Files:**
-- Modify: `acorn/config.py` (add `write_collection`)
-- Modify: `acorn/tui/collections_screen.py` (`s` action)
+- Modify: `fnd/config.py` (add `write_collection`)
+- Modify: `fnd/tui/collections_screen.py` (`s` action)
 - Test: `tests/test_config_write_collection.py` (new)
 - Modify: `tests/test_collections_screen.py`
 
@@ -1108,7 +1108,7 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-from acorn.config import (
+from fnd.config import (
     CollectionConfig,
     SourceConfig,
     load,
@@ -1206,7 +1206,7 @@ Expected: 4 failures — `write_collection` not exported.
 
 - [ ] **Step 3: Implement `write_collection`**
 
-Append to `acorn/config.py`:
+Append to `fnd/config.py`:
 
 ```python
 def write_collection(
@@ -1279,9 +1279,9 @@ async def test_s_persists_changes_to_config_toml(
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     cfg = load(cfg_path)
-    app = AcornApp(index_dir=tmp_index_dir, config=cfg)
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("f3")
@@ -1314,7 +1314,7 @@ Action method:
     def action_save(self) -> None:
         if self._selected is None:
             return
-        from acorn.config import write_collection
+        from fnd.config import write_collection
 
         c = self._config.collections[self._selected]
         write_collection(
@@ -1336,7 +1336,7 @@ Expected: full suite green.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add acorn/config.py acorn/tui/collections_screen.py tests/test_config_write_collection.py tests/test_collections_screen.py
+git add fnd/config.py fnd/tui/collections_screen.py tests/test_config_write_collection.py tests/test_collections_screen.py
 git commit -m "feat(tui,config): phase 5.5e-3 — write_collection + s save in the form"
 ```
 
@@ -1345,7 +1345,7 @@ git commit -m "feat(tui,config): phase 5.5e-3 — write_collection + s save in t
 ## Task 8: Auto-reindex on structural save
 
 **Files:**
-- Modify: `acorn/tui/collections_screen.py:action_save`
+- Modify: `fnd/tui/collections_screen.py:action_save`
 - Modify: `tests/test_collections_screen.py`
 
 - [ ] **Step 1: Failing test**
@@ -1377,16 +1377,16 @@ async def test_save_triggers_reindex_when_paths_change(
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     cfg = load(cfg_path)
 
     # Build the initial index so the form will detect a "change" on save.
-    from acorn.index import build_index_from_config
+    from fnd.index import build_index_from_config
     build_index_from_config(
         config=cfg.collection("notes"), collection="notes", index_dir=tmp_index_dir
     )
 
-    app = AcornApp(index_dir=tmp_index_dir, config=cfg)
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("f3")
@@ -1405,7 +1405,7 @@ async def test_save_triggers_reindex_when_paths_change(
         await pilot.pause()
 
     # Searcher should now find y.md (notes_b) but not x.md (notes_a).
-    from acorn.query import Searcher
+    from fnd.query import Searcher
     s = Searcher(index_dir=tmp_index_dir)
     paths = {Path(h.path).name for h in s.search("blue penguin", limit=10, collection="notes")}
     assert "y.md" in paths
@@ -1432,7 +1432,7 @@ Update `CollectionsScreen.__init__` to snapshot the initial collection state per
         }
 ```
 
-Add `from acorn.config import SourceConfig` and `from copy import deepcopy` at the module top.
+Add `from fnd.config import SourceConfig` and `from copy import deepcopy` at the module top.
 
 Update `action_save`:
 
@@ -1440,8 +1440,8 @@ Update `action_save`:
     def action_save(self) -> None:
         if self._selected is None:
             return
-        from acorn.config import write_collection
-        from acorn.index import build_index_from_config
+        from fnd.config import write_collection
+        from fnd.index import build_index_from_config
 
         c = self._config.collections[self._selected]
         write_collection(
@@ -1502,7 +1502,7 @@ Expected: 11 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/collections_screen.py tests/test_collections_screen.py
+git add fnd/tui/collections_screen.py tests/test_collections_screen.py
 git commit -m "feat(tui): phase 5.5e-3 — auto-reindex on structural save"
 ```
 
@@ -1511,8 +1511,8 @@ git commit -m "feat(tui): phase 5.5e-3 — auto-reindex on structural save"
 ## Task 9: Delete collection (with confirmation)
 
 **Files:**
-- Modify: `acorn/config.py` (add `delete_collection`)
-- Modify: `acorn/tui/collections_screen.py`
+- Modify: `fnd/config.py` (add `delete_collection`)
+- Modify: `fnd/tui/collections_screen.py`
 - Test: `tests/test_config_write_collection.py`
 - Modify: `tests/test_collections_screen.py`
 
@@ -1522,7 +1522,7 @@ Append to `tests/test_config_write_collection.py`:
 
 ```python
 def test_delete_collection_removes_table(tmp_path: Path) -> None:
-    from acorn.config import delete_collection
+    from fnd.config import delete_collection
 
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(
@@ -1545,7 +1545,7 @@ def test_delete_collection_removes_table(tmp_path: Path) -> None:
 
 
 def test_delete_missing_collection_is_idempotent(tmp_path: Path) -> None:
-    from acorn.config import delete_collection
+    from fnd.config import delete_collection
 
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text("", encoding="utf-8")
@@ -1561,7 +1561,7 @@ Expected: 2 new failures.
 
 - [ ] **Step 3: Implement `delete_collection`**
 
-Append to `acorn/config.py`:
+Append to `fnd/config.py`:
 
 ```python
 def delete_collection(*, config_path: Path, name: str) -> None:
@@ -1590,7 +1590,7 @@ Append to `tests/test_collections_screen.py`:
 async def test_d_deletes_with_confirmation(
     cfg_three_collections: Config, tmp_index_dir: Path
 ) -> None:
-    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg_three_collections)
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("f3")
@@ -1607,7 +1607,7 @@ async def test_d_deletes_with_confirmation(
 
 - [ ] **Step 5: Implement `d` action with a tiny confirmation modal**
 
-Append to `acorn/tui/collections_screen.py`:
+Append to `fnd/tui/collections_screen.py`:
 
 ```python
 class _DeleteConfirmScreen(Screen[bool]):
@@ -1660,9 +1660,9 @@ Add binding + action to `CollectionsScreen`:
     def _on_delete_confirmed(self, name: str, ok: bool | None) -> None:
         if not ok:
             return
-        from acorn.config import delete_collection
-        from acorn.index import _ensure_index
-        from acorn.schema import F_COLLECTION
+        from fnd.config import delete_collection
+        from fnd.index import _ensure_index
+        from fnd.schema import F_COLLECTION
 
         # 1. Remove from on-disk config.
         delete_collection(config_path=self._config_path, name=name)
@@ -1697,7 +1697,7 @@ Expected: full suite green.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add acorn/config.py acorn/tui/collections_screen.py tests/test_config_write_collection.py tests/test_collections_screen.py
+git add fnd/config.py fnd/tui/collections_screen.py tests/test_config_write_collection.py tests/test_collections_screen.py
 git commit -m "feat(tui,config): phase 5.5e-3 — delete collection with confirmation"
 ```
 
@@ -1706,7 +1706,7 @@ git commit -m "feat(tui,config): phase 5.5e-3 — delete collection with confirm
 ## Task 10: New collection (inline name prompt)
 
 **Files:**
-- Modify: `acorn/tui/collections_screen.py`
+- Modify: `fnd/tui/collections_screen.py`
 - Modify: `tests/test_collections_screen.py`
 
 - [ ] **Step 1: Failing test**
@@ -1718,7 +1718,7 @@ Append:
 async def test_n_creates_new_empty_collection(
     cfg_three_collections: Config, tmp_index_dir: Path
 ) -> None:
-    app = AcornApp(index_dir=tmp_index_dir, config=cfg_three_collections)
+    app = FNDApp(index_dir=tmp_index_dir, config=cfg_three_collections)
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("f3")
@@ -1745,7 +1745,7 @@ Expected: fail.
 
 - [ ] **Step 3: Implement `n` action with a name-prompt modal**
 
-Append to `acorn/tui/collections_screen.py`:
+Append to `fnd/tui/collections_screen.py`:
 
 ```python
 class _NewCollectionScreen(Screen[str | None]):
@@ -1797,7 +1797,7 @@ Add binding + action to `CollectionsScreen`:
                 f"Collection {name} already exists.", severity="warning"
             )
             return
-        from acorn.config import CollectionConfig
+        from fnd.config import CollectionConfig
 
         empty = CollectionConfig(sources=[])
         self._config.collections[name] = empty
@@ -1819,7 +1819,7 @@ Expected: 15 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/tui/collections_screen.py tests/test_collections_screen.py
+git add fnd/tui/collections_screen.py tests/test_collections_screen.py
 git commit -m "feat(tui): phase 5.5e-3 — new collection (n key) with name prompt"
 ```
 
@@ -1837,14 +1837,14 @@ Expected: all green; ~310 tests after this phase (288 baseline from 5.5e-2 close
 
 - [ ] **Step 2: Lint + types**
 
-Run: `uv run ruff check acorn tests && uv run pyright`
+Run: `uv run ruff check fnd tests && uv run pyright`
 Expected: clean.
 
 - [ ] **Step 3: Manual smoke (recommended, not blocking)**
 
 If you have a real config + index handy:
 
-1. `uv run acorn tui --collection notes`
+1. `uv run fnd tui --collection notes`
 2. Press `F3` — Collections form opens.
 3. Press `j`/`k` to navigate the list; selected collection shows in the editor pane.
 4. Press `e` — source-edit modal opens; tweak the path, see filter parse status; press `ctrl+s`.
@@ -1859,7 +1859,7 @@ Verify `config.toml` round-trip: open the file in `$EDITOR`, confirm comments an
 
 - [ ] **Step 4: Update top-level plan §22 (out-of-scope) — drop the "TUI Collection CRUD" deferral**
 
-Find the §22 line about "Collection CRUD UI inside the TUI" or equivalent in the top-level acorn design plan. Strike it through (or remove) — it's now shipped.
+Find the §22 line about "Collection CRUD UI inside the TUI" or equivalent in the top-level fnd design plan. Strike it through (or remove) — it's now shipped.
 
 If the plan file isn't easily editable here, skip this step and note it for the user to apply manually.
 
@@ -1911,7 +1911,7 @@ git commit -m "docs: phase 5.5e-3 close-out — drop TUI CRUD deferral from plan
 - **Testing notes:**
   - All form tests use `pytest.mark.asyncio` + `app.run_test()` + `pilot`.
   - Some tests inspect `app._config.collections[...]` directly — these are internal but stable enough across the phase.
-  - `monkeypatch.setattr("acorn.config.default_config_path", ...)` is the established pattern; reuse it.
+  - `monkeypatch.setattr("fnd.config.default_config_path", ...)` is the established pattern; reuse it.
   - The auto-reindex test uses real on-disk md files in `tmp_path` and a real Tantivy index in `tmp_index_dir`. Slow-ish (~1s) but solid.
 
 - **Schema-bump migration:** unchanged. No new schema fields in this phase. `_ensure_index(force=True)` is reused for the auto-reindex path.

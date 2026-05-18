@@ -21,14 +21,14 @@ from pathlib import Path
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-DIAG_PATH = Path("/tmp/acorn-preview-diag.log")
+DIAG_PATH = Path("/tmp/fnd-preview-diag.log")
 if DIAG_PATH.exists():
     DIAG_PATH.unlink()
-os.environ["ACORN_PREVIEW_DIAG"] = "1"
+os.environ["FND_PREVIEW_DIAG"] = "1"
 
-from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
-from acorn.index import build_index  # noqa: E402
-from acorn.tui import AcornApp  # noqa: E402
+from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
+from fnd.index import build_index  # noqa: E402
+from fnd.tui import FNDApp  # noqa: E402
 
 VAULT_ROOT = Path(
     "/Users/BenDavidson/Library/Mobile Documents/iCloud~md~obsidian/Documents/Obsidian Vault"
@@ -55,7 +55,7 @@ def build_vault_subset(root: Path, *, n: int) -> Path:
 
 
 async def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="acorn-fix-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="fnd-fix-") as tmp:
         root = Path(tmp)
         corpus = build_vault_subset(root, n=2)
         index_dir = root / "index"
@@ -65,7 +65,7 @@ async def main() -> int:
             defaults=Defaults(preview_prefetch_count=0, preview_load_debounce_ms=0),
             ranking={"default": RankingProfileConfig()},
         )
-        app = AcornApp(index_dir=index_dir, config=cfg, collection="default", initial_query="the")
+        app = FNDApp(index_dir=index_dir, config=cfg, collection="default", initial_query="the")
         from textual.widgets import Tree  # pyright: ignore[reportMissingImports]
 
         async with app.run_test(size=(140, 40)) as pilot:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-from acorn.config import (
+from fnd.config import (
     CollectionConfig,
     SourceConfig,
     delete_collection,

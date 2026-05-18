@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from acorn.config import Config, load
-from acorn.index import build_index
+from fnd.config import Config, load
+from fnd.index import build_index
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -26,7 +26,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -45,7 +45,7 @@ def unambiguous_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 
 def test_parse_multi_input_extracts_intent() -> None:
-    from acorn.fusion import parse_multi_input
+    from fnd.fusion import parse_multi_input
 
     text = "intent: web page latency\nlex: performance\n"
     result = parse_multi_input(text, synonyms=None)
@@ -55,7 +55,7 @@ def test_parse_multi_input_extracts_intent() -> None:
 
 
 def test_parse_multi_input_no_intent_returns_none() -> None:
-    from acorn.fusion import parse_multi_input
+    from fnd.fusion import parse_multi_input
 
     result = parse_multi_input("lex: foo\nphrase: bar baz\n", synonyms=None)
     assert result.intent is None
@@ -63,7 +63,7 @@ def test_parse_multi_input_no_intent_returns_none() -> None:
 
 
 def test_parse_multi_input_intent_does_not_become_subquery() -> None:
-    from acorn.fusion import parse_multi_input
+    from fnd.fusion import parse_multi_input
 
     result = parse_multi_input("intent: docs\nlex: foo\n", synonyms=None)
     assert all(s.source != "intent" for s in result.subqueries)
@@ -72,7 +72,7 @@ def test_parse_multi_input_intent_does_not_become_subquery() -> None:
 def test_parse_multi_input_intent_last_write_wins() -> None:
     """Multiple intent lines are tolerated; the last one wins (matches
     QMD's "at most one intent line" rule)."""
-    from acorn.fusion import parse_multi_input
+    from fnd.fusion import parse_multi_input
 
     result = parse_multi_input("intent: first\nlex: x\nintent: second\n", synonyms=None)
     assert result.intent == "second"
@@ -81,7 +81,7 @@ def test_parse_multi_input_intent_last_write_wins() -> None:
 def test_make_snippet_prefers_intent_match() -> None:
     """Two query-term occurrences exist; prefer the window that contains
     an intent-token over one that doesn't."""
-    from acorn.query import _make_snippet
+    from fnd.query import _make_snippet
 
     body = (
         "Performance is great in athletes. "
@@ -101,7 +101,7 @@ def test_make_snippet_prefers_intent_match() -> None:
 def test_make_snippet_falls_back_when_no_intent_match() -> None:
     """If no occurrence's window overlaps with intent tokens, return the
     first-occurrence snippet (no error, no missed result)."""
-    from acorn.query import _make_snippet
+    from fnd.query import _make_snippet
 
     body = "Performance varies. Athletic performance is well-studied."
     # Intent tokens won't appear in the body — fallback to first match.
@@ -112,9 +112,9 @@ def test_make_snippet_falls_back_when_no_intent_match() -> None:
 def test_intent_in_multi_input_disables_bypass(cfg: Config, unambiguous_index: Path) -> None:
     """End-to-end: parse_multi_input → search_layered with intent →
     regime is NOT strong-signal."""
-    from acorn.fusion import parse_multi_input
-    from acorn.layered import search_layered
-    from acorn.query import Searcher
+    from fnd.fusion import parse_multi_input
+    from fnd.layered import search_layered
+    from fnd.query import Searcher
 
     parsed = parse_multi_input("intent: organelles\nlex: mitochondrion\n", synonyms=None)
     assert parsed.intent == "organelles"

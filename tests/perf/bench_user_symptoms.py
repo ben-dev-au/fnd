@@ -34,16 +34,16 @@ from pathlib import Path
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-DIAG_PATH = Path("/tmp/acorn-preview-diag.log")
+DIAG_PATH = Path("/tmp/fnd-preview-diag.log")
 if DIAG_PATH.exists():
     DIAG_PATH.unlink()
-os.environ["ACORN_PREVIEW_DIAG"] = "1"
-os.environ["ACORN_REVEAL_FIRST"] = "1"
+os.environ["FND_PREVIEW_DIAG"] = "1"
+os.environ["FND_REVEAL_FIRST"] = "1"
 
-from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
-from acorn.index import build_index  # noqa: E402
-from acorn.tui import AcornApp  # noqa: E402
-from acorn.tui.app import AcornMarkdown, PreviewContainer  # noqa: E402
+from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
+from fnd.index import build_index  # noqa: E402
+from fnd.tui import FNDApp  # noqa: E402
+from fnd.tui.app import FNDMarkdown, PreviewContainer  # noqa: E402
 from tests.perf import _corpus  # noqa: E402
 
 MATCH_TOKEN = _corpus.MATCH_TOKEN
@@ -94,7 +94,7 @@ class ClickReport:
 
 
 async def _poll_milestones(
-    app: AcornApp,
+    app: FNDApp,
     report: ClickReport,
     deadline: float,
 ) -> None:
@@ -128,14 +128,14 @@ async def _poll_milestones(
                 if widget is not None:
                     if report.t_focused_widget is None:
                         report.t_focused_widget = now_rel
-                    if isinstance(widget, AcornMarkdown):
+                    if isinstance(widget, FNDMarkdown):
                         if (
                             report.t_first_match_block is None
                             and widget.first_match_block is not None
                         ):
                             report.t_first_match_block = now_rel
                     else:
-                        # Non-AcornMarkdown focused widget (e.g. table DT
+                        # Non-FNDMarkdown focused widget (e.g. table DT
                         # registered itself) — treat existence as match
                         # resolved.
                         if report.t_first_match_block is None:
@@ -164,13 +164,13 @@ def _capture_log_excerpts() -> tuple[logging.Handler, io.StringIO]:
     h = logging.StreamHandler(buf)
     h.setLevel(logging.WARNING)
     h.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
-    for name in ("", "textual", "acorn"):
+    for name in ("", "textual", "fnd"):
         logging.getLogger(name).addHandler(h)
     return h, buf
 
 
 def _release_log_handler(h: logging.Handler) -> None:
-    for name in ("", "textual", "acorn"):
+    for name in ("", "textual", "fnd"):
         try:
             logging.getLogger(name).removeHandler(h)
         except Exception:
@@ -195,7 +195,7 @@ async def drive(corpus_root: Path) -> tuple[list[ClickReport], str, str]:
 
     log_handler, log_buf = _capture_log_excerpts()
 
-    app = AcornApp(
+    app = FNDApp(
         index_dir=index_dir,
         config=cfg,
         collection="default",
@@ -372,7 +372,7 @@ def render(reports: list[ClickReport]) -> str:
 
 
 async def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="acorn-symptoms-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="fnd-symptoms-") as tmp:
         root = Path(tmp)
         corpus = build_corpus(root)
         reports, _diag, log_text = await drive(corpus)

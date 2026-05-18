@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from acorn.extract.base import Block
-from acorn.index import build_index
-from acorn.query import FileChunk, Searcher
-from acorn.render import render_document
-from acorn.tui import AcornApp
+from fnd.extract.base import Block
+from fnd.index import build_index
+from fnd.query import FileChunk, Searcher
+from fnd.render import render_document
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -135,7 +135,7 @@ async def test_tui_renders_full_document_when_section_focused(built_index: Path)
     """Phase 5 contract: focused PDF file mounts ONE LineBufferPreview;
     every chunk's line range registers in ``chunk_to_range`` and every
     anchor term carries a match style baked into the FileView's lines."""
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         from textual.widgets import Tree

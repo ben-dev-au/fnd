@@ -1,4 +1,4 @@
-"""Phase 5 host wire-in — AcornApp routes PDF/TXT through LineBufferPreview.
+"""Phase 5 host wire-in — FNDApp routes PDF/TXT through LineBufferPreview.
 
 These tests assert the user-visible contracts the redesign promised:
 
@@ -22,11 +22,11 @@ from pathlib import Path
 import pytest
 from textual.widgets import Static, Tree
 
-from acorn.config import Config, load
-from acorn.index import build_index
-from acorn.tui import AcornApp
-from acorn.tui.line_buffer import LineBufferPreview
-from acorn.tui.preview_scrollbar import MatchAwareScrollBar
+from fnd.config import Config, load
+from fnd.index import build_index
+from fnd.tui import FNDApp
+from fnd.tui.line_buffer import LineBufferPreview
+from fnd.tui.preview_scrollbar import MatchAwareScrollBar
 
 
 @pytest.fixture
@@ -39,7 +39,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -104,7 +104,7 @@ def md_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 async def test_pdf_preview_uses_line_buffer(pdf_index: Path) -> None:
     """A PDF result mounts one LineBufferPreview inside #preview_pane;
     no PreviewContainer is active."""
-    app = AcornApp(index_dir=pdf_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=pdf_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
@@ -130,7 +130,7 @@ async def test_flat_buffer_scrollbar_carries_line_precise_markers(
     """The widget pushes its match-line positions into its own
     MatchAwareScrollBar on ``set_file_view`` so the line-precise
     markers paint without any wiring from the host."""
-    app = AcornApp(index_dir=pdf_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=pdf_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
@@ -163,7 +163,7 @@ async def test_cursor_between_sections_calls_scroll_to_chunk_each_time(
     must call ``scroll_to_chunk`` with each new chunk_seq — testing
     that directly via a spy (independent of fixture viewport size /
     whether the buffer is tall enough to actually scroll)."""
-    app = AcornApp(index_dir=multi_match_pdf_index, initial_query="zebra")
+    app = FNDApp(index_dir=multi_match_pdf_index, initial_query="zebra")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
@@ -221,7 +221,7 @@ async def test_only_one_flat_buffer_is_visible_at_a_time(
     buffers from the layout — they stacked in the pane, each with
     their own scrollbar. Pin the invariant: at most ONE buffer in the
     pane is visible (display != none) at any time."""
-    app = AcornApp(index_dir=multi_match_pdf_index, initial_query="zebra")
+    app = FNDApp(index_dir=multi_match_pdf_index, initial_query="zebra")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
@@ -270,11 +270,11 @@ async def test_switching_md_to_pdf_hides_structural_container(
 
     combined_index = pdf_index.parent / "combined_index"
     combined_index.mkdir(parents=True, exist_ok=True)
-    from acorn.index import build_index as _build
+    from fnd.index import build_index as _build
 
     _build(roots=[workspace], index_dir=combined_index, collection="default")
 
-    app = AcornApp(index_dir=combined_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=combined_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
@@ -287,7 +287,7 @@ async def test_switching_md_to_pdf_hides_structural_container(
             await pilot.pause()
 
         pane = app.query_one("#preview_pane")
-        from acorn.tui.app import PreviewContainer
+        from fnd.tui.app import PreviewContainer
 
         visible_buffers = [b for b in pane.query(LineBufferPreview) if b.display]
         visible_containers = [c for c in pane.query(PreviewContainer) if c.display]
@@ -302,7 +302,7 @@ async def test_switching_md_to_pdf_hides_structural_container(
 async def test_flat_buffer_cache_hit_reuses_widget(pdf_index: Path) -> None:
     """Re-cursoring back onto the same PDF doesn't remount — the
     cached LineBufferPreview is flipped visible again."""
-    app = AcornApp(index_dir=pdf_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=pdf_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
@@ -331,7 +331,7 @@ async def test_flat_buffer_cache_hit_reuses_widget(pdf_index: Path) -> None:
 async def test_md_preview_keeps_structural_path(cfg: Config, md_index: Path) -> None:
     """Markdown files still mount the PreviewContainer — the structural
     path is unchanged by the Phase 5 wire-in."""
-    app = AcornApp(index_dir=md_index, config=cfg, initial_query="susy")
+    app = FNDApp(index_dir=md_index, config=cfg, initial_query="susy")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)

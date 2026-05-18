@@ -94,7 +94,7 @@ async def main() -> None:
     app = _Demo()
     async with app.run_test(size=(150, 50)) as pilot:
         await pilot.pause()
-        app.save_screenshot(filename="/tmp/acorn_md_demo.svg")
+        app.save_screenshot(filename="/tmp/fnd_md_demo.svg")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # Preview-pane DOM architecture — proposal comparison and recommended path
 
-A read of the three AI proposals (Gemini, GPT-5.4, Claude 4.7) against `acorn`'s
+A read of the three AI proposals (Gemini, GPT-5.4, Claude 4.7) against `fnd`'s
 current preview-pipeline code, plus a staged next-step plan.
 
 ---
@@ -8,12 +8,12 @@ current preview-pipeline code, plus a staged next-step plan.
 ## TL;DR
 
 1. **You're not as far from the answer as the proposals assume.** `LineBufferPreview`
-   in `acorn/tui/line_buffer.py` is already a fully working version of the "flat
+   in `fnd/tui/line_buffer.py` is already a fully working version of the "flat
    strip-buffer" pattern that GPT calls "scene-based viewport" and Claude 4.7
    calls P2/P6. It just happens to be wired only to PDF/TXT today. The
    architectural bet is already half-paid.
 2. **The DOM problem only exists on the structural path** (`md`/`docx`/`pptx` →
-   `AcornMarkdown` chunk widgets inside `PreviewContainer`). All three proposals
+   `FNDMarkdown` chunk widgets inside `PreviewContainer`). All three proposals
    are essentially answering one question: *how do we get the structural path to
    the same DOM-cost profile as the flat path, without losing visual polish?*
 3. **All three responses converge on the same diagnosis** (display:none does not
@@ -36,10 +36,10 @@ current preview-pipeline code, plus a staged next-step plan.
 ## Current architecture (anchored in the code)
 
 The preview pane runs **two parallel pipelines** chosen per-file by
-`choose_preview_mode()` (`acorn/tui/preview_dispatcher.py:34`).
+`choose_preview_mode()` (`fnd/tui/preview_dispatcher.py:34`).
 
 **Flat pipeline — PDF / TXT.** One `LineBufferPreview` widget per file
-(`acorn/tui/line_buffer.py:195`). It's a `ScrollView` subclass whose
+(`fnd/tui/line_buffer.py:195`). It's a `ScrollView` subclass whose
 `render_line(y)` paints from a pre-built `list[Strip]`. Match highlights are
 baked into Rich spans at `build_file_view` time (`line_buffer.py:121`);
 chunk-boundary gap rows are part of the line array; a parallel `match_lines`
@@ -49,7 +49,7 @@ the strips off-thread (`app.py:2174`). **The "scene-based viewport" architecture
 is already shipped for these formats.**
 
 **Structural pipeline — MD / DOCX / PPTX.** Each chunk becomes an
-`AcornMarkdown` widget (`app.py:383`), which is `textual.widgets.Markdown`
+`FNDMarkdown` widget (`app.py:383`), which is `textual.widgets.Markdown`
 subclassed with `_HighlightingBlockMixin` for inline highlight overlays.
 Headings, paragraphs, lists, blockquotes, and table cells get highlight-aware
 subclasses; code fences deliberately keep the stock Rich-syntax renderer
@@ -67,7 +67,7 @@ BELOW = 7` each side, (2a) below-window fill capped at
 on each mounted widget so the focused chunk's screen position doesn't drift,
 then a bulk reveal.
 
-**Where the DOM blows up.** Each `AcornMarkdown` block expands to several
+**Where the DOM blows up.** Each `FNDMarkdown` block expands to several
 `MarkdownBlock` descendants (heading rows, paragraph spans, fence containers,
 table cells, etc.). For a markdown file with N chunks, the steady-state DOM
 contribution is in the order of `N × (5–30)` widgets. With `LRU_CAP = 8` cached
@@ -141,7 +141,7 @@ cost.
 **Pros.**
 
 - **Zero rendering changes.** Everything inside the cached screen is your
-  current `AcornMarkdown` tree. Tables, fences, links, heading CSS, highlight
+  current `FNDMarkdown` tree. Tables, fences, links, heading CSS, highlight
   overlays — all preserved exactly.
 - **Cheapest cache-hit possible.** `switch_screen` fires a `ScreenSuspend` /
   `ScreenResume` pair; nothing mounts or unmounts. Strip caches survive.
@@ -172,7 +172,7 @@ Textual's mode system and Posting/Harlequin use the same primitive.
 ### 2. Two-tier: focused-chunk interactive, rest flat (Claude 4.7 P3 / GPT pattern 6 / Gemini P4)
 
 **Idea.** Per-file preview = three regions stacked vertically: flat
-`LineBufferPreview` for chunks before focus, one `AcornMarkdown` widget for the
+`LineBufferPreview` for chunks before focus, one `FNDMarkdown` widget for the
 focused chunk, flat `LineBufferPreview` for chunks after focus. On focus
 change, re-flatten the previously-focused chunk into the appropriate flat
 widget and inflate the newly-focused chunk into a `Markdown` widget.
@@ -184,7 +184,7 @@ widget and inflate the newly-focused chunk into a `Markdown` widget.
   and multi-line selection for plain text. Extending `build_file_view` to
   accept structured `body_md` chunks is incremental, not green-field.
 - **DOM cost is bounded and predictable.** ≈ `3 + (focused chunk's
-  AcornMarkdown subtree)` ≈ 30–60 widgets per cached file. With LRU = 8 that's
+  FNDMarkdown subtree)` ≈ 30–60 widgets per cached file. With LRU = 8 that's
   ~240–480 — well under your unresponsiveness threshold.
 - **Polish in the focused chunk is identical to today.** Tables scroll,
   fences syntax-highlight, links style as today.
@@ -280,7 +280,7 @@ other patterns — this just sits underneath them.
 
 Already in place for the **flat** path: the prefetch worker runs
 `build_file_view` + `_render_lines` in a thread (`app.py:2172`). Not in place
-for the structural path — `_mount_chunks_async` does the `AcornMarkdown(...)`
+for the structural path — `_mount_chunks_async` does the `FNDMarkdown(...)`
 construction on the main thread, which is where most of the markdown-it /
 Rich parsing cost lives.
 
@@ -376,11 +376,11 @@ visible behaviour change.
 
 **Goal.** Match the flat path's prefetch model.
 
-- Move `AcornMarkdown` source preparation (`_legacy_blocks_to_md`, etc.) and
+- Move `FNDMarkdown` source preparation (`_legacy_blocks_to_md`, etc.) and
   any markdown-it / Rich pre-parsing that can happen pre-mount into the
   existing prefetch worker (`_prefetch_one` in `app.py:2157`).
 - On the main thread, prefetch handoff becomes a single `app.mount(widget)`
-  per chunk rather than `AcornMarkdown(...)` + mount.
+  per chunk rather than `FNDMarkdown(...)` + mount.
 
 **Why second.** Almost certainly worth doing on its own. Stage 3 needs it to
 make screen-prebuilding feasible.
@@ -415,10 +415,10 @@ mount cost on first-visit-per-file is still too high.
 
 - Build the markdown flattener (`build_file_view`-equivalent for `body_md`
   chunks). The hard part is producing line-accurate `Strip`s from markdown
-  source — your existing `AcornMarkdown` block tree gives you the structural
+  source — your existing `FNDMarkdown` block tree gives you the structural
   AST; you'd Console-render each block to Segments and split on newlines.
 - Per-file preview becomes a small `Vertical` with three children: pre-flat,
-  focused `AcornMarkdown`, post-flat.
+  focused `FNDMarkdown`, post-flat.
 - Reuse `MatchAwareScrollBar` against a shared `match_lines` set.
 
 **Decision gate.** Same as Stage 3.
@@ -431,9 +431,9 @@ enough that it shouldn't be the first thing you reach for.
 
 ---
 
-## Risks specific to acorn's current code
+## Risks specific to fnd's current code
 
-- **Highlight-aware block subclasses (`AcornMarkdownH1`…`AcornMarkdownTD`)** are
+- **Highlight-aware block subclasses (`FNDMarkdownH1`…`FNDMarkdownTD`)** are
   the part of the structural pipeline that doesn't survive a move to a flat
   carrier as-is. The highlight logic itself is portable (`_build_match_spans`
   is already pure), but the *mechanism* changes from "subclass `MarkdownBlock`
@@ -441,7 +441,7 @@ enough that it shouldn't be the first thing you reach for.
   rewrite time accordingly.
 - **`_finalize_pre_reveal` + the multi-phase mount choreography** (`app.py:
   1761`, `app.py:2453`) is a careful piece of timing logic that exists because
-  mounting `AcornMarkdown` widgets is expensive. Screens-as-LRU largely
+  mounting `FNDMarkdown` widgets is expensive. Screens-as-LRU largely
   eliminates the *reason* for this logic, but it'll need to be re-derived if
   you re-introduce mounting elsewhere (e.g. in Stage 4's two-tier focused
   swap).
@@ -471,5 +471,5 @@ enough that it shouldn't be the first thing you reach for.
 ---
 
 *Generated 2026-05-15 from `# GPT & Gemini Responses - DOM.md` plus a read of
-`acorn/tui/app.py`, `acorn/tui/line_buffer.py`, `acorn/tui/preview_dispatcher.py`,
-`acorn/tui/preview_scrollbar.py`, and `acorn/render.py`.*
+`fnd/tui/app.py`, `fnd/tui/line_buffer.py`, `fnd/tui/preview_dispatcher.py`,
+`fnd/tui/preview_scrollbar.py`, and `fnd/render.py`.*

@@ -21,8 +21,8 @@ from pathlib import Path
 import pytest
 from textual.widgets import Tree
 
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 async def test_initial_query_lands_cursor_on_first_hit(built_index: Path) -> None:
     """``--query`` populates results AND seats the cursor on the first
     hit of the auto-expanded top file."""
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
@@ -53,7 +53,7 @@ async def test_right_arrow_on_collapsed_file_drops_cursor_on_first_child(
     """Right on a collapsed file → expand it AND move the cursor to its
     first hit (so the next Down advances to the second hit, not the
     first)."""
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)

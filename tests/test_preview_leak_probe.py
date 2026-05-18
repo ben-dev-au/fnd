@@ -52,13 +52,13 @@ async def test_preview_container_count_bounded_by_cache(
     Pre-fix this grew linearly with visits."""
     from textual.widgets import Tree
 
-    from acorn.index import build_index
-    from acorn.tui import AcornApp
-    from acorn.tui.app import PreviewContainer
+    from fnd.index import build_index
+    from fnd.tui import FNDApp
+    from fnd.tui.app import PreviewContainer
 
-    monkeypatch.setattr("acorn.tui.app._PREVIEW_CACHE_MAX_FILES", _TEST_LRU_CAP)
+    monkeypatch.setattr("fnd.tui.app._PREVIEW_CACHE_MAX_FILES", _TEST_LRU_CAP)
     build_index(roots=[small_corpus], index_dir=tmp_index_dir, collection="default")
-    app = AcornApp(index_dir=tmp_index_dir, initial_query="apple")
+    app = FNDApp(index_dir=tmp_index_dir, initial_query="apple")
     # PreviewCache binds its default max_files at class-definition time;
     # override the instance attribute so this test's cap actually applies.
     app._preview_cache.max_files = _TEST_LRU_CAP

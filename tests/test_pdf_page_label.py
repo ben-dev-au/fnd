@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pymupdf  # type: ignore[import-not-found]
 
-from acorn.extract.pdf import extract
-from acorn.render import _chunk_header
+from fnd.extract.pdf import extract
+from fnd.render import _chunk_header
 
 
 def _build_labeled_pdf(path: Path) -> None:
@@ -220,9 +220,9 @@ def test_page_label_survives_layered_search_pipeline(tmp_path: Path, tmp_index_d
     must propagate ``page_label`` — otherwise the result-tree locator
     falls back to the PDF index even though the index has the right
     label stored. This used to silently drop the field at four sites."""
-    from acorn.index import build_index
-    from acorn.layered import search_layered
-    from acorn.query import Searcher
+    from fnd.index import build_index
+    from fnd.layered import search_layered
+    from fnd.query import Searcher
 
     pdf = tmp_path / "labeled.pdf"
     _build_labeled_pdf(pdf)

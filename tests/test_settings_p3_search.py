@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from acorn.config import CollectionConfig, Config, SourceConfig
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.config import CollectionConfig, Config, SourceConfig
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -31,9 +31,9 @@ def _seed_config(fixtures_dir: Path) -> Config:
 async def test_walk_all_sections_includes_every_leaf(built_index: Path, fixtures_dir: Path) -> None:
     """Spec: Search behaviour › Index — walker covers Preferences,
     Collections, Keybindings, and root-level actions."""
-    from acorn.tui.menu import KIND_HEADER, walk_all_sections
+    from fnd.tui.menu import KIND_HEADER, walk_all_sections
 
-    app = AcornApp(index_dir=built_index, config=_seed_config(fixtures_dir))
+    app = FNDApp(index_dir=built_index, config=_seed_config(fixtures_dir))
     async with app.run_test():
         all_items = list(walk_all_sections(app))
         labels = {item.label for _path, item in all_items}
@@ -54,9 +54,9 @@ async def test_walk_all_sections_includes_every_leaf(built_index: Path, fixtures
 async def test_walk_includes_scope_pseudo_row(built_index: Path, fixtures_dir: Path) -> None:
     """Spec: Use cases › D — pre-empt confusion about active scope by
     surfacing a sidebar pointer in cross-section results."""
-    from acorn.tui.menu import walk_all_sections
+    from fnd.tui.menu import walk_all_sections
 
-    app = AcornApp(index_dir=built_index, config=_seed_config(fixtures_dir))
+    app = FNDApp(index_dir=built_index, config=_seed_config(fixtures_dir))
     async with app.run_test():
         all_items = list(walk_all_sections(app))
         scope = next(
@@ -77,9 +77,9 @@ async def test_search_on_root_finds_preferences_leaf(built_index: Path, fixtures
     every section, with the breadcrumb on each row."""
     from textual.widgets import Input
 
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index, config=_seed_config(fixtures_dir))
+    app = FNDApp(index_dir=built_index, config=_seed_config(fixtures_dir))
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -103,9 +103,9 @@ async def test_search_on_keybindings_finds_preference(
     finds items in other sections."""
     from textual.widgets import Input
 
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index, config=_seed_config(fixtures_dir))
+    app = FNDApp(index_dir=built_index, config=_seed_config(fixtures_dir))
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_show_help()
@@ -128,13 +128,13 @@ async def test_search_match_for_scalar_opens_edit_bar_inline(
     open the edit bar on the *current* screen."""
     from textual.widgets import Input
 
-    from acorn.tui.settings_screen import (
+    from fnd.tui.settings_screen import (
         EditBar,
         SettingsList,
         SettingsScreen,
     )
 
-    app = AcornApp(index_dir=built_index, config=_seed_config(fixtures_dir))
+    app = FNDApp(index_dir=built_index, config=_seed_config(fixtures_dir))
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -158,8 +158,8 @@ async def test_search_match_for_scalar_opens_edit_bar_inline(
 
 def test_search_result_label_has_bold_substring_for_query() -> None:
     """Spec: Search › Match display — matched substring rendered bold."""
-    from acorn.tui.menu import KIND_SCALAR, MenuItem
-    from acorn.tui.settings_screen import _render_row
+    from fnd.tui.menu import KIND_SCALAR, MenuItem
+    from fnd.tui.settings_screen import _render_row
 
     item = MenuItem(id="x", label="Result limit", kind=KIND_SCALAR)
     rendered = _render_row(item, app=None, width=80, highlight="result")
@@ -173,8 +173,8 @@ def test_search_result_label_has_bold_substring_for_query() -> None:
 
 def test_render_row_no_highlight_when_query_misses() -> None:
     """Substring matching is case-insensitive but only bolds on a hit."""
-    from acorn.tui.menu import KIND_SCALAR, MenuItem
-    from acorn.tui.settings_screen import _render_row
+    from fnd.tui.menu import KIND_SCALAR, MenuItem
+    from fnd.tui.settings_screen import _render_row
 
     item = MenuItem(id="x", label="Result limit", kind=KIND_SCALAR)
     rendered = _render_row(item, app=None, width=80, highlight="zzz")
@@ -195,9 +195,9 @@ async def test_zero_match_shows_empty_state_hint(built_index: Path) -> None:
     """Spec: Search › Empty-state hint — `No matches for '<q>'` placeholder."""
     from textual.widgets import Input
 
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -217,12 +217,12 @@ def test_filter_haystack_excludes_description() -> None:
     description prose. Indexing descriptions muddies results."""
     import asyncio
 
-    from acorn.config import CollectionConfig, Config, SourceConfig
-    from acorn.tui import AcornApp
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd.config import CollectionConfig, Config, SourceConfig
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import SettingsScreen
 
     async def run() -> None:
-        app = AcornApp()
+        app = FNDApp()
         cfg = Config(collections={"x": CollectionConfig(sources=[SourceConfig(path=Path("."))])})
         app._config = cfg
         async with app.run_test() as pilot:

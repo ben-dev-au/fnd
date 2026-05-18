@@ -15,11 +15,11 @@ from pathlib import Path
 
 import pytest
 
-from acorn.extract.base import Block
-from acorn.index import build_index
-from acorn.query import FileChunk
-from acorn.render import render_chunk_pieces
-from acorn.tui import AcornApp
+from fnd.extract.base import Block
+from fnd.index import build_index
+from fnd.query import FileChunk
+from fnd.render import render_chunk_pieces
+from fnd.tui import FNDApp
 
 # ── render_chunk_pieces unit tests ──────────────────────────────────
 
@@ -125,7 +125,7 @@ async def test_match_target_is_a_line_widget_not_the_header(
     first line. The user-visible bug was scrolling to "page top"
     instead of the actual match position — the flat buffer's
     ``first_hit_line_in_chunk`` map keeps the precise target."""
-    app = AcornApp(index_dir=long_page_pdf_index, initial_query="zebra")
+    app = FNDApp(index_dir=long_page_pdf_index, initial_query="zebra")
     async with app.run_test() as pilot:
         await pilot.pause()
         from textual.widgets import Tree
@@ -161,7 +161,7 @@ async def test_match_target_falls_back_to_header_when_no_match_in_chunk(
     """Chunks without query-term matches still need a scroll target —
     ``scroll_to_chunk`` falls back to the chunk's first line when
     ``first_hit_line_in_chunk`` has no entry for that chunk."""
-    app = AcornApp(index_dir=long_page_pdf_index, initial_query="zebra")
+    app = FNDApp(index_dir=long_page_pdf_index, initial_query="zebra")
     async with app.run_test() as pilot:
         await pilot.pause()
         from textual.widgets import Tree

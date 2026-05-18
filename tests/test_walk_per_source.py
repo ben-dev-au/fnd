@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from acorn.config import SourceConfig
-from acorn.walk import walk_sources
+from fnd.config import SourceConfig
+from fnd.walk import walk_sources
 
 
 def _touch(p: Path, body: str = "x") -> None:

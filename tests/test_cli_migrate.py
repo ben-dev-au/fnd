@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from acorn.cli import app
-from acorn.config import CollectionConfig, SourceConfig
-from acorn.index import build_index_from_config
-from acorn.schema import SCHEMA_VERSION
+from fnd.cli import app
+from fnd.config import CollectionConfig, SourceConfig
+from fnd.index import build_index_from_config
+from fnd.schema import SCHEMA_VERSION
 
 
 def _touch(p: Path, body: str) -> None:
@@ -40,12 +40,12 @@ def stale_corpus(tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.Monkey
     )
 
     # Now make the sidecar stale.
-    (tmp_index_dir / ".acorn-schema-version").write_text("1")
+    (tmp_index_dir / ".fnd-schema-version").write_text("1")
 
-    monkeypatch.setattr("acorn.cli.default_index_dir", lambda: tmp_index_dir)
-    monkeypatch.setattr("acorn.cli.default_config_path", lambda: cfg_path)
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
-    monkeypatch.setenv("ACORN_FORCE_TTY", "1")
+    monkeypatch.setattr("fnd.cli.default_index_dir", lambda: tmp_index_dir)
+    monkeypatch.setattr("fnd.cli.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setenv("FND_FORCE_TTY", "1")
     return tmp_index_dir
 
 
@@ -61,7 +61,7 @@ def test_search_prompts_rebuild_on_stale_and_proceeds(
     )
     assert result.exit_code == 0, result.output
     # Rebuild should have written the current version back to the sidecar.
-    sidecar = stale_corpus / ".acorn-schema-version"
+    sidecar = stale_corpus / ".fnd-schema-version"
     assert sidecar.read_text().strip() == str(SCHEMA_VERSION)
     # Search should have actually run after the rebuild.
     assert "a.md" in result.output
@@ -89,7 +89,7 @@ def test_search_works_when_schema_already_current(
     _touch(notes / "a.md", "# A\nlightning rod\n")
     cc = CollectionConfig(sources=[SourceConfig(path=notes, includes=["**/*.md"])])
     build_index_from_config(config=cc, collection="notes", index_dir=tmp_index_dir)
-    monkeypatch.setattr("acorn.cli.default_index_dir", lambda: tmp_index_dir)
+    monkeypatch.setattr("fnd.cli.default_index_dir", lambda: tmp_index_dir)
 
     runner = CliRunner()
     result = runner.invoke(app, ["search", "lightning rod", "--collection", "notes"])

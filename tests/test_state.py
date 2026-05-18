@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from acorn.state import UiState, load, save
+from fnd.state import UiState, load, save
 
 
 def test_load_missing_file_returns_empty(tmp_path: Path) -> None:

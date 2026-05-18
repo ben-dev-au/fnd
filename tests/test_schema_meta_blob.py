@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from tantivy import Document
 
-from acorn.schema import F_META_BLOB, SCHEMA_VERSION, build_schema
+from fnd.schema import F_META_BLOB, SCHEMA_VERSION, build_schema
 
 
 def test_schema_version_is_at_least_two() -> None:
@@ -31,9 +31,9 @@ def test_schema_accepts_meta_blob_bytes() -> None:
 
 def test_old_index_sidecar_refuses_load(tmp_path: Path) -> None:
     """An index dir with a v1 sidecar must refuse to load under v2."""
-    from acorn.index import _ensure_index
+    from fnd.index import _ensure_index
 
-    sidecar = tmp_path / ".acorn-schema-version"
+    sidecar = tmp_path / ".fnd-schema-version"
     sidecar.write_text("1")
     with pytest.raises(RuntimeError, match="schema version"):
         _ensure_index(tmp_path)
@@ -51,9 +51,9 @@ def test_force_rebuild_wipes_stale_index_dir(tmp_path: Path) -> None:
     a fresh index. (Tantivy regenerates its own ``meta.json`` after the
     wipe — that's expected.)
     """
-    from acorn.index import _ensure_index
+    from fnd.index import _ensure_index
 
-    sidecar = tmp_path / ".acorn-schema-version"
+    sidecar = tmp_path / ".fnd-schema-version"
     sidecar.write_text("1")
     # Simulate leftover artefacts from a v1 index. ``meta.json`` with
     # a mismatched schema is what triggered the original bug.
@@ -92,7 +92,7 @@ def _build_legacy_v1_index(index_dir: Path) -> None:
     Index(schema, path=str(index_dir))
     # Pretend a prior force-rebuild bumped the sidecar but crashed before
     # Tantivy got new segments — the exact stuck state in the field.
-    (index_dir / ".acorn-schema-version").write_text(str(SCHEMA_VERSION))
+    (index_dir / ".fnd-schema-version").write_text(str(SCHEMA_VERSION))
 
 
 def test_force_rebuild_recovers_from_inconsistent_sidecar_and_meta_json(
@@ -102,7 +102,7 @@ def test_force_rebuild_recovers_from_inconsistent_sidecar_and_meta_json(
     to the current version but Tantivy's meta.json still has v1 schema.
     Subsequent calls with ``force=True`` must wipe and recreate, not
     propagate Tantivy's ``Schema error`` ValueError."""
-    from acorn.index import _ensure_index
+    from fnd.index import _ensure_index
 
     _build_legacy_v1_index(tmp_path)
     # Sanity: opening with the current schema raises ValueError.
@@ -122,7 +122,7 @@ def test_open_without_force_on_inconsistent_dir_gives_clear_error(
     """Without ``force=True``, the same inconsistent state surfaces as a
     RuntimeError pointing the user at the rebuild command — not Tantivy's
     cryptic ``Schema error``."""
-    from acorn.index import _ensure_index
+    from fnd.index import _ensure_index
 
     _build_legacy_v1_index(tmp_path)
     with pytest.raises(RuntimeError, match=r"inconsistent|rebuild"):
@@ -134,7 +134,7 @@ def test_check_schema_status_detects_inconsistent_dir(tmp_path: Path) -> None:
     the sidecar matches but Tantivy disagrees, it must return STALE so
     the migrate prompt fires (instead of trusting the sidecar and
     blowing up later in the TUI)."""
-    from acorn.migrate import SchemaStatus, check_schema_status
+    from fnd.migrate import SchemaStatus, check_schema_status
 
     _build_legacy_v1_index(tmp_path)
     status, version = check_schema_status(tmp_path)

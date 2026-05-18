@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 from textual.widgets import Tree
 
-from acorn.config import CollectionConfig, Config, SourceConfig
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.config import CollectionConfig, Config, SourceConfig
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -45,7 +45,7 @@ def _first_collection_node(ctree: Tree[dict[str, object]]):
 async def test_toggling_collection_on_marks_all_sources(
     built_index: Path, multi_source_config: Config, isolated_ui_state: Path
 ) -> None:
-    app = AcornApp(index_dir=built_index, config=multi_source_config)
+    app = FNDApp(index_dir=built_index, config=multi_source_config)
     async with app.run_test() as pilot:
         await pilot.pause()
         ctree = app.query_one("#collections_panel_tree", Tree)
@@ -77,7 +77,7 @@ async def test_toggling_collection_on_marks_all_sources(
 async def test_single_source_toggle_marks_collection_partial(
     built_index: Path, multi_source_config: Config, isolated_ui_state: Path
 ) -> None:
-    app = AcornApp(index_dir=built_index, config=multi_source_config)
+    app = FNDApp(index_dir=built_index, config=multi_source_config)
     async with app.run_test() as pilot:
         await pilot.pause()
         ctree = app.query_one("#collections_panel_tree", Tree)
@@ -107,7 +107,7 @@ async def test_single_source_toggle_marks_collection_partial(
 async def test_all_sources_toggled_individually_marks_collection_full(
     built_index: Path, multi_source_config: Config, isolated_ui_state: Path
 ) -> None:
-    app = AcornApp(index_dir=built_index, config=multi_source_config)
+    app = FNDApp(index_dir=built_index, config=multi_source_config)
     async with app.run_test() as pilot:
         await pilot.pause()
         ctree = app.query_one("#collections_panel_tree", Tree)
@@ -135,7 +135,7 @@ async def test_all_sources_toggled_individually_marks_collection_full(
 async def test_toggle_collection_off_clears_sources(
     built_index: Path, multi_source_config: Config, isolated_ui_state: Path
 ) -> None:
-    app = AcornApp(index_dir=built_index, config=multi_source_config)
+    app = FNDApp(index_dir=built_index, config=multi_source_config)
     async with app.run_test() as pilot:
         await pilot.pause()
         ctree = app.query_one("#collections_panel_tree", Tree)
@@ -164,7 +164,7 @@ async def test_cli_collection_shows_full_marker(
 ) -> None:
     """Launching with ``--collection TWO`` should display TWO as
     fully active (●) — every source toggled on — not as empty (○)."""
-    app = AcornApp(index_dir=built_index, collection="TWO", config=multi_source_config)
+    app = FNDApp(index_dir=built_index, collection="TWO", config=multi_source_config)
     async with app.run_test() as pilot:
         await pilot.pause()
         ctree = app.query_one("#collections_panel_tree", Tree)
@@ -199,7 +199,7 @@ async def test_legacy_scope_only_collections_renders_as_full(
         "[panels]\ncollapsed = []\nexpanded_collections = []\nexpanded_filter_branches = []\n"
         '[filters]\nkinds = []\ndate = "any"\n'
     )
-    app = AcornApp(index_dir=built_index, config=multi_source_config)
+    app = FNDApp(index_dir=built_index, config=multi_source_config)
     async with app.run_test() as pilot:
         await pilot.pause()
         assert "TWO" in app._collections
@@ -220,7 +220,7 @@ async def test_toggle_collection_off_from_cli_state(
     """Bug B v2 — pressing Enter on a CLI-flag collection (rendered ●
     with empty ``_active_sources``) must turn it off, not flip into
     the "fully on with sources" state silently."""
-    app = AcornApp(index_dir=built_index, collection="TWO", config=multi_source_config)
+    app = FNDApp(index_dir=built_index, collection="TWO", config=multi_source_config)
     async with app.run_test() as pilot:
         await pilot.pause()
         ctree = app.query_one("#collections_panel_tree", Tree)

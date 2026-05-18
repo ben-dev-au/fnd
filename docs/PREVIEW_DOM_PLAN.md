@@ -9,7 +9,7 @@ preserved for history and tagged at its tip.
 This plan consolidates:
 
 - `preview-dom-analysis.md` (the structured comparison of three AI
-  proposals against `acorn`'s current code) — **primary source**.
+  proposals against `fnd`'s current code) — **primary source**.
 - The three original AI responses (Gemini, GPT 5.4, Claude 4.7) in
   `# GPT & Gemini Responses - DOM.md`.
 - Empirical measurements taken on this branch via
@@ -28,7 +28,7 @@ This plan consolidates:
 1. **The problem is the structural pipeline only.** The flat (PDF /
    TXT) pipeline already uses the single-widget-per-file
    `LineBufferPreview` pattern the research recommends. Markdown /
-   docx / pptx still mount one `AcornMarkdown` widget per chunk and
+   docx / pptx still mount one `FNDMarkdown` widget per chunk and
    that tree is what blows up the DOM, dominates refresh ticks, and
    pushes click latency from synthetic ~0.85 s on the harness to a
    user-reported 3–6 s on real corpora.
@@ -224,7 +224,7 @@ user-visible behaviour change.
 **Action.**
 
 - Introduce `RenderedDocument` (or extend `FileView` in
-  `acorn/tui/line_buffer.py`) carrying:
+  `fnd/tui/line_buffer.py`) carrying:
   - `strips: list[Strip]` (current `FileView.lines`-derived strips
     for flat; populated lazily for structural).
   - `structural_map: list[(line_start, line_end, kind, payload)]`.
@@ -250,11 +250,11 @@ continue to pass.
 
 **Action.**
 
-- Move `AcornMarkdown` source preparation (in `_prefetch_one`,
+- Move `FNDMarkdown` source preparation (in `_prefetch_one`,
   `app.py`) and any markdown-it / Rich pre-parsing into the existing
   prefetch worker thread.
 - On the main thread, prefetch handoff becomes a single
-  `app.mount(widget)` per chunk rather than `AcornMarkdown(...) +
+  `app.mount(widget)` per chunk rather than `FNDMarkdown(...) +
   mount`.
 
 **Why second.** Worth doing on its own; Stage 3 needs it to make
@@ -302,7 +302,7 @@ perceived mount cost on first-visit-per-file is still too high.
 - The flat-markdown render lives in `_md_flat.py` already (Stage 1
   added the structural map).
 - Per-file preview becomes a small `Vertical` with three children:
-  pre-flat (`LineBufferPreview`), focused `AcornMarkdown`, post-flat
+  pre-flat (`LineBufferPreview`), focused `FNDMarkdown`, post-flat
   (`LineBufferPreview`).
 - On chunk-focus change: re-flatten the previously-focused chunk into
   whichever flat widget it belongs to; inflate the newly-focused
@@ -335,20 +335,20 @@ large `LRU_CAP` or 1000-page-document workloads.
 
 These are gotchas to keep in mind during implementation:
 
-- **Highlight-aware block subclasses** (`AcornMarkdownH1` …
-  `AcornMarkdownTD` in `app.py:383+`) don't survive a move to a flat
+- **Highlight-aware block subclasses** (`FNDMarkdownH1` …
+  `FNDMarkdownTD` in `app.py:383+`) don't survive a move to a flat
   carrier as-is. The highlight LOGIC is portable
   (`_build_match_spans` is already pure) but the MECHANISM changes
   from "subclass `MarkdownBlock` and override `build_from_token`" to
   "post-process Strip segments". Plan rewrite time accordingly.
 - **`_finalize_pre_reveal` / `_finalize_via_lock` + the multi-phase
   mount choreography** (`app.py:2211`, `app.py:2864`) exists because
-  mounting `AcornMarkdown` widgets is expensive. Screens-as-LRU
+  mounting `FNDMarkdown` widgets is expensive. Screens-as-LRU
   largely eliminates the REASON for this logic, but it'll need to be
   re-derived if Stage 4 reintroduces mounting elsewhere.
 - **Match-scrollbar ticks** are line-precise on the flat path but
   chunk-uniform on the structural path
-  (`acorn/tui/preview_scrollbar.py:20-32`). Any restructuring should
+  (`fnd/tui/preview_scrollbar.py:20-32`). Any restructuring should
   converge both to line-precise via the structural map (Stage 1).
 - **`Strip.apply_style`** has a known limitation around `post_style`
   ([textualize/textual#6448](https://github.com/Textualize/textual/issues/6448))
@@ -404,8 +404,8 @@ Stage 3 verification:
   position diagnostic; per-click cache-state table.
 - `tests/perf/auto_test.py` — cold-path elapsed and scroll-count
   parsing for cold mounts.
-- Diag log at `/tmp/acorn-preview-diag.log` (when
-  `ACORN_PREVIEW_DIAG=1`), timestamped with monotonic seconds.
+- Diag log at `/tmp/fnd-preview-diag.log` (when
+  `FND_PREVIEW_DIAG=1`), timestamped with monotonic seconds.
 
 ---
 

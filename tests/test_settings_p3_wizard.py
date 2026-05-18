@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from acorn.tui import AcornApp
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
 def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
-    from acorn.index import build_index
+    from fnd.index import build_index
 
     build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
     return tmp_index_dir
@@ -19,7 +19,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 def test_excludes_presets_exposed() -> None:
     """Spec: Wizard › Excludes — preset patterns, with safe defaults."""
-    from acorn.config import EXCLUDES_PRESETS
+    from fnd.config import EXCLUDES_PRESETS
 
     assert "hidden" in EXCLUDES_PRESETS
     hidden = EXCLUDES_PRESETS["hidden"]
@@ -34,16 +34,16 @@ def test_excludes_presets_exposed() -> None:
 async def test_add_collection_pushes_wizard_with_expected_fields(built_index: Path) -> None:
     """Spec: Wizard › Single screen — Name, Source path, Includes,
     Excludes, Frontmatter filter, Follow symlinks, plus the sample tester."""
-    from acorn.tui import AcornApp
-    from acorn.tui.menu import SECTION_COLLECTIONS
-    from acorn.tui.settings_screen import (
+    from fnd.tui import FNDApp
+    from fnd.tui.menu import SECTION_COLLECTIONS
+    from fnd.tui.settings_screen import (
         AddCollectionWizard,
         SettingsList,
         SettingsScreen,
         open_settings_section,
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_COLLECTIONS)
@@ -73,13 +73,13 @@ async def test_add_collection_pushes_wizard_with_expected_fields(built_index: Pa
 @pytest.mark.asyncio
 async def test_includes_field_opens_filetypes_picker(built_index: Path) -> None:
     """Spec: Wizard › Includes — multi-select of indexer-supported types."""
-    from acorn.tui.settings_screen import (
+    from fnd.tui.settings_screen import (
         AddCollectionWizard,
         PickerScreen,
         SettingsList,
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(AddCollectionWizard())
@@ -94,7 +94,7 @@ async def test_includes_field_opens_filetypes_picker(built_index: Path) -> None:
         await pilot.pause()
         assert isinstance(app.screen, PickerScreen)
         # The picker shows the indexer-supported types.
-        from acorn.config import INDEXER_FILETYPES
+        from fnd.config import INDEXER_FILETYPES
 
         choice_values = [c.value for c in app.screen._choices]
         # Every indexer-supported extension appears, plus the custom escape hatch.
@@ -104,13 +104,13 @@ async def test_includes_field_opens_filetypes_picker(built_index: Path) -> None:
 @pytest.mark.asyncio
 async def test_excludes_field_opens_presets_picker_with_defaults(built_index: Path) -> None:
     """Spec: Wizard › Excludes — preset multi-select, hidden pre-checked."""
-    from acorn.tui.settings_screen import (
+    from fnd.tui.settings_screen import (
         AddCollectionWizard,
         PickerScreen,
         SettingsList,
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(AddCollectionWizard())
@@ -132,7 +132,7 @@ async def test_path_validation_inline(tmp_path: Path, built_index: Path) -> None
     """Spec: Wizard › Source path — live ✓/✗ inline validation."""
     from textual.widgets import Input, Static
 
-    from acorn.tui.settings_screen import (
+    from fnd.tui.settings_screen import (
         AddCollectionWizard,
         EditBar,
         SettingsList,
@@ -142,7 +142,7 @@ async def test_path_validation_inline(tmp_path: Path, built_index: Path) -> None
     real_dir.mkdir()
     (real_dir / "a.md").write_text("hello")
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(AddCollectionWizard())
@@ -173,21 +173,21 @@ async def test_save_writes_collection_and_reindexes(
     tmp_path: Path, built_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Spec: Wizard › Save — write_collection + reindex + drop on per-collection sub-screen."""
-    from acorn.config import load
-    from acorn.tui.settings_screen import (
+    from fnd.config import load
+    from fnd.tui.settings_screen import (
         AddCollectionWizard,
         SettingsScreen,
     )
 
     # Redirect all config reads/writes to an isolated temp file.
     cfg_path = tmp_path / "config.toml"
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
 
     real_dir = tmp_path / "vault"
     real_dir.mkdir()
     (real_dir / "a.md").write_text("# hello")
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         wiz = AddCollectionWizard()
@@ -220,18 +220,18 @@ async def test_esc_discards_wizard_with_no_side_effects(
 ) -> None:
     """Spec: Wizard › Esc — cancelling after typing a name does NOT
     create an empty collection."""
-    from acorn.config import default_config_path, load
-    from acorn.tui.settings_screen import AddCollectionWizard
+    from fnd.config import default_config_path, load
+    from fnd.tui.settings_screen import AddCollectionWizard
 
     # Redirect all config reads/writes to an isolated temp file.
     cfg_path = tmp_path / "config.toml"
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
 
     # Snapshot the (empty) config state before.
     cfg_path.write_text("")  # ensure file exists
     before = load(default_config_path()).collections.copy()
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         wiz = AddCollectionWizard()
@@ -249,14 +249,14 @@ async def test_esc_discards_wizard_with_no_side_effects(
 @pytest.mark.asyncio
 async def test_includes_picker_includes_custom_entry(built_index: Path) -> None:
     """Spec: Wizard › Includes — `Custom glob…` escape hatch."""
-    from acorn.tui import AcornApp
-    from acorn.tui.settings_screen import (
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import (
         AddCollectionWizard,
         PickerScreen,
         SettingsList,
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(AddCollectionWizard())
@@ -277,14 +277,14 @@ async def test_includes_picker_includes_custom_entry(built_index: Path) -> None:
 @pytest.mark.asyncio
 async def test_excludes_picker_includes_custom_entry(built_index: Path) -> None:
     """Spec: Wizard › Excludes — `Custom glob…` escape hatch."""
-    from acorn.tui import AcornApp
-    from acorn.tui.settings_screen import (
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import (
         AddCollectionWizard,
         PickerScreen,
         SettingsList,
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(AddCollectionWizard())
@@ -310,10 +310,10 @@ async def test_set_includes_with_custom_sentinel_strips_and_prompts(
     the sentinel from `_fields["includes"]` and opens the EditBar."""
     from textual.widgets import Input
 
-    from acorn.tui import AcornApp
-    from acorn.tui.settings_screen import AddCollectionWizard, EditBar
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import AddCollectionWizard, EditBar
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         wiz = AddCollectionWizard()
@@ -340,20 +340,20 @@ async def test_source_form_uses_picker_for_includes(
 ) -> None:
     """Spec: Per-source form — Includes is a multi-select picker pre-checked
     from the existing globs (parsed back into the indexer ext set)."""
-    from acorn.config import (
+    from fnd.config import (
         CollectionConfig,
         SourceConfig,
         write_collection,
     )
-    from acorn.tui import AcornApp
-    from acorn.tui.settings_screen import (
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import (
         PickerScreen,
         SettingsList,
         SourceFormScreen,
     )
 
     cfg_path = tmp_path / "config.toml"
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
 
     real = tmp_path / "vault"
     real.mkdir()
@@ -365,10 +365,10 @@ async def test_source_form_uses_picker_for_includes(
         ),
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
-        from acorn.config import load
+        from fnd.config import load
 
         app._config = load()
         app.push_screen(SourceFormScreen(collection_name="probe2", source_index=0))
@@ -395,21 +395,21 @@ async def test_source_form_excludes_picker_round_trips_hidden_preset(
 ) -> None:
     """Excludes globs that match the `hidden` preset round-trip to a
     pre-selected `hidden` entry."""
-    from acorn.config import (
+    from fnd.config import (
         EXCLUDES_PRESETS,
         CollectionConfig,
         SourceConfig,
         write_collection,
     )
-    from acorn.tui import AcornApp
-    from acorn.tui.settings_screen import (
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import (
         PickerScreen,
         SettingsList,
         SourceFormScreen,
     )
 
     cfg_path = tmp_path / "config.toml"
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
 
     real = tmp_path / "vault"
     real.mkdir()
@@ -427,10 +427,10 @@ async def test_source_form_excludes_picker_round_trips_hidden_preset(
         ),
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
-        from acorn.config import load
+        from fnd.config import load
 
         app._config = load()
         app.push_screen(SourceFormScreen(collection_name="probe3", source_index=0))
@@ -454,14 +454,14 @@ async def test_save_with_missing_name_shows_inline_error(
     """Spec: Locked decision #12 — inline error, no toast."""
     from textual.widgets import Static
 
-    from acorn.tui.settings_screen import AddCollectionWizard
+    from fnd.tui.settings_screen import AddCollectionWizard
 
     cfg_path = tmp_path / "config.toml"
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     real = tmp_path / "vault"
     real.mkdir()
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         wiz = AddCollectionWizard()

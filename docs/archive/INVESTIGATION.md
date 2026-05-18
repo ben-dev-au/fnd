@@ -2,7 +2,7 @@
 
 ## ⚠️ HANDOFF — pre-compact 2026-05-14 late evening
 
-**Uncommitted in working tree (acorn/tui/app.py):**
+**Uncommitted in working tree (fnd/tui/app.py):**
 - Silent-mode resume for within-file navigation. `_dispatch_preview_mount` "already active, focus not yet mounted" branch no longer calls `_show_progress_bar`; passes `silent=True` to `_mount_chunks_async`. Tests pass. NOT committed yet pending user sign-off — the user's actual concern was the underlying mounting, not the bar.
 
 **Real outstanding bugs the user reported (NONE FIXED YET — diagnose with the harness first, no speculative edits):**
@@ -24,7 +24,7 @@
 
 **Current default behaviour (committed):**
 - W3 DataTable for markdown tables — column-width fix landed (`_content_to_text` Content→Text conversion). Tables render with proper widths now but no borders and no row wrap.
-- Pre-mount structural on by default (`_prefetch_mount_structural` runs unless `ACORN_NO_PREMOUNT=1`).
+- Pre-mount structural on by default (`_prefetch_mount_structural` runs unless `FND_NO_PREMOUNT=1`).
 - `_BACKGROUND_FILL_RADIUS = 10`, `_PREFETCH_MOUNT_RADIUS = 0`.
 - `_PREVIEW_CACHE_MAX_FILES = 64`.
 - Wall-clock yields (`asyncio.sleep(0.002)`) in Phase 2 + prefetch loops.
@@ -44,14 +44,14 @@
 
 **Env flags currently usable:**
 ```
-ACORN_NO_W3=1            # legacy widget-per-cell tables
-ACORN_NO_PREMOUNT=1      # no structural pre-mount (cold path only)
-ACORN_W_HYBRID=1         # full hybrid chunk widget (drops formatting)
-ACORN_PREMOUNT=1         # legacy alias — now no-op as default is on (just don't set ACORN_NO_PREMOUNT)
-ACORN_REVEAL_FIRST=1     # warm cache-hit reveal-first (still env-gated)
-ACORN_FORCE_FLAT=1       # route md through flat path
-ACORN_PREVIEW_DIAG=1     # writes /tmp/acorn-preview-diag.log
-ACORN_PERF=1             # _perf records
+FND_NO_W3=1            # legacy widget-per-cell tables
+FND_NO_PREMOUNT=1      # no structural pre-mount (cold path only)
+FND_W_HYBRID=1         # full hybrid chunk widget (drops formatting)
+FND_PREMOUNT=1         # legacy alias — now no-op as default is on (just don't set FND_NO_PREMOUNT)
+FND_REVEAL_FIRST=1     # warm cache-hit reveal-first (still env-gated)
+FND_FORCE_FLAT=1       # route md through flat path
+FND_PREVIEW_DIAG=1     # writes /tmp/fnd-preview-diag.log
+FND_PERF=1             # _perf records
 ```
 
 **Harnesses:**
@@ -83,15 +83,15 @@ ACORN_PERF=1             # _perf records
 Defaults that ship in this branch now:
 
 - `_PREVIEW_CACHE_MAX_FILES = 64`
-- Reveal-first cache-hit path (was env-gated by `ACORN_REVEAL_FIRST`, still
+- Reveal-first cache-hit path (was env-gated by `FND_REVEAL_FIRST`, still
   is — production wiring tracked under "remaining work")
-- **W3 DataTable on by default** for markdown tables (`AcornMarkdownTableDT`).
-  Opt out: `ACORN_NO_W3=1`.
+- **W3 DataTable on by default** for markdown tables (`FNDMarkdownTableDT`).
+  Opt out: `FND_NO_W3=1`.
 - **Structural pre-mount on by default** (`_prefetch_mount_structural`).
-  Opt out: `ACORN_NO_PREMOUNT=1`.
+  Opt out: `FND_NO_PREMOUNT=1`.
 - `_BACKGROUND_FILL_RADIUS = 10` (was 200)
 - `_PREFETCH_MOUNT_RADIUS = 0` (was implicit 7)
-- `_md_hybrid.py` (W-Hybrid) stays opt-in (`ACORN_W_HYBRID=1`) —
+- `_md_hybrid.py` (W-Hybrid) stays opt-in (`FND_W_HYBRID=1`) —
   drops per-heading CSS, fence focus, link clicks. Not the default.
 
 ### Resolved issues (empirically verified via the harnesses)
@@ -122,13 +122,13 @@ Defaults that ship in this branch now:
 
 ### W3 DataTable scroll-to-match
 
-`AcornMarkdownTableDT.compose` now registers itself as the parent
-`AcornMarkdown._first_match_block` when a matched cell exists.
-`_scroll_proxy_for` detects an `AcornMarkdownTableDT` target and
+`FNDMarkdownTableDT.compose` now registers itself as the parent
+`FNDMarkdown._first_match_block` when a matched cell exists.
+`_scroll_proxy_for` detects an `FNDMarkdownTableDT` target and
 calls `DataTable.move_cursor(row, column, scroll=True)` so the
 matched cell scrolls into view. Cell text already carries the
 match spans (baked via `_apply_highlights_after_build` on
-`AcornMarkdownTH/TD` before W3 compose intercepts).
+`FNDMarkdownTH/TD` before W3 compose intercepts).
 
 ### Remaining work / open trade-offs
 
@@ -137,7 +137,7 @@ match spans (baked via `_apply_highlights_after_build` on
   because text runs collapse to a single Static. Fence focus + horizontal
   scroll also lost. Workarounds documented below (link-click recovery,
   fence-focus wrapper) — none implemented yet. **Default path stays on
-  W3 + legacy AcornMarkdown for headings/paragraphs/fences.**
+  W3 + legacy FNDMarkdown for headings/paragraphs/fences.**
 - `_md_flat.py` (W8 styled) and `_md_hybrid.py` remain available
   behind their flags for future experimentation; not currently the
   default.
@@ -153,14 +153,14 @@ match spans (baked via `_apply_highlights_after_build` on
 ### Env flags (current usage)
 
 ```
-ACORN_REVEAL_FIRST=1    # warm cache-hit reveal-first (still env-gated)
-ACORN_NO_W3=1           # opt out of W3 DataTable (back to MarkdownTH/TD)
-ACORN_NO_PREMOUNT=1     # opt out of structural widget pre-mount
-ACORN_W_HYBRID=1        # full hybrid chunk widget (drops formatting)
-ACORN_W3_DATATABLE=1    # legacy alias — superseded by ACORN_NO_W3 (negated)
-ACORN_FORCE_FLAT=1      # route md through the flat path
-ACORN_PREVIEW_DIAG=1    # writes /tmp/acorn-preview-diag.log
-ACORN_PERF=1            # writes _perf records (separate channel)
+FND_REVEAL_FIRST=1    # warm cache-hit reveal-first (still env-gated)
+FND_NO_W3=1           # opt out of W3 DataTable (back to MarkdownTH/TD)
+FND_NO_PREMOUNT=1     # opt out of structural widget pre-mount
+FND_W_HYBRID=1        # full hybrid chunk widget (drops formatting)
+FND_W3_DATATABLE=1    # legacy alias — superseded by FND_NO_W3 (negated)
+FND_FORCE_FLAT=1      # route md through the flat path
+FND_PREVIEW_DIAG=1    # writes /tmp/fnd-preview-diag.log
+FND_PERF=1            # writes _perf records (separate channel)
 ```
 
 ### Harnesses (current)
@@ -210,7 +210,7 @@ on branch `investigation/preview-perf-2026-05-14`. The feature branch
 - Synthetic corpus at four profiles (`tests/perf/_corpus.py`): small,
   heavy, table_heavy, fence_heavy.
 - Click-to-display measured via Pilot (`tests/perf/bench_reveal.py`),
-  driven by env-gated `_perf` spans (`acorn/tui/_perf.py`).
+  driven by env-gated `_perf` spans (`fnd/tui/_perf.py`).
 - Each option = one commit on the investigation branch. Diff between
   commits = the change being measured. Baseline result lives in
   `tests/perf/results/`.
@@ -322,7 +322,7 @@ worst case the user complained about); B hits "instant" but compromises.
 **Workarounds for W-Hybrid's remaining losses (Option A):**
 - Inline link clicks: recoverable. Rich preserves `Style.link`
   through `render_lines` (probed today). Wire `action_link` on
-  AcornChunkHybrid to post `Markdown.LinkClicked`. ~30 LOC.
+  FNDChunkHybrid to post `Markdown.LinkClicked`. ~30 LOC.
 - Fence focus + horizontal scroll: harder. Real `MarkdownFence`
   requires a parent Markdown widget. Workarounds: subclass to relax
   the parent requirement, or wrap Syntax in a focusable
@@ -438,19 +438,19 @@ NOT yet fixed:
 **Env vars currently usable:**
 
 ```
-ACORN_REVEAL_FIRST=1     # warm cache-hit goes through visibility flip path
-ACORN_DISABLE_L2=1       # restore original display:none CSS for A/B
-ACORN_W_HYBRID=1         # consolidated chunk widget (text Static + DataTable + Syntax)
-ACORN_FORCE_FLAT=1       # md routes through flat path
-ACORN_FLAT_MD_STYLED=1   # flat path uses rich.markdown rendering
-ACORN_W3_DATATABLE=1     # markdown table → single DataTable widget
-ACORN_PREVIEW_DIAG=1     # writes /tmp/acorn-preview-diag.log
-ACORN_PERF=1             # writes _perf records (separate channel)
+FND_REVEAL_FIRST=1     # warm cache-hit goes through visibility flip path
+FND_DISABLE_L2=1       # restore original display:none CSS for A/B
+FND_W_HYBRID=1         # consolidated chunk widget (text Static + DataTable + Syntax)
+FND_FORCE_FLAT=1       # md routes through flat path
+FND_FLAT_MD_STYLED=1   # flat path uses rich.markdown rendering
+FND_W3_DATATABLE=1     # markdown table → single DataTable widget
+FND_PREVIEW_DIAG=1     # writes /tmp/fnd-preview-diag.log
+FND_PERF=1             # writes _perf records (separate channel)
 ```
 
 **Next session priorities (in order):**
 
-1. Verify the user-visible result of the cache-bump + ACORN_REVEAL_FIRST=1
+1. Verify the user-visible result of the cache-bump + FND_REVEAL_FIRST=1
    combination. The diag shows cache hits — does the FLIP itself feel
    fast even if tail mount is laggy? If yes, attack tail mount cost
    next. If no, the visibility flip + scroll path still has issues.
@@ -480,9 +480,9 @@ on real corpus until they ran the diag. Honor that going forward.
 
 
 
-**Status:** prototype landed (commit `acorn/tui/app.py` + warm benchmark
+**Status:** prototype landed (commit `fnd/tui/app.py` + warm benchmark
 results in `tests/perf/results/warm_reveal_first_v2.json`). Behind
-`ACORN_REVEAL_FIRST=1`. Default behaviour unchanged.
+`FND_REVEAL_FIRST=1`. Default behaviour unchanged.
 
 **Measured warm cold (5 runs, median):**
 
@@ -515,7 +515,7 @@ block scroll precision, syntax-highlighted scrollable code fences, etc.
 **The fix:**
 
 In `_dispatch_preview_mount` cache-hit branch (gated by
-`ACORN_REVEAL_FIRST=1`):
+`FND_REVEAL_FIRST=1`):
 
 1. Activate the container with `pre_reveal=False` — full visibility
    immediately. Layout propagates on the next refresh tick.
@@ -601,7 +601,7 @@ In priority order for the "fast AND functional" goal:
    **User-confirmed combine path** (2026-05-14): pre-mount the
    **W-Hybrid** widget tree, not the full structural tree. Per-chunk
    widget count drops from ~50 → 3, so background pre-mount is
-   cheaper. AcornChunkHybrid resolves `first_match_widget`
+   cheaper. FNDChunkHybrid resolves `first_match_widget`
    synchronously at compose() time (no async build_from_token race),
    so scroll-target resolution is deterministic once region.height
    is non-zero. If pre-mount diagnosis succeeds AND W-Hybrid
@@ -610,7 +610,7 @@ In priority order for the "fast AND functional" goal:
    `ScrollableContainer(can_focus=True)`. Adds 30 widgets to
    fence_heavy but those are simple containers, not block trees.
 3. **W-Hybrid link-click wiring** — 30 LOC; restores inline link
-   click handling via `action_link` on AcornChunkHybrid.
+   click handling via `action_link` on FNDChunkHybrid.
 4. **W-Hybrid for docx/pptx** — current prototype is md-only.
 5. **Aggressive prefetch** — once the warm path is genuinely fast,
    widen prefetch_count or pre-decode all files at startup to keep
@@ -649,7 +649,7 @@ After all prototypes, pick a coherent ship set. Trade-offs:
 
 | Path | Purpose |
 |---|---|
-| `acorn/tui/_perf.py` | Env-gated timing spans. |
+| `fnd/tui/_perf.py` | Env-gated timing spans. |
 | `tests/perf/_corpus.py` | Synthetic corpus generator. |
 | `tests/perf/bench_reveal.py` | Click-to-display benchmark runner. |
 | `tests/perf/results/*.json` | Run outputs (committed for diffability). |

@@ -1,4 +1,4 @@
-"""UXP-4 §2 (CLI surface) — `acorn search --explain N` JSON trace."""
+"""UXP-4 §2 (CLI surface) — `fnd search --explain N` JSON trace."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from acorn.cli import app
-from acorn.index import build_index
+from fnd.cli import app
+from fnd.index import build_index
 
 
 def _bootstrap_index(tmp_path: Path) -> tuple[Path, Path]:
@@ -42,9 +42,9 @@ def test_search_without_explain_prints_existing_format(
 ) -> None:
     """No --explain: existing row format only, no JSON tail."""
     index_dir, cfg_path = _bootstrap_index(tmp_path)
-    monkeypatch.setattr("acorn.cli.default_index_dir", lambda: index_dir)
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
-    monkeypatch.setattr("acorn.migrate.prompt_and_rebuild_or_exit", lambda **kw: None)
+    monkeypatch.setattr("fnd.cli.default_index_dir", lambda: index_dir)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.migrate.prompt_and_rebuild_or_exit", lambda **kw: None)
 
     result = CliRunner().invoke(app, ["search", "mitochondrion", "--collection", "notes"])
     assert result.exit_code == 0
@@ -56,9 +56,9 @@ def test_search_without_explain_prints_existing_format(
 def test_search_explain_emits_trace_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """--explain 1 emits the existing rows plus a parseable JSON trace."""
     index_dir, cfg_path = _bootstrap_index(tmp_path)
-    monkeypatch.setattr("acorn.cli.default_index_dir", lambda: index_dir)
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
-    monkeypatch.setattr("acorn.migrate.prompt_and_rebuild_or_exit", lambda **kw: None)
+    monkeypatch.setattr("fnd.cli.default_index_dir", lambda: index_dir)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.migrate.prompt_and_rebuild_or_exit", lambda **kw: None)
 
     result = CliRunner().invoke(
         app,
@@ -82,9 +82,9 @@ def test_search_explain_out_of_range_exits_nonzero(
 ) -> None:
     """--explain N where N > number of hits exits 1 with an error."""
     index_dir, cfg_path = _bootstrap_index(tmp_path)
-    monkeypatch.setattr("acorn.cli.default_index_dir", lambda: index_dir)
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
-    monkeypatch.setattr("acorn.migrate.prompt_and_rebuild_or_exit", lambda **kw: None)
+    monkeypatch.setattr("fnd.cli.default_index_dir", lambda: index_dir)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.migrate.prompt_and_rebuild_or_exit", lambda **kw: None)
 
     result = CliRunner().invoke(
         app,

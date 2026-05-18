@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from acorn.index import build_index
-from acorn.tui import AcornApp
-from acorn.tui.actions import (
+from fnd.index import build_index
+from fnd.tui import FNDApp
+from fnd.tui.actions import (
     REGISTRY,
     load_keymap,
     resolve_command,
@@ -100,9 +100,9 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 async def test_open_command_palette_pushes_settings_menu(built_index: Path) -> None:
     """`:` opens the unified Settings & Commands menu (replaces the old
     one-shot palette input)."""
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd.tui.settings_screen import SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -123,10 +123,10 @@ async def test_root_menu_search_is_cross_section(built_index: Path) -> None:
     surfaces those keybinding rows, not just the top-level category row."""
     from textual.widgets import Input
 
-    from acorn.tui.menu import KIND_HEADER
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.menu import KIND_HEADER
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -156,9 +156,9 @@ async def test_root_menu_search_is_cross_section(built_index: Path) -> None:
 async def test_show_help_pushes_keybindings_subscreen(built_index: Path) -> None:
     """`?` pushes the Keybindings sub-screen directly — one Esc returns
     to the main app."""
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_show_help()

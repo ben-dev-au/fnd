@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 from textual.widgets import Tree
 
-from acorn.config import Config, load
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.config import Config, load
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -25,7 +25,7 @@ def cfg_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -47,7 +47,7 @@ def state_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Redirect the state-file lookup at a temp path so this test
     doesn't trample the user's real ``scope.toml``."""
     p = tmp_path / "state" / "scope.toml"
-    monkeypatch.setattr("acorn.state._state_path", lambda: p)
+    monkeypatch.setattr("fnd.state._state_path", lambda: p)
     return p
 
 
@@ -57,7 +57,7 @@ async def test_scope_toggle_persists_to_disk(
 ) -> None:
     """Toggling a collection in the panel writes the active list to
     ``scope.toml`` so the next launch starts in the same scope."""
-    app = AcornApp(index_dir=two_index, config=cfg_two)
+    app = FNDApp(index_dir=two_index, config=cfg_two)
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app._collections == []
@@ -69,7 +69,7 @@ async def test_scope_toggle_persists_to_disk(
         assert len(app._collections) == 1
 
     # Re-load state from disk: should reflect the toggle.
-    from acorn.state import load as load_state
+    from fnd.state import load as load_state
 
     saved = load_state(state_path)
     assert len(saved.collections) == 1
@@ -79,14 +79,14 @@ async def test_scope_toggle_persists_to_disk(
 async def test_app_restores_persisted_scope_on_launch(
     cfg_two: Config, two_index: Path, state_path: Path
 ) -> None:
-    """Pre-seed scope.toml; a fresh AcornApp (no --collection) should
+    """Pre-seed scope.toml; a fresh FNDApp (no --collection) should
     boot with that scope active."""
-    from acorn.state import UiState, save
+    from fnd.state import UiState, save
 
     state_path.parent.mkdir(parents=True, exist_ok=True)
     save(UiState(collections=["papers"]), state_path)
 
-    app = AcornApp(index_dir=two_index, config=cfg_two)  # no collection arg
+    app = FNDApp(index_dir=two_index, config=cfg_two)  # no collection arg
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app._collections == ["papers"]
@@ -99,7 +99,7 @@ async def test_left_at_collapsed_root_collapses_panel(
     """Left arrow on a top-level collapsed node — with no further parent
     to walk up to — collapses the whole panel to its header strip
     (CSS ``.collapsed`` class)."""
-    app = AcornApp(index_dir=two_index, config=cfg_two)
+    app = FNDApp(index_dir=two_index, config=cfg_two)
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#collections_panel_tree", Tree)
@@ -119,7 +119,7 @@ async def test_right_re_expands_collapsed_panel(
     cfg_two: Config, two_index: Path, state_path: Path
 ) -> None:
     """Once the panel's collapsed-to-header, Right re-expands it."""
-    app = AcornApp(index_dir=two_index, config=cfg_two)
+    app = FNDApp(index_dir=two_index, config=cfg_two)
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#collections_panel_tree", Tree)

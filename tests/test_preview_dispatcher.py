@@ -1,16 +1,16 @@
 """Phase 5: ``choose_preview_mode`` routes chunks to the right pipeline.
 
 Pure-function tests on the dispatcher — no Textual pilot needed. The
-host wire-in (``acorn/tui/app.py``) calls this once per file-load to
+host wire-in (``fnd/tui/app.py``) calls this once per file-load to
 decide between the flat buffer (PDF / TXT) and the structural Markdown
 renderer (MD / DOCX / PPTX).
 """
 
 from __future__ import annotations
 
-from acorn.extract.base import Block
-from acorn.query import FileChunk
-from acorn.tui.preview_dispatcher import choose_preview_mode
+from fnd.extract.base import Block
+from fnd.query import FileChunk
+from fnd.tui.preview_dispatcher import choose_preview_mode
 
 
 def _chunk(kind: str, body_md: str = "") -> FileChunk:

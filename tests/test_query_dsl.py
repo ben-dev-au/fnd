@@ -8,7 +8,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from acorn import query_dsl
+from fnd import query_dsl
 
 # ── Collection shorthand ─────────────────────────────────────────────────
 

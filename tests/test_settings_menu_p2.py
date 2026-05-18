@@ -21,8 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -36,10 +36,10 @@ async def test_root_menu_is_short_list_of_categories(built_index: Path) -> None:
     """`:` opens a small list of category drill-ins — Preferences,
     Collections, Keybindings, Open config file, Open keybindings file.
     No content piled on top of each other."""
-    from acorn.tui.menu import KIND_EXTERNAL
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.menu import KIND_EXTERNAL
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -67,14 +67,14 @@ async def test_root_menu_is_short_list_of_categories(built_index: Path) -> None:
 async def test_cursor_skips_headers_on_keybindings(built_index: Path) -> None:
     """The Keybindings sub-screen has KIND_HEADER group separators
     (Global, Results pane, etc.). Cursor must skip them."""
-    from acorn.tui.menu import KIND_HEADER, SECTION_KEYBINDINGS
-    from acorn.tui.settings_screen import (
+    from fnd.tui.menu import KIND_HEADER, SECTION_KEYBINDINGS
+    from fnd.tui.settings_screen import (
         SettingsList,
         SettingsScreen,
         open_settings_section,
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_KEYBINDINGS)
@@ -94,9 +94,9 @@ async def test_cursor_skips_headers_on_keybindings(built_index: Path) -> None:
 @pytest.mark.asyncio
 async def test_left_arrow_pops(built_index: Path) -> None:
     """`←` is Esc (pop) — back-stack navigation."""
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd.tui.settings_screen import SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -112,15 +112,15 @@ async def test_right_arrow_only_drills(built_index: Path) -> None:
     """`→` is navigation parity for drilling sub-screens only. On a
     scalar/toggle/action row it must NOT activate (no edit-bar opens,
     no toggle flips, no action runs). Enter is the activate key."""
-    from acorn.tui.menu import KIND_SCALAR, SECTION_PREFERENCES
-    from acorn.tui.settings_screen import (
+    from fnd.tui.menu import KIND_SCALAR, SECTION_PREFERENCES
+    from fnd.tui.settings_screen import (
         EditBar,
         SettingsList,
         SettingsScreen,
         open_settings_section,
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PREFERENCES)
@@ -146,9 +146,9 @@ async def test_right_arrow_only_drills(built_index: Path) -> None:
 @pytest.mark.asyncio
 async def test_palette_toggle(built_index: Path) -> None:
     """Pressing `:` again closes an already-open settings menu."""
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd.tui.settings_screen import SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -163,9 +163,9 @@ async def test_palette_toggle(built_index: Path) -> None:
 async def test_help_pushes_keybindings_subscreen(built_index: Path) -> None:
     """`?` from the main app pushes the Keybindings sub-screen directly
     (single push), so one Esc returns to the main app."""
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd.tui.settings_screen import SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_show_help()
@@ -181,9 +181,9 @@ async def test_help_pushes_keybindings_subscreen(built_index: Path) -> None:
 async def test_drilling_into_preferences_then_esc_returns_to_root(built_index: Path) -> None:
     """Drilling from root into a category pushes a new sub-screen; Esc
     pops back to the root, not all the way to the main app."""
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -213,10 +213,10 @@ async def test_drilling_into_preferences_then_esc_returns_to_root(built_index: P
 async def test_activating_key_action_closes_menu_and_runs(built_index: Path) -> None:
     """Keys & Actions rows are launcher rows: Enter dispatches the
     action AND closes the menu so the user lands back in the main app."""
-    from acorn.tui.menu import KIND_ACTION
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.menu import KIND_ACTION
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_show_help()  # pushes Keybindings sub-screen
@@ -247,9 +247,9 @@ async def test_activating_key_action_closes_menu_and_runs(built_index: Path) -> 
 async def test_root_has_open_config_file_row(built_index: Path) -> None:
     """Configuration → Open config file is reachable directly from the
     root menu (no nesting required for a one-off action)."""
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()

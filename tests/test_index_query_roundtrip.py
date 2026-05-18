@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from acorn.index import build_index
-from acorn.query import Searcher
+from fnd.index import build_index
+from fnd.query import Searcher
 
 
 @pytest.fixture

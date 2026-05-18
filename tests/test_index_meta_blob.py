@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from acorn.config import CollectionConfig, SourceConfig
-from acorn.index import build_index_from_config
-from acorn.meta_blob import decode
-from acorn.schema import F_META_BLOB, build_schema
+from fnd.config import CollectionConfig, SourceConfig
+from fnd.index import build_index_from_config
+from fnd.meta_blob import decode
+from fnd.schema import F_META_BLOB, build_schema
 
 
 def _touch(p: Path, body: str) -> None:

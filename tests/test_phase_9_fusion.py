@@ -2,15 +2,15 @@
 
 Three new pieces land here:
 
-* :func:`acorn.fusion.rrf_fuse` — pure Reciprocal Rank Fusion of ranked Hit
+* :func:`fnd.fusion.rrf_fuse` — pure Reciprocal Rank Fusion of ranked Hit
   lists with per-source weights and a small rank-1/2/3 position bonus.
-* :func:`acorn.fusion.auto_subqueries` — derive sub-queries from a typed user
+* :func:`fnd.fusion.auto_subqueries` — derive sub-queries from a typed user
   query (phrase + lex + optional synonym).
-* :func:`acorn.fusion.parse_multi_input` — parse the ``:multi`` typed
+* :func:`fnd.fusion.parse_multi_input` — parse the ``:multi`` typed
   multi-line syntax (``lex:`` / ``phrase:`` / ``syn:``).
 
-Plus :func:`acorn.fusion.fusion_search` orchestrates the above against an
-acorn :class:`acorn.query.Searcher`.
+Plus :func:`fnd.fusion.fusion_search` orchestrates the above against an
+fnd :class:`fnd.query.Searcher`.
 """
 
 from __future__ import annotations
@@ -20,16 +20,16 @@ from pathlib import Path
 
 import pytest
 
-from acorn.fusion import (
+from fnd.fusion import (
     SubQuery,
     auto_subqueries,
     fusion_search,
     parse_multi_input,
     rrf_fuse,
 )
-from acorn.index import build_index
-from acorn.query import Hit, Searcher
-from acorn.synonyms import SynonymTable
+from fnd.index import build_index
+from fnd.query import Hit, Searcher
+from fnd.synonyms import SynonymTable
 
 # ── helpers ────────────────────────────────────────────────────────
 
@@ -336,7 +336,7 @@ def test_fusion_search_pass_index_2_for_synonym_primary(
 def test_format_hit_label_shows_phrase_glyph_for_pass_index_3() -> None:
     """The fusion phrase pass gets its own glyph (e.g. ❝) so the TUI tree
     visually distinguishes phrase-led hits from lex/fuzzy/synonym ones."""
-    from acorn.tui.app import _format_hit_label
+    from fnd.tui.app import _format_hit_label
 
     base = Hit(
         score=1.23,

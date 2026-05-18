@@ -18,9 +18,9 @@ from pathlib import Path
 import pytest
 from textual.widgets import Tree
 
-from acorn.index import build_index
-from acorn.tui import AcornApp
-from acorn.tui.app import _score_bar
+from fnd.index import build_index
+from fnd.tui import FNDApp
+from fnd.tui.app import _score_bar
 
 
 def test_score_bar_full_at_max() -> None:
@@ -47,7 +47,7 @@ async def test_results_tree_labels_omit_score_bars(fixtures_dir: Path, tmp_index
     """The label format shouldn't carry block-graph glyphs — they read
     as visual artefacts on most terminals and the user vetoed them."""
     build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
-    app = AcornApp(index_dir=tmp_index_dir, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=tmp_index_dir, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)

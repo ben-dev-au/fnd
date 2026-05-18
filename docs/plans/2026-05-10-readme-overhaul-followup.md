@@ -8,7 +8,7 @@ repository.
 
 **Scope:**
 
-- Positioning paragraph (the gap acorn fills vs Foxtrot, Recoll, PDF
+- Positioning paragraph (the gap fnd fills vs Foxtrot, Recoll, PDF
   Search) — already in the current README's "Why this exists"; refine.
 - Install instructions (uv install, macOS-only caveat, Skim integration
   for PDF jumps).

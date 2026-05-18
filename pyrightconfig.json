@@ -1,5 +1,5 @@
 {
-  "include": ["acorn", "tests"],
+  "include": ["fnd", "tests"],
   "exclude": ["**/__pycache__", ".venv", "dist", "build"],
   "pythonVersion": "3.13",
   "typeCheckingMode": "strict",

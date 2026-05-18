@@ -5,7 +5,7 @@ Three knobs:
   * filetype boost (per-kind multiplier)
   * phrase-proximity reward (multi-term-query clustering bonus)
 
-All three are pure functions; the orchestrator :func:`acorn.rerank.rerank_hits`
+All three are pure functions; the orchestrator :func:`fnd.rerank.rerank_hits`
 applies them in sequence and re-sorts. Property tests cover monotonicity and
 idempotence (zero-magnitude leaves order untouched).
 """
@@ -19,9 +19,9 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from acorn.index import build_index
-from acorn.query import Hit, Searcher
-from acorn.rerank import (
+from fnd.index import build_index
+from fnd.query import Hit, Searcher
+from fnd.rerank import (
     RankingProfile,
     apply_filetype_boost,
     apply_phrase_proximity,
@@ -292,7 +292,7 @@ def test_recency_boost_handles_future_mtime() -> None:
 
 
 def test_parse_duration_seconds_known_units() -> None:
-    from acorn.config import parse_duration_seconds
+    from fnd.config import parse_duration_seconds
 
     assert parse_duration_seconds("365d") == 365 * 86_400
     assert parse_duration_seconds("12h") == 12 * 3600
@@ -301,7 +301,7 @@ def test_parse_duration_seconds_known_units() -> None:
 
 
 def test_parse_duration_seconds_rejects_garbage() -> None:
-    from acorn.config import parse_duration_seconds
+    from fnd.config import parse_duration_seconds
 
     with pytest.raises(ValueError, match="invalid duration"):
         parse_duration_seconds("forever")
@@ -312,8 +312,8 @@ def test_load_config_with_ranking_profile(tmp_path: Path) -> None:
     the rerank dataclass; bm25_k1/b are accepted but silently ignored."""
     import textwrap
 
-    from acorn.config import load
-    from acorn.rerank import profile_from_config
+    from fnd.config import load
+    from fnd.rerank import profile_from_config
 
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(
@@ -342,8 +342,8 @@ def test_load_config_with_ranking_profile(tmp_path: Path) -> None:
 def test_ranking_profile_unknown_name_is_neutral_default() -> None:
     """Calling Config.ranking_profile() with a missing name yields an
     all-zero default — opt-in semantics."""
-    from acorn.config import Config
-    from acorn.rerank import profile_from_config
+    from fnd.config import Config
+    from fnd.rerank import profile_from_config
 
     cfg = Config()
     profile = profile_from_config(cfg.ranking_profile("does-not-exist"))
@@ -352,13 +352,13 @@ def test_ranking_profile_unknown_name_is_neutral_default() -> None:
     assert profile.phrase_proximity == 0.0
 
 
-def test_acorn_app_resolves_collection_specific_profile(
+def test_fnd_app_resolves_collection_specific_profile(
     two_collection_index: Path,
 ) -> None:
     """The TUI resolves a per-collection ranking profile when present and
     applies it during search — no profile defined → neutral identity."""
-    from acorn.config import CollectionConfig, Config, RankingProfileConfig
-    from acorn.tui import AcornApp
+    from fnd.config import CollectionConfig, Config, RankingProfileConfig
+    from fnd.tui import FNDApp
 
     cfg = Config(
         collections={
@@ -368,16 +368,16 @@ def test_acorn_app_resolves_collection_specific_profile(
             "hot": RankingProfileConfig(recency_boost=2.0, recency_half_life="1d"),
         },
     )
-    app = AcornApp(index_dir=two_collection_index, collection="papers", config=cfg)
+    app = FNDApp(index_dir=two_collection_index, collection="papers", config=cfg)
     assert app._ranking_profile.recency_boost == pytest.approx(2.0)
     assert app._ranking_profile.recency_half_life_seconds == 86_400
 
 
-def test_acorn_app_no_config_uses_neutral_profile(
+def test_fnd_app_no_config_uses_neutral_profile(
     two_collection_index: Path,
 ) -> None:
-    from acorn.tui import AcornApp
+    from fnd.tui import FNDApp
 
-    app = AcornApp(index_dir=two_collection_index)
+    app = FNDApp(index_dir=two_collection_index)
     assert app._ranking_profile.recency_boost == 0.0
     assert app._ranking_profile.filetype_boosts == {}

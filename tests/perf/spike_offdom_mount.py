@@ -7,7 +7,7 @@ Result 2026-05-15 (Textual 8.2.5):
   refuses to mount into an unmounted parent.
 Combined with spike_remount.py: caching widget trees off-DOM is not
 viable. Stage 3's literal screen-per-file would need actual Textual
-Screens, which don't fit acorn's side-by-side layout.
+Screens, which don't fit fnd's side-by-side layout.
 
 Run with:
     ./.venv/bin/python tests/perf/spike_offdom_mount.py

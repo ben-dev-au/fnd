@@ -16,22 +16,22 @@ from pathlib import Path
 
 from textual.widgets import Tree
 
-from acorn.config import load
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.config import load
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 async def _snap(out_path: Path) -> None:
-    work = Path("/tmp/__acorn_snap_filters")
+    work = Path("/tmp/__fnd_snap_filters")
     work.mkdir(parents=True, exist_ok=True)
     cfg_path = work / "config.toml"
     cfg_path.write_text(
         textwrap.dedent("""
             [[collections.DPC.sources]]
-            path = "/tmp/__acorn_snap_filters/dpc"
+            path = "/tmp/__fnd_snap_filters/dpc"
 
             [[collections.wine.sources]]
-            path = "/tmp/__acorn_snap_filters/wine"
+            path = "/tmp/__fnd_snap_filters/wine"
         """),
         encoding="utf-8",
     )
@@ -59,7 +59,7 @@ async def _snap(out_path: Path) -> None:
     build_index(roots=[wine], index_dir=idx, collection="wine")
     cfg = load(cfg_path)
 
-    app = AcornApp(index_dir=idx, config=cfg, collection="DPC", initial_query="templates")
+    app = FNDApp(index_dir=idx, config=cfg, collection="DPC", initial_query="templates")
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         # Pre-select two file kinds and a date so the panel renders a
@@ -78,7 +78,7 @@ async def _snap(out_path: Path) -> None:
 
 
 def main(argv: list[str]) -> int:
-    out = Path(argv[1] if len(argv) > 1 else "/tmp/acorn_filters_panel.svg")
+    out = Path(argv[1] if len(argv) > 1 else "/tmp/fnd_filters_panel.svg")
     asyncio.run(_snap(out))
     print(f"saved {out}")
     return 0

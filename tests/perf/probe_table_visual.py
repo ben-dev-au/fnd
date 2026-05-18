@@ -3,7 +3,7 @@ our wrapped DataTable looks like versus Textual's default MarkdownTable.
 
 Renders the same fixture twice:
   * Run 1: default (W3 DataTable path, with our wrap fix).
-  * Run 2: ACORN_NO_W3=1 forces MarkdownTableContent (grid layout with
+  * Run 2: FND_NO_W3=1 forces MarkdownTableContent (grid layout with
     keyline). text-overflow: ellipsis is still in upstream CSS but
     short cells let us see the surrounding chrome (borders, headers).
 
@@ -22,9 +22,9 @@ from pathlib import Path
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
-from acorn.index import build_index  # noqa: E402
-from acorn.tui import AcornApp  # noqa: E402
+from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
+from fnd.index import build_index  # noqa: E402
+from fnd.tui import FNDApp  # noqa: E402
 
 # Use a small synthetic fixture so the rendered output is readable.
 TABLE_MD = """\
@@ -40,11 +40,11 @@ TABLE_MD = """\
 
 async def render_once(label: str, no_w3: bool) -> None:
     if no_w3:
-        os.environ["ACORN_NO_W3"] = "1"
+        os.environ["FND_NO_W3"] = "1"
     else:
-        os.environ.pop("ACORN_NO_W3", None)
+        os.environ.pop("FND_NO_W3", None)
 
-    with tempfile.TemporaryDirectory(prefix=f"acorn-vis-{label}-") as tmp:
+    with tempfile.TemporaryDirectory(prefix=f"fnd-vis-{label}-") as tmp:
         root = Path(tmp)
         corpus = root / "corpus"
         corpus.mkdir(parents=True, exist_ok=True)
@@ -56,7 +56,7 @@ async def render_once(label: str, no_w3: bool) -> None:
             defaults=Defaults(preview_prefetch_count=0, preview_load_debounce_ms=0),
             ranking={"default": RankingProfileConfig()},
         )
-        app = AcornApp(
+        app = FNDApp(
             index_dir=index_dir,
             config=cfg,
             collection="default",

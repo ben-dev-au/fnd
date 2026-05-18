@@ -32,13 +32,13 @@ _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
 # Silence diag chatter; we want bench numbers not log spam.
-os.environ.pop("ACORN_PREVIEW_DIAG", None)
-os.environ["ACORN_REVEAL_FIRST"] = "1"
+os.environ.pop("FND_PREVIEW_DIAG", None)
+os.environ["FND_REVEAL_FIRST"] = "1"
 
-from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
-from acorn.index import build_index  # noqa: E402
-from acorn.tui import AcornApp  # noqa: E402
-from acorn.tui import app as _app_mod  # noqa: E402
+from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
+from fnd.index import build_index  # noqa: E402
+from fnd.tui import FNDApp  # noqa: E402
+from fnd.tui import app as _app_mod  # noqa: E402
 from tests.perf import _corpus  # noqa: E402
 
 MATCH_TOKEN = _corpus.MATCH_TOKEN
@@ -119,7 +119,7 @@ async def drive(corpus_root: Path, *, cap: int, query: str, n_clicks: int) -> Ca
     index_dir.mkdir(parents=True, exist_ok=True)
     build_index(roots=[corpus_root], index_dir=index_dir, collection="default")
 
-    app = AcornApp(index_dir=index_dir, config=cfg, collection="default", initial_query=query)
+    app = FNDApp(index_dir=index_dir, config=cfg, collection="default", initial_query=query)
     # PreviewCache binds the cap default at class-definition; override the instance.
     app._preview_cache.max_files = cap
 
@@ -162,7 +162,7 @@ async def drive(corpus_root: Path, *, cap: int, query: str, n_clicks: int) -> Ca
         total = sum(1 for _ in screen.walk_children(with_self=True))
         preview_pane = app.query_one("#preview_pane")
         pane_desc = sum(1 for _ in preview_pane.walk_children())
-        from acorn.tui.app import PreviewContainer
+        from fnd.tui.app import PreviewContainer
 
         containers = list(app.query(PreviewContainer))
         chunks_in_containers = sum(len(c.children) for c in containers)
@@ -202,7 +202,7 @@ def print_row(r: CapResult) -> None:
 async def run_matrix(corpus: str, caps: list[int]) -> None:
     target_clicks = max(caps)
     n_files = target_clicks + 4
-    with tempfile.TemporaryDirectory(prefix=f"acorn-cap-{corpus}-") as tmp:
+    with tempfile.TemporaryDirectory(prefix=f"fnd-cap-{corpus}-") as tmp:
         root = Path(tmp)
         if corpus == "synthetic":
             corpus_root = build_synthetic_corpus(root, n_files=n_files)

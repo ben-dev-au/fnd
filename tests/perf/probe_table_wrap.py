@@ -23,9 +23,9 @@ from pathlib import Path
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
-from acorn.index import build_index  # noqa: E402
-from acorn.tui import AcornApp  # noqa: E402
+from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
+from fnd.index import build_index  # noqa: E402
+from fnd.tui import FNDApp  # noqa: E402
 
 VAULT_ROOT = Path(
     "/Users/BenDavidson/Library/Mobile Documents/iCloud~md~obsidian/Documents/Obsidian Vault"
@@ -38,7 +38,7 @@ async def main() -> int:
     src = VAULT_ROOT / TARGET_FILE
     if not src.exists():
         raise SystemExit(f"file not found: {src}")
-    with tempfile.TemporaryDirectory(prefix="acorn-table-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="fnd-table-") as tmp:
         root = Path(tmp)
         corpus = root / "corpus"
         corpus.mkdir(parents=True, exist_ok=True)
@@ -50,7 +50,7 @@ async def main() -> int:
             defaults=Defaults(preview_prefetch_count=0, preview_load_debounce_ms=0),
             ranking={"default": RankingProfileConfig()},
         )
-        app = AcornApp(index_dir=index_dir, config=cfg, collection="default", initial_query=QUERY)
+        app = FNDApp(index_dir=index_dir, config=cfg, collection="default", initial_query=QUERY)
         from textual.widgets import DataTable, Tree  # pyright: ignore[reportMissingImports]
         from textual.widgets._markdown import MarkdownTable  # pyright: ignore[reportMissingImports]
 

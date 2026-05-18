@@ -1,7 +1,7 @@
 """Structural markdown rendering in the preview pane.
 
 Replaces the legacy ``test_md_match_chunk_uses_per_line_layout`` —
-matched markdown chunks now mount through ``AcornMarkdown`` (Textual's
+matched markdown chunks now mount through ``FNDMarkdown`` (Textual's
 Markdown widget with highlight-aware block subclasses) so tables, code
 fences, lists, and blockquotes render structurally even when they
 contain query matches. The highlight overlay is a per-span mark inside
@@ -21,20 +21,20 @@ from textual.widgets._markdown import (
     MarkdownTable,
 )
 
-from acorn.config import Config, load
-from acorn.index import build_index
-from acorn.render import HIGHLIGHT_STYLE
-from acorn.tui import AcornApp
-from acorn.tui.app import (
-    AcornMarkdown,
-    AcornMarkdownParagraph,
+from fnd.config import Config, load
+from fnd.index import build_index
+from fnd.render import HIGHLIGHT_STYLE
+from fnd.tui import FNDApp
+from fnd.tui.app import (
+    FNDMarkdown,
+    FNDMarkdownParagraph,
 )
 
 
 def _is_highlight_span(span: object) -> bool:
     """The renderer sets the search-highlight Span style to the same
     Rich style string the per-line plain renderer uses
-    (``acorn.render.HIGHLIGHT_STYLE``). The Span style attribute is
+    (``fnd.render.HIGHLIGHT_STYLE``). The Span style attribute is
     parsed into a Style instance, so compare via the string form."""
     style = getattr(span, "style", None)
     return str(style) == HIGHLIGHT_STYLE or HIGHLIGHT_STYLE in str(style)
@@ -55,7 +55,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -83,7 +83,7 @@ def paragraph_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 async def test_preview_md_match_only_highlights_term(cfg: Config, paragraph_index: Path) -> None:
     """A query that matches one word in a paragraph applies a span over
     exactly that word's character range — not the whole paragraph."""
-    app = AcornApp(
+    app = FNDApp(
         index_dir=paragraph_index,
         config=cfg,
         collection="notes",
@@ -95,11 +95,11 @@ async def test_preview_md_match_only_highlights_term(cfg: Config, paragraph_inde
         tree.focus()
         await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
-        # Exactly one AcornMarkdown widget mounted (one chunk, one paragraph).
-        md_widgets = list(pane.query(AcornMarkdown))
+        # Exactly one FNDMarkdown widget mounted (one chunk, one paragraph).
+        md_widgets = list(pane.query(FNDMarkdown))
         assert len(md_widgets) == 1
         # The paragraph block carries highlight spans.
-        paras = list(pane.query(AcornMarkdownParagraph))
+        paras = list(pane.query(FNDMarkdownParagraph))
         assert paras
         spans = list(paras[0]._content.spans)
         # A span exists, has the search-highlight style, and bounds the
@@ -145,7 +145,7 @@ async def test_preview_md_renders_table_with_cell_highlight(cfg: Config, table_i
     off ``_headers`` / ``_rows`` directly rather than querying TH/TD
     widgets — the latter aren't mounted as visible widgets, only
     referenced as Content sources."""
-    app = AcornApp(
+    app = FNDApp(
         index_dir=table_index,
         config=cfg,
         collection="notes",
@@ -215,7 +215,7 @@ async def test_preview_md_fence_no_highlight_inside_code(cfg: Config, fence_inde
     highlight overlay — code stays on Textual's stock MarkdownFence
     rendering (rich.syntax.Syntax) so syntax colours remain readable.
     """
-    app = AcornApp(
+    app = FNDApp(
         index_dir=fence_index,
         config=cfg,
         collection="notes",
@@ -265,7 +265,7 @@ async def test_preview_md_nested_lists_render(cfg: Config, nested_list_index: Pa
     MarkdownBulletList ancestors deep), not as flat paragraphs."""
     from textual.widgets._markdown import MarkdownBulletList
 
-    app = AcornApp(
+    app = FNDApp(
         index_dir=nested_list_index,
         config=cfg,
         collection="notes",
@@ -365,10 +365,10 @@ def pptx_corpus(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_pptx_preview_routes_through_acorn_markdown(cfg: Config, pptx_corpus: Path) -> None:
+async def test_pptx_preview_routes_through_fnd_markdown(cfg: Config, pptx_corpus: Path) -> None:
     from textual.widgets._markdown import MarkdownTable
 
-    app = AcornApp(
+    app = FNDApp(
         index_dir=pptx_corpus,
         config=cfg,
         collection="notes",
@@ -380,18 +380,18 @@ async def test_pptx_preview_routes_through_acorn_markdown(cfg: Config, pptx_corp
         tree.focus()
         await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
-        assert list(pane.query(AcornMarkdown)), "pptx chunk should mount AcornMarkdown"
+        assert list(pane.query(FNDMarkdown)), "pptx chunk should mount FNDMarkdown"
         assert list(pane.query(MarkdownTable)), "pptx table should render via MarkdownTable"
 
 
 @pytest.mark.asyncio
-async def test_docx_preview_routes_through_acorn_markdown(cfg: Config, docx_corpus: Path) -> None:
-    """A docx chunk's preview mounts an AcornMarkdown widget and
+async def test_docx_preview_routes_through_fnd_markdown(cfg: Config, docx_corpus: Path) -> None:
+    """A docx chunk's preview mounts an FNDMarkdown widget and
     renders the embedded table — proves the renderer dispatch wires
     the docx kind through the new path."""
     from textual.widgets._markdown import MarkdownTable
 
-    app = AcornApp(
+    app = FNDApp(
         index_dir=docx_corpus,
         config=cfg,
         collection="notes",
@@ -403,7 +403,7 @@ async def test_docx_preview_routes_through_acorn_markdown(cfg: Config, docx_corp
         tree.focus()
         await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
-        assert list(pane.query(AcornMarkdown)), "docx chunk should mount AcornMarkdown"
+        assert list(pane.query(FNDMarkdown)), "docx chunk should mount FNDMarkdown"
         assert list(pane.query(MarkdownTable)), "docx table should render via MarkdownTable"
 
 
@@ -411,9 +411,9 @@ async def test_docx_preview_routes_through_acorn_markdown(cfg: Config, docx_corp
 async def test_preview_first_match_block_resolves_to_matched_paragraph(
     cfg: Config, multi_para_index: Path
 ) -> None:
-    """``AcornMarkdown.first_match_block`` should resolve to the third
+    """``FNDMarkdown.first_match_block`` should resolve to the third
     paragraph (the one containing the query term), not paragraph one."""
-    app = AcornApp(
+    app = FNDApp(
         index_dir=multi_para_index,
         config=cfg,
         collection="notes",
@@ -425,7 +425,7 @@ async def test_preview_first_match_block_resolves_to_matched_paragraph(
         tree.focus()
         await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
-        md = pane.query_one(AcornMarkdown)
+        md = pane.query_one(FNDMarkdown)
         first_match = md.first_match_block  # type: ignore[attr-defined]
         assert first_match is not None
         assert "templates" in first_match._content.plain

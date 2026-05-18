@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from acorn.config import Config
-from acorn.tui.config_recovery_screen import _backup_name, _format_error
+from fnd.config import Config
+from fnd.tui.config_recovery_screen import _backup_name, _format_error
 
 
 def test_format_toml_decode_error_includes_path_and_message(tmp_path: Path) -> None:

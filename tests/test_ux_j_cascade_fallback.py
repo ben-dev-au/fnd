@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from acorn.config import Config, load
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.config import Config, load
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -32,7 +32,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -53,7 +53,7 @@ def fuzzy_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 async def test_typo_query_falls_back_to_cascade(cfg: Config, fuzzy_index: Path) -> None:
     """``glimer`` (1-edit typo) exact-misses but cascade's fuzzy~1 pass
     surfaces ``glimmer``. Run via ``_run_query``; expect a group."""
-    app = AcornApp(index_dir=fuzzy_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=fuzzy_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("glimer")
@@ -71,7 +71,7 @@ async def test_typo_query_falls_back_to_cascade(cfg: Config, fuzzy_index: Path) 
 async def test_exact_query_uses_fusion_path(cfg: Config, fuzzy_index: Path) -> None:
     """A clean exact-match query (no typos) should be served by the
     fusion path — pass_index == 0 (lex) is the default attribution."""
-    app = AcornApp(index_dir=fuzzy_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=fuzzy_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("glimmer")
@@ -86,8 +86,8 @@ async def test_cascade_path_honours_active_sources(cfg: Config, fuzzy_index: Pat
     """When ``active_sources`` is set, every cascade pass (including the
     programmatic fuzzy pass) should respect the source-set so a bogus
     path filters out hits even via fuzzy."""
-    from acorn.cascade import cascade_search
-    from acorn.query import Searcher
+    from fnd.cascade import cascade_search
+    from fnd.query import Searcher
 
     s = Searcher(index_dir=fuzzy_index)
     out = cascade_search(

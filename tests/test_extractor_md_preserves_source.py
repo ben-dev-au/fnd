@@ -13,7 +13,7 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-from acorn.extract.markdown import extract
+from fnd.extract.markdown import extract
 
 
 def _write(tmp_path: Path, body: str) -> Path:

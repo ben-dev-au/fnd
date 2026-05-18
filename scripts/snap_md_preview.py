@@ -7,17 +7,17 @@ import asyncio
 import textwrap
 from pathlib import Path
 
-from acorn.config import load
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.config import load
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 async def main() -> None:
-    work = Path("/tmp/__acorn_md_preview")
+    work = Path("/tmp/__fnd_md_preview")
     work.mkdir(parents=True, exist_ok=True)
     cfg_path = work / "config.toml"
     cfg_path.write_text(
-        '[collections.demo]\nroots = ["/tmp/__acorn_md_preview/notes"]\n',
+        '[collections.demo]\nroots = ["/tmp/__fnd_md_preview/notes"]\n',
         encoding="utf-8",
     )
     notes = work / "notes"
@@ -67,7 +67,7 @@ async def main() -> None:
     idx.mkdir()
     build_index(roots=[notes], index_dir=idx, collection="demo")
     cfg = load(cfg_path)
-    app = AcornApp(index_dir=idx, config=cfg, collection="demo", initial_query="strategy")
+    app = FNDApp(index_dir=idx, config=cfg, collection="demo", initial_query="strategy")
     async with app.run_test(size=(170, 50)) as pilot:
         await pilot.pause()
         # Result tree auto-expands top file; cursor needs to land on the
@@ -79,7 +79,7 @@ async def main() -> None:
         await pilot.pause()
         await pilot.press("down")  # onto section row
         await pilot.pause()
-        app.save_screenshot(filename="/tmp/acorn_md_preview.svg")
+        app.save_screenshot(filename="/tmp/fnd_md_preview.svg")
 
 
 if __name__ == "__main__":

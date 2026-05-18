@@ -15,9 +15,9 @@ from pathlib import Path
 import pytest
 from textual.widgets import Tree
 
-from acorn.config import Config, load
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.config import Config, load
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -35,7 +35,7 @@ def cfg_one_collection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Confi
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -52,7 +52,7 @@ def mixed_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 @pytest.mark.asyncio
 async def test_filters_panel_mounts(cfg_one_collection: Config, mixed_index: Path) -> None:
     """The Filters panel is a third Tree widget visible at startup."""
-    app = AcornApp(index_dir=mixed_index, config=cfg_one_collection)
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#filters_panel_tree", Tree)
@@ -69,7 +69,7 @@ async def test_filters_panel_header_shows_state(
     cfg_one_collection: Config, mixed_index: Path
 ) -> None:
     """Border title summarises active filters at a glance."""
-    app = AcornApp(index_dir=mixed_index, config=cfg_one_collection)
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#filters_panel_tree", Tree)
@@ -81,7 +81,7 @@ async def test_filters_panel_header_shows_state(
 @pytest.mark.asyncio
 async def test_kind_toggle_is_multi_select(cfg_one_collection: Config, mixed_index: Path) -> None:
     """Selecting two file kinds keeps both active (multi-select)."""
-    app = AcornApp(index_dir=mixed_index, config=cfg_one_collection)
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#filters_panel_tree", Tree)
@@ -103,7 +103,7 @@ async def test_kind_toggle_is_multi_select(cfg_one_collection: Config, mixed_ind
 @pytest.mark.asyncio
 async def test_date_toggle_is_single_select(cfg_one_collection: Config, mixed_index: Path) -> None:
     """Selecting a date option replaces the previous selection."""
-    app = AcornApp(index_dir=mixed_index, config=cfg_one_collection)
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#filters_panel_tree", Tree)
@@ -129,7 +129,7 @@ async def test_filters_compose_into_query(cfg_one_collection: Config, mixed_inde
     layer (``_filtered_raw_hits``) since fusion issues multiple parallel
     sub-queries — at least one of them must carry the kind/date filter
     clauses for the field-restriction to take effect."""
-    app = AcornApp(index_dir=mixed_index, config=cfg_one_collection)
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
         captured_queries: list[str] = []
@@ -159,7 +159,7 @@ async def test_kind_multi_select_uses_or_group(
 ) -> None:
     """Multiple kinds compose as ``kind:(a b)`` so Tantivy treats them
     as a disjunction across the kind field."""
-    app = AcornApp(index_dir=mixed_index, config=cfg_one_collection)
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
         captured_queries: list[str] = []
@@ -187,7 +187,7 @@ async def test_filters_persist_across_restart(
     cfg_one_collection: Config, mixed_index: Path
 ) -> None:
     """Toggling a filter writes to scope.toml so the next launch restores it."""
-    app = AcornApp(index_dir=mixed_index, config=cfg_one_collection)
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
         app._filter_kinds = ["pdf"]
@@ -195,7 +195,7 @@ async def test_filters_persist_across_restart(
         app._persist_state()
         await pilot.pause()
     # Fresh app reads the same state file (autouse fixture isolates path).
-    app2 = AcornApp(index_dir=mixed_index, config=cfg_one_collection)
+    app2 = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     assert app2._filter_kinds == ["pdf"]
     assert app2._filter_date == "week"
 
@@ -203,7 +203,7 @@ async def test_filters_persist_across_restart(
 @pytest.mark.asyncio
 async def test_active_kind_marked_in_label(cfg_one_collection: Config, mixed_index: Path) -> None:
     """Selected file-type leaves show the ● marker; unselected show ○."""
-    app = AcornApp(index_dir=mixed_index, config=cfg_one_collection)
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
         app._filter_kinds = ["pdf"]

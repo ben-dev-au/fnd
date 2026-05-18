@@ -8,12 +8,12 @@ from typing import Any
 import pytest
 from rich.text import Text
 
-from acorn import opener
-from acorn.extract.base import Block
-from acorn.index import build_index
-from acorn.query import FileChunk
-from acorn.render import render_document_rich
-from acorn.tui import AcornApp
+from fnd import opener
+from fnd.extract.base import Block
+from fnd.index import build_index
+from fnd.query import FileChunk
+from fnd.render import render_document_rich
+from fnd.tui import FNDApp
 
 # ── Visible highlights via Rich Text styling ─────────────────────────
 
@@ -160,7 +160,7 @@ async def test_tui_passes_query_to_opener_for_skim_search(
 
     monkeypatch.setattr(opener, "open_smart", fake_open_smart)
 
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         from textual.widgets import Tree
@@ -187,9 +187,9 @@ async def test_tui_passes_query_to_opener_for_skim_search(
 async def test_escape_closes_help_menu(built_index: Path) -> None:
     """Help (`?`) opens the Settings menu pre-navigated to Keybindings;
     Esc walks the user back to the main app."""
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd.tui.settings_screen import SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_show_help()
@@ -206,9 +206,9 @@ async def test_escape_closes_help_menu(built_index: Path) -> None:
 @pytest.mark.asyncio
 async def test_escape_closes_settings_menu(built_index: Path) -> None:
     """`:` opens the unified Settings menu; Esc closes it."""
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd.tui.settings_screen import SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -225,7 +225,7 @@ async def test_escape_closes_settings_menu(built_index: Path) -> None:
 @pytest.mark.asyncio
 async def test_theme_is_set_on_mount(built_index: Path) -> None:
     """Confirm the muted blue/teal pastel theme (tokyo-night) is applied."""
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app.theme == "tokyo-night"
@@ -239,7 +239,7 @@ async def test_chunk_widgets_mounted_per_pdf_page(built_index: Path) -> None:
     """Phase 5 model: PDFs mount through the flat-buffer pipeline.
     The widget owns a FileView whose ``chunk_to_range`` covers every
     page; the focused chunk's first-match line is the scroll target."""
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         from textual.widgets import Tree

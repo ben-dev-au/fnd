@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_empty_query_shows_placeholder(built_index: Path) -> None:
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         from textual.widgets import Static
@@ -31,7 +31,7 @@ async def test_empty_query_shows_placeholder(built_index: Path) -> None:
 @pytest.mark.asyncio
 async def test_query_populates_results_tree(built_index: Path) -> None:
     """Type a phrase, submit, and verify the tree fills with file nodes."""
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         from textual.widgets import Input, Tree
@@ -51,7 +51,7 @@ async def test_query_populates_results_tree(built_index: Path) -> None:
 @pytest.mark.asyncio
 async def test_initial_query_seeds_results(built_index: Path) -> None:
     """Launching with --query should auto-populate the tree."""
-    app = AcornApp(index_dir=built_index, initial_query="lavender stapler")
+    app = FNDApp(index_dir=built_index, initial_query="lavender stapler")
     async with app.run_test() as pilot:
         await pilot.pause()
         from textual.widgets import Tree
@@ -64,7 +64,7 @@ async def test_initial_query_seeds_results(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_expanding_file_node_shows_section_hits(built_index: Path) -> None:
-    app = AcornApp(index_dir=built_index, initial_query="page")
+    app = FNDApp(index_dir=built_index, initial_query="page")
     async with app.run_test() as pilot:
         await pilot.pause()
         from textual.widgets import Tree
@@ -92,11 +92,11 @@ async def test_o_key_opens_at_locator_on_focused_section(
         calls.append({"path": str(path), "kind": kind, "page": page})
         return 0
 
-    from acorn import opener
+    from fnd import opener
 
     monkeypatch.setattr(opener, "open_smart", fake_open_smart)
 
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         from textual.widgets import Tree

@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -23,7 +23,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_escape_from_query_focuses_results(built_index: Path) -> None:
-    app = AcornApp(index_dir=built_index, initial_query="orange penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="orange penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         app.query_one("#query_bar").focus()
@@ -36,7 +36,7 @@ async def test_escape_from_query_focuses_results(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_escape_from_collections_panel_focuses_results(built_index: Path) -> None:
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.query_one("#collections_panel_tree").focus()
@@ -49,7 +49,7 @@ async def test_escape_from_collections_panel_focuses_results(built_index: Path) 
 
 @pytest.mark.asyncio
 async def test_escape_from_results_is_a_noop(built_index: Path) -> None:
-    app = AcornApp(index_dir=built_index, initial_query="orange penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="orange penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         # The CLI's initial-query path already focuses results; double-check.

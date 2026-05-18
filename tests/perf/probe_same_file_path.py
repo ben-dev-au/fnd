@@ -27,10 +27,10 @@ from typing import Any
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
-from acorn.index import build_index  # noqa: E402
-from acorn.tui import AcornApp  # noqa: E402
-from acorn.tui import app as _app_mod  # noqa: E402
+from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
+from fnd.index import build_index  # noqa: E402
+from fnd.tui import FNDApp  # noqa: E402
+from fnd.tui import app as _app_mod  # noqa: E402
 
 VAULT_ROOT = Path(
     "/Users/BenDavidson/Library/Mobile Documents/iCloud~md~obsidian/Documents/Obsidian Vault"
@@ -64,7 +64,7 @@ def build_vault_subset(root: Path, *, n: int) -> Path:
     return corpus
 
 
-def install_timing(app: AcornApp, sink: dict[str, list[float]], gap_sink: list[float]) -> None:
+def install_timing(app: FNDApp, sink: dict[str, list[float]], gap_sink: list[float]) -> None:
     """Wrap each tracked method with perf_counter timing. Also records
     the gap between ``_scroll_preview_to_chunk`` exit and the next
     ``_do_scroll_to_chunk`` entry (i.e. the refresh-tick wait)."""
@@ -92,7 +92,7 @@ def install_timing(app: AcornApp, sink: dict[str, list[float]], gap_sink: list[f
         setattr(app, name, make(orig, name))
 
 
-def remove_timing(app: AcornApp) -> None:
+def remove_timing(app: FNDApp) -> None:
     for name in STEP_NAMES:
         if name in app.__dict__:
             delattr(app, name)
@@ -148,7 +148,7 @@ async def intra_file_clicks(app: Any, tree: Any, n_clicks: int) -> int:
     for file_node in list(tree.root.children):
         data = file_node.data if isinstance(file_node, TreeNode) else None
         if isinstance(data, dict) and data.get("kind") == "file":
-            from acorn.query import FileGroup
+            from fnd.query import FileGroup
 
             grp: FileGroup = data["group"]
             if grp.parent_id != target_parent:
@@ -183,7 +183,7 @@ async def run_scenario(
         prior = _app_mod._PREVIEW_CACHE_MAX_FILES
         _app_mod._PREVIEW_CACHE_MAX_FILES = cap_override
     try:
-        app = AcornApp(index_dir=index_dir, config=cfg, collection="default", initial_query="the")
+        app = FNDApp(index_dir=index_dir, config=cfg, collection="default", initial_query="the")
         if cap_override is not None:
             app._preview_cache.max_files = cap_override
         from textual.widgets import Tree  # pyright: ignore[reportMissingImports]
@@ -246,7 +246,7 @@ async def run_scenario(
 
 
 async def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="acorn-samefile-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="fnd-samefile-") as tmp:
         root = Path(tmp)
         corpus = build_vault_subset(root, n=24)
         index_dir = root / "index"

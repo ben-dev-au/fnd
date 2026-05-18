@@ -66,7 +66,7 @@ The research also recommends:
 
 ### 2.1 Flat (plain-text) path — already matches the research
 
-`acorn/tui/line_buffer.py` (687 lines) implements `LineBufferPreview`
+`fnd/tui/line_buffer.py` (687 lines) implements `LineBufferPreview`
 exactly as recommended:
 
 - Subclass of `ScrollView`.
@@ -76,7 +76,7 @@ exactly as recommended:
 - `scroll_to_chunk(focus_chunk_seq, prefer_first_match=True)` resolves
   to a logical line, then a visual y, then `scroll_to(y=…)`.
 - Match-aware scrollbar via `MatchAwareScrollBar` in
-  `acorn/tui/preview_scrollbar.py`.
+  `fnd/tui/preview_scrollbar.py`.
 - Multi-line selection (`ALLOW_SELECT = True`).
 - Pre-rendered Rich `Text` lines with match spans baked in.
 
@@ -86,16 +86,16 @@ research.
 
 ### 2.2 Structural path (md / docx / pptx) — diverges from the research
 
-`acorn/tui/app.py` handles md / docx / pptx via:
+`fnd/tui/app.py` handles md / docx / pptx via:
 
 - **One `PreviewContainer`** per file.
-- **One `AcornMarkdown` widget per chunk**, where each chunk renders
+- **One `FNDMarkdown` widget per chunk**, where each chunk renders
   via Textual's `Markdown` AST (headings, paragraphs, code fences,
   lists, tables).
-- Each `AcornMarkdown` instance owns its own per-block widget tree
+- Each `FNDMarkdown` instance owns its own per-block widget tree
   (`MarkdownParagraph`, `MarkdownHeading`, `MarkdownFence`,
   `MarkdownTable`, etc.).
-- W3 DataTable (`AcornMarkdownTableDT`, `commit bbc3001`) collapsed
+- W3 DataTable (`FNDMarkdownTableDT`, `commit bbc3001`) collapsed
   the old widget-per-cell table render (~50 widgets per table) to a
   single `DataTable` per table — a partial mitigation, not a
   fundamental change.
@@ -167,8 +167,8 @@ for structured formats.
 
 | Concern | Research recommendation | Current state |
 |---|---|---|
-| PDF / TXT preview | `LineBufferPreview(ScrollView)` with `list[Text]` buffer | **Matches.** Implemented in `acorn/tui/line_buffer.py`. |
-| md / docx / pptx preview | Structural per-chunk renderer "because format matters" | **Matches in shape.** Per-chunk `AcornMarkdown` widgets via Textual `Markdown`. |
+| PDF / TXT preview | `LineBufferPreview(ScrollView)` with `list[Text]` buffer | **Matches.** Implemented in `fnd/tui/line_buffer.py`. |
+| md / docx / pptx preview | Structural per-chunk renderer "because format matters" | **Matches in shape.** Per-chunk `FNDMarkdown` widgets via Textual `Markdown`. |
 | Tables inside md | Per-cell widgets via Textual's `MarkdownTable` | **Improved.** W3 swaps to a single `DataTable` per table. |
 | Match highlights | Baked into Rich spans on the line buffer | Flat path: ✓. Structural: per-block via `_apply_highlights_after_build`, **stored as Content spans on individual widgets** in the per-chunk tree. |
 | Cross-file caching | "Single widget per file means revisits are constant DOM regardless of cache size" | **Diverges.** LRU caches the widget tree for each visited file. DOM grows with cache. |
@@ -231,7 +231,7 @@ genuinely new design space rather than rediscovering choices we've
 already evaluated.
 
 ```
-I'm building "acorn" — a Textual-based Python TUI full-text search
+I'm building "fnd" — a Textual-based Python TUI full-text search
 tool over heterogeneous local document corpora (PDF, TXT, Markdown,
 DOCX, PPTX). Search hits resolve to chunks; users navigate hits with
 the arrow keys; the preview pane shows the matched file scrolled to

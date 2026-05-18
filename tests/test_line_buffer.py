@@ -3,7 +3,7 @@
 The widget replaces ~250,000 ``Static`` widgets (one per line of a
 1000-page PDF) with a single ``ScrollView`` subclass that owns a
 ``list[Strip]``. These tests exercise the widget in isolation —
-no AcornApp coupling, no real Tantivy index — so they can pin down
+no FNDApp coupling, no real Tantivy index — so they can pin down
 the data model + rendering contract before the host app starts
 calling it.
 
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from acorn.tui.line_buffer import (
+from fnd.tui.line_buffer import (
     FileView,
     LineBufferPreview,
     RenderedDocument,
@@ -349,10 +349,10 @@ def test_build_file_view_emits_structural_map_one_chunk() -> None:
 
 def test_build_md_file_view_emits_structural_map() -> None:
     """Markdown flat-renderer agrees with the structural_map contract."""
-    from acorn.extract.base import Block
-    from acorn.matching import MatchSpec
-    from acorn.query import FileChunk
-    from acorn.tui._md_flat import build_md_file_view
+    from fnd.extract.base import Block
+    from fnd.matching import MatchSpec
+    from fnd.query import FileChunk
+    from fnd.tui._md_flat import build_md_file_view
 
     def _md_chunk(seq: int, md: str) -> FileChunk:
         return FileChunk(

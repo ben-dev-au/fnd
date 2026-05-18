@@ -7,10 +7,10 @@ from typing import Any
 
 import pytest
 
-from acorn import opener
-from acorn.index import build_index
-from acorn.tui import AcornApp
-from acorn.tui.actions import REGISTRY
+from fnd import opener
+from fnd.index import build_index
+from fnd.tui import FNDApp
+from fnd.tui.actions import REGISTRY
 
 
 @pytest.fixture
@@ -44,7 +44,7 @@ async def test_enter_does_not_open_external_app(
     """Phase 5.7: pressing Enter on a section node must NOT call the opener."""
     calls: list[Any] = []
     monkeypatch.setattr(opener, "open_smart", lambda **kw: calls.append(kw) or 0)
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         from textual.widgets import Tree
@@ -66,7 +66,7 @@ async def test_o_key_action_open_at_locator(
 ) -> None:
     seen: list[Any] = []
     monkeypatch.setattr(opener, "open_smart", lambda **kw: seen.append(kw) or 0)
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         from textual.widgets import Tree
@@ -90,7 +90,7 @@ async def test_capital_o_action_open_default_app(
 ) -> None:
     seen: list[Path] = []
     monkeypatch.setattr(opener, "open_default", lambda p: seen.append(p) or 0)
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         from textual.widgets import Tree
@@ -118,7 +118,7 @@ async def test_chunk_widgets_rebuild_when_focus_moves_to_different_file(
     section in the second document'): switching between two PDFs swaps
     the active LineBufferPreview to the second file's widget, keyed by
     its parent_id, and the new FileView covers all 12 pages."""
-    app = AcornApp(index_dir=two_pdf_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=two_pdf_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         from textual.widgets import Tree

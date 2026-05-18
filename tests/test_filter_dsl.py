@@ -8,7 +8,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from acorn.filter_dsl import (
+from fnd.filter_dsl import (
     And,
     Compare,
     FilterError,

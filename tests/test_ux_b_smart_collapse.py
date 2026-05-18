@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 from textual.widgets import Tree
 
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 async def test_left_on_leaf_collapses_parent(built_index: Path) -> None:
     """Cursor on a section (leaf) → Left collapses the parent file node
     and moves the cursor onto it."""
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
@@ -57,7 +57,7 @@ async def test_left_on_collapsed_branch_walks_further_up(built_index: Path) -> N
     """Cursor on an already-collapsed file node at the top level → Left
     is a no-op (no parent to collapse). It must not crash, must not move
     the cursor off the tree."""
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
@@ -90,7 +90,7 @@ async def test_left_on_expanded_branch_just_collapses_it(built_index: Path) -> N
     on a file row while that file is collapsed. Up/down from a child
     of an expanded parent skips the parent entirely; collapsing it
     makes the parent row selectable again."""
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)

@@ -12,7 +12,7 @@ parses the diag log to record:
 
 Emits a per-click table plus headline counts so we can see exactly
 where the buffer stops following the cursor. NO code edits to
-acorn/*; this is read-only diagnostic.
+fnd/*; this is read-only diagnostic.
 
 Run:
     ./.venv/bin/python tests/perf/bench_prefetch_window.py
@@ -31,15 +31,15 @@ from pathlib import Path
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-DIAG_PATH = Path("/tmp/acorn-preview-diag.log")
+DIAG_PATH = Path("/tmp/fnd-preview-diag.log")
 if DIAG_PATH.exists():
     DIAG_PATH.unlink()
-os.environ["ACORN_PREVIEW_DIAG"] = "1"
-os.environ["ACORN_REVEAL_FIRST"] = "1"
+os.environ["FND_PREVIEW_DIAG"] = "1"
+os.environ["FND_REVEAL_FIRST"] = "1"
 
-from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
-from acorn.index import build_index  # noqa: E402
-from acorn.tui import AcornApp  # noqa: E402
+from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
+from fnd.index import build_index  # noqa: E402
+from fnd.tui import FNDApp  # noqa: E402
 from tests.perf import _corpus  # noqa: E402
 
 MATCH_TOKEN = _corpus.MATCH_TOKEN
@@ -243,7 +243,7 @@ async def drive_app(corpus_root: Path) -> str:
     index_dir.mkdir(parents=True, exist_ok=True)
     build_index(roots=[corpus_root], index_dir=index_dir, collection="default")
 
-    app = AcornApp(
+    app = FNDApp(
         index_dir=index_dir,
         config=cfg,
         collection="default",
@@ -355,7 +355,7 @@ def render_headlines(rows: list[ClickRow]) -> str:
 
 
 async def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="acorn-prefetch-window-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="fnd-prefetch-window-") as tmp:
         root = Path(tmp)
         corpus = build_corpus(root)
         diag = await drive_app(corpus)

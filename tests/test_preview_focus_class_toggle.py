@@ -16,8 +16,8 @@ from typing import Any
 import pytest
 from textual.widgets import Tree
 
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ async def test_preview_pane_has_no_focus_within_rule(built_index: Path) -> None:
     pseudo-class — otherwise Textual reapplies CSS across the entire
     preview subtree on every focus change.
     """
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         pane = app.query_one("#preview_pane")
@@ -46,7 +46,7 @@ async def test_preview_pane_has_no_focus_within_rule(built_index: Path) -> None:
 async def test_preview_focused_class_toggles_with_focus(built_index: Path) -> None:
     """The ``-focused`` class lands on the preview pane when (and only
     when) focus is inside it."""
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         pane = app.query_one("#preview_pane")
@@ -75,7 +75,7 @@ async def test_focus_change_does_not_walk_preview_subtree(built_index: Path) -> 
     of focus transitions on large documents. The override on
     ``MatchAwareScroll`` applies CSS only to the pane itself.
     """
-    app = AcornApp(index_dir=built_index, initial_query="results")
+    app = FNDApp(index_dir=built_index, initial_query="results")
     async with app.run_test() as pilot:
         await pilot.pause()
         # Drill into a result to populate the preview subtree.

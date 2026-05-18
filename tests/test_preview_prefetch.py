@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from acorn.config import Config, Defaults, RankingProfileConfig
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.config import Config, Defaults, RankingProfileConfig
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ async def test_prefetch_populates_chunk_cache(
 ) -> None:
     """After a search, the prefetch worker warms ``_chunk_cache`` for
     the top result file(s)."""
-    app = AcornApp(index_dir=two_file_index, config=cfg_with_prefetch)
+    app = FNDApp(index_dir=two_file_index, config=cfg_with_prefetch)
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("test")
@@ -62,7 +62,7 @@ async def test_prefetch_populates_prebuilt_cache_for_flat_files(
     """For flat-path files (PDF / TXT) the prefetch worker also
     pre-builds the FileView + Strips bundle so the user-visible mount
     is instant."""
-    app = AcornApp(index_dir=two_file_index, config=cfg_with_prefetch)
+    app = FNDApp(index_dir=two_file_index, config=cfg_with_prefetch)
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("results")
@@ -90,7 +90,7 @@ async def test_prefetch_zero_disables(two_file_index: Path) -> None:
     """``preview_prefetch_count=0`` means no prefetch worker is
     spawned at all."""
     cfg = Config(defaults=Defaults(preview_prefetch_count=0, preview_load_debounce_ms=0))
-    app = AcornApp(index_dir=two_file_index, config=cfg)
+    app = FNDApp(index_dir=two_file_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("test")
@@ -104,13 +104,13 @@ async def test_query_change_clears_prebuilt_cache(
 ) -> None:
     """Bundles bake in the query's highlight spans; a new query must
     invalidate them."""
-    app = AcornApp(index_dir=two_file_index, config=cfg_with_prefetch)
+    app = FNDApp(index_dir=two_file_index, config=cfg_with_prefetch)
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("test")
         # Force a bundle into the cache directly so we don't depend
         # on prefetch timing.
-        from acorn.tui.line_buffer import FileView, RenderedDocument
+        from fnd.tui.line_buffer import FileView, RenderedDocument
 
         app._prebuilt_cache[("fake-parent", "old-sig")] = RenderedDocument(fv=FileView())
         app._run_query("different")
@@ -126,9 +126,9 @@ async def test_prefetch_populates_flat_buffer_cache(
     click installs into the shared widget without a fresh build."""
     import asyncio
 
-    from acorn.tui.line_buffer import RenderedDocument
+    from fnd.tui.line_buffer import RenderedDocument
 
-    app = AcornApp(index_dir=two_file_index, config=cfg_with_prefetch)
+    app = FNDApp(index_dir=two_file_index, config=cfg_with_prefetch)
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("results")
@@ -178,7 +178,7 @@ async def test_prefetch_premounts_structural_container(multi_md_index: Path) -> 
         defaults=Defaults(preview_prefetch_count=3, preview_load_debounce_ms=0),
         ranking={"default": RankingProfileConfig()},
     )
-    app = AcornApp(index_dir=multi_md_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=multi_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("prefetch-anchor")
@@ -210,13 +210,13 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
     ``focus +/- 10``; full-file completion would need a wider radius."""
     import asyncio
 
-    from acorn.tui.app import _BACKGROUND_FILL_RADIUS
+    from fnd.tui.app import _BACKGROUND_FILL_RADIUS
 
     cfg = Config(
         defaults=Defaults(preview_prefetch_count=10, preview_load_debounce_ms=0),
         ranking={"default": RankingProfileConfig()},
     )
-    app = AcornApp(index_dir=multi_md_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=multi_md_index, config=cfg, collection="notes")
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         app._run_query("prefetch-anchor")

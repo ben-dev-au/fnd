@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from acorn.config import Config, load
-from acorn.index import build_index
+from fnd.config import Config, load
+from fnd.index import build_index
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -27,7 +27,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -49,8 +49,8 @@ def unambiguous_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 def test_strong_signal_fires_for_unambiguous_keyword(cfg: Config, unambiguous_index: Path) -> None:
     """`mitochondrion` returns one obvious doc; bypass should fire."""
-    from acorn.layered import search_layered
-    from acorn.query import Searcher
+    from fnd.layered import search_layered
+    from fnd.query import Searcher
 
     searcher = Searcher(index_dir=unambiguous_index)
     groups, trace = search_layered(
@@ -73,13 +73,13 @@ def test_strong_signal_does_not_fire_for_ambiguous_query(
 ) -> None:
     """A common word spread across many docs — bypass must NOT fire;
     fusion runs as default."""
-    from acorn.fusion import (
+    from fnd.fusion import (
         STRONG_SIGNAL_MIN_NORM_GAP,
         STRONG_SIGNAL_MIN_NORM_SCORE,
         normalize_bm25,
     )
-    from acorn.layered import search_layered
-    from acorn.query import Searcher
+    from fnd.layered import search_layered
+    from fnd.query import Searcher
 
     searcher = Searcher(index_dir=unambiguous_index)
     groups, trace = search_layered(
@@ -111,8 +111,8 @@ def test_strong_signal_does_not_fire_for_ambiguous_query(
 def test_intent_disables_strong_signal_bypass(cfg: Config, unambiguous_index: Path) -> None:
     """Same unambiguous query, but with intent supplied — bypass must
     be disabled, fusion runs."""
-    from acorn.layered import _evaluate_strong_signal, search_layered
-    from acorn.query import Searcher
+    from fnd.layered import _evaluate_strong_signal, search_layered
+    from fnd.query import Searcher
 
     searcher = Searcher(index_dir=unambiguous_index)
     probe = searcher._filtered_raw_hits(
@@ -141,7 +141,7 @@ def test_intent_disables_strong_signal_bypass(cfg: Config, unambiguous_index: Pa
 
 def test_normalize_bm25_monotone_and_bounded() -> None:
     """Sanity-check the score transform: monotone in [0, 1)."""
-    from acorn.fusion import normalize_bm25
+    from fnd.fusion import normalize_bm25
 
     assert normalize_bm25(0.0) == 0.0
     assert normalize_bm25(-5.0) == 0.0  # negative scores clamped to 0

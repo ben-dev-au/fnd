@@ -10,10 +10,10 @@ from typing import Any
 
 import pytest
 
-from acorn.config import Config, load
-from acorn.index import build_index
-from acorn.tui import AcornApp
-from acorn.tui.progress import AcornProgressBar
+from fnd.config import Config, load
+from fnd.index import build_index
+from fnd.tui import FNDApp
+from fnd.tui.progress import FNDProgressBar
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -31,7 +31,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -56,7 +56,7 @@ async def test_preview_load_dispatches_worker_on_cache_miss(
     cfg: Config, two_file_index: Path
 ) -> None:
     """First-time _render_full_doc dispatches a preview-load worker."""
-    app = AcornApp(index_dir=two_file_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("target")
@@ -84,7 +84,7 @@ async def test_preview_clears_old_content_and_shows_progress_bar(
     cfg: Config, two_file_index: Path
 ) -> None:
     """On cache miss the progress strip becomes visible immediately."""
-    app = AcornApp(index_dir=two_file_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("target")
@@ -98,7 +98,7 @@ async def test_preview_clears_old_content_and_shows_progress_bar(
         assert app._preview_parent_id == small_group.parent_id
         # Switch to the big file. Strip should become visible immediately.
         app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
-        strip = app.query_one(AcornProgressBar)
+        strip = app.query_one(FNDProgressBar)
         assert "-idle" not in strip.classes
         # Pane has scroll lock during load.
         pane = app.query_one("#preview_pane")
@@ -111,7 +111,7 @@ async def test_progress_strip_runs_determinate_then_hides_on_complete(
 ) -> None:
     """Strip is determinate from the first frame and hides on mount-complete.
     The old indeterminate (red) phase is intentionally gone."""
-    app = AcornApp(index_dir=two_file_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("target")
@@ -119,7 +119,7 @@ async def test_progress_strip_runs_determinate_then_hides_on_complete(
         big_group = next(g for g in app._groups if g.path.endswith("big.md"))
         app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         # Visible + determinate at start (decode phase).
-        strip = app.query_one(AcornProgressBar)
+        strip = app.query_one(FNDProgressBar)
         assert "-idle" not in strip.classes
         active_session = app._progress.active
         assert active_session is not None
@@ -141,7 +141,7 @@ async def test_switching_files_mid_load_cancels_mount_task(
 ) -> None:
     """Switching to a new file mid-mount cancels the previous mount
     task so chunks from the old file can't append into the new pane."""
-    app = AcornApp(index_dir=two_file_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("target")
@@ -170,7 +170,7 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
     """A previously-mounted file (with chunk count above the cache
     threshold) should NOT remount on revisit — its PreviewContainer
     stays in the LRU and a return visit is an O(1) class flip."""
-    app = AcornApp(index_dir=two_file_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("target")
@@ -198,7 +198,7 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
         app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         for _ in range(8):
             await pilot.pause()
-        strip = app.query_one(AcornProgressBar)
+        strip = app.query_one(FNDProgressBar)
         assert "-idle" in strip.classes
         assert app._active_preview is big_container
 
@@ -211,7 +211,7 @@ async def test_rapid_file_switching_does_not_raise_duplicate_ids(
     DuplicateIds because cancellation didn't run the bar's cleanup,
     leaving an id-collision-prone widget in the DOM. Class-based
     selectors + try/finally cleanup make this benign."""
-    app = AcornApp(index_dir=two_file_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("target")
@@ -237,7 +237,7 @@ async def test_preview_title_no_longer_carries_progress_text(
 ) -> None:
     """The border title stays clean — never says 'loading N/M chunks'.
     Progress lives on the ProgressBar widget instead."""
-    app = AcornApp(index_dir=two_file_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("target")

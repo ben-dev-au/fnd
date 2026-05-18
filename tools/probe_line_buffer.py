@@ -10,7 +10,7 @@ Or against a different PDF / collection / query:
         --collection cpl --query "AWS" \
         --pdf "/path/to/some.pdf"
 
-What it proves (before AcornApp depends on the widget):
+What it proves (before FNDApp depends on the widget):
 
 * The vacuum FileView builds correctly from real Tantivy chunks (not just
   synthetic test fixtures).
@@ -54,10 +54,10 @@ from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import BindingType  # noqa: E402
 from textual.widgets import Footer, Static  # noqa: E402
 
-from acorn.config import default_index_dir  # noqa: E402
-from acorn.matching import MatchSpec, word_matches  # noqa: E402
-from acorn.query import Searcher  # noqa: E402
-from acorn.tui.line_buffer import LineBufferPreview, build_file_view  # noqa: E402
+from fnd.config import default_index_dir  # noqa: E402
+from fnd.matching import MatchSpec, word_matches  # noqa: E402
+from fnd.query import Searcher  # noqa: E402
+from fnd.tui.line_buffer import LineBufferPreview, build_file_view  # noqa: E402
 
 DEFAULT_PDF_PATH = (
     "/Users/BenDavidson/Documents/Uni/B. Software Engineering (Honours)/"
@@ -71,7 +71,7 @@ DEFAULT_QUERY = "AWS"
 def _chunk_match_spans(text: str, spec: MatchSpec) -> list[tuple[int, int]]:
     """Word-level match span detection for the probe.
 
-    Mirrors ``acorn.tui.app._build_match_spans`` byte-offset-wise: every
+    Mirrors ``fnd.tui.app._build_match_spans`` byte-offset-wise: every
     ``\\w+`` token that matches the spec (exact-stem or fuzzy-AUTO)
     contributes one ``(start, end)`` byte range. Returned in source
     order so ``build_file_view`` can clip per line without resorting.
@@ -246,7 +246,7 @@ class _Probe(App[None]):
 
 
 def _resolve_index_dir() -> Path:
-    override = os.environ.get("ACORN_INDEX_DIR")
+    override = os.environ.get("FND_INDEX_DIR")
     if override:
         return Path(override).expanduser()
     return default_index_dir()

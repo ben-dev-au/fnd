@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from acorn.matching import MatchSpec
-from acorn.render import HIGHLIGHT_STYLE, MISMATCH_STYLE, word_highlight_runs
+from fnd.matching import MatchSpec
+from fnd.render import HIGHLIGHT_STYLE, MISMATCH_STYLE, word_highlight_runs
 
 
 def test_pizza_pizzas_splits_match_and_extra_char() -> None:

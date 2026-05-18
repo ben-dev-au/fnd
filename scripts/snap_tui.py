@@ -16,22 +16,22 @@ import sys
 import textwrap
 from pathlib import Path
 
-from acorn.config import load
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.config import load
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 async def _snap(out_path: Path) -> None:
-    work = Path("/tmp/__acorn_snap")
+    work = Path("/tmp/__fnd_snap")
     work.mkdir(parents=True, exist_ok=True)
     cfg_path = work / "config.toml"
     cfg_path.write_text(
         textwrap.dedent("""
             [collections.DPC]
-            roots = ["/tmp/__acorn_snap/dpc"]
+            roots = ["/tmp/__fnd_snap/dpc"]
 
             [collections.wine]
-            roots = ["/tmp/__acorn_snap/wine"]
+            roots = ["/tmp/__fnd_snap/wine"]
         """),
         encoding="utf-8",
     )
@@ -68,7 +68,7 @@ async def _snap(out_path: Path) -> None:
     build_index(roots=[wine], index_dir=idx, collection="wine")
     cfg = load(cfg_path)
 
-    app = AcornApp(index_dir=idx, config=cfg, collection="DPC", initial_query="templates")
+    app = FNDApp(index_dir=idx, config=cfg, collection="DPC", initial_query="templates")
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         # Land focus somewhere sensible so the active-pane border shows.
@@ -81,7 +81,7 @@ async def _snap(out_path: Path) -> None:
 
 
 def main(argv: list[str]) -> int:
-    out = Path(argv[1] if len(argv) > 1 else "/tmp/acorn_snap.svg")
+    out = Path(argv[1] if len(argv) > 1 else "/tmp/fnd_snap.svg")
     asyncio.run(_snap(out))
     print(f"saved {out}")
     return 0

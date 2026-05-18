@@ -6,7 +6,7 @@ import datetime as dt
 
 import pytest
 
-from acorn.meta_blob import decode, encode
+from fnd.meta_blob import decode, encode
 
 
 def test_empty_dict_roundtrip() -> None:

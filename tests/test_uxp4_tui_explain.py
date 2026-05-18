@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from acorn.config import Config, load
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.config import Config, load
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -27,7 +27,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -47,7 +47,7 @@ def small_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 async def test_explain_overlay_captures_trace_and_toggles(cfg: Config, small_index: Path) -> None:
     """After a search, the trace is captured on the app and :explain
     pops an overlay. A second call toggles the overlay closed."""
-    app = AcornApp(index_dir=small_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=small_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("mitochondrion")
@@ -78,7 +78,7 @@ async def test_explain_overlay_captures_trace_and_toggles(cfg: Config, small_ind
 @pytest.mark.asyncio
 async def test_explain_overlay_no_search_warns(cfg: Config, small_index: Path) -> None:
     """Calling :explain before any search emits a notify, no overlay."""
-    app = AcornApp(index_dir=small_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=small_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         # No query run; trace is None
@@ -92,7 +92,7 @@ async def test_explain_overlay_no_search_warns(cfg: Config, small_index: Path) -
 @pytest.mark.asyncio
 async def test_dismiss_overlay_closes_explain(cfg: Config, small_index: Path) -> None:
     """action_dismiss_overlay also clears #explain_overlay."""
-    app = AcornApp(index_dir=small_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=small_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("mitochondrion")

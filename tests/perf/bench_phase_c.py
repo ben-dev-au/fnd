@@ -26,12 +26,12 @@ from typing import Any
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-os.environ.pop("ACORN_PREVIEW_DIAG", None)
-os.environ["ACORN_REVEAL_FIRST"] = "1"
+os.environ.pop("FND_PREVIEW_DIAG", None)
+os.environ["FND_REVEAL_FIRST"] = "1"
 
-from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
-from acorn.index import build_index  # noqa: E402
-from acorn.tui import AcornApp  # noqa: E402
+from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
+from fnd.index import build_index  # noqa: E402
+from fnd.tui import FNDApp  # noqa: E402
 from tests.perf import _corpus  # noqa: E402
 
 MATCH_TOKEN = _corpus.MATCH_TOKEN
@@ -123,7 +123,7 @@ async def measure_intra_file(app: Any, tree: Any, pilot: Any, n_clicks: int = 10
     for n in list(tree.root.children):
         data = n.data if isinstance(n, TreeNode) else None
         if isinstance(data, dict) and data.get("kind") == "file":
-            from acorn.query import FileGroup
+            from fnd.query import FileGroup
 
             grp: FileGroup = data["group"]
             if grp.parent_id == parent_id:
@@ -158,7 +158,7 @@ async def run_one(label: str, corpus: Path, *, query: str, n_clicks: int = 4) ->
     index_dir = corpus.parent / "index"
     index_dir.mkdir(parents=True, exist_ok=True)
     build_index(roots=[corpus], index_dir=index_dir, collection="default")
-    app = AcornApp(index_dir=index_dir, config=cfg, collection="default", initial_query=query)
+    app = FNDApp(index_dir=index_dir, config=cfg, collection="default", initial_query=query)
     from textual.widgets import Tree  # pyright: ignore[reportMissingImports]
 
     async with app.run_test(size=(140, 40)) as pilot:
@@ -190,7 +190,7 @@ async def run_one(label: str, corpus: Path, *, query: str, n_clicks: int = 4) ->
         total = sum(1 for _ in screen.walk_children(with_self=True))
         preview_pane = app.query_one("#preview_pane")
         pane_desc = sum(1 for _ in preview_pane.walk_children())
-        from acorn.tui.app import PreviewContainer
+        from fnd.tui.app import PreviewContainer
 
         containers = list(app.query(PreviewContainer))
         chunks = sum(len(c.children) for c in containers)
@@ -231,15 +231,15 @@ def print_result(r: Result) -> None:
 
 
 async def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="acorn-phc-vh-") as t1:
+    with tempfile.TemporaryDirectory(prefix="fnd-phc-vh-") as t1:
         corpus = build_vault_heavy(Path(t1), n_files=12)
         r = await run_one("cap=4 vault heavy", corpus, query=VAULT_QUERY, n_clicks=4)
         print_result(r)
-    with tempfile.TemporaryDirectory(prefix="acorn-phc-vr-") as t2:
+    with tempfile.TemporaryDirectory(prefix="fnd-phc-vr-") as t2:
         corpus = build_vault_random(Path(t2), n_files=12)
         r = await run_one("cap=4 vault random", corpus, query=VAULT_QUERY, n_clicks=4)
         print_result(r)
-    with tempfile.TemporaryDirectory(prefix="acorn-phc-syn-") as t3:
+    with tempfile.TemporaryDirectory(prefix="fnd-phc-syn-") as t3:
         corpus = build_synthetic_corpus(Path(t3), n_files=12)
         r = await run_one("cap=4 synthetic", corpus, query=MATCH_TOKEN, n_clicks=4)
         print_result(r)

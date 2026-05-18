@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from docx import Document
 
-from acorn.extract.docx import extract
+from fnd.extract.docx import extract
 
 
 @pytest.fixture

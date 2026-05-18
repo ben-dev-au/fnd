@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from acorn.query_dsl import split_metadata_filter
+from fnd.query_dsl import split_metadata_filter
 
 
 def test_no_brackets_returns_query_unchanged() -> None:

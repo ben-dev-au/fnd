@@ -59,12 +59,12 @@ async def test_cursor_stays_after_expand_during_real_pdf_load(
 
     from textual.widgets import Tree
 
-    from acorn.index import build_index
-    from acorn.tui import AcornApp
-    from acorn.tui.app import PreviewContainer
+    from fnd.index import build_index
+    from fnd.tui import FNDApp
+    from fnd.tui.app import PreviewContainer
 
     build_index(roots=[real_pdf_corpus], index_dir=tmp_index_dir, collection="default")
-    app = AcornApp(index_dir=tmp_index_dir, initial_query="AWS")
+    app = FNDApp(index_dir=tmp_index_dir, initial_query="AWS")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)

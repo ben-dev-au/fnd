@@ -15,19 +15,19 @@ from pathlib import Path
 
 from textual.widgets import Tree
 
-from acorn.config import load
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.config import load
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 async def _snap(out_path: Path) -> None:
-    work = Path("/tmp/__acorn_snap_md")
+    work = Path("/tmp/__fnd_snap_md")
     work.mkdir(parents=True, exist_ok=True)
     cfg_path = work / "config.toml"
     cfg_path.write_text(
         textwrap.dedent("""
             [[collections.DPC.sources]]
-            path = "/tmp/__acorn_snap_md/dpc"
+            path = "/tmp/__fnd_snap_md/dpc"
         """),
         encoding="utf-8",
     )
@@ -58,7 +58,7 @@ async def _snap(out_path: Path) -> None:
     build_index(roots=[dpc], index_dir=idx, collection="DPC")
     cfg = load(cfg_path)
 
-    app = AcornApp(index_dir=idx, config=cfg, collection="DPC", initial_query="templates")
+    app = FNDApp(index_dir=idx, config=cfg, collection="DPC", initial_query="templates")
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         await pilot.pause()
@@ -76,7 +76,7 @@ async def _snap(out_path: Path) -> None:
 
 
 def main(argv: list[str]) -> int:
-    out = Path(argv[1] if len(argv) > 1 else "/tmp/acorn_md_highlight.svg")
+    out = Path(argv[1] if len(argv) > 1 else "/tmp/fnd_md_highlight.svg")
     asyncio.run(_snap(out))
     print(f"saved {out}")
     return 0

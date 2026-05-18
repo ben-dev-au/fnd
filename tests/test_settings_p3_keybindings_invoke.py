@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -20,9 +20,9 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 async def test_pressing_key_in_keybindings_invokes_action(built_index: Path) -> None:
     """Spec: Keybindings › Press-key-to-invoke — pressing a listed key
     dispatches the action and closes the settings stack."""
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_show_help()
@@ -43,9 +43,9 @@ async def test_pressing_key_while_search_focused_does_not_invoke(built_index: Pa
     typing in the search filter must not trigger actions."""
     from textual.widgets import Input
 
-    from acorn.tui.settings_screen import SettingsScreen
+    from fnd.tui.settings_screen import SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_show_help()
@@ -63,7 +63,7 @@ def test_drill_summary_mode_default_and_validation() -> None:
     """Spec: Drill-cue preference — defaults to always_show; validates set."""
     from pydantic import ValidationError
 
-    from acorn.config import Defaults
+    from fnd.config import Defaults
 
     d = Defaults()
     assert d.drill_summary_mode == "always_show"
@@ -84,11 +84,11 @@ async def test_drill_mode_always_ellipsis(
 ) -> None:
     """Spec: Drill-cue preference — `always_ellipsis` mode renders `…`
     instead of content summaries."""
-    from acorn.config import write_setting
+    from fnd.config import write_setting
 
     # Isolate config reads/writes to the tmp dir.
     cfg_path = tmp_path / "config.toml"
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
 
     # Write directly to cfg_path so the patched default_config_path() picks it up.
     write_setting(
@@ -97,13 +97,13 @@ async def test_drill_mode_always_ellipsis(
         value="always_ellipsis",
     )
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
         await pilot.pause()
         screen = app.screen
-        from acorn.tui.settings_screen import SettingsList, SettingsScreen
+        from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
         assert isinstance(screen, SettingsScreen)
         lst = screen.query_one(SettingsList)

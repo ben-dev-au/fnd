@@ -9,11 +9,11 @@ import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Tree
 
-from acorn.config import Config, load
-from acorn.index import build_index
-from acorn.query import Hit
-from acorn.tui import AcornApp
-from acorn.tui.app import _format_hit_label, _trim_redundant_heading
+from fnd.config import Config, load
+from fnd.index import build_index
+from fnd.query import Hit
+from fnd.tui import FNDApp
+from fnd.tui.app import _format_hit_label, _trim_redundant_heading
 
 
 def test_trim_redundant_heading_strips_filename_prefix() -> None:
@@ -91,7 +91,7 @@ def cfg_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -123,14 +123,14 @@ async def test_md_match_chunk_renders_via_markdown_widget_with_highlight(
     cfg_one: Config, md_index: Path
 ) -> None:
     """Matched markdown chunks render via Textual's Markdown widget tree
-    (AcornMarkdown), with the matched word carrying a search-highlight
+    (FNDMarkdown), with the matched word carrying a search-highlight
     span on its block's Content. Replaces the legacy per-line layout
     assertion — the structural renderer keeps tables / fenced code /
     lists rendering correctly even when a chunk contains a match.
     """
-    from acorn.tui.app import AcornMarkdown
+    from fnd.tui.app import FNDMarkdown
 
-    app = AcornApp(
+    app = FNDApp(
         index_dir=md_index,
         config=cfg_one,
         collection="notes",
@@ -142,9 +142,9 @@ async def test_md_match_chunk_renders_via_markdown_widget_with_highlight(
         tree.focus()
         await pilot.pause(0.3)
         pane = app.query_one("#preview_pane", VerticalScroll)
-        md_widgets = list(pane.query(AcornMarkdown))
-        assert md_widgets, "expected matched md chunk to mount AcornMarkdown"
-        # Some block under at least one AcornMarkdown carries a
+        md_widgets = list(pane.query(FNDMarkdown))
+        assert md_widgets, "expected matched md chunk to mount FNDMarkdown"
+        # Some block under at least one FNDMarkdown carries a
         # search-highlight span — that's the visible match indicator.
         any_highlight = False
         for md in md_widgets:

@@ -14,9 +14,9 @@ from pathlib import Path
 import pytest
 from textual.widgets import Tree
 
-from acorn.config import Config, load
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.config import Config, load
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -37,7 +37,7 @@ def cfg_two_collections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Conf
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -58,7 +58,7 @@ async def test_collections_panel_mounts_below_results(
 ) -> None:
     """The panel exists in the DOM at startup with all configured
     collections visible as tree nodes."""
-    app = AcornApp(index_dir=two_collection_index, config=cfg_two_collections)
+    app = FNDApp(index_dir=two_collection_index, config=cfg_two_collections)
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#collections_panel_tree", Tree)
@@ -75,7 +75,7 @@ async def test_enter_toggles_collection_scope(
     """Enter on a collection node in the panel should toggle its
     membership in the active search scope (per the user's explicit
     request: Enter, not Space)."""
-    app = AcornApp(index_dir=two_collection_index, config=cfg_two_collections)
+    app = FNDApp(index_dir=two_collection_index, config=cfg_two_collections)
     async with app.run_test() as pilot:
         await pilot.pause()
         # Start with no scope active.
@@ -100,7 +100,7 @@ async def test_active_collection_marked_in_label(
 ) -> None:
     """Active collections should be visually marked in the tree label
     so the user can see at a glance which are in scope."""
-    app = AcornApp(index_dir=two_collection_index, config=cfg_two_collections)
+    app = FNDApp(index_dir=two_collection_index, config=cfg_two_collections)
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#collections_panel_tree", Tree)
@@ -122,7 +122,7 @@ async def test_panel_header_shows_active_count(
     the results pane's styling). Originally this was a separate Static
     above the tree — moved into the border title to make both panels
     look identical."""
-    app = AcornApp(index_dir=two_collection_index, config=cfg_two_collections)
+    app = FNDApp(index_dir=two_collection_index, config=cfg_two_collections)
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#collections_panel_tree", Tree)

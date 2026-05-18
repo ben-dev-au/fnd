@@ -19,7 +19,7 @@ make lint          # ruff + pyright strict
 
 ## Search how-to
 
-acorn's query bar accepts plain words, phrases, boolean expressions, fuzzy and
+fnd's query bar accepts plain words, phrases, boolean expressions, fuzzy and
 proximity matches, field qualifiers, date filters, and markdown frontmatter
 filters. They compose freely.
 
@@ -93,7 +93,7 @@ the exact phrase.
 
 ### Collections
 
-acorn organises sources into named collections. The shorthand `c:` scopes a
+fnd organises sources into named collections. The shorthand `c:` scopes a
 search to one or more:
 
 | You type                     | What it does                       |
@@ -170,7 +170,7 @@ mtime:month NOT draft~1                            # recent docs, exclude anythi
 
 ## Acknowledgments
 
-Some design choices in acorn's search layer are adapted from sibling
+Some design choices in fnd's search layer are adapted from sibling
 open-source projects:
 
 - **[tobi/qmd](https://github.com/tobi/qmd)** (MIT): the strong-signal bypass

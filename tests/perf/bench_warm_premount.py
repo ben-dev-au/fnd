@@ -30,12 +30,12 @@ from pathlib import Path
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-os.environ.setdefault("ACORN_PERF", "1")
+os.environ.setdefault("FND_PERF", "1")
 
-from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
-from acorn.index import _path_parent_id, build_index  # noqa: E402
-from acorn.query import FileGroup, Hit  # noqa: E402
-from acorn.tui import AcornApp, _perf  # noqa: E402
+from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
+from fnd.index import _path_parent_id, build_index  # noqa: E402
+from fnd.query import FileGroup, Hit  # noqa: E402
+from fnd.tui import FNDApp, _perf  # noqa: E402
 from tests.perf import _corpus  # noqa: E402
 
 
@@ -69,14 +69,14 @@ async def _run_one(*, index_dir: Path, corpus_root: Path, profile: str, run: int
         ),
         ranking={"default": RankingProfileConfig()},
     )
-    app = AcornApp(index_dir=index_dir, config=cfg, collection="default")
+    app = FNDApp(index_dir=index_dir, config=cfg, collection="default")
     target_md = corpus_root / f"{profile}.md"
     parent_id = _path_parent_id(target_md)
     async with app.run_test() as pilot:
         await pilot.pause()
         # Configure the app's match-spec so highlighting + first_match_block
         # resolve as they would after a real _run_query.
-        from acorn.matching import MatchSpec
+        from fnd.matching import MatchSpec
 
         app._current_query = _corpus.MATCH_TOKEN
         app._current_match_spec = MatchSpec.from_query(_corpus.MATCH_TOKEN)
@@ -183,7 +183,7 @@ async def _run_one(*, index_dir: Path, corpus_root: Path, profile: str, run: int
 
 
 async def _amain(args: argparse.Namespace) -> int:
-    with tempfile.TemporaryDirectory(prefix="acorn-bench-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="fnd-bench-") as tmp:
         tmp_path = Path(tmp)
         _corpus.write_corpus(tmp_path / "corpus", list(_corpus.PROFILES.values()))
         idx = tmp_path / "index"

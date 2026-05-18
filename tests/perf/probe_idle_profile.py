@@ -23,9 +23,9 @@ from pathlib import Path
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
-from acorn.index import build_index  # noqa: E402
-from acorn.tui import AcornApp  # noqa: E402
+from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
+from fnd.index import build_index  # noqa: E402
+from fnd.tui import FNDApp  # noqa: E402
 
 VAULT_ROOT = Path(
     "/Users/BenDavidson/Library/Mobile Documents/iCloud~md~obsidian/Documents/Obsidian Vault"
@@ -48,7 +48,7 @@ def build_vault_subset(root: Path, *, n: int) -> Path:
 
 
 async def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="acorn-prof-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="fnd-prof-") as tmp:
         root = Path(tmp)
         corpus = build_vault_subset(root, n=12)
         index_dir = root / "index"
@@ -61,7 +61,7 @@ async def main() -> int:
             ),
             ranking={"default": RankingProfileConfig()},
         )
-        app = AcornApp(
+        app = FNDApp(
             index_dir=index_dir,
             config=cfg,
             collection="default",

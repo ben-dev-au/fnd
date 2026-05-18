@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 from textual.widgets import Tree
 
-from acorn.config import Config, load
-from acorn.index import build_index
-from acorn.tui import AcornApp
-from acorn.tui.preview_scrollbar import (
+from fnd.config import Config, load
+from fnd.index import build_index
+from fnd.tui import FNDApp
+from fnd.tui.preview_scrollbar import (
     MatchAwareScroll,
     MatchAwareScrollBar,
     MatchAwareScrollBarRender,
@@ -143,7 +143,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -171,7 +171,7 @@ def md_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_preview_pane_uses_match_aware_scroll(cfg: Config, md_index: Path) -> None:
-    app = AcornApp(index_dir=md_index, config=cfg)
+    app = FNDApp(index_dir=md_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
         pane = app.query_one("#preview_pane", MatchAwareScroll)
@@ -184,7 +184,7 @@ async def test_preview_pane_uses_match_aware_scroll(cfg: Config, md_index: Path)
 async def test_match_map_propagates_to_scrollbar(cfg: Config, md_index: Path) -> None:
     """After a match-bearing query renders chunks, the scrollbar's
     ``_match_map`` should reflect which chunks contain matches."""
-    app = AcornApp(
+    app = FNDApp(
         index_dir=md_index,
         config=cfg,
         collection="notes",

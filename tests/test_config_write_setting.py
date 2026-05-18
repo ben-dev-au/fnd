@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from acorn.config import load, write_setting
+from fnd.config import load, write_setting
 
 
 def test_writes_scalar_into_empty_file(tmp_path: Path) -> None:

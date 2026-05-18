@@ -22,9 +22,9 @@ from pathlib import Path
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
-from acorn.index import build_index  # noqa: E402
-from acorn.tui import AcornApp  # noqa: E402
+from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
+from fnd.index import build_index  # noqa: E402
+from fnd.tui import FNDApp  # noqa: E402
 from tests.perf import _corpus  # noqa: E402
 
 MATCH_TOKEN = _corpus.MATCH_TOKEN
@@ -43,7 +43,7 @@ def build_corpus(root: Path, *, n: int = 6) -> Path:
 
 
 async def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="acorn-hidden-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="fnd-hidden-") as tmp:
         root = Path(tmp)
         corpus = build_corpus(root, n=6)
         index_dir = root / "index"
@@ -53,7 +53,7 @@ async def main() -> int:
             defaults=Defaults(preview_prefetch_count=0, preview_load_debounce_ms=0),
             ranking={"default": RankingProfileConfig()},
         )
-        app = AcornApp(
+        app = FNDApp(
             index_dir=index_dir,
             config=cfg,
             collection="default",
@@ -75,7 +75,7 @@ async def main() -> int:
                 await asyncio.sleep(1.0)
                 await pilot.pause()
 
-            from acorn.tui.app import PreviewContainer
+            from fnd.tui.app import PreviewContainer
 
             containers = list(app.query(PreviewContainer))
             print(f"\ncached PreviewContainers: {len(containers)}")

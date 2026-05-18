@@ -2,12 +2,12 @@
 
 Two features land here:
 
-* :func:`acorn.synonyms.expand` rewrites a query string by wrapping any
+* :func:`fnd.synonyms.expand` rewrites a query string by wrapping any
   single-term that matches a synonym group into ``(term OR sym1 OR sym2)``.
   Synonyms live in a user-owned TOML file (§6) and apply at *query time*
   only — the index never sees the expansion, so synonym edits don't require
   a rebuild.
-* :func:`acorn.cascade.cascade_search` orchestrates a sequence of widening
+* :func:`fnd.cascade.cascade_search` orchestrates a sequence of widening
   query passes. Pass 1 is the literal query; if the result count is below
   the per-pass threshold, pass 2 widens with fuzzy~1; pass 3 then expands
   via synonyms. Hits from later passes are *appended* (deduplicated) so the
@@ -21,10 +21,10 @@ from pathlib import Path
 
 import pytest
 
-from acorn.cascade import cascade_search
-from acorn.index import build_index
-from acorn.query import Hit, Searcher
-from acorn.synonyms import SynonymTable, expand, load_synonyms
+from fnd.cascade import cascade_search
+from fnd.index import build_index
+from fnd.query import Hit, Searcher
+from fnd.synonyms import SynonymTable, expand, load_synonyms
 
 # ── synonyms ───────────────────────────────────────────────────────
 
@@ -233,7 +233,7 @@ def test_hit_pass_index_default_is_zero() -> None:
 def test_format_hit_label_shows_per_pass_glyph() -> None:
     """The TUI tree label adds a glyph for fuzzy / synonym hits but stays
     quiet for the exact pass (the common case)."""
-    from acorn.tui.app import _format_hit_label
+    from fnd.tui.app import _format_hit_label
 
     def _make(pass_index: int) -> Hit:
         return Hit(

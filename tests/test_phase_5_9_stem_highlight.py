@@ -10,15 +10,15 @@ from __future__ import annotations
 
 from rich.text import Text
 
-from acorn.extract.base import Block
-from acorn.query import FileChunk
-from acorn.render import (
+from fnd.extract.base import Block
+from fnd.query import FileChunk
+from fnd.render import (
     HIGHLIGHT_STYLE,
     apply_stem_highlights,
     render_chunk_pieces,
     text_has_match,
 )
-from acorn.render import _term_stems as term_stems  # private but stable
+from fnd.render import _term_stems as term_stems  # private but stable
 
 # ── stem helpers ────────────────────────────────────────────────────
 

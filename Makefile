@@ -18,7 +18,7 @@ fmt:
 	uv run ruff check --fix .
 
 tui:
-	uv run textual run --dev acorn.tui.app:AcornApp
+	uv run textual run --dev fnd.tui.app:FNDApp
 
 snapshot:
 	uv run pytest --snapshot-update

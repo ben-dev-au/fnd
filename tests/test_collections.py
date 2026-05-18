@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from acorn.config import CollectionConfig
-from acorn.index import build_index, build_index_from_config
-from acorn.query import Searcher
+from fnd.config import CollectionConfig
+from fnd.index import build_index, build_index_from_config
+from fnd.query import Searcher
 
 
 def _make_md(p: Path, content: str) -> None:
@@ -138,7 +138,7 @@ def test_build_index_from_config_round_trips(shaped_corpus: Path, tmp_index_dir:
 
 def test_load_config_reads_toml(tmp_path: Path) -> None:
     """Config file load + validate roundtrip."""
-    from acorn.config import load
+    from fnd.config import load
 
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(

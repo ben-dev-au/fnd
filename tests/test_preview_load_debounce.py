@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from acorn.config import Config, Defaults
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.config import Config, Defaults
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ async def test_rapid_cursor_sweep_dispatches_once(
     built_index: Path, cfg_with_debounce: Config
 ) -> None:
     """Several quick highlights only fire one ``_render_full_doc``."""
-    app = AcornApp(index_dir=built_index, config=cfg_with_debounce, initial_query="results")
+    app = FNDApp(index_dir=built_index, config=cfg_with_debounce, initial_query="results")
     async with app.run_test() as pilot:
         await pilot.pause()
 
@@ -68,7 +68,7 @@ async def test_zero_delay_dispatches_synchronously(
     """When ``preview_load_debounce_ms`` is 0 the load fires inline —
     the legacy / test-time behaviour."""
     cfg = Config(defaults=Defaults(preview_load_debounce_ms=0))
-    app = AcornApp(index_dir=built_index, config=cfg, initial_query="results")
+    app = FNDApp(index_dir=built_index, config=cfg, initial_query="results")
     async with app.run_test() as pilot:
         await pilot.pause()
         render_calls: list[str] = []
@@ -89,7 +89,7 @@ async def test_query_change_cancels_pending_load(
 ) -> None:
     """A new query rebuilds the results tree; any in-flight debounce
     target from the prior result set must not fire after rebuild."""
-    app = AcornApp(index_dir=built_index, config=cfg_with_debounce, initial_query="results")
+    app = FNDApp(index_dir=built_index, config=cfg_with_debounce, initial_query="results")
     async with app.run_test() as pilot:
         await pilot.pause()
         # Arm a debounced load that points at a parent_id we won't have

@@ -21,9 +21,9 @@ from pathlib import Path
 
 import pytest
 
-from acorn.config import Config, load
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.config import Config, load
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -41,7 +41,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -76,7 +76,7 @@ async def test_fusion_default_returns_many_files(cfg: Config, wide_index: Path) 
     """A corpus with templates in 15 files should produce 15 result rows
     — the fusion path must oversample enough chunks for the grouper to
     fill ``limit`` files. The pre-fix wiring produced 2-3 files."""
-    app = AcornApp(index_dir=wide_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=wide_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("templates")
@@ -90,7 +90,7 @@ async def test_fusion_default_returns_many_files(cfg: Config, wide_index: Path) 
 async def test_fusion_preserves_bm25_score_range(cfg: Config, wide_index: Path) -> None:
     """Hit scores must stay in the BM25 range (1+) — RRF fused values
     of 0.001-0.07 leak the implementation through to the UI."""
-    app = AcornApp(index_dir=wide_index, config=cfg, collection="notes")
+    app = FNDApp(index_dir=wide_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("templates")

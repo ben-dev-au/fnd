@@ -23,9 +23,9 @@ from pathlib import Path
 
 import pytest
 
-from acorn import query as query_mod
-from acorn.index import build_index
-from acorn.query import Searcher
+from fnd import query as query_mod
+from fnd.index import build_index
+from fnd.query import Searcher
 
 
 @pytest.fixture

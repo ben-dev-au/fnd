@@ -11,7 +11,7 @@ import pytest
 
 def test_reveal_runs_open_r_on_macos(tmp_path: Path) -> None:
     """Spec: Reveal-in-Finder — uses `open -R <path>` on macOS."""
-    from acorn import opener
+    from fnd import opener
 
     p = tmp_path / "x.toml"
     p.write_text("")
@@ -26,7 +26,7 @@ def test_reveal_runs_open_r_on_macos(tmp_path: Path) -> None:
 
 @pytest.fixture
 def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
-    from acorn.index import build_index
+    from fnd.index import build_index
 
     build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
     return tmp_index_dir
@@ -35,10 +35,10 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 @pytest.mark.asyncio
 async def test_root_has_open_keybindings_file(built_index: Path) -> None:
     """Spec: IA › Root — sibling action for the keybindings TOML."""
-    from acorn.tui import AcornApp
-    from acorn.tui.settings_screen import SettingsList
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import SettingsList
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -52,10 +52,10 @@ async def test_root_has_open_keybindings_file(built_index: Path) -> None:
 async def test_shift_enter_on_open_config_calls_reveal(built_index: Path) -> None:
     """Spec: Reveal pattern — Shift+Enter on the Open config row reveals
     config.toml in Finder."""
-    from acorn.tui import AcornApp
-    from acorn.tui.settings_screen import SettingsList, SettingsScreen
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
@@ -65,7 +65,7 @@ async def test_shift_enter_on_open_config_calls_reveal(built_index: Path) -> Non
         lst = screen.query_one(SettingsList)
         idx = next(i for i, it in enumerate(lst._items) if it.id == "root.open_config_file")
         lst.cursor_index = idx
-        with patch("acorn.opener.reveal") as mock_reveal:
+        with patch("fnd.opener.reveal") as mock_reveal:
             await pilot.press("shift+enter")
             await pilot.pause()
             mock_reveal.assert_called_once()

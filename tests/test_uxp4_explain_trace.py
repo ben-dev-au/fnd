@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from acorn.config import Config, load
-from acorn.index import build_index
+from fnd.config import Config, load
+from fnd.index import build_index
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -26,7 +26,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -63,8 +63,8 @@ def test_fusion_trace_shape(cfg: Config, medium_index: Path) -> None:
     """A multi-word query routes through fusion; trace must list one
     SubQueryTrace per sub-query that ran (phrase + lex), with hit_count
     and bm25_top populated."""
-    from acorn.fusion import fusion_search
-    from acorn.query import Searcher
+    from fnd.fusion import fusion_search
+    from fnd.query import Searcher
 
     searcher = Searcher(index_dir=medium_index)
     hits, trace = fusion_search(
@@ -96,8 +96,8 @@ def test_fusion_trace_shape(cfg: Config, medium_index: Path) -> None:
 
 def test_fusion_search_default_returns_list_unchanged(cfg: Config, medium_index: Path) -> None:
     """Backward-compat: no with_trace kwarg → returns plain list[Hit]."""
-    from acorn.fusion import fusion_search
-    from acorn.query import Searcher
+    from fnd.fusion import fusion_search
+    from fnd.query import Searcher
 
     searcher = Searcher(index_dir=medium_index)
     hits = fusion_search(searcher, query="quick brown", limit=10, collection="notes")
@@ -115,8 +115,8 @@ def test_cascade_trace_records_pass_widening(
     Uses ``glimmer`` / ``glimer`` (both pass through en_stem unchanged
     so the on-disk Levenshtein distance is exactly 1) — same canonical
     fixture as ``test_ux_j_cascade_fallback.py``."""
-    from acorn.cascade import cascade_search
-    from acorn.query import Searcher
+    from fnd.cascade import cascade_search
+    from fnd.query import Searcher
 
     a = tmp_path / "notes"
     a.mkdir(parents=True, exist_ok=True)
@@ -143,8 +143,8 @@ def test_cascade_trace_records_pass_widening(
 
 
 def test_search_layered_regime_strong_signal(cfg: Config, unambiguous_index: Path) -> None:
-    from acorn.layered import search_layered
-    from acorn.query import Searcher
+    from fnd.layered import search_layered
+    from fnd.query import Searcher
 
     searcher = Searcher(index_dir=unambiguous_index)
     _, trace = search_layered(
@@ -161,8 +161,8 @@ def test_search_layered_regime_strong_signal(cfg: Config, unambiguous_index: Pat
 
 
 def test_search_layered_regime_fusion_for_ambiguous_query(cfg: Config, medium_index: Path) -> None:
-    from acorn.layered import search_layered
-    from acorn.query import Searcher
+    from fnd.layered import search_layered
+    from fnd.query import Searcher
 
     searcher = Searcher(index_dir=medium_index)
     _, trace = search_layered(
@@ -181,8 +181,8 @@ def test_search_layered_regime_fusion_for_ambiguous_query(cfg: Config, medium_in
 def test_search_layered_regime_cascade_for_typo(
     cfg: Config, tmp_path: Path, tmp_index_dir: Path
 ) -> None:
-    from acorn.layered import search_layered
-    from acorn.query import Searcher
+    from fnd.layered import search_layered
+    from fnd.query import Searcher
 
     a = tmp_path / "notes"
     a.mkdir(parents=True, exist_ok=True)
@@ -206,8 +206,8 @@ def test_trace_to_json_is_valid_dict(cfg: Config, medium_index: Path) -> None:
     """SearchTrace.to_json round-trips through json module without error."""
     import json
 
-    from acorn.layered import search_layered
-    from acorn.query import Searcher
+    from fnd.layered import search_layered
+    from fnd.query import Searcher
 
     searcher = Searcher(index_dir=medium_index)
     _, trace = search_layered(

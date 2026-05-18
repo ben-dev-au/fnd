@@ -6,7 +6,7 @@ click_to_display_start → click_to_display_end deltas.
 
 Run with:
 
-    ACORN_PERF=1 ./.venv/bin/python tests/perf/bench_reveal.py \\
+    FND_PERF=1 ./.venv/bin/python tests/perf/bench_reveal.py \\
         --profile heavy --warm cold --runs 5
 
 Output: JSON to stdout (or to ``--out PATH``).
@@ -25,15 +25,15 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-# Ensure we can import acorn from the worktree.
+# Ensure we can import fnd from the worktree.
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-os.environ.setdefault("ACORN_PERF", "1")  # auto-enable for this entry point
+os.environ.setdefault("FND_PERF", "1")  # auto-enable for this entry point
 
-from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
-from acorn.index import _path_parent_id, build_index  # noqa: E402
-from acorn.tui import AcornApp, _perf  # noqa: E402
+from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
+from fnd.index import _path_parent_id, build_index  # noqa: E402
+from fnd.tui import FNDApp, _perf  # noqa: E402
 from tests.perf import _corpus  # noqa: E402
 
 WarmState = str  # "cold" | "warm"
@@ -83,7 +83,7 @@ def _extract_click_to_display(records: list[dict[str, Any]]) -> tuple[float | No
     return end_ms - start_ms, path
 
 
-async def _wait_for_results(app: AcornApp, pilot: Any, timeout: float = 5.0) -> None:
+async def _wait_for_results(app: FNDApp, pilot: Any, timeout: float = 5.0) -> None:
     """Pump the loop until ``app._groups`` is non-empty or timeout."""
     deadline = time.perf_counter() + timeout
     while time.perf_counter() < deadline:
@@ -128,7 +128,7 @@ async def _run_one(
         ),
         ranking={"default": RankingProfileConfig()},
     )
-    app = AcornApp(index_dir=index_dir, config=cfg, collection="default")
+    app = FNDApp(index_dir=index_dir, config=cfg, collection="default")
     target_md = corpus_root / f"{profile}.md"
     if not target_md.exists():
         return BenchResult(
@@ -197,7 +197,7 @@ async def _run_one(
 
 
 async def _amain(args: argparse.Namespace) -> int:
-    with tempfile.TemporaryDirectory(prefix="acorn-bench-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="fnd-bench-") as tmp:
         tmp_path = Path(tmp)
         corpus_paths = _build_corpus(tmp_path)
         _build_index(tmp_path / "corpus", tmp_path / "index")

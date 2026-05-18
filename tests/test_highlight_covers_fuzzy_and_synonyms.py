@@ -18,12 +18,12 @@ import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Tree
 
-from acorn.config import Config, load
-from acorn.index import build_index
-from acorn.matching import MatchSpec, word_matches
-from acorn.synonyms import SynonymTable
-from acorn.tui import AcornApp
-from acorn.tui.app import AcornMarkdown
+from fnd.config import Config, load
+from fnd.index import build_index
+from fnd.matching import MatchSpec, word_matches
+from fnd.synonyms import SynonymTable
+from fnd.tui import FNDApp
+from fnd.tui.app import FNDMarkdown
 
 # ── Unit: MatchSpec covers all three pass semantics ──────────────────
 
@@ -85,7 +85,7 @@ def test_match_spec_empty_query_is_inert() -> None:
 def test_word_runs_exact_match_is_one_yellow_run() -> None:
     """Literal stem match → single yellow run covering the whole
     word, no orange overlay (no mismatch information to show)."""
-    from acorn.render import HIGHLIGHT_STYLE, MISMATCH_STYLE, word_highlight_runs
+    from fnd.render import HIGHLIGHT_STYLE, MISMATCH_STYLE, word_highlight_runs
 
     spec = MatchSpec.from_query("templates")
     runs = word_highlight_runs("templates", spec)
@@ -99,7 +99,7 @@ def test_word_runs_fuzzy_match_marks_only_diverging_char_orange() -> None:
     fuzzy pass. Char-level alignment marks the matching prefix and
     suffix yellow and the one diverging char orange — exactly the
     spec the user asked for."""
-    from acorn.render import HIGHLIGHT_STYLE, MISMATCH_STYLE, word_highlight_runs
+    from fnd.render import HIGHLIGHT_STYLE, MISMATCH_STYLE, word_highlight_runs
 
     spec = MatchSpec.from_query("templatas")
     runs = word_highlight_runs("templates", spec)
@@ -118,7 +118,7 @@ def test_word_runs_synonym_match_is_all_yellow() -> None:
     typed "k8s" but a synonym group expanded to "kubernetes". The
     whole synonym word should read as a clean match (yellow) rather
     than mostly-orange because of low char-level overlap."""
-    from acorn.render import HIGHLIGHT_STYLE, word_highlight_runs
+    from fnd.render import HIGHLIGHT_STYLE, word_highlight_runs
 
     syns = SynonymTable.from_groups([["k8s", "kubernetes"]])
     spec = MatchSpec.from_query("k8s", synonyms=syns)
@@ -130,7 +130,7 @@ def test_word_runs_two_typo_fuzzy_marks_both_diverging_chars() -> None:
     """Long stems get AUTO distance 2. User typo "tempplatas" (extra
     'p' AND 'a' in place of 'e') still surfaces "templates", and
     alignment marks both diverging positions orange."""
-    from acorn.render import MISMATCH_STYLE, word_highlight_runs
+    from fnd.render import MISMATCH_STYLE, word_highlight_runs
 
     spec = MatchSpec.from_query("tempplatas")
     runs = word_highlight_runs("templates", spec)
@@ -142,7 +142,7 @@ def test_word_runs_two_typo_fuzzy_marks_both_diverging_chars() -> None:
 
 
 def test_word_runs_non_match_returns_empty() -> None:
-    from acorn.render import word_highlight_runs
+    from fnd.render import word_highlight_runs
 
     spec = MatchSpec.from_query("templates")
     assert word_highlight_runs("strawberry", spec) == []
@@ -152,7 +152,7 @@ def test_word_runs_case_difference_alone_is_not_a_mismatch() -> None:
     """Matching is case-insensitive — "Templates" against query
     "templates" is a literal stem hit, all yellow. No orange even
     though 'T' is uppercase in the doc and lowercase in the query."""
-    from acorn.render import HIGHLIGHT_STYLE, MISMATCH_STYLE, word_highlight_runs
+    from fnd.render import HIGHLIGHT_STYLE, MISMATCH_STYLE, word_highlight_runs
 
     spec = MatchSpec.from_query("templates")
     runs = word_highlight_runs("Templates", spec)
@@ -178,7 +178,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
         """),
         encoding="utf-8",
     )
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return load(cfg_path)
 
 
@@ -201,7 +201,7 @@ async def test_fuzzy_match_chunk_highlights_the_actual_word(
     pass and surfaces the chunk that contains ``templates``. The
     preview must highlight the matched word ``templates``, not nothing.
     """
-    app = AcornApp(
+    app = FNDApp(
         index_dir=fuzzy_corpus,
         config=cfg,
         collection="notes",
@@ -213,7 +213,7 @@ async def test_fuzzy_match_chunk_highlights_the_actual_word(
         tree.focus()
         await pilot.pause(0.3)
         pane = app.query_one("#preview_pane", VerticalScroll)
-        md_widgets = list(pane.query(AcornMarkdown))
+        md_widgets = list(pane.query(FNDMarkdown))
         assert md_widgets, "expected fuzzy-hit chunk to mount"
         # The chars of the doc word "templates" must be COVERED by
         # highlight spans (collectively — for a fuzzy hit the word

@@ -27,7 +27,7 @@ A user must be able to:
 Five units, each independently testable:
 
 ```
-acorn/
+fnd/
 ├── frontmatter.py    # parse YAML frontmatter blocks from .md files
 ├── filter_dsl.py     # parse + evaluate the predicate DSL (used at index AND query time)
 ├── schema.py         # extended: stored meta_blob field for query-time filter
@@ -42,8 +42,8 @@ acorn/
 
 Dependencies between units:
 
-- `frontmatter.py` is a leaf: no acorn imports.
-- `filter_dsl.py` is a leaf: no acorn imports.
+- `frontmatter.py` is a leaf: no fnd imports.
+- `filter_dsl.py` is a leaf: no fnd imports.
 - `config.py` consumes `filter_dsl.compile_filter` to validate `frontmatter_filter` strings at load time.
 - `walk.py` consumes `frontmatter.read_frontmatter` and a compiled filter callable from each source.
 - `index.py` consumes `frontmatter.read_frontmatter` to serialize the file's metadata into `meta_blob` at index time (so query-time filters can read it back).
@@ -55,7 +55,7 @@ Dependencies between units:
 
 `tomlkit>=0.13` — comment-preserving TOML round-trip. MIT, ~250 KB, same maintainer as poetry. Used only when the form saves the config back; reading still uses stdlib `tomllib`.
 
-YAML frontmatter is hand-rolled (`acorn/frontmatter.py`) to avoid adding PyYAML for one feature. Obsidian's frontmatter is a flat mapping with scalar / list / quoted-string values — well within reach of a ~80 LOC parser.
+YAML frontmatter is hand-rolled (`fnd/frontmatter.py`) to avoid adding PyYAML for one feature. Obsidian's frontmatter is a flat mapping with scalar / list / quoted-string values — well within reach of a ~80 LOC parser.
 
 ## Config schema
 
@@ -94,7 +94,7 @@ excludes = ["**/Archive/**"]
 - If `frontmatter_filter` fails to parse → ValidationError with the parser's column/message ("collection X source 1: filter syntax: expected operator after 'Course' at column 8").
 - Internally the loader normalizes both shapes into `list[SourceConfig]` so downstream code (walk, index, TUI) only sees the new shape.
 
-## Frontmatter parser (`acorn/frontmatter.py`)
+## Frontmatter parser (`fnd/frontmatter.py`)
 
 ```python
 def read_frontmatter(text: str) -> dict[str, object] | None:
@@ -124,7 +124,7 @@ Supported subset (covers Obsidian, Jekyll, Hugo, MkDocs):
 
 Strings are deserialized as `str`. Numbers as `int` / `float`. Dates as `datetime.date`. Booleans as `bool`. Null as `None`. Lists as `list` of any of the above.
 
-## Filter DSL (`acorn/filter_dsl.py`)
+## Filter DSL (`fnd/filter_dsl.py`)
 
 ### Grammar
 
@@ -158,7 +158,7 @@ ident       ::= word | quoted_word               # quoted to allow keys with spa
 
 - A document with no frontmatter at all → filter returns `False` (excluded). Matches "include only notes with `Course = X`".
 - A document with frontmatter but missing the field referenced in the filter → `False` for `==`/`<`/etc.; `False` for `in`; `True` for `!=` *only* when the field is present and unequal — a missing field treats the predicate as `False` (strict null-handling).
-- A document with frontmatter that fails to parse (`FrontmatterParseError`) → filter returns `False` (excluded), and the indexer logs the file with a `frontmatter_parse_error` flag for `acorn status --errors`.
+- A document with frontmatter that fails to parse (`FrontmatterParseError`) → filter returns `False` (excluded), and the indexer logs the file with a `frontmatter_parse_error` flag for `fnd status --errors`.
 
 ### Public API
 
@@ -181,7 +181,7 @@ class Predicate(Protocol):
     def __call__(self, frontmatter: Mapping[str, object]) -> bool: ...
 ```
 
-## Walker (`acorn/walk.py`)
+## Walker (`fnd/walk.py`)
 
 Extended signature:
 
@@ -197,7 +197,7 @@ def walk_sources(*, sources: list[SourceConfig]) -> Iterator[Path]:
 
 The collection-level `walk(...)` shim continues to work for the legacy single-source shape (collections that haven't migrated). Downstream callers (`build_index_from_config`) switch to `walk_sources`.
 
-## Indexer (`acorn/index.py`)
+## Indexer (`fnd/index.py`)
 
 `build_index_from_config` takes the normalized `list[SourceConfig]` and:
 
@@ -206,7 +206,7 @@ The collection-level `walk(...)` shim continues to work for the legacy single-so
 3. For surviving `.md` chunks: serialize the file's frontmatter to JSON bytes and store in the `meta_blob` field. Non-md chunks store empty bytes.
 4. Frontmatter parse errors are logged once per file but don't abort the build; the offending file is excluded by the index-time filter (already documented above) and `meta_blob` is left empty.
 
-## Schema (`acorn/schema.py`)
+## Schema (`fnd/schema.py`)
 
 Adds one field:
 
@@ -214,9 +214,9 @@ Adds one field:
 |---|---|---|---|---|---|
 | `meta_blob` | bytes | no | yes | no | JSON-encoded frontmatter; decoded per hit at query time when a metadata filter is in effect. |
 
-Schema version bumps; existing indexes need a `--rebuild`. The sidecar `.acorn-schema-version` already gates this — old indexes refuse to load with a clear message, matching the established pattern.
+Schema version bumps; existing indexes need a `--rebuild`. The sidecar `.fnd-schema-version` already gates this — old indexes refuse to load with a clear message, matching the established pattern.
 
-## Query DSL pre-pass (`acorn/query_dsl.py`)
+## Query DSL pre-pass (`fnd/query_dsl.py`)
 
 The pre-pass already translates `c:` → `collection:` and date / size tokens. It gains one more transform: extract a single bracketed metadata filter from anywhere in the query, leaving the rest as the lexical query.
 
@@ -241,7 +241,7 @@ Examples:
 
 Multiple `[…]` blocks → ValueError ("only one inline metadata filter per query"); user can compose with `AND` / `OR` inside the single block.
 
-## Query layer (`acorn/query.py`)
+## Query layer (`fnd/query.py`)
 
 `Searcher.search` and `Searcher.search_grouped` gain an optional `metadata_filter: str | None = None` kwarg. When set:
 
@@ -259,7 +259,7 @@ The TUI calls `Searcher.search_grouped(metadata_filter=metadata_filter)` after s
 
 Saved searches and `Up`/`Down` query history persist the *full* user-typed string including the `[…]` clause — round-trip is "what you typed comes back exactly." No separate column for the metadata filter; the DSL pre-pass extracts it on every replay.
 
-## TUI (`acorn/tui/collections_screen.py`)
+## TUI (`fnd/tui/collections_screen.py`)
 
 ### New action / binding
 
@@ -324,7 +324,7 @@ Edit source — coursework / 1
 ### Save flow
 
 1. On `s save` (collection or source): re-parse the filter; if it fails, refuse to save and surface the column + message inline. **The user cannot save an invalid filter.**
-2. Successful save → diff the new collection against the on-disk one. If sources / includes / excludes / `frontmatter_filter` changed → kick off `acorn collection reindex <name>` automatically (auto-reindex per user preference, with a "cancel" action visible in the status bar).
+2. Successful save → diff the new collection against the on-disk one. If sources / includes / excludes / `frontmatter_filter` changed → kick off `fnd collection reindex <name>` automatically (auto-reindex per user preference, with a "cancel" action visible in the status bar).
 3. Write back via `tomlkit`: load the TOML doc, mutate the relevant tables, write back. Comments and unrelated tables are preserved.
 
 ### Test-against-frontmatter affordance
@@ -381,7 +381,7 @@ Confirmation modal ("Delete collection 'coursework' and remove its 412 indexed c
 
 ### `tests/test_config_validate_filter.py`
 
-- `acorn config validate` flags an invalid `frontmatter_filter` with column + message
+- `fnd config validate` flags an invalid `frontmatter_filter` with column + message
 - Mixing `roots = [...]` and `[[sources]]` → ValidationError
 
 ### `tests/test_query_metadata_filter.py` — query-time post-filter
@@ -399,31 +399,31 @@ Confirmation modal ("Delete collection 'coursework' and remove its 412 indexed c
 
 ### Phase 5.5e-1 — Backend: index-time filtering
 
-1. `acorn/frontmatter.py` + tests
-2. `acorn/filter_dsl.py` + tests
-3. `acorn/config.py` extended (`SourceConfig`, validators, normalization, tomlkit write API) + tests
-4. `acorn/walk.py` extended (`walk_sources`) + tests
-5. `acorn/index.py` extended (per-source filter at index time) + tests
-6. CLI: `acorn collection add <name> --source <path> [--include ... --exclude ... --filter ...]` (the TUI form will reuse the same `acorn.config` write primitives — no subprocess shelling)
-7. `acorn config validate` surfaces filter errors
+1. `fnd/frontmatter.py` + tests
+2. `fnd/filter_dsl.py` + tests
+3. `fnd/config.py` extended (`SourceConfig`, validators, normalization, tomlkit write API) + tests
+4. `fnd/walk.py` extended (`walk_sources`) + tests
+5. `fnd/index.py` extended (per-source filter at index time) + tests
+6. CLI: `fnd collection add <name> --source <path> [--include ... --exclude ... --filter ...]` (the TUI form will reuse the same `fnd.config` write primitives — no subprocess shelling)
+7. `fnd config validate` surfaces filter errors
 
-After 5.5e-1 a power user can configure filtered collections via `acorn config edit` and `acorn collection add`.
+After 5.5e-1 a power user can configure filtered collections via `fnd config edit` and `fnd collection add`.
 
 ### Phase 5.5e-2 — Query-time filtering
 
-1. `acorn/schema.py` adds `meta_blob` stored field; bump schema version
-2. `acorn/index.py` serializes frontmatter JSON to `meta_blob` per chunk
-3. `acorn/query_dsl.py` adds `split_metadata_filter`
-4. `acorn/query.py` accepts `metadata_filter` kwarg and post-filters with oversample-and-retry
-5. CLI: `acorn search [--meta "<filter>"]` for non-TUI users
+1. `fnd/schema.py` adds `meta_blob` stored field; bump schema version
+2. `fnd/index.py` serializes frontmatter JSON to `meta_blob` per chunk
+3. `fnd/query_dsl.py` adds `split_metadata_filter`
+4. `fnd/query.py` accepts `metadata_filter` kwarg and post-filters with oversample-and-retry
+5. CLI: `fnd search [--meta "<filter>"]` for non-TUI users
 6. TUI: query bar wires the inline `[…]` syntax; parse errors surface inline; saved searches round-trip the full string
 7. Tests: pre-pass split, post-filter end-to-end, oversample correctness, schema-version refusal of old index
 
-After 5.5e-2 the same DSL works at both index time and query time. **Existing indexes must be rebuilt** to gain the `meta_blob` field — old indexes still load (the field is optional in queries that don't use it) only if Tantivy permits adding optional stored fields without rebuild; if not, schema-version gate fires and the user runs `acorn collection reindex --all`. We will determine this empirically during the spike at the start of 5.5e-2 and document the path users must take.
+After 5.5e-2 the same DSL works at both index time and query time. **Existing indexes must be rebuilt** to gain the `meta_blob` field — old indexes still load (the field is optional in queries that don't use it) only if Tantivy permits adding optional stored fields without rebuild; if not, schema-version gate fires and the user runs `fnd collection reindex --all`. We will determine this empirically during the spike at the start of 5.5e-2 and document the path users must take.
 
 ### Phase 5.5e-3 — TUI Collections form
 
-1. `acorn/tui/collections_screen.py` (new screen)
+1. `fnd/tui/collections_screen.py` (new screen)
 2. New actions in registry; `F3` binding; help-overlay update
 3. Source edit modal + filter test affordance
 4. Save round-trip via `tomlkit`
@@ -437,7 +437,7 @@ Each phase ships green with its own commit per §20 phase-gating.
 A change is "phase 5.5e complete" only when:
 
 1. All tests above are green; full suite still passes; `ruff` + `pyright --strict` clean.
-2. **5.5e-1 manual smoke** — configure a real Obsidian-vault source with a frontmatter filter via `acorn config edit`, reindex, run a query → only matching notes appear; toggle the filter to its negation, reindex → complementary set appears.
+2. **5.5e-1 manual smoke** — configure a real Obsidian-vault source with a frontmatter filter via `fnd config edit`, reindex, run a query → only matching notes appear; toggle the filter to its negation, reindex → complementary set appears.
 3. **5.5e-2 manual smoke** — without changing the collection's index-time filter, type a query like `[Course == 'DPwC' AND status != 'archived'] design patterns` → results narrow to matching notes within ~100 ms; type a syntactically invalid filter → inline error appears, no search runs; remove the bracketed clause → results widen back.
 4. **5.5e-3 manual smoke** — `config.toml` saved through the form keeps all hand-authored comments intact (verified by hand on a test file). Invalid filter → form refuses save with inline error; valid filter → saves and (auto-)reindexes.
 5. Plan §22 ("Out of scope for v1") is updated to remove the "TUI Collection CRUD" deferral.

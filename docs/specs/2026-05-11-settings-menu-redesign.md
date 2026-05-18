@@ -224,7 +224,7 @@ Four rows. No headers. Search input on top. Detail strip on the bottom.
    │ ▌ Preferences         Result limit · Debounce · Defaults · 4     │
    │   Collections         2 collections · 5 sources                  │
    │   Keybindings         24 keys across 6 contexts                  │
-   │   Open config file    …/Application Support/acorn/config.toml    │
+   │   Open config file    …/Application Support/fnd/config.toml    │
    │                                                                  │
    │ ──────────────────────────────────────────────────────────────── │
    │  Preferences — adjust result limit, debounce, default collection,│
@@ -413,7 +413,7 @@ Same shape as the Add Collection wizard, but pre-populated with the existing sou
    │                                                                  │
    │ ──────────────────────────────────────────────────────────────── │
    │  Open settings & commands — opens this menu. Stored in           │
-   │  `acorn.tui.actions:open_command_palette`.                       │
+   │  `fnd.tui.actions:open_command_palette`.                       │
    └──────────────────────────────────────────────────────────────────┘
     ⏎ Run   [key] Run directly   Esc Back
 ```
@@ -427,8 +427,8 @@ Behaviour highlights:
 ### Open config file / Open keybindings file (root-level actions)
 
 Two sibling rows on the root menu:
-- `Open config file` — `~/Library/Application Support/acorn/config.toml`
-- `Open keybindings file` — `~/Library/Application Support/acorn/keybindings.toml`
+- `Open config file` — `~/Library/Application Support/fnd/config.toml`
+- `Open keybindings file` — `~/Library/Application Support/fnd/keybindings.toml`
 
 Each:
 - `Enter` → drops to `$EDITOR` via `App.suspend()`, reloads + validates on return (recovery flow if invalid).
@@ -559,11 +559,11 @@ Automated tests:
 
 | File                                      | Change                                                                                  |
 |-------------------------------------------|-----------------------------------------------------------------------------------------|
-| `acorn/tui/menu.py`                       | Add `walk_all_sections()` walker. New `KIND_HEADER` rendering changes (none, already supports). New top-level `Open keybindings file` row. Add scope pseudo-row. Drill-cue mode helper. Trailing-summary providers for every drill row (live counts). |
-| `acorn/tui/settings_screen.py`            | `SettingsScreen`: container `height: auto`, centered, max width 100. Detail strip widget below list. Cross-section search on root. Match-substring bolding in row renderer. Bracketed key style. Reveal-in-Finder binding for supported rows. New Add Collection wizard screen + multi-select picker integration. Per-source form retains TextArea tester; switches to picker-based Includes / Excludes. |
-| `acorn/tui/app.py`                        | Drop F3 binding. Hint-bar table gets reveal-aware variant. Open config / keybindings file actions. |
-| `acorn/config.py`                         | New `defaults.drill_summary_mode` field. Indexer-supported file types as a public constant `INDEXER_FILETYPES`. |
-| `acorn/tui/widgets/`                      | (new dir if needed) — maybe split EditBar / DetailStrip / row-renderer helpers into their own files since `settings_screen.py` is large. |
+| `fnd/tui/menu.py`                       | Add `walk_all_sections()` walker. New `KIND_HEADER` rendering changes (none, already supports). New top-level `Open keybindings file` row. Add scope pseudo-row. Drill-cue mode helper. Trailing-summary providers for every drill row (live counts). |
+| `fnd/tui/settings_screen.py`            | `SettingsScreen`: container `height: auto`, centered, max width 100. Detail strip widget below list. Cross-section search on root. Match-substring bolding in row renderer. Bracketed key style. Reveal-in-Finder binding for supported rows. New Add Collection wizard screen + multi-select picker integration. Per-source form retains TextArea tester; switches to picker-based Includes / Excludes. |
+| `fnd/tui/app.py`                        | Drop F3 binding. Hint-bar table gets reveal-aware variant. Open config / keybindings file actions. |
+| `fnd/config.py`                         | New `defaults.drill_summary_mode` field. Indexer-supported file types as a public constant `INDEXER_FILETYPES`. |
+| `fnd/tui/widgets/`                      | (new dir if needed) — maybe split EditBar / DetailStrip / row-renderer helpers into their own files since `settings_screen.py` is large. |
 | `tests/test_settings_redesign.py`         | New file covering all twelve verification steps above. |
 | `tests/test_actions_keymap.py`            | Drop the stale `:` behaviour test, replace with cross-section search dispatch test. |
 

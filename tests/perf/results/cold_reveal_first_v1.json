@@ -1,9 +1,9 @@
 {
   "corpus": {
-    "small.md": "/var/folders/hq/gvg4r_tj1hq80xhgw51yy0y00000gn/T/acorn-bench-s2848rxt/corpus/small.md",
-    "heavy.md": "/var/folders/hq/gvg4r_tj1hq80xhgw51yy0y00000gn/T/acorn-bench-s2848rxt/corpus/heavy.md",
-    "table_heavy.md": "/var/folders/hq/gvg4r_tj1hq80xhgw51yy0y00000gn/T/acorn-bench-s2848rxt/corpus/table_heavy.md",
-    "fence_heavy.md": "/var/folders/hq/gvg4r_tj1hq80xhgw51yy0y00000gn/T/acorn-bench-s2848rxt/corpus/fence_heavy.md"
+    "small.md": "/var/folders/hq/gvg4r_tj1hq80xhgw51yy0y00000gn/T/fnd-bench-s2848rxt/corpus/small.md",
+    "heavy.md": "/var/folders/hq/gvg4r_tj1hq80xhgw51yy0y00000gn/T/fnd-bench-s2848rxt/corpus/heavy.md",
+    "table_heavy.md": "/var/folders/hq/gvg4r_tj1hq80xhgw51yy0y00000gn/T/fnd-bench-s2848rxt/corpus/table_heavy.md",
+    "fence_heavy.md": "/var/folders/hq/gvg4r_tj1hq80xhgw51yy0y00000gn/T/fnd-bench-s2848rxt/corpus/fence_heavy.md"
   },
   "config": {
     "profiles": [

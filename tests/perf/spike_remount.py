@@ -6,7 +6,7 @@ with children (see spike_offdom_mount.py): Textual's _prune is
 recursive and tears down the child tree. So the "detach to cache,
 re-attach on activate" pattern is NOT viable for caching
 PreviewContainers — Stage 3's literal Screen-per-file would need
-actual Screens, which don't fit acorn's side-by-side layout.
+actual Screens, which don't fit fnd's side-by-side layout.
 
 Run with:
     ./.venv/bin/python tests/perf/spike_remount.py

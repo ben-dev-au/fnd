@@ -2,7 +2,7 @@
 
 **Goal:** Land the four density / layout fixes from the UX-pass-2 spec — drop the top bar, tighten padding, narrow the left column, fix the footer tint, surface location prefixes — each with a snapshot diff before/after and a single commit.
 
-**Architecture:** No new modules. CSS edits inside `acorn/tui/app.py`'s class-level `CSS` string + a few label / compose changes. The `scripts/snap_tui.py` harness gives us before/after PNGs.
+**Architecture:** No new modules. CSS edits inside `fnd/tui/app.py`'s class-level `CSS` string + a few label / compose changes. The `scripts/snap_tui.py` harness gives us before/after PNGs.
 
 **Tech stack:** Textual 8.x (CSS, Tree, VerticalScroll), pytest, Rich.
 
@@ -11,10 +11,10 @@
 ## Task A1 — Remove the top status bar
 
 **Files:**
-- Modify: `acorn/tui/app.py` (drop `#status_bar` from compose + CSS + `_status_text`)
+- Modify: `fnd/tui/app.py` (drop `#status_bar` from compose + CSS + `_status_text`)
 - Test: `tests/test_ux_a_pane_titles.py:test_status_bar_no_longer_duplicates_counts`
 
-The active scope already lives in the Collections panel header; `acorn   scope: DPC` is one wasted row. The existing test pins "no counts in status bar" — generalise it to "no status bar at all".
+The active scope already lives in the Collections panel header; `fnd   scope: DPC` is one wasted row. The existing test pins "no counts in status bar" — generalise it to "no status bar at all".
 
 - [ ] **Step 1: Update / write the failing test**
 
@@ -26,7 +26,7 @@ async def test_status_bar_widget_is_removed(built_index: Path) -> None:
     """The top status bar is gone — its only content (active scope) is
     shown in the Collections panel border title instead. Pure dead pixels
     otherwise; lazygit has no equivalent strip."""
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         assert not app.query("#status_bar"), "status bar widget still mounted"
@@ -39,7 +39,7 @@ Expected: FAIL with `status bar widget still mounted`.
 
 - [ ] **Step 3: Drop the status bar**
 
-In `acorn/tui/app.py`:
+In `fnd/tui/app.py`:
 
 1. Remove `yield Static(self._status_text(), id="status_bar")` from `compose()`.
 2. Remove `_status_text` method and the `#status_bar { … }` CSS rule.
@@ -49,21 +49,21 @@ In `acorn/tui/app.py`:
 
 ```sh
 uv run pytest -q
-uv run ruff check acorn tests
+uv run ruff check fnd tests
 uv run pyright
 ```
 
 - [ ] **Step 5: Snap before/after**
 
 ```sh
-PYTHONPATH=. uv run python scripts/snap_tui.py /tmp/acorn_a1.svg
-rsvg-convert -o /tmp/acorn_a1.png /tmp/acorn_a1.svg
+PYTHONPATH=. uv run python scripts/snap_tui.py /tmp/fnd_a1.svg
+rsvg-convert -o /tmp/fnd_a1.png /tmp/fnd_a1.svg
 ```
 
 - [ ] **Step 6: Commit**
 
 ```sh
-git add acorn/tui/app.py tests/test_ux_a_pane_titles.py
+git add fnd/tui/app.py tests/test_ux_a_pane_titles.py
 git commit -m "$(cat <<'EOF'
 fix(tui): drop the top status bar
 
@@ -78,14 +78,14 @@ EOF
 ## Task A2 — Tighten padding & narrow the left column
 
 **Files:**
-- Modify: `acorn/tui/app.py` (CSS block)
+- Modify: `fnd/tui/app.py` (CSS block)
 - Snap: `scripts/snap_tui.py` (no change)
 
 Lazygit's panels use `padding: 0 1` (1-col horizontal, no vertical) and a left:right ratio closer to 1fr:3fr. Today the preview is `padding: 1 2` and the column ratio is 1fr:2fr.
 
 - [ ] **Step 1: Adjust the CSS block**
 
-Find the `CSS = """ … """` block in `acorn/tui/app.py`. Replace with the version below — only the listed rules change; everything else (border colours, focus-within, scrollbars) stays.
+Find the `CSS = """ … """` block in `fnd/tui/app.py`. Replace with the version below — only the listed rules change; everything else (border colours, focus-within, scrollbars) stays.
 
 ```css
 Screen { background: $surface; }
@@ -134,24 +134,24 @@ Key changes only:
 - [ ] **Step 2: Verify the snapshot looks right**
 
 ```sh
-PYTHONPATH=. uv run python scripts/snap_tui.py /tmp/acorn_a2.svg
-rsvg-convert -o /tmp/acorn_a2.png /tmp/acorn_a2.svg
+PYTHONPATH=. uv run python scripts/snap_tui.py /tmp/fnd_a2.svg
+rsvg-convert -o /tmp/fnd_a2.png /tmp/fnd_a2.svg
 ```
 
-Open `/tmp/acorn_a2.png`. Expected: preview pane visibly wider, gaps inside boxes reduced, query bar a single row, footer no longer tinted.
+Open `/tmp/fnd_a2.png`. Expected: preview pane visibly wider, gaps inside boxes reduced, query bar a single row, footer no longer tinted.
 
 - [ ] **Step 3: Run the full test sweep**
 
 ```sh
 uv run pytest -q
-uv run ruff check acorn tests
+uv run ruff check fnd tests
 uv run pyright
 ```
 
 - [ ] **Step 4: Commit**
 
 ```sh
-git add acorn/tui/app.py
+git add fnd/tui/app.py
 git commit -m "$(cat <<'EOF'
 fix(tui): tighter pane padding and 1:3 left/right split
 
@@ -169,7 +169,7 @@ The `#footer_hints` rule already changes in A2 (`background: $surface`), removin
 
 If A2's snapshot still shows the tint, the cause is the `[reverse]` markup spilling onto the label. The fix:
 
-- [ ] **Step 1: Inspect `_refresh_footer_hints` in `acorn/tui/app.py`** — confirm only `[reverse] {key} [/]` is wrapped, not the label.
+- [ ] **Step 1: Inspect `_refresh_footer_hints` in `fnd/tui/app.py`** — confirm only `[reverse] {key} [/]` is wrapped, not the label.
 - [ ] **Step 2: If the label is also styled, scope the markup more tightly** by writing key + label as separate `Text` runs:
 
 ```python
@@ -189,8 +189,8 @@ This task only fires if A2's snapshot still shows tint. Otherwise mark complete 
 ## Task A4 — Surface location prefixes on section rows
 
 **Files:**
-- Modify: `acorn/tui/app.py` (`_refresh_results_tree` — auto-expand top result)
-- Modify: `acorn/tui/app.py` (`_format_hit_label` — fall back to `L<line>` when no heading)
+- Modify: `fnd/tui/app.py` (`_refresh_results_tree` — auto-expand top result)
+- Modify: `fnd/tui/app.py` (`_format_hit_label` — fall back to `L<line>` when no heading)
 - Test: new test in `tests/test_ux_a_pane_titles.py`
 
 The user reported never seeing `§ heading` / `p.N` / `s.N` prefixes. Two reasons it might not be visible: (a) the user has to manually expand a file to see its sections, so they never see the section rows; (b) markdown chunks without an explicit `# Heading` fall back to `loc = "—"` in `_format_hit_label`.
@@ -207,7 +207,7 @@ async def test_top_result_is_auto_expanded(built_index: Path) -> None:
     location prefixes) without having to press Right."""
     from textual.widgets import Tree
 
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
@@ -222,8 +222,8 @@ def test_format_hit_label_falls_back_to_line_marker_for_markdown() -> None:
     """When a markdown chunk has no heading_path / page / slide, the row
     should still carry a location marker — fall back to the chunk_seq as
     a synthetic 'chunk N' label."""
-    from acorn.query import Hit
-    from acorn.tui.app import _format_hit_label
+    from fnd.query import Hit
+    from fnd.tui.app import _format_hit_label
 
     h = Hit(
         score=1.0, parent_id="x", path="/foo.md", kind="md",
@@ -242,7 +242,7 @@ uv run pytest tests/test_ux_a_pane_titles.py -v
 
 - [ ] **Step 4: Auto-expand top result in `_refresh_results_tree`**
 
-In `acorn/tui/app.py`, find `_refresh_results_tree`. After the `for g in self._groups: …` loop, add:
+In `fnd/tui/app.py`, find `_refresh_results_tree`. After the `for g in self._groups: …` loop, add:
 
 ```python
 # Auto-expand the top result so its section rows are immediately
@@ -274,10 +274,10 @@ uv run pytest -q
 - [ ] **Step 7: Snap & commit**
 
 ```sh
-PYTHONPATH=. uv run python scripts/snap_tui.py /tmp/acorn_a4.svg
-rsvg-convert -o /tmp/acorn_a4.png /tmp/acorn_a4.svg
+PYTHONPATH=. uv run python scripts/snap_tui.py /tmp/fnd_a4.svg
+rsvg-convert -o /tmp/fnd_a4.png /tmp/fnd_a4.svg
 
-git add acorn/tui/app.py tests/test_ux_a_pane_titles.py
+git add fnd/tui/app.py tests/test_ux_a_pane_titles.py
 git commit -m "$(cat <<'EOF'
 fix(tui): surface section locators — auto-expand top result, label markdown chunks
 
@@ -298,8 +298,8 @@ After A1–A4 land:
 - [ ] **Final snap** for visual review:
 
 ```sh
-PYTHONPATH=. uv run python scripts/snap_tui.py /tmp/acorn_phase_a.svg
-rsvg-convert -o /tmp/acorn_phase_a.png /tmp/acorn_phase_a.svg
+PYTHONPATH=. uv run python scripts/snap_tui.py /tmp/fnd_phase_a.svg
+rsvg-convert -o /tmp/fnd_phase_a.png /tmp/fnd_phase_a.svg
 ```
 
 - [ ] **Push** to origin once the user has eyeballed the screenshot:

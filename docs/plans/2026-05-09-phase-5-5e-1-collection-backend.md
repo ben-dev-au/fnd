@@ -3,9 +3,9 @@
 
 **Spec:** [`docs/specs/2026-05-09-collection-crud-and-source-filters-design.md`](../specs/2026-05-09-collection-crud-and-source-filters-design.md)
 
-**Goal:** Ship the backend for multi-source collections with per-source includes/excludes plus a YAML-frontmatter predicate DSL applied at index time, so power users can configure filtered collections via `acorn config edit` and `acorn collection add`.
+**Goal:** Ship the backend for multi-source collections with per-source includes/excludes plus a YAML-frontmatter predicate DSL applied at index time, so power users can configure filtered collections via `fnd config edit` and `fnd collection add`.
 
-**Architecture:** Two leaf modules (`frontmatter.py` parses Obsidian-style YAML frontmatter; `filter_dsl.py` parses + evaluates the predicate DSL). Both feed into an extended `config.py` (new `SourceConfig`; `CollectionConfig` accepts `[[sources]]` *or* legacy flat `roots/includes/excludes`), an extended `walk.py` (`walk_sources`), and an extended `index.py` (per-source extraction + index-time filter on `.md` files). `tomlkit` is added for comment-preserving config writes used by `acorn collection add`.
+**Architecture:** Two leaf modules (`frontmatter.py` parses Obsidian-style YAML frontmatter; `filter_dsl.py` parses + evaluates the predicate DSL). Both feed into an extended `config.py` (new `SourceConfig`; `CollectionConfig` accepts `[[sources]]` *or* legacy flat `roots/includes/excludes`), an extended `walk.py` (`walk_sources`), and an extended `index.py` (per-source extraction + index-time filter on `.md` files). `tomlkit` is added for comment-preserving config writes used by `fnd collection add`.
 
 **Tech Stack:** Python 3.13, Pydantic v2, Tantivy (unchanged this phase), pytest, hypothesis (property tests), tomlkit (new dep), stdlib `tomllib`.
 
@@ -16,19 +16,19 @@
 | File | Action | Responsibility |
 |---|---|---|
 | `pyproject.toml` | modify | Add `tomlkit>=0.13` to runtime deps |
-| `acorn/frontmatter.py` | create | Parse Obsidian-style YAML frontmatter blocks; `FrontmatterParseError` for malformed |
-| `acorn/filter_dsl.py` | create | Tokenize → parse → evaluate the predicate DSL; `FilterError` carries column + message |
-| `acorn/config.py` | modify | Add `SourceConfig`; extend `CollectionConfig` to accept `[[sources]]`; normalize legacy flat shape into a single implicit source; validators surface filter parse errors; `write_config_atomically` uses `tomlkit` |
-| `acorn/walk.py` | modify | New `walk_sources(*, sources)` runs the per-source filter chain; old `walk` remains for ad-hoc CLI use |
-| `acorn/index.py` | modify | `build_index_from_config` walks per-source; `.md` chunks pass through the source's compiled filter before being added to the index |
-| `acorn/cli.py` | modify | New `acorn collection add NAME --source PATH ...`; rewire `acorn config validate` to surface filter errors with column |
+| `fnd/frontmatter.py` | create | Parse Obsidian-style YAML frontmatter blocks; `FrontmatterParseError` for malformed |
+| `fnd/filter_dsl.py` | create | Tokenize → parse → evaluate the predicate DSL; `FilterError` carries column + message |
+| `fnd/config.py` | modify | Add `SourceConfig`; extend `CollectionConfig` to accept `[[sources]]`; normalize legacy flat shape into a single implicit source; validators surface filter parse errors; `write_config_atomically` uses `tomlkit` |
+| `fnd/walk.py` | modify | New `walk_sources(*, sources)` runs the per-source filter chain; old `walk` remains for ad-hoc CLI use |
+| `fnd/index.py` | modify | `build_index_from_config` walks per-source; `.md` chunks pass through the source's compiled filter before being added to the index |
+| `fnd/cli.py` | modify | New `fnd collection add NAME --source PATH ...`; rewire `fnd config validate` to surface filter errors with column |
 | `tests/test_frontmatter.py` | create | YAML subset coverage + error cases |
 | `tests/test_filter_dsl.py` | create | Tokenizer + parser + evaluator + property tests |
 | `tests/test_config_sources.py` | create | New schema + validator + legacy-shape normalization |
 | `tests/test_walk_per_source.py` | create | Per-source filter chain + frontmatter post-filter |
 | `tests/test_index_per_source_filter.py` | create | End-to-end build with one filtered md source + one pdf source |
 | `tests/test_cli_collection_add.py` | create | CLI command writes `[[sources]]` round-trip via `tomlkit` |
-| `tests/test_config_validate_filter.py` | create | `acorn config validate` reports invalid DSL with column |
+| `tests/test_config_validate_filter.py` | create | `fnd config validate` reports invalid DSL with column |
 
 ---
 
@@ -75,7 +75,7 @@ git commit -m "chore(deps): add tomlkit for comment-preserving config writes (§
 ## Task 2: Frontmatter parser — parse fence detection
 
 **Files:**
-- Create: `acorn/frontmatter.py`
+- Create: `fnd/frontmatter.py`
 - Test: `tests/test_frontmatter.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -91,7 +91,7 @@ import datetime as dt
 
 import pytest
 
-from acorn.frontmatter import FrontmatterParseError, read_frontmatter_from_text
+from fnd.frontmatter import FrontmatterParseError, read_frontmatter_from_text
 
 
 def test_no_frontmatter_returns_none() -> None:
@@ -110,11 +110,11 @@ def test_does_not_match_when_first_line_isnt_fence() -> None:
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_frontmatter.py -v`
-Expected: collection ERROR — `ModuleNotFoundError: No module named 'acorn.frontmatter'`.
+Expected: collection ERROR — `ModuleNotFoundError: No module named 'fnd.frontmatter'`.
 
 - [ ] **Step 3: Create the module skeleton**
 
-Create `acorn/frontmatter.py`:
+Create `fnd/frontmatter.py`:
 
 ```python
 """Obsidian-style YAML frontmatter parser (§5.5e-1).
@@ -191,7 +191,7 @@ Expected: 3 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/frontmatter.py tests/test_frontmatter.py
+git add fnd/frontmatter.py tests/test_frontmatter.py
 git commit -m "feat(frontmatter): phase 5.5e-1 — fence detection (§5.5e)"
 ```
 
@@ -200,7 +200,7 @@ git commit -m "feat(frontmatter): phase 5.5e-1 — fence detection (§5.5e)"
 ## Task 3: Frontmatter parser — scalar key/value lines
 
 **Files:**
-- Modify: `acorn/frontmatter.py:_parse_block`
+- Modify: `fnd/frontmatter.py:_parse_block`
 - Modify: `tests/test_frontmatter.py`
 
 - [ ] **Step 1: Add failing tests**
@@ -262,7 +262,7 @@ Expected: 9 failures all from `_parse_block`'s NotImplementedError stub.
 
 - [ ] **Step 3: Implement scalar line parsing**
 
-Replace `_parse_block` and add helpers in `acorn/frontmatter.py`:
+Replace `_parse_block` and add helpers in `fnd/frontmatter.py`:
 
 ```python
 _KEY_VALUE = re.compile(r"^([A-Za-z_][\w\- ]*?)\s*:\s*(.*)$")
@@ -345,7 +345,7 @@ Expected: 12 passed (3 original + 9 new).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/frontmatter.py tests/test_frontmatter.py
+git add fnd/frontmatter.py tests/test_frontmatter.py
 git commit -m "feat(frontmatter): phase 5.5e-1 — scalar key/value lines"
 ```
 
@@ -354,7 +354,7 @@ git commit -m "feat(frontmatter): phase 5.5e-1 — scalar key/value lines"
 ## Task 4: Frontmatter parser — list values
 
 **Files:**
-- Modify: `acorn/frontmatter.py`
+- Modify: `fnd/frontmatter.py`
 - Modify: `tests/test_frontmatter.py`
 
 - [ ] **Step 1: Add failing tests**
@@ -401,7 +401,7 @@ Expected: 6 new failures (existing 12 still pass).
 
 - [ ] **Step 3: Extend parser for lists**
 
-In `acorn/frontmatter.py`, replace `_parse_block` and `_parse_scalar`, and add list helpers:
+In `fnd/frontmatter.py`, replace `_parse_block` and `_parse_scalar`, and add list helpers:
 
 ```python
 def _parse_block(lines: list[str]) -> dict[str, object]:
@@ -530,7 +530,7 @@ Expected: 18 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/frontmatter.py tests/test_frontmatter.py
+git add fnd/frontmatter.py tests/test_frontmatter.py
 git commit -m "feat(frontmatter): phase 5.5e-1 — inline + block list values"
 ```
 
@@ -539,7 +539,7 @@ git commit -m "feat(frontmatter): phase 5.5e-1 — inline + block list values"
 ## Task 5: Filter DSL — tokenizer
 
 **Files:**
-- Create: `acorn/filter_dsl.py`
+- Create: `fnd/filter_dsl.py`
 - Test: `tests/test_filter_dsl.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -555,7 +555,7 @@ import datetime as dt
 
 import pytest
 
-from acorn.filter_dsl import FilterError, Token, TokenKind, tokenize
+from fnd.filter_dsl import FilterError, Token, TokenKind, tokenize
 
 
 def _kinds(text: str) -> list[TokenKind]:
@@ -619,11 +619,11 @@ def test_tokenize_unterminated_string_raises_with_column() -> None:
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_filter_dsl.py -v`
-Expected: collection ERROR — `ModuleNotFoundError: No module named 'acorn.filter_dsl'`.
+Expected: collection ERROR — `ModuleNotFoundError: No module named 'fnd.filter_dsl'`.
 
 - [ ] **Step 3: Implement the tokenizer**
 
-Create `acorn/filter_dsl.py`:
+Create `fnd/filter_dsl.py`:
 
 ```python
 """Predicate DSL parser + evaluator (§5.5e-1).
@@ -820,7 +820,7 @@ Expected: 7 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/filter_dsl.py tests/test_filter_dsl.py
+git add fnd/filter_dsl.py tests/test_filter_dsl.py
 git commit -m "feat(filter): phase 5.5e-1 — DSL tokenizer with column tracking"
 ```
 
@@ -829,7 +829,7 @@ git commit -m "feat(filter): phase 5.5e-1 — DSL tokenizer with column tracking
 ## Task 6: Filter DSL — parser (AST)
 
 **Files:**
-- Modify: `acorn/filter_dsl.py`
+- Modify: `fnd/filter_dsl.py`
 - Modify: `tests/test_filter_dsl.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -837,7 +837,7 @@ git commit -m "feat(filter): phase 5.5e-1 — DSL tokenizer with column tracking
 Append to `tests/test_filter_dsl.py`:
 
 ```python
-from acorn.filter_dsl import And, Compare, In, Not, Or, parse
+from fnd.filter_dsl import And, Compare, In, Not, Or, parse
 
 
 def test_parse_simple_compare() -> None:
@@ -906,7 +906,7 @@ Expected: 10 new failures (existing 7 still pass) — `parse` not exported, AST 
 
 - [ ] **Step 3: Implement parser + AST**
 
-Append to `acorn/filter_dsl.py`:
+Append to `fnd/filter_dsl.py`:
 
 ```python
 # ── AST nodes ─────────────────────────────────────────────────────
@@ -1089,7 +1089,7 @@ Expected: 17 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add acorn/filter_dsl.py tests/test_filter_dsl.py
+git add fnd/filter_dsl.py tests/test_filter_dsl.py
 git commit -m "feat(filter): phase 5.5e-1 — DSL parser + AST"
 ```
 
@@ -1098,7 +1098,7 @@ git commit -m "feat(filter): phase 5.5e-1 — DSL parser + AST"
 ## Task 7: Filter DSL — evaluator + public compile_filter API
 
 **Files:**
-- Modify: `acorn/filter_dsl.py`
+- Modify: `fnd/filter_dsl.py`
 - Modify: `tests/test_filter_dsl.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -1106,7 +1106,7 @@ git commit -m "feat(filter): phase 5.5e-1 — DSL parser + AST"
 Append to `tests/test_filter_dsl.py`:
 
 ```python
-from acorn.filter_dsl import compile_filter, parse_or_error
+from fnd.filter_dsl import compile_filter, parse_or_error
 
 
 def test_eval_equality_match() -> None:
@@ -1199,7 +1199,7 @@ Expected: 12 new failures.
 
 - [ ] **Step 3: Implement evaluator + public API**
 
-Append to `acorn/filter_dsl.py`:
+Append to `fnd/filter_dsl.py`:
 
 ```python
 # ── Evaluator ─────────────────────────────────────────────────────
@@ -1352,7 +1352,7 @@ Expected: 30 passed.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add acorn/filter_dsl.py tests/test_filter_dsl.py
+git add fnd/filter_dsl.py tests/test_filter_dsl.py
 git commit -m "feat(filter): phase 5.5e-1 — DSL evaluator with strict null + property test"
 ```
 
@@ -1361,7 +1361,7 @@ git commit -m "feat(filter): phase 5.5e-1 — DSL evaluator with strict null + p
 ## Task 8: Extend `CollectionConfig` with `[[sources]]`
 
 **Files:**
-- Modify: `acorn/config.py`
+- Modify: `fnd/config.py`
 - Test: `tests/test_config_sources.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -1379,7 +1379,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from acorn.config import Config, SourceConfig, load
+from fnd.config import Config, SourceConfig, load
 
 
 def _write_config(path: Path, text: str) -> Path:
@@ -1480,7 +1480,7 @@ Expected: 6 failures — `SourceConfig` not exported; `CollectionConfig.sources`
 
 - [ ] **Step 3: Extend the config schema**
 
-Open `acorn/config.py`. Add `SourceConfig` near `CollectionConfig` and rewrite `CollectionConfig` to use it. Final form of the schema section:
+Open `fnd/config.py`. Add `SourceConfig` near `CollectionConfig` and rewrite `CollectionConfig` to use it. Final form of the schema section:
 
 ```python
 class SourceConfig(BaseModel):
@@ -1505,7 +1505,7 @@ class SourceConfig(BaseModel):
         # at index time — caching here would couple the model to runtime.
         if v is None or not v.strip():
             return None
-        from acorn.filter_dsl import FilterError, compile_filter
+        from fnd.filter_dsl import FilterError, compile_filter
 
         try:
             compile_filter(v)
@@ -1568,7 +1568,7 @@ class CollectionConfig(BaseModel):
         return self
 ```
 
-Add the new import at the top of `acorn/config.py` (alongside `field_validator`):
+Add the new import at the top of `fnd/config.py` (alongside `field_validator`):
 
 ```python
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -1589,7 +1589,7 @@ If a regression appears: the legacy-shape normaliser usually misses something. R
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/config.py tests/test_config_sources.py
+git add fnd/config.py tests/test_config_sources.py
 git commit -m "feat(config): phase 5.5e-1 — SourceConfig + multi-source CollectionConfig"
 ```
 
@@ -1598,7 +1598,7 @@ git commit -m "feat(config): phase 5.5e-1 — SourceConfig + multi-source Collec
 ## Task 9: `walk_sources` — per-source filter chain
 
 **Files:**
-- Modify: `acorn/walk.py`
+- Modify: `fnd/walk.py`
 - Test: `tests/test_walk_per_source.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -1612,8 +1612,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from acorn.config import SourceConfig
-from acorn.walk import walk_sources
+from fnd.config import SourceConfig
+from fnd.walk import walk_sources
 
 
 def _touch(p: Path, body: str = "x") -> None:
@@ -1710,7 +1710,7 @@ Expected: 5 failures — `walk_sources` doesn't exist.
 
 - [ ] **Step 3: Implement `walk_sources`**
 
-Append to `acorn/walk.py`:
+Append to `fnd/walk.py`:
 
 ```python
 def walk_sources(*, sources: "list[SourceConfig]") -> Iterator[Path]:
@@ -1719,12 +1719,12 @@ def walk_sources(*, sources: "list[SourceConfig]") -> Iterator[Path]:
     Per source: applies includes/excludes via :func:`walk`, then on
     ``.md`` files runs the source's frontmatter filter. Frontmatter parse
     errors and missing-field strict-null cases drop the file silently —
-    the indexer will eventually log them via ``acorn status --errors``
+    the indexer will eventually log them via ``fnd status --errors``
     (phase 10).
     """
-    from acorn.config import SourceConfig  # local import: avoid cycle
-    from acorn.filter_dsl import compile_filter
-    from acorn.frontmatter import (
+    from fnd.config import SourceConfig  # local import: avoid cycle
+    from fnd.filter_dsl import compile_filter
+    from fnd.frontmatter import (
         FrontmatterParseError,
         read_frontmatter_from_file,
     )
@@ -1753,16 +1753,16 @@ def walk_sources(*, sources: "list[SourceConfig]") -> Iterator[Path]:
                 yield path
 ```
 
-Add the missing import at the top of `acorn/walk.py`:
+Add the missing import at the top of `fnd/walk.py`:
 
 ```python
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from acorn.config import SourceConfig
+    from fnd.config import SourceConfig
 ```
 
-(The `walk_sources` signature uses `"list[SourceConfig]"` as a string forward-reference because `acorn.config` imports from `acorn.walk` for legacy reasons we shouldn't unwind in this task.)
+(The `walk_sources` signature uses `"list[SourceConfig]"` as a string forward-reference because `fnd.config` imports from `fnd.walk` for legacy reasons we shouldn't unwind in this task.)
 
 - [ ] **Step 4: Run tests**
 
@@ -1777,7 +1777,7 @@ Expected: green.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/walk.py tests/test_walk_per_source.py
+git add fnd/walk.py tests/test_walk_per_source.py
 git commit -m "feat(walk): phase 5.5e-1 — walk_sources with per-source filters"
 ```
 
@@ -1786,7 +1786,7 @@ git commit -m "feat(walk): phase 5.5e-1 — walk_sources with per-source filters
 ## Task 10: `build_index_from_config` — per-source extraction
 
 **Files:**
-- Modify: `acorn/index.py`
+- Modify: `fnd/index.py`
 - Test: `tests/test_index_per_source_filter.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -1800,9 +1800,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from acorn.config import CollectionConfig, SourceConfig
-from acorn.index import build_index_from_config
-from acorn.query import Searcher
+from fnd.config import CollectionConfig, SourceConfig
+from fnd.index import build_index_from_config
+from fnd.query import Searcher
 
 
 def _touch(p: Path, body: str) -> None:
@@ -1863,7 +1863,7 @@ Expected: failures — `build_index_from_config` still uses the old flat-shape A
 
 - [ ] **Step 3: Rewire `build_index_from_config`**
 
-Replace `build_index_from_config` in `acorn/index.py`:
+Replace `build_index_from_config` in `fnd/index.py`:
 
 ```python
 def build_index_from_config(
@@ -1875,12 +1875,12 @@ def build_index_from_config(
 ) -> int:
     """Build a collection from its :class:`CollectionConfig`.
 
-    Walks each source's filter chain via :func:`acorn.walk.walk_sources`
+    Walks each source's filter chain via :func:`fnd.walk.walk_sources`
     and indexes the surviving paths. The legacy flat-shape config is
     auto-promoted to a single implicit source by the loader, so this
     function only sees the new shape.
     """
-    from acorn.walk import walk_sources
+    from fnd.walk import walk_sources
 
     index = _ensure_index(index_dir)
     writer = index.writer(heap_size=_WRITER_HEAP)
@@ -1915,17 +1915,17 @@ Expected: green.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/index.py tests/test_index_per_source_filter.py
+git add fnd/index.py tests/test_index_per_source_filter.py
 git commit -m "feat(index): phase 5.5e-1 — index per-source via walk_sources"
 ```
 
 ---
 
-## Task 11: `acorn collection add` CLI with `--source` / `--filter`
+## Task 11: `fnd collection add` CLI with `--source` / `--filter`
 
 **Files:**
-- Modify: `acorn/cli.py`
-- Modify: `acorn/config.py` (add `write_collection`)
+- Modify: `fnd/cli.py`
+- Modify: `fnd/config.py` (add `write_collection`)
 - Test: `tests/test_cli_collection_add.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -1933,7 +1933,7 @@ git commit -m "feat(index): phase 5.5e-1 — index per-source via walk_sources"
 Create `tests/test_cli_collection_add.py`:
 
 ```python
-"""Phase 5.5e-1: `acorn collection add` writes [[sources]] via tomlkit."""
+"""Phase 5.5e-1: `fnd collection add` writes [[sources]] via tomlkit."""
 
 from __future__ import annotations
 
@@ -1942,8 +1942,8 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from acorn.cli import app
-from acorn.config import load
+from fnd.cli import app
+from fnd.config import load
 
 
 def _runner_with_config(
@@ -1955,8 +1955,8 @@ def _runner_with_config(
     else:
         cfg_path.write_text("", encoding="utf-8")
     # Force the CLI to use the temp config file.
-    monkeypatch.setattr("acorn.cli.default_config_path", lambda: cfg_path)
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.cli.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return CliRunner(), cfg_path
 
 
@@ -2062,11 +2062,11 @@ def test_collection_add_preserves_user_comments(
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_cli_collection_add.py -v`
-Expected: 5 failures — `acorn collection add` doesn't accept `--source`/`--filter`/`--include`/`--exclude` (or doesn't exist at all).
+Expected: 5 failures — `fnd collection add` doesn't accept `--source`/`--filter`/`--include`/`--exclude` (or doesn't exist at all).
 
-- [ ] **Step 3: Add `write_collection` helper to `acorn/config.py`**
+- [ ] **Step 3: Add `write_collection` helper to `fnd/config.py`**
 
-Append to `acorn/config.py`:
+Append to `fnd/config.py`:
 
 ```python
 def write_collection_source(
@@ -2108,9 +2108,9 @@ def write_collection_source(
     config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
 ```
 
-- [ ] **Step 4: Replace the collection-add CLI in `acorn/cli.py`**
+- [ ] **Step 4: Replace the collection-add CLI in `fnd/cli.py`**
 
-Find the `collection_app` definitions in `acorn/cli.py` (around line 146 onwards) and add the new `add` command. Insert after `collection_list` and before `collection_reindex`:
+Find the `collection_app` definitions in `fnd/cli.py` (around line 146 onwards) and add the new `add` command. Insert after `collection_list` and before `collection_reindex`:
 
 ```python
 @collection_app.command("add")
@@ -2145,12 +2145,12 @@ def collection_add(
     Each invocation appends one source (one --source argument). Repeat
     the command to add additional sources to the same collection.
     """
-    from acorn.config import (
+    from fnd.config import (
         SourceConfig,
         default_config_path,
         write_collection_source,
     )
-    from acorn.filter_dsl import FilterError, compile_filter
+    from fnd.filter_dsl import FilterError, compile_filter
 
     if filter is not None:
         try:
@@ -2195,16 +2195,16 @@ Expected: green.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add acorn/cli.py acorn/config.py tests/test_cli_collection_add.py
-git commit -m "feat(cli): phase 5.5e-1 — acorn collection add with --source / --filter"
+git add fnd/cli.py fnd/config.py tests/test_cli_collection_add.py
+git commit -m "feat(cli): phase 5.5e-1 — fnd collection add with --source / --filter"
 ```
 
 ---
 
-## Task 12: `acorn config validate` surfaces filter errors
+## Task 12: `fnd config validate` surfaces filter errors
 
 **Files:**
-- Modify: `acorn/cli.py:config_validate`
+- Modify: `fnd/cli.py:config_validate`
 - Test: `tests/test_config_validate_filter.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -2212,7 +2212,7 @@ git commit -m "feat(cli): phase 5.5e-1 — acorn collection add with --source / 
 Create `tests/test_config_validate_filter.py`:
 
 ```python
-"""Phase 5.5e-1: `acorn config validate` reports filter syntax errors."""
+"""Phase 5.5e-1: `fnd config validate` reports filter syntax errors."""
 
 from __future__ import annotations
 
@@ -2221,14 +2221,14 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from acorn.cli import app
+from fnd.cli import app
 
 
 def _runner(monkeypatch, tmp_path: Path, body: str) -> tuple[CliRunner, Path]:
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(textwrap.dedent(body), encoding="utf-8")
-    monkeypatch.setattr("acorn.cli.default_config_path", lambda: cfg_path)
-    monkeypatch.setattr("acorn.config.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.cli.default_config_path", lambda: cfg_path)
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return CliRunner(), cfg_path
 
 
@@ -2262,7 +2262,7 @@ Expected: passes for the valid case probably; fails for the error case if Pydant
 
 - [ ] **Step 3: Improve error rendering in `config_validate`**
 
-In `acorn/cli.py`, replace the existing `config_validate` function:
+In `fnd/cli.py`, replace the existing `config_validate` function:
 
 ```python
 @config_app.command("validate")
@@ -2270,7 +2270,7 @@ def config_validate() -> None:
     """Validate the config TOML; exit 1 with a helpful message on failure."""
     from pydantic import ValidationError
 
-    from acorn.config import default_config_path, load
+    from fnd.config import default_config_path, load
 
     path = default_config_path()
     if not path.exists():
@@ -2308,7 +2308,7 @@ Expected: green.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add acorn/cli.py tests/test_config_validate_filter.py
+git add fnd/cli.py tests/test_config_validate_filter.py
 git commit -m "feat(cli): phase 5.5e-1 — config validate surfaces filter syntax errors"
 ```
 
@@ -2326,7 +2326,7 @@ Expected: all tests pass; ~30 new tests in this phase.
 
 - [ ] **Step 2: Lint + types**
 
-Run: `uv run ruff check acorn tests && uv run ruff format --check acorn tests && uv run pyright`
+Run: `uv run ruff check fnd tests && uv run ruff format --check fnd tests && uv run pyright`
 Expected: all clean.
 
 - [ ] **Step 3: Manual smoke against a real Obsidian-style vault (optional but recommended)**
@@ -2336,13 +2336,13 @@ Skip if you don't have a real vault handy; otherwise:
 1. Pick a directory with at least one `.md` file containing YAML frontmatter (e.g. `Course: 'X'`).
 2. Run:
    ```
-   uv run acorn collection add demo --source <vault> --include '**/*.md' --filter "Course == 'X'"
-   uv run acorn collection reindex demo
-   uv run acorn search "<phrase known to appear in matching note>" --collection demo
+   uv run fnd collection add demo --source <vault> --include '**/*.md' --filter "Course == 'X'"
+   uv run fnd collection reindex demo
+   uv run fnd search "<phrase known to appear in matching note>" --collection demo
    ```
 3. Confirm only matching notes appear; toggle to a non-matching value and reindex; confirm the previous matches disappear.
 
-If smoke fails: drop into `acorn config show` to inspect the loaded config; check that `sources` is populated and `frontmatter_filter` round-tripped intact.
+If smoke fails: drop into `fnd config show` to inspect the loaded config; check that `sources` is populated and `frontmatter_filter` round-tripped intact.
 
 - [ ] **Step 4: Update plan §22 (out-of-scope) — drop the `TUI Collection CRUD` deferral once 5.5e-3 lands**
 
@@ -2371,8 +2371,8 @@ git commit -m "docs: phase 5.5e-1 close-out notes"
   - Filter DSL → Tasks 5–7
   - Per-source walker → Task 9
   - Index-time filter → Task 10
-  - CLI `acorn collection add --source --filter` → Task 11
-  - `acorn config validate` filter errors → Task 12
+  - CLI `fnd collection add --source --filter` → Task 11
+  - `fnd config validate` filter errors → Task 12
   - `tomlkit` dep → Task 1
   - Acceptance gates → Task 13
 
@@ -2391,4 +2391,4 @@ git commit -m "docs: phase 5.5e-1 close-out notes"
   - Query-time post-filter via the same DSL
   - Inline `[…]` query-bar syntax
   - TUI Collections form / `F3` binding
-  - `acorn collection rm` (currently absent — treat as a separate small task once it's needed; not blocking 5.5e)
+  - `fnd collection rm` (currently absent — treat as a separate small task once it's needed; not blocking 5.5e)

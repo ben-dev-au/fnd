@@ -8,22 +8,22 @@ import asyncio
 import textwrap
 from pathlib import Path
 
-from acorn.config import load
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.config import load
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 async def main() -> None:
-    work = Path("/tmp/__acorn_verify")
+    work = Path("/tmp/__fnd_verify")
     work.mkdir(parents=True, exist_ok=True)
     cfg_path = work / "config.toml"
     cfg_path.write_text(
         textwrap.dedent("""
             [collections.DPC]
-            roots = ["/tmp/__acorn_verify/dpc"]
+            roots = ["/tmp/__fnd_verify/dpc"]
 
             [collections.wine]
-            roots = ["/tmp/__acorn_verify/wine"]
+            roots = ["/tmp/__fnd_verify/wine"]
         """),
         encoding="utf-8",
     )
@@ -44,7 +44,7 @@ async def main() -> None:
     build_index(roots=[dpc], index_dir=idx, collection="DPC")
     build_index(roots=[wine], index_dir=idx, collection="wine")
     cfg = load(cfg_path)
-    app = AcornApp(index_dir=idx, config=cfg, collection="DPC", initial_query="foo")
+    app = FNDApp(index_dir=idx, config=cfg, collection="DPC", initial_query="foo")
 
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
@@ -104,7 +104,7 @@ async def main() -> None:
         await pilot.pause()
         await pilot.press("down")
         await pilot.pause()
-        app.save_screenshot(filename="/tmp/acorn_verify.svg")
+        app.save_screenshot(filename="/tmp/fnd_verify.svg")
 
 
 if __name__ == "__main__":

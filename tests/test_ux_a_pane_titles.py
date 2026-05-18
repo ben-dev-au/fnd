@@ -8,8 +8,8 @@ import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Tree
 
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -23,7 +23,7 @@ async def test_results_pane_title_shows_counts_after_search(built_index: Path) -
     """The results pane border title carries the file/section counts so the
     user always sees how many matches exist alongside the data, not buried
     in a separate status bar."""
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
@@ -37,7 +37,7 @@ async def test_results_pane_title_shows_counts_after_search(built_index: Path) -
 async def test_results_pane_title_empty_state(built_index: Path) -> None:
     """Before any query, the title should still render (something like
     ``Results``) — not be empty or crash."""
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
@@ -49,7 +49,7 @@ async def test_results_pane_title_empty_state(built_index: Path) -> None:
 async def test_preview_pane_title_shows_file_name_when_focused(built_index: Path) -> None:
     """When a result is focused, the preview pane's border title should
     show the file name (so the user knows which document they're looking at)."""
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
@@ -70,7 +70,7 @@ async def test_preview_pane_title_shows_file_name_when_focused(built_index: Path
 async def test_status_bar_widget_is_removed(built_index: Path) -> None:
     """The top status bar is gone — its only content (active scope) is
     shown in the Collections panel border title instead."""
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         assert not app.query("#status_bar"), "status bar widget still mounted"
@@ -81,7 +81,7 @@ async def test_top_result_is_auto_expanded(built_index: Path) -> None:
     """The first file row in the results tree should be expanded after a
     search so the user immediately sees its section rows (with their
     location prefixes) without having to press Right."""
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
@@ -93,8 +93,8 @@ def test_format_hit_label_falls_back_for_markdown_without_heading() -> None:
     """When a markdown chunk has no heading_path / page / slide, the row
     should still carry a synthetic locator (``§N``) rather than the
     generic em-dash placeholder."""
-    from acorn.query import Hit
-    from acorn.tui.app import _format_hit_label
+    from fnd.query import Hit
+    from fnd.tui.app import _format_hit_label
 
     h = Hit(
         score=1.0,

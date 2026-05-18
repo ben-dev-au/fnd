@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 from textual.widgets import Tree
 
-from acorn.index import build_index
-from acorn.tui import AcornApp
+from fnd.index import build_index
+from fnd.tui import FNDApp
 
 
 @pytest.fixture
@@ -39,7 +39,7 @@ def _first_collection_node(ctree: Tree[dict[str, object]]):
 
 @pytest.mark.asyncio
 async def test_preview_loads_after_back_to_back_queries(built_index: Path) -> None:
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app._groups, "test setup — initial query produced no results"
@@ -59,7 +59,7 @@ async def test_preview_loads_after_back_to_back_queries(built_index: Path) -> No
 
 @pytest.mark.asyncio
 async def test_panel_collapse_writes_to_disk(built_index: Path, isolated_ui_state: Path) -> None:
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         ctree = app.query_one("#collections_panel_tree", Tree)
@@ -87,7 +87,7 @@ async def test_saved_collapse_state_is_restored_at_startup(
         'expanded_filter_branches = ["kinds"]\n'
         '[filters]\nkinds = []\ndate = "any"\n'
     )
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         ctree = app.query_one("#collections_panel_tree", Tree)
@@ -112,7 +112,7 @@ async def test_enter_on_collection_does_not_undo_collapse(
     collection's scope used to also expand it (Tree.auto_expand=True),
     so an intentional Left-collapse was lost the next time the user
     toggled the collection's enable state."""
-    app = AcornApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         ctree = app.query_one("#collections_panel_tree", Tree)
@@ -144,7 +144,7 @@ async def test_enter_on_collection_does_not_undo_collapse(
 async def test_toggle_with_active_query_clears_results_without_focus_shift(
     built_index: Path, isolated_ui_state: Path
 ) -> None:
-    app = AcornApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app._groups, "test setup — initial query produced no results"
@@ -180,10 +180,10 @@ async def test_collapse_state_survives_collection_cli_flag(
         'expanded_filter_branches = ["kinds"]\n'
         '[filters]\nkinds = []\ndate = "any"\n'
     )
-    # Equivalent of ``acorn tui --collection default``: the flag pins
+    # Equivalent of ``fnd tui --collection default``: the flag pins
     # search scope to "default" but should NOT discard the saved
     # collapse-to-header state on the two sidebar panels.
-    app = AcornApp(index_dir=built_index, collection="default")
+    app = FNDApp(index_dir=built_index, collection="default")
     async with app.run_test() as pilot:
         await pilot.pause()
         ctree = app.query_one("#collections_panel_tree", Tree)

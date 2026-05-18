@@ -15,7 +15,7 @@ import pytest
 from pptx import Presentation
 from pptx.util import Inches
 
-from acorn.extract.pptx import extract
+from fnd.extract.pptx import extract
 
 
 def _make_deck_with_bullets_and_table(out: Path) -> Path:

@@ -21,14 +21,14 @@ from pathlib import Path
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-DIAG_PATH = Path("/tmp/acorn-preview-diag.log")
+DIAG_PATH = Path("/tmp/fnd-preview-diag.log")
 if DIAG_PATH.exists():
     DIAG_PATH.unlink()
-os.environ["ACORN_PREVIEW_DIAG"] = "1"
+os.environ["FND_PREVIEW_DIAG"] = "1"
 
-from acorn.config import Config, Defaults, RankingProfileConfig  # noqa: E402
-from acorn.index import build_index  # noqa: E402
-from acorn.tui import AcornApp  # noqa: E402
+from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
+from fnd.index import build_index  # noqa: E402
+from fnd.tui import FNDApp  # noqa: E402
 
 VAULT_ROOT = Path(
     "/Users/BenDavidson/Library/Mobile Documents/iCloud~md~obsidian/Documents/Obsidian Vault"
@@ -41,7 +41,7 @@ async def main() -> int:
     src = VAULT_ROOT / TARGET_FILE
     if not src.exists():
         raise SystemExit(f"file not found: {src}")
-    with tempfile.TemporaryDirectory(prefix="acorn-ckc-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="fnd-ckc-") as tmp:
         root = Path(tmp)
         corpus = root / "corpus"
         corpus.mkdir(parents=True, exist_ok=True)
@@ -53,7 +53,7 @@ async def main() -> int:
             defaults=Defaults(preview_prefetch_count=0, preview_load_debounce_ms=0),
             ranking={"default": RankingProfileConfig()},
         )
-        app = AcornApp(index_dir=index_dir, config=cfg, collection="default", initial_query=QUERY)
+        app = FNDApp(index_dir=index_dir, config=cfg, collection="default", initial_query=QUERY)
         from textual.widgets import Tree  # pyright: ignore[reportMissingImports]
 
         async with app.run_test(size=(140, 40)) as pilot:
@@ -72,7 +72,7 @@ async def main() -> int:
             sections = list(file_node.children)
             print(f"file: {file_node.label}  n_sections={len(sections)}")
 
-            from acorn.tui.app import AcornMarkdown
+            from fnd.tui.app import FNDMarkdown
 
             for i, sec in enumerate(sections):
                 data = sec.data
@@ -96,7 +96,7 @@ async def main() -> int:
                 fmb_type = None
                 fmb_y = None
                 fmb_h = None
-                if isinstance(chunk_md, AcornMarkdown):
+                if isinstance(chunk_md, FNDMarkdown):
                     inner = chunk_md.first_match_block
                     if inner is not None:
                         fmb_type = type(inner).__name__
