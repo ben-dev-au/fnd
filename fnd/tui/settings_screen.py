@@ -1374,6 +1374,13 @@ class SourceFormScreen(Screen[None]):
             "excludes_custom": "",  # comma-separated free-form globs
             "filter": "",
             "follow_symlinks": False,
+            # Phase 2b: per-source app override + Obsidian vault.
+            # ``app`` is the registry id (or "" = no override → resolver
+            # walks the global app_defaults / auto-promote ladder).
+            # ``app_params_vault`` is the only app_param that has UI
+            # surface today; other params still reachable via the TOML.
+            "app": "",
+            "app_params_vault": "",
         }
         # Snapshot the current source (if editing) for cancel and the
         # "needs reindex on save" check.
@@ -1439,6 +1446,8 @@ class SourceFormScreen(Screen[None]):
             "excludes_custom": excludes_custom,
             "filter": s.frontmatter_filter or "",
             "follow_symlinks": bool(s.follow_symlinks),
+            "app": s.app or "",
+            "app_params_vault": (s.app_params or {}).get("vault", ""),
         }
         self._snapshot = {
             "path": self._fields["path"],
@@ -1448,6 +1457,8 @@ class SourceFormScreen(Screen[None]):
             "excludes_custom": self._fields["excludes_custom"],
             "filter": self._fields["filter"],
             "follow_symlinks": self._fields["follow_symlinks"],
+            "app": self._fields["app"],
+            "app_params_vault": self._fields["app_params_vault"],
         }
 
     def _populate_fields(self) -> None:
@@ -1508,7 +1519,70 @@ class SourceFormScreen(Screen[None]):
                 toggle_getter=lambda _app: bool(self._fields["follow_symlinks"]),
                 toggle_setter=lambda _app, v: self._set_follow(v),
             ),
+            MenuItem(
+                id="form.app",
+                label="App",
+                description=(
+                    "Open files from this source with a specific app. "
+                    "Leave as '(default)' to use the global app_defaults "
+                    "+ auto-promote ladder. See ``[apps]`` in config.toml "
+                    "and docs/apps/ for the full list."
+                ),
+                kind=KIND_PICKER,
+                multi=False,
+                choices_provider=self._app_choices,
+                picker_getter=lambda _app: self._fields.get("app") or "",
+                picker_setter=lambda _app, v: self._set_app(v),
+            ),
+            self._field_item(
+                "app_params_vault",
+                "Obsidian vault",
+                hint="vault name (auto-detected when App = Obsidian)",
+            ),
         ]
+
+    def _app_choices(self, _app: Any) -> list[ChoiceOption]:
+        """All registered apps + a '(default)' sentinel for clearing the
+        per-source override. Built-ins and user apps from [apps.<id>]
+        appear together."""
+        from fnd.apps import build_registry
+
+        cfg_obj = self.app._config  # type: ignore[attr-defined]
+        registry = build_registry(cfg_obj)
+        out: list[ChoiceOption] = [
+            ChoiceOption(
+                value="",
+                label="(default — use global resolver)",
+                description="No per-source override; defer to app_defaults + auto-promote.",
+            )
+        ]
+        for app_id, app in registry.items():
+            handles = ",".join(app.handles)
+            out.append(
+                ChoiceOption(
+                    value=app_id,
+                    label=app.display_name,
+                    description=f"handles: {handles}",
+                )
+            )
+        return out
+
+    def _set_app(self, value: str) -> None:
+        """Update the App field. When the user picks Obsidian and no
+        vault is set yet, auto-detect from the source path."""
+        self._fields["app"] = value or ""
+        if value == "obsidian" and not str(self._fields.get("app_params_vault") or "").strip():
+            from fnd.apps import detect_obsidian_vault
+
+            path_s = str(self._fields.get("path") or "").strip()
+            if path_s:
+                try:
+                    detected = detect_obsidian_vault(Path(path_s).expanduser())
+                except (ValueError, OSError):
+                    detected = None
+                if detected:
+                    self._fields["app_params_vault"] = detected
+        self.query_one(SettingsList).refresh_values()
 
     def _includes_picker_state(self) -> list[str]:
         state = list(self._fields["includes"])
@@ -1711,6 +1785,9 @@ class SourceFormScreen(Screen[None]):
             g = g.strip()
             if g:
                 excludes_globs.append(g)
+        app_id = str(self._fields.get("app") or "").strip()
+        vault = str(self._fields.get("app_params_vault") or "").strip()
+        app_params: dict[str, str] = {"vault": vault} if vault else {}
         try:
             new_source = SourceConfig(
                 path=Path(path),
@@ -1718,6 +1795,8 @@ class SourceFormScreen(Screen[None]):
                 excludes=excludes_globs,
                 follow_symlinks=bool(self._fields["follow_symlinks"]),
                 frontmatter_filter=(str(self._fields["filter"]) or None),
+                app=app_id or None,
+                app_params=app_params,
             )
         except Exception as e:
             self._show_error(_summarize(e))
