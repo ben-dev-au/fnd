@@ -1,4 +1,4 @@
-"""Probe — enable FND_PREVIEW_DIAG and capture do_scroll log lines.
+"""Probe — enable _FND_PREVIEW_DIAG and capture do_scroll log lines.
 
 Runs intra-file navigation, then reads /tmp/fnd-preview-diag.log and
 filters for the do_scroll lines. Used to understand WHY the scroll
@@ -23,7 +23,7 @@ sys.path.insert(0, str(_here.parent.parent.parent))
 DIAG_PATH = Path("/tmp/fnd-preview-diag.log")
 if DIAG_PATH.exists():
     DIAG_PATH.unlink()
-os.environ["FND_PREVIEW_DIAG"] = "1"
+os.environ["_FND_PREVIEW_DIAG"] = "1"
 
 from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
 from fnd.index import build_index  # noqa: E402

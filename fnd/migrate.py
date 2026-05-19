@@ -98,7 +98,7 @@ def prompt_and_rebuild_or_exit(
     )
     if is_tty is None:
         # Allow tests to force the TTY path.
-        interactive = True if os.environ.get("FND_FORCE_TTY") == "1" else sys.stdin.isatty()
+        interactive = True if os.environ.get("_FND_FORCE_TTY") == "1" else sys.stdin.isatty()
     else:
         interactive = is_tty
 

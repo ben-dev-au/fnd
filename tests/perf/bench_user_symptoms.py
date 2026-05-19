@@ -37,8 +37,8 @@ sys.path.insert(0, str(_here.parent.parent.parent))
 DIAG_PATH = Path("/tmp/fnd-preview-diag.log")
 if DIAG_PATH.exists():
     DIAG_PATH.unlink()
-os.environ["FND_PREVIEW_DIAG"] = "1"
-os.environ["FND_REVEAL_FIRST"] = "1"
+os.environ["_FND_PREVIEW_DIAG"] = "1"
+os.environ["_FND_REVEAL_FIRST"] = "1"
 
 from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
 from fnd.index import build_index  # noqa: E402

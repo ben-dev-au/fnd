@@ -1,4 +1,8 @@
-# Prompt — fresh Claude Code session for the preview-pane DOM rework
+# Prompt — fresh session for the preview-pane DOM rework
+
+> Note: env vars referenced below were renamed `FND_*` → `_FND_*` on 2026-05-19
+> (private-knob convention). Older snapshots in this doc may show the old names.
+
 
 Copy this into a new Claude Code session at the repo root (or any
 worktree pointing at this project). It's self-contained; the new

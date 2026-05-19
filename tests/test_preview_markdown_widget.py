@@ -93,7 +93,8 @@ async def test_preview_md_match_only_highlights_term(cfg: Config, paragraph_inde
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause()
+        for _ in range(8):
+            await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
         # Exactly one FNDMarkdown widget mounted (one chunk, one paragraph).
         md_widgets = list(pane.query(FNDMarkdown))
@@ -155,7 +156,8 @@ async def test_preview_md_renders_table_with_cell_highlight(cfg: Config, table_i
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause()
+        for _ in range(8):
+            await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
         tables = list(pane.query(MarkdownTable))
         assert tables, "table chunk should render via MarkdownTable widget"
@@ -225,7 +227,8 @@ async def test_preview_md_fence_no_highlight_inside_code(cfg: Config, fence_inde
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause()
+        for _ in range(8):
+            await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
         fences = list(pane.query(MarkdownFence))
         assert fences, "code-only chunk should render via MarkdownFence"
@@ -275,7 +278,8 @@ async def test_preview_md_nested_lists_render(cfg: Config, nested_list_index: Pa
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause()
+        for _ in range(8):
+            await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
         bullet_lists = list(pane.query(MarkdownBulletList))
         # Outer + inner list = at least two MarkdownBulletList widgets.
@@ -378,7 +382,8 @@ async def test_pptx_preview_routes_through_fnd_markdown(cfg: Config, pptx_corpus
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause()
+        for _ in range(8):
+            await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
         assert list(pane.query(FNDMarkdown)), "pptx chunk should mount FNDMarkdown"
         assert list(pane.query(MarkdownTable)), "pptx table should render via MarkdownTable"
@@ -401,7 +406,8 @@ async def test_docx_preview_routes_through_fnd_markdown(cfg: Config, docx_corpus
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause()
+        for _ in range(8):
+            await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
         assert list(pane.query(FNDMarkdown)), "docx chunk should mount FNDMarkdown"
         assert list(pane.query(MarkdownTable)), "docx table should render via MarkdownTable"
@@ -423,7 +429,8 @@ async def test_preview_first_match_block_resolves_to_matched_paragraph(
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause()
+        for _ in range(8):
+            await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
         md = pane.query_one(FNDMarkdown)
         first_match = md.first_match_block  # type: ignore[attr-defined]

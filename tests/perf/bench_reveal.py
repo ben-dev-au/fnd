@@ -6,7 +6,7 @@ click_to_display_start → click_to_display_end deltas.
 
 Run with:
 
-    FND_PERF=1 ./.venv/bin/python tests/perf/bench_reveal.py \\
+    _FND_PERF=1 ./.venv/bin/python tests/perf/bench_reveal.py \\
         --profile heavy --warm cold --runs 5
 
 Output: JSON to stdout (or to ``--out PATH``).
@@ -29,7 +29,7 @@ from typing import Any
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-os.environ.setdefault("FND_PERF", "1")  # auto-enable for this entry point
+os.environ.setdefault("_FND_PERF", "1")  # auto-enable for this entry point
 
 from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
 from fnd.index import _path_parent_id, build_index  # noqa: E402

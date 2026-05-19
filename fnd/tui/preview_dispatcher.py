@@ -47,7 +47,7 @@ def choose_preview_mode(chunks: list[FileChunk]) -> PreviewMode:
     """
     import os
 
-    if os.environ.get("FND_FORCE_FLAT") == "1":
+    if os.environ.get("_FND_FORCE_FLAT") == "1":
         return "flat"
     for c in chunks:
         if c.kind in _MARKDOWN_RENDERED_KINDS and c.body_md:

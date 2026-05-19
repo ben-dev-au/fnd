@@ -3,7 +3,7 @@ our wrapped DataTable looks like versus Textual's default MarkdownTable.
 
 Renders the same fixture twice:
   * Run 1: default (W3 DataTable path, with our wrap fix).
-  * Run 2: FND_NO_W3=1 forces MarkdownTableContent (grid layout with
+  * Run 2: _FND_NO_W3=1 forces MarkdownTableContent (grid layout with
     keyline). text-overflow: ellipsis is still in upstream CSS but
     short cells let us see the surrounding chrome (borders, headers).
 
@@ -40,9 +40,9 @@ TABLE_MD = """\
 
 async def render_once(label: str, no_w3: bool) -> None:
     if no_w3:
-        os.environ["FND_NO_W3"] = "1"
+        os.environ["_FND_NO_W3"] = "1"
     else:
-        os.environ.pop("FND_NO_W3", None)
+        os.environ.pop("_FND_NO_W3", None)
 
     with tempfile.TemporaryDirectory(prefix=f"fnd-vis-{label}-") as tmp:
         root = Path(tmp)

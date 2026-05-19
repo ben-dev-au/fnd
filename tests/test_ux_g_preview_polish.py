@@ -140,7 +140,8 @@ async def test_md_match_chunk_renders_via_markdown_widget_with_highlight(
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause(0.3)
+        for _ in range(8):
+            await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
         md_widgets = list(pane.query(FNDMarkdown))
         assert md_widgets, "expected matched md chunk to mount FNDMarkdown"

@@ -1,6 +1,6 @@
 """Env-gated perf spans for preview-pipeline measurement.
 
-Toggle with ``FND_PERF=1``. When disabled, the context manager and
+Toggle with ``_FND_PERF=1``. When disabled, the context manager and
 ``mark()`` calls are near-zero cost (one env lookup at import time).
 Records live in a process-global ring; tests reset between scenarios.
 """
@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from threading import Lock
 from typing import Any
 
-_ENABLED: bool = os.environ.get("FND_PERF") == "1"
+_ENABLED: bool = os.environ.get("_FND_PERF") == "1"
 _RECORD: list[dict[str, Any]] = []
 _LOCK = Lock()
 _T0 = time.perf_counter()
