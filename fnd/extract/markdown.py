@@ -20,7 +20,7 @@ from pathlib import Path
 
 from markdown_it import MarkdownIt
 
-from fnd.extract.base import Block, Chunk
+from fnd.extract.base import Block, Chunk, ExtractError
 
 _md = MarkdownIt("commonmark")
 
@@ -44,7 +44,7 @@ _CONTENT_TOKEN_TYPES: frozenset[str] = frozenset(
 
 
 def _parent_id(path: Path) -> str:
-    return hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()
+    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _flush_section(
@@ -97,7 +97,19 @@ def _section_source(source_lines: list[str], start_line: int, end_line: int) -> 
 
 
 def extract(path: Path) -> Iterator[Chunk]:
-    source = path.read_text(encoding="utf-8")
+    try:
+        yield from _extract_inner(path)
+    except ExtractError:
+        raise
+    except Exception as e:
+        raise ExtractError(str(path), f"{type(e).__name__}: {e}") from e
+
+
+def _extract_inner(path: Path) -> Iterator[Chunk]:
+    try:
+        source = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as e:
+        raise ExtractError(str(path), f"not valid utf-8: {e}") from e
     if not source.strip():
         return
 

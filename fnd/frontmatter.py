@@ -32,7 +32,13 @@ class FrontmatterParseError(Exception):
 def read_frontmatter_from_text(text: str) -> dict[str, object] | None:
     """Return the parsed frontmatter, ``{}`` if the block is empty, or
     ``None`` if no frontmatter fence appears at the very start of the
-    document. Raises FrontmatterParseError on malformed YAML."""
+    document. Raises FrontmatterParseError on malformed YAML or when the
+    block exceeds size limits (see :mod:`fnd.extract._limits`)."""
+    from fnd.extract._limits import (
+        LIMIT_FRONTMATTER_LINE_BYTES,
+        LIMIT_FRONTMATTER_TOTAL_BYTES,
+    )
+
     if not text.startswith("---"):
         return None
     lines = text.splitlines()
@@ -41,7 +47,18 @@ def read_frontmatter_from_text(text: str) -> dict[str, object] | None:
         return None
     # Find the matching closing fence. The opening line is ``---``; from
     # line 1 onward, look for ``---`` or ``...`` on its own.
+    running = len(lines[0]) + 1
     for i in range(1, len(lines)):
+        running += len(lines[i].encode("utf-8")) + 1
+        if running > LIMIT_FRONTMATTER_TOTAL_BYTES:
+            raise FrontmatterParseError(
+                f"frontmatter exceeds {LIMIT_FRONTMATTER_TOTAL_BYTES}-byte limit "
+                "(potential decompression-bomb shape)"
+            )
+        if len(lines[i].encode("utf-8")) > LIMIT_FRONTMATTER_LINE_BYTES:
+            raise FrontmatterParseError(
+                f"frontmatter line {i + 1} exceeds {LIMIT_FRONTMATTER_LINE_BYTES}-byte limit"
+            )
         if _FENCE.match(lines[i]):
             body_lines = lines[1:i]
             return _parse_block(body_lines)

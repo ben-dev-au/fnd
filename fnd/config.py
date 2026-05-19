@@ -30,9 +30,9 @@ def app_data_dir() -> Path:
 
 
 def default_index_dir() -> Path:
-    d = app_data_dir() / "index"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    from fnd._perms import secure_mkdir
+
+    return secure_mkdir(app_data_dir() / "index")
 
 
 def default_config_path() -> Path:
@@ -275,6 +275,33 @@ class Config(BaseModel):
         return self.ranking.get(name, RankingProfileConfig())
 
 
+# Collection names appear as TOML table keys (`[collections.<name>]`),
+# as ``--collection`` CLI args, and inside the query DSL ``c:<name>``
+# shorthand. Restricting to a single safe character class everywhere
+# keeps the three surfaces in lockstep: no TOML key escapes, no DSL
+# parse ambiguity, no filesystem-component pitfalls (slashes, NUL,
+# leading dot).
+_COLLECTION_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$")
+
+
+class InvalidCollectionNameError(ValueError):
+    """Raised when a collection name fails :func:`validate_collection_name`."""
+
+
+def validate_collection_name(name: str) -> str:
+    """Return ``name`` if it matches the canonical regex, else raise.
+
+    The pattern is intentionally narrow (64 chars max, alphanumeric +
+    underscore + hyphen, must not start with hyphen). Names round-trip
+    safely through TOML, command-line argv, and the ``c:<name>`` DSL
+    shorthand."""
+    if not _COLLECTION_NAME_RE.fullmatch(name):
+        raise InvalidCollectionNameError(
+            f"invalid collection name {name!r}: must match {_COLLECTION_NAME_RE.pattern}"
+        )
+    return name
+
+
 _DURATION_RE = re.compile(r"^\s*(\d+)\s*([smhd])\s*$")
 
 
@@ -320,6 +347,7 @@ def write_collection_source(
     """
     import tomlkit
 
+    validate_collection_name(collection_name)
     if config_path.exists():
         doc = tomlkit.parse(config_path.read_text(encoding="utf-8"))
     else:
@@ -341,7 +369,9 @@ def write_collection_source(
         new_table["frontmatter_filter"] = source.frontmatter_filter
     sources_array.append(new_table)
 
-    config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+    from fnd._perms import secure_write_text
+
+    secure_write_text(config_path, tomlkit.dumps(doc))
 
 
 def write_collection(
@@ -361,6 +391,7 @@ def write_collection(
     """
     import tomlkit
 
+    validate_collection_name(name)
     if config_path.exists():
         doc = tomlkit.parse(config_path.read_text(encoding="utf-8"))
     else:
@@ -391,7 +422,9 @@ def write_collection(
         # back as CollectionConfig(sources=[]).
         new_table.add("sources", tomlkit.array())
     collections[name] = new_table
-    config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+    from fnd._perms import secure_write_text
+
+    secure_write_text(config_path, tomlkit.dumps(doc))
 
 
 def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Config:
@@ -437,8 +470,10 @@ def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Conf
     raw = tomllib.loads(tomlkit.dumps(doc))
     config = Config.model_validate(raw)
 
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+    from fnd._perms import secure_mkdir, secure_write_text
+
+    secure_mkdir(config_path.parent)
+    secure_write_text(config_path, tomlkit.dumps(doc))
     return config
 
 
@@ -456,7 +491,9 @@ def delete_collection(*, config_path: Path, name: str) -> None:
     if not collections or name not in collections:
         return
     del collections[name]
-    config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+    from fnd._perms import secure_write_text
+
+    secure_write_text(config_path, tomlkit.dumps(doc))
 
 
 CONFIG_TEMPLATE = """\

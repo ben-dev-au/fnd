@@ -43,20 +43,18 @@ def test_skim_url_unicode(tmp_path: Path) -> None:
 
 def test_explain_open_falls_back_when_no_skim(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(opener, "_has_skim", lambda: False)
-    assert opener.explain_open(kind="pdf", page=7, pdf_strategy="applescript").startswith(
-        "open <file>"
-    )
+    assert opener.explain_open(kind="pdf", page=7, pdf_strategy="url").startswith("open <file>")
 
 
 def test_explain_open_pdf_with_skim(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(opener, "_has_skim", lambda: True)
-    msg = opener.explain_open(kind="pdf", page=7, pdf_strategy="applescript")
-    assert "Skim" in msg
-    assert "page 7" in msg
+    msg = opener.explain_open(kind="pdf", page=7, pdf_strategy="url")
+    assert "skim://" in msg
+    assert "page=7" in msg
 
 
 def test_explain_open_non_pdf() -> None:
-    msg = opener.explain_open(kind="docx", page=0, pdf_strategy="applescript")
+    msg = opener.explain_open(kind="docx", page=0, pdf_strategy="url")
     assert msg == "open <file> (default app)"
 
 

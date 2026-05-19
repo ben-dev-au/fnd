@@ -19,6 +19,7 @@ from typing import Final
 
 from tantivy import Index
 
+from fnd.extract._limits import LIMIT_QUERY_BOOLEAN_TOKENS, LIMIT_QUERY_BYTES
 from fnd.extract.base import Block
 from fnd.schema import (
     DEFAULT_FIELD_BOOSTS,
@@ -211,6 +212,28 @@ def _passes_meta_filter(hit: Hit, predicate: object) -> bool:
     return bool(predicate(fm))  # type: ignore[operator]
 
 
+class QueryTooLargeError(ValueError):
+    """Raised when a query exceeds the size / complexity limits in
+    :mod:`fnd.extract._limits`. Today only a defensive bound — the
+    local user is the only query author — but pinned now so any future
+    URL-handler / Spotlight / ``--query-from-file`` path inherits it
+    automatically."""
+
+
+def enforce_query_bounds(query: str) -> None:
+    """Refuse pathological queries before handing them to Tantivy."""
+    if len(query.encode("utf-8")) > LIMIT_QUERY_BYTES:
+        raise QueryTooLargeError(f"query exceeds {LIMIT_QUERY_BYTES}-byte limit")
+    # Cheap upper bound on boolean depth: count AND/OR/NOT tokens.
+    # Tantivy's parser tree explodes when these multiply; the cap is
+    # conservative but well above any realistic human query.
+    boolean_tokens = sum(query.count(op) for op in (" AND ", " OR ", " NOT "))
+    if boolean_tokens > LIMIT_QUERY_BOOLEAN_TOKENS:
+        raise QueryTooLargeError(
+            f"query has {boolean_tokens} boolean operators; limit is {LIMIT_QUERY_BOOLEAN_TOKENS}"
+        )
+
+
 class Searcher:
     """Single-pass searcher against an existing fnd index."""
 
@@ -234,6 +257,7 @@ class Searcher:
         from fnd.query_dsl import preprocess
         from fnd.schema import F_BODY, F_HEADING_PATH, F_PATH_TOKENS
 
+        enforce_query_bounds(query)
         user_query = preprocess(query)
         full_query = user_query
         if collection:

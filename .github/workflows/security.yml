@@ -1,0 +1,46 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly Monday 09:00 UTC — catches CVEs published since the last
+    # human-driven push.
+    - cron: "0 9 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    name: pip-audit (lockfile)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+      - name: Sync deps (frozen lockfile)
+        run: uv sync --frozen --all-extras --group dev
+      - name: Install pip-audit
+        run: uv tool install pip-audit
+      - name: Export resolved requirements
+        run: uv export --format requirements-txt --no-hashes -o requirements.frozen.txt
+      - name: Audit
+        run: uv tool run pip-audit -r requirements.frozen.txt --strict
+
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

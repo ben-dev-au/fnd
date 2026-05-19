@@ -288,10 +288,18 @@ def collection_add(
     the command to add additional sources to the same collection.
     """
     from fnd.config import (
+        InvalidCollectionNameError,
         SourceConfig,
+        validate_collection_name,
         write_collection_source,
     )
     from fnd.filter_dsl import FilterError, compile_filter
+
+    try:
+        validate_collection_name(name)
+    except InvalidCollectionNameError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1) from e
 
     if filter is not None:
         try:

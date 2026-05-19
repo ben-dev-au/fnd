@@ -10,9 +10,9 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
-from fnd.extract.base import Chunk
+from fnd.extract.base import Chunk, ExtractError
 
-__all__ = ["Chunk", "extract", "supported_suffixes"]
+__all__ = ["Chunk", "ExtractError", "extract", "supported_suffixes"]
 
 # Map suffix → extractor module attribute name. Lazily imported to keep
 # startup time small (pymupdf is the heaviest dep).
