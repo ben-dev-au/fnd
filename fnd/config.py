@@ -210,6 +210,45 @@ class RankingProfileConfig(BaseModel):
     bm25_b: float | None = None
 
 
+class AppConfig(BaseModel):
+    """User-extensible app entry from ``[apps.<id>]``.
+
+    Exactly one of ``argv`` (process exec) and ``url`` (deep-link via
+    ``open <url>``) must be set. Template variables use ``{name}``-style
+    placeholders; see ``docs/apps/README.md`` for the full variable list.
+    Built-in apps (``system``, ``preview``, ``skim``, ``pdf_expert``,
+    ``obsidian``, ``vscode``) ship in :mod:`fnd.apps` and do NOT appear
+    here unless the user is overriding them.
+    """
+
+    display_name: str
+    handles: list[str]
+    argv: list[str] | None = None
+    url: str | None = None
+    notes: str = ""
+
+    @model_validator(mode="after")
+    def _argv_xor_url(self) -> AppConfig:
+        if (self.argv is None) == (self.url is None):
+            raise ValueError("AppConfig: exactly one of argv or url must be set")
+        return self
+
+    @field_validator("handles")
+    @classmethod
+    def _validate_handles(cls, v: list[str]) -> list[str]:
+        # Mirror fnd.apps.ALLOWED_HANDLES. Duplicated here so the config
+        # layer doesn't depend on importing apps.py at load time (apps.py
+        # imports from opener which used to import config — keeping the
+        # dependency one-way).
+        allowed = {"md", "markdown", "txt", "pdf", "pptx", "docx", "*"}
+        for h in v:
+            if h not in allowed:
+                raise ValueError(f"unknown handle kind {h!r}; allowed: {sorted(allowed)}")
+        if not v:
+            raise ValueError("handles must be non-empty")
+        return v
+
+
 class Defaults(BaseModel):
     collection: str = "default"
     result_limit: int = 200
@@ -258,6 +297,38 @@ class Config(BaseModel):
     defaults: Defaults = Field(default_factory=Defaults)
     collections: dict[str, CollectionConfig] = Field(default_factory=dict)
     ranking: dict[str, RankingProfileConfig] = Field(default_factory=dict)
+    # User-extensible app registry. Keys are app ids referenced by
+    # ``app_defaults`` and (Phase 2) per-source app fields. Built-in
+    # apps live in :mod:`fnd.apps`; entries here override built-ins on
+    # id collision.
+    apps: dict[str, AppConfig] = Field(default_factory=dict)
+    # Global per-filetype default app. Keys are file kinds (``pdf``,
+    # ``md``, ``txt``, ...); values are app ids resolved against
+    # ``BUILTIN_APPS | self.apps``. Missing entries fall through to the
+    # system default at open time.
+    app_defaults: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_app_refs(self) -> Config:
+        # Import here to avoid a circular import at module load time.
+        from fnd.apps import ALLOWED_HANDLES, APP_ID_RE, BUILTIN_APPS
+
+        known_ids = set(BUILTIN_APPS) | set(self.apps)
+        for app_id in self.apps:
+            if not APP_ID_RE.fullmatch(app_id):
+                raise ValueError(f"invalid app id {app_id!r}: must match {APP_ID_RE.pattern}")
+        for kind, app_id in self.app_defaults.items():
+            if kind not in ALLOWED_HANDLES or kind == "*":
+                raise ValueError(
+                    f"app_defaults: unknown filetype {kind!r}; "
+                    f"allowed: {sorted(ALLOWED_HANDLES - {'*'})}"
+                )
+            if app_id not in known_ids:
+                raise ValueError(
+                    f"app_defaults.{kind} = {app_id!r}: unknown app id "
+                    f"(known: {sorted(known_ids)})"
+                )
+        return self
 
     def collection(self, name: str) -> CollectionConfig:
         try:
@@ -568,6 +639,33 @@ excludes = ["**/.git/**", "**/.DS_Store", "**/__pycache__/**"]
 # recency_half_life  = "365d"
 # filetype_boosts    = { md = 1.0, txt = 0.9, pdf = 0.85 }
 # phrase_proximity   = 0.3
+
+# ── Apps & defaults ────────────────────────────────────────────────────
+# Default app per filetype, used when a source doesn't override. Built-in
+# app ids: system, preview, skim, pdf_expert, obsidian, vscode. Add your
+# own under [apps.<id>] below.
+# [app_defaults]
+# pdf = "preview"   # or "skim" / "pdf_expert" / "system"
+# md  = "obsidian"  # or "vscode" / "system"
+# txt = "vscode"
+
+# User-defined apps. See docs/apps/ for ready-to-paste configs for common
+# third-party apps. Each entry sets exactly one of `argv` (process exec)
+# or `url` (deep-link via `open <url>`). Template variables: {path},
+# {path_pct}, {page}, {line}, {heading}, {heading_pct}, {query},
+# {query_pct}, {vault}, {vault_pct}, {file_in_vault}, {file_in_vault_pct}.
+# Empty fields render as the empty string; templates ending in `::N`
+# (line missing, col set) collapse to just `{path}`.
+#
+# [apps.marked]
+# display_name = "Marked 2"
+# handles      = ["md"]
+# argv         = ["open", "-a", "Marked 2", "{path}"]
+#
+# [apps.typora]
+# display_name = "Typora"
+# handles      = ["md"]
+# argv         = ["open", "-a", "Typora", "{path}"]
 """
 
 # Backwards-compat alias for any older callers that imported the
