@@ -36,11 +36,21 @@ below. The checklist at the top is the live progress tracker.
 
 ### SHOULD-fix before public release
 
-- [ ] **S1** — Codesign + notarize Homebrew bottle via CI release
-      workflow. (`.github/workflows/release.yml`, `homebrew-fnd/` repo)
-      *Blocked on Apple Developer ID enrolment.*
+- [ ] **S1** — Publish a Homebrew tap (`homebrew-fnd`) whose formula
+      installs the PyPI sdist into a venv. **No Apple Developer ID
+      required:** the formula is pure-Python, Homebrew downloads via
+      curl (no quarantine xattr → Gatekeeper does not fire), and the
+      arm64 wheels we depend on (pymupdf, tantivy) already ship with
+      the ad-hoc signing they need. The original "codesign + notarize"
+      track only becomes necessary if we later ship a bundled Mach-O
+      via PyOxidizer/Briefcase, and even then ad-hoc signing
+      (`codesign --sign -`) suffices for Homebrew distribution.
+      (`.github/workflows/release.yml`, separate `homebrew-fnd/` repo)
 - [ ] **S2** — Emit SBOM (CycloneDX) and SLSA provenance with each
-      release. (release workflow) *Lands with S1.*
+      release. (release workflow) Independent of S1's signing
+      decision; still valuable so users can verify *what's in the
+      tarball* and *that GitHub Actions built it, not a compromised
+      laptop*.
 - [x] **S3** — Collection-name regex validator, applied at write and at
       query-DSL expansion. (`fnd/config.py`, `fnd/cli.py`,
       `tests/test_collection_name_validation.py`)
@@ -206,26 +216,56 @@ could read those paths. Cheap to fix.
 
 ### SHOULD-fix
 
-**S1. Code signing & notarization of the Homebrew artifact.** An
-unsigned macOS binary triggers Gatekeeper warnings; users are told
-to right-click → open, which trains them to ignore the same dialog
-that would otherwise warn of malware swapping the binary at install-
-time. Standard Apple flow:
-1. Apple Developer Program ($99/yr) → Developer ID Application cert.
-2. Build with `--strip` and `--codesign-identity "Developer ID
-   Application: <name>"`.
-3. `xcrun notarytool submit --wait` to notarize.
-4. `xcrun stapler staple` to attach the ticket.
-5. For a Python CLI: `pyoxidizer` or `briefcase` produces a stand-
-   alone Mach-O. Pure-Python `pipx` installs skip signing — but a
-   Homebrew formula then needs `depends_on "python@3.13"` and lays a
-   venv, a worse UX.
+**S1. Homebrew tap (no Apple Developer ID required).** The original
+draft of this audit recommended codesigning + notarizing a bottle via
+Apple's notary service. On further investigation — and confirmed
+research from the project owner — that's not needed for `fnd`:
 
-*Recommendation: two channels.* `pipx install fnd` from PyPI (no
-signing; user-scoped). `brew install fnd/tap/fnd` from a signed,
-notarized bottle for non-developers. CI builds the bottle via
-`.github/workflows/release.yml` on tag push, uploads to a GitHub
-release, the tap formula pins the SHA-256.
+- Gatekeeper only enforces on Mach-O binaries that carry the
+  `com.apple.quarantine` extended attribute. The xattr is set by
+  user-space apps that participate in LaunchServices' "I came from the
+  internet" hand-off (Safari, Mail, Messages, AirDrop). `curl`,
+  `wget`, and `brew install` do *not* set it. So a Homebrew-installed
+  artifact never trips Gatekeeper, regardless of whether it's signed.
+- `fnd` is a pure-Python CLI. There is no Mach-O *of ours* to sign in
+  the first place. The Python deps that contain native code
+  (`pymupdf`, `tantivy`) ship as wheels from PyPI with the ad-hoc
+  signing they need to run on Apple Silicon — those wheels' authors
+  handled that, not us.
+- The minimum bar Apple Silicon enforces is that any arm64 Mach-O
+  carries *some* signature, even an ad-hoc one. Ad-hoc signing
+  (`codesign --sign -`) is free and requires no Apple Developer
+  Program enrolment. Homebrew applies it automatically when bottling.
+
+*Recommendation: two channels, both free.*
+1. **PyPI / `pipx install fnd`.** Pure-Python install path; works
+   on macOS, Linux, anywhere with Python 3.13. Set up a PyPI Trusted
+   Publisher via OIDC so the release workflow can publish without an
+   API token.
+2. **Homebrew tap `homebrew-fnd`.** A `Formula/fnd.rb` that uses
+   `Language::Python::Virtualenv` to install from the PyPI sdist:
+   ```ruby
+   class Fnd < Formula
+     include Language::Python::Virtualenv
+     desc "Fast, free, keyboard-driven document search for macOS"
+     homepage "https://github.com/<owner>/fnd"
+     url "https://files.pythonhosted.org/.../fnd-X.Y.Z.tar.gz"
+     sha256 "..."
+     depends_on "python@3.13"
+     def install
+       virtualenv_install_with_resources
+     end
+   end
+   ```
+   No signing step. `.github/workflows/release.yml` on a `v*` tag:
+   (a) builds + uploads the sdist to PyPI, (b) downloads it back,
+   computes SHA-256, (c) opens a PR against `homebrew-fnd` bumping
+   `url` + `sha256`. The tap repo is just a GitHub repo —
+   `brew tap <owner>/fnd && brew install fnd` is the end-user path.
+
+The "PyOxidizer + codesign + notarize" track stays on the shelf and
+only gets unboxed if we ever decide to ship a standalone Mach-O for
+non-Homebrew users.
 
 **S2. SBOM + release-artifact provenance.** At release time emit (a)
 a CycloneDX SBOM via `cyclonedx-py` and (b) SLSA-style provenance
@@ -310,28 +350,46 @@ same tag get identical wheels. C-extension builds (`pymupdf`,
 
 ---
 
-## Distribution-hardening track (Homebrew + signed binary)
+## Distribution-hardening track (Homebrew tap + PyPI)
 
-Separate workstream from the source-code fixes. Best practice for a
-macOS CLI shipped publicly:
+Separate workstream from the source-code fixes. The original draft
+assumed an Apple Developer ID would be needed; on further
+investigation, it isn't — both channels below cost nothing.
 
-1. **Apple Developer ID enrolment.** $99/yr. One-time setup.
-2. **Build the signed binary in CI, not on a laptop.** GitHub Actions
-   macOS runners support codesign + notarization. Secrets:
-   `APPLE_CERT_P12` (base64), `APPLE_CERT_PASSWORD`,
-   `APPLE_NOTARY_PWD` (app-specific password). Workflow:
-   `.github/workflows/release.yml` on `v*` tag.
-3. **Notarize and staple.** `xcrun notarytool submit … --wait`;
-   `xcrun stapler staple`. Verify with `spctl -a -t exec -vv`.
-4. **Generate SHA-256 + SBOM.** Attach both to the GitHub Release.
-5. **Publish Homebrew tap.** Create `homebrew-fnd` repo; formula
-   pointing at the release asset and the SHA-256.
-   `brew audit --new fnd` before pushing.
-6. **Document the verification path** in `README.md`:
-   `shasum -a 256 fnd-vX.Y.Z.tar.gz` + `spctl -a -t exec -vv $(which fnd)`
-   so a skeptical user can independently verify.
-7. **PyPI Trusted Publisher.** OIDC, no API token — eliminates the
-   "stolen PyPI token" supply-chain class entirely.
+1. **PyPI Trusted Publisher.** Configure
+   <https://pypi.org/manage/account/publishing/> with the GitHub repo
+   and the release workflow's job name. The workflow then mints a
+   short-lived OIDC token at release time; no API token sits in repo
+   secrets to be stolen.
+2. **Release workflow.** `.github/workflows/release.yml` on a `v*`
+   tag:
+   - `uv build` → sdist + wheel.
+   - `cyclonedx-py environment` → CycloneDX SBOM (S2).
+   - `actions/attest-build-provenance` → SLSA-style attestation
+     (S2). Proves the artifact came from this commit on this
+     workflow, not from a developer's laptop.
+   - `pypa/gh-action-pypi-publish` (Trusted Publisher, no token)
+     uploads the sdist + wheel to PyPI.
+   - Compute SHA-256 of the sdist, open a PR against
+     `homebrew-fnd/Formula/fnd.rb` bumping `url` and `sha256`.
+   - Attach sdist + wheel + SBOM + provenance to the GitHub Release.
+3. **Homebrew tap repo.** Create `<owner>/homebrew-fnd`. Its sole
+   contents are `Formula/fnd.rb` plus a README. `brew audit --strict
+   --new fnd` before opening the PR, `brew install
+   --build-from-source ./Formula/fnd.rb` to dry-run.
+4. **End-user install paths in README.md:**
+   - `brew tap <owner>/fnd && brew install fnd`
+   - `pipx install fnd`
+   - For the security-conscious: `gh attestation verify
+     <downloaded-tarball> --repo <owner>/fnd` confirms GitHub Actions
+     produced it on the expected workflow.
+
+Codesign + notarize via Apple Developer ID is *not* on this path.
+It only matters if we later bundle a standalone Mach-O binary (e.g.
+PyOxidizer) and ship it through a channel that quarantines downloads
+(Safari, S3 + browser link). Pure-Python `pipx` and Homebrew installs
+bypass quarantine entirely because the download tools (`pip`, `brew`)
+do not set the `com.apple.quarantine` xattr.
 
 ---
 
@@ -358,10 +416,12 @@ After implementation, the audit holds if:
    `find ~/Library/Application\ Support/fnd -type d -perm -o+r` returns
    empty (no world-readable dirs); same with `-type f -perm -o+r`.
 6. **Release-pipeline dry-run.** Push `v0.0.1-rc1`, watch
-   `.github/workflows/release.yml` produce a signed + notarized
-   artifact, verify locally with `spctl -a -t exec -vv` and
-   `codesign --verify --deep --strict`. Verify the bottle installs
-   cleanly: `brew install --build-from-source ./Formula/fnd.rb`.
+   `.github/workflows/release.yml` build sdist + wheel, attach SBOM
+   and provenance, publish to PyPI via OIDC, and open the
+   bump-PR against `homebrew-fnd`. Verify
+   `gh attestation verify <downloaded-tarball> --repo <owner>/fnd`
+   accepts the attestation. Verify the formula installs cleanly:
+   `brew install --build-from-source ./Formula/fnd.rb`.
 7. **SBOM sanity.** `cyclonedx-py` output lists every dep in
    `uv.lock`. `pip-audit` consumes the SBOM and finds zero open
    CVEs at release time.
