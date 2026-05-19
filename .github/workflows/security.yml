@@ -30,14 +30,17 @@ jobs:
       - name: Install pip-audit
         run: uv tool install pip-audit
       - name: Export resolved requirements
-        # `uv export` includes the local `fnd` package itself; pip-audit
-        # then tries to look it up on PyPI and fails because we haven't
-        # published yet. Drop the self-reference before auditing —
-        # remove this filter once Phase 0 of the publish runbook lands
-        # `fnd` on PyPI.
+        # `--no-emit-project` drops the local `fnd` package (which uv
+        # emits as `-e .`); pip-audit can't look up an unpublished
+        # editable install and would fail the whole audit. Once Phase
+        # 0 of the publish runbook lands `fnd` on PyPI, the flag stays
+        # — we don't need to audit ourselves, only our deps.
         run: |
-          uv export --format requirements-txt --no-hashes -o requirements.raw.txt
-          grep -v '^fnd==\|^fnd @' requirements.raw.txt > requirements.frozen.txt
+          uv export \
+            --format requirements-txt \
+            --no-hashes \
+            --no-emit-project \
+            -o requirements.frozen.txt
       - name: Audit
         run: uv tool run pip-audit -r requirements.frozen.txt --strict
 
