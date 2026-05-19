@@ -1292,6 +1292,14 @@ class FNDApp(App[None]):
         self._prefetch_sink_queue = _asyncio.Queue()
         self._prefetch_sink_drainer = _asyncio.create_task(self._drain_prefetch_sinks())
 
+        # Route fnd.apps notices through an in-app modal for AX issues, and
+        # through Textual.notify for everything else. Without this hook, the
+        # Preview handler's stderr fallback gets buried under the curses
+        # display and the user has no idea the page-jump failed.
+        from fnd import apps as _apps_mod
+
+        _apps_mod.set_notice_sink(self._dispatch_apps_notice)
+
         try:
             self._searcher = Searcher(index_dir=self._index_dir)
         except (FileNotFoundError, RuntimeError):
@@ -1392,6 +1400,19 @@ class FNDApp(App[None]):
         except Exception:
             pass
         self._refresh_footer_hints()
+
+    def _dispatch_apps_notice(self, message: str) -> None:
+        """Route a notice from fnd.apps through the right UI surface.
+
+        Accessibility-permission denials get a modal so the user can act
+        on them; everything else uses the inline notification toast.
+        """
+        if "Accessibility" in message or "accessibility" in message:
+            from fnd.tui.ax_permission_screen import AccessibilityPermissionScreen
+
+            self.push_screen(AccessibilityPermissionScreen())
+            return
+        self.notify(message, title="fnd", timeout=6)
 
     # ── Footer hints (focus-aware, lazygit-style) ─────────────────
 

@@ -164,15 +164,33 @@ def ax_trusted() -> bool:
     return _ax_cache["value"]
 
 
+# Pluggable notice sink. TUI registers a callable that pushes the
+# AccessibilityPermissionScreen modal (or routes to .notify for other
+# kinds). CLI / test callers see stderr via the fallback below.
+_notice_sink: Callable[[str], None] | None = None
+
+
+def set_notice_sink(sink: Callable[[str], None] | None) -> None:
+    """Register the notice sink. ``None`` resets to the stderr fallback.
+
+    The TUI uses this to surface :data:`_AX_NOTICE` (and any future
+    notices) through an in-app modal, rather than printing under the
+    curses display where the user can't see it.
+    """
+    global _notice_sink
+    _notice_sink = sink
+
+
 def _emit_notice(message: str) -> None:
     """One-shot user-facing notice — dedup'd by message text so the same
-    fallback warning never spams the log. TUI overrides this hook to route
-    the message through ``Textual.App.notify``."""
+    fallback warning never spams the log. Routed through
+    :func:`set_notice_sink` when a TUI sink is registered."""
     if message in _notice_seen:
         return
     _notice_seen.add(message)
-    # The TUI replaces this with a notify-bound callable. Standalone CLI
-    # callers see the message on stderr.
+    if _notice_sink is not None:
+        _notice_sink(message)
+        return
     import sys
 
     print(message, file=sys.stderr)
@@ -610,4 +628,5 @@ __all__ = [
     "detect_obsidian_vault",
     "load_user_apps",
     "resolve_app",
+    "set_notice_sink",
 ]

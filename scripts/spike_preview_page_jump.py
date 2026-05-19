@@ -96,18 +96,34 @@ def quit_preview() -> None:
 
 
 def ax_check() -> str | None:
-    """Returns None if AX is granted; else a human-readable reason string."""
-    rc, _, err = run_osascript(
+    """Returns None if Accessibility (keystroke) permission is granted to
+    the calling process; else a human-readable reason string.
+
+    Sends an empty keystroke to Finder — a benign operation that exercises
+    the same AX gate as the page-jump script. ``-1719`` and ``-25211``
+    are the standard "not authorized" / "assistive access denied" codes.
+    Reading process names (cheaper probe) goes through *Automation*
+    permission instead of *Accessibility*, so it can pass while the real
+    keystroke fails. Don't downgrade this probe.
+    """
+    rc, out, err = run_osascript(
         [
             "osascript",
             "-e",
-            'tell application "System Events" to return name of first process',
+            (
+                "try\n"
+                '  tell application "System Events" to tell process "Finder" to keystroke ""\n'
+                '  return "ax_ok"\n'
+                "on error errMsg number errNum\n"
+                '  return "ax_error " & errNum & " " & errMsg\n'
+                "end try"
+            ),
         ]
     )
     if rc != 0:
-        if "not authorized" in err.lower() or "1002" in err or "-1719" in err:
-            return f"System Events access denied: {err}"
         return f"osascript probe failed (rc={rc}): {err}"
+    if out.startswith("ax_error"):
+        return f"Accessibility access denied: {out}"
     return None
 
 
