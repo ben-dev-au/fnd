@@ -76,6 +76,11 @@ def test_open_smart_dispatches_to_url_for_adversarial_filename(
 
     f = tmp_path / 'evil"newline.pdf'
     monkeypatch.setattr(opener, "_has_skim", lambda: True)
+    # Isolate from the user's real config — without this the test routes
+    # through whichever ``[app_defaults]`` the developer happens to have set.
+    from fnd.config import Config
+
+    monkeypatch.setattr("fnd.config.load", lambda *a, **kw: Config())
     captured: list[dict[str, Any]] = []
     monkeypatch.setattr(
         opener,

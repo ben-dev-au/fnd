@@ -119,12 +119,19 @@ def open_smart(
 
     registry = apps_mod.build_registry(cfg) if cfg is not None else apps_mod.BUILTIN_APPS
     app_defaults: dict[str, str] = dict(getattr(cfg, "app_defaults", {})) if cfg else {}
-    # Pre-Phase-0 conservative default: auto-promote Skim for PDFs when
-    # installed. Phase 0's verdict on Preview-via-AppleScript decides
-    # whether to flip this to "preview" before merge. Either way, an
-    # explicit ``app_defaults.pdf`` in the user config wins.
-    if "pdf" not in app_defaults and _has_skim():
-        app_defaults["pdf"] = "skim"
+    # Auto-promote a page-jump-capable PDF app when the user hasn't set
+    # one explicitly. Preference order is UX-driven:
+    #   1. Skim   - silent URL scheme, no permissions, polished
+    #   2. Preview - osascript Go-to-Page keystroke; needs Accessibility,
+    #                shows a brief dialog flash but no install required
+    #   3. system - LaunchServices fallback; opens at page 1
+    # Any explicit ``app_defaults.pdf = "..."`` in the user config wins
+    # over this auto-promotion.
+    if "pdf" not in app_defaults:
+        if _has_skim():
+            app_defaults["pdf"] = "skim"
+        elif apps_mod.BUILTIN_APPS["preview"].available() and apps_mod.ax_trusted():
+            app_defaults["pdf"] = "preview"
 
     app_params: dict[str, str] = {}
     if source is not None:
