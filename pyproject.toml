@@ -28,13 +28,20 @@ dependencies = [
     "pydantic~=2.13",
     "pydantic-settings~=2.14",
     "platformdirs~=4.9",
-    "loguru~=0.7",
     "snowballstemmer~=3.0",
     "tomlkit~=0.14",
 ]
 
 [project.optional-dependencies]
 ocr = ["ocrmypdf~=17.0"]
+
+[tool.pytest.ini_options]
+# `slow` flags long-running tests (perf benches, fuzz harness). The
+# default fast suite excludes them with `-m "not slow"`; CI's nightly
+# job runs the full set.
+markers = [
+    "slow: long-running tests excluded from the fast suite",
+]
 
 [project.scripts]
 fnd = "fnd.cli:app"

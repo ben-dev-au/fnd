@@ -87,9 +87,23 @@ Out of scope (today):
 
 - `uv sync --frozen` is the supported install path. It reads
   `uv.lock` and refuses to resolve new versions.
-- For independently verifying a Homebrew bottle, compare the
-  on-disk SHA-256 to the value published in the GitHub Release notes
-  for the same tag.
+- Pinned toolchain: Python 3.13 (the one `uv python install 3.13`
+  resolves), `uv >= 0.4`. CI uses the same.
+- Pure-Python wheels build deterministically from the same sdist on
+  the same Python minor. Native-extension deps (`pymupdf`, `tantivy`)
+  ship as prebuilt wheels from PyPI — those are reproducible at the
+  byte level for users on macOS arm64 / x86_64, identical to what CI
+  uses.
+- For a release built locally instead of via CI, set
+  `SOURCE_DATE_EPOCH` to the commit timestamp before `uv build` so
+  the sdist metadata matches what CI would produce.
+- Tarball integrity: every GitHub Release ships a SHA-256 of the
+  sdist and a SLSA build-provenance attestation (S2). Verify with
+  `shasum -a 256 fnd-<ver>.tar.gz` and
+  `gh attestation verify fnd-<ver>.tar.gz --repo <owner>/fnd`.
+- For verifying a Homebrew tap install, the formula pins both `url`
+  and `sha256`; `brew audit --strict` validates the pin matches the
+  downloaded tarball.
 
 ## What we test
 

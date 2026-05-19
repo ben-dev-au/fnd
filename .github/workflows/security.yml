@@ -34,6 +34,17 @@ jobs:
       - name: Audit
         run: uv tool run pip-audit -r requirements.frozen.txt --strict
 
+  ruff-security:
+    name: ruff (bandit ruleset)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install 3.13
+      - run: uv sync --frozen --group dev
+      - name: Ruff (project config includes select=S)
+        run: uv run ruff check .
+
   gitleaks:
     name: gitleaks
     runs-on: ubuntu-latest

@@ -36,21 +36,17 @@ below. The checklist at the top is the live progress tracker.
 
 ### SHOULD-fix before public release
 
-- [ ] **S1** — Publish a Homebrew tap (`homebrew-fnd`) whose formula
-      installs the PyPI sdist into a venv. **No Apple Developer ID
-      required:** the formula is pure-Python, Homebrew downloads via
-      curl (no quarantine xattr → Gatekeeper does not fire), and the
-      arm64 wheels we depend on (pymupdf, tantivy) already ship with
-      the ad-hoc signing they need. The original "codesign + notarize"
-      track only becomes necessary if we later ship a bundled Mach-O
-      via PyOxidizer/Briefcase, and even then ad-hoc signing
-      (`codesign --sign -`) suffices for Homebrew distribution.
-      (`.github/workflows/release.yml`, separate `homebrew-fnd/` repo)
-- [ ] **S2** — Emit SBOM (CycloneDX) and SLSA provenance with each
-      release. (release workflow) Independent of S1's signing
-      decision; still valuable so users can verify *what's in the
-      tarball* and *that GitHub Actions built it, not a compromised
-      laptop*.
+- [x] **S1** — Release pipeline + Homebrew tap template.
+      `.github/workflows/release.yml` builds sdist + wheel on every
+      `v*` tag, publishes to PyPI via OIDC Trusted Publisher (no API
+      token), opens a bump PR against `<owner>/homebrew-fnd`. The
+      tap template lives at `homebrew-fnd/Formula/fnd.rb` (move to a
+      standalone GitHub repo before first release — see
+      `docs/RELEASE.md`). No Apple Developer ID required.
+- [x] **S2** — CycloneDX SBOM (`dist/sbom.cdx.json`) + SLSA
+      build-provenance attestation via
+      `actions/attest-build-provenance` emitted on every release
+      tag. (release workflow)
 - [x] **S3** — Collection-name regex validator, applied at write and at
       query-DSL expansion. (`fnd/config.py`, `fnd/cli.py`,
       `tests/test_collection_name_validation.py`)
@@ -68,19 +64,39 @@ below. The checklist at the top is the live progress tracker.
 
 ### NICE-to-have (defense in depth)
 
-- [ ] **N1** — `sandbox-exec` extractor subprocess wrapper.
-- [ ] **N2** — `hypothesis` fuzz harness for extractors.
-      (`tests/fuzz/test_extractor_fuzz.py`, `tests/fixtures/malformed/`)
-- [ ] **N3** — Remove dead `loguru` dep (or start using it).
-      (`pyproject.toml`)
-- [ ] **N4** — Implement OCR or remove the dead `ocr: bool` config knob.
-      (`fnd/config.py`, possibly `fnd/extract/pdf.py`)
-- [ ] **N5** — Tighten ruff to `--select S,B,A`. 48 findings on `fnd/`
-      today; partial credit for `usedforsecurity=False` on the
-      content-addressing SHA-1 calls. Re-enable
-      `.github/workflows/security.yml` ruff job when the remaining 42
-      findings are addressed or explicitly `noqa`-tagged.
-- [ ] **N6** — Reproducible-build documentation in `SECURITY.md`.
+- [ ] **N1** — `sandbox-exec` extractor subprocess wrapper. **Deferred
+      — architecture-level change.** Today extractors run as in-process
+      generators; sandboxing would move them into child processes
+      with their own `.sb` profile (deny network, restrict writes to
+      a per-extract temp dir, cap address space). This is a real
+      mitigation against memory-corruption parser exploits (the C-
+      extension layer of `pymupdf`/`tantivy` can bypass Python's
+      try/except), but it also adds an IPC layer to the hot path and
+      changes how `ExtractError` propagates. Worth proposing as its
+      own design doc + spike before implementing.
+- [x] **N2** — Property-based fuzz harness for extractors using
+      hypothesis. Each extractor must return either a Chunk iterator
+      or raise `ExtractError`; any other exception is a bug.
+      Marked `slow` so the fast suite stays quick.
+      (`tests/fuzz/test_extractor_fuzz.py`,
+      `tests/fixtures/malformed/`)
+- [x] **N3** — `loguru` removed from `pyproject.toml` and `uv.lock`;
+      it was pinned but never imported.
+- [x] **N4** — `ocr: bool` field removed from
+      `CollectionConfig`. The field accepted config but was never
+      consumed; Pydantic v2 silently drops the legacy key from
+      existing TOMLs at load time. The `[ocr]` optional dep stays for
+      when OCR genuinely lands.
+- [x] **N5** — Ruff `S` rule enabled in `ruff.toml`, with documented
+      ignores for: `S101` (canonical pyright-strict type-narrowing
+      asserts), `S603` (argv-list subprocess pattern is audited
+      everywhere), `S607` (macOS-only system tools at known paths),
+      plus per-file ignores for `fnd/tui/**` (UI best-effort
+      patterns) and `tests/**` / `scripts/**`. CI re-enabled the
+      ruff-S job. Two unavoidable hardcoded `/tmp` paths in dev-only
+      `FND_PREVIEW_DIAG` instrumentation are `noqa`-tagged with
+      rationale.
+- [x] **N6** — Reproducible-build section added to `SECURITY.md`.
 
 ---
 

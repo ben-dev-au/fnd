@@ -149,7 +149,6 @@ class CollectionConfig(BaseModel):
     excludes: list[str] = Field(default_factory=list)
     follow_symlinks: bool = False
 
-    ocr: bool = False  # phase 10 honours this
     ranking_profile: str = "default"
 
     @field_validator("roots", mode="before")

@@ -8,6 +8,29 @@ lazygit-style TUI.
 
 Early development. See `docs/specs/` and `docs/plans/` for the design spec and phase plans.
 
+## Install
+
+```sh
+brew tap <owner>/fnd
+brew install fnd
+```
+
+…or:
+
+```sh
+pipx install fnd
+```
+
+To independently verify the install:
+
+```sh
+gh attestation verify "$(brew --cache fnd)" --repo <owner>/fnd
+```
+
+See `SECURITY.md` for the threat model, disclosure policy, and the
+reasoning behind the install/verify story (no Apple Developer ID
+required — Homebrew installs bypass Gatekeeper via curl).
+
 ## Quick start (dev)
 
 ```sh
