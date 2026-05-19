@@ -96,13 +96,29 @@ EXCLUDES_PRESETS: dict[str, dict[str, Any]] = {
 
 
 class SourceConfig(BaseModel):
-    """One root path inside a collection with its own filter chain."""
+    """One root path inside a collection with its own filter chain.
+
+    Optional ``app`` / ``app_for`` / ``app_params`` fields wire this
+    source into the apps registry. See :mod:`fnd.apps` for resolution
+    semantics. Validation of app id existence happens at the top-level
+    :class:`Config` model_validator — sources can't see siblings.
+    """
 
     path: Path
     includes: list[str] = Field(default_factory=list)
     excludes: list[str] = Field(default_factory=list)
     follow_symlinks: bool = False
     frontmatter_filter: str | None = None
+    # When set, this app id is used for any of its declared ``handles``
+    # — sugar for the common single-app case.
+    app: str | None = None
+    # Per-filetype override: ``{"md": "obsidian", "pdf": "skim"}``.
+    # Wins against ``app`` per-kind.
+    app_for: dict[str, str] = Field(default_factory=dict)
+    # Free-form template-variable bag, surfaced as ``{vault}`` etc. in
+    # apps registry templates. Common keys: ``vault`` (Obsidian vault
+    # name).
+    app_params: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("path", mode="before")
     @classmethod
@@ -328,6 +344,26 @@ class Config(BaseModel):
                     f"app_defaults.{kind} = {app_id!r}: unknown app id "
                     f"(known: {sorted(known_ids)})"
                 )
+        # Per-source app references — same id-existence rule applies.
+        for coll_name, coll in self.collections.items():
+            for idx, src in enumerate(coll.sources):
+                where = f"collections.{coll_name}.sources[{idx}]"
+                if src.app is not None and src.app not in known_ids:
+                    raise ValueError(
+                        f"{where}.app = {src.app!r}: unknown app id "
+                        f"(known: {sorted(known_ids)})"
+                    )
+                for kind, app_id in src.app_for.items():
+                    if kind not in ALLOWED_HANDLES or kind == "*":
+                        raise ValueError(
+                            f"{where}.app_for: unknown filetype {kind!r}; "
+                            f"allowed: {sorted(ALLOWED_HANDLES - {'*'})}"
+                        )
+                    if app_id not in known_ids:
+                        raise ValueError(
+                            f"{where}.app_for.{kind} = {app_id!r}: unknown app id "
+                            f"(known: {sorted(known_ids)})"
+                        )
         return self
 
     def collection(self, name: str) -> CollectionConfig:
