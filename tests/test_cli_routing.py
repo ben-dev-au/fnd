@@ -93,6 +93,21 @@ class TestEndToEndRouting:
         assert mock_app.call_args.kwargs["collection"] == "notes"
         assert mock_app.call_args.kwargs["initial_query"] == "pizza"
 
+    def test_multiword_unquoted_query_joins_with_space(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `fnd buffer overflow` (no quotes) collects both positionals and
+        # joins them — matches the natural English shape without forcing
+        # the user to quote.
+        mock_app = MagicMock()
+        monkeypatch.setattr("fnd.tui.FNDApp", mock_app)
+        monkeypatch.setattr("fnd.migrate.prompt_and_rebuild_or_exit", lambda **_: None)
+
+        result = CliRunner().invoke(app, _rewrite_default_command(["buffer", "overflow"]))
+
+        assert result.exit_code == 0, result.output
+        assert mock_app.call_args.kwargs["initial_query"] == "buffer overflow"
+
     def test_hidden_query_flag_still_works(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Back-compat: `fnd tui -q pizza` still seeds the query.
         mock_app = MagicMock()

@@ -42,6 +42,7 @@ app.add_typer(config_app, name="config")
 app.add_typer(collection_app, name="collection")
 
 
+# Keep in sync with the @app.command() / app.add_typer() registrations below.
 _KNOWN_SUBCOMMANDS = frozenset({"version", "index", "tui", "search", "config", "collection"})
 _ROOT_FLAGS = frozenset({"--help", "-h", "--install-completion", "--show-completion"})
 
@@ -92,7 +93,9 @@ def index(
 
 @app.command()
 def tui(
-    query: str = typer.Argument("", help="Initial query to seed the TUI."),
+    query: list[str] = typer.Argument(
+        default_factory=list, help="Initial query to seed the TUI.", show_default=False
+    ),
     collection: str | None = typer.Option(None, "--collection", "-c"),
     query_opt: str = typer.Option("", "--query", "-q", hidden=True),
 ) -> None:
@@ -102,7 +105,7 @@ def tui(
     from fnd.tui import FNDApp
     from fnd.tui.config_recovery_screen import run_recovery
 
-    initial_query = query or query_opt
+    initial_query = " ".join(query) if query else query_opt
 
     # Loop so the user can fix the config in-place and immediately retry.
     while True:
