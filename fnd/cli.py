@@ -21,16 +21,50 @@ import typer
 
 from fnd.config import default_config_path, default_index_dir
 
-app = typer.Typer(
-    name="fnd",
-    help="Fast, free, keyboard-driven document search for macOS.",
-    no_args_is_help=True,
-)
+_ROOT_HELP = """Fast, free, keyboard-driven document search for macOS.
+
+Usage:
+  fnd                          Launch the interactive TUI.
+  fnd <query>                  Launch the TUI with <query> pre-filled.
+  fnd -c <collection> <query>  Launch the TUI scoped to a collection.
+  fnd <command> <args>         Run a subcommand (see below).
+
+Note: if <query> matches a subcommand name (e.g. `version`), the
+subcommand wins. Use `fnd tui <query>` or type the query inside the TUI.
+"""
+
+
+app = typer.Typer(name="fnd", help=_ROOT_HELP)
 
 config_app = typer.Typer(name="config", help="Manage fnd's TOML config file.")
 collection_app = typer.Typer(name="collection", help="Manage indexed collections.")
 app.add_typer(config_app, name="config")
 app.add_typer(collection_app, name="collection")
+
+
+# Keep in sync with the @app.command() / app.add_typer() registrations below.
+_KNOWN_SUBCOMMANDS = frozenset({"version", "index", "tui", "search", "config", "collection"})
+_ROOT_FLAGS = frozenset({"--help", "-h", "--install-completion", "--show-completion"})
+
+
+def _rewrite_default_command(argv: list[str]) -> list[str]:
+    """Route bare `fnd` and `fnd <free-text>` to the `tui` subcommand.
+
+    Subcommands always win on exact collision. Root flags pass through.
+    Anything else gets `tui` prepended so subcommand-level options like
+    `--collection` are parsed by `tui`, not the root group.
+    """
+    if not argv:
+        return ["tui"]
+    head = argv[0]
+    if head in _ROOT_FLAGS or head in _KNOWN_SUBCOMMANDS:
+        return argv
+    return ["tui", *argv]
+
+
+def main() -> None:
+    """Console-script entry point: rewrite argv, then dispatch to Typer."""
+    app(args=_rewrite_default_command(sys.argv[1:]))
 
 
 # ── Top-level commands ────────────────────────────────────────────────────
@@ -59,14 +93,19 @@ def index(
 
 @app.command()
 def tui(
+    query: list[str] = typer.Argument(
+        default_factory=list, help="Initial query to seed the TUI.", show_default=False
+    ),
     collection: str | None = typer.Option(None, "--collection", "-c"),
-    query: str = typer.Option("", "--query", "-q", help="Initial query to seed the TUI."),
+    query_opt: str = typer.Option("", "--query", "-q", hidden=True),
 ) -> None:
     """Launch the interactive TUI."""
     from fnd.config import default_config_path, load
     from fnd.migrate import prompt_and_rebuild_or_exit
     from fnd.tui import FNDApp
     from fnd.tui.config_recovery_screen import run_recovery
+
+    initial_query = " ".join(query) if query else query_opt
 
     # Loop so the user can fix the config in-place and immediately retry.
     while True:
@@ -79,7 +118,7 @@ def tui(
 
     prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg)
 
-    FNDApp(collection=collection, initial_query=query, config=cfg).run()
+    FNDApp(collection=collection, initial_query=initial_query, config=cfg).run()
 
 
 @app.command()

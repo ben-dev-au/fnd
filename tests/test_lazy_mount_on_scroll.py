@@ -64,9 +64,16 @@ async def _drain(pilot: Pilot[None], n: int = 6) -> None:
 
 
 async def _drain_secs(pilot: Pilot[None], seconds: float) -> None:
-    """Wall-clock drain — needed for the lazy-mount debounce timer
-    (set_timer uses real seconds, not pilot tick count)."""
-    await pilot.pause(seconds)
+    """Wall-clock drain + idle settle for the lazy-mount debounce timer
+    (``set_timer`` uses real seconds, not pilot tick count). One big
+    ``pilot.pause(seconds)`` flaked under full-suite load — splitting
+    the budget into slices and idle-draining between each gives the
+    event loop room to flush the watcher → debounce → mount chain."""
+    slices = max(4, int(seconds * 20))
+    per_slice = seconds / slices
+    for _ in range(slices):
+        await pilot.pause(per_slice)
+        await pilot.pause()
 
 
 @pytest.mark.asyncio

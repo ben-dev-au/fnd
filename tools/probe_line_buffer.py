@@ -246,7 +246,7 @@ class _Probe(App[None]):
 
 
 def _resolve_index_dir() -> Path:
-    override = os.environ.get("FND_INDEX_DIR")
+    override = os.environ.get("_FND_INDEX_DIR")
     if override:
         return Path(override).expanduser()
     return default_index_dir()

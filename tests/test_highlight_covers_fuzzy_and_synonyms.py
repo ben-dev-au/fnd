@@ -211,7 +211,8 @@ async def test_fuzzy_match_chunk_highlights_the_actual_word(
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause(0.3)
+        for _ in range(8):
+            await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
         md_widgets = list(pane.query(FNDMarkdown))
         assert md_widgets, "expected fuzzy-hit chunk to mount"

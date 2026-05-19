@@ -1,5 +1,9 @@
 # Preview perf — focused investigation
 
+> Note: env vars referenced below were renamed `FND_*` → `_FND_*` on 2026-05-19
+> (private-knob convention). Older snapshots in this doc may show the old names.
+
+
 ## ⚠️ HANDOFF — pre-compact 2026-05-14 late evening
 
 **Uncommitted in working tree (fnd/tui/app.py):**

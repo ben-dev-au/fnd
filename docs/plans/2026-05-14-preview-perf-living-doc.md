@@ -1,5 +1,9 @@
 # Preview performance — living investigation doc
 
+> Note: env vars referenced below were renamed `FND_*` → `_FND_*` on 2026-05-19
+> (private-knob convention). Older snapshots in this doc may show the old names.
+
+
 **Status:** v0 (initial scaffold, populated from session research). **Owner:** Ben.
 **Predecessor:** `~/.claude/plans/yesterday-pre-load-functionality-amongst-soft-planet.md`
 (superseded only where this doc updates findings — cited as prior art, not deleted).

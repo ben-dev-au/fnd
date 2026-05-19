@@ -32,8 +32,8 @@ _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
 # Silence diag chatter; we want bench numbers not log spam.
-os.environ.pop("FND_PREVIEW_DIAG", None)
-os.environ["FND_REVEAL_FIRST"] = "1"
+os.environ.pop("_FND_PREVIEW_DIAG", None)
+os.environ["_FND_REVEAL_FIRST"] = "1"
 
 from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
 from fnd.index import build_index  # noqa: E402

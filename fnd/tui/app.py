@@ -411,7 +411,7 @@ class FNDMarkdownTableDT(MarkdownTable):
     """W3 prototype: render a markdown table as a single DataTable
     widget instead of ~N MarkdownTableCellContents widgets.
 
-    Gated by ``FND_W3_DATATABLE=1`` (off => parent's compose runs).
+    Gated by ``_FND_W3_DATATABLE=1`` (off => parent's compose runs).
 
     Styling matches Textual's MarkdownTable as closely as DataTable
     allows: rounded outer border + zebra rows + primary-coloured bold
@@ -438,10 +438,10 @@ class FNDMarkdownTableDT(MarkdownTable):
     """
 
     def compose(self):  # type: ignore[override]
-        # Opt out with FND_NO_W3=1 to fall back to widget-per-cell.
+        # Opt out with _FND_NO_W3=1 to fall back to widget-per-cell.
         import os
 
-        if os.environ.get("FND_NO_W3") == "1":
+        if os.environ.get("_FND_NO_W3") == "1":
             yield from super().compose()
             return
         from textual.containers import VerticalScroll
@@ -2016,7 +2016,7 @@ class FNDApp(App[None]):
 
         import os
 
-        reveal_first = os.environ.get("FND_REVEAL_FIRST") == "1"
+        reveal_first = os.environ.get("_FND_REVEAL_FIRST") == "1"
         cache_keys = [f"{pid[:8]}/{sig[:6]}" for (pid, sig) in self._preview_cache._cache]
         dom_keys = [
             f"{c.parent_doc_id[:8]}/{c.query_signature[:6]}"
@@ -2209,7 +2209,7 @@ class FNDApp(App[None]):
         import os
 
         if (
-            os.environ.get("FND_FLAT_MD_STYLED") == "1"
+            os.environ.get("_FND_FLAT_MD_STYLED") == "1"
             and chunks
             and any(c.kind == "md" and c.body_md for c in chunks)
         ):
@@ -2832,10 +2832,10 @@ class FNDApp(App[None]):
         """Queue a hidden structural pre-mount so cached clicks land
         as a visibility flip. Safe to default-on now that W3 collapses
         per-cell widgets — see bench_input_lag for the DOM-size
-        breakdown. Opt out with FND_NO_PREMOUNT=1."""
+        breakdown. Opt out with _FND_NO_PREMOUNT=1."""
         import os as _os
 
-        if _os.environ.get("FND_NO_PREMOUNT") == "1":
+        if _os.environ.get("_FND_NO_PREMOUNT") == "1":
             return
         q = self._prefetch_sink_queue
         if q is None:
@@ -3600,7 +3600,7 @@ class FNDApp(App[None]):
         source = c.body_md or _legacy_blocks_to_md(c.blocks)
         import os
 
-        if os.environ.get("FND_W_HYBRID") == "1":
+        if os.environ.get("_FND_W_HYBRID") == "1":
             from fnd.tui._md_hybrid import FNDChunkHybrid
 
             try:
@@ -3632,12 +3632,12 @@ class FNDApp(App[None]):
             self._match_targets[c.chunk_seq] = md_widget
 
     def _diag_log(self, msg: str) -> None:
-        # FND_PREVIEW_DIAG=1 appends to /tmp/fnd-preview-diag.log.
+        # _FND_PREVIEW_DIAG=1 appends to /tmp/fnd-preview-diag.log.
         # Investigation-only; remove once findings recorded.
         import os
         import time as _time
 
-        if not os.environ.get("FND_PREVIEW_DIAG"):
+        if not os.environ.get("_FND_PREVIEW_DIAG"):
             return
         try:
             # Hardcoded /tmp path is intentional: opt-in dev

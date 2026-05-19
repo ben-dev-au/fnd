@@ -1,4 +1,4 @@
-from fnd.cli import app
+from fnd.cli import main
 
 if __name__ == "__main__":
-    app()
+    main()

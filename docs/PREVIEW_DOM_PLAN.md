@@ -1,5 +1,9 @@
 # Preview pane — DOM architecture plan
 
+> Note: env vars referenced below were renamed `FND_*` → `_FND_*` on 2026-05-19
+> (private-knob convention). Older snapshots in this doc may show the old names.
+
+
 **Status.** Source of truth for the structural-preview DOM rework.
 Supersedes `INVESTIGATION.md` and `docs/archive/RESEARCH_VS_CURRENT.md`.
 **Branch.** Implementation will start on a fresh branch off `main`; the

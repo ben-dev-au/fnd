@@ -30,7 +30,7 @@ from pathlib import Path
 _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent.parent.parent))
 
-os.environ.setdefault("FND_PERF", "1")
+os.environ.setdefault("_FND_PERF", "1")
 
 from fnd.config import Config, Defaults, RankingProfileConfig  # noqa: E402
 from fnd.index import _path_parent_id, build_index  # noqa: E402

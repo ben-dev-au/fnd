@@ -45,7 +45,7 @@ def stale_corpus(tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.Monkey
     monkeypatch.setattr("fnd.cli.default_index_dir", lambda: tmp_index_dir)
     monkeypatch.setattr("fnd.cli.default_config_path", lambda: cfg_path)
     monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
-    monkeypatch.setenv("FND_FORCE_TTY", "1")
+    monkeypatch.setenv("_FND_FORCE_TTY", "1")
     return tmp_index_dir
 
 
