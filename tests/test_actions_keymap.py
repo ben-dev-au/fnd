@@ -166,7 +166,9 @@ async def test_show_help_pushes_keybindings_subscreen(built_index: Path) -> None
         assert isinstance(app.screen, SettingsScreen)
         assert app.screen._breadcrumb == ("Keybindings",)
         # Every REGISTRY action with a bound key shows up in the list.
+        # The provider is now registry-derived (single source of truth)
+        # so labels are the actions' actual ``description`` strings.
         lst = app.screen.query_one(SettingsList)
         labels = " ".join(item.label for item in lst._items)
-        assert "Focus the search bar" in labels
-        assert "Quit" in labels
+        assert "Focus the query input" in labels  # focus_query
+        assert "Quit fnd" in labels  # quit

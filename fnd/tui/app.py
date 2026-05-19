@@ -2402,8 +2402,7 @@ class FNDApp(App[None]):
 
         t0 = time.perf_counter()
         self._diag_log(
-            f"finalize_pre_reveal start seq={focus_chunk_seq} "
-            f"parent_id={container.parent_doc_id}"
+            f"finalize_pre_reveal start seq={focus_chunk_seq} parent_id={container.parent_doc_id}"
         )
 
         self._do_finalize_pre_reveal(container, focus_chunk_seq, retries=10, t0=t0)
@@ -2903,12 +2902,12 @@ class FNDApp(App[None]):
     ) -> None:
         if query_sig != self._current_query_signature():
             self._diag_log(
-                f"prefetch_mount_structural_async SKIPPED stale-sig " f"parent={parent_id[:8]}"
+                f"prefetch_mount_structural_async SKIPPED stale-sig parent={parent_id[:8]}"
             )
             return
         if self._preview_cache.get(parent_id, query_sig) is not None:
             self._diag_log(
-                f"prefetch_mount_structural_async SKIPPED already-cached " f"parent={parent_id[:8]}"
+                f"prefetch_mount_structural_async SKIPPED already-cached parent={parent_id[:8]}"
             )
             return
         if (
@@ -2917,7 +2916,7 @@ class FNDApp(App[None]):
             and self._active_preview.query_signature == query_sig
         ):
             self._diag_log(
-                f"prefetch_mount_structural_async SKIPPED already-active " f"parent={parent_id[:8]}"
+                f"prefetch_mount_structural_async SKIPPED already-active parent={parent_id[:8]}"
             )
             return
         import asyncio
@@ -2927,7 +2926,7 @@ class FNDApp(App[None]):
             pane = self.query_one("#preview_pane", VerticalScroll)
         except Exception:
             self._diag_log(
-                f"prefetch_mount_structural_async SKIPPED no-pane " f"parent={parent_id[:8]}"
+                f"prefetch_mount_structural_async SKIPPED no-pane parent={parent_id[:8]}"
             )
             return
         self._diag_log(f"prefetch_mount_structural_async STARTING parent={parent_id[:8]}")
@@ -3701,8 +3700,7 @@ class FNDApp(App[None]):
             lines.append("no active preview")
         if active is not None:
             lines.append(
-                f"structural parent_id={active.parent_doc_id} "
-                f"chunks={len(active.chunk_widgets)}"
+                f"structural parent_id={active.parent_doc_id} chunks={len(active.chunk_widgets)}"
             )
             total = Counter()
             for seq, header in active.chunk_widgets.items():
@@ -4848,11 +4846,20 @@ class FNDApp(App[None]):
                 self.query_one("#results_pane", Tree).focus()
 
     def action_show_help(self) -> None:
-        """Open the Settings menu pre-navigated to the Keybindings section.
+        """Open (or toggle off) the Keybindings cheat sheet.
 
-        The standalone help overlay was removed in the Settings overhaul —
-        ``?`` now lands the user inside the menu's filterable Keybindings
-        list, which doubles as the up-to-date cheat sheet.
+        ``?`` always pushes Keybindings ON TOP of whatever screen the
+        user is currently on so ``Esc`` from Keybindings returns them
+        to exactly that screen (a sub-menu, the source-edit form, the
+        Open-with modal — wherever they invoked ``?``). The previous
+        behaviour popped the entire settings stack first, which
+        dropped users back to the main app and made ``?`` useless as a
+        "what can I do here?" affordance.
+
+        Re-pressing ``?`` while Keybindings is the front screen pops
+        it (toggle), so the same key opens and closes the cheat sheet.
+        Context hint is derived from the screen below Keybindings so
+        the relevant section sorts right after Global.
         """
         from fnd.tui.menu import SECTION_KEYBINDINGS
         from fnd.tui.settings_screen import (
@@ -4860,11 +4867,50 @@ class FNDApp(App[None]):
             open_settings_section,
         )
 
-        # Already in the menu — close the current stack before pushing
-        # Keybindings so Esc returns to the main app in one press.
-        if isinstance(self.screen, SettingsScreen):
-            self._close_settings_stack()
-        open_settings_section(self, SECTION_KEYBINDINGS)
+        # Toggle off when already on Keybindings.
+        current = self.screen
+        if isinstance(current, SettingsScreen) and getattr(current, "_breadcrumb", ()) == (
+            "Keybindings",
+        ):
+            self.pop_screen()
+            return
+
+        context_hint = self._keybindings_context_hint()
+        open_settings_section(self, SECTION_KEYBINDINGS, context_hint=context_hint)
+
+    def _keybindings_context_hint(self) -> str | None:
+        """Map the current screen / focused panel to the Keybindings
+        section that should appear right after Global. Returns ``None``
+        when nothing more specific than Global is appropriate."""
+        from fnd.tui.settings_screen import SettingsScreen
+
+        # If we're inside the Settings stack, the relevant section
+        # depends on which screen the user is on. SourceFormScreen
+        # has its own static section; the rest fall under "Settings
+        # menu" (the SettingsList widget bindings apply universally).
+        current = self.screen
+        if "SourceFormScreen" in type(current).__name__:
+            return "Source form"
+        if isinstance(current, SettingsScreen):
+            return "Settings menu"
+
+        # Main app — pick by the focused pane.
+        focused = self.focused
+        widget = focused
+        while widget is not None:
+            wid = getattr(widget, "id", "") or ""
+            if wid == "preview_pane":
+                return "Preview pane"
+            if wid == "results_pane":
+                return "Results pane"
+            if wid in ("filters_panel", "filters_panel_tree"):
+                return "Filters panel"
+            if wid in ("collections_panel", "collections_panel_tree"):
+                return "Collections panel"
+            if wid == "query_bar":
+                return "Query input"
+            widget = widget.parent
+        return None
 
     def action_show_explain_overlay(self) -> None:
         """Toggle a JSON trace overlay for the most-recent search.

@@ -355,31 +355,69 @@ def _handle_preview(req: OpenRequest) -> int:
 
 
 def _handle_pdf_expert(req: OpenRequest) -> int:
-    """PDF Expert deep-link. Best-effort URL form
-    ``pdf-expert-7://open?url=<pct_path>&page=<N>`` — confirm against the
-    current PDF Expert docs before merge; if wrong, users can override via
-    a ``[apps.pdf_expert]`` table in their config."""
-    url = f"pdf-expert-7://open?url={urllib.parse.quote(str(req.path), safe=_PCT_SAFE)}"
-    if req.page > 0:
-        url += f"&page={req.page}"
-    return subprocess.run(["open", url], check=False).returncode
+    """Open the PDF in PDF Expert.
+
+    Earlier I tried a ``pdf-expert-7://`` URL — that scheme isn't
+    registered (the bundle's Info.plist exposes ``pdfexpert://`` only)
+    and any URL it does accept isn't publicly documented in a stable
+    form. ``open -a "PDF Expert" <path>`` is the reliable invocation
+    on macOS: it always opens the file, but it has NO page-jump (PDF
+    Expert on Mac doesn't expose a documented page-locator entry
+    point). Users who want page-jump should pick Skim or Preview.
+    """
+    return subprocess.run(["open", "-a", "PDF Expert", str(req.path)], check=False).returncode
+
+
+_HEADING_BREADCRUMB_SEP: Final[str] = " > "
+
+
+def _heading_path_to_anchor(heading_path: str) -> str:
+    """Convert a chunk's ``heading_path`` ("A > B > C") to Obsidian's
+    nested-heading anchor format ("A#B#C").
+
+    Obsidian's wiki-link syntax uses ``#`` between successive heading
+    levels — ``[[Note#A#B#C]]`` navigates to the C heading inside B
+    inside A. The chained form is more specific than the leaf alone:
+    if the file has multiple headings literally named "C", only the one
+    nested under A→B will match.
+    """
+    parts = [p.strip() for p in heading_path.split(_HEADING_BREADCRUMB_SEP) if p.strip()]
+    return "#".join(parts)
 
 
 def _handle_obsidian(req: OpenRequest) -> int:
-    """Obsidian ``obsidian://open?...`` deep-link. ``vault`` is required —
-    when missing the source isn't actually associated with an Obsidian
-    vault; fall back to the system handler so the file still opens (in
-    whatever LaunchServices picks for ``.md``)."""
-    if not req.vault:
-        return _handle_system(req)
-    file_param = req.file_in_vault or str(req.path)
-    if req.heading_path:
-        file_param = f"{file_param}#{req.heading_path}"
-    url = (
-        "obsidian://open"
-        f"?vault={urllib.parse.quote(req.vault, safe=_PCT_SAFE)}"
-        f"&file={urllib.parse.quote(file_param, safe=_PCT_SAFE)}"
-    )
+    """Obsidian ``obsidian://open?...`` deep-link.
+
+    Two forms based on what the source carries:
+
+    * **With a vault** (``app_params.vault`` set on the source): uses the
+      vault+file form. Obsidian opens the file in that named vault, even
+      if it's not the front vault.
+    * **Without a vault**: uses ``?path=<absolute>``. Obsidian routes
+      this to whichever vault contains the path; if no vault does,
+      Obsidian shows its own "file not in vault" notice. We never fall
+      back to ``open <path>`` — the user explicitly picked Obsidian and
+      a silent app-swap is misleading.
+
+    Heading anchor (``%23A%23B%23C`` after percent-encoding) is appended
+    when ``heading_path`` is non-empty; the chunk's breadcrumb
+    ("A > B > C") is rewritten to Obsidian's chained-heading form
+    ("A#B#C") so the anchor actually navigates.
+    """
+    if req.vault:
+        file_param = req.file_in_vault or str(req.path)
+        if req.heading_path:
+            file_param = f"{file_param}#{_heading_path_to_anchor(req.heading_path)}"
+        url = (
+            "obsidian://open"
+            f"?vault={urllib.parse.quote(req.vault, safe=_PCT_SAFE)}"
+            f"&file={urllib.parse.quote(file_param, safe=_PCT_SAFE)}"
+        )
+    else:
+        path_str = str(req.path)
+        if req.heading_path:
+            path_str = f"{path_str}#{_heading_path_to_anchor(req.heading_path)}"
+        url = f"obsidian://open?path={urllib.parse.quote(path_str, safe=_PCT_SAFE)}"
     return subprocess.run(["open", url], check=False).returncode
 
 
@@ -428,8 +466,8 @@ BUILTIN_APPS: Final[dict[str, App]] = {
         handles=("pdf",),
         handler=_handle_pdf_expert,
         available=lambda: _pdf_expert_app_exists(),
-        positional=True,
-        notes="pdf-expert-7:// deep-link (best-effort — verify against your version).",
+        positional=False,  # opens via `open -a`; no documented page-jump
+        notes="open -a 'PDF Expert' <path> — no page-jump on macOS.",
     ),
     "obsidian": App(
         id="obsidian",
@@ -481,8 +519,7 @@ def _validate_user_app(app_id: str, raw: dict[str, Any]) -> _UserAppSpec:
     for h in handles_raw:
         if h not in ALLOWED_HANDLES:
             raise ValueError(
-                f"app {app_id!r}: unknown handle kind {h!r} "
-                f"(allowed: {sorted(ALLOWED_HANDLES)})"
+                f"app {app_id!r}: unknown handle kind {h!r} (allowed: {sorted(ALLOWED_HANDLES)})"
             )
         handles.append(h)
     argv_raw = raw.get("argv")

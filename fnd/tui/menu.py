@@ -169,13 +169,27 @@ class MenuItem:
 # ── Header helpers ───────────────────────────────────────────────────
 
 
-def header(label: str, *, level: int = 1, anchor_id: str = "") -> MenuItem:
-    """Build a non-selectable header row."""
+def header(
+    label: str,
+    *,
+    level: int = 1,
+    anchor_id: str = "",
+    hint: bool = False,
+) -> MenuItem:
+    """Build a non-selectable header row.
+
+    ``hint=True`` stamps the header (and every body row until the next
+    header) with a ``-hint-section`` CSS class via the SettingsList's
+    rendering loop — used by the Keybindings cheat sheet to highlight
+    the section relevant to the screen that called ``?``.
+    """
+    keywords: tuple[str, ...] = ("_hint_section_",) if hint else ()
     return MenuItem(
         id=f"header.{anchor_id or label.lower().replace(' ', '_')}",
         label=label,
         kind=KIND_HEADER,
         header_level=level,
+        keywords=keywords,
     )
 
 
@@ -210,48 +224,88 @@ def walk_leaves(
 # directly when the relevant pane has focus).
 
 
-_KEYS_GLOBAL: tuple[tuple[str, str, str], ...] = (
-    ("/", "focus_query", "Focus the search bar"),
-    (":", "open_command_palette", "Open settings & commands"),
-    ("?", "show_help", "Open keybindings"),
-    ("Tab", "toggle_focus", "Toggle focus query ↔ results"),
-    ("Ctrl+C", "quit", "Quit"),
-    ("Esc", "", "Back / cascade focus to results"),
-)
+# Pretty-print a Textual ``default_key`` (e.g. "slash", "ctrl+f") into
+# a glyph users recognise on the keyboard.
+_KEY_PRETTY: dict[str, str] = {
+    "slash": "/",
+    "question_mark": "?",
+    "colon": ":",
+    "space": "Space",
+    "tab": "Tab",
+    "left": "←",
+    "right": "→",
+    "up": "↑",
+    "down": "↓",
+    "enter": "Enter",
+    "escape": "Esc",
+    "page_up": "PgUp",
+    "page_down": "PgDn",
+    "home": "Home",
+    "end": "End",
+    "shift+tab": "Shift+Tab",
+    "shift+enter": "Shift+Enter",
+}
 
-_KEYS_RESULTS: tuple[tuple[str, str, str], ...] = (
-    ("o", "open_at_locator", "Open at locator (resolved app for this file)"),
-    ("O", "open_with_menu", "Open with… (menu of apps for this file type)"),
-    ("Space", "peek_focused", "Quick Look"),
-    ("Enter", "open_at_locator", "Open the focused match"),
-    ("j / k", "", "Move cursor down / up"),
-    ("← / →", "", "Collapse / expand"),
-    ("h", "toggle_highlights", "Toggle search highlights in the preview"),
-)
 
-_KEYS_PREVIEW: tuple[tuple[str, str, str], ...] = (
-    ("j / k", "", "Scroll line down / up"),
-    ("PgDn / PgUp", "", "Scroll one page"),
-)
+def _pretty_key(key: str) -> str:
+    if key in _KEY_PRETTY:
+        return _KEY_PRETTY[key]
+    # ctrl+x → Ctrl+X; lone letters stay literal.
+    parts = [
+        p.capitalize() if p in {"ctrl", "shift", "alt", "cmd"} else p.upper()
+        for p in key.split("+")
+    ]
+    return "+".join(parts) if len(parts) > 1 else key
 
-_KEYS_FILTERS: tuple[tuple[str, str, str], ...] = (
-    ("Enter", "", "Toggle filter (multi-select on kinds, radio on date)"),
-    ("← / →", "", "Collapse / expand category"),
-)
 
-_KEYS_COLLECTIONS_PANEL: tuple[tuple[str, str, str], ...] = (
-    ("Enter", "", "Toggle whole collection (parent) or single source"),
-    ("← / →", "", "Collapse / expand"),
-)
-
+# Sections that wrap bindings NOT in the Action registry — widget-level
+# bindings from SettingsList, SourceFormScreen, OpenWithScreen,
+# AccessibilityPermissionScreen, etc. Listed here so the Keybindings
+# screen surfaces them too.
 _KEYS_SETTINGS: tuple[tuple[str, str, str], ...] = (
-    ("↑ / ↓", "", "Move cursor"),
-    ("⏎ / →", "", "Activate / drill in"),
+    ("↑ / ↓ / j / k", "", "Move cursor"),
+    ("Enter", "", "Activate / drill in / edit"),
+    ("→", "", "Drill into a submenu (parity with Enter)"),
     ("←", "", "Back one level"),
     ("/", "", "Filter every section"),
     ("1-9", "", "Jump by index"),
-    ("Esc", "", "Clear search / back one level"),
+    ("Shift+Enter", "", "Reveal in Finder (file-capable rows)"),
+    ("Esc", "", "Clear search → back one level"),
 )
+
+_KEYS_SOURCE_FORM: tuple[tuple[str, str, str], ...] = (
+    ("Tab / Shift+Tab", "", "Cycle fields ↔ frontmatter sample"),
+    ("Enter", "", "Edit / pick / toggle the focused field"),
+    ("Ctrl+S", "", "Save and close"),
+    ("Ctrl+D", "", "Delete this source (only when editing an existing one)"),
+    ("Esc / ←", "", "Cancel without saving"),
+)
+
+_KEYS_OPEN_WITH: tuple[tuple[str, str, str], ...] = (
+    ("↑ / ↓ / j / k", "", "Move cursor between apps"),
+    ("Enter", "", "Open with the highlighted (★) app"),
+    ("a-z", "", "Letter shortcut for the corresponding row"),
+    ("Esc / q", "", "Cancel"),
+)
+
+_KEYS_AX_MODAL: tuple[tuple[str, str, str], ...] = (
+    ("o", "", "Open System Settings → Privacy & Security → Accessibility"),
+    ("r", "", "Try again (clears the AX cache without restarting fnd)"),
+    ("Esc / q", "", "Dismiss"),
+)
+
+
+# Mapping from an Action's primary context (first entry of
+# ``contexts``) to the section header it lands under in the
+# Keybindings screen. ``""`` (no contexts) → Global.
+_CONTEXT_TO_SECTION: dict[str, str] = {
+    "": "Global",
+    "results": "Results pane",
+    "preview": "Preview pane",
+    "filters": "Filters panel",
+    "collections": "Collections panel",
+    "query": "Query input",
+}
 
 
 def _key_row(key: str, action_id: str, description: str) -> MenuItem:
@@ -270,21 +324,65 @@ def _key_row(key: str, action_id: str, description: str) -> MenuItem:
 # ── Providers ───────────────────────────────────────────────────────
 
 
-def _provider_keybindings(_app: FNDApp) -> tuple[MenuItem, ...]:
-    """Content of the Keybindings sub-screen. No top-level header here —
-    the screen's border_title carries the identity. Sub-headers group
-    by context."""
+def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> tuple[MenuItem, ...]:
+    """Build the Keybindings list from the live ``Action`` registry plus
+    static widget-binding tables.
+
+    Single source of truth = ``fnd.tui.actions.REGISTRY``. Sub-sections:
+
+    * Global — actions with no ``contexts`` constraint.
+    * Per-pane sections (Results / Preview / Query / Filters / Collections)
+      — actions whose primary (first) context matches that pane.
+    * Static sections — Settings menu, Source form, Open-with modal,
+      Accessibility prompt. These live in widget BINDINGS, not the
+      registry, so they're hand-curated; they're at least short.
+
+    ``context_hint`` is the section label that should be moved to the
+    top (right after Global) — e.g. "Source form" when the user pressed
+    ``?`` from inside the source-edit form. Empty sections are dropped.
+    """
+    from fnd.tui.actions import REGISTRY
+
+    sections: dict[str, list[MenuItem]] = {
+        "Global": [],
+        "Results pane": [],
+        "Preview pane": [],
+        "Query input": [],
+        "Filters panel": [],
+        "Collections panel": [],
+    }
+    for action in REGISTRY:
+        if action.default_key is None:
+            continue  # palette-only — no key to show
+        primary_ctx = action.contexts[0] if action.contexts else ""
+        section = _CONTEXT_TO_SECTION.get(primary_ctx, "Global")
+        sections[section].append(
+            _key_row(_pretty_key(action.default_key), action.id, action.description)
+        )
+
+    # Static widget bindings — append AFTER the registry-derived
+    # sections in declaration order; reordering happens below.
+    sections["Settings menu"] = [_key_row(*row) for row in _KEYS_SETTINGS]
+    sections["Source form"] = [_key_row(*row) for row in _KEYS_SOURCE_FORM]
+    sections["Open with… modal"] = [_key_row(*row) for row in _KEYS_OPEN_WITH]
+    sections["Accessibility prompt"] = [_key_row(*row) for row in _KEYS_AX_MODAL]
+
+    # Display order: Global first; then hint section (if set and not
+    # Global); then everything else in declaration order; empty
+    # sections dropped.
+    order = list(sections.keys())
+    if context_hint and context_hint in sections and context_hint != "Global":
+        order.remove(context_hint)
+        order.insert(1, context_hint)
+
     out: list[MenuItem] = []
-    for sub_label, rows in (
-        ("Global", _KEYS_GLOBAL),
-        ("Results pane", _KEYS_RESULTS),
-        ("Preview pane", _KEYS_PREVIEW),
-        ("Filters panel", _KEYS_FILTERS),
-        ("Collections panel", _KEYS_COLLECTIONS_PANEL),
-        ("Settings menu", _KEYS_SETTINGS),
-    ):
-        out.append(header(sub_label, level=2))
-        out.extend(_key_row(*row) for row in rows)
+    for section in order:
+        rows = sections[section]
+        if not rows:
+            continue
+        is_hint = bool(context_hint) and section == context_hint
+        out.append(header(section, level=2, hint=is_hint))
+        out.extend(rows)
     return tuple(out)
 
 
@@ -515,7 +613,110 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             picker_setter=_setting_writer("defaults.collection"),
             keywords=("default", "collection"),
         ),
+        header("Default app per filetype", level=2),
+        *_filetype_default_app_items(),
     )
+
+
+# ── Default-app pickers per filetype ────────────────────────────────
+
+
+_FILETYPE_LABELS: dict[str, str] = {
+    "pdf": "PDF",
+    "md": "Markdown",
+    "txt": "Plain text",
+    "docx": "Word",
+    "pptx": "PowerPoint",
+}
+
+
+def _filetype_default_app_items() -> tuple[MenuItem, ...]:
+    """One picker per indexer-supported filetype. Picker lists every
+    registered app whose ``handles`` covers that kind (built-ins +
+    user-defined), plus a "(auto-resolve)" sentinel that clears the
+    explicit default and lets the resolver walk its own ladder
+    (per-source → auto-promote → system)."""
+    rows: list[MenuItem] = []
+    for kind, label in _FILETYPE_LABELS.items():
+        rows.append(
+            MenuItem(
+                id=f"pref.app_defaults.{kind}",
+                label=f"Default {label} app",
+                description=(
+                    f"App that opens {label} files when no per-source "
+                    "override is set. '(auto-resolve)' lets the resolver "
+                    "auto-pick (eg. Skim if installed → Preview-if-AX → system)."
+                ),
+                kind=KIND_PICKER,
+                choices_provider=lambda app, k=kind: _choices_apps_for_kind(app, k),
+                picker_getter=lambda app, k=kind: _get_app_default_for_kind(app, k),
+                picker_setter=lambda app, value, k=kind: _set_app_default_for_kind(app, k, value),
+                keywords=("app", "default", kind, label.lower(), "filetype"),
+            )
+        )
+    return tuple(rows)
+
+
+def _choices_apps_for_kind(app: FNDApp, kind: str) -> list[ChoiceOption]:
+    """Apps registered for ``kind`` (or wildcard) + an auto-resolve
+    sentinel. Available-only so the picker doesn't offer apps that
+    aren't installed."""
+    from fnd.apps import build_registry
+
+    cfg = app._config  # type: ignore[attr-defined]
+    registry = build_registry(cfg)
+    out: list[ChoiceOption] = [
+        ChoiceOption(
+            value="",
+            label="(auto-resolve)",
+            description="Let the resolver pick — skim → preview-if-AX → system for PDFs; system for others.",
+        )
+    ]
+    for app_id, app_def in registry.items():
+        if kind not in app_def.handles and "*" not in app_def.handles:
+            continue
+        if not app_def.available():
+            continue
+        out.append(
+            ChoiceOption(
+                value=app_id,
+                label=app_def.display_name,
+                description=app_def.notes or "",
+            )
+        )
+    return out
+
+
+def _get_app_default_for_kind(app: FNDApp, kind: str) -> str:
+    cfg = app._config  # type: ignore[attr-defined]
+    if cfg is None:
+        return ""
+    return cfg.app_defaults.get(kind, "")
+
+
+def _set_app_default_for_kind(app: FNDApp, kind: str, value: Any) -> None:
+    """Persist the picker choice. Empty value (auto-resolve sentinel)
+    clears the explicit default — done by reloading config, removing
+    the key, and writing the whole [app_defaults] back via tomlkit."""
+    from fnd.config import default_config_path, load, write_setting
+
+    cfg_path = default_config_path()
+    if value:
+        write_setting(config_path=cfg_path, dotted_path=f"app_defaults.{kind}", value=value)
+    else:
+        # No write_unset helper — round-trip via tomlkit to drop the key.
+        import tomlkit
+
+        if cfg_path.exists():
+            doc = tomlkit.parse(cfg_path.read_text(encoding="utf-8"))
+            defaults = doc.get("app_defaults")
+            if defaults is not None and kind in defaults:
+                del defaults[kind]
+                from fnd._perms import secure_write_text
+
+                secure_write_text(cfg_path, tomlkit.dumps(doc))
+    app._config = load()  # type: ignore[attr-defined]
+    app._refresh_status()  # type: ignore[attr-defined]
 
 
 # ── Collections drill chain (per-collection / per-source) ───────────
@@ -939,10 +1140,24 @@ _SECTION_LABELS: dict[str, str] = {
 }
 
 
-def section_items(app: FNDApp, section_id: str) -> tuple[MenuItem, ...]:
-    """Return the rows for a named sub-screen."""
+def section_items(
+    app: FNDApp,
+    section_id: str,
+    *,
+    context_hint: str | None = None,
+) -> tuple[MenuItem, ...]:
+    """Return the rows for a named sub-screen.
+
+    ``context_hint`` is forwarded to providers that accept it
+    (Keybindings uses it to surface the section relevant to the screen
+    that opened it). Providers that don't expect the kwarg ignore it.
+    """
     provider = _SECTION_PROVIDERS.get(section_id)
-    return provider(app) if provider else ()
+    if provider is None:
+        return ()
+    if section_id == SECTION_KEYBINDINGS:
+        return _provider_keybindings(app, context_hint=context_hint)
+    return provider(app)
 
 
 def section_label(section_id: str) -> str:

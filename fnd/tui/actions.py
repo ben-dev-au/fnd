@@ -91,8 +91,9 @@ REGISTRY: tuple[Action, ...] = (
     ),
     Action(
         id="open_at_locator",
-        description="Open the focused result in Skim at its page (PDFs) "
-        "or the default app for other formats.",
+        description="Open the focused result at its page / heading / line in "
+        "the resolved app (per-source override → app_defaults → auto-promote "
+        "→ system).",
         default_key="o",
         command="open",
         footer_label="Open",
@@ -134,7 +135,8 @@ REGISTRY: tuple[Action, ...] = (
     ),
     Action(
         id="show_help",
-        description="Toggle help overlay.",
+        description="Open the Keybindings cheat sheet, scoped to the screen "
+        "you're on. Press ? again to dismiss.",
         default_key="question_mark",
         command="help",
         footer_label="Help",

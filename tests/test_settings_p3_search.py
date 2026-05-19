@@ -42,8 +42,9 @@ async def test_walk_all_sections_includes_every_leaf(built_index: Path, fixtures
         assert "Default collection" in labels
         # Collections section includes the per-collection drill row.
         assert "default" in labels
-        # Keybindings keys (sample):
-        assert any(item.label == "Quit" for _, item in all_items)
+        # Keybindings keys (sample). The provider derives from the
+        # action registry now, so the label is the action description.
+        assert any("Quit fnd" in item.label for _, item in all_items)
         # Root action:
         assert "Open config file in editor" in labels
         # No headers leak through.

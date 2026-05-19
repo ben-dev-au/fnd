@@ -269,7 +269,7 @@ def test_ax_trusted_false_triggers_preview_fallback(
     monkeypatch.setattr(
         apps.subprocess,
         "run",
-        lambda argv, **kw: (captured.append(list(argv)) or type("R", (), {"returncode": 0})()),
+        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
     )
 
     req = OpenRequest(path=Path("/tmp/p.pdf"), kind="pdf", page=5)
@@ -291,3 +291,125 @@ def test_load_user_apps_rejects_bad_id_chars() -> None:
 def test_load_user_apps_rejects_unknown_handle_kind() -> None:
     with pytest.raises(ValueError, match=r"handle"):
         load_user_apps({"x": _user_app_cfg(handles=["banana"])})
+
+
+# ── Obsidian handler: never silently swaps apps ────────────────────────
+
+
+def test_obsidian_handler_with_vault_uses_vault_form(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[list[str]] = []
+    monkeypatch.setattr(
+        apps.subprocess,
+        "run",
+        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
+    )
+    req = OpenRequest(
+        path=Path("/Users/me/Vault/note.md"),
+        kind="md",
+        vault="MyVault",
+        file_in_vault="note.md",
+        heading_path="Findings",
+    )
+    apps.BUILTIN_APPS["obsidian"].handler(req)
+    assert len(captured) == 1
+    argv = captured[0]
+    assert argv[0] == "open"
+    assert argv[1].startswith("obsidian://open?vault=MyVault")
+    assert "file=note.md" in argv[1]
+    assert "%23Findings" in argv[1]
+
+
+def test_obsidian_handler_without_vault_uses_path_form_not_system_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug fix regression: when the user explicitly picks Obsidian from
+    the "Open with…" menu but no vault is configured, the handler
+    MUST still fire Obsidian (via ``?path=<abs>``) rather than silently
+    delegating to ``open <path>`` (which would open the macOS default
+    for that file kind — often VS Code for .md — and look like a
+    silent app-swap to the user)."""
+    captured: list[list[str]] = []
+    monkeypatch.setattr(
+        apps.subprocess,
+        "run",
+        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
+    )
+    req = OpenRequest(
+        path=Path("/Users/me/elsewhere/note.md"),
+        kind="md",
+        vault="",  # no vault
+        heading_path="Intro",
+    )
+    apps.BUILTIN_APPS["obsidian"].handler(req)
+    assert len(captured) == 1
+    argv = captured[0]
+    assert argv[0] == "open"
+    # MUST be an obsidian:// URL, NOT a plain ``open <path>``.
+    assert argv[1].startswith(
+        "obsidian://open?path="
+    ), f"obsidian handler with no vault silently swapped apps: {argv}"
+    assert "note.md" in argv[1]
+    assert "%23Intro" in argv[1]
+
+
+def test_obsidian_handler_converts_breadcrumb_to_chained_anchor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``heading_path`` is a breadcrumb ("A > B > C") in the chunk;
+    Obsidian's anchor syntax wants nested headings separated by ``#``
+    ("A#B#C"). Without this rewrite, the anchor reads ``#A > B > C`` —
+    Obsidian opens the file but cannot find that heading and lands at
+    the top. Regression test for the user-reported "Obsidian opened
+    the file but not at the location"."""
+    captured: list[list[str]] = []
+    monkeypatch.setattr(
+        apps.subprocess,
+        "run",
+        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
+    )
+    req = OpenRequest(
+        path=Path("/Users/me/Vault/note.md"),
+        kind="md",
+        vault="MyVault",
+        file_in_vault="note.md",
+        heading_path="Week 9 > Cyber Kill Chain > Reconnaissance",
+    )
+    apps.BUILTIN_APPS["obsidian"].handler(req)
+    argv = captured[0]
+    # Chained-heading anchor (URL-encoded #): Week%209%23Cyber%20Kill%20Chain%23Reconnaissance.
+    assert "%23Cyber%20Kill%20Chain%23Reconnaissance" in argv[1], argv[1]
+    # The raw " > " breadcrumb separator MUST NOT survive into the URL —
+    # spaces around ` > ` would percent-encode to %20%3E%20 and Obsidian
+    # would fail to navigate.
+    assert "%20%3E%20" not in argv[1], argv[1]
+
+
+def test_pdf_expert_uses_open_dash_a_not_url_scheme(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pdf-expert-7:// URL scheme isn't registered (Info.plist
+    only exposes ``pdfexpert://``) and the accepted URL format is
+    undocumented. Handler must use ``open -a 'PDF Expert' <path>``
+    which always opens the file; page-jump isn't supported but the
+    file opens reliably."""
+    captured: list[list[str]] = []
+    monkeypatch.setattr(
+        apps.subprocess,
+        "run",
+        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
+    )
+    req = OpenRequest(path=Path("/tmp/paper.pdf"), kind="pdf", page=7)
+    apps.BUILTIN_APPS["pdf_expert"].handler(req)
+    assert captured == [["open", "-a", "PDF Expert", "/tmp/paper.pdf"]], captured
+
+
+def test_heading_path_to_anchor_strips_empty_segments() -> None:
+    """Defensive: trailing/leading separators or duplicated ` > ` from
+    quirky source files shouldn't yield empty ## sequences in the
+    anchor (Obsidian treats `##` as an anchor reset)."""
+    assert apps._heading_path_to_anchor("A > B > C") == "A#B#C"
+    assert apps._heading_path_to_anchor("  > A >   > B > ") == "A#B"
+    assert apps._heading_path_to_anchor("Solo") == "Solo"
+    assert apps._heading_path_to_anchor("") == ""
