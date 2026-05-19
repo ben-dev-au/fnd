@@ -220,8 +220,8 @@ _KEYS_GLOBAL: tuple[tuple[str, str, str], ...] = (
 )
 
 _KEYS_RESULTS: tuple[tuple[str, str, str], ...] = (
-    ("o", "open_at_locator", "Open at locator (Skim / default app for page)"),
-    ("O", "open_default_app", "Open in default app"),
+    ("o", "open_at_locator", "Open at locator (resolved app for this file)"),
+    ("O", "open_with_menu", "Open with… (menu of apps for this file type)"),
     ("Space", "peek_focused", "Quick Look"),
     ("Enter", "open_at_locator", "Open the focused match"),
     ("j / k", "", "Move cursor down / up"),

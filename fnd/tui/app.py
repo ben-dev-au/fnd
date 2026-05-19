@@ -215,6 +215,23 @@ class PreviewContainer(Container):
         return arrangement.total_region.height
 
 
+class _HitWithQuery:
+    """Adapter exposing a Hit plus the current query string as one object
+    for ``OpenWithScreen``. The modal's :func:`build_request` reads
+    ``hit.query`` to populate the Skim ``&search=`` highlight; Hit
+    itself doesn't carry the query."""
+
+    __slots__ = ("_hit", "query")
+
+    def __init__(self, hit: Any, query: str) -> None:
+        self._hit = hit
+        self.query = query
+
+    def __getattr__(self, name: str) -> Any:
+        # Forward everything not explicitly overridden to the wrapped Hit.
+        return getattr(self._hit, name)
+
+
 class PreviewCache:
     """LRU cache of :class:`PreviewContainer`, keyed by
     ``(parent_doc_id, query_signature)``. Files with fewer than
@@ -3975,6 +3992,92 @@ class FNDApp(App[None]):
             return
         _, hit = target
         opener.open_default(Path(hit.path))
+
+    def action_open_with_menu(self) -> None:
+        """Show the 'Open with…' modal for the focused hit.
+
+        Lists every registered app whose ``handles`` covers the hit's
+        kind; the resolved default is highlighted and Enter fires it.
+        Builds the registry, resolves the default app, and finds the
+        source the hit belongs to (so per-source ``app_for`` / vault
+        overrides take effect).
+        """
+        tree = self.query_one("#results_pane", Tree)
+        if tree.cursor_node is None:
+            return
+        target = self._target_for_node(tree.cursor_node)
+        if target is None:
+            return
+        _, hit = target
+
+        from fnd import apps as apps_mod
+        from fnd.config import load as load_config
+        from fnd.tui.open_with_screen import OpenWithScreen
+
+        try:
+            cfg = load_config()
+        except Exception:
+            cfg = None
+
+        registry = apps_mod.build_registry(cfg) if cfg is not None else apps_mod.BUILTIN_APPS
+        app_defaults: dict[str, str] = dict(getattr(cfg, "app_defaults", {})) if cfg else {}
+        # Mirror open_smart's auto-promote ladder so the modal's
+        # highlighted default matches what `o` would fire.
+        if "pdf" not in app_defaults:
+            if opener._has_skim():
+                app_defaults["pdf"] = "skim"
+            elif apps_mod.BUILTIN_APPS["preview"].available() and apps_mod.ax_trusted():
+                app_defaults["pdf"] = "preview"
+
+        source = self._source_for_hit(hit)
+        resolved = apps_mod.resolve_app(
+            kind=hit.kind,
+            source=source,
+            app_defaults=app_defaults,
+            registry=registry,
+        )
+        # The modal needs the raw query string for the OpenRequest.
+        hit_with_query = _HitWithQuery(hit, self._current_query)
+        self.push_screen(
+            OpenWithScreen(
+                hit=hit_with_query,
+                source=source,
+                registry=registry,
+                default_id=resolved.id,
+            )
+        )
+
+    def _source_for_hit(self, hit: Any) -> Any | None:
+        """Find the :class:`fnd.config.SourceConfig` whose root contains
+        ``hit.path``. Used by the open-with modal to surface per-source
+        app overrides + vault params. Returns ``None`` if no source
+        matches (eg. legacy index without source metadata)."""
+        cfg = getattr(self, "_config", None)
+        if cfg is None:
+            return None
+        try:
+            hit_path = Path(hit.path).expanduser().resolve()
+        except (ValueError, OSError):
+            return None
+        # Scan every collection in the active scope; first containing
+        # source wins. The hit's parent_id encodes its source path so a
+        # future refactor could short-circuit via index lookup.
+        active = self._collections or list(cfg.collections.keys())
+        for name in active:
+            coll = cfg.collections.get(name)
+            if coll is None:
+                continue
+            for src in coll.sources:
+                try:
+                    root = Path(src.path).expanduser().resolve()
+                except (ValueError, OSError):
+                    continue
+                try:
+                    hit_path.relative_to(root)
+                except ValueError:
+                    continue
+                return src
+        return None
 
     def action_peek_focused(self) -> None:
         tree = self.query_one("#results_pane", Tree)

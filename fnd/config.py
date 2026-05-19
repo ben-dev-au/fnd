@@ -677,9 +677,26 @@ excludes = ["**/.git/**", "**/.DS_Store", "**/__pycache__/**"]
 # phrase_proximity   = 0.3
 
 # ── Apps & defaults ────────────────────────────────────────────────────
-# Default app per filetype, used when a source doesn't override. Built-in
-# app ids: system, preview, skim, pdf_expert, obsidian, vscode. Add your
-# own under [apps.<id>] below.
+# Default app per filetype. Resolved in this order for the `o` shortcut:
+#   1. per-source `app_for[kind]`           (set in [[collections.X.sources]])
+#   2. per-source `app`                     (same place; sugar)
+#   3. `[app_defaults][kind]`               (this section)
+#   4. AUTO-DEFAULT for that kind           (see below)
+#   5. `system` — `open <path>`             (LaunchServices, no page-jump)
+#
+# Auto-defaults only fire when nothing above sets a value:
+#   pdf:  Skim if installed                 — silent skim:// URL, no permissions
+#         else Preview if Accessibility
+#         is granted to the launching app   — keystrokes Cmd-Opt-G in Preview;
+#                                             dialog briefly flashes; needs
+#                                             System Settings → Privacy &
+#                                             Security → Accessibility for
+#                                             your terminal / IDE
+#         else system                       — opens at page 1
+#   md, txt, docx, pptx: system             — no smart pick today
+#
+# Built-in app ids: system, preview, skim, pdf_expert, obsidian, vscode.
+# Add your own under [apps.<id>] below.
 # [app_defaults]
 # pdf = "preview"   # or "skim" / "pdf_expert" / "system"
 # md  = "obsidian"  # or "vscode" / "system"
