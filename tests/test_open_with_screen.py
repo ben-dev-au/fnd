@@ -215,6 +215,48 @@ async def test_modal_escape_dismisses_without_firing(
 
 
 @pytest.mark.asyncio
+async def test_modal_arrow_keys_move_cursor_and_enter_fires_highlighted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Pressing ↓ moves the cursor off the resolved default; Enter
+    then fires the new cursor's app (NOT the default)."""
+    monkeypatch.setattr(apps, "_skim_app_exists", lambda: True)
+    monkeypatch.setattr(apps, "_preview_app_exists", lambda: True)
+    captured: list[list[str]] = []
+    monkeypatch.setattr(apps.subprocess, "run", _fake_run(captured))
+
+    pdf = tmp_path / "doc.pdf"
+    pdf.touch()
+    hit = SimpleNamespace(path=str(pdf), kind="pdf", page=4, heading_path="")
+
+    class Host(App[None]):
+        async def on_mount(self) -> None:
+            await self.push_screen(
+                OpenWithScreen(
+                    hit=hit,
+                    source=None,
+                    registry=apps.BUILTIN_APPS,
+                    default_id="skim",
+                )
+            )
+
+    async with Host().run_test() as pilot:
+        await pilot.pause()
+        # Cursor starts on skim (the default). ↓ moves to the next row.
+        await pilot.press("down")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert len(captured) == 1
+    argv = captured[0]
+    # Whichever app sits below skim must have fired — NOT skim.
+    assert not (
+        argv[0] == "open" and argv[1].startswith("skim://")
+    ), f"expected ↓+Enter to fire a non-skim app; got {argv}"
+
+
+@pytest.mark.asyncio
 async def test_modal_md_hit_lists_obsidian_when_vault_known(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

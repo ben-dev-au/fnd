@@ -1,15 +1,20 @@
 """Shift-O "Open with…" modal — pick which app opens the focused hit.
 
-Surfaced when the user presses ``O`` on a result. Lists every registered
-app whose ``handles`` covers the focused hit's kind (plus wildcard apps)
-and is :attr:`fnd.apps.App.available`. The resolved default is
-highlighted; pressing Enter fires it, letter-shortcuts dispatch other
-rows directly, Esc dismisses.
+Surfaced when the user presses ``O`` on a result. One job: let the
+user pick an app for this file and fire it. The picker is a plain
+list of "<key>  <marker> <name>" rows:
 
-Resolution order is the same as for the default ``o`` shortcut — the
-chosen row gets the same :class:`fnd.apps.OpenRequest`. See the
-``[app_defaults]`` section comments in the user config for the full
-hierarchy.
+* Arrow / j / k move the cursor.
+* Enter fires the cursor's app.
+* The resolved default (what `o` would fire) starts under the cursor
+  and is marked with ★.
+* Letter shortcuts (first unique letter of the display name) fire any
+  row directly without moving the cursor.
+* Esc dismisses.
+
+No descriptions, hierarchy explainers, or app notes live here —
+that's settings territory. Resolution itself is exactly what `o` uses;
+see ``[app_defaults]`` in config.toml for the rules.
 """
 
 from __future__ import annotations
@@ -20,11 +25,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
+from rich.text import Text
+from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Static
+from textual.widgets import OptionList, Static
+from textual.widgets.option_list import Option
 
 from fnd.apps import App, OpenRequest
 
@@ -116,16 +124,11 @@ def letter_shortcuts(rows: Iterable[Any]) -> dict[str, str]:
 
 
 class OpenWithScreen(ModalScreen[str | None]):
-    """ModalScreen that lists eligible apps and dispatches on selection.
-
-    Dismiss value: the id of the app that fired (or ``None`` if the user
-    pressed Esc). Lets the caller surface a status message ("Opened with
-    Skim") if it wants.
-    """
+    """Minimal app picker. Dismiss value: the fired app id, or ``None``
+    if Esc was pressed."""
 
     BINDINGS: ClassVar[list[Binding]] = [
-        Binding("escape", "close", "Dismiss", show=True),
-        Binding("enter", "fire_default", "Open with default", show=True),
+        Binding("escape,q", "close", "Cancel", show=False),
     ]
 
     CSS = """
@@ -134,27 +137,23 @@ class OpenWithScreen(ModalScreen[str | None]):
         background: $surface 50%;
     }
     #open_with_box {
-        width: 70%;
-        max-width: 70;
+        width: auto;
+        max-width: 60;
+        min-width: 32;
         height: auto;
         border: round $primary;
-        padding: 1 2;
+        padding: 0 1;
         background: $surface;
     }
-    #open_with_title {
-        text-style: bold;
-        padding-bottom: 1;
-    }
-    .open_with_row {
-        padding: 0 1;
-    }
-    .open_with_row.-default {
-        background: $primary 30%;
-        text-style: bold;
+    #open_with_list {
+        height: auto;
+        background: $surface;
+        border: none;
+        padding: 0;
     }
     #open_with_hint {
         color: $text-muted;
-        padding-top: 1;
+        padding: 1 1 0 1;
     }
     """
 
@@ -177,52 +176,63 @@ class OpenWithScreen(ModalScreen[str | None]):
             default_id=default_id,
         )
         self._shortcuts = letter_shortcuts(self._rows)
-        # Register letter-shortcut bindings dynamically. Textual reads
-        # BINDINGS at class level so we install per-instance bindings
-        # via ``_bindings`` after super().__init__.
+        # Per-instance letter-shortcut bindings. ``show=False`` keeps
+        # them out of the chrome — they're visible inline next to each
+        # row already.
         for app_id, key in self._shortcuts.items():
             self._bindings.bind(key, f"fire('{app_id}')", show=False)
 
     def compose(self) -> ComposeResult:
+        kind = getattr(self._hit, "kind", "?")
         with Vertical(id="open_with_box") as box:
-            box.border_title = f"Open with… ({getattr(self._hit, 'kind', '?')})"
-            yield Static(
-                "Pick an app for this file. Enter fires the highlighted default; "
-                "letter keys dispatch directly. Resolution: per-source app → "
-                "[app_defaults] → auto-default → system. See config.toml for "
-                "the full hierarchy.",
-                id="open_with_title",
-            )
+            box.border_title = f" Open with — .{kind} "
+            options: list[Option] = []
             for row in self._rows:
-                key = self._shortcuts.get(row.id, "·")
-                marker = "★ " if row.is_default else "  "
-                line = f"[{key}] {marker}{row.display_name}"
-                if row.notes:
-                    line += f"  — {row.notes}"
-                widget = Static(line, classes="open_with_row")
-                if row.is_default:
-                    widget.add_class("-default")
-                yield widget
+                options.append(Option(self._row_text(row), id=row.id))
+            yield OptionList(*options, id="open_with_list")
             yield Static(
-                "Enter = default · letter = pick · Esc = cancel",
+                "↑↓ pick · Enter open · letter jump · Esc cancel",
                 id="open_with_hint",
             )
+
+    def _row_text(self, row: OpenWithRow) -> Text:
+        """One row's display. Use ``rich.text.Text`` (not a markup
+        string) so characters like ``[s]`` are rendered literally
+        instead of being interpreted as Rich style tags."""
+        key = self._shortcuts.get(row.id, " ")
+        marker = "★" if row.is_default else " "
+        text = Text()
+        text.append(f" {key} ", style="bold")
+        text.append(f" {marker} ", style="yellow" if row.is_default else "")
+        text.append(row.display_name)
+        if row.is_default:
+            text.stylize("bold")
+        return text
+
+    def on_mount(self) -> None:
+        lst = self.query_one("#open_with_list", OptionList)
+        # Park the cursor on the resolved default so Enter does the
+        # same thing as `o` would. Walks the populated option list
+        # because OptionList doesn't expose a "highlight by id" API.
+        if self._default_id:
+            for idx, opt in enumerate(lst.options):
+                if opt.id == self._default_id:
+                    lst.highlighted = idx
+                    break
+        lst.focus()
 
     # ── Actions ──────────────────────────────────────────────────────
 
     def action_close(self) -> None:
         self.dismiss(None)
 
-    def action_fire_default(self) -> None:
-        if self._default_id and self._default_id in self._registry:
-            self._fire(self._default_id)
-            return
-        # No default → pick the first row if any.
-        if self._rows:
-            self._fire(self._rows[0].id)
-
     def action_fire(self, app_id: str) -> None:
         self._fire(app_id)
+
+    @on(OptionList.OptionSelected, "#open_with_list")
+    def _on_option_selected(self, ev: OptionList.OptionSelected) -> None:
+        if ev.option.id:
+            self._fire(ev.option.id)
 
     def _fire(self, app_id: str) -> None:
         app = self._registry.get(app_id)
