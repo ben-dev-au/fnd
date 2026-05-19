@@ -141,3 +141,62 @@ def test_extract_module_dispatch_propagates_extract_error(tmp_path: Path) -> Non
     bad.write_bytes(b"garbage")
     with pytest.raises(ExtractError):
         list(extract(bad))
+
+
+def test_index_drops_partial_chunks_on_midstream_extract_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An extractor that yields chunks and *then* raises ExtractError
+    must leave nothing behind for that file. Pre-fix, chunks added
+    before the crash (and potentially committed by the mid-loop batch
+    commit) would survive."""
+    from collections.abc import Iterator
+
+    from fnd import index as index_module
+    from fnd.extract.base import Chunk
+    from fnd.query import Searcher
+
+    poison = tmp_path / "midstream.md"
+    poison.write_text("# heading\n\nbody\n", encoding="utf-8")
+    good = tmp_path / "ok.md"
+    good.write_text("# ok\n\nokbody\n", encoding="utf-8")
+
+    real_extract = index_module.extract
+
+    def flaky_extract(path: Path) -> Iterator[Chunk]:
+        if path.name != "midstream.md":
+            yield from real_extract(path)
+            return
+        # Yield two well-formed chunks for the poison file, *then* raise.
+        # Two is enough to exercise the "some chunks already buffered
+        # in the writer" path without depending on _COMMIT_BATCH.
+        yield Chunk(
+            parent_id=index_module._path_parent_id(path),
+            path=str(path),
+            mtime=1,
+            kind="md",
+            body="partial-chunk-1",
+            chunk_seq=0,
+        )
+        yield Chunk(
+            parent_id=index_module._path_parent_id(path),
+            path=str(path),
+            mtime=1,
+            kind="md",
+            body="partial-chunk-2",
+            chunk_seq=1,
+        )
+        raise ExtractError(str(path), "synthetic mid-iteration failure")
+
+    monkeypatch.setattr(index_module, "extract", flaky_extract)
+
+    index_dir = tmp_path / "index"
+    build_index(roots=[tmp_path], index_dir=index_dir, collection="default")
+
+    searcher = Searcher(index_dir=index_dir)
+    # The poison file's body never wins a hit — its (partial) chunks
+    # should have been cleaned up in the except branch.
+    assert searcher.search("partial-chunk-1") == []
+    assert searcher.search("partial-chunk-2") == []
+    # The good file's chunk survives normally.
+    assert searcher.search("okbody")

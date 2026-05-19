@@ -226,8 +226,11 @@ def enforce_query_bounds(query: str) -> None:
         raise QueryTooLargeError(f"query exceeds {LIMIT_QUERY_BYTES}-byte limit")
     # Cheap upper bound on boolean depth: count AND/OR/NOT tokens.
     # Tantivy's parser tree explodes when these multiply; the cap is
-    # conservative but well above any realistic human query.
-    boolean_tokens = sum(query.count(op) for op in (" AND ", " OR ", " NOT "))
+    # conservative but well above any realistic human query. The query
+    # is padded with single spaces so a leading `NOT foo` or trailing
+    # `foo AND` (the boundary cases) gets counted.
+    padded = f" {query} "
+    boolean_tokens = sum(padded.count(op) for op in (" AND ", " OR ", " NOT "))
     if boolean_tokens > LIMIT_QUERY_BOOLEAN_TOKENS:
         raise QueryTooLargeError(
             f"query has {boolean_tokens} boolean operators; limit is {LIMIT_QUERY_BOOLEAN_TOKENS}"

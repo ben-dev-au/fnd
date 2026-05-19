@@ -276,10 +276,18 @@ class Config(BaseModel):
 
 # Collection names appear as TOML table keys (`[collections.<name>]`),
 # as ``--collection`` CLI args, and inside the query DSL ``c:<name>``
-# shorthand. Restricting to a single safe character class everywhere
-# keeps the three surfaces in lockstep: no TOML key escapes, no DSL
-# parse ambiguity, no filesystem-component pitfalls (slashes, NUL,
-# leading dot).
+# shorthand. Validation is *write-side only*: any name that fails this
+# regex is refused before it can enter the config TOML, so names that
+# would corrupt the TOML key syntax, escape the DSL splitter on `,`,
+# or trip filesystem-component pitfalls (slashes, NUL, leading dot)
+# can never appear in saved state.
+#
+# The DSL parser (`fnd/query_dsl.py::_expand_collection_shorthand`)
+# intentionally accepts a slightly broader character set on the
+# read side — it's a freeform shorthand and any non-matching name
+# just yields no results from Tantivy. Keeping the DSL permissive
+# means a typo'd `c:` token doesn't silently get dropped from the
+# query.
 _COLLECTION_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$")
 
 

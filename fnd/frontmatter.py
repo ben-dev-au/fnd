@@ -47,7 +47,7 @@ def read_frontmatter_from_text(text: str) -> dict[str, object] | None:
         return None
     # Find the matching closing fence. The opening line is ``---``; from
     # line 1 onward, look for ``---`` or ``...`` on its own.
-    running = len(lines[0]) + 1
+    running = len(lines[0].encode("utf-8")) + 1
     for i in range(1, len(lines)):
         running += len(lines[i].encode("utf-8")) + 1
         if running > LIMIT_FRONTMATTER_TOTAL_BYTES:

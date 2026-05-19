@@ -175,7 +175,8 @@ def build_index(
     for path in paths:
         # Idempotent re-index: delete chunks for this file then re-add. Phase
         # 10 adds mtime gating to skip unchanged files entirely.
-        writer.delete_documents(F_PARENT_ID, _path_parent_id(path))
+        parent_id = _path_parent_id(path)
+        writer.delete_documents(F_PARENT_ID, parent_id)
         try:
             for chunk in extract(path):
                 writer.add_document(_doc_for_chunk(chunk, collection=collection))
@@ -184,7 +185,12 @@ def build_index(
                     writer.commit()
         except ExtractError as err:
             # One hostile or corrupt file shouldn't kill indexing of the
-            # rest of the collection — surface and continue.
+            # rest of the collection — surface and continue. Re-stage the
+            # delete so any chunks already added (and possibly already
+            # committed by the mid-loop batch commit) get cleaned up;
+            # otherwise a parser that crashes after yielding N pages
+            # leaves a partial document indexed.
+            writer.delete_documents(F_PARENT_ID, parent_id)
             print(f"[fnd skip] {err}", file=sys.stderr)
     writer.commit()
     writer.wait_merging_threads()
@@ -233,7 +239,8 @@ def build_index_from_config(
                     fm = None
                 if fm:
                     meta_blob_bytes = encode_meta_blob(fm)
-            writer.delete_documents(F_PARENT_ID, _path_parent_id(path))
+            parent_id = _path_parent_id(path)
+            writer.delete_documents(F_PARENT_ID, parent_id)
             try:
                 for chunk in extract(path):
                     writer.add_document(
@@ -248,6 +255,10 @@ def build_index_from_config(
                     if written % _COMMIT_BATCH == 0:
                         writer.commit()
             except ExtractError as err:
+                # See build_index above — re-stage the delete so an
+                # extractor crash mid-iteration doesn't leave partial
+                # chunks indexed.
+                writer.delete_documents(F_PARENT_ID, parent_id)
                 print(f"[fnd skip] {err}", file=sys.stderr)
     writer.commit()
     writer.wait_merging_threads()

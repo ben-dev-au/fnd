@@ -9,11 +9,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Tag to release (e.g. v0.1.0)"
-        required: true
 
 permissions:
   contents: read
@@ -50,12 +45,16 @@ jobs:
         run: uv build --sdist --wheel --out-dir dist
 
       - name: Generate CycloneDX SBOM (S2)
+        # SBOM lives outside dist/ so the PyPI publish step (which
+        # uploads the whole packages-dir via twine) doesn't try to
+        # upload a JSON file as a distribution and fail.
         run: |
+          mkdir -p sbom
           uv tool install cyclonedx-bom
           uv export --format requirements-txt --no-hashes -o requirements.frozen.txt
           uv tool run cyclonedx-py requirements requirements.frozen.txt \
             --output-format JSON \
-            --output-file dist/sbom.cdx.json
+            --output-file sbom/sbom.cdx.json
 
       - name: Attest build provenance (S2)
         uses: actions/attest-build-provenance@v1
@@ -81,6 +80,12 @@ jobs:
           name: dist
           path: dist/
 
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/
+
   publish-pypi:
     name: publish to PyPI (Trusted Publisher)
     needs: build
@@ -103,8 +108,6 @@ jobs:
           # https://pypi.org/manage/account/publishing/ pointing at
           # this repo + `release.yml` workflow + `pypi` environment.
           packages-dir: dist
-          # Keep the SBOM and any other non-package files out of the
-          # upload step's globbing.
           skip-existing: true
 
   release-notes:
@@ -120,6 +123,11 @@ jobs:
         with:
           name: dist
           path: dist/
+      - name: Download SBOM
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: sbom/
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -132,7 +140,7 @@ jobs:
           gh release create "$tag" \
             --title "fnd $tag" \
             --notes "See CHANGELOG / commit log for details. SHA-256: ${{ needs.build.outputs.sdist-sha256 }}" \
-            dist/*.tar.gz dist/*.whl dist/sbom.cdx.json
+            dist/*.tar.gz dist/*.whl sbom/sbom.cdx.json
 
   bump-homebrew-tap:
     name: bump homebrew-fnd formula

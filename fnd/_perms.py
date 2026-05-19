@@ -40,6 +40,7 @@ def secure_mkdir(path: Path, *, anchor: Path | None = None) -> Path:
         from fnd.config import app_data_dir
 
         anchor = app_data_dir()
+    anchor = anchor.expanduser()
     path = path.expanduser()
     path.mkdir(parents=True, exist_ok=True)
     try:
