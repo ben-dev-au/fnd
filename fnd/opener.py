@@ -1,9 +1,9 @@
 """Open-in-app dispatch.
 
-Per plan §5 + §17 + §21 Spike C:
-
-* PDF: AppleScript (primary, robust under unusual filenames). URL-scheme fallback
-  for shareable links: ``skim:///<percent-encoded-absolute-path>#page=N``.
+* PDF: Skim URL scheme — ``skim:///<percent-encoded-absolute-path>#page=N``
+  — handed to ``open <url>``. ``urllib.parse.quote`` covers every byte
+  including filename newlines/quotes that could otherwise inject into
+  a shell-out or AppleScript string literal.
 * PPTX / DOCX / MD / TXT: ``open <file>`` (LaunchServices default app) — these
   formats have no reliable page-jump protocol on macOS; the TUI surfaces the
   slide/heading in its footer so the user can scroll to it manually.
@@ -22,9 +22,9 @@ import urllib.parse
 from pathlib import Path
 from typing import Final, Literal
 
-OpenStrategy = Literal["applescript", "url", "default"]
+OpenStrategy = Literal["url", "default"]
 
-DEFAULT_PDF_STRATEGY: Final[OpenStrategy] = "applescript"
+DEFAULT_PDF_STRATEGY: Final[OpenStrategy] = "url"
 
 
 def _has_skim() -> bool:
@@ -52,29 +52,6 @@ def skim_url(path: Path, page: int, *, search: str = "") -> str:
     if search:
         fragment_parts.append(f"search={urllib.parse.quote(search)}")
     return f"skim://{encoded_path}#{'&'.join(fragment_parts)}"
-
-
-def _osascript(commands: list[str]) -> subprocess.CompletedProcess[bytes]:
-    args: list[str] = ["osascript"]
-    for c in commands:
-        args.extend(["-e", c])
-    return subprocess.run(args, check=False, capture_output=True)
-
-
-def open_pdf_via_applescript(path: Path, page: int) -> int:
-    """Open ``path`` in Skim and jump to 1-based ``page``. Returns the
-    exit code of the underlying ``osascript`` invocation."""
-    posix_path = str(path.expanduser().resolve())
-    # Backslash + double-quote escapes for AppleScript string literals.
-    escaped = posix_path.replace("\\", "\\\\").replace('"', '\\"')
-    proc = _osascript(
-        [
-            'tell application "Skim" to activate',
-            f'tell application "Skim" to open POSIX file "{escaped}"',
-            f'tell application "Skim" to tell document 1 to go to page {int(page)}',
-        ]
-    )
-    return proc.returncode
 
 
 def open_pdf_via_url(path: Path, page: int, *, search: str = "") -> int:
@@ -114,21 +91,13 @@ def open_smart(
 ) -> int:
     """Dispatch based on ``kind`` and locator metadata.
 
-    PDFs deep-link via Skim. When ``query`` is non-empty, the URL form is
-    preferred over AppleScript because only the URL form supports
-    ``&search=`` (which makes Skim highlight the matching string on
-    the opened page). Falls back to AppleScript for query-less opens
-    (URL form has slight encoding fragility under unusual filenames per
-    §21 Spike C). Non-PDF kinds fall through to ``open <path>``.
+    PDFs deep-link via Skim's ``skim://`` URL scheme; when ``query`` is
+    non-empty the URL also carries ``&search=`` so Skim highlights the
+    match. Non-PDF kinds fall through to ``open <path>``. ``pdf_strategy
+    = "default"`` skips Skim and lets LaunchServices pick the app.
     """
-    if kind == "pdf" and page > 0 and _has_skim():
-        # Prefer URL when we have a search term — only that form highlights.
-        if query.strip():
-            return open_pdf_via_url(path, page, search=query.strip())
-        if pdf_strategy == "url":
-            return open_pdf_via_url(path, page)
-        if pdf_strategy == "applescript":
-            return open_pdf_via_applescript(path, page)
+    if kind == "pdf" and page > 0 and _has_skim() and pdf_strategy == "url":
+        return open_pdf_via_url(path, page, search=query.strip())
     return open_default(path)
 
 
@@ -137,11 +106,8 @@ def open_smart(
 
 def explain_open(*, kind: str, page: int, pdf_strategy: OpenStrategy) -> str:
     """Human-readable description of what ``open_smart`` will do."""
-    if kind == "pdf" and page > 0 and _has_skim():
-        if pdf_strategy == "applescript":
-            return f"AppleScript → Skim, page {page}"
-        if pdf_strategy == "url":
-            return f"open '{shlex.quote(str(skim_url(Path('/X'), page)))}'"
+    if kind == "pdf" and page > 0 and _has_skim() and pdf_strategy == "url":
+        return f"open '{shlex.quote(str(skim_url(Path('/X'), page)))}'"
     return "open <file> (default app)"
 
 

@@ -24,11 +24,13 @@ from pathlib import Path
 from typing import Any
 
 from docx import Document
+from docx.opc.exceptions import PackageNotFoundError
 from docx.oxml.ns import qn
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
-from fnd.extract.base import Block, Chunk
+from fnd.extract._ooxml import reject_if_zip_bomb
+from fnd.extract.base import Block, Chunk, ExtractError
 
 _HEADING_LEVELS: dict[str, int] = {
     "Heading 1": 1,
@@ -42,7 +44,7 @@ _HEADING_LEVELS: dict[str, int] = {
 
 
 def _parent_id(path: Path) -> str:
-    return hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()
+    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _heading_level(p: Paragraph) -> int:
@@ -195,10 +197,36 @@ def _flush(
 
 
 def extract(path: Path) -> Iterator[Chunk]:
+    reject_if_zip_bomb(path)
     parent_id = _parent_id(path)
-    mtime = int(path.stat().st_mtime)
-    doc = Document(str(path))
+    yield from _extract_inner(path, parent_id)
 
+
+def _extract_inner(path: Path, parent_id: str) -> Iterator[Chunk]:
+    """Generator body for :func:`extract`, factored out so the whole
+    iteration sits inside a single try/except. Without this split, a
+    parser crash during ``doc.iter_inner_content()`` would propagate
+    raw and abort the index build."""
+    try:
+        mtime = int(path.stat().st_mtime)
+        try:
+            doc = Document(str(path))
+        except PackageNotFoundError as e:
+            # `python-docx` raises this for encrypted / password-protected
+            # packages too — we can't reliably tell them apart, so the
+            # umbrella message is the right shape.
+            raise ExtractError(str(path), f"unreadable docx: {e}") from e
+        yield from _walk_docx_body(path=path, parent_id=parent_id, mtime=mtime, doc=doc)
+    except ExtractError:
+        raise
+    except Exception as e:
+        # Parser libs raise everything from RuntimeError to opaque C
+        # extension errors. Broad except is intentional — the goal is
+        # "don't let one bad doc stop the index build."
+        raise ExtractError(str(path), f"{type(e).__name__}: {e}") from e
+
+
+def _walk_docx_body(*, path: Path, parent_id: str, mtime: int, doc: Any) -> Iterator[Chunk]:
     heading_stack: list[str] = []
     blocks: list[Block] = []
     body_parts: list[str] = []

@@ -8,7 +8,15 @@ Includes/excludes precedence per plan §8:
    matched an ``includes``.
 4. Hidden files (``.foo``) are excluded by default unless an explicit include
    matches.
-5. Symlinks are followed only if ``follow_symlinks = True``.
+5. Symlinks are followed only if ``follow_symlinks = True``. This applies in
+   two places:
+   - The collection root itself — if the user-supplied ``root`` is a symlink,
+     it is refused unless ``follow_symlinks=True``. This blocks a hostile
+     config (or a typo) from pointing fnd at ``/etc`` via a symlinked root.
+   - Each file inside the tree — symlinked files are skipped when the flag is
+     off. Directory symlinks are not recursed into (we pass
+     ``recurse_symlinks=False`` to ``Path.rglob`` rather than relying on the
+     Python 3.13 default).
 
 Globs are matched against the path **relative to its root** using ``PurePath.match``-
 compatible semantics extended to support ``**`` (recursive).
@@ -73,7 +81,13 @@ def walk(
     exc = list(excludes or [])
 
     for root in roots:
-        root = root.expanduser().resolve()
+        original = root.expanduser()
+        if not follow_symlinks and original.is_symlink():
+            # A symlinked root is the only way the index can end up
+            # following the link target (the inner symlink-checks below
+            # only handle members). Refuse unless the user opted in.
+            continue
+        root = original.resolve()
         if not root.exists():
             continue
         if root.is_file():
@@ -81,7 +95,7 @@ def walk(
                 yield root
             continue
 
-        for p in root.rglob("*"):
+        for p in root.rglob("*", recurse_symlinks=False):
             if not p.is_file():
                 continue
             if not follow_symlinks and p.is_symlink():

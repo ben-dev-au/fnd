@@ -16,14 +16,16 @@ from pathlib import Path
 from typing import Any
 
 from pptx import Presentation
+from pptx.exc import PackageNotFoundError
 from pptx.shapes.base import BaseShape
 from pptx.slide import Slide
 
-from fnd.extract.base import Block, Chunk
+from fnd.extract._ooxml import reject_if_zip_bomb
+from fnd.extract.base import Block, Chunk, ExtractError
 
 
 def _parent_id(path: Path) -> str:
-    return hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()
+    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _shape_text(shape: BaseShape) -> str:
@@ -139,9 +141,25 @@ def _table_md(shape: BaseShape) -> str:
 
 
 def extract(path: Path) -> Iterator[Chunk]:
+    reject_if_zip_bomb(path)
+    try:
+        yield from _extract_inner(path)
+    except ExtractError:
+        raise
+    except Exception as e:
+        # Parser libs raise everything from RuntimeError to opaque C
+        # extension errors. Broad except is intentional — the goal is
+        # "don't let one bad doc stop the index build."
+        raise ExtractError(str(path), f"{type(e).__name__}: {e}") from e
+
+
+def _extract_inner(path: Path) -> Iterator[Chunk]:
     parent_id = _parent_id(path)
     mtime = int(path.stat().st_mtime)
-    prs = Presentation(str(path))
+    try:
+        prs = Presentation(str(path))
+    except PackageNotFoundError as e:
+        raise ExtractError(str(path), f"unreadable pptx: {e}") from e
 
     deck_title = ""
     for slide_index, slide in enumerate(prs.slides, start=1):

@@ -96,8 +96,8 @@ def test_skim_url_search_is_percent_encoded(tmp_path: Path) -> None:
 def test_open_smart_routes_to_url_when_query_present(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With a non-empty query, open_smart should use the URL form (which
-    supports &search=) rather than AppleScript."""
+    """With a non-empty query, open_smart hands Skim a URL whose
+    ``search=`` fragment makes Skim highlight the matching string."""
     f = tmp_path / "doc.pdf"
     f.touch()
     monkeypatch.setattr(opener, "_has_skim", lambda: True)
@@ -107,34 +107,27 @@ def test_open_smart_routes_to_url_when_query_present(
         "open_pdf_via_url",
         lambda path, page, *, search="": calls.append({"strategy": "url", "search": search}) or 0,
     )
-    monkeypatch.setattr(
-        opener,
-        "open_pdf_via_applescript",
-        lambda path, page: calls.append({"strategy": "applescript"}) or 0,
-    )
     opener.open_smart(path=f, kind="pdf", page=7, query="Yalumba")
     assert calls == [{"strategy": "url", "search": "Yalumba"}]
 
 
-def test_open_smart_uses_applescript_when_query_blank(
+def test_open_smart_uses_url_when_query_blank(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Query-less PDF opens still use the Skim URL form — the AppleScript
+    path was removed because filename control-char injection through the
+    AppleScript string literal could execute arbitrary `osascript`."""
     f = tmp_path / "doc.pdf"
     f.touch()
     monkeypatch.setattr(opener, "_has_skim", lambda: True)
-    calls: list[str] = []
-    monkeypatch.setattr(
-        opener,
-        "open_pdf_via_applescript",
-        lambda path, page: calls.append("applescript") or 0,
-    )
+    calls: list[dict[str, Any]] = []
     monkeypatch.setattr(
         opener,
         "open_pdf_via_url",
-        lambda path, page, *, search="": calls.append("url") or 0,
+        lambda path, page, *, search="": calls.append({"strategy": "url", "search": search}) or 0,
     )
     opener.open_smart(path=f, kind="pdf", page=7, query="")
-    assert calls == ["applescript"]
+    assert calls == [{"strategy": "url", "search": ""}]
 
 
 # ── TUI: query plumbed to opener ────────────────────────────────────

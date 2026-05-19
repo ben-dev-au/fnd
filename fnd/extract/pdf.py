@@ -24,11 +24,11 @@ from typing import Any, cast
 
 import pymupdf  # type: ignore[import-not-found]
 
-from fnd.extract.base import Block, Chunk
+from fnd.extract.base import Block, Chunk, ExtractError
 
 
 def _parent_id(path: Path) -> str:
-    return hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()
+    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _margin_integers(page: pymupdf.Page) -> list[int]:
@@ -223,11 +223,29 @@ def _font_clustering_heading(
 
 
 def extract(path: Path) -> Iterator[Chunk]:
+    try:
+        yield from _extract_inner(path)
+    except ExtractError:
+        raise
+    except Exception as e:
+        # pymupdf is a C-extension parser with a long CVE history; any
+        # Python-level exception from inside it (UAF surfacing as
+        # `RuntimeError`, malformed-stream `ValueError`, ...) becomes
+        # an ExtractError so the index build survives.
+        raise ExtractError(str(path), f"{type(e).__name__}: {e}") from e
+
+
+def _extract_inner(path: Path) -> Iterator[Chunk]:
     parent_id = _parent_id(path)
     mtime = int(path.stat().st_mtime)
 
-    doc = pymupdf.open(str(path))
     try:
+        doc = pymupdf.open(str(path))
+    except Exception as e:
+        raise ExtractError(str(path), f"pymupdf cannot open: {e}") from e
+    try:
+        if doc.is_encrypted or doc.needs_pass:
+            raise ExtractError(str(path), "encrypted PDF (password required)")
         meta = doc.metadata or {}
         meta_title = str(meta.get("title") or "")
         meta_author = str(meta.get("author") or "")

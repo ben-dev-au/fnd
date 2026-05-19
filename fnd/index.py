@@ -6,13 +6,14 @@ fsevents incremental updates and the long-running watcher.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from tantivy import Document, Index
 
 from fnd.config import CollectionConfig
-from fnd.extract import Chunk, extract
+from fnd.extract import Chunk, ExtractError, extract
 from fnd.meta_blob import encode as encode_meta_blob
 from fnd.schema import (
     F_AUTHOR,
@@ -174,12 +175,23 @@ def build_index(
     for path in paths:
         # Idempotent re-index: delete chunks for this file then re-add. Phase
         # 10 adds mtime gating to skip unchanged files entirely.
-        writer.delete_documents(F_PARENT_ID, _path_parent_id(path))
-        for chunk in extract(path):
-            writer.add_document(_doc_for_chunk(chunk, collection=collection))
-            written += 1
-            if written % _COMMIT_BATCH == 0:
-                writer.commit()
+        parent_id = _path_parent_id(path)
+        writer.delete_documents(F_PARENT_ID, parent_id)
+        try:
+            for chunk in extract(path):
+                writer.add_document(_doc_for_chunk(chunk, collection=collection))
+                written += 1
+                if written % _COMMIT_BATCH == 0:
+                    writer.commit()
+        except ExtractError as err:
+            # One hostile or corrupt file shouldn't kill indexing of the
+            # rest of the collection — surface and continue. Re-stage the
+            # delete so any chunks already added (and possibly already
+            # committed by the mid-loop batch commit) get cleaned up;
+            # otherwise a parser that crashes after yielding N pages
+            # leaves a partial document indexed.
+            writer.delete_documents(F_PARENT_ID, parent_id)
+            print(f"[fnd skip] {err}", file=sys.stderr)
     writer.commit()
     writer.wait_merging_threads()
     return written
@@ -227,19 +239,27 @@ def build_index_from_config(
                     fm = None
                 if fm:
                     meta_blob_bytes = encode_meta_blob(fm)
-            writer.delete_documents(F_PARENT_ID, _path_parent_id(path))
-            for chunk in extract(path):
-                writer.add_document(
-                    _doc_for_chunk(
-                        chunk,
-                        collection=collection,
-                        source_path=source_id,
-                        meta_blob_bytes=meta_blob_bytes,
+            parent_id = _path_parent_id(path)
+            writer.delete_documents(F_PARENT_ID, parent_id)
+            try:
+                for chunk in extract(path):
+                    writer.add_document(
+                        _doc_for_chunk(
+                            chunk,
+                            collection=collection,
+                            source_path=source_id,
+                            meta_blob_bytes=meta_blob_bytes,
+                        )
                     )
-                )
-                written += 1
-                if written % _COMMIT_BATCH == 0:
-                    writer.commit()
+                    written += 1
+                    if written % _COMMIT_BATCH == 0:
+                        writer.commit()
+            except ExtractError as err:
+                # See build_index above — re-stage the delete so an
+                # extractor crash mid-iteration doesn't leave partial
+                # chunks indexed.
+                writer.delete_documents(F_PARENT_ID, parent_id)
+                print(f"[fnd skip] {err}", file=sys.stderr)
     writer.commit()
     writer.wait_merging_threads()
     return written
@@ -249,4 +269,4 @@ def _path_parent_id(path: Path) -> str:
     """Mirror of the extractor's hashing so deletes target the right docs."""
     import hashlib
 
-    return hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()
+    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()

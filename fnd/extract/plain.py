@@ -19,7 +19,7 @@ OVERLAP_CHARS = 200
 def _make_parent_id(path: Path) -> str:
     import hashlib
 
-    return hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()
+    return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def extract(path: Path) -> Iterator[Chunk]:

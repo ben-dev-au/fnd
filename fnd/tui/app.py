@@ -3640,7 +3640,12 @@ class FNDApp(App[None]):
         if not os.environ.get("FND_PREVIEW_DIAG"):
             return
         try:
-            with open("/tmp/fnd-preview-diag.log", "a") as f:
+            # Hardcoded /tmp path is intentional: opt-in dev
+            # instrumentation gated by FND_PREVIEW_DIAG=1, slated for
+            # removal once the preview-perf investigation closes (see
+            # docs/PREVIEW_DOM_PLAN.md). Production code paths do not
+            # touch /tmp.
+            with open("/tmp/fnd-preview-diag.log", "a") as f:  # noqa: S108
                 f.write(f"[{_time.monotonic():.3f}] {msg}\n")
         except Exception:
             pass
@@ -3677,7 +3682,8 @@ class FNDApp(App[None]):
                 f"lines={len(getattr(flat, 'lines', []) or [])}"
             )
         try:
-            with open("/tmp/fnd-preview-diag.log", "a") as f:
+            # See _diag_log above for the /tmp rationale.
+            with open("/tmp/fnd-preview-diag.log", "a") as f:  # noqa: S108
                 f.write("\n".join(lines) + "\n")
         except Exception:
             pass

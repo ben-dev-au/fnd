@@ -9,27 +9,39 @@ description = "Fast, free, keyboard-driven document search for macOS"
 requires-python = ">=3.13"
 license = { text = "MIT" }
 authors = [{ name = "Ben Davidson" }]
+# Pins use the compatible-release operator (~=) so `uv sync` cannot
+# silently absorb a surprise major from a security-sensitive parser
+# (pymupdf and the OOXML parsers especially). uv.lock pins exact
+# versions; the operators here gate `uv lock --upgrade`. Bumps go
+# through quarterly review documented in SECURITY.md.
 dependencies = [
-    "tantivy>=0.25",
-    "pymupdf>=1.27",
-    "pymupdf4llm>=0.0.17",
-    "python-pptx>=1.0",
-    "python-docx>=1.1",
-    "markdown-it-py>=3.0",
-    "watchdog>=4.0",
-    "textual>=0.85",
-    "rich>=13",
-    "typer>=0.12",
-    "pydantic>=2.7",
-    "pydantic-settings>=2.4",
-    "platformdirs>=4.2",
-    "loguru>=0.7",
-    "snowballstemmer>=3.0.1",
-    "tomlkit>=0.13",
+    "tantivy~=0.26",
+    "pymupdf~=1.27",
+    "pymupdf4llm~=1.27",
+    "python-pptx~=1.0",
+    "python-docx~=1.2",
+    "markdown-it-py~=4.0",
+    "watchdog~=6.0",
+    "textual~=8.0",
+    "rich~=15.0",
+    "typer~=0.25",
+    "pydantic~=2.13",
+    "pydantic-settings~=2.14",
+    "platformdirs~=4.9",
+    "snowballstemmer~=3.0",
+    "tomlkit~=0.14",
 ]
 
 [project.optional-dependencies]
-ocr = ["ocrmypdf>=16"]
+ocr = ["ocrmypdf~=17.0"]
+
+[tool.pytest.ini_options]
+# `slow` flags long-running tests (perf benches, fuzz harness). The
+# default fast suite excludes them with `-m "not slow"`; CI's nightly
+# job runs the full set.
+markers = [
+    "slow: long-running tests excluded from the fast suite",
+]
 
 [project.scripts]
 fnd = "fnd.cli:app"

@@ -7,7 +7,6 @@ can't leave the file half-empty.
 
 from __future__ import annotations
 
-import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,9 +17,9 @@ from fnd.config import app_data_dir
 
 
 def _state_path() -> Path:
-    d = app_data_dir() / "state"
-    d.mkdir(parents=True, exist_ok=True)
-    return d / "scope.toml"
+    from fnd._perms import secure_mkdir
+
+    return secure_mkdir(app_data_dir() / "state") / "scope.toml"
 
 
 @dataclass(slots=True)
@@ -83,8 +82,10 @@ def load(path: Path | None = None) -> UiState:
 
 def save(state: UiState, path: Path | None = None) -> None:
     """Atomic write of the state TOML."""
+    from fnd._perms import secure_mkdir, secure_write_text
+
     p = path if path is not None else _state_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
+    secure_mkdir(p.parent)
     doc = tomlkit.document()
     scope = tomlkit.table()
     scope["collections"] = list(state.collections)
@@ -99,6 +100,4 @@ def save(state: UiState, path: Path | None = None) -> None:
     filters["kinds"] = list(state.filter_kinds)
     filters["date"] = state.filter_date
     doc["filters"] = filters
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(tomlkit.dumps(doc), encoding="utf-8")
-    os.replace(tmp, p)
+    secure_write_text(p, tomlkit.dumps(doc), atomic=True)

@@ -1,0 +1,183 @@
+name: release
+
+# Triggered on any `v*` tag. Builds sdist + wheel, emits SBOM and a
+# SLSA-style build-provenance attestation, publishes to PyPI via a
+# Trusted Publisher (OIDC — no API token in repo secrets), and opens
+# a bump-PR against the Homebrew tap with the new sdist SHA-256.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build sdist + wheel
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # `id-token: write` lets the build job mint an OIDC token for
+      # the attestation step (and later for PyPI Trusted Publisher).
+      id-token: write
+      # `attestations: write` lets actions/attest-build-provenance
+      # record the SLSA-style provenance for the artifacts we produce.
+      attestations: write
+    outputs:
+      sdist-name: ${{ steps.meta.outputs.sdist }}
+      sdist-sha256: ${{ steps.meta.outputs.sha256 }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - run: uv python install 3.13
+
+      - name: Build sdist + wheel
+        run: uv build --sdist --wheel --out-dir dist
+
+      - name: Generate CycloneDX SBOM (S2)
+        # SBOM lives outside dist/ so the PyPI publish step (which
+        # uploads the whole packages-dir via twine) doesn't try to
+        # upload a JSON file as a distribution and fail.
+        run: |
+          mkdir -p sbom
+          uv tool install cyclonedx-bom
+          uv export --format requirements-txt --no-hashes -o requirements.frozen.txt
+          uv tool run cyclonedx-py requirements requirements.frozen.txt \
+            --output-format JSON \
+            --output-file sbom/sbom.cdx.json
+
+      - name: Attest build provenance (S2)
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.whl
+
+      - name: Compute sdist metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          sdist=$(ls dist/*.tar.gz | head -n1)
+          sha=$(shasum -a 256 "$sdist" | awk '{print $1}')
+          ver=$(basename "$sdist" .tar.gz | sed 's/^fnd-//')
+          echo "sdist=$(basename "$sdist")" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/
+
+  publish-pypi:
+    name: publish to PyPI (Trusted Publisher)
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish (OIDC, no token)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Configure the Trusted Publisher at
+          # https://pypi.org/manage/account/publishing/ pointing at
+          # this repo + `release.yml` workflow + `pypi` environment.
+          packages-dir: dist
+          skip-existing: true
+
+  release-notes:
+    name: publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Download SBOM
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: sbom/
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF##*/}"
+          # Attach sdist, wheel, and SBOM; the provenance attestation
+          # is fetched separately via `gh attestation verify` and is
+          # not uploaded as a release asset (GitHub stores it).
+          gh release create "$tag" \
+            --title "fnd $tag" \
+            --notes "See CHANGELOG / commit log for details. SHA-256: ${{ needs.build.outputs.sdist-sha256 }}" \
+            dist/*.tar.gz dist/*.whl sbom/sbom.cdx.json
+
+  bump-homebrew-tap:
+    name: bump homebrew-fnd formula
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Open formula bump PR
+        env:
+          # Set HOMEBREW_TAP_PAT to a fine-scoped GitHub PAT with PR
+          # write access to <owner>/homebrew-fnd. (No write access to
+          # this repo; cross-repo PRs need a real token.)
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_PAT }}
+          TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO }}
+          VERSION: ${{ needs.build.outputs.version }}
+          SHA256: ${{ needs.build.outputs.sdist-sha256 }}
+        if: ${{ vars.HOMEBREW_TAP_REPO != '' }}
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          git clone "https://x-access-token:$GH_TOKEN@github.com/$TAP_REPO.git" "$tmp/tap"
+          cd "$tmp/tap"
+          formula=Formula/fnd.rb
+          # PyPI mirrors the sdist by hashed path; the canonical
+          # download URL is derived from the version.
+          new_url="https://files.pythonhosted.org/packages/source/f/fnd/fnd-${VERSION}.tar.gz"
+          # Replace the url and sha256 lines in place.
+          sed -i.bak "s|^  url \".*\"|  url \"$new_url\"|" "$formula"
+          sed -i.bak "s|^  sha256 \".*\"|  sha256 \"$SHA256\"|" "$formula"
+          rm -f "$formula.bak"
+          branch="bump/fnd-$VERSION"
+          git checkout -b "$branch"
+          git add "$formula"
+          git -c user.email="actions@github.com" -c user.name="fnd-release-bot" \
+            commit -m "fnd $VERSION"
+          git push -u origin "$branch"
+          gh pr create \
+            --title "fnd $VERSION" \
+            --body "Automated bump from <owner>/fnd@${GITHUB_REF##*/}. sha256 \`$SHA256\`."

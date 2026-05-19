@@ -3,6 +3,13 @@
 A :class:`Chunk` is one indexed unit (one page of a PDF, one slide of a PPTX, one
 heading-section of a DOCX/MD, one fixed window of a TXT). Every chunk shares a
 ``parent_id`` so the query layer can group hits back into per-file results.
+
+:class:`ExtractError` is the single failure type that propagates out of
+``extract``. It wraps both *rejections* (we refused to parse — encrypted,
+decompression-bomb threshold tripped) and *crashes* (the parser raised
+something unhelpful). The indexer catches it and continues to the next
+file, so a single hostile or corrupt document can't deny indexing of
+its entire collection.
 """
 
 from __future__ import annotations
@@ -11,6 +18,19 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 Kind = Literal["pdf", "pptx", "docx", "md", "txt"]
+
+
+class ExtractError(Exception):
+    """Raised when a file can't be safely extracted.
+
+    ``path`` is the offending file; ``reason`` is a short human-readable
+    explanation suitable for printing to stderr.
+    """
+
+    def __init__(self, path: str, reason: str) -> None:
+        super().__init__(f"{path}: {reason}")
+        self.path = path
+        self.reason = reason
 
 
 @dataclass(slots=True, frozen=True)
