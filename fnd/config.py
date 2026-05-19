@@ -471,21 +471,39 @@ def write_collection_source(
     collection = collections.setdefault(collection_name, tomlkit.table())
     sources_array = collection.setdefault("sources", tomlkit.aot())  # array-of-tables
 
-    new_table = tomlkit.table()
-    new_table["path"] = str(source.path)
-    if source.includes:
-        new_table["includes"] = list(source.includes)
-    if source.excludes:
-        new_table["excludes"] = list(source.excludes)
-    if source.follow_symlinks:
-        new_table["follow_symlinks"] = source.follow_symlinks
-    if source.frontmatter_filter:
-        new_table["frontmatter_filter"] = source.frontmatter_filter
+    new_table = _source_to_tomlkit_table(source)
     sources_array.append(new_table)
 
     from fnd._perms import secure_write_text
 
     secure_write_text(config_path, tomlkit.dumps(doc))
+
+
+def _source_to_tomlkit_table(source: SourceConfig) -> Any:
+    """Serialise ``source`` to a tomlkit Table. Single point that owns
+    the source-field → TOML mapping so :func:`write_collection_source`,
+    :func:`write_collection`, and :func:`clone_source` all preserve the
+    same set of optional fields (including the Phase 2 app refs).
+    """
+    import tomlkit
+
+    table = tomlkit.table()
+    table["path"] = str(source.path)
+    if source.includes:
+        table["includes"] = list(source.includes)
+    if source.excludes:
+        table["excludes"] = list(source.excludes)
+    if source.follow_symlinks:
+        table["follow_symlinks"] = source.follow_symlinks
+    if source.frontmatter_filter:
+        table["frontmatter_filter"] = source.frontmatter_filter
+    if source.app is not None:
+        table["app"] = source.app
+    if source.app_for:
+        table["app_for"] = dict(source.app_for)
+    if source.app_params:
+        table["app_params"] = dict(source.app_params)
+    return table
 
 
 def write_collection(
@@ -518,23 +536,13 @@ def write_collection(
     if collection.sources:
         sources_aot = tomlkit.aot()
         for source in collection.sources:
-            st = tomlkit.table()
-            st["path"] = str(source.path)
-            if source.includes:
-                st["includes"] = list(source.includes)
-            if source.excludes:
-                st["excludes"] = list(source.excludes)
-            if source.follow_symlinks:
-                st["follow_symlinks"] = source.follow_symlinks
-            if source.frontmatter_filter:
-                st["frontmatter_filter"] = source.frontmatter_filter
-            sources_aot.append(st)
+            sources_aot.append(_source_to_tomlkit_table(source))
         new_table["sources"] = sources_aot
-    else:
-        # tomlkit aot() with zero entries produces no output; use an inline
-        # array so `[collections.<name>]` survives the round-trip and loads
-        # back as CollectionConfig(sources=[]).
-        new_table.add("sources", tomlkit.array())
+    # An empty `[collections.<name>]` table survives the round-trip and
+    # loads back as CollectionConfig(sources=[]) — no inline placeholder
+    # needed. A previous `sources = []` workaround broke
+    # write_collection_source's later append (tomlkit can't promote an
+    # inline array to an array-of-tables in place).
     collections[name] = new_table
     from fnd._perms import secure_write_text
 
@@ -589,6 +597,55 @@ def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Conf
     secure_mkdir(config_path.parent)
     secure_write_text(config_path, tomlkit.dumps(doc))
     return config
+
+
+def clone_source(
+    *,
+    config_path: Path,
+    source_collection: str,
+    source_index: int,
+    target_collection: str,
+) -> int:
+    """Deep-copy a source from one collection to another.
+
+    Loads the validated :class:`Config`, looks up
+    ``[collections.<source_collection>.sources][source_index]``, and
+    appends an independent copy to ``[collections.<target_collection>
+    .sources]``. Returns the new index in the target. Raises if either
+    collection is missing or the index is out of range.
+
+    The clone is a true deep copy — edits to the new entry don't
+    propagate back to the original. Uses :func:`_source_to_tomlkit_table`
+    so every persisted field (including Phase 2 ``app`` / ``app_for`` /
+    ``app_params``) round-trips.
+    """
+    validate_collection_name(source_collection)
+    validate_collection_name(target_collection)
+    if source_collection == target_collection:
+        raise ValueError("source and target collections must differ")
+    cfg = load(config_path)
+    if source_collection not in cfg.collections:
+        raise KeyError(f"unknown source collection {source_collection!r}")
+    if target_collection not in cfg.collections:
+        raise KeyError(f"unknown target collection {target_collection!r}")
+    sources = cfg.collections[source_collection].sources
+    if not 0 <= source_index < len(sources):
+        raise IndexError(
+            f"source_index {source_index} out of range for "
+            f"{source_collection!r} ({len(sources)} sources)"
+        )
+    source = sources[source_index]
+    # Re-validate through SourceConfig so the in-memory copy is fully
+    # independent of the original (avoids accidental list/dict aliasing
+    # if a caller later mutates the source). Pydantic's model_dump +
+    # model_validate gives us a clean deep copy.
+    cloned = SourceConfig.model_validate(source.model_dump())
+    write_collection_source(
+        config_path=config_path,
+        collection_name=target_collection,
+        source=cloned,
+    )
+    return len(cfg.collections[target_collection].sources)
 
 
 def delete_collection(*, config_path: Path, name: str) -> None:

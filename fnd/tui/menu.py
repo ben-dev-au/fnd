@@ -758,6 +758,15 @@ def _source_trailing(collection_name: str, idx: int) -> Callable[[FNDApp], str]:
     return _summary
 
 
+def _make_open_clone_source(name: str) -> Callable[[FNDApp], None]:
+    def _open(app: FNDApp) -> None:
+        from fnd.tui.settings_screen import CloneSourcePickCollectionScreen
+
+        app.push_screen(CloneSourcePickCollectionScreen(target_collection=name))
+
+    return _open
+
+
 def _provider_sources(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
     """Per-collection Sources list."""
     cfg = app._config  # type: ignore[attr-defined]
@@ -769,6 +778,19 @@ def _provider_sources(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
             label="Add source",
             kind=KIND_EXTERNAL,
             external=_make_open_source_form(name, None),
+        ),
+        MenuItem(
+            id=f"sources.{name}.clone",
+            label="Clone from another collection…",
+            description=(
+                "Deep-copy a source from another collection into this "
+                "one. Useful when you keep the same root (eg. an "
+                "Obsidian vault) in several collections with different "
+                "filters."
+            ),
+            kind=KIND_EXTERNAL,
+            external=_make_open_clone_source(name),
+            keywords=("clone", "copy", "another", "collection"),
         ),
     ]
     col = cfg.collections[name]

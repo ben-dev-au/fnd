@@ -2427,6 +2427,219 @@ class DeleteCollectionScreen(Screen[None]):
         self.app.pop_screen()
 
 
+# ── Clone-source flow (Phase 5) ─────────────────────────────────────
+
+
+class CloneSourcePickCollectionScreen(Screen[None]):
+    """Step 1 of clone: pick the source collection to copy a source FROM.
+
+    Lists every collection except the target so users can't accidentally
+    clone from a collection into itself. Enter pushes
+    :class:`CloneSourcePickSourceScreen` for that collection.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Cancel", show=False),
+        Binding("up,k", "cursor(-1)", show=False),
+        Binding("down,j", "cursor(1)", show=False),
+        Binding("enter", "activate", show=False),
+    ]
+
+    CSS = """
+    CloneSourcePickCollectionScreen { background: $surface; }
+    CloneSourcePickCollectionScreen > #settings_box {
+        height: auto;
+        border: round $primary 50%;
+        padding: 0 1;
+        margin: 1 4;
+    }
+    CloneSourcePickCollectionScreen > #settings_box:focus-within { border: round $accent; }
+    CloneSourcePickCollectionScreen #clone_list { height: auto; }
+    CloneSourcePickCollectionScreen .info { color: $text-muted; padding: 0 0 1 0; }
+    CloneSourcePickCollectionScreen > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(self, *, target_collection: str) -> None:
+        super().__init__()
+        self._target = target_collection
+
+    def compose(self) -> ComposeResult:
+        app: FNDApp = self.app  # type: ignore[assignment]
+        cfg = app._config  # type: ignore[attr-defined]
+        with Vertical(id="settings_box") as box:
+            box.border_title = f"Collections › {self._target} › Sources › Clone from…"
+            yield Static(
+                "Pick a collection to clone a source from. The source is "
+                f"deep-copied into {self._target!r} (edits won't propagate).",
+                classes="info",
+            )
+            options: list[Option] = []
+            if cfg is not None:
+                for name in sorted(cfg.collections):
+                    if name == self._target:
+                        continue
+                    n = len(cfg.collections[name].sources)
+                    label = f"{name}  ({n} source{'s' if n != 1 else ''})"
+                    options.append(Option(label, id=name))
+            if not options:
+                options.append(Option("(no other collections)", id="__empty__"))
+            yield OptionList(*options, id="clone_list")
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        self.query_one("#clone_list", OptionList).focus()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(app, (("⏎", "Pick"), ("Esc", "Cancel")))
+        )
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    def action_cursor(self, direction: int) -> None:
+        lst = self.query_one("#clone_list", OptionList)
+        if direction > 0:
+            lst.action_cursor_down()
+        else:
+            lst.action_cursor_up()
+
+    def action_activate(self) -> None:
+        self.query_one("#clone_list", OptionList).action_select()
+
+    @on(OptionList.OptionSelected, "#clone_list")
+    def _on_select(self, ev: OptionList.OptionSelected) -> None:
+        if ev.option.id == "__empty__":
+            return
+        # Push the step-2 picker for the chosen source collection.
+        chosen = ev.option.id
+        if chosen is None:
+            return
+        self.app.push_screen(
+            CloneSourcePickSourceScreen(
+                source_collection=chosen,
+                target_collection=self._target,
+            )
+        )
+
+
+class CloneSourcePickSourceScreen(Screen[None]):
+    """Step 2 of clone: pick the individual source to copy.
+
+    Lists every source in the chosen source collection with a brief
+    summary (file types + path). Enter dispatches
+    :func:`fnd.config.clone_source` and pops back to the Sources screen
+    of the target collection. Triggers a reindex of the target.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Cancel", show=False),
+        Binding("up,k", "cursor(-1)", show=False),
+        Binding("down,j", "cursor(1)", show=False),
+        Binding("enter", "activate", show=False),
+    ]
+
+    CSS = CloneSourcePickCollectionScreen.CSS
+
+    def __init__(self, *, source_collection: str, target_collection: str) -> None:
+        super().__init__()
+        self._source_coll = source_collection
+        self._target = target_collection
+
+    def compose(self) -> ComposeResult:
+        app: FNDApp = self.app  # type: ignore[assignment]
+        cfg = app._config  # type: ignore[attr-defined]
+        with Vertical(id="settings_box") as box:
+            box.border_title = (
+                f"Collections › {self._target} › Sources › Clone from " f"{self._source_coll}"
+            )
+            yield Static(
+                f"Pick a source from {self._source_coll!r} to deep-copy " f"into {self._target!r}.",
+                classes="info",
+            )
+            options: list[Option] = []
+            if cfg is not None and self._source_coll in cfg.collections:
+                sources = cfg.collections[self._source_coll].sources
+                for i, src in enumerate(sources):
+                    base = Path(str(src.path)).name or str(src.path)
+                    types = (
+                        ", ".join(
+                            ext
+                            for ext in ("md", "pdf", "docx", "pptx", "txt")
+                            if any(g.endswith(f".{ext}") for g in src.includes)
+                        )
+                        or "all"
+                    )
+                    label = f"{i + 1}. {base}  ·  {types}  ·  {src.path}"
+                    options.append(Option(label, id=str(i)))
+            if not options:
+                options.append(Option("(collection has no sources)", id="__empty__"))
+            yield OptionList(*options, id="clone_list")
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        self.query_one("#clone_list", OptionList).focus()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(app, (("⏎", "Clone"), ("Esc", "Cancel")))
+        )
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    def action_cursor(self, direction: int) -> None:
+        lst = self.query_one("#clone_list", OptionList)
+        if direction > 0:
+            lst.action_cursor_down()
+        else:
+            lst.action_cursor_up()
+
+    def action_activate(self) -> None:
+        self.query_one("#clone_list", OptionList).action_select()
+
+    @on(OptionList.OptionSelected, "#clone_list")
+    def _on_select(self, ev: OptionList.OptionSelected) -> None:
+        if ev.option.id == "__empty__" or ev.option.id is None:
+            return
+        try:
+            idx = int(ev.option.id)
+        except ValueError:
+            return
+        from fnd.config import clone_source, default_config_path, load
+
+        try:
+            clone_source(
+                config_path=default_config_path(),
+                source_collection=self._source_coll,
+                source_index=idx,
+                target_collection=self._target,
+            )
+        except (KeyError, IndexError, ValueError) as e:
+            self.notify(f"Clone failed: {e}", severity="error")
+            return
+
+        app: FNDApp = self.app  # type: ignore[assignment]
+        app._config = load()  # type: ignore[attr-defined]
+        app._refresh_collections_panel()  # type: ignore[attr-defined]
+        self.notify(
+            f"Cloned source from {self._source_coll!r} into {self._target!r}. "
+            f"Reindexing {self._target}…",
+            title="Clone source",
+            timeout=4,
+        )
+        # Trigger reindex of the target since its source set just grew.
+        # Fire-and-forget; failure surfaces via the existing
+        # prompt-and-run UI, never block the pop.
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            app._reindex_collection_async(self._target)  # type: ignore[attr-defined]
+        # Pop both: step-2 picker, then step-1 picker.
+        self.app.pop_screen()
+        self.app.pop_screen()
+
+
 # ── Public entry points used by the main app ────────────────────────
 
 
