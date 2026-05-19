@@ -3967,6 +3967,10 @@ class FNDApp(App[None]):
 
         For PDFs with a non-empty query, routes through Skim's URL form
         so ``&search=`` highlights the term in the opened PDF (§22 Spike C).
+        For MD / TXT, the chunk's ``line`` (plus per-source app override
+        and Obsidian vault from app_params) flows through to the
+        resolved handler so templates like ``code -g {path}:{line}:1``
+        jump to the right line.
         """
         tree = self.query_one("#results_pane", Tree)
         if tree.cursor_node is None:
@@ -3979,7 +3983,11 @@ class FNDApp(App[None]):
             path=Path(hit.path),
             kind=hit.kind,
             page=hit.page,
+            slide=getattr(hit, "slide", 0),
+            heading_path=getattr(hit, "heading_path", ""),
+            line=getattr(hit, "line", 0),
             query=self._current_query,
+            source=self._source_for_hit(hit),
         )
 
     def action_open_default_app(self) -> None:

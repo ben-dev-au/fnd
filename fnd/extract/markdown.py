@@ -58,6 +58,7 @@ def _flush_section(
     body_md: str,
     has_content: bool,
     seq: int,
+    section_start_line: int,
 ) -> Chunk | None:
     if not has_content:
         return None
@@ -79,6 +80,9 @@ def _flush_section(
         heading_path=heading_path,
         title=heading_stack[0] if heading_stack else "",
         chunk_seq=seq,
+        # `section_start_line` is 0-based (token.map index); deep-link
+        # templates want 1-based.
+        line=section_start_line + 1,
     )
 
 
@@ -148,6 +152,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
                 body_md=_section_source(source_lines, section_start_line, heading_line),
                 has_content=section_has_content,
                 seq=seq,
+                section_start_line=section_start_line,
             )
             if chunk is not None:
                 yield chunk
@@ -210,6 +215,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
         body_md=_section_source(source_lines, section_start_line, total_lines),
         has_content=section_has_content,
         seq=seq,
+        section_start_line=section_start_line,
     )
     if chunk is not None:
         yield chunk

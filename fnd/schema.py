@@ -35,7 +35,9 @@ from typing import Final
 from tantivy import Schema, SchemaBuilder
 
 # Bump on any field-shape change; indexer refuses to open a stale index.
-SCHEMA_VERSION: Final[int] = 6
+# v7 (2026-05-19): added F_LINE for MD / TXT line-locator deep links via
+# user app templates like `code -g {path}:{line}:1`.
+SCHEMA_VERSION: Final[int] = 7
 
 # Field-name constants so callers don't sprinkle string literals.
 F_PARENT_ID: Final = "parent_id"
@@ -48,6 +50,10 @@ F_KIND: Final = "kind"
 F_PAGE: Final = "page"
 F_PAGE_LABEL: Final = "page_label"
 F_SLIDE: Final = "slide"
+# 1-based source line of the chunk's first character (MD heading-open
+# line, TXT chunk window start). 0 for kinds without line tracking
+# (PDF, DOCX, PPTX) — they have page/slide/heading_path instead.
+F_LINE: Final = "line"
 F_HEADING_PATH: Final = "heading_path"
 F_TITLE: Final = "title"
 F_AUTHOR: Final = "author"
@@ -96,6 +102,7 @@ def build_schema() -> Schema:
     sb.add_unsigned_field(F_MTIME, stored=True, indexed=True, fast=True)
     sb.add_unsigned_field(F_PAGE, stored=True, indexed=True, fast=True)
     sb.add_unsigned_field(F_SLIDE, stored=True, indexed=True, fast=True)
+    sb.add_unsigned_field(F_LINE, stored=True, indexed=True, fast=True)
     sb.add_unsigned_field(F_CHUNK_SEQ, stored=True, indexed=True, fast=True)
 
     # Stored bytes for the structured-preview JSON (snippet generation).
