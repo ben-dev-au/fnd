@@ -1,6 +1,10 @@
-"""Daemon helper for docling. Loads model once, processes PDFs from stdin.
+"""Daemon helper for docling. Loads model once; extracts one page per request.
 
 Executed by docling-slim's own tool-venv Python, not fnd's venv.
+
+Protocol:
+  request:  {"pdf": "...", "page": 0}   (page is 0-based)
+  response: {"pdf": "...", "page": 0, "wall_ms": 1234.5, "md": "..."}
 """
 
 from __future__ import annotations
@@ -13,7 +17,6 @@ import time
 
 
 def _main() -> None:
-    # Quiet model-load progress to avoid corrupting the stdout JSON stream.
     log_fd = os.dup(1)
     null_fd = os.open(os.devnull, os.O_WRONLY)
     try:
@@ -33,7 +36,6 @@ def _main() -> None:
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipe_opts)}
         )
 
-        # Best-effort device probe — docling uses HF Accelerate underneath.
         try:
             import torch  # type: ignore[import-not-found]
 
@@ -55,18 +57,22 @@ def _main() -> None:
     sys.stdout.flush()
 
     for raw in sys.stdin:
-        pdf = raw.strip()
-        if not pdf:
+        raw = raw.strip()
+        if not raw:
             break
+        req = json.loads(raw)
+        pdf = req["pdf"]
+        page = int(req["page"])
         t0 = time.perf_counter()
         try:
             with _mute_fd(1), _mute_fd(2):
-                result = converter.convert(pdf)
+                # docling page_range is 1-based, inclusive on both ends.
+                result = converter.convert(pdf, page_range=(page + 1, page + 1))
                 md = result.document.export_to_markdown()
             wall_ms = (time.perf_counter() - t0) * 1000.0
-            payload = {"pdf": pdf, "wall_ms": wall_ms, "md": md}
+            payload = {"pdf": pdf, "page": page, "wall_ms": wall_ms, "md": md}
         except Exception as e:
-            payload = {"pdf": pdf, "error": f"{type(e).__name__}: {e}"}
+            payload = {"pdf": pdf, "page": page, "error": f"{type(e).__name__}: {e}"}
         sys.stdout.write(json.dumps(payload) + "\n")
         sys.stdout.flush()
 

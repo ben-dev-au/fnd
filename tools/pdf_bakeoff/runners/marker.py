@@ -35,12 +35,11 @@ def setup() -> Any:
     print(f"[marker] using {python}; loading model (~25s, one-time)…", file=sys.stderr)
     proc = start_daemon(python, _HELPER, name="marker", ready_timeout_s=300.0)
     print("[marker] daemon ready", file=sys.stderr)
-    return DaemonState(proc=proc, docs={}, cli_name="marker_single", helper=_HELPER)
+    return DaemonState(proc=proc, cli_name="marker_single", helper=_HELPER)
 
 
 def run(state: Any, pdf_path: Path, page_index: int) -> RunnerResult:
-    _ = page_index  # whole-doc runner; per-page granularity not modelled
-    return extract_via_daemon(state, pdf_path)
+    return extract_via_daemon(state, pdf_path, page_index)
 
 
 def teardown(state: Any) -> None:

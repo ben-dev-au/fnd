@@ -27,7 +27,6 @@ _UV_TOOL_ROOT = Path.home() / ".local" / "share" / "uv" / "tools"
 
 class DaemonState(TypedDict):
     proc: subprocess.Popen[str]
-    docs: dict[str, str]  # pdf_path -> extracted markdown
     cli_name: str
     helper: Path
 
@@ -76,19 +75,15 @@ def start_daemon(
     raise RuntimeError(f"{name} daemon did not become ready within {ready_timeout_s}s")
 
 
-def extract_via_daemon(state: DaemonState, pdf_path: Path) -> RunnerResult:
-    """Send one PDF to the daemon, read one JSON response."""
-    cache = state["docs"]
-    key = str(pdf_path)
-    if key in cache:
-        return RunnerResult(wall_ms=0.0, rss_delta_mb=0.0, output_md=cache[key])
-
+def extract_via_daemon(state: DaemonState, pdf_path: Path, page_index: int) -> RunnerResult:
+    """Send one (pdf, page) request to the daemon, read one JSON response."""
     proc = state["proc"]
     assert proc.stdin is not None
     assert proc.stdout is not None
 
+    request = json.dumps({"pdf": str(pdf_path), "page": page_index})
     try:
-        proc.stdin.write(f"{pdf_path}\n")
+        proc.stdin.write(request + "\n")
         proc.stdin.flush()
         line = proc.stdout.readline()
     except (BrokenPipeError, ValueError) as e:
@@ -130,7 +125,6 @@ def extract_via_daemon(state: DaemonState, pdf_path: Path) -> RunnerResult:
         )
 
     md = str(msg.get("md", ""))
-    cache[key] = md
     return RunnerResult(
         wall_ms=float(msg.get("wall_ms", 0.0)),
         rss_delta_mb=0.0,

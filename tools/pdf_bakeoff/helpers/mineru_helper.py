@@ -1,6 +1,10 @@
-"""Daemon helper for mineru. Loads model once, processes PDFs from stdin.
+"""Daemon helper for mineru. Loads model once; extracts one page per request.
 
 Executed by mineru's own tool-venv Python, not fnd's venv.
+
+Protocol:
+  request:  {"pdf": "...", "page": 0}   (page is 0-based)
+  response: {"pdf": "...", "page": 0, "wall_ms": 1234.5, "md": "..."}
 """
 
 from __future__ import annotations
@@ -15,7 +19,6 @@ from pathlib import Path
 
 
 def _main() -> None:
-    # Quiet mineru's noisy loguru init banner so stdout stays JSON.
     log_fd = os.dup(1)
     null_fd = os.open(os.devnull, os.O_WRONLY)
     try:
@@ -47,22 +50,25 @@ def _main() -> None:
     sys.stdout.flush()
 
     for raw in sys.stdin:
-        pdf = raw.strip()
-        if not pdf:
+        raw = raw.strip()
+        if not raw:
             break
+        req = json.loads(raw)
+        pdf = req["pdf"]
+        page = int(req["page"])
         t0 = time.perf_counter()
         try:
             with _mute_fd(1), _mute_fd(2):
-                md = _extract_one(do_parse, Path(pdf))
+                md = _extract_one_page(do_parse, Path(pdf), page)
             wall_ms = (time.perf_counter() - t0) * 1000.0
-            payload = {"pdf": pdf, "wall_ms": wall_ms, "md": md}
+            payload = {"pdf": pdf, "page": page, "wall_ms": wall_ms, "md": md}
         except Exception as e:
-            payload = {"pdf": pdf, "error": f"{type(e).__name__}: {e}"}
+            payload = {"pdf": pdf, "page": page, "error": f"{type(e).__name__}: {e}"}
         sys.stdout.write(json.dumps(payload) + "\n")
         sys.stdout.flush()
 
 
-def _extract_one(do_parse, pdf_path: Path) -> str:
+def _extract_one_page(do_parse, pdf_path: Path, page_index: int) -> str:
     pdf_bytes = pdf_path.read_bytes()
     with tempfile.TemporaryDirectory(prefix="mineru-helper-") as tmp:
         do_parse(
@@ -82,6 +88,8 @@ def _extract_one(do_parse, pdf_path: Path) -> str:
             f_dump_orig_pdf=False,
             f_dump_content_list=False,
             image_analysis=False,
+            start_page_id=page_index,
+            end_page_id=page_index,
         )
         md_files = list(Path(tmp).rglob("*.md"))
         if not md_files:

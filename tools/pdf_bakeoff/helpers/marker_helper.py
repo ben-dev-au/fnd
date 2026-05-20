@@ -1,6 +1,10 @@
-"""Daemon helper for marker. Loads model once, processes PDFs from stdin.
+"""Daemon helper for marker. Loads model once; extracts one page per request.
 
 Executed by marker-pdf's own tool-venv Python, not fnd's venv.
+
+Protocol:
+  request:  {"pdf": "...", "page": 0}   (page is 0-based)
+  response: {"pdf": "...", "page": 0, "wall_ms": 1234.5, "md": "..."}
 """
 
 from __future__ import annotations
@@ -15,22 +19,6 @@ import time
 def _main() -> None:
     os.environ.setdefault("TORCH_DEVICE", "mps" if sys.platform == "darwin" else "cpu")
 
-    # Aggressive batch sizes — marker's defaults are tuned for ~8GB
-    # devices. On 32-64GB Apple Silicon there's no reason to single-
-    # thread the model. Numbers below are conservative for a 64GB Max;
-    # halve them if you OOM.
-    marker_config = {
-        "disable_ocr": True,
-        "disable_image_extraction": True,
-        "disable_ocr_math": True,
-        "disable_links": True,
-        "layout_batch_size": 32,
-        "detection_batch_size": 32,
-        "equation_batch_size": 32,
-        "table_rec_batch_size": 16,
-        "pdftext_workers": 8,
-    }
-
     log_fd = os.dup(1)
     null_fd = os.open(os.devnull, os.O_WRONLY)
     try:
@@ -42,38 +30,43 @@ def _main() -> None:
         from marker.settings import settings  # type: ignore[import-not-found]
 
         device_actual = settings.TORCH_DEVICE_MODEL
-        config = ConfigParser(marker_config).generate_config_dict()
-        converter = PdfConverter(artifact_dict=create_model_dict(), config=config)
+        artifact_dict = create_model_dict()
     finally:
         os.dup2(log_fd, 1)
         os.close(log_fd)
         os.close(null_fd)
 
-    print(
-        f"[marker-helper] device={device_actual} "
-        f"layout_batch={marker_config['layout_batch_size']} "
-        f"det_batch={marker_config['detection_batch_size']} "
-        f"pdftext_workers={marker_config['pdftext_workers']}",
-        file=sys.stderr,
-        flush=True,
-    )
+    print(f"[marker-helper] device={device_actual}", file=sys.stderr, flush=True)
 
     sys.stdout.write(json.dumps({"_status": "ready"}) + "\n")
     sys.stdout.flush()
 
     for raw in sys.stdin:
-        pdf = raw.strip()
-        if not pdf:
+        raw = raw.strip()
+        if not raw:
             break
+        req = json.loads(raw)
+        pdf = req["pdf"]
+        page = int(req["page"])
         t0 = time.perf_counter()
         try:
             with _mute_fd(1), _mute_fd(2):
+                config = ConfigParser(
+                    {
+                        "disable_ocr": True,
+                        "disable_image_extraction": True,
+                        "disable_ocr_math": True,
+                        "disable_links": True,
+                        "page_range": str(page),
+                    }
+                ).generate_config_dict()
+                converter = PdfConverter(artifact_dict=artifact_dict, config=config)
                 rendered = converter(pdf)
                 md, _meta, _images = text_from_rendered(rendered)
             wall_ms = (time.perf_counter() - t0) * 1000.0
-            payload = {"pdf": pdf, "wall_ms": wall_ms, "md": md}
+            payload = {"pdf": pdf, "page": page, "wall_ms": wall_ms, "md": md}
         except Exception as e:
-            payload = {"pdf": pdf, "error": f"{type(e).__name__}: {e}"}
+            payload = {"pdf": pdf, "page": page, "error": f"{type(e).__name__}: {e}"}
         sys.stdout.write(json.dumps(payload) + "\n")
         sys.stdout.flush()
 

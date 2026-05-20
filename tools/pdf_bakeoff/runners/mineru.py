@@ -48,12 +48,11 @@ def setup() -> Any:
     print(f"[mineru] using {python}; loading model (~20s, one-time)…", file=sys.stderr)
     proc = start_daemon(python, _HELPER, name="mineru", ready_timeout_s=300.0)
     print("[mineru] daemon ready", file=sys.stderr)
-    return DaemonState(proc=proc, docs={}, cli_name="mineru", helper=_HELPER)
+    return DaemonState(proc=proc, cli_name="mineru", helper=_HELPER)
 
 
 def run(state: Any, pdf_path: Path, page_index: int) -> RunnerResult:
-    _ = page_index
-    return extract_via_daemon(state, pdf_path)
+    return extract_via_daemon(state, pdf_path, page_index)
 
 
 def teardown(state: Any) -> None:
