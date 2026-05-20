@@ -309,6 +309,24 @@ and explicit pruning is simpler than tuning a policy.
 7. End-to-end verification: cold reindex of HBR handbook → warm reindex
    should drop from ~43s to <2s (cache hits)
 
+### Cache-driven resumability (no separate machinery needed)
+
+The cache is also the resumability primitive. Every file's extraction
+completion writes a cache entry on disk; the indexer's per-file loop
+already checks the cache at the top of `extract()`. So:
+
+- Ctrl+C / terminal close / sleep mid-reindex → re-run
+  `fnd collection reindex <name>` and only the files not yet cached
+  get re-extracted.
+- No "resume" flag needed; the cache lookup handles it.
+
+One small optimisation to add in Phase 2: when the cache hits AND the
+Tantivy index already has chunks for this `parent_id` at this mtime,
+skip the delete+rewrite of those chunks too. Without this, warm
+reindex is O(JSON-load) per file; with this, it's O(metadata-check)
+per file. Difference: ~5ms vs ~50ms per cached file = matters on
+big corpora.
+
 ### Out of scope for Phase 2
 
 - LRU eviction (manual prune is enough)
@@ -319,6 +337,126 @@ and explicit pruning is simpler than tuning a policy.
   - pymupdf4llm processes whole-doc anyway
   - docling daemon does too
   - File-level change → file-level recompute is the natural unit
+
+## Phase 2.5 — In-app progress UI + background runs
+
+Even with caching, the first cold reindex of a real corpus can be
+hours. A CLI-only flow (block terminal until done, no progress
+feedback, no way to dismiss) is unworkable. fnd needs an in-app
+indexer with a progress UI and the ability to run in the background
+within the TUI's lifetime.
+
+### Surface (TUI command palette)
+
+```
+> reindex default
+```
+
+opens a modal dialog:
+
+```
+┌─ Indexing: Documents/Readings ─────────────────────────────┐
+│                                                            │
+│  142 / 487 files                          [████░░░░░░] 29% │
+│                                                            │
+│  Current: (HBR Handbooks) coll. - The Harvard Business…    │
+│  Page 187 / 286 · docling fallback fired on 3 pages        │
+│                                                            │
+│  Started: 14:23   Elapsed: 18 min   ETA: ~45 min remaining │
+│  Cache: 38 hits, 104 misses                                │
+│                                                            │
+│  [ Pause ]  [ Run in background ]  [ Cancel ]              │
+└────────────────────────────────────────────────────────────┘
+```
+
+### Behaviours
+
+- **Run in background**: dismisses the dialog; indexer continues as an
+  asyncio task owned by FNDApp. A thin one-line status indicator
+  appears in the footer/status bar ("indexing 142/487 · click to
+  view"). Clicking re-opens the modal.
+- **Pause**: completes the current file, writes a checkpoint to the
+  state file, stops. Re-opening the modal offers Resume.
+- **Cancel**: stops at next file boundary. Cache entries written
+  during the run remain (so a future `reindex` skips them).
+- **Quit fnd mid-reindex**: the asyncio task dies; cache entries
+  written so far survive. On next launch, fnd reads the state file
+  and shows a one-line prompt:
+  ```
+  Last reindex of 'default' was interrupted at 142/487.
+                                       [ Resume ]  [ Discard ]
+  ```
+
+### Architecture
+
+- `fnd/index_runner.py` — the async indexer task. Mirrors
+  `build_index_from_config` but yields per-file progress events
+  instead of blocking until done. Uses `asyncio.to_thread` for the
+  per-file pymupdf4llm + docling work so the event loop stays
+  responsive for UI rendering.
+- `fnd/tui/indexer_modal.py` — Textual ModalScreen with the layout
+  above. Reads events from a `asyncio.Queue` shared with the runner.
+- `fnd/tui/app.py` — adds a command-palette entry, a footer status
+  widget, and a startup hook that reads the state file.
+- State file: `$XDG_DATA_HOME/fnd/reindex/<collection>.state.toml` —
+  small TOML with `started_at`, `total_files`, `files_completed`,
+  `current_file`, `interrupted_at`. Atomic-writes per-file completion.
+
+### Phase 2.5 deliverables
+
+1. `fnd/index_runner.py` — async indexer + progress events
+2. `fnd/tui/indexer_modal.py` — progress dialog
+3. `fnd/tui/app.py` — palette command, footer status, resume prompt
+4. State file format + atomic-write helper
+5. Tests:
+   - F16: starting a reindex from palette opens the modal
+   - F17: "Run in background" dismisses modal, indexer continues
+   - F18: closing fnd mid-reindex writes a state file; reopening shows
+     the resume prompt
+   - F19: "Discard" deletes the state file (cache entries kept)
+   - F20: cache-hit files don't show up in the progress count
+   - NF11: UI stays responsive during indexing (frame rate >30fps in
+     async-runner mode)
+
+### Background-helper alternatives (deferred)
+
+A launchd-managed daemon would let reindex survive fnd quit + reboot.
+Honest cost:
+- Apple Developer ID required for Homebrew distribution (already a
+  concern fnd's SECURITY.md navigates for the main binary)
+- Separate `fnd-indexd` binary with its own update channel
+- IPC protocol (Unix socket or gRPC) between TUI and daemon
+- Permissions UX (background-task entitlement on macOS)
+
+Defer until users actually report wanting reindex to survive fnd
+quit. The cache already makes a "quit + relaunch + resume" flow
+fast enough that this is probably YAGNI.
+
+## Phase 2.6 — Preview pane parity verification
+
+Not really a new phase; a verification step that should happen as
+part of Phase 2 acceptance. Goal: PDF preview-pane load with warm
+cache is **indistinguishable** from MD file preview load.
+
+The plumbing is already there from Phase 1 — adding `"pdf"` to
+`_MARKDOWN_RENDERED_KINDS` routes PDFs through the same structural
+pipeline as MD/DOCX. With Phase 2 caching:
+
+- Cache hit at preview time = JSON load (~10-30ms for a 300-page
+  book's chunk blob) + structural widget mount
+- The existing prefetch mechanism (mount-on-tree-expand, cache flip
+  on revisit) applies unchanged
+
+### Verification (NF10)
+
+- Open a known-cached PDF in the preview pane; time to first paint
+  must be within 1.5× of a same-size MD file's first paint
+- Snapshot test verifies the prefetch widget tree is built before the
+  user clicks (mount-on-expand contract holds for PDFs)
+- Manual: navigate through a 200-page book's match list with the
+  arrow keys; preview re-mount latency must be sub-100ms on every
+  step (the per-chunk prefetch + cache-flip already does this for MD;
+  same path for PDF after Phase 1)
 
 ## Phase 3 — Per-page quality routing (hybrid pymupdf4llm + docling)
 
