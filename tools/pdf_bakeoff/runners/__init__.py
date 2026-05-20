@@ -25,6 +25,13 @@ _BUILTIN: dict[str, str] = {
     "pymupdf4llm_toc": "tools.pdf_bakeoff.runners.pymupdf4llm_toc",
 }
 
+# Opt-in built-in (pymupdf4llm with AI-layout add-on; same install but
+# isolated to its own daemon so the global import side-effects don't
+# contaminate the other pymupdf4llm runners)
+_OPTIONAL_BUILTIN: dict[str, str] = {
+    "pymupdf4llm_layout_ai": "tools.pdf_bakeoff.runners.pymupdf4llm_layout_ai",
+}
+
 # Opt-in (heavy ML deps; --with-<name>)
 _OPTIONAL: dict[str, str] = {
     "docling": "tools.pdf_bakeoff.runners.docling",
@@ -36,15 +43,15 @@ _OPTIONAL: dict[str, str] = {
 
 
 def all_names() -> list[str]:
-    return list(_BUILTIN) + list(_OPTIONAL)
+    return list(_BUILTIN) + list(_OPTIONAL_BUILTIN) + list(_OPTIONAL)
 
 
 def is_optional(name: str) -> bool:
-    return name in _OPTIONAL
+    return name in _OPTIONAL or name in _OPTIONAL_BUILTIN
 
 
 def load(name: str) -> Runner:
-    mod_path = _BUILTIN.get(name) or _OPTIONAL.get(name)
+    mod_path = _BUILTIN.get(name) or _OPTIONAL_BUILTIN.get(name) or _OPTIONAL.get(name)
     if mod_path is None:
         raise KeyError(f"unknown runner: {name!r}")
     return importlib.import_module(mod_path)  # type: ignore[return-value]

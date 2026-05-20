@@ -105,6 +105,14 @@ def parse_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         help="enable docling_backend_text runner (force_backend_text=True for inline-format recovery)",
     )
+    p.add_argument(
+        "--with-pymupdf4llm-layout-ai",
+        action="store_true",
+        help=(
+            "enable pymupdf4llm_layout_ai runner (uses pymupdf-layout AI-based "
+            "layout detection; Polyform Noncommercial license)"
+        ),
+    )
     p.add_argument("--with-marker", action="store_true", help="enable marker runner")
     p.add_argument("--with-mineru", action="store_true", help="enable mineru runner")
     p.add_argument(
@@ -144,6 +152,10 @@ def parse_args(argv: Sequence[str] | None = None) -> Args:
         opt_ins.add("docling_backend_text")
         if "docling_backend_text" not in requested:
             requested.append("docling_backend_text")
+    if ns.with_pymupdf4llm_layout_ai:
+        opt_ins.add("pymupdf4llm_layout_ai")
+        if "pymupdf4llm_layout_ai" not in requested:
+            requested.append("pymupdf4llm_layout_ai")
     if ns.with_marker:
         opt_ins.add("marker")
         if "marker" not in requested:
