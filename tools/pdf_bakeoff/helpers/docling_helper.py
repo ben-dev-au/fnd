@@ -32,10 +32,24 @@ def _main() -> None:
         converter = DocumentConverter(
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipe_opts)}
         )
+
+        # Best-effort device probe — docling uses HF Accelerate underneath.
+        try:
+            import torch  # type: ignore[import-not-found]
+
+            device_actual = (
+                "mps"
+                if torch.backends.mps.is_available()
+                else ("cuda" if torch.cuda.is_available() else "cpu")
+            )
+        except Exception:
+            device_actual = "unknown"
     finally:
         os.dup2(log_fd, 1)
         os.close(log_fd)
         os.close(null_fd)
+
+    print(f"[docling-helper] device={device_actual} do_ocr=False", file=sys.stderr, flush=True)
 
     sys.stdout.write(json.dumps({"_status": "ready"}) + "\n")
     sys.stdout.flush()

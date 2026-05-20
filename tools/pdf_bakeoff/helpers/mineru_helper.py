@@ -21,10 +21,27 @@ def _main() -> None:
     try:
         os.dup2(null_fd, 1)
         from mineru.cli.common import do_parse  # type: ignore[import-not-found]
+
+        try:
+            import torch  # type: ignore[import-not-found]
+
+            device_actual = (
+                "mps"
+                if torch.backends.mps.is_available()
+                else ("cuda" if torch.cuda.is_available() else "cpu")
+            )
+        except Exception:
+            device_actual = "unknown"
     finally:
         os.dup2(log_fd, 1)
         os.close(log_fd)
         os.close(null_fd)
+
+    print(
+        f"[mineru-helper] device={device_actual} backend=pipeline method=txt",
+        file=sys.stderr,
+        flush=True,
+    )
 
     sys.stdout.write(json.dumps({"_status": "ready"}) + "\n")
     sys.stdout.flush()

@@ -13,11 +13,24 @@ import time
 
 
 def _main() -> None:
-    # marker_single defaults to MPS on Apple Silicon; honour any user override.
     os.environ.setdefault("TORCH_DEVICE", "mps" if sys.platform == "darwin" else "cpu")
 
-    # Marker prints model-load progress to stdout; isolate it so our JSON
-    # protocol on stdout stays clean.
+    # Aggressive batch sizes — marker's defaults are tuned for ~8GB
+    # devices. On 32-64GB Apple Silicon there's no reason to single-
+    # thread the model. Numbers below are conservative for a 64GB Max;
+    # halve them if you OOM.
+    marker_config = {
+        "disable_ocr": True,
+        "disable_image_extraction": True,
+        "disable_ocr_math": True,
+        "disable_links": True,
+        "layout_batch_size": 32,
+        "detection_batch_size": 32,
+        "equation_batch_size": 32,
+        "table_rec_batch_size": 16,
+        "pdftext_workers": 8,
+    }
+
     log_fd = os.dup(1)
     null_fd = os.open(os.devnull, os.O_WRONLY)
     try:
@@ -26,13 +39,24 @@ def _main() -> None:
         from marker.converters.pdf import PdfConverter  # type: ignore[import-not-found]
         from marker.models import create_model_dict  # type: ignore[import-not-found]
         from marker.output import text_from_rendered  # type: ignore[import-not-found]
+        from marker.settings import settings  # type: ignore[import-not-found]
 
-        config = ConfigParser({"disable_ocr": True}).generate_config_dict()
+        device_actual = settings.TORCH_DEVICE_MODEL
+        config = ConfigParser(marker_config).generate_config_dict()
         converter = PdfConverter(artifact_dict=create_model_dict(), config=config)
     finally:
         os.dup2(log_fd, 1)
         os.close(log_fd)
         os.close(null_fd)
+
+    print(
+        f"[marker-helper] device={device_actual} "
+        f"layout_batch={marker_config['layout_batch_size']} "
+        f"det_batch={marker_config['detection_batch_size']} "
+        f"pdftext_workers={marker_config['pdftext_workers']}",
+        file=sys.stderr,
+        flush=True,
+    )
 
     sys.stdout.write(json.dumps({"_status": "ready"}) + "\n")
     sys.stdout.flush()

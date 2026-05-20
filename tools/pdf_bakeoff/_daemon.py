@@ -50,11 +50,13 @@ def start_daemon(
     python: Path, helper: Path, *, name: str, ready_timeout_s: float = 120.0
 ) -> subprocess.Popen[str]:
     """Spawn helper, block until it writes the `_status: ready` line."""
+    # Pass helper stderr through to our stderr so device-detection /
+    # config diagnostic lines are visible to the user.
     proc = subprocess.Popen(
         [str(python), str(helper)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=None,
         text=True,
         bufsize=1,
     )
