@@ -24,6 +24,7 @@ from fnd.schema import (
     F_COLLECTION,
     F_HEADING_PATH,
     F_KIND,
+    F_LINE,
     F_META_BLOB,
     F_MTIME,
     F_PAGE,
@@ -131,6 +132,7 @@ def _doc_for_chunk(
     doc.add_unsigned(F_MTIME, max(chunk.mtime, 0))
     doc.add_unsigned(F_PAGE, max(chunk.page, 0))
     doc.add_unsigned(F_SLIDE, max(chunk.slide, 0))
+    doc.add_unsigned(F_LINE, max(chunk.line, 0))
     doc.add_unsigned(F_CHUNK_SEQ, max(chunk.chunk_seq, 0))
     doc.add_bytes(F_BODY_STRUCT, encode_body_struct(chunk.body_struct))
     doc.add_bytes(F_BODY_MD, chunk.body_md.encode("utf-8"))

@@ -215,6 +215,23 @@ class PreviewContainer(Container):
         return arrangement.total_region.height
 
 
+class _HitWithQuery:
+    """Adapter exposing a Hit plus the current query string as one object
+    for ``OpenWithScreen``. The modal's :func:`build_request` reads
+    ``hit.query`` to populate the Skim ``&search=`` highlight; Hit
+    itself doesn't carry the query."""
+
+    __slots__ = ("_hit", "query")
+
+    def __init__(self, hit: Any, query: str) -> None:
+        self._hit = hit
+        self.query = query
+
+    def __getattr__(self, name: str) -> Any:
+        # Forward everything not explicitly overridden to the wrapped Hit.
+        return getattr(self._hit, name)
+
+
 class PreviewCache:
     """LRU cache of :class:`PreviewContainer`, keyed by
     ``(parent_doc_id, query_signature)``. Files with fewer than
@@ -359,27 +376,47 @@ class _HighlightingBlockMixin:
         _apply_highlights_after_build(self)  # type: ignore[arg-type]
 
 
-class FNDMarkdownH1(_HighlightingBlockMixin, MarkdownH1):
+class _HeadingMarkerMixin:
+    """Prepend the level marker (``#`` / ``##`` / ``###`` …) to a
+    heading's rendered content so users can distinguish heading levels
+    in a terminal that can't render font-size differences. The marker
+    inherits the heading's own color so it reads as a low-key prefix,
+    not a second style band.
+
+    Must sit *inside* ``_HighlightingBlockMixin`` in the MRO so the
+    marker lands on the Content **before** highlight spans run — that
+    way the highlight span offsets line up with the post-prefix plain.
+    """
+
+    def build_from_token(self, token):  # type: ignore[override]
+        super().build_from_token(token)  # type: ignore[misc]
+        from textual.content import Content
+
+        marker = ("#" * self.LEVEL) + " "  # type: ignore[attr-defined]
+        self.set_content(Content.assemble(marker, self._content))  # type: ignore[attr-defined]
+
+
+class FNDMarkdownH1(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH1):
     pass
 
 
-class FNDMarkdownH2(_HighlightingBlockMixin, MarkdownH2):
+class FNDMarkdownH2(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH2):
     pass
 
 
-class FNDMarkdownH3(_HighlightingBlockMixin, MarkdownH3):
+class FNDMarkdownH3(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH3):
     pass
 
 
-class FNDMarkdownH4(_HighlightingBlockMixin, MarkdownH4):
+class FNDMarkdownH4(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH4):
     pass
 
 
-class FNDMarkdownH5(_HighlightingBlockMixin, MarkdownH5):
+class FNDMarkdownH5(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH5):
     pass
 
 
-class FNDMarkdownH6(_HighlightingBlockMixin, MarkdownH6):
+class FNDMarkdownH6(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH6):
     pass
 
 
@@ -615,6 +652,25 @@ class FNDMarkdown(Markdown):
     FNDMarkdown {
         height: auto;
     }
+    /* All six heading levels render in the theme accent colour, not just
+       H1-H3 (Textual's stock palette stops colouring at H3 and falls back
+       to plain text-style on H4-H6). A terminal can't show font-size
+       differences, so the level marker prefix ("#" / "##" / "###" …) is
+       baked into the heading content by ``_HeadingMarkerMixin`` to give
+       readers the level cue. Bold / underline are layered on top so the
+       top three levels still feel weightier without changing colour. */
+    FNDMarkdown FNDMarkdownH1 { color: $accent; text-style: bold; }
+    FNDMarkdown FNDMarkdownH2 { color: $accent; text-style: bold underline; }
+    FNDMarkdown FNDMarkdownH3 { color: $accent; text-style: bold; }
+    FNDMarkdown FNDMarkdownH4 { color: $accent; text-style: underline; }
+    FNDMarkdown FNDMarkdownH5 { color: $accent; text-style: none; }
+    FNDMarkdown FNDMarkdownH6 { color: $accent 70%; text-style: none; }
+    /* Inline emphasis colour-shifts too — text-style alone is too
+       subtle to read at terminal weight on most fonts. ``$primary``
+       contrasts with ``$accent`` (headings) so bold inside a heading
+       is still visible. */
+    FNDMarkdown MarkdownBlock > .strong { color: $primary; text-style: bold; }
+    FNDMarkdown MarkdownBlock > .em { color: $secondary; text-style: italic; }
     """
 
     BLOCKS: dict[str, type[MarkdownBlock]] = {  # noqa: RUF012
@@ -1292,6 +1348,14 @@ class FNDApp(App[None]):
         self._prefetch_sink_queue = _asyncio.Queue()
         self._prefetch_sink_drainer = _asyncio.create_task(self._drain_prefetch_sinks())
 
+        # Route fnd.apps notices through an in-app modal for AX issues, and
+        # through Textual.notify for everything else. Without this hook, the
+        # Preview handler's stderr fallback gets buried under the curses
+        # display and the user has no idea the page-jump failed.
+        from fnd import apps as _apps_mod
+
+        _apps_mod.set_notice_sink(self._dispatch_apps_notice)
+
         try:
             self._searcher = Searcher(index_dir=self._index_dir)
         except (FileNotFoundError, RuntimeError):
@@ -1392,6 +1456,19 @@ class FNDApp(App[None]):
         except Exception:
             pass
         self._refresh_footer_hints()
+
+    def _dispatch_apps_notice(self, message: str) -> None:
+        """Route a notice from fnd.apps through the right UI surface.
+
+        Accessibility-permission denials get a modal so the user can act
+        on them; everything else uses the inline notification toast.
+        """
+        if "Accessibility" in message or "accessibility" in message:
+            from fnd.tui.ax_permission_screen import AccessibilityPermissionScreen
+
+            self.push_screen(AccessibilityPermissionScreen())
+            return
+        self.notify(message, title="fnd", timeout=6)
 
     # ── Footer hints (focus-aware, lazygit-style) ─────────────────
 
@@ -2364,8 +2441,7 @@ class FNDApp(App[None]):
 
         t0 = time.perf_counter()
         self._diag_log(
-            f"finalize_pre_reveal start seq={focus_chunk_seq} "
-            f"parent_id={container.parent_doc_id}"
+            f"finalize_pre_reveal start seq={focus_chunk_seq} parent_id={container.parent_doc_id}"
         )
 
         self._do_finalize_pre_reveal(container, focus_chunk_seq, retries=10, t0=t0)
@@ -2865,12 +2941,12 @@ class FNDApp(App[None]):
     ) -> None:
         if query_sig != self._current_query_signature():
             self._diag_log(
-                f"prefetch_mount_structural_async SKIPPED stale-sig " f"parent={parent_id[:8]}"
+                f"prefetch_mount_structural_async SKIPPED stale-sig parent={parent_id[:8]}"
             )
             return
         if self._preview_cache.get(parent_id, query_sig) is not None:
             self._diag_log(
-                f"prefetch_mount_structural_async SKIPPED already-cached " f"parent={parent_id[:8]}"
+                f"prefetch_mount_structural_async SKIPPED already-cached parent={parent_id[:8]}"
             )
             return
         if (
@@ -2879,7 +2955,7 @@ class FNDApp(App[None]):
             and self._active_preview.query_signature == query_sig
         ):
             self._diag_log(
-                f"prefetch_mount_structural_async SKIPPED already-active " f"parent={parent_id[:8]}"
+                f"prefetch_mount_structural_async SKIPPED already-active parent={parent_id[:8]}"
             )
             return
         import asyncio
@@ -2889,7 +2965,7 @@ class FNDApp(App[None]):
             pane = self.query_one("#preview_pane", VerticalScroll)
         except Exception:
             self._diag_log(
-                f"prefetch_mount_structural_async SKIPPED no-pane " f"parent={parent_id[:8]}"
+                f"prefetch_mount_structural_async SKIPPED no-pane parent={parent_id[:8]}"
             )
             return
         self._diag_log(f"prefetch_mount_structural_async STARTING parent={parent_id[:8]}")
@@ -3663,8 +3739,7 @@ class FNDApp(App[None]):
             lines.append("no active preview")
         if active is not None:
             lines.append(
-                f"structural parent_id={active.parent_doc_id} "
-                f"chunks={len(active.chunk_widgets)}"
+                f"structural parent_id={active.parent_doc_id} chunks={len(active.chunk_widgets)}"
             )
             total = Counter()
             for seq, header in active.chunk_widgets.items():
@@ -3929,6 +4004,10 @@ class FNDApp(App[None]):
 
         For PDFs with a non-empty query, routes through Skim's URL form
         so ``&search=`` highlights the term in the opened PDF (§22 Spike C).
+        For MD / TXT, the chunk's ``line`` (plus per-source app override
+        and Obsidian vault from app_params) flows through to the
+        resolved handler so templates like ``code -g {path}:{line}:1``
+        jump to the right line.
         """
         tree = self.query_one("#results_pane", Tree)
         if tree.cursor_node is None:
@@ -3941,7 +4020,11 @@ class FNDApp(App[None]):
             path=Path(hit.path),
             kind=hit.kind,
             page=hit.page,
+            slide=getattr(hit, "slide", 0),
+            heading_path=getattr(hit, "heading_path", ""),
+            line=getattr(hit, "line", 0),
             query=self._current_query,
+            source=self._source_for_hit(hit),
         )
 
     def action_open_default_app(self) -> None:
@@ -3954,6 +4037,92 @@ class FNDApp(App[None]):
             return
         _, hit = target
         opener.open_default(Path(hit.path))
+
+    def action_open_with_menu(self) -> None:
+        """Show the 'Open with…' modal for the focused hit.
+
+        Lists every registered app whose ``handles`` covers the hit's
+        kind; the resolved default is highlighted and Enter fires it.
+        Builds the registry, resolves the default app, and finds the
+        source the hit belongs to (so per-source ``app_for`` / vault
+        overrides take effect).
+        """
+        tree = self.query_one("#results_pane", Tree)
+        if tree.cursor_node is None:
+            return
+        target = self._target_for_node(tree.cursor_node)
+        if target is None:
+            return
+        _, hit = target
+
+        from fnd import apps as apps_mod
+        from fnd.config import load as load_config
+        from fnd.tui.open_with_screen import OpenWithScreen
+
+        try:
+            cfg = load_config()
+        except Exception:
+            cfg = None
+
+        registry = apps_mod.build_registry(cfg) if cfg is not None else apps_mod.BUILTIN_APPS
+        app_defaults: dict[str, str] = dict(getattr(cfg, "app_defaults", {})) if cfg else {}
+        # Mirror open_smart's auto-promote ladder so the modal's
+        # highlighted default matches what `o` would fire.
+        if "pdf" not in app_defaults:
+            if opener._has_skim():
+                app_defaults["pdf"] = "skim"
+            elif apps_mod.BUILTIN_APPS["preview"].available() and apps_mod.ax_trusted():
+                app_defaults["pdf"] = "preview"
+
+        source = self._source_for_hit(hit)
+        resolved = apps_mod.resolve_app(
+            kind=hit.kind,
+            source=source,
+            app_defaults=app_defaults,
+            registry=registry,
+        )
+        # The modal needs the raw query string for the OpenRequest.
+        hit_with_query = _HitWithQuery(hit, self._current_query)
+        self.push_screen(
+            OpenWithScreen(
+                hit=hit_with_query,
+                source=source,
+                registry=registry,
+                default_id=resolved.id,
+            )
+        )
+
+    def _source_for_hit(self, hit: Any) -> Any | None:
+        """Find the :class:`fnd.config.SourceConfig` whose root contains
+        ``hit.path``. Used by the open-with modal to surface per-source
+        app overrides + vault params. Returns ``None`` if no source
+        matches (eg. legacy index without source metadata)."""
+        cfg = getattr(self, "_config", None)
+        if cfg is None:
+            return None
+        try:
+            hit_path = Path(hit.path).expanduser().resolve()
+        except (ValueError, OSError):
+            return None
+        # Scan every collection in the active scope; first containing
+        # source wins. The hit's parent_id encodes its source path so a
+        # future refactor could short-circuit via index lookup.
+        active = self._collections or list(cfg.collections.keys())
+        for name in active:
+            coll = cfg.collections.get(name)
+            if coll is None:
+                continue
+            for src in coll.sources:
+                try:
+                    root = Path(src.path).expanduser().resolve()
+                except (ValueError, OSError):
+                    continue
+                try:
+                    hit_path.relative_to(root)
+                except ValueError:
+                    continue
+                return src
+        return None
 
     def action_peek_focused(self) -> None:
         tree = self.query_one("#results_pane", Tree)
@@ -4716,11 +4885,20 @@ class FNDApp(App[None]):
                 self.query_one("#results_pane", Tree).focus()
 
     def action_show_help(self) -> None:
-        """Open the Settings menu pre-navigated to the Keybindings section.
+        """Open (or toggle off) the Keybindings cheat sheet.
 
-        The standalone help overlay was removed in the Settings overhaul —
-        ``?`` now lands the user inside the menu's filterable Keybindings
-        list, which doubles as the up-to-date cheat sheet.
+        ``?`` always pushes Keybindings ON TOP of whatever screen the
+        user is currently on so ``Esc`` from Keybindings returns them
+        to exactly that screen (a sub-menu, the source-edit form, the
+        Open-with modal — wherever they invoked ``?``). The previous
+        behaviour popped the entire settings stack first, which
+        dropped users back to the main app and made ``?`` useless as a
+        "what can I do here?" affordance.
+
+        Re-pressing ``?`` while Keybindings is the front screen pops
+        it (toggle), so the same key opens and closes the cheat sheet.
+        Context hint is derived from the screen below Keybindings so
+        the relevant section sorts right after Global.
         """
         from fnd.tui.menu import SECTION_KEYBINDINGS
         from fnd.tui.settings_screen import (
@@ -4728,11 +4906,51 @@ class FNDApp(App[None]):
             open_settings_section,
         )
 
-        # Already in the menu — close the current stack before pushing
-        # Keybindings so Esc returns to the main app in one press.
-        if isinstance(self.screen, SettingsScreen):
-            self._close_settings_stack()
-        open_settings_section(self, SECTION_KEYBINDINGS)
+        # Toggle off when already on Keybindings.
+        current = self.screen
+        if isinstance(current, SettingsScreen) and getattr(current, "_breadcrumb", ()) == (
+            "Keybindings",
+        ):
+            self.pop_screen()
+            return
+
+        context_hint = self._keybindings_context_hint()
+        open_settings_section(self, SECTION_KEYBINDINGS, context_hint=context_hint)
+
+    def _keybindings_context_hint(self) -> str | None:
+        """Map the current screen / focused panel to the Keybindings
+        section that should appear right after Global. Returns ``None``
+        when nothing more specific than Global is appropriate."""
+        from fnd.tui.settings_screen import SettingsScreen, SourceFormScreen
+
+        # If we're inside the Settings stack, the relevant section
+        # depends on which screen the user is on. SourceFormScreen
+        # has its own static section; SettingsScreen catches the rest
+        # (Preferences / Collections / Keybindings sub-screens — the
+        # SettingsList widget bindings apply across all of them).
+        current = self.screen
+        if isinstance(current, SourceFormScreen):
+            return "Source form"
+        if isinstance(current, SettingsScreen):
+            return "Settings menu"
+
+        # Main app — pick by the focused pane.
+        focused = self.focused
+        widget = focused
+        while widget is not None:
+            wid = getattr(widget, "id", "") or ""
+            if wid == "preview_pane":
+                return "Preview pane"
+            if wid == "results_pane":
+                return "Results pane"
+            if wid in ("filters_panel", "filters_panel_tree"):
+                return "Filters panel"
+            if wid in ("collections_panel", "collections_panel_tree"):
+                return "Collections panel"
+            if wid == "query_bar":
+                return "Query input"
+            widget = widget.parent
+        return None
 
     def action_show_explain_overlay(self) -> None:
         """Toggle a JSON trace overlay for the most-recent search.

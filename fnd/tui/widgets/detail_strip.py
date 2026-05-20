@@ -24,10 +24,23 @@ class DetailStrip(Widget):
     """
 
     DEFAULT_CSS = """
-    DetailStrip { height: 3; padding: 1 0 0 0; }
-    DetailStrip > Static { height: 1; padding: 0 1; }
-    DetailStrip > Static.-description { color: $text; }
-    DetailStrip > Static.-metadata { color: $text-muted; }
+    /* Top horizontal rule visually separates guidance from the row list
+       above. The DetailStrip already sits inside the settings_box's
+       round border, so a full box here would double-bracket the panel.
+
+       Height is ``auto`` so the description wraps onto as many lines as
+       it needs without truncating. ``max-height: 6`` bounds the panel
+       so a runaway-long description can't dominate the screen — keep
+       descriptions concise enough to fit comfortably. */
+    DetailStrip {
+        height: auto;
+        max-height: 6;
+        padding: 0 0 0 0;
+        border-top: hkey $primary 50%;
+    }
+    DetailStrip > Static { padding: 0 1; }
+    DetailStrip > Static.-description { color: $text; height: auto; }
+    DetailStrip > Static.-metadata { color: $text-muted; height: 1; }
     """
 
     def __init__(self) -> None:

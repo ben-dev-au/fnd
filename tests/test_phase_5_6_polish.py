@@ -98,9 +98,16 @@ def test_open_smart_routes_to_url_when_query_present(
 ) -> None:
     """With a non-empty query, open_smart hands Skim a URL whose
     ``search=`` fragment makes Skim highlight the matching string."""
+    from fnd.config import Config
+
     f = tmp_path / "doc.pdf"
     f.touch()
     monkeypatch.setattr(opener, "_has_skim", lambda: True)
+    # Isolate from the developer's real config — without this the resolver
+    # routes through whichever [app_defaults] they have set (eg. `preview`)
+    # and the test fires a real `osascript`, opening Preview against the
+    # empty tmp file.
+    monkeypatch.setattr("fnd.config.load", lambda *a, **kw: Config())
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(
         opener,
@@ -117,9 +124,12 @@ def test_open_smart_uses_url_when_query_blank(
     """Query-less PDF opens still use the Skim URL form — the AppleScript
     path was removed because filename control-char injection through the
     AppleScript string literal could execute arbitrary `osascript`."""
+    from fnd.config import Config
+
     f = tmp_path / "doc.pdf"
     f.touch()
     monkeypatch.setattr(opener, "_has_skim", lambda: True)
+    monkeypatch.setattr("fnd.config.load", lambda *a, **kw: Config())
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(
         opener,

@@ -66,6 +66,12 @@ class Chunk:
     page: int = 0  # 1-based; 0 = not applicable
     page_label: str = ""
     slide: int = 0  # 1-based; 0 = not applicable
+    # 1-based source-line index of the chunk's first character. MD
+    # extractor sets it to the heading_open line; TXT extractor counts
+    # newlines before the chunk start. 0 for kinds without line tracking
+    # (PDF / DOCX / PPTX). Reaches the opener via Hit.line for the
+    # ``code -g {path}:{line}:1`` family of templates.
+    line: int = 0
     heading_path: str = ""
     title: str = ""
     author: str = ""

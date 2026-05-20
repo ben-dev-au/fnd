@@ -62,3 +62,94 @@ def urlsafe_unquote(s: str) -> str:
     import urllib.parse
 
     return urllib.parse.unquote(s)
+
+
+# ── Phase 1d: conditional PDF auto-promote ──────────────────────────────
+
+
+def test_open_smart_auto_promotes_preview_when_no_skim_and_ax_granted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No Skim, Preview installed, AX granted → page-jump via Preview."""
+    from fnd import apps as apps_mod
+
+    apps_mod._reset_ax_cache()
+    monkeypatch.setattr(opener, "_has_skim", lambda: False)
+    monkeypatch.setattr(apps_mod, "_preview_app_exists", lambda: True)
+    monkeypatch.setattr(apps_mod, "_probe_ax_trusted", lambda: True)
+    # Make config loading return a fresh empty Config so no user override.
+    from fnd.config import Config
+
+    monkeypatch.setattr("fnd.config.load", lambda *a, **kw: Config())
+
+    captured: list[list[str]] = []
+    monkeypatch.setattr(
+        apps_mod.subprocess,
+        "run",
+        lambda argv, **kw: (captured.append(list(argv)) or type("R", (), {"returncode": 0})()),
+    )
+
+    f = tmp_path / "paper.pdf"
+    f.touch()
+    opener.open_smart(path=f, kind="pdf", page=5)
+    assert captured, "expected at least one subprocess.run call"
+    argv = captured[0]
+    assert argv[0] == "osascript", f"expected osascript dispatch, got {argv}"
+    assert str(f) in argv
+    assert "5" in argv
+
+
+def test_open_smart_falls_through_to_system_when_no_skim_no_ax(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No Skim, no AX → ``open <pdf>`` (system default, no page jump)."""
+    from fnd import apps as apps_mod
+
+    apps_mod._reset_ax_cache()
+    monkeypatch.setattr(opener, "_has_skim", lambda: False)
+    monkeypatch.setattr(apps_mod, "_preview_app_exists", lambda: True)
+    monkeypatch.setattr(apps_mod, "_probe_ax_trusted", lambda: False)
+    from fnd.config import Config
+
+    monkeypatch.setattr("fnd.config.load", lambda *a, **kw: Config())
+
+    captured: list[list[str]] = []
+    monkeypatch.setattr(
+        apps_mod.subprocess,
+        "run",
+        lambda argv, **kw: (captured.append(list(argv)) or type("R", (), {"returncode": 0})()),
+    )
+
+    f = tmp_path / "paper.pdf"
+    f.touch()
+    opener.open_smart(path=f, kind="pdf", page=5)
+    # System fallback uses plain ``open <path>``.
+    assert captured == [["open", str(f)]], f"got {captured}"
+
+
+def test_open_smart_user_override_wins_over_auto_promote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Explicit ``app_defaults.pdf = "system"`` must beat the Skim
+    auto-promote even when Skim is installed."""
+    from fnd import apps as apps_mod
+    from fnd.config import Config
+
+    apps_mod._reset_ax_cache()
+    monkeypatch.setattr(opener, "_has_skim", lambda: True)
+    monkeypatch.setattr(
+        "fnd.config.load",
+        lambda *a, **kw: Config.model_validate({"app_defaults": {"pdf": "system"}}),
+    )
+
+    captured: list[list[str]] = []
+    monkeypatch.setattr(
+        apps_mod.subprocess,
+        "run",
+        lambda argv, **kw: (captured.append(list(argv)) or type("R", (), {"returncode": 0})()),
+    )
+
+    f = tmp_path / "paper.pdf"
+    f.touch()
+    opener.open_smart(path=f, kind="pdf", page=5)
+    assert captured == [["open", str(f)]], f"user override ignored: {captured}"

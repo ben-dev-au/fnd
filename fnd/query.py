@@ -28,6 +28,7 @@ from fnd.schema import (
     F_CHUNK_SEQ,
     F_HEADING_PATH,
     F_KIND,
+    F_LINE,
     F_META_BLOB,
     F_MTIME,
     F_PAGE,
@@ -64,6 +65,11 @@ class Hit:
     # this over ``page`` (which is the PDF page index used by Skim).
     page_label: str = ""
     chunk_seq: int = 0
+    # 1-based source line of the chunk's first character (MD heading
+    # line, TXT chunk window start). 0 for kinds without line tracking
+    # (PDF / DOCX / PPTX). Consumed by the opener for ``{line}``
+    # template variables (vscode, sublime, etc.).
+    line: int = 0
     # Unix epoch seconds; 0 means "unknown / unindexed file". Used by the
     # reranker (§4 recency boost) — pulled from the F_MTIME fast field at
     # search time, not stored on the Hit until reranking runs.
@@ -327,6 +333,7 @@ class Searcher:
                     snippet=_make_snippet(body_text, query, intent=intent),
                     page_label=_first_str(doc, F_PAGE_LABEL),
                     chunk_seq=_first_int(doc, F_CHUNK_SEQ),
+                    line=_first_int(doc, F_LINE),
                     mtime=_first_int(doc, F_MTIME),
                     meta_blob=meta_blob_bytes,
                 )

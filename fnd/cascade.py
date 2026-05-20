@@ -289,6 +289,7 @@ def _materialize_hits(
                 snippet=_make_snippet(body_text, query, intent=intent),
                 page_label=_first_str(doc, F_PAGE_LABEL),
                 chunk_seq=_first_int(doc, "chunk_seq"),
+                line=_first_int(doc, "line"),
                 mtime=_first_int(doc, "mtime"),
                 meta_blob=meta_blob_bytes,
             )
@@ -507,6 +508,7 @@ def _with_pass(h: Hit, pass_index: int) -> Hit:
         snippet=h.snippet,
         page_label=h.page_label,
         chunk_seq=h.chunk_seq,
+        line=h.line,
         mtime=h.mtime,
         pass_index=pass_index,
         meta_blob=h.meta_blob,

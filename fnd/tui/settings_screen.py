@@ -34,7 +34,7 @@ from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import Screen
@@ -376,10 +376,19 @@ class SettingsList(Widget, can_focus=True):
 
     DEFAULT_CSS = """
     SettingsList { height: 1fr; }
-    SettingsList > Vertical { padding: 0 0; }
+    SettingsList > VerticalScroll { padding: 0 0; }
     SettingsList Static.row { height: 1; padding: 0 1; }
     SettingsList Static.row.-header-1 { padding: 1 0 0 0; height: 2; }
     SettingsList Static.row.-header-2 { padding: 0 0 0 0; }
+    /* Context-relevant section (Keybindings cheat sheet only today):
+       header gets an accent border-left + bold; body rows get a faint
+       tint so the eye lands on the section the user came from. */
+    SettingsList Static.row.-hint-section.-header-2 {
+        color: $accent;
+        text-style: bold;
+        border-left: thick $accent;
+    }
+    SettingsList Static.row.-hint-section { background: $accent 8%; }
     /* Only paint the cursor row when the list itself owns focus. When
        the screen's filter Input is focused, the user is composing a
        query — a list-cursor highlight at the same time would compete
@@ -428,7 +437,11 @@ class SettingsList(Widget, can_focus=True):
         self._search_query: str = ""
 
     def compose(self) -> ComposeResult:
-        yield Vertical(id="settings_list_body")
+        # VerticalScroll (not plain Vertical) so long lists like the
+        # Keybindings cheat sheet — 30+ rows after the registry-derived
+        # rebuild — get a working scrollbar and ``_scroll_cursor_into_view``
+        # has a scrollable parent to call ``scroll_to_widget`` on.
+        yield VerticalScroll(id="settings_list_body")
 
     # ── Population ──────────────────────────────────────────────
 
@@ -439,16 +452,26 @@ class SettingsList(Widget, can_focus=True):
     ) -> None:
         self._items = list(items)
         self._search_breadcrumbs = dict(breadcrumbs) if breadcrumbs else {}
-        body = self.query_one("#settings_list_body", Vertical)
+        body = self.query_one("#settings_list_body", VerticalScroll)
         # Remove existing rows synchronously by walking the DOM directly —
         # Textual's `remove_children` is async and would race against the
         # mount of fresh rows immediately below.
         for child in list(body.children):
             child.remove()
+        # Track whether the current header was marked as the
+        # "context-hint" section by its provider (sentinel in keywords);
+        # if so, every body row until the next header gets the same
+        # ``-hint-section`` class so the whole band paints together.
+        in_hint_section = False
         for item in items:
             cls = "row"
             if item.kind == KIND_HEADER:
                 cls += f" -header-{item.header_level or 1}"
+                in_hint_section = "_hint_section_" in (item.keywords or ())
+                if in_hint_section:
+                    cls += " -hint-section"
+            elif in_hint_section:
+                cls += " -hint-section"
             body.mount(Static("", classes=cls))
         self.call_after_refresh(self._init_cursor)
 
@@ -463,7 +486,7 @@ class SettingsList(Widget, can_focus=True):
     def _render_all(self) -> None:
         app: FNDApp = self.app  # type: ignore[assignment]
         try:
-            body = self.query_one("#settings_list_body", Vertical)
+            body = self.query_one("#settings_list_body", VerticalScroll)
         except Exception:
             return
         width = self.size.width or 80
@@ -513,7 +536,7 @@ class SettingsList(Widget, can_focus=True):
         only changes one CSS class on two rows; do exactly that.
         """
         try:
-            body = self.query_one("#settings_list_body", Vertical)
+            body = self.query_one("#settings_list_body", VerticalScroll)
         except Exception:
             return
         rows = list(body.query(Static))
@@ -580,7 +603,7 @@ class SettingsList(Widget, can_focus=True):
 
     def _scroll_cursor_into_view(self) -> None:
         try:
-            body = self.query_one("#settings_list_body", Vertical)
+            body = self.query_one("#settings_list_body", VerticalScroll)
             rows = list(body.query(Static))
             if 0 <= self.cursor_index < len(rows):
                 self.scroll_to_widget(rows[self.cursor_index], animate=False)
@@ -1002,11 +1025,17 @@ class SettingsScreen(Screen[None]):
     def _activate_item(self, item: MenuItem) -> None:
         app: FNDApp = self.app  # type: ignore[assignment]
         if item.kind == KIND_ACTION:
+            # Documentation-only rows (widget-level bindings — Move
+            # cursor, Activate, etc. in the Keybindings sheet) carry
+            # an empty action_id and have nothing to fire. Treat Enter
+            # as a no-op rather than dismissing the cheat sheet — the
+            # user is reading help, not invoking a global action.
+            if not item.action_id:
+                return
             self._close_settings_stack()
-            if item.action_id:
-                method = getattr(app, f"action_{item.action_id}", None)
-                if callable(method):
-                    method()
+            method = getattr(app, f"action_{item.action_id}", None)
+            if callable(method):
+                method()
             return
         if item.kind == KIND_TOGGLE:
             if item.toggle_setter is not None and item.toggle_getter is not None:
@@ -1337,6 +1366,7 @@ class SourceFormScreen(Screen[None]):
         Binding("tab", "cycle_focus(1)", show=False),
         Binding("shift+tab", "cycle_focus(-1)", show=False),
         Binding("ctrl+s", "save_close", show=False),
+        Binding("ctrl+d", "delete_source", "Delete", show=False),
     ]
 
     CSS = """
@@ -1374,6 +1404,13 @@ class SourceFormScreen(Screen[None]):
             "excludes_custom": "",  # comma-separated free-form globs
             "filter": "",
             "follow_symlinks": False,
+            # Phase 2b: per-source app override + Obsidian vault.
+            # ``app`` is the registry id (or "" = no override → resolver
+            # walks the global app_defaults / auto-promote ladder).
+            # ``app_params_vault`` is the only app_param that has UI
+            # surface today; other params still reachable via the TOML.
+            "app": "",
+            "app_params_vault": "",
         }
         # Snapshot the current source (if editing) for cancel and the
         # "needs reindex on save" check.
@@ -1439,6 +1476,8 @@ class SourceFormScreen(Screen[None]):
             "excludes_custom": excludes_custom,
             "filter": s.frontmatter_filter or "",
             "follow_symlinks": bool(s.follow_symlinks),
+            "app": s.app or "",
+            "app_params_vault": (s.app_params or {}).get("vault", ""),
         }
         self._snapshot = {
             "path": self._fields["path"],
@@ -1448,6 +1487,8 @@ class SourceFormScreen(Screen[None]):
             "excludes_custom": self._fields["excludes_custom"],
             "filter": self._fields["filter"],
             "follow_symlinks": self._fields["follow_symlinks"],
+            "app": self._fields["app"],
+            "app_params_vault": self._fields["app_params_vault"],
         }
 
     def _populate_fields(self) -> None:
@@ -1508,7 +1549,88 @@ class SourceFormScreen(Screen[None]):
                 toggle_getter=lambda _app: bool(self._fields["follow_symlinks"]),
                 toggle_setter=lambda _app, v: self._set_follow(v),
             ),
+            MenuItem(
+                id="form.app",
+                label="App",
+                description=(
+                    "Open files from this source with a specific app. "
+                    "Leave as '(default)' to use the global app_defaults "
+                    "+ auto-promote ladder. See ``[apps]`` in config.toml "
+                    "and docs/apps/ for the full list."
+                ),
+                kind=KIND_PICKER,
+                multi=False,
+                choices_provider=self._app_choices,
+                picker_getter=lambda _app: self._fields.get("app") or "",
+                picker_setter=lambda _app, v: self._set_app(v),
+            ),
+            self._field_item(
+                "app_params_vault",
+                "Obsidian vault",
+                description=(
+                    "Add the Advanced URI plugin to your vault for "
+                    "line-precise jumps; without it, lands at section."
+                ),
+                hint="Vault name (auto-detected when App = Obsidian)",
+            ),
         ]
+
+    def _app_choices(self, _app: Any) -> list[ChoiceOption]:
+        """All registered apps + a '(default)' sentinel for clearing the
+        per-source override. Built-ins and user apps from [apps.<id>]
+        appear together."""
+        from fnd.apps import build_registry
+
+        cfg_obj = self.app._config  # type: ignore[attr-defined]
+        registry = build_registry(cfg_obj)
+        out: list[ChoiceOption] = [
+            ChoiceOption(
+                value="",
+                label="(default — use global resolver)",
+                description="No per-source override; defer to app_defaults + auto-promote.",
+            )
+        ]
+        for app_id, app in registry.items():
+            # Filter to apps that are actually installed on this host —
+            # matches the global default-app picker and the Open-with
+            # modal, both of which already filter by ``available()``.
+            # Without this, the picker would let users pick e.g. Skim on
+            # a machine that doesn't have Skim and only fail at open
+            # time. ``system`` is always available so it stays.
+            if not app.available():
+                continue
+            handles = ",".join(app.handles)
+            # ``app.notes`` carries the per-app advisory ("install plugin X
+            # for line-precise jumps", "no page-jump on macOS", etc.) — surface
+            # it as the picker's description so users see the recommendation
+            # at the point of choice. Fall back to ``handles:`` when an app
+            # has no notes (most built-ins do).
+            desc = app.notes if app.notes else f"handles: {handles}"
+            out.append(
+                ChoiceOption(
+                    value=app_id,
+                    label=app.display_name,
+                    description=desc,
+                )
+            )
+        return out
+
+    def _set_app(self, value: str) -> None:
+        """Update the App field. When the user picks Obsidian and no
+        vault is set yet, auto-detect from the source path."""
+        self._fields["app"] = value or ""
+        if value == "obsidian" and not str(self._fields.get("app_params_vault") or "").strip():
+            from fnd.apps import detect_obsidian_vault
+
+            path_s = str(self._fields.get("path") or "").strip()
+            if path_s:
+                try:
+                    detected = detect_obsidian_vault(Path(path_s).expanduser())
+                except (ValueError, OSError):
+                    detected = None
+                if detected:
+                    self._fields["app_params_vault"] = detected
+        self.query_one(SettingsList).refresh_values()
 
     def _includes_picker_state(self) -> list[str]:
         state = list(self._fields["includes"])
@@ -1551,7 +1673,7 @@ class SourceFormScreen(Screen[None]):
         )
         self.query_one(EditBar).open(item, str(self._fields.get(field_key) or ""))
 
-    def _field_item(self, key: str, label: str, *, hint: str) -> MenuItem:
+    def _field_item(self, key: str, label: str, *, hint: str, description: str = "") -> MenuItem:
         def _get(_app: Any) -> str:
             v = self._fields[key]
             if key == "filter" and v:
@@ -1562,6 +1684,7 @@ class SourceFormScreen(Screen[None]):
         return MenuItem(
             id=f"form.{key}",
             label=label,
+            description=description,
             kind=KIND_SCALAR,
             setting_path="",  # we write into self._fields, not config.toml
             hint=hint,
@@ -1663,19 +1786,30 @@ class SourceFormScreen(Screen[None]):
 
     def _render_footer(self) -> None:
         app: FNDApp = self.app  # type: ignore[assignment]
-        self.query_one("#footer_hints", Static).update(
-            _hint_bar(
-                app,
-                (
-                    ("Tab", "Fields ↔ sample"),
-                    ("⏎", "Edit"),
-                    ("Ctrl+S", "Save"),
-                    ("Esc", "Cancel"),
-                ),
-            )
+        # Ctrl+D only meaningful when editing an existing source.
+        hints: tuple[tuple[str, str], ...] = (
+            ("Tab", "Fields ↔ sample"),
+            ("⏎", "Edit"),
+            ("Ctrl+S", "Save"),
+            ("Esc", "Cancel"),
         )
+        if self._source_index is not None:
+            hints = (*hints, ("Ctrl+D", "Delete source"))
+        self.query_one("#footer_hints", Static).update(_hint_bar(app, hints))
 
     # ── Save / cancel ────────────────────────────────────────
+
+    def action_delete_source(self) -> None:
+        """Push the delete-source confirmation modal. No-op when adding
+        a new source (nothing to delete yet)."""
+        if self._source_index is None:
+            return
+        self.app.push_screen(
+            DeleteSourceScreen(
+                collection_name=self._collection_name,
+                source_index=self._source_index,
+            )
+        )
 
     def action_save_close(self) -> None:
         from pathlib import Path
@@ -1711,6 +1845,9 @@ class SourceFormScreen(Screen[None]):
             g = g.strip()
             if g:
                 excludes_globs.append(g)
+        app_id = str(self._fields.get("app") or "").strip()
+        vault = str(self._fields.get("app_params_vault") or "").strip()
+        app_params: dict[str, str] = {"vault": vault} if vault else {}
         try:
             new_source = SourceConfig(
                 path=Path(path),
@@ -1718,6 +1855,8 @@ class SourceFormScreen(Screen[None]):
                 excludes=excludes_globs,
                 follow_symlinks=bool(self._fields["follow_symlinks"]),
                 frontmatter_filter=(str(self._fields["filter"]) or None),
+                app=app_id or None,
+                app_params=app_params,
             )
         except Exception as e:
             self._show_error(_summarize(e))
@@ -2427,6 +2566,336 @@ class DeleteCollectionScreen(Screen[None]):
         self.app.pop_screen()
 
 
+# ── Clone-source flow (Phase 5) ─────────────────────────────────────
+
+
+class DeleteSourceScreen(Screen[None]):
+    """Confirm + remove a single source from a collection.
+
+    Triggered by ``Ctrl+D`` inside :class:`SourceFormScreen` (only when
+    editing an existing source). The source's path is dropped from
+    ``[collections.<name>.sources]`` via :func:`fnd.config.write_collection`.
+    Reindex of the collection follows because the source set changed.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Cancel", show=False),
+        Binding("up,k", "cursor(-1)", show=False),
+        Binding("down,j", "cursor(1)", show=False),
+        Binding("enter", "activate", show=False),
+    ]
+
+    CSS = DeleteCollectionScreen.CSS
+
+    def __init__(self, *, collection_name: str, source_index: int) -> None:
+        super().__init__()
+        self._collection_name = collection_name
+        self._source_index = source_index
+
+    def compose(self) -> ComposeResult:
+        app: FNDApp = self.app  # type: ignore[assignment]
+        cfg = app._config  # type: ignore[attr-defined]
+        path_display = "(unknown)"
+        if (
+            cfg is not None
+            and self._collection_name in cfg.collections
+            and 0 <= self._source_index < len(cfg.collections[self._collection_name].sources)
+        ):
+            src = cfg.collections[self._collection_name].sources[self._source_index]
+            path_display = str(src.path) or "(no path)"
+
+        with Vertical(id="settings_box") as box:
+            box.border_title = (
+                f"Collections › {self._collection_name} › Sources › "
+                f"Source {self._source_index + 1} › Delete"
+            )
+            yield Static(
+                f"Remove this source from {self._collection_name!r}?\n"
+                f"Path: {path_display}\n\n"
+                "Only the config entry is removed. The files on disk are "
+                "untouched. Indexed chunks for files only reachable via "
+                "this source become orphaned until the next reindex.",
+                classes="warning",
+            )
+            yield OptionList(
+                Option(Text("Yes, remove this source", style="bold"), id="yes"),
+                Option("Cancel", id="no"),
+                id="confirm_list",
+            )
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        self.query_one("#confirm_list", OptionList).focus()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(app, (("⏎", "Confirm"), ("Esc", "Cancel")))
+        )
+
+    def action_cursor(self, direction: int) -> None:
+        lst = self.query_one("#confirm_list", OptionList)
+        if direction > 0:
+            lst.action_cursor_down()
+        else:
+            lst.action_cursor_up()
+
+    def action_activate(self) -> None:
+        self.query_one("#confirm_list", OptionList).action_select()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    @on(OptionList.OptionSelected, "#confirm_list")
+    def _on_select(self, ev: OptionList.OptionSelected) -> None:
+        if ev.option.id == "no":
+            self.app.pop_screen()
+            return
+        from fnd.config import default_config_path, load, write_collection
+
+        app: FNDApp = self.app  # type: ignore[assignment]
+        cfg = app._config  # type: ignore[attr-defined]
+        if cfg is None or self._collection_name not in cfg.collections:
+            self.notify("Collection vanished", severity="error")
+            self.app.pop_screen()
+            return
+        col = cfg.collections[self._collection_name]
+        if not 0 <= self._source_index < len(col.sources):
+            self.notify("Source vanished", severity="error")
+            self.app.pop_screen()
+            return
+        del col.sources[self._source_index]
+        try:
+            write_collection(
+                config_path=default_config_path(),
+                name=self._collection_name,
+                collection=col,
+            )
+        except Exception as e:
+            self.notify(f"Delete failed: {e}", severity="error")
+            return
+        app._config = load()  # type: ignore[attr-defined]
+        app._refresh_collections_panel()  # type: ignore[attr-defined]
+        # Source set changed → trigger reindex (fire-and-forget; same
+        # pattern as the clone flow).
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            app._reindex_collection_async(self._collection_name)  # type: ignore[attr-defined]
+        # Pop DeleteSourceScreen AND the now-stale SourceFormScreen
+        # below it — land back on the Sources screen.
+        self.app.pop_screen()
+        self.app.pop_screen()
+
+
+class CloneSourcePickCollectionScreen(Screen[None]):
+    """Step 1 of clone: pick the source collection to copy a source FROM.
+
+    Lists every collection except the target so users can't accidentally
+    clone from a collection into itself. Enter pushes
+    :class:`CloneSourcePickSourceScreen` for that collection.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Cancel", show=False),
+        Binding("up,k", "cursor(-1)", show=False),
+        Binding("down,j", "cursor(1)", show=False),
+        Binding("enter", "activate", show=False),
+    ]
+
+    CSS = """
+    CloneSourcePickCollectionScreen { background: $surface; }
+    CloneSourcePickCollectionScreen > #settings_box {
+        height: auto;
+        border: round $primary 50%;
+        padding: 0 1;
+        margin: 1 4;
+    }
+    CloneSourcePickCollectionScreen > #settings_box:focus-within { border: round $accent; }
+    CloneSourcePickCollectionScreen #clone_list { height: auto; }
+    CloneSourcePickCollectionScreen .info { color: $text-muted; padding: 0 0 1 0; }
+    CloneSourcePickCollectionScreen > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(self, *, target_collection: str) -> None:
+        super().__init__()
+        self._target = target_collection
+
+    def compose(self) -> ComposeResult:
+        app: FNDApp = self.app  # type: ignore[assignment]
+        cfg = app._config  # type: ignore[attr-defined]
+        with Vertical(id="settings_box") as box:
+            box.border_title = f"Collections › {self._target} › Sources › Clone from…"
+            yield Static(
+                "Pick a collection to clone a source from. The source is "
+                f"deep-copied into {self._target!r} (edits won't propagate).",
+                classes="info",
+            )
+            options: list[Option] = []
+            if cfg is not None:
+                for name in sorted(cfg.collections):
+                    if name == self._target:
+                        continue
+                    n = len(cfg.collections[name].sources)
+                    label = f"{name}  ({n} source{'s' if n != 1 else ''})"
+                    options.append(Option(label, id=name))
+            if not options:
+                options.append(Option("(no other collections)", id="__empty__"))
+            yield OptionList(*options, id="clone_list")
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        self.query_one("#clone_list", OptionList).focus()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(app, (("⏎", "Pick"), ("Esc", "Cancel")))
+        )
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    def action_cursor(self, direction: int) -> None:
+        lst = self.query_one("#clone_list", OptionList)
+        if direction > 0:
+            lst.action_cursor_down()
+        else:
+            lst.action_cursor_up()
+
+    def action_activate(self) -> None:
+        self.query_one("#clone_list", OptionList).action_select()
+
+    @on(OptionList.OptionSelected, "#clone_list")
+    def _on_select(self, ev: OptionList.OptionSelected) -> None:
+        if ev.option.id == "__empty__":
+            return
+        # Push the step-2 picker for the chosen source collection.
+        chosen = ev.option.id
+        if chosen is None:
+            return
+        self.app.push_screen(
+            CloneSourcePickSourceScreen(
+                source_collection=chosen,
+                target_collection=self._target,
+            )
+        )
+
+
+class CloneSourcePickSourceScreen(Screen[None]):
+    """Step 2 of clone: pick the individual source to copy.
+
+    Lists every source in the chosen source collection with a brief
+    summary (file types + path). Enter dispatches
+    :func:`fnd.config.clone_source` and pops back to the Sources screen
+    of the target collection. Triggers a reindex of the target.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Cancel", show=False),
+        Binding("up,k", "cursor(-1)", show=False),
+        Binding("down,j", "cursor(1)", show=False),
+        Binding("enter", "activate", show=False),
+    ]
+
+    CSS = CloneSourcePickCollectionScreen.CSS
+
+    def __init__(self, *, source_collection: str, target_collection: str) -> None:
+        super().__init__()
+        self._source_coll = source_collection
+        self._target = target_collection
+
+    def compose(self) -> ComposeResult:
+        app: FNDApp = self.app  # type: ignore[assignment]
+        cfg = app._config  # type: ignore[attr-defined]
+        with Vertical(id="settings_box") as box:
+            box.border_title = (
+                f"Collections › {self._target} › Sources › Clone from {self._source_coll}"
+            )
+            yield Static(
+                f"Pick a source from {self._source_coll!r} to deep-copy into {self._target!r}.",
+                classes="info",
+            )
+            options: list[Option] = []
+            if cfg is not None and self._source_coll in cfg.collections:
+                sources = cfg.collections[self._source_coll].sources
+                for i, src in enumerate(sources):
+                    base = Path(str(src.path)).name or str(src.path)
+                    types = (
+                        ", ".join(
+                            ext
+                            for ext in ("md", "pdf", "docx", "pptx", "txt")
+                            if any(g.endswith(f".{ext}") for g in src.includes)
+                        )
+                        or "all"
+                    )
+                    label = f"{i + 1}. {base}  ·  {types}  ·  {src.path}"
+                    options.append(Option(label, id=str(i)))
+            if not options:
+                options.append(Option("(collection has no sources)", id="__empty__"))
+            yield OptionList(*options, id="clone_list")
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        self.query_one("#clone_list", OptionList).focus()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(app, (("⏎", "Clone"), ("Esc", "Cancel")))
+        )
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    def action_cursor(self, direction: int) -> None:
+        lst = self.query_one("#clone_list", OptionList)
+        if direction > 0:
+            lst.action_cursor_down()
+        else:
+            lst.action_cursor_up()
+
+    def action_activate(self) -> None:
+        self.query_one("#clone_list", OptionList).action_select()
+
+    @on(OptionList.OptionSelected, "#clone_list")
+    def _on_select(self, ev: OptionList.OptionSelected) -> None:
+        if ev.option.id == "__empty__" or ev.option.id is None:
+            return
+        try:
+            idx = int(ev.option.id)
+        except ValueError:
+            return
+        from fnd.config import clone_source, default_config_path, load
+
+        try:
+            clone_source(
+                config_path=default_config_path(),
+                source_collection=self._source_coll,
+                source_index=idx,
+                target_collection=self._target,
+            )
+        except (KeyError, IndexError, ValueError) as e:
+            self.notify(f"Clone failed: {e}", severity="error")
+            return
+
+        app: FNDApp = self.app  # type: ignore[assignment]
+        app._config = load()  # type: ignore[attr-defined]
+        app._refresh_collections_panel()  # type: ignore[attr-defined]
+        self.notify(
+            f"Cloned source from {self._source_coll!r} into {self._target!r}. "
+            f"Reindexing {self._target}…",
+            title="Clone source",
+            timeout=4,
+        )
+        # Trigger reindex of the target since its source set just grew.
+        # Fire-and-forget; failure surfaces via the existing
+        # prompt-and-run UI, never block the pop.
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            app._reindex_collection_async(self._target)  # type: ignore[attr-defined]
+        # Pop both: step-2 picker, then step-1 picker.
+        self.app.pop_screen()
+        self.app.pop_screen()
+
+
 # ── Public entry points used by the main app ────────────────────────
 
 
@@ -2443,19 +2912,28 @@ def open_settings(app: FNDApp) -> None:
     )
 
 
-def open_settings_section(app: FNDApp, section_id: str) -> None:
+def open_settings_section(
+    app: FNDApp,
+    section_id: str,
+    *,
+    context_hint: str | None = None,
+) -> None:
     """Push a Settings sub-screen directly (no intermediate root push).
 
     Used by drill-in rows on the root menu AND by the global shortcuts
-    (`?` → Keybindings, F3 → Collections) so the user lands in one
-    push and Esc returns to the main app in one press.
+    (`?` → Keybindings, F3 → Collections). When called from `?`, an
+    optional ``context_hint`` is threaded into the section's provider so
+    the Keybindings list reorders its sections — most-relevant first
+    after Global. Hint is ignored by sections that don't consume it.
     """
     label = section_label(section_id)
-    items = section_items(app, section_id)
+    items = section_items(app, section_id, context_hint=context_hint)
     app.push_screen(
         SettingsScreen(
             breadcrumb=(label,),
             items=items,
-            provider=lambda a, _s=section_id: tuple(section_items(a, _s)),
+            provider=lambda a, _s=section_id, _h=context_hint: tuple(
+                section_items(a, _s, context_hint=_h)
+            ),
         )
     )

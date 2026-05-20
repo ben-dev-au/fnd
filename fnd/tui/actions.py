@@ -91,21 +91,39 @@ REGISTRY: tuple[Action, ...] = (
     ),
     Action(
         id="open_at_locator",
-        description="Open the focused result in Skim at its page (PDFs) "
-        "or the default app for other formats.",
+        description="Open the focused result at its page / heading / line in "
+        "the resolved app (per-source override → app_defaults → auto-promote "
+        "→ system).",
         default_key="o",
         command="open",
         footer_label="Open",
         contexts=("results", "preview"),
     ),
     Action(
-        id="open_default_app",
-        description="Open the focused file in the default app (no page jump).",
+        id="open_with_menu",
+        description=(
+            "Open the focused file with… — picker showing every app that "
+            "handles this file type. Default highlighted (Enter), letter "
+            "keys pick others, Esc dismisses."
+        ),
         default_key="O",
-        command="open-default",
-        footer_label="Default",
+        command="open-with",
+        footer_label="Open with…",
         contexts=("results", "preview"),
-        show_in_footer=False,  # noisy alongside Open; reachable via palette
+        show_in_footer=False,  # discoverable via `o` footer + help (`?`)
+    ),
+    Action(
+        id="open_default_app",
+        description=(
+            "Open the focused file in the system default app (no page "
+            "jump). Reachable only via the command palette — `O` now "
+            "opens the 'Open with…' picker instead."
+        ),
+        default_key=None,
+        command="open-default",
+        footer_label="System default",
+        contexts=("results", "preview"),
+        show_in_footer=False,
     ),
     Action(
         id="peek_focused",
@@ -117,7 +135,8 @@ REGISTRY: tuple[Action, ...] = (
     ),
     Action(
         id="show_help",
-        description="Toggle help overlay.",
+        description="Open the Keybindings cheat sheet, scoped to the screen "
+        "you're on. Press ? again to dismiss.",
         default_key="question_mark",
         command="help",
         footer_label="Help",

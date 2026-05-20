@@ -20,7 +20,7 @@ import shutil
 import subprocess
 import urllib.parse
 from pathlib import Path
-from typing import Final, Literal
+from typing import Any, Final, Literal
 
 OpenStrategy = Literal["url", "default"]
 
@@ -88,17 +88,98 @@ def open_smart(
     page: int = 0,
     query: str = "",
     pdf_strategy: OpenStrategy = DEFAULT_PDF_STRATEGY,
+    source: Any | None = None,
+    slide: int = 0,
+    heading_path: str = "",
+    line: int = 0,
 ) -> int:
-    """Dispatch based on ``kind`` and locator metadata.
+    """Dispatch the focused hit to the resolved app.
 
-    PDFs deep-link via Skim's ``skim://`` URL scheme; when ``query`` is
-    non-empty the URL also carries ``&search=`` so Skim highlights the
-    match. Non-PDF kinds fall through to ``open <path>``. ``pdf_strategy
-    = "default"`` skips Skim and lets LaunchServices pick the app.
+    Walks the apps registry hierarchy:
+
+      1. ``source.app_for[kind]`` (set per-source per-filetype)
+      2. ``source.app`` if its ``handles`` covers ``kind``
+      3. ``Config.app_defaults[kind]``
+      4. The ``system`` built-in (``open <path>``).
+
+    ``pdf_strategy = "default"`` is preserved for back-compat — it forces
+    the ``system`` handler for the current call regardless of the
+    resolved app. Always-default callers should use :func:`open_default`.
     """
-    if kind == "pdf" and page > 0 and _has_skim() and pdf_strategy == "url":
-        return open_pdf_via_url(path, page, search=query.strip())
-    return open_default(path)
+    if pdf_strategy == "default":
+        return open_default(path)
+
+    from fnd import apps as apps_mod
+    from fnd.config import load as load_config
+
+    try:
+        cfg = load_config()
+    except Exception:
+        cfg = None
+
+    registry = apps_mod.build_registry(cfg) if cfg is not None else apps_mod.BUILTIN_APPS
+    app_defaults: dict[str, str] = dict(getattr(cfg, "app_defaults", {})) if cfg else {}
+    # Auto-promote a page-jump-capable PDF app when the user hasn't set
+    # one explicitly. Preference order is UX-driven:
+    #   1. Skim   - silent URL scheme, no permissions, polished
+    #   2. Preview - osascript Go-to-Page keystroke; needs Accessibility,
+    #                shows a brief dialog flash but no install required
+    #   3. system - LaunchServices fallback; opens at page 1
+    # Any explicit ``app_defaults.pdf = "..."`` in the user config wins
+    # over this auto-promotion.
+    if "pdf" not in app_defaults:
+        if _has_skim():
+            app_defaults["pdf"] = "skim"
+        elif apps_mod.BUILTIN_APPS["preview"].available() and apps_mod.ax_trusted():
+            app_defaults["pdf"] = "preview"
+
+    app_params: dict[str, str] = {}
+    if source is not None:
+        app_params = dict(getattr(source, "app_params", {}) or {})
+
+    # ``file_in_vault`` MUST be relative to the vault root (the dir
+    # containing ``.obsidian/``), not the source's ``path``. A source
+    # configured as a subdirectory of the vault — e.g. an Obsidian
+    # collection that indexes only one course's notes — would otherwise
+    # produce a vault-relative path that's missing the prefix between
+    # vault root and source root, and Obsidian's Advanced URI would
+    # create a new file at the wrong location. Fall back to source-
+    # relative when no vault is found (handler tolerates this).
+    source_path = getattr(source, "path", None) if source is not None else None
+    vault_root: Path | None = None
+    if app_params.get("vault"):
+        vault_root = apps_mod.detect_obsidian_vault_path(path)
+    req = apps_mod.OpenRequest(
+        path=path,
+        kind=kind,
+        page=page,
+        slide=slide,
+        heading_path=heading_path,
+        line=line,
+        query=query,
+        vault=app_params.get("vault", ""),
+        file_in_vault=_relative_to(path, vault_root or source_path),
+        source_path=source_path,
+    )
+    app = apps_mod.resolve_app(
+        kind=kind,
+        source=source,
+        app_defaults=app_defaults,
+        registry=registry,
+    )
+    return app.handler(req)
+
+
+def _relative_to(target: Path, root: Path | None) -> str:
+    """Path of ``target`` relative to ``root``, or ``""`` when root is unset
+    or unreachable. Used to fill the ``file_in_vault`` template variable
+    for Obsidian (which wants paths relative to the vault root)."""
+    if root is None:
+        return ""
+    try:
+        return str(target.expanduser().resolve().relative_to(Path(root).expanduser().resolve()))
+    except (ValueError, OSError):
+        return ""
 
 
 # ── Diagnostics for the TUI status bar ──────────────────────────────────────

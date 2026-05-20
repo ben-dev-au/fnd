@@ -96,13 +96,29 @@ EXCLUDES_PRESETS: dict[str, dict[str, Any]] = {
 
 
 class SourceConfig(BaseModel):
-    """One root path inside a collection with its own filter chain."""
+    """One root path inside a collection with its own filter chain.
+
+    Optional ``app`` / ``app_for`` / ``app_params`` fields wire this
+    source into the apps registry. See :mod:`fnd.apps` for resolution
+    semantics. Validation of app id existence happens at the top-level
+    :class:`Config` model_validator — sources can't see siblings.
+    """
 
     path: Path
     includes: list[str] = Field(default_factory=list)
     excludes: list[str] = Field(default_factory=list)
     follow_symlinks: bool = False
     frontmatter_filter: str | None = None
+    # When set, this app id is used for any of its declared ``handles``
+    # — sugar for the common single-app case.
+    app: str | None = None
+    # Per-filetype override: ``{"md": "obsidian", "pdf": "skim"}``.
+    # Wins against ``app`` per-kind.
+    app_for: dict[str, str] = Field(default_factory=dict)
+    # Free-form template-variable bag, surfaced as ``{vault}`` etc. in
+    # apps registry templates. Common keys: ``vault`` (Obsidian vault
+    # name).
+    app_params: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("path", mode="before")
     @classmethod
@@ -210,6 +226,45 @@ class RankingProfileConfig(BaseModel):
     bm25_b: float | None = None
 
 
+class AppConfig(BaseModel):
+    """User-extensible app entry from ``[apps.<id>]``.
+
+    Exactly one of ``argv`` (process exec) and ``url`` (deep-link via
+    ``open <url>``) must be set. Template variables use ``{name}``-style
+    placeholders; see ``docs/apps/README.md`` for the full variable list.
+    Built-in apps (``system``, ``preview``, ``skim``, ``pdf_expert``,
+    ``obsidian``, ``vscode``) ship in :mod:`fnd.apps` and do NOT appear
+    here unless the user is overriding them.
+    """
+
+    display_name: str
+    handles: list[str]
+    argv: list[str] | None = None
+    url: str | None = None
+    notes: str = ""
+
+    @model_validator(mode="after")
+    def _argv_xor_url(self) -> AppConfig:
+        if (self.argv is None) == (self.url is None):
+            raise ValueError("AppConfig: exactly one of argv or url must be set")
+        return self
+
+    @field_validator("handles")
+    @classmethod
+    def _validate_handles(cls, v: list[str]) -> list[str]:
+        # Mirror fnd.apps.ALLOWED_HANDLES. Duplicated here so the config
+        # layer doesn't depend on importing apps.py at load time (apps.py
+        # imports from opener which used to import config — keeping the
+        # dependency one-way).
+        allowed = {"md", "markdown", "txt", "pdf", "pptx", "docx", "*"}
+        for h in v:
+            if h not in allowed:
+                raise ValueError(f"unknown handle kind {h!r}; allowed: {sorted(allowed)}")
+        if not v:
+            raise ValueError("handles must be non-empty")
+        return v
+
+
 class Defaults(BaseModel):
     collection: str = "default"
     result_limit: int = 200
@@ -258,6 +313,58 @@ class Config(BaseModel):
     defaults: Defaults = Field(default_factory=Defaults)
     collections: dict[str, CollectionConfig] = Field(default_factory=dict)
     ranking: dict[str, RankingProfileConfig] = Field(default_factory=dict)
+    # User-extensible app registry. Keys are app ids referenced by
+    # ``app_defaults`` and (Phase 2) per-source app fields. Built-in
+    # apps live in :mod:`fnd.apps`; entries here override built-ins on
+    # id collision.
+    apps: dict[str, AppConfig] = Field(default_factory=dict)
+    # Global per-filetype default app. Keys are file kinds (``pdf``,
+    # ``md``, ``txt``, ...); values are app ids resolved against
+    # ``BUILTIN_APPS | self.apps``. Missing entries fall through to the
+    # system default at open time.
+    app_defaults: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_app_refs(self) -> Config:
+        # Import here to avoid a circular import at module load time.
+        from fnd.apps import ALLOWED_HANDLES, APP_ID_RE, BUILTIN_APPS
+
+        known_ids = set(BUILTIN_APPS) | set(self.apps)
+        for app_id in self.apps:
+            if not APP_ID_RE.fullmatch(app_id):
+                raise ValueError(f"invalid app id {app_id!r}: must match {APP_ID_RE.pattern}")
+        for kind, app_id in self.app_defaults.items():
+            if kind not in ALLOWED_HANDLES or kind == "*":
+                raise ValueError(
+                    f"app_defaults: unknown filetype {kind!r}; "
+                    f"allowed: {sorted(ALLOWED_HANDLES - {'*'})}"
+                )
+            if app_id not in known_ids:
+                raise ValueError(
+                    f"app_defaults.{kind} = {app_id!r}: unknown app id "
+                    f"(known: {sorted(known_ids)})"
+                )
+        # Per-source app references — same id-existence rule applies.
+        for coll_name, coll in self.collections.items():
+            for idx, src in enumerate(coll.sources):
+                where = f"collections.{coll_name}.sources[{idx}]"
+                if src.app is not None and src.app not in known_ids:
+                    raise ValueError(
+                        f"{where}.app = {src.app!r}: unknown app id "
+                        f"(known: {sorted(known_ids)})"
+                    )
+                for kind, app_id in src.app_for.items():
+                    if kind not in ALLOWED_HANDLES or kind == "*":
+                        raise ValueError(
+                            f"{where}.app_for: unknown filetype {kind!r}; "
+                            f"allowed: {sorted(ALLOWED_HANDLES - {'*'})}"
+                        )
+                    if app_id not in known_ids:
+                        raise ValueError(
+                            f"{where}.app_for.{kind} = {app_id!r}: unknown app id "
+                            f"(known: {sorted(known_ids)})"
+                        )
+        return self
 
     def collection(self, name: str) -> CollectionConfig:
         try:
@@ -364,21 +471,39 @@ def write_collection_source(
     collection = collections.setdefault(collection_name, tomlkit.table())
     sources_array = collection.setdefault("sources", tomlkit.aot())  # array-of-tables
 
-    new_table = tomlkit.table()
-    new_table["path"] = str(source.path)
-    if source.includes:
-        new_table["includes"] = list(source.includes)
-    if source.excludes:
-        new_table["excludes"] = list(source.excludes)
-    if source.follow_symlinks:
-        new_table["follow_symlinks"] = source.follow_symlinks
-    if source.frontmatter_filter:
-        new_table["frontmatter_filter"] = source.frontmatter_filter
+    new_table = _source_to_tomlkit_table(source)
     sources_array.append(new_table)
 
     from fnd._perms import secure_write_text
 
     secure_write_text(config_path, tomlkit.dumps(doc))
+
+
+def _source_to_tomlkit_table(source: SourceConfig) -> Any:
+    """Serialise ``source`` to a tomlkit Table. Single point that owns
+    the source-field → TOML mapping so :func:`write_collection_source`,
+    :func:`write_collection`, and :func:`clone_source` all preserve the
+    same set of optional fields (including the Phase 2 app refs).
+    """
+    import tomlkit
+
+    table = tomlkit.table()
+    table["path"] = str(source.path)
+    if source.includes:
+        table["includes"] = list(source.includes)
+    if source.excludes:
+        table["excludes"] = list(source.excludes)
+    if source.follow_symlinks:
+        table["follow_symlinks"] = source.follow_symlinks
+    if source.frontmatter_filter:
+        table["frontmatter_filter"] = source.frontmatter_filter
+    if source.app is not None:
+        table["app"] = source.app
+    if source.app_for:
+        table["app_for"] = dict(source.app_for)
+    if source.app_params:
+        table["app_params"] = dict(source.app_params)
+    return table
 
 
 def write_collection(
@@ -411,23 +536,13 @@ def write_collection(
     if collection.sources:
         sources_aot = tomlkit.aot()
         for source in collection.sources:
-            st = tomlkit.table()
-            st["path"] = str(source.path)
-            if source.includes:
-                st["includes"] = list(source.includes)
-            if source.excludes:
-                st["excludes"] = list(source.excludes)
-            if source.follow_symlinks:
-                st["follow_symlinks"] = source.follow_symlinks
-            if source.frontmatter_filter:
-                st["frontmatter_filter"] = source.frontmatter_filter
-            sources_aot.append(st)
+            sources_aot.append(_source_to_tomlkit_table(source))
         new_table["sources"] = sources_aot
-    else:
-        # tomlkit aot() with zero entries produces no output; use an inline
-        # array so `[collections.<name>]` survives the round-trip and loads
-        # back as CollectionConfig(sources=[]).
-        new_table.add("sources", tomlkit.array())
+    # An empty `[collections.<name>]` table survives the round-trip and
+    # loads back as CollectionConfig(sources=[]) — no inline placeholder
+    # needed. A previous `sources = []` workaround broke
+    # write_collection_source's later append (tomlkit can't promote an
+    # inline array to an array-of-tables in place).
     collections[name] = new_table
     from fnd._perms import secure_write_text
 
@@ -482,6 +597,55 @@ def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Conf
     secure_mkdir(config_path.parent)
     secure_write_text(config_path, tomlkit.dumps(doc))
     return config
+
+
+def clone_source(
+    *,
+    config_path: Path,
+    source_collection: str,
+    source_index: int,
+    target_collection: str,
+) -> int:
+    """Deep-copy a source from one collection to another.
+
+    Loads the validated :class:`Config`, looks up
+    ``[collections.<source_collection>.sources][source_index]``, and
+    appends an independent copy to ``[collections.<target_collection>
+    .sources]``. Returns the new index in the target. Raises if either
+    collection is missing or the index is out of range.
+
+    The clone is a true deep copy — edits to the new entry don't
+    propagate back to the original. Uses :func:`_source_to_tomlkit_table`
+    so every persisted field (including Phase 2 ``app`` / ``app_for`` /
+    ``app_params``) round-trips.
+    """
+    validate_collection_name(source_collection)
+    validate_collection_name(target_collection)
+    if source_collection == target_collection:
+        raise ValueError("source and target collections must differ")
+    cfg = load(config_path)
+    if source_collection not in cfg.collections:
+        raise KeyError(f"unknown source collection {source_collection!r}")
+    if target_collection not in cfg.collections:
+        raise KeyError(f"unknown target collection {target_collection!r}")
+    sources = cfg.collections[source_collection].sources
+    if not 0 <= source_index < len(sources):
+        raise IndexError(
+            f"source_index {source_index} out of range for "
+            f"{source_collection!r} ({len(sources)} sources)"
+        )
+    source = sources[source_index]
+    # Re-validate through SourceConfig so the in-memory copy is fully
+    # independent of the original (avoids accidental list/dict aliasing
+    # if a caller later mutates the source). Pydantic's model_dump +
+    # model_validate gives us a clean deep copy.
+    cloned = SourceConfig.model_validate(source.model_dump())
+    write_collection_source(
+        config_path=config_path,
+        collection_name=target_collection,
+        source=cloned,
+    )
+    return len(cfg.collections[target_collection].sources)
 
 
 def delete_collection(*, config_path: Path, name: str) -> None:
@@ -568,6 +732,50 @@ excludes = ["**/.git/**", "**/.DS_Store", "**/__pycache__/**"]
 # recency_half_life  = "365d"
 # filetype_boosts    = { md = 1.0, txt = 0.9, pdf = 0.85 }
 # phrase_proximity   = 0.3
+
+# ── Apps & defaults ────────────────────────────────────────────────────
+# Default app per filetype. Resolved in this order for the `o` shortcut:
+#   1. per-source `app_for[kind]`           (set in [[collections.X.sources]])
+#   2. per-source `app`                     (same place; sugar)
+#   3. `[app_defaults][kind]`               (this section)
+#   4. AUTO-DEFAULT for that kind           (see below)
+#   5. `system` — `open <path>`             (LaunchServices, no page-jump)
+#
+# Auto-defaults only fire when nothing above sets a value:
+#   pdf:  Skim if installed                 — silent skim:// URL, no permissions
+#         else Preview if Accessibility
+#         is granted to the launching app   — keystrokes Cmd-Opt-G in Preview;
+#                                             dialog briefly flashes; needs
+#                                             System Settings → Privacy &
+#                                             Security → Accessibility for
+#                                             your terminal / IDE
+#         else system                       — opens at page 1
+#   md, txt, docx, pptx: system             — no smart pick today
+#
+# Built-in app ids: system, preview, skim, pdf_expert, obsidian, vscode.
+# Add your own under [apps.<id>] below.
+# [app_defaults]
+# pdf = "preview"   # or "skim" / "pdf_expert" / "system"
+# md  = "obsidian"  # or "vscode" / "system"
+# txt = "vscode"
+
+# User-defined apps. See docs/apps/ for ready-to-paste configs for common
+# third-party apps. Each entry sets exactly one of `argv` (process exec)
+# or `url` (deep-link via `open <url>`). Template variables: {path},
+# {path_pct}, {page}, {line}, {heading}, {heading_pct}, {query},
+# {query_pct}, {vault}, {vault_pct}, {file_in_vault}, {file_in_vault_pct}.
+# Empty fields render as the empty string; templates ending in `::N`
+# (line missing, col set) collapse to just `{path}`.
+#
+# [apps.marked]
+# display_name = "Marked 2"
+# handles      = ["md"]
+# argv         = ["open", "-a", "Marked 2", "{path}"]
+#
+# [apps.typora]
+# display_name = "Typora"
+# handles      = ["md"]
+# argv         = ["open", "-a", "Typora", "{path}"]
 """
 
 # Backwards-compat alias for any older callers that imported the
