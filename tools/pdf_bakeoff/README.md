@@ -17,14 +17,30 @@ uv run python -m tools.pdf_bakeoff \
     ~/Documents/Readings /tmp/bakeoff-readings \
     --pages-per-pdf 5 --max-pdfs 20 --seed 42
 
-# All runners (requires extra installs)
-pip install docling marker-pdf
-uv pip install -U "mineru[all]"
+# All runners (requires extra installs — see "Installing opt-in runners" below)
 uv run python -m tools.pdf_bakeoff \
     ~/Documents/Readings /tmp/bakeoff-full \
     --with-docling --with-marker --with-mineru \
     --pages-per-pdf 5 --max-pdfs 20
 ```
+
+## Installing opt-in runners
+
+`docling`, `marker-pdf`, and `mineru` each pull heavy ML deps. They
+**cannot share a venv with each other or with fnd**: docling pins
+`typer<0.22` (fnd needs `typer~=0.25`); marker-pdf pins `pillow<11`;
+mineru pins `pillow>=11`. We sidestep the conflict by invoking each as
+a CLI on PATH, installed via `uv tool install` (or `pipx install`),
+each in its own isolated environment.
+
+```sh
+uv tool install docling           # puts `docling` on PATH
+uv tool install marker-pdf        # puts `marker_single` on PATH
+uv tool install "mineru[all]"     # puts `mineru` on PATH
+```
+
+On first run each downloads model weights into
+`~/Library/Caches/fnd/bakeoff/<name>/` (200MB–5GB depending on extractor).
 
 ## Runners
 

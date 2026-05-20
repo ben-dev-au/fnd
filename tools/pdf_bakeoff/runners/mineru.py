@@ -1,9 +1,16 @@
-"""MinerU runner. Opt-in via --with-mineru. Custom Apache-2.0-based license."""
+"""MinerU runner. Opt-in via --with-mineru. Invokes the `mineru` CLI.
+
+Installed via `uv tool install "mineru[all]"` (or `pipx install
+"mineru[all]"`) so it lands in an isolated env with the `mineru` binary
+on PATH. mineru pulls heavy ML deps that conflict with marker-pdf's
+pillow pin, so we don't put it in fnd's project venv.
+"""
 
 from __future__ import annotations
 
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -34,19 +41,14 @@ def _check_macos_version() -> None:
 
 
 def setup() -> Any:
-    try:
-        import mineru  # type: ignore[import-not-found]  # noqa: F401
-    except ImportError as e:
-        raise ImportError(
-            'mineru not installed. Install with: uv pip install -U "mineru[all]"'
-        ) from e
-
+    if shutil.which("mineru") is None:
+        raise ImportError('mineru CLI not on PATH. Install with: uv tool install "mineru[all]"')
     _check_macos_version()
     cache = _cache_root()
     cache.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("MINERU_MODELS_DIR", str(cache))
     print(
-        f"[mineru] models dir: {cache}\n" "[mineru] first run downloads model weights",
+        f"[mineru] CLI: {shutil.which('mineru')}\n[mineru] models dir: {cache}",
         file=sys.stderr,
     )
     return cache

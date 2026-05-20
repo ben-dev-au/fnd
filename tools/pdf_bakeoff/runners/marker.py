@@ -1,9 +1,19 @@
-"""Marker runner. Opt-in via --with-marker. GPL-3.0; see spec licensing matrix."""
+"""Marker runner. Opt-in via --with-marker. Invokes the `marker_single` CLI.
+
+Installed via `uv tool install marker-pdf` (or `pipx install marker-pdf`,
+or the user's system pip — anything that puts `marker_single` on PATH).
+We use the CLI because marker-pdf pins pillow<11 which conflicts with
+mineru's pillow>=11 — they can't share a venv.
+
+marker_single supports --page_range, so we invoke it per page.
+"""
 
 from __future__ import annotations
 
-import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -20,51 +30,48 @@ def _cache_root() -> Path:
 
 
 def setup() -> Any:
-    try:
-        from marker.converters.pdf import PdfConverter  # type: ignore[import-not-found]
-        from marker.models import create_model_dict  # type: ignore[import-not-found]
-    except ImportError as e:
-        raise ImportError("marker not installed. Install with: pip install marker-pdf") from e
-
+    if shutil.which("marker_single") is None:
+        raise ImportError("marker_single CLI not on PATH. Install with: uv tool install marker-pdf")
     cache = _cache_root()
     cache.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("HF_HOME", str(cache))
-    # Apple Silicon: prefer MPS unless user pinned TORCH_DEVICE explicitly.
-    os.environ.setdefault("TORCH_DEVICE", "mps" if sys.platform == "darwin" else "cpu")
-
     print(
-        f"[marker] cache dir: {cache}\n"
-        f"[marker] TORCH_DEVICE={os.environ.get('TORCH_DEVICE')}\n"
-        "[marker] first run downloads ~5GB of model weights",
+        f"[marker] CLI: {shutil.which('marker_single')}\n[marker] cache dir: {cache}",
         file=sys.stderr,
     )
-    return PdfConverter(artifact_dict=create_model_dict())
-
-
-def _text_from(rendered: object) -> str:
-    from marker.output import text_from_rendered  # type: ignore[import-not-found]
-
-    text, _meta, _images = text_from_rendered(rendered)
-    return text
+    return cache
 
 
 def run(state: Any, pdf_path: Path, page_index: int) -> RunnerResult:
-    converter = state
+    _ = state
     t0 = time.perf_counter()
-    try:
-        rendered = converter(str(pdf_path), page_range=[page_index])
-        md = _text_from(rendered)
-    except TypeError:
-        rendered = converter(str(pdf_path))
-        md = _text_from(rendered)
-    except Exception as e:
-        return RunnerResult(
-            wall_ms=(time.perf_counter() - t0) * 1000.0,
-            rss_delta_mb=0.0,
-            output_md="",
-            crashed=True,
-            error=f"{type(e).__name__}: {e}",
-        )
+    with tempfile.TemporaryDirectory(prefix="bakeoff-marker-") as tmp:
+        out_dir = Path(tmp)
+        cmd = [
+            "marker_single",
+            str(pdf_path),
+            "--page_range",
+            str(page_index),
+            "--output_dir",
+            str(out_dir),
+            "--output_format",
+            "markdown",
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=600)
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            FileNotFoundError,
+        ) as e:
+            return RunnerResult(
+                wall_ms=(time.perf_counter() - t0) * 1000.0,
+                rss_delta_mb=0.0,
+                output_md="",
+                crashed=True,
+                error=f"{type(e).__name__}: {e}",
+            )
+        md_files = list(out_dir.rglob("*.md"))
+        md = md_files[0].read_text(encoding="utf-8", errors="replace") if md_files else ""
     return RunnerResult(
         wall_ms=(time.perf_counter() - t0) * 1000.0,
         rss_delta_mb=0.0,

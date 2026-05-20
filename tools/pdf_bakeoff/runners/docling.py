@@ -1,9 +1,22 @@
-"""Docling runner. Opt-in via --with-docling. Models cache locally."""
+"""Docling runner. Opt-in via --with-docling. Invokes the `docling` CLI.
+
+Installed via `uv tool install docling` (or `pipx install docling`, or
+the user's system pip — anything that puts the `docling` binary on PATH).
+We use the CLI rather than a Python import because docling pins typer
+<0.22 while fnd needs typer~=0.25 — they can't share a venv.
+
+Docling does whole-doc extraction; per-page slicing isn't exposed on the
+CLI. We cache the whole-doc markdown per (pdf_path) so subsequent
+page-calls within the same PDF reuse it. Wall-time on the first call
+is the real extraction cost; later calls are near-zero.
+"""
 
 from __future__ import annotations
 
-import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -20,50 +33,52 @@ def _cache_root() -> Path:
 
 
 def setup() -> Any:
-    try:
-        from docling.document_converter import DocumentConverter  # type: ignore[import-not-found]
-    except ImportError as e:
-        raise ImportError("docling not installed. Install with: pip install docling") from e
-
+    if shutil.which("docling") is None:
+        raise ImportError("docling CLI not on PATH. Install with: uv tool install docling")
     cache = _cache_root()
     cache.mkdir(parents=True, exist_ok=True)
-    # Redirect Docling artifact downloads into our cache so first-run
-    # weights live with the bake-off, not in HOME.
-    os.environ.setdefault("DOCLING_ARTIFACTS_PATH", str(cache))
-
     print(
-        f"[docling] artifacts dir: {cache}\n"
-        "[docling] first run downloads ~200-400MB of model weights",
+        f"[docling] CLI: {shutil.which('docling')}\n[docling] artifacts dir: {cache}",
         file=sys.stderr,
     )
-    return DocumentConverter()
+    # State: per-pdf whole-doc cache + extraction wall-time per pdf.
+    return {"docs": {}, "walls": {}, "cache_dir": cache}
+
+
+def _extract_whole_doc(pdf_path: Path) -> tuple[str, float]:
+    t0 = time.perf_counter()
+    with tempfile.TemporaryDirectory(prefix="bakeoff-docling-") as tmp:
+        out_dir = Path(tmp)
+        cmd = ["docling", str(pdf_path), "--to", "md", "--output", str(out_dir)]
+        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=600)
+        md_files = list(out_dir.rglob("*.md"))
+        md = md_files[0].read_text(encoding="utf-8", errors="replace") if md_files else ""
+    return md, (time.perf_counter() - t0) * 1000.0
 
 
 def run(state: Any, pdf_path: Path, page_index: int) -> RunnerResult:
-    converter = state
-    t0 = time.perf_counter()
+    cache = state["docs"]
+    walls = state["walls"]
+    key = str(pdf_path)
+    if key in cache:
+        # Whole-doc already extracted; this page's marginal cost is ~0.
+        return RunnerResult(wall_ms=0.0, rss_delta_mb=0.0, output_md=cache[key])
+
+    _ = page_index  # whole-doc runner; page granularity lost
     try:
-        # Docling's page selection is 1-based; align with our 0-based index.
-        result = converter.convert(
-            str(pdf_path),
-            page_range=(page_index + 1, page_index + 1),
-        )
-        md = result.document.export_to_markdown()
-    except TypeError:
-        # Older docling signatures lack page_range; convert whole doc and
-        # slice. Crude but keeps the runner usable across versions.
-        result = converter.convert(str(pdf_path))
-        md = result.document.export_to_markdown()
-    except Exception as e:
+        md, wall_ms = _extract_whole_doc(pdf_path)
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+    ) as e:
         return RunnerResult(
-            wall_ms=(time.perf_counter() - t0) * 1000.0,
+            wall_ms=0.0,
             rss_delta_mb=0.0,
             output_md="",
             crashed=True,
             error=f"{type(e).__name__}: {e}",
         )
-    return RunnerResult(
-        wall_ms=(time.perf_counter() - t0) * 1000.0,
-        rss_delta_mb=0.0,
-        output_md=md,
-    )
+    cache[key] = md
+    walls[key] = wall_ms
+    return RunnerResult(wall_ms=wall_ms, rss_delta_mb=0.0, output_md=md)
