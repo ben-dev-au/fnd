@@ -39,14 +39,16 @@ app = typer.Typer(name="fnd", help=_ROOT_HELP)
 config_app = typer.Typer(name="config", help="Manage fnd's TOML config file.")
 collection_app = typer.Typer(name="collection", help="Manage indexed collections.")
 extras_app = typer.Typer(name="extras", help="Manage opt-in feature extras.")
+cache_app = typer.Typer(name="cache", help="Manage the on-disk extraction cache.")
 app.add_typer(config_app, name="config")
 app.add_typer(collection_app, name="collection")
 app.add_typer(extras_app, name="extras")
+app.add_typer(cache_app, name="cache")
 
 
 # Keep in sync with the @app.command() / app.add_typer() registrations below.
 _KNOWN_SUBCOMMANDS = frozenset(
-    {"version", "index", "tui", "search", "config", "collection", "extras"}
+    {"version", "index", "tui", "search", "config", "collection", "extras", "cache"}
 )
 _ROOT_FLAGS = frozenset({"--help", "-h", "--install-completion", "--show-completion"})
 
@@ -521,3 +523,140 @@ def extras_uninstall(
             typer.echo(f"command failed (exit {rc}):\n{stderr}", err=True)
             raise typer.Exit(code=rc)
     typer.echo(f"\nUninstalled {name}.")
+
+
+# ---- cache ----------------------------------------------------------------
+
+
+def _human_bytes(n: int) -> str:
+    if n < 1024:
+        return f"{n} B"
+    kb = n / 1024
+    if kb < 1024:
+        return f"{kb:.1f} KB"
+    mb = kb / 1024
+    if mb < 1024:
+        return f"{mb:.1f} MB"
+    gb = mb / 1024
+    return f"{gb:.2f} GB"
+
+
+@cache_app.command("status")
+def cache_status() -> None:
+    """Show on-disk extraction cache location, entry count, and size."""
+    from fnd.cache import ExtractionCache, default_cache_dir
+
+    cache = ExtractionCache()
+    root = default_cache_dir()
+    if not root.exists():
+        typer.echo(f"cache dir: {root}  (not yet created)")
+        return
+    typer.echo(f"cache dir:    {root}")
+    typer.echo(f"entries:      {cache.entry_count()}")
+    typer.echo(f"total size:   {_human_bytes(cache.total_size_bytes())}")
+
+
+@cache_app.command("clear")
+def cache_clear(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+) -> None:
+    """Remove the entire extraction cache. Next reindex will re-extract."""
+    import shutil
+
+    from fnd.cache import default_cache_dir
+
+    root = default_cache_dir()
+    if not root.exists():
+        typer.echo("cache is empty (no directory)")
+        return
+
+    if not yes:
+        typer.echo(f"About to remove {root} and all extraction artifacts.")
+        typer.echo("Next reindex will re-extract every file from scratch.")
+        if not typer.confirm("Continue?", default=False):
+            typer.echo("aborted")
+            raise typer.Exit(code=1)
+    shutil.rmtree(root)
+    typer.echo(f"removed {root}")
+
+
+@cache_app.command("prune")
+def cache_prune(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="List candidates; don't delete."),
+) -> None:
+    """Remove cache entries from older extractor versions.
+
+    Reads each entry's filename to extract its extractor_signature
+    suffix, compares against the current signature, and offers to
+    remove the stale ones.
+    """
+    from fnd.cache import default_cache_dir
+    from fnd.extract.pdf import _extractor_signature
+
+    root = default_cache_dir()
+    if not root.exists():
+        typer.echo("cache is empty (no directory)")
+        return
+
+    current = _extractor_signature()
+    stale: list[Path] = []
+    fresh = 0
+    for shard in root.iterdir():
+        if not shard.is_dir():
+            continue
+        for entry in shard.glob("*.json"):
+            stem = entry.stem  # <sha256>--<extractor_signature>
+            try:
+                _content, _, sig = stem.partition("--")
+            except ValueError:
+                continue
+            if sig == current:
+                fresh += 1
+            else:
+                stale.append(entry)
+
+    typer.echo(f"current extractor signature: {current}")
+    typer.echo(f"fresh entries (kept):        {fresh}")
+    typer.echo(f"stale entries (candidates):  {len(stale)}")
+
+    if not stale:
+        return
+    if dry_run:
+        for p in stale[:10]:
+            typer.echo(f"  would remove: {p.name}")
+        if len(stale) > 10:
+            typer.echo(f"  …and {len(stale) - 10} more")
+        return
+
+    if not yes and not typer.confirm(f"Remove {len(stale)} stale entries?", default=False):
+        typer.echo("aborted")
+        raise typer.Exit(code=1)
+    for p in stale:
+        try:
+            p.unlink()
+        except OSError as e:
+            typer.echo(f"failed to remove {p}: {e}", err=True)
+    typer.echo(f"removed {len(stale)} entries")
+
+
+@cache_app.command("info")
+def cache_info(path: Path) -> None:
+    """Show whether a file has a cached extraction (and which key it uses)."""
+    from fnd.cache import ExtractionCache, sha256_file
+    from fnd.extract.pdf import _extractor_signature
+
+    if not path.exists():
+        typer.echo(f"file not found: {path}", err=True)
+        raise typer.Exit(code=2)
+
+    cache = ExtractionCache()
+    sig = _extractor_signature()
+    sha = sha256_file(path)
+    key = cache.build_key(content_sha256=sha, extractor_signature=sig)
+    entry = cache.entry_path(key)
+    typer.echo(f"path:                 {path}")
+    typer.echo(f"sha256:               {sha[:16]}…")
+    typer.echo(f"extractor signature:  {sig}")
+    typer.echo(f"cache entry:          {entry}")
+    typer.echo(f"status:               {'HIT' if entry.exists() else 'MISS'}")
