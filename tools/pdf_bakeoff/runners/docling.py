@@ -1,7 +1,9 @@
 """Docling runner. Opt-in via --with-docling. Invokes the `docling` CLI.
 
-Installed via `uv tool install docling` (or `pipx install docling`, or
-the user's system pip — anything that puts the `docling` binary on PATH).
+Installed via `uv tool install docling-slim` (or `pipx install
+docling-slim`, or the user's system pip — anything that puts the
+`docling` binary on PATH). Note: the `docling` package itself does not
+ship a CLI entry point; `docling-slim` is the wrapper that does.
 We use the CLI rather than a Python import because docling pins typer
 <0.22 while fnd needs typer~=0.25 — they can't share a venv.
 
@@ -34,7 +36,7 @@ def _cache_root() -> Path:
 
 def setup() -> Any:
     if shutil.which("docling") is None:
-        raise ImportError("docling CLI not on PATH. Install with: uv tool install docling")
+        raise ImportError("docling CLI not on PATH. Install with: uv tool install docling-slim")
     cache = _cache_root()
     cache.mkdir(parents=True, exist_ok=True)
     print(

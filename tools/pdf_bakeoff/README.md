@@ -34,7 +34,7 @@ a CLI on PATH, installed via `uv tool install` (or `pipx install`),
 each in its own isolated environment.
 
 ```sh
-uv tool install docling           # puts `docling` on PATH
+uv tool install docling-slim      # puts `docling` on PATH (the `docling` pkg itself has no CLI)
 uv tool install marker-pdf        # puts `marker_single` on PATH
 uv tool install "mineru[all]"     # puts `mineru` on PATH
 ```
