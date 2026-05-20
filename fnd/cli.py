@@ -38,12 +38,16 @@ app = typer.Typer(name="fnd", help=_ROOT_HELP)
 
 config_app = typer.Typer(name="config", help="Manage fnd's TOML config file.")
 collection_app = typer.Typer(name="collection", help="Manage indexed collections.")
+extras_app = typer.Typer(name="extras", help="Manage opt-in feature extras.")
 app.add_typer(config_app, name="config")
 app.add_typer(collection_app, name="collection")
+app.add_typer(extras_app, name="extras")
 
 
 # Keep in sync with the @app.command() / app.add_typer() registrations below.
-_KNOWN_SUBCOMMANDS = frozenset({"version", "index", "tui", "search", "config", "collection"})
+_KNOWN_SUBCOMMANDS = frozenset(
+    {"version", "index", "tui", "search", "config", "collection", "extras"}
+)
 _ROOT_FLAGS = frozenset({"--help", "-h", "--install-completion", "--show-completion"})
 
 
@@ -382,3 +386,138 @@ def collection_reindex(
         rebuild=rebuild,
     )
     typer.echo(f"indexed {written} chunks for collection {name}")
+
+
+# ---- extras ---------------------------------------------------------------
+
+
+def _format_disk(mb: int) -> str:
+    if mb >= 1024:
+        return f"~{mb / 1024:.1f} GB"
+    return f"~{mb} MB"
+
+
+@extras_app.command("list")
+def extras_list() -> None:
+    """List all available extras and their installed status."""
+    from fnd.extras import EXTRAS, is_extra_installed
+
+    if not EXTRAS:
+        typer.echo("no extras defined")
+        return
+    for extra in EXTRAS.values():
+        status = "installed" if is_extra_installed(extra) else "not installed"
+        typer.echo(f"{extra.name}  [{status}]  {extra.description}")
+
+
+@extras_app.command("status")
+def extras_status() -> None:
+    """Show installed extras with disk usage."""
+    from fnd.extras import EXTRAS, actual_disk_mb, installed_packages, is_extra_installed
+
+    for extra in EXTRAS.values():
+        installed = is_extra_installed(extra)
+        if not installed:
+            typer.echo(f"{extra.name}: not installed")
+            continue
+        disk = actual_disk_mb(extra)
+        typer.echo(f"{extra.name}: installed ({_format_disk(disk)})")
+        for pkg in installed_packages(extra):
+            typer.echo(f"  - {pkg.display}")
+
+
+def _print_install_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
+    total_mb = sum(p.disk_mb for p in extra.packages)
+    typer.echo(f"\nInstall '{extra.name}' — {extra.description}\n")
+    typer.echo("Will install:")
+    for p in extra.packages:
+        typer.echo(f"  - {p.display}  (~{p.disk_mb} MB)")
+    typer.echo(f"\nApproximate total disk + download: {_format_disk(total_mb)}")
+    typer.echo(
+        "ML model weights (a portion of the size above) download on first use.\n"
+        "Without this extra, PDFs continue to render as flat text (current behaviour).\n"
+    )
+
+
+def _print_uninstall_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
+    from fnd.extras import actual_disk_mb, installed_packages
+
+    typer.echo(f"\nUninstall '{extra.name}' — {extra.description}\n")
+    typer.echo("Will remove:")
+    for p in installed_packages(extra):
+        typer.echo(f"  - {p.display}")
+    for c in extra.cache_dirs:
+        if c.exists():
+            typer.echo(f"  - cache: {c}")
+    typer.echo(f"\nApproximate disk recovered: {_format_disk(actual_disk_mb(extra))}")
+    typer.echo(
+        "Already-indexed structured chunks remain in the index — previews keep\n"
+        "working. New extractions revert to flat text. To fully revert existing\n"
+        "collections, run `fnd collection reindex <name>` after uninstall.\n"
+    )
+
+
+@extras_app.command("install")
+def extras_install(
+    name: str = typer.Argument(..., help="Extra to install (e.g. 'pdf-structure')"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the commands that would run; don't execute."
+    ),
+) -> None:
+    """Install an opt-in extra after a disk-impact disclosure prompt."""
+    from fnd.extras import EXTRAS, install_commands, run_command
+
+    extra = EXTRAS.get(name)
+    if extra is None:
+        typer.echo(f"unknown extra: {name!r}; available: {list(EXTRAS)}", err=True)
+        raise typer.Exit(code=2)
+
+    _print_install_disclosure(extra)
+    cmds = install_commands(extra)
+    if dry_run:
+        for c in cmds:
+            typer.echo("would run: " + " ".join(c))
+        return
+    if not yes and not typer.confirm("Continue?", default=False):
+        typer.echo("aborted")
+        raise typer.Exit(code=1)
+    for c in cmds:
+        typer.echo("$ " + " ".join(c))
+        rc, _stdout, stderr = run_command(c)
+        if rc != 0:
+            typer.echo(f"command failed (exit {rc}):\n{stderr}", err=True)
+            raise typer.Exit(code=rc)
+    typer.echo(f"\nInstalled {name}. Run `fnd collection reindex <name>` to apply.")
+
+
+@extras_app.command("uninstall")
+def extras_uninstall(
+    name: str = typer.Argument(..., help="Extra to uninstall (e.g. 'pdf-structure')"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print commands; don't execute."),
+) -> None:
+    """Remove an opt-in extra. Indexed chunks remain; new extractions revert."""
+    from fnd.extras import EXTRAS, run_command, uninstall_commands
+
+    extra = EXTRAS.get(name)
+    if extra is None:
+        typer.echo(f"unknown extra: {name!r}; available: {list(EXTRAS)}", err=True)
+        raise typer.Exit(code=2)
+
+    _print_uninstall_disclosure(extra)
+    cmds = uninstall_commands(extra)
+    if dry_run:
+        for c in cmds:
+            typer.echo("would run: " + " ".join(c))
+        return
+    if not yes and not typer.confirm("Continue?", default=False):
+        typer.echo("aborted")
+        raise typer.Exit(code=1)
+    for c in cmds:
+        typer.echo("$ " + " ".join(c))
+        rc, _stdout, stderr = run_command(c)
+        if rc != 0:
+            typer.echo(f"command failed (exit {rc}):\n{stderr}", err=True)
+            raise typer.Exit(code=rc)
+    typer.echo(f"\nUninstalled {name}.")
