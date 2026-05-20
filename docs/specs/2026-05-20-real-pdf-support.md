@@ -162,6 +162,29 @@ the decision:
   is acceptable because cached. Without a cache, multi-second
   extractors are unusable on books. See "Caching".
 
+## Phase-0 verdict (2026-05-20)
+
+Hybrid: **pymupdf4llm primary, docling fallback** for pages with
+image-rendered or borderless tables that pymupdf4llm flags as picture
+regions. The two extractors are architecturally complementary —
+neither alone is sufficient for a search tool that must index *all*
+table content.
+
+| Capability | pymupdf4llm | docling | Hybrid |
+|---|---|---|---|
+| Speed | 0.16s/page | 0.40s/page | ~0.20s avg (90% pymupdf, 10% docling) |
+| Vector tables | ✓ | ✓ | ✓ |
+| Image-rendered tables | ✗ (omitted) | ✓ | ✓ (via docling fallback) |
+| Bold/italic | ✓ | ✗ | ✓ on 90% of pages |
+| Heading hierarchy | h2-only | h2-only | h2-only (architectural limit both ways) |
+| License | AGPL-3.0 | Apache-2.0 | both, fine for fnd |
+
+Cost: both packages as dependencies. Acceptable until upstream
+(pymupdf4llm or docling) closes its respective gap.
+
+See `docs/plans/2026-05-20-real-pdf-support-bakeoff.md` Phase 3 for
+the routing-logic sketch.
+
 ## Open questions for the bake-off to answer
 
 Specific, falsifiable:
