@@ -15,6 +15,7 @@ phase 7 adds reranker live-tuning.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import re
 from collections import OrderedDict
@@ -66,6 +67,7 @@ from fnd.render import (
 )
 from fnd.rerank import RankingProfile, profile_from_config
 from fnd.tui.actions import REGISTRY, Keymap, load_keymap
+from fnd.tui.indexer_modal import IndexerScreen, drive_indexer
 from fnd.tui.line_buffer import (
     FileView,
     LineBufferPreview,
@@ -1260,6 +1262,16 @@ class FNDApp(App[None]):
         # installed in the shared widget. Lets intra-file navigation skip
         # set_prebuilt_view and just scroll.
         self._installed_flat_key: tuple[str, str] | None = None
+        # Async indexer state — see fnd/tui/indexer_modal.py. None when
+        # no indexer is running; populated for the lifetime of one
+        # `fnd collection reindex` invoked from the TUI / palette.
+        self._indexer_task: asyncio.Task[None] | None = None
+        self._indexer_cancel: asyncio.Event | None = None
+        self._indexer_events: asyncio.Queue[Any] | None = None
+        self._indexer_state: Any = None
+        self._indexer_last_event: Any = None
+        self._indexer_collection: str = ""
+        self._indexer_started_at: str = ""
         # Convenience aliases that point into the active container —
         # legacy code paths (_scroll_preview_to_chunk, etc.) read from
         # these instead of poking at the container directly.
@@ -1400,6 +1412,13 @@ class FNDApp(App[None]):
             self._run_query(self._initial_query)
         if not self._initial_query or not self._groups:
             self.query_one("#query_bar", Input).focus()
+        # Auto-resume any interrupted reindex from a previous fnd session.
+        # Runs in background (no modal); user can click the footer
+        # indicator or invoke `action_reindex_default` to view progress.
+        # Wrapped in try/except so a corrupt state file doesn't keep the
+        # TUI from launching.
+        with contextlib.suppress(Exception):
+            self._maybe_resume_indexer()
 
     # ── Ranking profile (§7) ──────────────────────────────────────
 
@@ -3986,6 +4005,97 @@ class FNDApp(App[None]):
             if g.hits:
                 return g, g.hits[0]
         return None
+
+    # ── Async indexer plumbing ────────────────────────────────────
+
+    def start_indexer(
+        self,
+        *,
+        collection: str,
+        config: Any = None,  # CollectionConfig; Any to avoid import cycle
+        index_dir: Path | None = None,
+        rebuild: bool = False,
+        open_modal: bool = True,
+    ) -> bool:
+        """Spawn the async indexer task for ``collection``. Idempotent —
+        if a task is already running, returns False without starting a
+        second one.
+
+        Returns True when a new task was spawned.
+        """
+        import datetime as _dt
+
+        from fnd.config import default_index_dir
+        from fnd.config import load as _load_config
+
+        if self._indexer_task is not None and not self._indexer_task.done():
+            if open_modal:
+                self.push_screen(IndexerScreen(self._indexer_collection or collection))
+            return False
+        if config is None:
+            cfg = _load_config()
+            config = cfg.collection(collection)
+        if index_dir is None:
+            index_dir = default_index_dir()
+        self._indexer_collection = collection
+        self._indexer_started_at = _dt.datetime.now(tz=_dt.UTC).isoformat(timespec="seconds")
+        self._indexer_cancel = asyncio.Event()
+        self._indexer_events = asyncio.Queue()
+        self._indexer_state = None
+        self._indexer_last_event = None
+        self._indexer_task = asyncio.create_task(
+            drive_indexer(
+                self,
+                collection=collection,
+                config=config,
+                index_dir=index_dir,
+                rebuild=rebuild,
+                cancel=self._indexer_cancel,
+                events=self._indexer_events,
+            )
+        )
+        if open_modal:
+            self.push_screen(IndexerScreen(collection))
+        return True
+
+    def action_reindex_default(self) -> None:
+        """Convenience action: reindex the default collection."""
+        try:
+            self.start_indexer(collection="default")
+        except Exception as e:
+            self.notify(f"Could not start indexer: {e}", severity="error")
+
+    def _maybe_resume_indexer(self) -> None:
+        """If a state file from a previous run exists, restart the
+        indexer in background mode (no modal). Called from on_mount."""
+        from fnd.config import default_index_dir
+        from fnd.index_runner import load_state, state_file_for
+
+        # Resume the default collection only for now — extending to
+        # named collections requires walking ~/Library/Application
+        # Support/fnd/reindex/ for *.state.toml files.
+        state = load_state(state_file_for("default"))
+        if state is None or state.files_completed >= state.total_files:
+            return
+        # Auto-resume opt-out via config flag (see indexer.auto_resume).
+        try:
+            from fnd.config import load as _load_config
+
+            cfg = _load_config()
+            if not getattr(cfg, "indexer_auto_resume", True):
+                return
+        except Exception:
+            pass
+        try:
+            self.start_indexer(
+                collection="default", index_dir=default_index_dir(), open_modal=False
+            )
+            self.notify(
+                f"Resuming indexing: {state.files_completed}/{state.total_files}",
+                timeout=5,
+            )
+        except Exception:
+            pass
 
     # ── Actions ───────────────────────────────────────────────────
 
