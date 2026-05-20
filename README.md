@@ -48,6 +48,23 @@ After installing, run `fnd collection reindex <name>` to reprocess
 existing PDFs structurally. New PDFs added later are extracted
 structurally automatically.
 
+Structured extraction is **slow on first encounter** (~30 s per PDF on
+M1 Max for the pymupdf4llm pipeline; longer for pages that need the
+docling fallback). The output is cached at
+`~/Library/Caches/fnd/extraction/`, so subsequent reindexes only
+re-process files that have changed since last run. **A 200-book
+corpus is roughly a 2-hour one-time cost.**
+
+The reindex is **resumable**: Ctrl+C, computer sleep, terminal close,
+or fnd quit all leave the cache and a state file at
+`~/Library/Application Support/fnd/reindex/<collection>.state.toml`.
+Next time you open the TUI it auto-resumes in the background —
+already-cached files return from the cache in milliseconds, so resume
+effectively starts where you left off. To disable auto-resume add
+`indexer_auto_resume = false` to your config.
+
+To inspect or prune the cache: `fnd cache status / info / prune / clear`.
+
 The extra installs two packages: `pymupdf4llm[layout]` (Polyform
 Noncommercial — fnd is open-source non-commercial, acceptable; blocks
 commercial redistribution) and `docling-slim[standard]` (Apache-2.0).

@@ -35,6 +35,13 @@ column tracking implementation + verification status. Updated as Phase
 | F14 | corrupt entry → silent miss + re-extract | `tests/test_extraction_cache.py::test_get_corrupt_json_returns_none` | test |
 | F15 | schema_version mismatch → silent miss | `tests/test_extraction_cache.py::test_get_schema_version_mismatch_returns_none` | test |
 | FCLI | `fnd cache status/clear/prune/info` | `tests/test_cache_cli.py` (7 tests) | test |
+| F16 | `start_indexer` from TUI / palette opens IndexerScreen | `IndexerScreen` class + smoke via `start_indexer()` | done |
+| F17 | Background mode dismisses modal but keeps task running | `IndexerScreen.action_background()` + task on app | done |
+| F18 | Quit mid-reindex leaves state file; reopen auto-resumes (no prompt) | `tests/test_index_runner.py` + `_maybe_resume_indexer` | test |
+| F19 | Cancel clears state file so next launch doesn't auto-resume | `tests/test_index_runner.py::test_run_indexer_clears_state_file_on_done` | test |
+| F20 | Cache-hit files reported on `file_complete` event | `tests/test_index_runner.py::test_cache_hit_reported_on_warm_run` | test |
+| F21 | First-reindex warning shown once then suppressed | `tests/test_first_reindex_warning.py` (10 tests) | test |
+| F22 | `indexer.auto_resume = false` suppresses auto-resume on launch | `_maybe_resume_indexer` reads config flag | done |
 
 ## Non-functional requirements
 
@@ -49,6 +56,8 @@ column tracking implementation + verification status. Updated as Phase
 | NF7 | No pymupdf4llm/docling imports at fnd startup when extra is absent | `tests/test_pdf_extras_optional.py::test_optional_extractors_not_imported_eagerly` | test |
 | NF8 | Cache lookup adds <100ms on a 300-page payload | `tests/test_extraction_cache.py::test_get_round_trip_under_20ms_for_typical_payload` | test |
 | NF9 | Warm-cache reindex is ≥50× faster than cold | HBR Handbook smoke: 44.1s cold → 0.5s warm = 88× | verif |
+| NF11 | UI stays responsive during indexing | `asyncio.to_thread` in `_process_one_file`; manual verification on real corpus pending | done (manual verif pending) |
+| NF12 | Extras install disclosure includes indexing-time estimate | `tests/test_extras_cli.py::test_install_dry_run_discloses_indexing_time_for_pdf_structure` | test |
 
 ## Cross-cutting invariants
 
