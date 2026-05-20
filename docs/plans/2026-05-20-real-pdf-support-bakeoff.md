@@ -45,15 +45,136 @@ against a folder of PDFs and emits structured results.
 - Choosing the cache design — see spec "Caching — decisions to make".
 - Modifying any production extraction or rendering code.
 
-## Phase 1 — Integrate winning extractor *(sketch)*
+## Phase 1 — Integrate winning extractor (opt-in extras)
 
-After Phase 0 picks a winner, add it as a configurable extractor
-behind a feature flag (`fnd config set pdf.extractor=...` or env
-var). Populate `body_md` and a richer `body_struct` in
-`fnd/extract/pdf.py`. Add `"pdf"` to `_MARKDOWN_RENDERED_KINDS` in
-`fnd/tui/preview_dispatcher.py`. Keep the current font-clustering
-path as fallback when the new extractor returns empty/garbage or
-raises.
+User requirement: PDF formatting must be **opt-in**, with full
+disclosure of additional disk + download cost. Default `fnd install`
+remains lean; structured PDF rendering is a choice the user makes
+explicitly. Uninstall reverts cleanly to the current flat-text
+behaviour.
+
+### `fnd extras` CLI
+
+```
+fnd extras list                    # show available + installed
+fnd extras status                  # disk usage per extra, last touched
+fnd extras install pdf-structure   # interactive prompt, then install
+fnd extras uninstall pdf-structure # interactive prompt, then remove
+```
+
+Install prompt example:
+```
+$ fnd extras install pdf-structure
+
+This will install structured PDF rendering, which uses two extractors:
+
+  pymupdf4llm 1.27   ~10 MB Python package, no model weights
+  docling-slim 2.x   ~500 MB Python package + ~400 MB ML weights
+
+Total disk: ~910 MB
+Network:    ~910 MB downloaded once
+
+After install, run `fnd collection reindex <name>` to apply structured
+extraction to existing PDFs. New PDFs added later are extracted
+structurally by default.
+
+Without this extra, PDFs render as flat text (current behaviour).
+
+Continue? [y/N]
+```
+
+Uninstall prompt:
+```
+$ fnd extras uninstall pdf-structure
+
+This will remove:
+  pymupdf4llm     (project venv)
+  docling-slim    (uv tool venv, ~500 MB)
+  ML weights      (~/Library/Caches/fnd/docling-models/, ~400 MB)
+
+Already-indexed structured chunks remain in the index — previews
+keep working. New extractions revert to flat text. To fully revert
+existing collections, run `fnd collection reindex <name>` after
+uninstall.
+
+Continue? [y/N]
+```
+
+### pyproject restructure
+
+`pymupdf4llm~=1.27` moves from hard dependency to optional:
+
+```toml
+[project.optional-dependencies]
+ocr = ["ocrmypdf~=17.0"]
+# Structured PDF rendering — opt-in via `fnd extras install pdf-structure`.
+# docling-slim is installed separately via `uv tool install` due to
+# transitive version conflicts (typer<0.22 vs fnd's typer~=0.25).
+pdf-structure = ["pymupdf4llm~=1.27"]
+```
+
+`fnd extras install pdf-structure` runs:
+- `uv pip install --upgrade "fnd[pdf-structure]"` (gets pymupdf4llm into the project venv)
+- `uv tool install "docling-slim[standard]"` (isolated tool venv for docling)
+
+### Two extraction code paths in `fnd/extract/pdf.py`
+
+Detection at module load:
+```python
+try:
+    import pymupdf4llm
+    import shutil
+    _HAS_PYMUPDF4LLM = True
+    _HAS_DOCLING = shutil.which("docling") is not None
+except ImportError:
+    _HAS_PYMUPDF4LLM = False
+    _HAS_DOCLING = False
+```
+
+Dispatch in `extract(path)`:
+```python
+def extract(path: Path) -> Iterator[Chunk]:
+    if _HAS_PYMUPDF4LLM:
+        yield from _extract_structured(path)   # body_md populated
+    else:
+        yield from _extract_flat(path)         # current behaviour
+```
+
+`_extract_flat` is **today's `fnd/extract/pdf.py` verbatim** — preserved
+in its entirety. Users who don't install the extra get the exact
+behaviour they have today.
+
+`_extract_structured` is new: pymupdf4llm primary, docling fallback
+per Phase 3 routing logic. Populates `body_md` (the routing signal)
+and a richer `body_struct`.
+
+### Preview dispatcher
+
+Add `"pdf"` to `_MARKDOWN_RENDERED_KINDS` in
+`fnd/tui/preview_dispatcher.py`. The existing dispatcher rule
+`kind in _MARKDOWN_RENDERED_KINDS and body_md` already handles the
+fallback: if `body_md` is empty (flat extraction), PDF stays on the
+flat preview path automatically. No additional branching needed.
+
+### Reindex behaviour
+
+Schema version stays at 7 — the existing `body_md` field accommodates
+both modes. After `fnd extras install`, the user runs
+`fnd collection reindex <name>` to re-extract existing PDFs
+structurally. New PDFs auto-detect the extras and pick the right
+path on first index.
+
+### Acceptance criteria
+
+- `fnd extras install pdf-structure` works end-to-end on a clean
+  install; shows the disk-impact prompt; installs both packages.
+- `fnd extras uninstall pdf-structure` works end-to-end; removes
+  both packages; existing indexed chunks remain.
+- Without the extra: `fnd` works exactly as it does today. Zero
+  behavioural change for users who don't opt in.
+- With the extra: PDF previews show headings, lists, bold/italic
+  via the structural renderer.
+- `make lint` clean; snapshot tests for both extraction modes.
 
 ## Phase 2 — On-disk cache *(sketch)*
 
