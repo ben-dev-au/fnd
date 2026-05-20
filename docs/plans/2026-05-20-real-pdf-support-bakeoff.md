@@ -380,12 +380,20 @@ opens a modal dialog:
 - **Cancel**: stops at next file boundary. Cache entries written
   during the run remain (so a future `reindex` skips them).
 - **Quit fnd mid-reindex**: the asyncio task dies; cache entries
-  written so far survive. On next launch, fnd reads the state file
-  and shows a one-line prompt:
-  ```
-  Last reindex of 'default' was interrupted at 142/487.
-                                       [ Resume ]  [ Discard ]
-  ```
+  written so far survive. **On next launch fnd auto-resumes** —
+  the indexer task starts in background mode immediately, and the
+  user sees the "indexing 142/487 · click to view" footer indicator.
+  No confirmation prompt: closing fnd shouldn't punish the user with
+  a dialog on next launch, and the cache makes resume effectively
+  free (cache hits skip the ~150ms extraction).
+
+  If the user wants to stop a resumed reindex, they click the
+  footer to open the modal and hit Cancel. To disable auto-resume
+  entirely: `fnd config set indexer.auto_resume = false` (default
+  true).
+
+  If a reindex was *cancelled* (not just interrupted by quit), the
+  state file is cleared and there's nothing to resume.
 
 ### Architecture
 
@@ -402,21 +410,91 @@ opens a modal dialog:
   small TOML with `started_at`, `total_files`, `files_completed`,
   `current_file`, `interrupted_at`. Atomic-writes per-file completion.
 
+### First-reindex disclosure (when extras flip the cost profile)
+
+Installing the `pdf-structure` extra raises per-PDF indexing cost
+from ~1-2s to ~30-60s on first extraction. The user already saw
+disk-impact disclosure at `fnd extras install` time; they need an
+**indexing-time** disclosure too, ideally right before the first
+big reindex bills hours of CPU.
+
+Trigger: the first `> reindex` palette command issued after a state
+transition where `_HAS_PYMUPDF4LLM` flipped from False → True
+(detected via a flag in fnd's data dir, set by the indexer after
+its first run with extras). Shows:
+
+```
+┌─ First reindex after enabling structured PDF support ──────┐
+│                                                            │
+│  This will extract structure from 487 PDFs in 'default'.   │
+│                                                            │
+│  Estimated time: ~2h 30min (~30s per PDF on average,       │
+│  ~3min on figure-heavy PDFs with image-table fallback).    │
+│                                                            │
+│  After this one-time cost, future reindexes only process   │
+│  files that have changed since last run.                   │
+│                                                            │
+│  Indexing runs in the background — you can keep searching  │
+│  while it works. fnd will auto-resume on next launch if    │
+│  you quit before it finishes.                              │
+│                                                            │
+│  [ Start ]  [ Cancel ]  [ Don't show this again ]          │
+└────────────────────────────────────────────────────────────┘
+```
+
+ETA computed from: `pdf_count × avg_pages × ~150ms` + a ~15% kicker
+for docling-fallback pages. Re-estimated and updated in the
+progress modal as the run progresses (replace static ETA with
+"running average × remaining files").
+
+The "Don't show this again" option persists in fnd config; can be
+re-enabled via `fnd config set indexer.show_first_reindex_warning = true`.
+
+The same disclosure also appears in the `fnd extras install
+pdf-structure` confirmation flow, with the indexing-time numbers
+appended after the existing disk-size disclosure:
+
+```
+This will install structured PDF rendering, which uses two
+extractors:
+
+  pymupdf4llm[layout]  (Polyform Noncommercial)  ~200 MB
+  docling-slim         (Apache-2.0)              ~700 MB
+
+Approximate total disk: ~900 MB
+
+After installing, your next `fnd collection reindex` will spend
+~30s per PDF extracting structure (one-time per file, cached
+afterward). For a corpus of 100 books that's roughly 50 minutes;
+500 books is roughly 4 hours. Subsequent reindexes only re-process
+changed files.
+
+Continue? [y/N]
+```
+
 ### Phase 2.5 deliverables
 
 1. `fnd/index_runner.py` — async indexer + progress events
-2. `fnd/tui/indexer_modal.py` — progress dialog
-3. `fnd/tui/app.py` — palette command, footer status, resume prompt
+2. `fnd/tui/indexer_modal.py` — progress dialog + first-reindex warning dialog
+3. `fnd/tui/app.py` — palette command, footer status, auto-resume on launch
 4. State file format + atomic-write helper
-5. Tests:
+5. ETA estimator (initial estimate + running-average updates)
+6. `fnd/extras.py` — extend install disclosure with indexing-time numbers
+7. Tests:
    - F16: starting a reindex from palette opens the modal
    - F17: "Run in background" dismisses modal, indexer continues
-   - F18: closing fnd mid-reindex writes a state file; reopening shows
-     the resume prompt
-   - F19: "Discard" deletes the state file (cache entries kept)
+   - F18: closing fnd mid-reindex writes a state file; reopening
+     auto-resumes (no prompt) with footer indicator
+   - F19: cancelling a reindex clears the state file so next launch
+     doesn't auto-resume
    - F20: cache-hit files don't show up in the progress count
+   - F21: first-reindex warning appears once then suppresses on
+     "don't show again"
+   - F22: `fnd config set indexer.auto_resume = false` suppresses
+     auto-resume
    - NF11: UI stays responsive during indexing (frame rate >30fps in
      async-runner mode)
+   - NF12: extras install disclosure includes indexing-time estimate
 
 ### Background-helper alternatives (deferred)
 
