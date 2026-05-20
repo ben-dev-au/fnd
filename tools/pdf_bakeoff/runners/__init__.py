@@ -58,10 +58,17 @@ def load(name: str) -> Runner:
 
 
 def install_hint(name: str) -> str:
+    pymupdf4llm_hint = "uv sync --extra pdf-structure  # adds pymupdf4llm to project venv"
     return {
-        "docling": "pip install docling",
-        "marker": "pip install marker-pdf",
-        "mineru": 'uv pip install -U "mineru[all]"',
+        "pymupdf4llm_layout": pymupdf4llm_hint,
+        "pymupdf4llm_legacy": pymupdf4llm_hint,
+        "pymupdf4llm_toc": pymupdf4llm_hint,
+        "pymupdf4llm_layout_ai": pymupdf4llm_hint,
+        "docling": 'uv tool install "docling-slim[standard]"',
+        "docling_tuned": 'uv tool install "docling-slim[standard]"',
+        "docling_backend_text": 'uv tool install "docling-slim[standard]"',
+        "marker": "uv tool install marker-pdf",
+        "mineru": 'uv tool install "mineru[all]"',
     }.get(name, "")
 
 

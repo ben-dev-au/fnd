@@ -274,7 +274,6 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pymupdf" },
-    { name = "pymupdf4llm" },
     { name = "python-docx" },
     { name = "python-pptx" },
     { name = "rich" },
@@ -289,6 +288,9 @@ dependencies = [
 [package.optional-dependencies]
 ocr = [
     { name = "ocrmypdf" },
+]
+pdf-structure = [
+    { name = "pymupdf4llm" },
 ]
 
 [package.dev-dependencies]
@@ -311,7 +313,7 @@ requires-dist = [
     { name = "pydantic", specifier = "~=2.13" },
     { name = "pydantic-settings", specifier = "~=2.14" },
     { name = "pymupdf", specifier = "~=1.27" },
-    { name = "pymupdf4llm", specifier = "~=1.27" },
+    { name = "pymupdf4llm", marker = "extra == 'pdf-structure'", specifier = "~=1.27" },
     { name = "python-docx", specifier = "~=1.2" },
     { name = "python-pptx", specifier = "~=1.0" },
     { name = "rich", specifier = "~=15.0" },
@@ -322,7 +324,7 @@ requires-dist = [
     { name = "typer", specifier = "~=0.25" },
     { name = "watchdog", specifier = "~=6.0" },
 ]
-provides-extras = ["ocr"]
+provides-extras = ["ocr", "pdf-structure"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -1,10 +1,10 @@
 """PDF extractor: one chunk per page, with TOC-first heading detection.
 
-Per plan §17 + §21 Spike B:
+Flow:
 
 1. Try ``doc.get_toc()`` first — if the PDF has an embedded outline, that's
    ~100% accurate; map each page to the nearest preceding TOC entry.
-2. Else fall back to ``pymupdf4llm.IdentifyHeaders`` font-size clustering.
+2. Else fall back to local font-size clustering (``_font_clustering_heading``).
 3. Apply sanity gates and bail to ``heading_path = ""`` when:
    - ≤1 distinct rounded font size (likely OCR'd; clustering yields garbage)
    - >30% of spans flagged as headings (false positives dominate)
@@ -12,6 +12,11 @@ Per plan §17 + §21 Spike B:
 
 When heading_path can't be derived, the chunk still ranks via body/title/path
 and the user navigates by page number.
+
+When the optional ``pdf-structure`` extra is installed (pymupdf4llm +
+docling), a parallel structured-extraction path runs and populates
+``body_md`` for Markdown-rendered preview. See
+``docs/specs/2026-05-20-real-pdf-support.md``.
 """
 
 from __future__ import annotations

@@ -17,7 +17,6 @@ authors = [{ name = "Ben Davidson" }]
 dependencies = [
     "tantivy~=0.26",
     "pymupdf~=1.27",
-    "pymupdf4llm~=1.27",
     "python-pptx~=1.0",
     "python-docx~=1.2",
     "markdown-it-py~=4.0",
@@ -34,6 +33,10 @@ dependencies = [
 
 [project.optional-dependencies]
 ocr = ["ocrmypdf~=17.0"]
+# Structured PDF rendering — opt-in via `fnd extras install pdf-structure`.
+# docling-slim is installed separately into its own uv tool venv (transitive
+# version conflicts with fnd's deps make it unsafe in this venv).
+pdf-structure = ["pymupdf4llm~=1.27"]
 
 [tool.pytest.ini_options]
 # `slow` flags long-running tests (perf benches, fuzz harness). The
