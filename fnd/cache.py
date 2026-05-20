@@ -59,6 +59,11 @@ class ExtractionCache:
 
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or default_cache_dir()
+        # Per-instance counters for indexer-runner progress reporting.
+        # Not thread-safe — caller should snapshot before reading from
+        # another task.
+        self.hits = 0
+        self.misses = 0
 
     @staticmethod
     def build_key(*, content_sha256: str, extractor_signature: str) -> str:
@@ -87,17 +92,23 @@ class ExtractionCache:
         """
         path = self.entry_path(key)
         if not path.exists():
+            self.misses += 1
             return None
         try:
             blob = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            self.misses += 1
             return None
         if blob.get("schema_version") != CACHE_SCHEMA_VERSION:
+            self.misses += 1
             return None
         try:
-            return [_chunk_from_dict(d) for d in blob.get("chunks", [])]
+            chunks = [_chunk_from_dict(d) for d in blob.get("chunks", [])]
         except (KeyError, TypeError, ValueError):
+            self.misses += 1
             return None
+        self.hits += 1
+        return chunks
 
     def put(self, key: str, chunks: list[Chunk]) -> None:
         """Write `chunks` to the cache atomically.
