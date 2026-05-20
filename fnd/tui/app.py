@@ -4061,9 +4061,48 @@ class FNDApp(App[None]):
     def action_reindex_default(self) -> None:
         """Convenience action: reindex the default collection."""
         try:
-            self.start_indexer(collection="default")
+            self._reindex_with_warning_if_needed("default")
         except Exception as e:
             self.notify(f"Could not start indexer: {e}", severity="error")
+
+    def _reindex_with_warning_if_needed(self, collection: str) -> None:
+        """If the pdf-structure extra is installed and the first-reindex
+        warning hasn't been seen, show it; on confirm, start the
+        indexer. Otherwise start the indexer directly."""
+        from fnd.config import load as _load_config
+        from fnd.tui.first_reindex_warning import (
+            FirstReindexWarningScreen,
+            count_pdfs,
+            has_been_seen,
+        )
+
+        cfg = _load_config()
+        col_cfg = cfg.collection(collection)
+
+        # Only warn when extras are actually installed (otherwise the
+        # cost is the old flat-extraction cost, which is sub-second/PDF).
+        from fnd.extras import EXTRAS, is_extra_installed
+
+        extra = EXTRAS.get("pdf-structure")
+        show_warning = extra is not None and is_extra_installed(extra) and not has_been_seen()
+
+        if show_warning:
+            n_pdfs = count_pdfs(col_cfg)
+            if n_pdfs == 0:
+                # No PDFs in this collection; skip the warning entirely.
+                self.start_indexer(collection=collection, config=col_cfg)
+                return
+
+            def _after_warning(confirmed: bool | None) -> None:
+                if confirmed:
+                    self.start_indexer(collection=collection, config=col_cfg)
+
+            self.push_screen(
+                FirstReindexWarningScreen(collection=collection, n_pdfs=n_pdfs),
+                _after_warning,
+            )
+        else:
+            self.start_indexer(collection=collection, config=col_cfg)
 
     def _maybe_resume_indexer(self) -> None:
         """If a state file from a previous run exists, restart the

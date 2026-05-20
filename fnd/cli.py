@@ -435,10 +435,20 @@ def _print_install_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
     for p in extra.packages:
         typer.echo(f"  - {p.display}  (~{p.disk_mb} MB)")
     typer.echo(f"\nApproximate total disk + download: {_format_disk(total_mb)}")
-    typer.echo(
-        "ML model weights (a portion of the size above) download on first use.\n"
-        "Without this extra, PDFs continue to render as flat text (current behaviour).\n"
-    )
+    typer.echo("ML model weights (a portion of the size above) download on first use.")
+    typer.echo("")
+    # For the pdf-structure extra, also disclose the indexing-time cost
+    # the user will incur on the first big reindex after install.
+    if extra.name == "pdf-structure":
+        typer.echo(
+            "Indexing-time impact:\n"
+            "  After installing, your next `fnd collection reindex` will spend\n"
+            "  ~30s per PDF extracting structure (one-time per file; cached\n"
+            "  thereafter). Rough scale: 100 books ~50 min, 500 books ~4 hours.\n"
+            "  Subsequent reindexes only re-process changed files.\n"
+            "  Indexing can run in the background and auto-resumes if interrupted.\n"
+        )
+    typer.echo("Without this extra, PDFs continue to render as flat text (current behaviour).\n")
 
 
 def _print_uninstall_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
