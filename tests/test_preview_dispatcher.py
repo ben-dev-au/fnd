@@ -28,7 +28,24 @@ def _chunk(kind: str, body_md: str = "") -> FileChunk:
 
 
 def test_pdf_chunks_take_flat_path() -> None:
+    """F8: without the pdf-structure extra, ``body_md`` stays empty and
+    PDFs continue to render via the flat-buffer pipeline."""
     assert choose_preview_mode([_chunk("pdf"), _chunk("pdf")]) == "flat"
+
+
+def test_pdf_with_body_md_takes_structural_path() -> None:
+    """F7: with the pdf-structure extra populating ``body_md``, PDFs
+    route to the structural Markdown renderer like docx/pptx/md do."""
+    chunks = [_chunk("pdf", body_md="## Page 1\n\nIntroduction.")]
+    assert choose_preview_mode(chunks) == "structural"
+
+
+def test_pdf_partially_structured_still_structural() -> None:
+    """A PDF that was reindexed with extras present but had an
+    individual page fail extraction (empty body_md) still routes
+    structural overall — the any-chunk rule wins."""
+    chunks = [_chunk("pdf", body_md=""), _chunk("pdf", body_md="## p2")]
+    assert choose_preview_mode(chunks) == "structural"
 
 
 def test_txt_chunks_take_flat_path() -> None:

@@ -25,8 +25,11 @@ from typing import Literal
 from fnd.query import FileChunk
 
 # Kinds whose extractor emits a Markdown serialisation in ``body_md``;
-# these go through the structural Markdown widget.
-_MARKDOWN_RENDERED_KINDS: frozenset[str] = frozenset({"md", "docx", "pptx"})
+# these go through the structural Markdown widget. PDFs are included
+# only when the optional ``pdf-structure`` extra is installed — without
+# it, ``body_md`` stays empty and the any-chunk predicate below keeps
+# PDFs on the flat path automatically.
+_MARKDOWN_RENDERED_KINDS: frozenset[str] = frozenset({"md", "docx", "pptx", "pdf"})
 
 PreviewMode = Literal["flat", "structural"]
 
