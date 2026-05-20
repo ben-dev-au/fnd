@@ -22,6 +22,7 @@ _BUILTIN: dict[str, str] = {
     "baseline": "tools.pdf_bakeoff.runners.baseline_pymupdf",
     "pymupdf4llm_layout": "tools.pdf_bakeoff.runners.pymupdf4llm_layout",
     "pymupdf4llm_legacy": "tools.pdf_bakeoff.runners.pymupdf4llm_legacy",
+    "pymupdf4llm_toc": "tools.pdf_bakeoff.runners.pymupdf4llm_toc",
 }
 
 # Opt-in (heavy ML deps; --with-<name>)

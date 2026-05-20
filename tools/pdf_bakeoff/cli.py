@@ -24,7 +24,29 @@ from tools.pdf_bakeoff.metrics import (
     populate_structural_metrics,
 )
 
-DEFAULT_RUNNERS = "baseline,pymupdf4llm_layout,pymupdf4llm_legacy"
+try:
+    import mdformat  # type: ignore[import-not-found]
+except ImportError:
+    mdformat = None  # type: ignore[assignment]
+
+
+def _normalize_md(md: str) -> str:
+    """Run extractor output through mdformat for consistent spacing/lists.
+
+    Doesn't recover lost structure; only normalises what's there. Skipped
+    silently if mdformat isn't installed.
+    """
+    if not md or mdformat is None:
+        return md
+    try:
+        return mdformat.text(md)
+    except Exception:
+        # Some extractors emit Markdown that mdformat's strict parser
+        # rejects. Fall back to the original on failure.
+        return md
+
+
+DEFAULT_RUNNERS = "baseline,pymupdf4llm_layout,pymupdf4llm_legacy,pymupdf4llm_toc"
 
 
 @dataclass
@@ -341,6 +363,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                             error=f"orchestrator-caught {type(e).__name__}: {e}\n"
                             + traceback.format_exc(limit=2),
                         )
+                    # Normalise spacing/lists; baseline is plain text so
+                    # we skip it (mdformat would mangle the unstructured
+                    # output and skew the jaccard denominator).
+                    if name != "baseline":
+                        r.output_md = _normalize_md(r.output_md)
                     if name == "baseline":
                         baseline_md = r.output_md
                     populate_structural_metrics(r, baseline_md=baseline_md)

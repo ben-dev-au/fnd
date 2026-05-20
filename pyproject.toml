@@ -55,6 +55,9 @@ dev = [
     "pytest-asyncio>=0.24",
     "hypothesis>=6.110",
     "pre-commit>=3.8",
+    # Used by tools/pdf_bakeoff to normalise ML extractor output before
+    # comparison. Not loaded by fnd itself.
+    "mdformat>=0.7",
 ]
 
 [tool.hatch.build.targets.wheel]
