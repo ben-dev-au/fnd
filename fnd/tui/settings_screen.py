@@ -1025,11 +1025,17 @@ class SettingsScreen(Screen[None]):
     def _activate_item(self, item: MenuItem) -> None:
         app: FNDApp = self.app  # type: ignore[assignment]
         if item.kind == KIND_ACTION:
+            # Documentation-only rows (widget-level bindings — Move
+            # cursor, Activate, etc. in the Keybindings sheet) carry
+            # an empty action_id and have nothing to fire. Treat Enter
+            # as a no-op rather than dismissing the cheat sheet — the
+            # user is reading help, not invoking a global action.
+            if not item.action_id:
+                return
             self._close_settings_stack()
-            if item.action_id:
-                method = getattr(app, f"action_{item.action_id}", None)
-                if callable(method):
-                    method()
+            method = getattr(app, f"action_{item.action_id}", None)
+            if callable(method):
+                method()
             return
         if item.kind == KIND_TOGGLE:
             if item.toggle_setter is not None and item.toggle_getter is not None:
@@ -1585,6 +1591,14 @@ class SourceFormScreen(Screen[None]):
             )
         ]
         for app_id, app in registry.items():
+            # Filter to apps that are actually installed on this host —
+            # matches the global default-app picker and the Open-with
+            # modal, both of which already filter by ``available()``.
+            # Without this, the picker would let users pick e.g. Skim on
+            # a machine that doesn't have Skim and only fail at open
+            # time. ``system`` is always available so it stays.
+            if not app.available():
+                continue
             handles = ",".join(app.handles)
             # ``app.notes`` carries the per-app advisory ("install plugin X
             # for line-precise jumps", "no page-jump on macOS", etc.) — surface

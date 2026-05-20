@@ -137,6 +137,18 @@ def open_smart(
     if source is not None:
         app_params = dict(getattr(source, "app_params", {}) or {})
 
+    # ``file_in_vault`` MUST be relative to the vault root (the dir
+    # containing ``.obsidian/``), not the source's ``path``. A source
+    # configured as a subdirectory of the vault — e.g. an Obsidian
+    # collection that indexes only one course's notes — would otherwise
+    # produce a vault-relative path that's missing the prefix between
+    # vault root and source root, and Obsidian's Advanced URI would
+    # create a new file at the wrong location. Fall back to source-
+    # relative when no vault is found (handler tolerates this).
+    source_path = getattr(source, "path", None) if source is not None else None
+    vault_root: Path | None = None
+    if app_params.get("vault"):
+        vault_root = apps_mod.detect_obsidian_vault_path(path)
     req = apps_mod.OpenRequest(
         path=path,
         kind=kind,
@@ -146,8 +158,8 @@ def open_smart(
         line=line,
         query=query,
         vault=app_params.get("vault", ""),
-        file_in_vault=_relative_to(path, getattr(source, "path", None)),
-        source_path=getattr(source, "path", None) if source is not None else None,
+        file_in_vault=_relative_to(path, vault_root or source_path),
+        source_path=source_path,
     )
     app = apps_mod.resolve_app(
         kind=kind,

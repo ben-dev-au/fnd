@@ -626,6 +626,11 @@ def _validate_user_app(app_id: str, raw: dict[str, Any]) -> _UserAppSpec:
         if not isinstance(url_raw, str) or not url_raw:
             raise ValueError(f"app {app_id!r}: url must be a non-empty string")
         url = url_raw
+    # Dry-run the template against a stub OpenRequest so placeholder
+    # typos ({ptha} for {path}) surface at config load — not at open
+    # time, where the resulting KeyError gets surfaced as an ugly
+    # "Open failed: KeyError: 'ptha'" toast in the OpenWithScreen.
+    _validate_template(app_id, argv=argv, url=url)
     return _UserAppSpec(
         id=app_id,
         display_name=display_name,
@@ -633,6 +638,41 @@ def _validate_user_app(app_id: str, raw: dict[str, Any]) -> _UserAppSpec:
         argv=argv,
         url=url,
     )
+
+
+def _validate_template(
+    app_id: str,
+    *,
+    argv: tuple[str, ...] | None,
+    url: str | None,
+) -> None:
+    """Dry-run-format the template against a fully-populated stub
+    OpenRequest. Re-raise the placeholder name as a ValueError so the
+    config-load error message points users at the typo."""
+    stub = OpenRequest(
+        path=Path("/stub/path"),
+        kind="md",
+        page=1,
+        slide=1,
+        heading_path="Stub > Section",
+        line=1,
+        query="stub",
+        vault="StubVault",
+        file_in_vault="stub.md",
+        source_path=Path("/stub"),
+    )
+    try:
+        if argv is not None:
+            _render_argv(list(argv), stub)
+        if url is not None:
+            _render_url(url, stub)
+    except KeyError as e:
+        # e.args[0] is the missing placeholder name.
+        bad = e.args[0] if e.args else "?"
+        raise ValueError(
+            f"app {app_id!r}: template references unknown placeholder {{{bad}}}. "
+            f"See docs/apps/README.md for the variable list."
+        ) from None
 
 
 def _make_user_handler(spec: _UserAppSpec) -> Callable[[OpenRequest], int]:
@@ -725,23 +765,39 @@ def resolve_app(
 # ── Vault detection (Phase 2 helper, lives here so opener can use it) ─────
 
 
-def detect_obsidian_vault(path: Path) -> str | None:
-    """Walk up from ``path`` looking for a ``.obsidian/`` directory. Return
-    the basename of the first directory whose ``.obsidian/`` exists, or
-    ``None`` if no vault is found before the filesystem root.
+def detect_obsidian_vault_path(path: Path) -> Path | None:
+    """Walk up from ``path`` looking for the directory containing a
+    ``.obsidian/`` folder. Return the absolute path to that vault
+    root, or ``None`` if no vault is found before the filesystem root.
 
-    Used by the Settings TUI to pre-fill ``app_params.vault`` when the
-    user picks Obsidian as a source's app.
+    Used by the opener to compute ``file_in_vault`` relative to the
+    actual vault root — which Obsidian's Advanced URI expects — even
+    when the source's ``path`` is a subdirectory of the vault (a
+    common layout for collections that index only one course's notes
+    out of a larger vault).
     """
     p = path.expanduser().resolve()
     if p.is_file():
         p = p.parent
     while True:
         if (p / ".obsidian").is_dir():
-            return p.name
+            return p
         if p.parent == p:
             return None
         p = p.parent
+
+
+def detect_obsidian_vault(path: Path) -> str | None:
+    """Walk up from ``path`` and return the basename of the containing
+    vault, or ``None`` when no vault is above ``path``.
+
+    Used by the Settings TUI to pre-fill ``app_params.vault`` when the
+    user picks Obsidian as a source's app. For the vault's filesystem
+    path (needed by the deep-link layer) use
+    :func:`detect_obsidian_vault_path`.
+    """
+    root = detect_obsidian_vault_path(path)
+    return root.name if root is not None else None
 
 
 __all__ = [
@@ -753,6 +809,7 @@ __all__ = [
     "ax_trusted",
     "build_registry",
     "detect_obsidian_vault",
+    "detect_obsidian_vault_path",
     "load_user_apps",
     "resolve_app",
     "set_notice_sink",

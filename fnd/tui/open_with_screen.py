@@ -255,6 +255,8 @@ class OpenWithScreen(ModalScreen[str | None]):
         self.dismiss(app_id)
 
     def _build_request(self) -> OpenRequest:
+        from fnd.apps import detect_obsidian_vault_path
+
         hit = self._hit
         source = self._source
         params: dict[str, str] = {}
@@ -263,6 +265,11 @@ class OpenWithScreen(ModalScreen[str | None]):
             params = dict(getattr(source, "app_params", {}) or {})
             source_path = getattr(source, "path", None)
         path = Path(str(getattr(hit, "path", "")))
+        # Match opener.open_smart: when a vault is configured, anchor
+        # file_in_vault on the actual vault root (the dir containing
+        # .obsidian/) so deep-links work even when source.path is a
+        # subdirectory of the vault.
+        vault_root = detect_obsidian_vault_path(path) if params.get("vault") else None
         return OpenRequest(
             path=path,
             kind=str(getattr(hit, "kind", "")),
@@ -272,7 +279,7 @@ class OpenWithScreen(ModalScreen[str | None]):
             line=int(getattr(hit, "line", 0) or 0),
             query=str(getattr(hit, "query", "") or ""),
             vault=params.get("vault", ""),
-            file_in_vault=_relative_or_empty(path, source_path),
+            file_in_vault=_relative_or_empty(path, vault_root or source_path),
             source_path=source_path,
         )
 

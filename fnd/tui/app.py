@@ -4921,14 +4921,15 @@ class FNDApp(App[None]):
         """Map the current screen / focused panel to the Keybindings
         section that should appear right after Global. Returns ``None``
         when nothing more specific than Global is appropriate."""
-        from fnd.tui.settings_screen import SettingsScreen
+        from fnd.tui.settings_screen import SettingsScreen, SourceFormScreen
 
         # If we're inside the Settings stack, the relevant section
         # depends on which screen the user is on. SourceFormScreen
-        # has its own static section; the rest fall under "Settings
-        # menu" (the SettingsList widget bindings apply universally).
+        # has its own static section; SettingsScreen catches the rest
+        # (Preferences / Collections / Keybindings sub-screens — the
+        # SettingsList widget bindings apply across all of them).
         current = self.screen
-        if "SourceFormScreen" in type(current).__name__:
+        if isinstance(current, SourceFormScreen):
             return "Source form"
         if isinstance(current, SettingsScreen):
             return "Settings menu"

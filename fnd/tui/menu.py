@@ -25,6 +25,7 @@ that share the same chrome.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -414,13 +415,38 @@ _CONTEXT_TO_SECTION: dict[str, str] = {
 }
 
 
-def _key_row(key: str, label: str, action_id: str, description: str) -> MenuItem:
+_ID_SAFE_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _slug(*parts: str) -> str:
+    """Join ``parts`` into a lowercased, ascii-safe slug for MenuItem
+    ids. Keybinding labels like 'Cancel' repeat across sections, and
+    keys like '↑ / ↓ / j / k' or 'Esc / ←' contain spaces and arrows
+    that break id syntax; this collapses both into one safe form."""
+    return _ID_SAFE_RE.sub("_", "_".join(p.lower() for p in parts if p)).strip("_")
+
+
+def _key_row(
+    key: str,
+    label: str,
+    action_id: str,
+    description: str,
+    *,
+    section: str = "",
+) -> MenuItem:
     """Build a Keybindings cheat-sheet row. ``label`` is the short title
     shown in the row list; ``description`` is the long-form explanation
     surfaced in the DetailStrip when the row is focused — DON'T pass
-    the same string for both, or the DetailStrip just echoes the row."""
+    the same string for both, or the DetailStrip just echoes the row.
+
+    ``section`` disambiguates widget-only rows (action_id="") that
+    share a label across sections (Source form's "Cancel" vs Open
+    with's "Cancel"); without it, both would collapse to ``key.cancel``
+    and the second mount would shadow the first.
+    """
+    item_id = f"key.{action_id}" if action_id else "key." + _slug(section, key, label)
     return MenuItem(
-        id=f"key.{action_id or label.lower().replace(' ', '_')}",
+        id=item_id,
         label=label,
         description=description,
         kind=KIND_ACTION,
@@ -487,10 +513,14 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
 
     # Static widget bindings — append AFTER the registry-derived
     # sections in declaration order; reordering happens below.
-    sections["Settings menu"] = [_key_row(*row) for row in _KEYS_SETTINGS]
-    sections["Source form"] = [_key_row(*row) for row in _KEYS_SOURCE_FORM]
-    sections["Open with… modal"] = [_key_row(*row) for row in _KEYS_OPEN_WITH]
-    sections["Accessibility prompt"] = [_key_row(*row) for row in _KEYS_AX_MODAL]
+    # Pass section name so widget-only rows that share labels across
+    # sections (multiple "Cancel" rows) get distinct MenuItem ids.
+    sections["Settings menu"] = [_key_row(*row, section="settings") for row in _KEYS_SETTINGS]
+    sections["Source form"] = [_key_row(*row, section="source_form") for row in _KEYS_SOURCE_FORM]
+    sections["Open with… modal"] = [_key_row(*row, section="open_with") for row in _KEYS_OPEN_WITH]
+    sections["Accessibility prompt"] = [
+        _key_row(*row, section="ax_modal") for row in _KEYS_AX_MODAL
+    ]
 
     # Display order: Global first; then hint section (if set and not
     # Global); then everything else in declaration order; empty
