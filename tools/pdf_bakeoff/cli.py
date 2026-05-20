@@ -12,6 +12,7 @@ import sys
 import time
 import traceback
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,6 +29,23 @@ try:
     import mdformat  # type: ignore[import-not-found]
 except ImportError:
     mdformat = None  # type: ignore[assignment]
+
+
+def _run_one(mod, state, pdf, page) -> RunnerResult:
+    """Invoke one runner with orchestrator-level error capture."""
+    try:
+        rss_before = _maxrss_mb()
+        r = mod.run(state, pdf, page)
+        r.rss_delta_mb = max(0.0, _maxrss_mb() - rss_before)
+        return r
+    except Exception as e:
+        return RunnerResult(
+            wall_ms=0.0,
+            rss_delta_mb=0.0,
+            output_md="",
+            crashed=True,
+            error=f"orchestrator-caught {type(e).__name__}: {e}\n" + traceback.format_exc(limit=2),
+        )
 
 
 def _normalize_md(md: str) -> str:
@@ -58,6 +76,7 @@ class Args:
     seed: int
     max_pdfs: int | None
     include_glob: str
+    parallel: bool
 
 
 def parse_args(argv: Sequence[str] | None = None) -> Args:
@@ -76,8 +95,21 @@ def parse_args(argv: Sequence[str] | None = None) -> Args:
         help=f"comma-separated runner names. default: {DEFAULT_RUNNERS}",
     )
     p.add_argument("--with-docling", action="store_true", help="enable docling runner")
+    p.add_argument(
+        "--with-docling-tuned",
+        action="store_true",
+        help="enable docling_tuned runner (M1-Max-tuned: num_threads=10, batch=16, images_scale=0.5)",
+    )
     p.add_argument("--with-marker", action="store_true", help="enable marker runner")
     p.add_argument("--with-mineru", action="store_true", help="enable mineru runner")
+    p.add_argument(
+        "--parallel",
+        action="store_true",
+        help=(
+            "run all runners concurrently per page (faster total run, but "
+            "wall_ms measurements include contention from concurrent runners)"
+        ),
+    )
     p.add_argument(
         "--pages-per-pdf",
         type=int,
@@ -99,6 +131,10 @@ def parse_args(argv: Sequence[str] | None = None) -> Args:
         opt_ins.add("docling")
         if "docling" not in requested:
             requested.append("docling")
+    if ns.with_docling_tuned:
+        opt_ins.add("docling_tuned")
+        if "docling_tuned" not in requested:
+            requested.append("docling_tuned")
     if ns.with_marker:
         opt_ins.add("marker")
         if "marker" not in requested:
@@ -133,6 +169,7 @@ def parse_args(argv: Sequence[str] | None = None) -> Args:
         seed=int(ns.seed),
         max_pdfs=ns.max_pdfs,
         include_glob=ns.include_glob,
+        parallel=bool(ns.parallel),
     )
 
 
@@ -348,28 +385,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             short = pdf.name if len(pdf.name) <= 40 else pdf.name[:37] + "..."
 
             for page in pages:
+                # Baseline always runs first — it's the jaccard denominator.
+                baseline_pair = next(((n, m) for n, m in runners if n == "baseline"), None)
+                other_runners = [(n, m) for n, m in runners if n != "baseline"]
+
+                page_results: list[tuple[str, RunnerResult]] = []
                 baseline_md = ""
-                for name, mod in runners:
-                    try:
-                        rss_before = _maxrss_mb()
-                        r = mod.run(setups[name], pdf, page)
-                        r.rss_delta_mb = max(0.0, _maxrss_mb() - rss_before)
-                    except Exception as e:
-                        r = RunnerResult(
-                            wall_ms=0.0,
-                            rss_delta_mb=0.0,
-                            output_md="",
-                            crashed=True,
-                            error=f"orchestrator-caught {type(e).__name__}: {e}\n"
-                            + traceback.format_exc(limit=2),
-                        )
-                    # Normalise spacing/lists; baseline is plain text so
-                    # we skip it (mdformat would mangle the unstructured
-                    # output and skew the jaccard denominator).
+
+                if baseline_pair is not None:
+                    name, mod = baseline_pair
+                    r = _run_one(mod, setups[name], pdf, page)
+                    baseline_md = r.output_md
+                    page_results.append((name, r))
+
+                if args.parallel and other_runners:
+                    with ThreadPoolExecutor(max_workers=len(other_runners)) as ex:
+                        futures = {
+                            name: ex.submit(_run_one, mod, setups[name], pdf, page)
+                            for name, mod in other_runners
+                        }
+                        for name, fut in futures.items():
+                            page_results.append((name, fut.result()))
+                else:
+                    for name, mod in other_runners:
+                        page_results.append((name, _run_one(mod, setups[name], pdf, page)))
+
+                for name, r in page_results:
                     if name != "baseline":
                         r.output_md = _normalize_md(r.output_md)
-                    if name == "baseline":
-                        baseline_md = r.output_md
                     populate_structural_metrics(r, baseline_md=baseline_md)
                     md_path = _md_path(args.out_dir, pdf, page, name)
                     _write_md(md_path, r.output_md)

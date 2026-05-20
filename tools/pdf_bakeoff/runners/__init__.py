@@ -28,6 +28,7 @@ _BUILTIN: dict[str, str] = {
 # Opt-in (heavy ML deps; --with-<name>)
 _OPTIONAL: dict[str, str] = {
     "docling": "tools.pdf_bakeoff.runners.docling",
+    "docling_tuned": "tools.pdf_bakeoff.runners.docling_tuned",
     "marker": "tools.pdf_bakeoff.runners.marker",
     "mineru": "tools.pdf_bakeoff.runners.mineru",
 }
