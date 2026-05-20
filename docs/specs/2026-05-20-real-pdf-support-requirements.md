@@ -28,7 +28,13 @@ column tracking implementation + verification status. Updated as Phase
 | F7 | `"pdf"` in `_MARKDOWN_RENDERED_KINDS`; PDFs with non-empty `body_md` → structural preview | `tests/test_preview_dispatcher.py::test_pdf_with_body_md_takes_structural_path` | test |
 | F8 | PDFs with empty `body_md` → flat preview | `tests/test_preview_dispatcher.py::test_pdf_chunks_take_flat_path` | test |
 | F9 | After uninstall, previously-indexed structured chunks still render | implemented (index untouched on uninstall); UI test pending | done (test pending) |
-| F10 | docling daemon spawned lazily, reused across reindex, torn down at exit | `DoclingDaemon` class + atexit hook | done (test pending) |
+| F10 | docling daemon spawned lazily, reused across reindex, torn down at exit | `tests/test_pdf_docling_daemon.py` (lifecycle tests) | test |
+| F11 | identical file content → cache hit | `tests/test_extraction_cache.py::test_put_then_get_round_trip` | test |
+| F12 | same content, different extractor → cache miss | `tests/test_extraction_cache.py::test_build_key_differs_per_extractor` | test |
+| F13 | cache write is atomic (Ctrl+C safe) | `tests/test_extraction_cache.py::test_put_atomic_no_partial_file_on_failure` | test |
+| F14 | corrupt entry → silent miss + re-extract | `tests/test_extraction_cache.py::test_get_corrupt_json_returns_none` | test |
+| F15 | schema_version mismatch → silent miss | `tests/test_extraction_cache.py::test_get_schema_version_mismatch_returns_none` | test |
+| FCLI | `fnd cache status/clear/prune/info` | `tests/test_cache_cli.py` (7 tests) | test |
 
 ## Non-functional requirements
 
@@ -41,6 +47,8 @@ column tracking implementation + verification status. Updated as Phase
 | NF5 | Per-page extraction: pymupdf4llm <0.25s, docling <0.6s on born-digital A4 (M1 Max) | `tools/pdf_bakeoff/` harness | verif (Phase 0) |
 | NF6 | `fnd extras status` reports disk usage within ±10% of actual | implemented: `actual_disk_mb` walks tool venvs + cache dirs | done (verif pending) |
 | NF7 | No pymupdf4llm/docling imports at fnd startup when extra is absent | `tests/test_pdf_extras_optional.py::test_optional_extractors_not_imported_eagerly` | test |
+| NF8 | Cache lookup adds <100ms on a 300-page payload | `tests/test_extraction_cache.py::test_get_round_trip_under_20ms_for_typical_payload` | test |
+| NF9 | Warm-cache reindex is ≥50× faster than cold | HBR Handbook smoke: 44.1s cold → 0.5s warm = 88× | verif |
 
 ## Cross-cutting invariants
 
