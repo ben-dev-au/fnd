@@ -51,7 +51,7 @@ def run(_state: Any, pdf_path: Path, page_index: int) -> RunnerResult:
                     show_progress=False,
                     force_text=False,
                     ignore_images=True,
-                    ignore_graphics=True,
+                    ignore_graphics=False,
                     hdr_info=hdr_info,
                     table_strategy="lines",
                 )

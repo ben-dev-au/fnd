@@ -100,6 +100,11 @@ def parse_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         help="enable docling_tuned runner (M1-Max-tuned: num_threads=10, batch=16, images_scale=0.5)",
     )
+    p.add_argument(
+        "--with-docling-backend-text",
+        action="store_true",
+        help="enable docling_backend_text runner (force_backend_text=True for inline-format recovery)",
+    )
     p.add_argument("--with-marker", action="store_true", help="enable marker runner")
     p.add_argument("--with-mineru", action="store_true", help="enable mineru runner")
     p.add_argument(
@@ -135,6 +140,10 @@ def parse_args(argv: Sequence[str] | None = None) -> Args:
         opt_ins.add("docling_tuned")
         if "docling_tuned" not in requested:
             requested.append("docling_tuned")
+    if ns.with_docling_backend_text:
+        opt_ins.add("docling_backend_text")
+        if "docling_backend_text" not in requested:
+            requested.append("docling_backend_text")
     if ns.with_marker:
         opt_ins.add("marker")
         if "marker" not in requested:

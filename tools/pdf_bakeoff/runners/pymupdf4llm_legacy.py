@@ -36,7 +36,8 @@ def run(_state: Any, pdf_path: Path, page_index: int) -> RunnerResult:
                 use_glyphs=True,
                 force_text=False,
                 ignore_images=True,
-                ignore_graphics=True,
+                ignore_graphics=False,
+                table_strategy="lines",
             )
         if not chunks:
             md = ""

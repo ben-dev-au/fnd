@@ -19,10 +19,11 @@ def setup() -> Any:
 
 
 def _extract(pdf_path: Path, page_index: int) -> str:
-    # force_text=False skips the image-area OCR pass (PyMuPDF's
-    # Tesseract fallback), which dominates wall-time on figure-heavy
-    # PDFs and is irrelevant for born-digital text-layer extraction.
-    # ignore_images/ignore_graphics skip image output entirely.
+    # force_text=False alone disables the image-area OCR pass.
+    # ignore_images=True keeps image-OCR off too. We DO process vector
+    # graphics — most PDF tables are drawn as vector lines, and
+    # ignore_graphics=True silently kills that detection path.
+    # table_strategy="lines" is more permissive than "lines_strict".
     with mute_fd(1):
         chunks = pymupdf4llm.to_markdown(
             str(pdf_path),
@@ -31,7 +32,8 @@ def _extract(pdf_path: Path, page_index: int) -> str:
             show_progress=False,
             force_text=False,
             ignore_images=True,
-            ignore_graphics=True,
+            ignore_graphics=False,
+            table_strategy="lines",
         )
     if not chunks:
         return ""

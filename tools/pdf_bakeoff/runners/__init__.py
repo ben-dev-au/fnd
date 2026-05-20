@@ -29,6 +29,7 @@ _BUILTIN: dict[str, str] = {
 _OPTIONAL: dict[str, str] = {
     "docling": "tools.pdf_bakeoff.runners.docling",
     "docling_tuned": "tools.pdf_bakeoff.runners.docling_tuned",
+    "docling_backend_text": "tools.pdf_bakeoff.runners.docling_backend_text",
     "marker": "tools.pdf_bakeoff.runners.marker",
     "mineru": "tools.pdf_bakeoff.runners.mineru",
 }
