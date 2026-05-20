@@ -79,6 +79,9 @@ def run(state: Any, pdf_path: Path, page_index: int) -> RunnerResult:
             str(page_index + 1),
             "--end-page",
             str(page_index + 1),
+            # txt-only mode: skip the OCR path for born-digital PDFs.
+            "--method",
+            "txt",
         ]
         try:
             subprocess.run(

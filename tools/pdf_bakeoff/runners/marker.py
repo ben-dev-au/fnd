@@ -55,6 +55,7 @@ def run(state: Any, pdf_path: Path, page_index: int) -> RunnerResult:
             str(out_dir),
             "--output_format",
             "markdown",
+            "--disable_ocr",
         ]
         try:
             subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=600)

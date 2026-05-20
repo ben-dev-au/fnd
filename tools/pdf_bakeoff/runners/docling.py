@@ -51,7 +51,15 @@ def _extract_whole_doc(pdf_path: Path) -> tuple[str, float]:
     t0 = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="bakeoff-docling-") as tmp:
         out_dir = Path(tmp)
-        cmd = ["docling", str(pdf_path), "--to", "md", "--output", str(out_dir)]
+        cmd = [
+            "docling",
+            str(pdf_path),
+            "--to",
+            "md",
+            "--output",
+            str(out_dir),
+            "--no-ocr",
+        ]
         subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=600)
         md_files = list(out_dir.rglob("*.md"))
         md = md_files[0].read_text(encoding="utf-8", errors="replace") if md_files else ""

@@ -8,6 +8,7 @@ from typing import Any
 
 import pymupdf4llm  # type: ignore[import-untyped]
 
+from tools.pdf_bakeoff._util import mute_fd
 from tools.pdf_bakeoff.metrics import RunnerResult
 
 NAME = "pymupdf4llm_layout"
@@ -18,12 +19,20 @@ def setup() -> Any:
 
 
 def _extract(pdf_path: Path, page_index: int) -> str:
-    chunks = pymupdf4llm.to_markdown(
-        str(pdf_path),
-        pages=[page_index],
-        page_chunks=True,
-        show_progress=False,
-    )
+    # force_text=False skips the image-area OCR pass (PyMuPDF's
+    # Tesseract fallback), which dominates wall-time on figure-heavy
+    # PDFs and is irrelevant for born-digital text-layer extraction.
+    # ignore_images/ignore_graphics skip image output entirely.
+    with mute_fd(1):
+        chunks = pymupdf4llm.to_markdown(
+            str(pdf_path),
+            pages=[page_index],
+            page_chunks=True,
+            show_progress=False,
+            force_text=False,
+            ignore_images=True,
+            ignore_graphics=True,
+        )
     if not chunks:
         return ""
     first = chunks[0]

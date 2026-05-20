@@ -34,13 +34,25 @@ a CLI on PATH, installed via `uv tool install` (or `pipx install`),
 each in its own isolated environment.
 
 ```sh
-uv tool install docling-slim      # puts `docling` on PATH (the `docling` pkg itself has no CLI)
-uv tool install marker-pdf        # puts `marker_single` on PATH
-uv tool install "mineru[all]"     # puts `mineru` on PATH
+uv tool install "docling-slim[standard]"   # puts `docling` on PATH (the bare `docling` pkg has no CLI; bare `docling-slim` lacks the PDF backend)
+uv tool install marker-pdf                 # puts `marker_single` on PATH
+uv tool install "mineru[all]"              # puts `mineru` on PATH
 ```
 
 On first run each downloads model weights into
 `~/Library/Caches/fnd/bakeoff/<name>/` (200MB–5GB depending on extractor).
+
+### OCR is disabled by default
+
+All runners are configured to skip OCR (`--no-ocr` for docling,
+`--disable_ocr` for marker, `--method txt` for mineru, `ignore_images=True`
+for pymupdf4llm). `fnd` is a text-layer search tool and shouldn't pay
+OCR cost on figures, charts, or decorative logos in born-digital PDFs.
+
+For **scanned PDFs without a text layer** the bake-off won't produce
+useful output — that's intentional. Scanned-OCR is out of scope for
+the real-PDF-support feature; see `docs/specs/2026-05-20-real-pdf-support.md`
+non-goals.
 
 ## Runners
 

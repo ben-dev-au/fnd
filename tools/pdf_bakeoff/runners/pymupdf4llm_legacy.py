@@ -1,56 +1,43 @@
-"""pymupdf4llm legacy / font-clustering path.
+"""pymupdf4llm in glyph-based extraction mode (`use_glyphs=True`).
 
-The legacy path uses font heuristics instead of the layout pass added in
-the 1.27 series. Different signatures across pymupdf4llm versions — we
-probe `to_markdown` for known kwargs and fall back to layout-disabled
-output via `dpi=0` if necessary. The runner pins which path it actually
-used in `extra["mode"]` so RESULTS.md can distinguish runs.
+The default `to_markdown` path uses block-text extraction. `use_glyphs=True`
+switches to glyph-by-glyph clustering, which can recover headings/font
+hierarchy on PDFs where block extraction collapses sizing. Slower; the
+bake-off measures whether it's worth the cost.
 """
 
 from __future__ import annotations
 
-import inspect
 import time
 from pathlib import Path
 from typing import Any
 
 import pymupdf4llm  # type: ignore[import-untyped]
 
+from tools.pdf_bakeoff._util import mute_fd
 from tools.pdf_bakeoff.metrics import RunnerResult
 
 NAME = "pymupdf4llm_legacy"
 
 
-def _legacy_kwargs() -> tuple[dict[str, object], str]:
-    """Pick a kwarg combo that disables the layout pass for this version."""
-    sig = inspect.signature(pymupdf4llm.to_markdown)
-    params = sig.parameters
-    if "force_text" in params:
-        return {"force_text": True}, "force_text"
-    if "use_glyphs" in params:
-        return {"use_glyphs": False}, "use_glyphs"
-    if "layout" in params:
-        return {"layout": False}, "layout"
-    if "table_strategy" in params:
-        return {"table_strategy": "lines_strict"}, "table_strategy_only"
-    return {}, "no_legacy_flag_available"
-
-
 def setup() -> Any:
-    return _legacy_kwargs()
+    return None
 
 
-def run(state: Any, pdf_path: Path, page_index: int) -> RunnerResult:
-    kwargs, mode = state if state else _legacy_kwargs()
+def run(_state: Any, pdf_path: Path, page_index: int) -> RunnerResult:
     t0 = time.perf_counter()
     try:
-        chunks = pymupdf4llm.to_markdown(
-            str(pdf_path),
-            pages=[page_index],
-            page_chunks=True,
-            show_progress=False,
-            **kwargs,
-        )
+        with mute_fd(1):
+            chunks = pymupdf4llm.to_markdown(
+                str(pdf_path),
+                pages=[page_index],
+                page_chunks=True,
+                show_progress=False,
+                use_glyphs=True,
+                force_text=False,
+                ignore_images=True,
+                ignore_graphics=True,
+            )
         if not chunks:
             md = ""
         else:
@@ -63,11 +50,11 @@ def run(state: Any, pdf_path: Path, page_index: int) -> RunnerResult:
             output_md="",
             crashed=True,
             error=f"{type(e).__name__}: {e}",
-            extra={"mode": mode},
+            extra={"mode": "use_glyphs"},
         )
     return RunnerResult(
         wall_ms=(time.perf_counter() - t0) * 1000.0,
         rss_delta_mb=0.0,
         output_md=md,
-        extra={"mode": mode},
+        extra={"mode": "use_glyphs"},
     )

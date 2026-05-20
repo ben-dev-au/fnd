@@ -25,9 +25,11 @@ ten per category is enough to commit.
 | Multi-column scientific papers | Reading-order under columns — pymupdf4llm's known weak spot | arXiv preprints, conference proceedings, ACS journals |
 | Table-heavy | Table boundary detection, in-table newlines | Financial reports, datasheets, government statistics |
 | Slides exported to PDF | Landscape pages, sparse text, large fonts — exercises the slide-shape gate | Conference talks, lecture slides |
-| Scanned with OCR layer | Mixed text + image content; the OCR layer is usually noisy | Older scanned books with text-layer reflow |
-| Pure scanned (no OCR) | Forces the OCR-fallback path | Scanned forms, archival material |
 | Weird | Forms with fillable fields, mixed-language, decorative fonts, dense footnotes | Tax forms (IRS, HMRC), bilingual papers |
+
+OCR-only PDFs (scanned without a text layer) are **out of scope** — the
+real-PDF-support feature indexes the text layer only. See the spec
+non-goals. The bake-off runners all disable OCR by default.
 
 ## Legal note
 

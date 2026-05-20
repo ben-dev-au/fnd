@@ -23,6 +23,11 @@ memo.
   Deferred.
 - **Form-field interaction.** Out of scope — `fnd` is read-only over a
   corpus, not a PDF editor.
+- **OCR.** `fnd` indexes the text layer of born-digital PDFs. Scanned
+  PDFs without a text layer return empty extraction and won't show in
+  results. The existing optional `[ocr]` extra (ocrmypdf) is for users
+  who want to pre-OCR their scanned PDFs before indexing — orthogonal
+  to this feature. The bake-off runners all disable OCR by default.
 
 ## Current behaviour
 
@@ -77,8 +82,9 @@ Cheap signals route to one of:
   documents without TOC and uniform font size).
 - **(b) Richer Markdown-emitting extractor** — for pages with detected
   multi-column layout, tables, or rich heading hierarchy.
-- **(c) Selective OCR re-run** — for scanned pages without an OCR
-  layer (requires the existing `[ocr]` extra).
+- ~~(c) Selective OCR re-run~~ — *removed; OCR is a non-goal. Users
+  who need scanned-PDF support pre-OCR with the existing `[ocr]` extra
+  (ocrmypdf), then index the OCR'd version.*
 
 **Caching seam.** Per-page extraction is cached so the preview hot
 path never re-parses PDFs and reindexes don't re-pay extraction cost.
