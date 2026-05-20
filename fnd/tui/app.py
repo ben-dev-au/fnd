@@ -376,27 +376,47 @@ class _HighlightingBlockMixin:
         _apply_highlights_after_build(self)  # type: ignore[arg-type]
 
 
-class FNDMarkdownH1(_HighlightingBlockMixin, MarkdownH1):
+class _HeadingMarkerMixin:
+    """Prepend the level marker (``#`` / ``##`` / ``###`` …) to a
+    heading's rendered content so users can distinguish heading levels
+    in a terminal that can't render font-size differences. The marker
+    inherits the heading's own color so it reads as a low-key prefix,
+    not a second style band.
+
+    Must sit *inside* ``_HighlightingBlockMixin`` in the MRO so the
+    marker lands on the Content **before** highlight spans run — that
+    way the highlight span offsets line up with the post-prefix plain.
+    """
+
+    def build_from_token(self, token):  # type: ignore[override]
+        super().build_from_token(token)  # type: ignore[misc]
+        from textual.content import Content
+
+        marker = ("#" * self.LEVEL) + " "  # type: ignore[attr-defined]
+        self.set_content(Content.assemble(marker, self._content))  # type: ignore[attr-defined]
+
+
+class FNDMarkdownH1(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH1):
     pass
 
 
-class FNDMarkdownH2(_HighlightingBlockMixin, MarkdownH2):
+class FNDMarkdownH2(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH2):
     pass
 
 
-class FNDMarkdownH3(_HighlightingBlockMixin, MarkdownH3):
+class FNDMarkdownH3(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH3):
     pass
 
 
-class FNDMarkdownH4(_HighlightingBlockMixin, MarkdownH4):
+class FNDMarkdownH4(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH4):
     pass
 
 
-class FNDMarkdownH5(_HighlightingBlockMixin, MarkdownH5):
+class FNDMarkdownH5(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH5):
     pass
 
 
-class FNDMarkdownH6(_HighlightingBlockMixin, MarkdownH6):
+class FNDMarkdownH6(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH6):
     pass
 
 
@@ -632,6 +652,25 @@ class FNDMarkdown(Markdown):
     FNDMarkdown {
         height: auto;
     }
+    /* All six heading levels render in the theme accent colour, not just
+       H1-H3 (Textual's stock palette stops colouring at H3 and falls back
+       to plain text-style on H4-H6). A terminal can't show font-size
+       differences, so the level marker prefix ("#" / "##" / "###" …) is
+       baked into the heading content by ``_HeadingMarkerMixin`` to give
+       readers the level cue. Bold / underline are layered on top so the
+       top three levels still feel weightier without changing colour. */
+    FNDMarkdown FNDMarkdownH1 { color: $accent; text-style: bold; }
+    FNDMarkdown FNDMarkdownH2 { color: $accent; text-style: bold underline; }
+    FNDMarkdown FNDMarkdownH3 { color: $accent; text-style: bold; }
+    FNDMarkdown FNDMarkdownH4 { color: $accent; text-style: underline; }
+    FNDMarkdown FNDMarkdownH5 { color: $accent; text-style: none; }
+    FNDMarkdown FNDMarkdownH6 { color: $accent 70%; text-style: none; }
+    /* Inline emphasis colour-shifts too — text-style alone is too
+       subtle to read at terminal weight on most fonts. ``$primary``
+       contrasts with ``$accent`` (headings) so bold inside a heading
+       is still visible. */
+    FNDMarkdown MarkdownBlock > .strong { color: $primary; text-style: bold; }
+    FNDMarkdown MarkdownBlock > .em { color: $secondary; text-style: italic; }
     """
 
     BLOCKS: dict[str, type[MarkdownBlock]] = {  # noqa: RUF012

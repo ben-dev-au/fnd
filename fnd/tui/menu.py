@@ -262,36 +262,142 @@ def _pretty_key(key: str) -> str:
 # bindings from SettingsList, SourceFormScreen, OpenWithScreen,
 # AccessibilityPermissionScreen, etc. Listed here so the Keybindings
 # screen surfaces them too.
-_KEYS_SETTINGS: tuple[tuple[str, str, str], ...] = (
-    ("↑ / ↓ / j / k", "", "Move cursor"),
-    ("Enter", "", "Activate / drill in / edit"),
-    ("→", "", "Drill into a submenu (parity with Enter)"),
-    ("←", "", "Back one level"),
-    ("/", "", "Filter every section"),
-    ("1-9", "", "Jump by index"),
-    ("Shift+Enter", "", "Reveal in Finder (file-capable rows)"),
-    ("Esc", "", "Clear search → back one level"),
+#
+# Tuple shape: (key, label, action_id, description). Label is the short
+# title shown in the row list; description is the longer explanation
+# surfaced in the DetailStrip when the row is focused. action_id is
+# left blank for widget-level bindings (they don't map to a global
+# Action).
+_KEYS_SETTINGS: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "↑ / ↓ / j / k",
+        "Move cursor",
+        "",
+        "Step one row at a time. ↑/↓ are standard; j/k are vi-style aliases. Auto-scrolls into view when the cursor leaves the viewport.",
+    ),
+    (
+        "Enter",
+        "Activate",
+        "",
+        "Open the focused row — picker rows show their chooser, scalar rows open the inline edit bar, drill-in rows push a sub-screen.",
+    ),
+    (
+        "→",
+        "Drill in",
+        "",
+        "Same as Enter for drill-in rows. Convenient when you're already on the arrow cluster.",
+    ),
+    (
+        "←",
+        "Back one level",
+        "",
+        "Pop the current settings screen. Esc does the same; ← only fires when the cursor is on the row list (not the search input).",
+    ),
+    (
+        "/",
+        "Filter rows",
+        "",
+        "Filter rows across the current screen by label, key column, and keywords. Descriptions are excluded — they're advisory, not searchable.",
+    ),
+    (
+        "1-9",
+        "Jump by index",
+        "",
+        "Number keys jump the cursor straight to the nth visible row in the current section.",
+    ),
+    (
+        "Shift+Enter",
+        "Reveal in Finder",
+        "",
+        "On file-pointing rows (config.toml, keybindings.toml, source paths) opens Finder with that file selected. No-op on other rows.",
+    ),
+    (
+        "Esc",
+        "Clear search / back",
+        "",
+        "If the filter is active, clears it first. Press again to pop the current screen.",
+    ),
 )
 
-_KEYS_SOURCE_FORM: tuple[tuple[str, str, str], ...] = (
-    ("Tab / Shift+Tab", "", "Cycle fields ↔ frontmatter sample"),
-    ("Enter", "", "Edit / pick / toggle the focused field"),
-    ("Ctrl+S", "", "Save and close"),
-    ("Ctrl+D", "", "Delete this source (only when editing an existing one)"),
-    ("Esc / ←", "", "Cancel without saving"),
+_KEYS_SOURCE_FORM: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "Tab / Shift+Tab",
+        "Cycle fields",
+        "",
+        "Move forward (Tab) or backward (Shift+Tab) through the form fields and the frontmatter sample at the bottom.",
+    ),
+    (
+        "Enter",
+        "Edit field",
+        "",
+        "Edit, pick, or toggle the focused field. Scalar fields open the inline edit bar; multi-select fields push a picker.",
+    ),
+    (
+        "Ctrl+S",
+        "Save & close",
+        "",
+        "Persist this source to config.toml. Triggers an async reindex if the source set or includes/excludes changed.",
+    ),
+    (
+        "Ctrl+D",
+        "Delete source",
+        "",
+        "Only available when editing an existing source. Pushes a confirmation modal; on confirm, removes the entry from config and reindexes.",
+    ),
+    (
+        "Esc / ←",
+        "Cancel",
+        "",
+        "Discard unsaved changes and pop back to the Sources screen.",
+    ),
 )
 
-_KEYS_OPEN_WITH: tuple[tuple[str, str, str], ...] = (
-    ("↑ / ↓ / j / k", "", "Move cursor between apps"),
-    ("Enter", "", "Open with the highlighted (★) app"),
-    ("a-z", "", "Letter shortcut for the corresponding row"),
-    ("Esc / q", "", "Cancel"),
+_KEYS_OPEN_WITH: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "↑ / ↓ / j / k",
+        "Move between apps",
+        "",
+        "Step between the apps eligible for this hit's file type. The cursor parks on the resolved default (★) by default.",
+    ),
+    (
+        "Enter",
+        "Open with default",
+        "",
+        "Fire the highlighted (★) app — the one the resolver would have used for `o`. ★ shows which app fnd thinks is best for this hit.",
+    ),
+    (
+        "a-z",
+        "Letter shortcut",
+        "",
+        "Press the bold letter on any row to fire that app directly without arrow-key navigation.",
+    ),
+    (
+        "Esc / q",
+        "Cancel",
+        "",
+        "Dismiss the picker without opening anything.",
+    ),
 )
 
-_KEYS_AX_MODAL: tuple[tuple[str, str, str], ...] = (
-    ("o", "", "Open System Settings → Privacy & Security → Accessibility"),
-    ("r", "", "Try again (clears the AX cache without restarting fnd)"),
-    ("Esc / q", "", "Dismiss"),
+_KEYS_AX_MODAL: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "o",
+        "Open System Settings",
+        "",
+        "Jumps to System Settings → Privacy & Security → Accessibility so you can grant fnd permission for the Preview AppleScript page-jump.",
+    ),
+    (
+        "r",
+        "Retry",
+        "",
+        "Re-check AX permission without restarting fnd. Use after granting permission to clear the cached 'not trusted' state.",
+    ),
+    (
+        "Esc / q",
+        "Dismiss",
+        "",
+        "Close the modal. AX permission isn't required to use fnd — Preview will just open at page 1 without it.",
+    ),
 )
 
 
@@ -308,17 +414,31 @@ _CONTEXT_TO_SECTION: dict[str, str] = {
 }
 
 
-def _key_row(key: str, action_id: str, description: str) -> MenuItem:
-    """Convert a (key, action_id, desc) tuple to a MenuItem."""
+def _key_row(key: str, label: str, action_id: str, description: str) -> MenuItem:
+    """Build a Keybindings cheat-sheet row. ``label`` is the short title
+    shown in the row list; ``description`` is the long-form explanation
+    surfaced in the DetailStrip when the row is focused — DON'T pass
+    the same string for both, or the DetailStrip just echoes the row."""
     return MenuItem(
-        id=f"key.{action_id or description.lower().replace(' ', '_')}",
-        label=description,
+        id=f"key.{action_id or label.lower().replace(' ', '_')}",
+        label=label,
         description=description,
         kind=KIND_ACTION,
         action_id=action_id,
         key=key,
         keywords=(action_id, key) if action_id else (key,),
     )
+
+
+def _action_label(action: Any) -> str:
+    """Pick the short label for an Action's keybindings row. Preference
+    order: ``footer_label`` (already crafted for the auto-footer) →
+    ``command`` (the palette name) → titlecased ``id``."""
+    if action.footer_label:
+        return str(action.footer_label)
+    if action.command:
+        return str(action.command).replace("_", " ").title()
+    return str(action.id).replace("_", " ").title()
 
 
 # ── Providers ───────────────────────────────────────────────────────
@@ -357,7 +477,12 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
         primary_ctx = action.contexts[0] if action.contexts else ""
         section = _CONTEXT_TO_SECTION.get(primary_ctx, "Global")
         sections[section].append(
-            _key_row(_pretty_key(action.default_key), action.id, action.description)
+            _key_row(
+                _pretty_key(action.default_key),
+                _action_label(action),
+                action.id,
+                action.description,
+            )
         )
 
     # Static widget bindings — append AFTER the registry-derived
@@ -832,6 +957,11 @@ def _provider_collections(app: FNDApp) -> tuple[MenuItem, ...]:
         MenuItem(
             id="collections.add",
             label="Add collection",
+            description=(
+                "Push the new-collection wizard — pick a name, then add "
+                "the first source. The collection becomes available as "
+                "`--collection <name>` once at least one source is indexed."
+            ),
             kind=KIND_EXTERNAL,
             external=_make_add_collection(),
             keywords=("add", "new"),

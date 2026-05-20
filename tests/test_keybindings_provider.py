@@ -128,3 +128,26 @@ def test_no_context_hint_means_no_highlighted_header() -> None:
     items = _provider_keybindings(_fake_app())
     hint_headers = [it for it in items if it.is_header and "_hint_section_" in (it.keywords or ())]
     assert hint_headers == []
+
+
+def test_every_key_row_label_differs_from_description() -> None:
+    """The DetailStrip surfaces ``description`` when a row is focused —
+    if label == description, the strip just echoes the row label and
+    adds zero value. Every row must carry a short label AND a
+    distinct long-form description."""
+    items = _provider_keybindings(_fake_app())
+    duplicates = [it.label for it in items if not it.is_header and it.label == it.description]
+    assert not duplicates, (
+        f"{len(duplicates)} keybindings rows duplicate label==description; "
+        "DetailStrip would just echo the row label. Set a short label "
+        "and keep description for the long-form. Examples: "
+        f"{duplicates[:5]}"
+    )
+
+
+def test_every_key_row_has_a_description() -> None:
+    """A row with no description leaves the DetailStrip empty when
+    focused — every keybinding should have a long-form explanation."""
+    items = _provider_keybindings(_fake_app())
+    missing = [it.label for it in items if not it.is_header and not it.description]
+    assert not missing, missing

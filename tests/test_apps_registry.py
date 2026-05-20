@@ -386,6 +386,230 @@ def test_obsidian_handler_converts_breadcrumb_to_chained_anchor(
     assert "%20%3E%20" not in argv[1], argv[1]
 
 
+def test_advanced_uri_detector_finds_plugin(tmp_path: Path) -> None:
+    """``_advanced_uri_available`` returns True when the plugin folder
+    sits under any ancestor's ``.obsidian/plugins/`` — the standard
+    Obsidian vault layout."""
+    vault = tmp_path / "vault"
+    (vault / ".obsidian" / "plugins" / "obsidian-advanced-uri").mkdir(parents=True)
+    sub = vault / "Notes" / "deep" / "nested"
+    sub.mkdir(parents=True)
+    assert apps._advanced_uri_available(sub) is True
+    # Detector takes a file too — walks up to the containing dir first.
+    f = sub / "note.md"
+    f.write_text("# x")
+    assert apps._advanced_uri_available(f) is True
+
+
+def test_advanced_uri_detector_returns_false_when_plugin_missing(
+    tmp_path: Path,
+) -> None:
+    """Vault exists (``.obsidian`` dir present) but the Advanced URI
+    plugin isn't installed → False. Detector stops walking once it
+    finds the vault root so it doesn't accidentally match a parent
+    vault's plugin folder."""
+    vault = tmp_path / "vault"
+    (vault / ".obsidian").mkdir(parents=True)
+    note = vault / "note.md"
+    note.write_text("# x")
+    assert apps._advanced_uri_available(note) is False
+
+
+def test_advanced_uri_detector_returns_false_when_no_vault(tmp_path: Path) -> None:
+    """No ``.obsidian`` anywhere above ``source_path`` → False. Detector
+    must not walk all the way to ``/`` looking for a plugin."""
+    note = tmp_path / "loose" / "note.md"
+    note.parent.mkdir()
+    note.write_text("# x")
+    assert apps._advanced_uri_available(note) is False
+    # ``None`` short-circuits.
+    assert apps._advanced_uri_available(None) is False
+
+
+def test_obsidian_handler_uses_advanced_uri_when_plugin_and_line_present(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The point of the Advanced URI switch: when ``line > 0`` AND the
+    plugin is installed, send the line-precise URL form so the user
+    lands ON the matched line, not at the top of the section."""
+    vault = tmp_path / "Vault"
+    (vault / ".obsidian" / "plugins" / "obsidian-advanced-uri").mkdir(parents=True)
+    (vault / "note.md").write_text("# x")
+
+    captured: list[list[str]] = []
+    monkeypatch.setattr(
+        apps.subprocess,
+        "run",
+        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
+    )
+    req = OpenRequest(
+        path=vault / "note.md",
+        kind="md",
+        vault="Vault",
+        file_in_vault="note.md",
+        heading_path="Findings",
+        line=42,
+        source_path=vault,
+    )
+    apps.BUILTIN_APPS["obsidian"].handler(req)
+    argv = captured[0]
+    assert argv[0] == "open"
+    assert argv[1].startswith("obsidian://advanced-uri?vault=Vault"), argv[1]
+    assert "filepath=note.md" in argv[1]
+    assert "line=42" in argv[1]
+    # Heading anchor MUST NOT be appended in advanced-uri form — line is
+    # the only locator we need.
+    assert "%23Findings" not in argv[1]
+
+
+def test_obsidian_handler_falls_back_to_built_in_when_plugin_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When line is set but Advanced URI plugin is NOT installed, fall
+    back to the built-in ``obsidian://open`` with heading anchor."""
+    vault = tmp_path / "Vault"
+    (vault / ".obsidian").mkdir(parents=True)  # vault exists, no plugin
+
+    captured: list[list[str]] = []
+    monkeypatch.setattr(
+        apps.subprocess,
+        "run",
+        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
+    )
+    req = OpenRequest(
+        path=vault / "note.md",
+        kind="md",
+        vault="Vault",
+        file_in_vault="note.md",
+        heading_path="Findings",
+        line=42,
+        source_path=vault,
+    )
+    apps.BUILTIN_APPS["obsidian"].handler(req)
+    argv = captured[0]
+    assert argv[1].startswith("obsidian://open?vault=Vault"), argv[1]
+    assert "advanced-uri" not in argv[1]
+    assert "%23Findings" in argv[1]
+
+
+def test_resolve_match_line_finds_first_term_occurrence(tmp_path: Path) -> None:
+    """Walk-forward from ``from_line`` for the first line carrying any
+    whole-word query token. The function powers the Advanced URI line
+    jump's word-precision (chunk.line is the heading; the term is N
+    lines below)."""
+    f = tmp_path / "n.md"
+    f.write_text(
+        "# Section A\nintro paragraph\nmore intro\nthe template is here\nafter the match\n"
+    )
+    # from_line=1 (heading line), query "template" → matches on line 4.
+    assert apps._resolve_match_line(f, "template", 1) == 4
+
+
+def test_resolve_match_line_returns_from_line_on_miss(tmp_path: Path) -> None:
+    """When no line carries a query term we fall back to the chunk
+    start — better than randomly skipping ahead."""
+    f = tmp_path / "n.md"
+    f.write_text("# Heading\nline two\nline three\n")
+    assert apps._resolve_match_line(f, "absentterm", 1) == 1
+
+
+def test_resolve_match_line_handles_empty_query_and_invalid_inputs(
+    tmp_path: Path,
+) -> None:
+    f = tmp_path / "n.md"
+    f.write_text("line one\nline two\n")
+    # Empty query: nothing to find, return from_line unchanged.
+    assert apps._resolve_match_line(f, "", 3) == 3
+    # from_line < 1: invalid, return as-is.
+    assert apps._resolve_match_line(f, "two", 0) == 0
+
+
+def test_resolve_match_line_is_case_insensitive(tmp_path: Path) -> None:
+    f = tmp_path / "n.md"
+    f.write_text("## Top\n\nThe Template Pattern is foundational.\n")
+    assert apps._resolve_match_line(f, "TEMPLATE", 1) == 3
+
+
+def test_resolve_match_line_is_whole_word_not_substring(tmp_path: Path) -> None:
+    """Whole-word matching avoids matching 'template' inside
+    'templating' — stays conservative on fuzzy/stem hits and lets the
+    handler fall back to chunk.line on miss."""
+    f = tmp_path / "n.md"
+    f.write_text("# Header\n\ntemplating engines are useful\nthe template here\n")
+    # 'template' as a whole word lives on line 4, not line 3 ('templating').
+    assert apps._resolve_match_line(f, "template", 1) == 4
+
+
+def test_obsidian_advanced_uri_uses_resolved_match_line_not_chunk_line(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """End-to-end: with Advanced URI installed AND a query, the URL's
+    ``line=`` is the matched word's line, not the chunk heading's.
+    This is the fix for the user-reported "lands at heading" symptom
+    even with the plugin installed."""
+    vault = tmp_path / "Vault"
+    (vault / ".obsidian" / "plugins" / "obsidian-advanced-uri").mkdir(parents=True)
+    note = vault / "notes.md"
+    note.write_text(
+        "# Cyber Kill Chain\n"
+        "intro line 2\n"
+        "intro line 3\n"
+        "intro line 4\n"
+        "the reconnaissance phase covers passive enumeration\n"
+        "more text\n"
+    )
+
+    captured: list[list[str]] = []
+    monkeypatch.setattr(
+        apps.subprocess,
+        "run",
+        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
+    )
+    req = OpenRequest(
+        path=note,
+        kind="md",
+        vault="Vault",
+        file_in_vault="notes.md",
+        heading_path="Cyber Kill Chain",
+        line=1,  # chunk start = heading line
+        query="reconnaissance",
+        source_path=vault,
+    )
+    apps.BUILTIN_APPS["obsidian"].handler(req)
+    argv = captured[0]
+    # Match is on line 5 — Advanced URI URL must carry line=5, not line=1.
+    assert "line=5" in argv[1], argv[1]
+
+
+def test_obsidian_handler_uses_built_in_when_line_zero(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Plugin installed but ``line == 0`` → no benefit from Advanced
+    URI, stick with built-in form so heading anchor still navigates."""
+    vault = tmp_path / "Vault"
+    (vault / ".obsidian" / "plugins" / "obsidian-advanced-uri").mkdir(parents=True)
+
+    captured: list[list[str]] = []
+    monkeypatch.setattr(
+        apps.subprocess,
+        "run",
+        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
+    )
+    req = OpenRequest(
+        path=vault / "note.md",
+        kind="md",
+        vault="Vault",
+        file_in_vault="note.md",
+        heading_path="Findings",
+        line=0,
+        source_path=vault,
+    )
+    apps.BUILTIN_APPS["obsidian"].handler(req)
+    argv = captured[0]
+    assert "advanced-uri" not in argv[1]
+    assert "%23Findings" in argv[1]
+
+
 def test_pdf_expert_uses_open_dash_a_not_url_scheme(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

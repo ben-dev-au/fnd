@@ -1561,7 +1561,11 @@ class SourceFormScreen(Screen[None]):
             self._field_item(
                 "app_params_vault",
                 "Obsidian vault",
-                hint="vault name (auto-detected when App = Obsidian)",
+                description=(
+                    "Add the Advanced URI plugin to your vault for "
+                    "line-precise jumps; without it, lands at section."
+                ),
+                hint="Vault name (auto-detected when App = Obsidian)",
             ),
         ]
 
@@ -1582,11 +1586,17 @@ class SourceFormScreen(Screen[None]):
         ]
         for app_id, app in registry.items():
             handles = ",".join(app.handles)
+            # ``app.notes`` carries the per-app advisory ("install plugin X
+            # for line-precise jumps", "no page-jump on macOS", etc.) — surface
+            # it as the picker's description so users see the recommendation
+            # at the point of choice. Fall back to ``handles:`` when an app
+            # has no notes (most built-ins do).
+            desc = app.notes if app.notes else f"handles: {handles}"
             out.append(
                 ChoiceOption(
                     value=app_id,
                     label=app.display_name,
-                    description=f"handles: {handles}",
+                    description=desc,
                 )
             )
         return out
@@ -1649,7 +1659,7 @@ class SourceFormScreen(Screen[None]):
         )
         self.query_one(EditBar).open(item, str(self._fields.get(field_key) or ""))
 
-    def _field_item(self, key: str, label: str, *, hint: str) -> MenuItem:
+    def _field_item(self, key: str, label: str, *, hint: str, description: str = "") -> MenuItem:
         def _get(_app: Any) -> str:
             v = self._fields[key]
             if key == "filter" and v:
@@ -1660,6 +1670,7 @@ class SourceFormScreen(Screen[None]):
         return MenuItem(
             id=f"form.{key}",
             label=label,
+            description=description,
             kind=KIND_SCALAR,
             setting_path="",  # we write into self._fields, not config.toml
             hint=hint,

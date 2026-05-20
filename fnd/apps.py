@@ -385,26 +385,113 @@ def _heading_path_to_anchor(heading_path: str) -> str:
     return "#".join(parts)
 
 
+_ADVANCED_URI_PLUGIN_DIR: Final[str] = "obsidian-advanced-uri"
+
+
+def _advanced_uri_available(source_path: Path | None) -> bool:
+    """True when the Advanced URI plugin is installed in the vault that
+    contains ``source_path``.
+
+    Walks up from ``source_path`` looking for a ``.obsidian/plugins/<id>``
+    directory — the same detection pattern :func:`detect_obsidian_vault`
+    uses for the vault root, just one level deeper. Returns ``False``
+    when ``source_path`` is unset, isn't under any vault, or the plugin
+    folder is missing. Cheap (~one ``stat`` per parent walked).
+    """
+    if source_path is None:
+        return False
+    p = source_path.expanduser().resolve()
+    if p.is_file():
+        p = p.parent
+    while True:
+        candidate = p / ".obsidian" / "plugins" / _ADVANCED_URI_PLUGIN_DIR
+        if candidate.is_dir():
+            return True
+        if (p / ".obsidian").is_dir():
+            return False  # found the vault but no plugin → stop walking
+        if p.parent == p:
+            return False
+        p = p.parent
+
+
+_WORD_TOKEN_RE: Final = re.compile(r"\w+")
+
+
+def _resolve_match_line(
+    path: Path, query: str, from_line: int, *, max_scan_lines: int = 4000
+) -> int:
+    """Scan ``path`` from ``from_line`` for the first line whose lowercased
+    content contains any whole-word token of ``query``. Returns the matched
+    line (1-based) or ``from_line`` on miss.
+
+    Used by deep-link handlers that support line jumps (Obsidian
+    Advanced URI, VS Code) so the user lands on the matched word
+    rather than the chunk's heading. The chunk's ``line`` is the
+    heading line — a long section can drop the user 50+ lines above
+    their match without this resolution step.
+
+    Conservative on fuzzy: only literal whole-word query tokens are
+    matched, so a query like ``template~2`` matching the file's
+    ``templating`` falls back to the chunk start. That's
+    intentional — the goal is to *improve precision when we can*,
+    not guarantee it.
+    """
+    if not query or from_line < 1:
+        return from_line
+    terms = {m.group(0).lower() for m in _WORD_TOKEN_RE.finditer(query)}
+    if not terms:
+        return from_line
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for offset, raw in enumerate(f):
+                if offset + 1 < from_line:
+                    continue
+                if offset + 1 - from_line >= max_scan_lines:
+                    break
+                low = raw.lower()
+                if any(m.group(0).lower() in terms for m in _WORD_TOKEN_RE.finditer(low)):
+                    return offset + 1
+    except (OSError, UnicodeDecodeError):
+        return from_line
+    return from_line
+
+
 def _handle_obsidian(req: OpenRequest) -> int:
-    """Obsidian ``obsidian://open?...`` deep-link.
+    """Obsidian deep-link with optional line-precise jump via the
+    Advanced URI plugin.
 
-    Two forms based on what the source carries:
+    URL form picked by what's available:
 
-    * **With a vault** (``app_params.vault`` set on the source): uses the
-      vault+file form. Obsidian opens the file in that named vault, even
-      if it's not the front vault.
-    * **Without a vault**: uses ``?path=<absolute>``. Obsidian routes
-      this to whichever vault contains the path; if no vault does,
-      Obsidian shows its own "file not in vault" notice. We never fall
+    * **Advanced URI + line known** (``line > 0`` and the vault has the
+      ``obsidian-advanced-uri`` plugin installed): uses
+      ``obsidian://advanced-uri?vault=X&filepath=Y&line=N``. This is
+      the only path that lands the cursor on the *matched line* rather
+      than at the top of the section. Built-in URL forms can only target
+      headings, so a match deep inside a long section drops the user
+      lines above their match — see :func:`_advanced_uri_available`.
+    * **Vault set, no plugin (or no line)**: ``obsidian://open?vault=X
+      &file=Y#A#B#C``. Heading anchor uses Obsidian's chained-heading
+      syntax via :func:`_heading_path_to_anchor`.
+    * **No vault**: ``obsidian://open?path=<abs>[#A#B#C]``. Obsidian
+      routes the path to whichever vault contains it. We never fall
       back to ``open <path>`` — the user explicitly picked Obsidian and
       a silent app-swap is misleading.
-
-    Heading anchor (``%23A%23B%23C`` after percent-encoding) is appended
-    when ``heading_path`` is non-empty; the chunk's breadcrumb
-    ("A > B > C") is rewritten to Obsidian's chained-heading form
-    ("A#B#C") so the anchor actually navigates.
     """
-    if req.vault:
+    use_advanced = req.line > 0 and _advanced_uri_available(req.source_path)
+    if req.vault and use_advanced:
+        filepath = req.file_in_vault or str(req.path)
+        # Resolve the chunk's heading line forward to the actual matched
+        # line when a query is in play — Advanced URI's ``line=N`` jumps
+        # the cursor to exactly that line, so we get word-precision
+        # instead of section-precision.
+        target_line = _resolve_match_line(req.path, req.query, req.line)
+        url = (
+            "obsidian://advanced-uri"
+            f"?vault={urllib.parse.quote(req.vault, safe=_PCT_SAFE)}"
+            f"&filepath={urllib.parse.quote(filepath, safe=_PCT_SAFE)}"
+            f"&line={target_line}"
+        )
+    elif req.vault:
         file_param = req.file_in_vault or str(req.path)
         if req.heading_path:
             file_param = f"{file_param}#{_heading_path_to_anchor(req.heading_path)}"
@@ -476,7 +563,10 @@ BUILTIN_APPS: Final[dict[str, App]] = {
         handler=_handle_obsidian,
         available=lambda: _obsidian_app_exists(),
         positional=True,
-        notes="obsidian://open — requires `vault` in source app_params.",
+        notes=(
+            "Install the Advanced URI plugin in your vault for "
+            "line-precise jumps; without it lands at the section heading."
+        ),
     ),
     "vscode": App(
         id="vscode",
