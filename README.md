@@ -31,6 +31,30 @@ See `SECURITY.md` for the threat model, disclosure policy, and the
 reasoning behind the install/verify story (no Apple Developer ID
 required — Homebrew installs bypass Gatekeeper via curl).
 
+## Optional extras
+
+PDFs render as flat extracted text by default. To get structured
+preview (headings, lists, tables, bold/italic, recovered
+image-rendered tables), install the `pdf-structure` extra:
+
+```sh
+fnd extras install pdf-structure   # ~900 MB total, with disclosure prompt
+fnd extras list                    # show available + installed
+fnd extras status                  # disk usage per installed extra
+fnd extras uninstall pdf-structure # revert; indexed chunks remain in index
+```
+
+After installing, run `fnd collection reindex <name>` to reprocess
+existing PDFs structurally. New PDFs added later are extracted
+structurally automatically.
+
+The extra installs two packages: `pymupdf4llm[layout]` (Polyform
+Noncommercial — fnd is open-source non-commercial, acceptable; blocks
+commercial redistribution) and `docling-slim[standard]` (Apache-2.0).
+ML model weights (~400 MB) download on first use. Uninstall removes
+both; indexed structured chunks remain in the index so previews keep
+working until you reindex.
+
 ## Quick start (dev)
 
 ```sh
