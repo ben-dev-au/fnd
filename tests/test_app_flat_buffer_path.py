@@ -43,6 +43,28 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     return load(cfg_path)
 
 
+@pytest.fixture(autouse=True)
+def _force_flat_for_pdf_tests(  # pyright: ignore[reportUnusedFunction]
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Force the flat preview path for PDF-routing tests only.
+
+    With the pdf-structure extra installed (dev venv), PDF chunks carry
+    body_md and the dispatcher would otherwise route to the structural
+    renderer. Tests asserting the flat-buffer invariant set
+    _FND_FORCE_FLAT=1 via this fixture. Tests asserting MD/structural
+    paths are unaffected (the env var only forces *PDFs/TXT* to flat;
+    actually it forces *all* files to flat — so we scope this fixture
+    to tests whose name has "pdf" in it).
+    """
+    if (
+        "pdf" in request.node.name.lower()
+        or "flat_buffer" in request.node.name.lower()
+        or "cursor_between" in request.node.name.lower()
+    ):
+        monkeypatch.setenv("_FND_FORCE_FLAT", "1")
+
+
 @pytest.fixture
 def pdf_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
     build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")

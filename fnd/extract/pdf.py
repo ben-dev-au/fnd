@@ -41,6 +41,18 @@ from fnd.extract.base import Block, Chunk, ExtractError
 # who haven't opted in.
 _HAS_PYMUPDF4LLM: bool = importlib.util.find_spec("pymupdf4llm") is not None
 
+# Regex for the pymupdf4llm "couldn't decode this region" marker. When a
+# whole table is embedded as a raster image (common in HBR / finance
+# PDFs), pymupdf4llm emits a literal "==> picture [W x H] intentionally
+# omitted <==" instead of the cell values. We use this to detect
+# pages that need a docling fallback for the missing structure.
+_PIC_OMITTED_RE = re.compile(r"==>\s*picture\s*\[(\d+)\s*x\s*(\d+)\]\s*intentionally omitted\s*<==")
+
+# Trigger fallback when the omitted-image region is at least this
+# fraction of the page area. Below ~15% it's typically a logo / figure /
+# headshot rather than a table; not worth paying the docling cost.
+_FALLBACK_AREA_RATIO = 0.15
+
 
 def _parent_id(path: Path) -> str:
     return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
@@ -257,6 +269,39 @@ def _mute_fd(fd: int) -> Generator[None]:
         os.close(null)
 
 
+def _try_docling_fallback(pdf_path: str, page_index: int) -> str:
+    """Try to extract one page via the docling daemon. Returns "" on
+    any failure — caller keeps whatever pymupdf4llm produced."""
+    try:
+        from fnd.extract._docling_daemon import DoclingDaemon
+    except Exception:
+        return ""
+    daemon = DoclingDaemon.get()
+    if daemon is None:
+        return ""
+    try:
+        return daemon.extract_page(Path(pdf_path), page_index)
+    except Exception:
+        return ""
+
+
+def _needs_docling_fallback(page: pymupdf.Page, pymupdf_md: str) -> bool:
+    """Cheap heuristic: did pymupdf4llm visibly miss a structured region?
+
+    Returns True when the sum of "picture intentionally omitted"
+    rectangles exceeds `_FALLBACK_AREA_RATIO` of the page area. That's
+    the case for image-rendered tables — exactly what docling's ML
+    layout model handles and pymupdf4llm can't.
+    """
+    page_area = float(page.rect.width) * float(page.rect.height)
+    if page_area <= 0:
+        return False
+    omitted = 0.0
+    for w_s, h_s in _PIC_OMITTED_RE.findall(pymupdf_md):
+        omitted += float(w_s) * float(h_s)
+    return (omitted / page_area) >= _FALLBACK_AREA_RATIO
+
+
 def _extract_page_md(doc: pymupdf.Document, page_index: int) -> str:
     """Extract one page's Markdown via pymupdf4llm. Returns "" on failure.
 
@@ -382,6 +427,15 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
             # when the pdf-structure extra isn't installed — keeps
             # behaviour byte-identical to today.
             body_md = _extract_page_md(doc, page_index) if _HAS_PYMUPDF4LLM else ""
+
+            # Phase 3 routing: if pymupdf4llm visibly missed structure
+            # (e.g. a big image-rendered table), try docling as a
+            # fallback. Docling's ML layout model can recover those.
+            # No-op when docling isn't installed.
+            if body_md and _needs_docling_fallback(page, body_md):
+                docling_md = _try_docling_fallback(str(path), page_index)
+                if docling_md:
+                    body_md = docling_md
 
             page_states.append(
                 {
