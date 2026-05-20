@@ -25,6 +25,7 @@ import contextlib
 import hashlib
 import importlib
 import importlib.util
+import json
 import os
 import re
 from collections.abc import Generator, Iterator
@@ -33,6 +34,7 @@ from typing import Any, cast
 
 import pymupdf  # type: ignore[import-not-found]
 
+from fnd.cache import ExtractionCache, sha256_file
 from fnd.extract.base import Block, Chunk, ExtractError
 
 # Lazy availability of the pdf-structure extra (`pymupdf4llm`). Computed
@@ -356,9 +358,70 @@ def _extract_page_md(doc: pymupdf.Document, page_index: int) -> str:
     return str(first.get("text", "")) if isinstance(first, dict) else str(first)
 
 
+def _extractor_signature() -> str:
+    """Stable string identifying this extractor's behaviour.
+
+    Different signature → different cache key. Captures:
+    - flat vs structured path (gated by pymupdf4llm availability)
+    - whether docling fallback is wired in (gated by `docling` CLI)
+    - config flag hash so a future tuning change forces re-extraction
+    """
+    parts = ["flat"]
+    if _HAS_PYMUPDF4LLM:
+        try:
+            pymupdf4llm = importlib.import_module("pymupdf4llm")
+            ver = getattr(pymupdf4llm, "__version__", "unknown")
+        except ImportError:
+            ver = "unknown"
+        parts = [f"pymupdf4llm-{ver}"]
+        if _has_docling():
+            parts.append("docling")
+    # Hash the config-shaping flags so any tuning change bumps the key.
+    config = {
+        "force_text": False,
+        "ignore_images": True,
+        "ignore_graphics": False,
+        "table_strategy": "lines",
+        "fallback_area_ratio": _FALLBACK_AREA_RATIO,
+        "table_label_re": _TABLE_LABEL_RE.pattern,
+    }
+    config_hash = hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()[:8]
+    parts.append(f"cfg-{config_hash}")
+    return "|".join(parts)
+
+
+def _has_docling() -> bool:
+    """Cached check for docling CLI presence — used by signature only."""
+    import shutil
+
+    return shutil.which("docling") is not None
+
+
 def extract(path: Path) -> Iterator[Chunk]:
+    """Extract PDF chunks, consulting the on-disk cache first.
+
+    On cache hit: yields chunks directly from the JSON blob, skipping
+    the multi-second pymupdf4llm + docling work entirely.
+
+    On miss: runs the normal extraction, then writes the result back
+    to the cache before yielding (so a Ctrl+C *after* the put is
+    safe — next reindex will hit).
+    """
+    cache = _get_cache()
     try:
-        yield from _extract_inner(path)
+        content_sha = sha256_file(path)
+    except OSError as e:
+        raise ExtractError(str(path), f"cannot read for hash: {e}") from e
+    key = cache.build_key(content_sha256=content_sha, extractor_signature=_extractor_signature())
+    cached = cache.get(key)
+    if cached is not None:
+        yield from cached
+        return
+
+    chunks: list[Chunk] = []
+    try:
+        for chunk in _extract_inner(path):
+            chunks.append(chunk)
     except ExtractError:
         raise
     except Exception as e:
@@ -367,6 +430,26 @@ def extract(path: Path) -> Iterator[Chunk]:
         # `RuntimeError`, malformed-stream `ValueError`, ...) becomes
         # an ExtractError so the index build survives.
         raise ExtractError(str(path), f"{type(e).__name__}: {e}") from e
+
+    # Best-effort cache write; if it fails (disk full, perms) we still
+    # yield the freshly-extracted chunks — caller should never lose work
+    # because the cache had a bad day.
+    with contextlib.suppress(OSError):
+        cache.put(key, chunks)
+
+    yield from chunks
+
+
+def _get_cache() -> ExtractionCache:
+    """Cached singleton — building the path each call is cheap but
+    creating the directory tree once at first use is cleaner."""
+    global _cache_singleton
+    if _cache_singleton is None:
+        _cache_singleton = ExtractionCache()
+    return _cache_singleton
+
+
+_cache_singleton: ExtractionCache | None = None
 
 
 def _extract_inner(path: Path) -> Iterator[Chunk]:
