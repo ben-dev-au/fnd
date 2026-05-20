@@ -2,10 +2,32 @@
 
 from __future__ import annotations
 
+import importlib.util
 from collections.abc import Generator
 from pathlib import Path
 
 import pytest
+
+# When the pdf-structure extra is installed in the dev venv, PDF chunks
+# carry body_md and the preview dispatcher routes them through the
+# structural Markdown widget. Most existing tests pre-date that and
+# assert the flat-buffer routing PDFs have always taken — they pass
+# in CI (no extra installed) but fail locally when a dev has installed
+# it. Default the whole test suite to flat-PDF routing so the
+# invariant tests stay green; the two structural-PDF tests opt out
+# explicitly via `monkeypatch.delenv("_FND_FORCE_FLAT", raising=False)`.
+_PDF_STRUCTURE_INSTALLED = importlib.util.find_spec("pymupdf4llm") is not None
+
+
+@pytest.fixture(autouse=True)
+def _default_pdf_flat_when_extras_present(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if _PDF_STRUCTURE_INSTALLED:
+        # "pdf" forces PDF-only to the flat path; MD/DOCX/PPTX are
+        # unaffected. Tests asserting structural PDF routing override
+        # via `monkeypatch.delenv("_FND_FORCE_FLAT", raising=False)`.
+        monkeypatch.setenv("_FND_FORCE_FLAT", "pdf")
 
 
 @pytest.fixture(scope="session")

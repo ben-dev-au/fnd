@@ -8,6 +8,8 @@ renderer (MD / DOCX / PPTX).
 
 from __future__ import annotations
 
+import pytest
+
 from fnd.extract.base import Block
 from fnd.query import FileChunk
 from fnd.tui.preview_dispatcher import choose_preview_mode
@@ -33,17 +35,19 @@ def test_pdf_chunks_take_flat_path() -> None:
     assert choose_preview_mode([_chunk("pdf"), _chunk("pdf")]) == "flat"
 
 
-def test_pdf_with_body_md_takes_structural_path() -> None:
+def test_pdf_with_body_md_takes_structural_path(monkeypatch: pytest.MonkeyPatch) -> None:
     """F7: with the pdf-structure extra populating ``body_md``, PDFs
     route to the structural Markdown renderer like docx/pptx/md do."""
+    monkeypatch.delenv("_FND_FORCE_FLAT", raising=False)
     chunks = [_chunk("pdf", body_md="## Page 1\n\nIntroduction.")]
     assert choose_preview_mode(chunks) == "structural"
 
 
-def test_pdf_partially_structured_still_structural() -> None:
+def test_pdf_partially_structured_still_structural(monkeypatch: pytest.MonkeyPatch) -> None:
     """A PDF that was reindexed with extras present but had an
     individual page fail extraction (empty body_md) still routes
     structural overall — the any-chunk rule wins."""
+    monkeypatch.delenv("_FND_FORCE_FLAT", raising=False)
     chunks = [_chunk("pdf", body_md=""), _chunk("pdf", body_md="## p2")]
     assert choose_preview_mode(chunks) == "structural"
 

@@ -50,7 +50,10 @@ def choose_preview_mode(chunks: list[FileChunk]) -> PreviewMode:
     """
     import os
 
-    if os.environ.get("_FND_FORCE_FLAT") == "1":
+    force = os.environ.get("_FND_FORCE_FLAT")
+    if force == "1":
+        return "flat"
+    if force == "pdf" and chunks and all(c.kind == "pdf" for c in chunks):
         return "flat"
     for c in chunks:
         if c.kind in _MARKDOWN_RENDERED_KINDS and c.body_md:
