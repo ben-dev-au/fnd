@@ -176,16 +176,149 @@ path on first index.
   via the structural renderer.
 - `make lint` clean; snapshot tests for both extraction modes.
 
-## Phase 2 — On-disk cache *(sketch)*
+## Phase 2 — On-disk extraction cache
 
-Implement the cache design selected in Phase 0 (see spec). If
-content-addressed: schema-versioned artifact store under
-`platformdirs.user_cache_dir("fnd") / "pdf_artifacts"`, keyed by
-`sha256(file_bytes) + extractor_name + extractor_version`. Cache
-lookup happens in the indexer before extraction is invoked.
-Invalidation on extractor version bump. Add a `fnd cache clear` CLI
-command. Wire the existing schema-bump migration prompt to also
-offer cache reset.
+### Motivation (numbers from Phase 1 smoke)
+
+End-to-end smoke on the HBR Entrepreneur's Handbook (286 pages):
+- pymupdf4llm: ~150ms/page × 286 = ~40s
+- + docling fallback firing on ~1 page: ~3s
+- Total: **~43s for one 286-page book on reindex**
+
+A typical fnd corpus is several hundred such books. Every
+`fnd collection reindex` (today, with no caching) re-pays the full
+extraction cost for *every* file, even files that haven't changed
+since the last index build. For a ~200-book corpus: ~2.5 hours of
+wasted CPU. **This is the primary blocker to making the extras-enabled
+workflow practical.**
+
+### Cache key (chosen: content-addressed)
+
+The Phase 0 spec presented three options; Phase 0's measurements
+settled the choice:
+- median extraction is **multi-second per file** (not <50ms/page) →
+  Option A (no cache) is out
+- file mtimes drift under Dropbox/Syncthing/rsync, common in
+  real fnd corpora → Option B (mtime+path) too lossy
+- one-time sha256 of a 5MB PDF is ~10ms on M1 Max — negligible vs
+  multi-second extraction → **Option C (content hash) wins**
+
+Key composition:
+```
+cache_key = sha256(file_bytes) || extractor_id || extractor_version
+where extractor_id ∈ {"flat", "pymupdf4llm", "docling-hybrid"}
+      extractor_version is the package version + any config-shaping flags
+```
+
+Different extractor → different key → independent cache entries.
+A user can install extras, build cache, uninstall extras, reinstall a
+different combo, and never re-extract a file that's identical bytes-wise.
+
+### Storage layout
+
+```
+$XDG_CACHE_HOME/fnd/extraction/
+  <first-2-of-sha256>/
+    <sha256>--<extractor_id>--<extractor_version>.json
+```
+
+Sharded by hash prefix to keep any single directory below filesystem
+inode-list limits. Each artifact is a single JSON blob:
+```json
+{
+  "schema_version": 1,
+  "source_sha256": "...",
+  "extractor_id": "docling-hybrid",
+  "extractor_version": "pymupdf4llm-1.27.2.3+docling-2.94.0",
+  "extracted_at": "2026-05-20T15:30:00Z",
+  "source_size_bytes": 5242880,
+  "chunks": [
+    {"body": "...", "body_md": "...", "body_struct": [...], ...},
+    ...
+  ]
+}
+```
+
+JSON over a binary format because:
+- Trivial to inspect (`jq` works)
+- No native binary deps needed
+- A 300-page book's extraction is ~500KB JSON; loadable in <50ms
+- Forwards-compat: `schema_version` field lets us migrate
+
+### Lifecycle
+
+**Read path** (extractor):
+```python
+def extract(path: Path) -> Iterator[Chunk]:
+    cache = ExtractionCache.default()
+    key = cache.key_for(path, extractor_id=_current_extractor_id())
+    cached = cache.get(key)
+    if cached is not None:
+        yield from cached.chunks
+        return
+    chunks = list(_extract_uncached(path))
+    cache.put(key, chunks, source_size=path.stat().st_size)
+    yield from chunks
+```
+
+**Write path**: atomic (`os.replace` from a tmp file in the same
+directory) to survive Ctrl+C mid-write.
+
+**Invalidation**: never automatic on content change — that's what the
+content hash *is* for. On version bump, the cache key changes
+naturally so old entries become unreachable; we keep them for one
+release cycle then prune on next `fnd cache prune`.
+
+### CLI
+
+```
+fnd cache status                # show cache dir, total size, entry count
+fnd cache prune                 # delete entries from old extractor versions
+fnd cache clear [--yes]         # nuke the whole cache
+fnd cache info <path>           # show which entry would be used for a file
+```
+
+`fnd extras uninstall pdf-structure` does NOT clear the cache —
+existing entries stay, are unreachable for new extractor configs but
+remain valid if the user reinstalls the same extras version.
+
+### Memory pressure considerations
+
+A reindex of N PDFs accumulates N×~500KB JSON files. A 1000-book
+corpus = ~500MB cache. Document in `fnd cache status`; let the user
+prune. No automatic eviction (LRU etc.) — fnd's corpora are bounded
+and explicit pruning is simpler than tuning a policy.
+
+### Phase 2 deliverables
+
+1. `fnd/cache.py` — `ExtractionCache` class + `Chunk`<->JSON
+   serialisation
+2. `fnd/extract/pdf.py` — integrate cache lookup at top of `extract()`
+3. `fnd/extract/__init__.py` — same for other extractors that benefit
+   (eventual; PDF first)
+4. `fnd/cli.py` — `cache_app` Typer subcommand (status/prune/clear/info)
+5. Tests:
+   - F11: identical file content → cache hit
+   - F12: same file content, different extractor → cache miss
+   - F13: cache write is atomic (Ctrl+C survives)
+   - F14: `fnd cache prune` removes only old-extractor entries
+   - F15: corrupt cache entry → silent miss + log + re-extract
+   - NF8: cache lookup adds <20ms to extract() per file
+   - NF9: cache size growth proportional to indexed corpus, not unbounded
+6. README cache section
+7. End-to-end verification: cold reindex of HBR handbook → warm reindex
+   should drop from ~43s to <2s (cache hits)
+
+### Out of scope for Phase 2
+
+- LRU eviction (manual prune is enough)
+- Cross-machine cache portability (sha256 makes this technically
+  trivial but no UX yet)
+- Per-page granularity (cache key is per-file; if extraction of page 50
+  changes, we re-extract the whole file). Reasonable because:
+  - pymupdf4llm processes whole-doc anyway
+  - docling daemon does too
+  - File-level change → file-level recompute is the natural unit
 
 ## Phase 3 — Per-page quality routing (hybrid pymupdf4llm + docling)
 
