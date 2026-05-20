@@ -256,6 +256,9 @@ def _summarize(rows: list[dict[str, object]]) -> list[dict[str, object]]:
                 "n_h3_sum": sum(int(r["n_h3"]) for r in group),
                 "n_tables_sum": sum(int(r["n_tables"]) for r in group),
                 "n_list_items_sum": sum(int(r["n_list_items"]) for r in group),
+                "n_bold_sum": sum(int(r["n_bold"]) for r in group),
+                "n_italic_sum": sum(int(r["n_italic"]) for r in group),
+                "n_inline_code_sum": sum(int(r["n_inline_code"]) for r in group),
             }
         )
     return summary
@@ -456,6 +459,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "n_h3_sum",
             "n_tables_sum",
             "n_list_items_sum",
+            "n_bold_sum",
+            "n_italic_sum",
+            "n_inline_code_sum",
         ),
     )
     _results_md(args.out_dir, args, rows, summary_rows, pdfs)

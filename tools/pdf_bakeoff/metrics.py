@@ -13,6 +13,11 @@ _H_RE = re.compile(r"^(#{1,6})\s+\S", re.MULTILINE)
 _LIST_RE = re.compile(r"^\s{0,3}([-*+]|\d+\.)\s+\S", re.MULTILINE)
 _TABLE_ROW_RE = re.compile(r"^\s*\|.+\|\s*$", re.MULTILINE)
 _WS_RE = re.compile(r"\s+")
+# Inline formatting — non-greedy, no newline cross, ignore list-bullet `*`.
+_BOLD_RE = re.compile(r"\*\*\S(?:[^*\n]*\S)?\*\*")
+_ITALIC_STAR_RE = re.compile(r"(?<!\*)\*\S(?:[^*\n]*\S)?\*(?!\*)")
+_ITALIC_UNDER_RE = re.compile(r"(?<![_\w])_\S(?:[^_\n]*\S)?_(?![_\w])")
+_CODE_RE = re.compile(r"(?<!`)`[^`\n]+`(?!`)")
 
 
 @dataclass
@@ -28,6 +33,9 @@ class RunnerResult:
     n_h6: int = 0
     n_tables: int = 0
     n_list_items: int = 0
+    n_bold: int = 0
+    n_italic: int = 0
+    n_inline_code: int = 0
     token_jaccard: float = 0.0
     reading_order_hash: str = ""
     sample_300: str = ""
@@ -56,6 +64,20 @@ def count_headers(md: str) -> tuple[int, int, int, int, int, int]:
 
 def count_list_items(md: str) -> int:
     return sum(1 for _ in _LIST_RE.finditer(md))
+
+
+def count_bold(md: str) -> int:
+    return sum(1 for _ in _BOLD_RE.finditer(md))
+
+
+def count_italic(md: str) -> int:
+    return sum(1 for _ in _ITALIC_STAR_RE.finditer(md)) + sum(
+        1 for _ in _ITALIC_UNDER_RE.finditer(md)
+    )
+
+
+def count_inline_code(md: str) -> int:
+    return sum(1 for _ in _CODE_RE.finditer(md))
 
 
 def count_tables(md: str) -> int:
@@ -101,6 +123,9 @@ def populate_structural_metrics(result: RunnerResult, *, baseline_md: str) -> No
     result.n_h4, result.n_h5, result.n_h6 = h4, h5, h6
     result.n_tables = count_tables(md)
     result.n_list_items = count_list_items(md)
+    result.n_bold = count_bold(md)
+    result.n_italic = count_italic(md)
+    result.n_inline_code = count_inline_code(md)
     result.token_jaccard = token_jaccard(md, baseline_md)
     result.reading_order_hash = reading_order_hash(md)
     result.sample_300 = md[:300]
@@ -120,6 +145,9 @@ CSV_COLUMNS: tuple[str, ...] = (
     "n_h6",
     "n_tables",
     "n_list_items",
+    "n_bold",
+    "n_italic",
+    "n_inline_code",
     "token_jaccard",
     "reading_order_hash",
     "sample_300",
