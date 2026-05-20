@@ -57,6 +57,21 @@ def test_install_dry_run_discloses_disk_and_network() -> None:
     assert "uv sync" in out or "uv tool install" in out
 
 
+def test_install_dry_run_discloses_indexing_time_for_pdf_structure() -> None:
+    """NF12: the pdf-structure install disclosure must include the
+    indexing-time impact so users know the structured-PDF flow
+    requires hours of one-time CPU on real corpora."""
+    code, out = _run("extras", "install", "pdf-structure", "--dry-run")
+    assert code == 0
+    assert (
+        "Indexing-time impact" in out
+    ), "must include the indexing-time section explaining the ~30s/PDF cost"
+    assert "30s" in out or "per PDF" in out
+    assert (
+        "auto-resumes" in out or "background" in out
+    ), "must reassure the user that the long indexing is interruptible"
+
+
 def test_install_unknown_extra_fails_cleanly() -> None:
     """NF3: unknown extra name → exit code != 0, no partial state."""
     code, out = _run("extras", "install", "nonexistent-extra", "--dry-run")

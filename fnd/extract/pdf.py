@@ -415,7 +415,22 @@ def extract(path: Path) -> Iterator[Chunk]:
     key = cache.build_key(content_sha256=content_sha, extractor_signature=_extractor_signature())
     cached = cache.get(key)
     if cached is not None:
-        yield from cached
+        # Cache entries are keyed by content hash, so two different files
+        # with identical bytes share an entry. The chunks were captured
+        # with the original file's parent_id / path / mtime — overlay
+        # the *current* file's identity so downstream indexer code
+        # routes chunks to the right Tantivy parent_id.
+        parent_id_now = _parent_id(path)
+        path_str_now = str(path)
+        try:
+            mtime_now = int(path.stat().st_mtime)
+        except OSError:
+            mtime_now = cached[0].mtime if cached else 0
+        for chunk in cached:
+            chunk.parent_id = parent_id_now
+            chunk.path = path_str_now
+            chunk.mtime = mtime_now
+            yield chunk
         return
 
     chunks: list[Chunk] = []

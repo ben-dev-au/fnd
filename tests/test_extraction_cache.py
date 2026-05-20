@@ -206,3 +206,48 @@ def test_sha256_file_is_stable(tmp_path: Path) -> None:
     assert sha256_file(a) == sha256_file(b)
     b.write_bytes(b"different")
     assert sha256_file(a) != sha256_file(b)
+
+
+def test_cache_overlay_per_file_identity_on_restore(tmp_path: Path) -> None:
+    """Regression: two files with identical bytes at DIFFERENT paths
+    share a cache entry (keyed by content hash), but the restored
+    chunks must reflect the current file's parent_id / path / mtime —
+    otherwise the indexer routes chunks to the wrong Tantivy
+    parent_id and the search shows only one of the two files.
+
+    This validates the overlay in fnd/extract/pdf.py at the cache-hit
+    branch. We verify here by extracting two identical-content PDFs
+    and checking the chunks' parent_id differs.
+    """
+    # Use the real PDF extractor against two copies of the same fixture.
+    import shutil
+
+    from fnd.extract.pdf import _parent_id, extract
+
+    fixture = Path(__file__).parent / "fixtures" / "papers" / "test.pdf"
+    if not fixture.exists():
+        pytest.skip("test.pdf fixture missing")
+
+    a = tmp_path / "a.pdf"
+    b = tmp_path / "b.pdf"
+    shutil.copy(fixture, a)
+    shutil.copy(fixture, b)
+
+    # First extraction populates the cache.
+    chunks_a = list(extract(a))
+    # Second extraction is a cache hit — must overlay parent_id.
+    chunks_b = list(extract(b))
+
+    assert chunks_a, "extract() must yield chunks"
+    assert chunks_b, "extract() must yield chunks for the copy"
+
+    parent_a = _parent_id(a)
+    parent_b = _parent_id(b)
+    assert parent_a != parent_b, "different paths must yield different parent_ids"
+
+    for chunk in chunks_a:
+        assert chunk.parent_id == parent_a
+        assert chunk.path == str(a)
+    for chunk in chunks_b:
+        assert chunk.parent_id == parent_b
+        assert chunk.path == str(b), "cache hit returned the original path; overlay logic broken"
