@@ -34,9 +34,13 @@ dependencies = [
 [project.optional-dependencies]
 ocr = ["ocrmypdf~=17.0"]
 # Structured PDF rendering — opt-in via `fnd extras install pdf-structure`.
-# docling-slim is installed separately into its own uv tool venv (transitive
-# version conflicts with fnd's deps make it unsafe in this venv).
-pdf-structure = ["pymupdf4llm~=1.27"]
+# Includes pymupdf-layout (an Artifex add-on under Polyform Noncommercial
+# 1.0 — acceptable for fnd because fnd is open-source and non-commercial).
+# Without pymupdf-layout, pymupdf4llm rejects the no-OCR flag combo we
+# need to keep extraction cheap on figure-heavy PDFs.
+# docling-slim is installed separately into its own uv tool venv
+# (transitive version conflicts with fnd's deps make it unsafe in this venv).
+pdf-structure = ["pymupdf4llm[layout]~=1.27"]
 
 [tool.pytest.ini_options]
 # `slow` flags long-running tests (perf benches, fuzz harness). The

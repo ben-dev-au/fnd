@@ -313,7 +313,7 @@ requires-dist = [
     { name = "pydantic", specifier = "~=2.13" },
     { name = "pydantic-settings", specifier = "~=2.14" },
     { name = "pymupdf", specifier = "~=1.27" },
-    { name = "pymupdf4llm", marker = "extra == 'pdf-structure'", specifier = "~=1.27" },
+    { name = "pymupdf4llm", extras = ["layout"], marker = "extra == 'pdf-structure'", specifier = "~=1.27" },
     { name = "python-docx", specifier = "~=1.2" },
     { name = "python-pptx", specifier = "~=1.0" },
     { name = "rich", specifier = "~=15.0" },

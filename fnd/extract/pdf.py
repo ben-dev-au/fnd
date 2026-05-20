@@ -21,15 +21,25 @@ docling), a parallel structured-extraction path runs and populates
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import importlib
+import importlib.util
+import os
 import re
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from pathlib import Path
 from typing import Any, cast
 
 import pymupdf  # type: ignore[import-not-found]
 
 from fnd.extract.base import Block, Chunk, ExtractError
+
+# Lazy availability of the pdf-structure extra (`pymupdf4llm`). Computed
+# at module load — cheap; just a spec lookup. The actual import happens
+# inside _extract_page_md() to keep import-time cost zero for users
+# who haven't opted in.
+_HAS_PYMUPDF4LLM: bool = importlib.util.find_spec("pymupdf4llm") is not None
 
 
 def _parent_id(path: Path) -> str:
@@ -227,6 +237,66 @@ def _font_clustering_heading(
     return (heading_text, page_title)
 
 
+@contextlib.contextmanager
+def _mute_fd(fd: int) -> Generator[None]:
+    """Redirect a file descriptor to /dev/null for the block's duration.
+
+    Used to silence libmupdf's stdout banner ("=== Document parser
+    messages === / Using Tesseract for OCR processing.") emitted from
+    C-level code during pymupdf4llm extraction. Not catchable via
+    contextlib.redirect_stdout.
+    """
+    saved = os.dup(fd)
+    null = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(null, fd)
+        yield
+    finally:
+        os.dup2(saved, fd)
+        os.close(saved)
+        os.close(null)
+
+
+def _extract_page_md(doc: pymupdf.Document, page_index: int) -> str:
+    """Extract one page's Markdown via pymupdf4llm. Returns "" on failure.
+
+    Only called when `_HAS_PYMUPDF4LLM` is True. Config matches the
+    Phase 0 bake-off winning settings: vector tables on, OCR off,
+    image emission off.
+    """
+    try:
+        pymupdf4llm = importlib.import_module("pymupdf4llm")
+    except ImportError:
+        return ""
+    # Layout mode (auto-enabled when pymupdf-layout is on the path)
+    # accepts our no-OCR flag combo; the standard path's validator
+    # rejects it. Both modes produce equivalent markdown on our corpus;
+    # the only reason to choose one is which validator runs.
+    try:
+        with _mute_fd(1):
+            chunks = pymupdf4llm.to_markdown(
+                doc,
+                pages=[page_index],
+                page_chunks=True,
+                show_progress=False,
+                force_text=False,
+                ignore_images=True,
+                ignore_graphics=False,
+                table_strategy="lines",
+            )
+    except Exception:
+        # pymupdf4llm has stricter input validation than vanilla
+        # pymupdf and can reject pages that the rest of the pipeline
+        # accepts. Fall through to empty md — caller treats this as
+        # "structured mode unavailable for this page" and the chunk
+        # still ships its flat body.
+        return ""
+    if not chunks:
+        return ""
+    first = chunks[0]
+    return str(first.get("text", "")) if isinstance(first, dict) else str(first)
+
+
 def extract(path: Path) -> Iterator[Chunk]:
     try:
         yield from _extract_inner(path)
@@ -307,12 +377,19 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
                 blocks.append(Block(kind="h2", text=page_title))
             blocks.append(Block(kind="p", text=text.strip()))
 
+            # Structured path (opt-in): populate body_md so the preview
+            # dispatcher routes this page to the Markdown widget. Empty
+            # when the pdf-structure extra isn't installed — keeps
+            # behaviour byte-identical to today.
+            body_md = _extract_page_md(doc, page_index) if _HAS_PYMUPDF4LLM else ""
+
             page_states.append(
                 {
                     "page_no": page_no,
                     "page_index": page_index,
                     "text": text,
                     "blocks": blocks,
+                    "body_md": body_md,
                     "heading_path": heading_path,
                 }
             )
@@ -333,6 +410,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
                 kind="pdf",
                 body=state["text"],
                 body_struct=state["blocks"],
+                body_md=state["body_md"],
                 page=state["page_no"],
                 page_label=labels[state["page_index"]],
                 heading_path=state["heading_path"],
