@@ -9,6 +9,7 @@ import random
 import resource
 import statistics
 import sys
+import time
 import traceback
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -297,47 +298,69 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"no PDFs found under {args.pdf_dir} matching {args.include_glob!r}", file=sys.stderr)
         return 1
 
+    runner_names = [n for n, _ in runners]
     print(
-        f"[bakeoff] {len(pdfs)} pdfs × runners={[n for n, _ in runners]}; "
+        f"[bakeoff] {len(pdfs)} pdfs × runners={runner_names}; "
         f"pages_per_pdf={args.pages_per_pdf}",
         file=sys.stderr,
     )
 
+    # Stream metrics.csv incrementally so Ctrl+C still leaves usable
+    # data on disk. We re-write summary.csv and RESULTS.md at the end.
+    metrics_path = args.out_dir / "metrics.csv"
+    metrics_f = metrics_path.open("w", newline="", encoding="utf-8")
+    writer = csv.DictWriter(metrics_f, fieldnames=list(CSV_COLUMNS))
+    writer.writeheader()
+    metrics_f.flush()
+
     rows: list[dict[str, object]] = []
-    for pdf in pdfs:
-        n_pages = _page_count(pdf)
-        if n_pages == 0:
-            print(f"[skip] {pdf}: 0 pages or unreadable", file=sys.stderr)
-            continue
-        pages = _sample_pages(n_pages, args.pages_per_pdf, rng)
+    t_start = time.perf_counter()
+    n_completed = 0
+    try:
+        for pdf_idx, pdf in enumerate(pdfs, start=1):
+            n_pages = _page_count(pdf)
+            if n_pages == 0:
+                print(f"[skip] {pdf}: 0 pages or unreadable", file=sys.stderr)
+                continue
+            pages = _sample_pages(n_pages, args.pages_per_pdf, rng)
+            short = pdf.name if len(pdf.name) <= 40 else pdf.name[:37] + "..."
 
-        for page in pages:
-            # Baseline first — its output is the jaccard denominator.
-            results: dict[str, RunnerResult] = {}
-            baseline_md = ""
-            for name, mod in runners:
-                try:
-                    rss_before = _maxrss_mb()
-                    r = mod.run(setups[name], pdf, page)
-                    r.rss_delta_mb = max(0.0, _maxrss_mb() - rss_before)
-                except Exception as e:
-                    r = RunnerResult(
-                        wall_ms=0.0,
-                        rss_delta_mb=0.0,
-                        output_md="",
-                        crashed=True,
-                        error=f"orchestrator-caught {type(e).__name__}: {e}\n"
-                        + traceback.format_exc(limit=2),
+            for page in pages:
+                baseline_md = ""
+                for name, mod in runners:
+                    try:
+                        rss_before = _maxrss_mb()
+                        r = mod.run(setups[name], pdf, page)
+                        r.rss_delta_mb = max(0.0, _maxrss_mb() - rss_before)
+                    except Exception as e:
+                        r = RunnerResult(
+                            wall_ms=0.0,
+                            rss_delta_mb=0.0,
+                            output_md="",
+                            crashed=True,
+                            error=f"orchestrator-caught {type(e).__name__}: {e}\n"
+                            + traceback.format_exc(limit=2),
+                        )
+                    if name == "baseline":
+                        baseline_md = r.output_md
+                    populate_structural_metrics(r, baseline_md=baseline_md)
+                    md_path = _md_path(args.out_dir, pdf, page, name)
+                    _write_md(md_path, r.output_md)
+                    row = _row(pdf, page, name, r, md_path, args.out_dir)
+                    rows.append(row)
+                    writer.writerow(row)
+                    metrics_f.flush()
+                    n_completed += 1
+
+                    elapsed = time.perf_counter() - t_start
+                    status = "CRASH" if r.crashed else f"{r.wall_ms / 1000:6.2f}s"
+                    print(
+                        f"[{pdf_idx}/{len(pdfs)}] {short:>40} p{page:>3} "
+                        f"{name:<20} {status}  elapsed={elapsed / 60:5.1f}m",
+                        file=sys.stderr,
                     )
-                if name == "baseline":
-                    baseline_md = r.output_md
-                populate_structural_metrics(r, baseline_md=baseline_md)
-                results[name] = r
-                md_path = _md_path(args.out_dir, pdf, page, name)
-                _write_md(md_path, r.output_md)
-                rows.append(_row(pdf, page, name, r, md_path, args.out_dir))
-
-    _write_csv(args.out_dir / "metrics.csv", rows, CSV_COLUMNS)
+    finally:
+        metrics_f.close()
     summary_rows = _summarize(rows)
     _write_csv(
         args.out_dir / "summary.csv",
