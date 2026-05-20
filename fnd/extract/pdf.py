@@ -53,6 +53,11 @@ _PIC_OMITTED_RE = re.compile(r"==>\s*picture\s*\[(\d+)\s*x\s*(\d+)\]\s*intention
 # headshot rather than a table; not worth paying the docling cost.
 _FALLBACK_AREA_RATIO = 0.15
 
+# Secondary signal: a literal "TABLE N" / "Table N" heading on the same
+# page as a picture-omitted marker means the picture IS a table even if
+# the region itself is below the area threshold (HBR-style narrow tables).
+_TABLE_LABEL_RE = re.compile(r"\b(?:TABLE|Table)\s+\d", re.MULTILINE)
+
 
 def _parent_id(path: Path) -> str:
     return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
@@ -288,18 +293,27 @@ def _try_docling_fallback(pdf_path: str, page_index: int) -> str:
 def _needs_docling_fallback(page: pymupdf.Page, pymupdf_md: str) -> bool:
     """Cheap heuristic: did pymupdf4llm visibly miss a structured region?
 
-    Returns True when the sum of "picture intentionally omitted"
-    rectangles exceeds `_FALLBACK_AREA_RATIO` of the page area. That's
-    the case for image-rendered tables — exactly what docling's ML
-    layout model handles and pymupdf4llm can't.
+    Triggers in two cases:
+    1. Sum of "picture intentionally omitted" rectangles exceeds
+       `_FALLBACK_AREA_RATIO` of the page area — most likely a big
+       borderless / image-rendered table.
+    2. A picture-omitted marker appears alongside a "TABLE" / "Table"
+       label on the same page — catches small image-rendered tables
+       (the HBR p99 case: a 324x70 pt = ~5% region that's clearly a
+       table per its adjacent "TABLE 5-2" heading).
     """
-    page_area = float(page.rect.width) * float(page.rect.height)
-    if page_area <= 0:
+    if not _PIC_OMITTED_RE.search(pymupdf_md):
         return False
-    omitted = 0.0
-    for w_s, h_s in _PIC_OMITTED_RE.findall(pymupdf_md):
-        omitted += float(w_s) * float(h_s)
-    return (omitted / page_area) >= _FALLBACK_AREA_RATIO
+    page_area = float(page.rect.width) * float(page.rect.height)
+    if page_area > 0:
+        omitted = 0.0
+        for w_s, h_s in _PIC_OMITTED_RE.findall(pymupdf_md):
+            omitted += float(w_s) * float(h_s)
+        if (omitted / page_area) >= _FALLBACK_AREA_RATIO:
+            return True
+    # Label-proximity signal: "TABLE N" or "Table N" near a picture
+    # marker is a strong "this picture is a table" hint.
+    return bool(_TABLE_LABEL_RE.search(pymupdf_md))
 
 
 def _extract_page_md(doc: pymupdf.Document, page_index: int) -> str:

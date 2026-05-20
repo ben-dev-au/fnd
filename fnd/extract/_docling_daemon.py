@@ -109,8 +109,13 @@ def _docling_python() -> Path | None:
 
 
 def _spawn_helper(python: Path, ready_timeout_s: float = 60.0) -> subprocess.Popen[str] | None:
+    # -I = isolated mode: don't add the script's dir to sys.path[0] and
+    # ignore PYTHONPATH. The helper lives in fnd/extract/, which contains
+    # fnd's own pptx.py extractor — without isolated mode, docling's
+    # `import pptx` resolves to that file instead of the docling-slim
+    # venv's python-pptx package, breaking the helper at import time.
     proc = subprocess.Popen(
-        [str(python), str(_HELPER_SCRIPT)],
+        [str(python), "-I", str(_HELPER_SCRIPT)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=sys.stderr,
