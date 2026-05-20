@@ -361,6 +361,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
     finally:
         metrics_f.close()
+        for name, mod in runners:
+            td = getattr(mod, "teardown", None)
+            if callable(td):
+                try:
+                    td(setups[name])
+                except Exception as e:
+                    print(f"[teardown-error] {name}: {e}", file=sys.stderr)
     summary_rows = _summarize(rows)
     _write_csv(
         args.out_dir / "summary.csv",
