@@ -42,6 +42,16 @@ column tracking implementation + verification status. Updated as Phase
 | F20 | Cache-hit files reported on `file_complete` event | `tests/test_index_runner.py::test_cache_hit_reported_on_warm_run` | test |
 | F21 | First-reindex warning shown once then suppressed | `tests/test_first_reindex_warning.py` (10 tests) | test |
 | F22 | `defaults.indexer_auto_resume = false` suppresses auto-resume on launch | `_maybe_resume_indexer` reads config flag; declared on Defaults | done |
+| F23 | Settings → Indexing surfaces structured PDF status (●/○) + disk | `tests/test_settings_structured_pdf.py::test_status_row_not_installed` | test |
+| F24 | Settings → Indexing → Install / Uninstall pushes confirm screen with disclosure | `tests/test_settings_structured_pdf.py::test_install_confirm_chrome_when_not_installed` | test |
+| F25 | Confirm → Yes runs install/uninstall in IndexerScreen-style progress modal | `tests/test_settings_extras_install_progress.py::test_progress_modal_chrome` | test |
+| F26 | Esc / Background dismisses progress modal but task survives | `tests/test_settings_extras_install_progress.py::test_background_keeps_task_running` | test |
+| F27 | Cancel SIGTERMs the active subprocess | `tests/test_settings_extras_install_progress.py::test_cancel_stops_subprocess` | test |
+| F28 | Auto-resume toggle in Settings → Indexing → Reindex behaviour | `tests/test_settings_indexing.py::test_indexing_toggle_via_enter` | test |
+| F29 | Cache size row shows live entry count + bytes | `tests/test_settings_cache_maintenance.py::test_cache_size_row_shows_count_and_size` | test |
+| F30 | Cache maintenance: Prune stale + Clear cache with confirm | `tests/test_settings_cache_maintenance.py::test_clear_yes_path` / `test_prune_with_stale_opens_confirm` | test |
+| F31 | Search `/auto-resume`, `/pdf-structure`, `/cache`, `/prune` finds correct rows | `tests/test_settings_indexing_search.py` (parametrized) | test |
+| F32 | Confirm dialogs accept ↑↓ navigation; Enter selects; Esc cancels | `tests/test_settings_cache_maintenance.py::test_clear_cancel_path` / `test_clear_yes_path` | test |
 
 ## Non-functional requirements
 

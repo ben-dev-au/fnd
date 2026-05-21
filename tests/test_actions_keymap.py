@@ -140,7 +140,7 @@ async def test_root_menu_search_is_cross_section(built_index: Path) -> None:
         # Cross-section search surfaces leaves from the Keybindings section
         # (each row's breadcrumb is "Keybindings"). The word "keybindings"
         # matches via the breadcrumb segment, so we get individual key rows.
-        # It also surfaces the root "Open keybindings file in editor" action
+        # It also surfaces the root "↗ Keybindings file" action
         # (breadcrumb is ()) because "keybindings" appears in its keywords.
         selectable = [item for item in lst._items if item.kind != KIND_HEADER]
         assert len(selectable) > 0

@@ -49,6 +49,7 @@ KIND_EXTERNAL = "external"
 SECTION_KEYBINDINGS = "keybindings"
 SECTION_PREFERENCES = "preferences"
 SECTION_COLLECTIONS = "collections"
+SECTION_INDEXING = "indexing"
 
 
 # ── Models ───────────────────────────────────────────────────────────
@@ -1231,6 +1232,367 @@ def _summary_keybindings_path(_app: FNDApp) -> str:
     return ("…" + p[-50:]) if len(p) > 50 else p
 
 
+# ── Indexing section ────────────────────────────────────────────────
+
+
+def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
+    """Indexing sub-screen.
+
+    Three groups: structured PDF (status + install/uninstall), reindex
+    behaviour (auto-resume toggle), and extraction cache (size display
+    + maintenance drill)."""
+    return (
+        header("Structured PDF extraction", level=2),
+        MenuItem(
+            id="indexing.pdf_status",
+            label="Status",
+            description=(
+                "● Installed — PDFs render with headings, lists, tables, "
+                "and recovered image-tables. ○ Not installed — PDFs render "
+                "as flat extracted text."
+            ),
+            kind=KIND_SCALAR,
+            value_getter=_summary_pdf_status,
+            setting_path="(extras: pdf-structure)",
+            keywords=("pdf", "structure", "pdf-structure", "status", "extra", "installed"),
+        ),
+        MenuItem(
+            id="indexing.pdf_install",
+            label=_pdf_install_label(),
+            description=(
+                "↗ Push the disclosure + confirm screen. pymupdf4llm[layout] "
+                "(Polyform NC, ~200 MB) + docling-slim[standard] "
+                "(Apache-2.0, ~700 MB). ML weights download on first use."
+            ),
+            kind=KIND_EXTERNAL,
+            external=_open_pdf_install_confirm,
+            value_getter=_summary_pdf_install_action,
+            keywords=(
+                "pdf",
+                "structure",
+                "install",
+                "uninstall",
+                "pdf-structure",
+                "extra",
+                "pymupdf4llm",
+                "docling",
+            ),
+        ),
+        header("Reindex behaviour", level=2),
+        MenuItem(
+            id="indexing.auto_resume",
+            label="Auto-resume on launch",
+            description=(
+                "● On — fnd resumes an interrupted reindex silently in the "
+                "background next time you open the app. "
+                "○ Off — reindex must be triggered manually."
+            ),
+            kind=KIND_TOGGLE,
+            toggle_getter=_get_indexer_auto_resume,
+            toggle_setter=lambda app, v: _setting_writer("defaults.indexer_auto_resume")(app, v),
+            setting_path="defaults.indexer_auto_resume",
+            keywords=("auto", "resume", "indexer", "interrupted", "launch", "reindex"),
+        ),
+        header("Extraction cache", level=2),
+        MenuItem(
+            id="indexing.cache_size",
+            label="Cache size",
+            description=(
+                "Content-addressed cache of extracted chunks. Shared across "
+                "collections — same file in two collections is extracted once."
+            ),
+            kind=KIND_SCALAR,
+            value_getter=_summary_cache_size_row,
+            setting_path="(cache dir)",
+            keywords=("cache", "size", "entries", "extraction"),
+        ),
+        MenuItem(
+            id="indexing.cache_maintenance",
+            label="Cache maintenance…",
+            description=(
+                "↗ Prune stale entries (different extractor signature) "
+                "or clear the cache entirely."
+            ),
+            kind=KIND_EXTERNAL,
+            external=_open_cache_maintenance,
+            value_getter=lambda _app: "prune · clear",
+            keywords=(
+                "cache",
+                "maintenance",
+                "prune",
+                "clear",
+                "wipe",
+                "stale",
+                "delete",
+                "extraction",
+            ),
+        ),
+    )
+
+
+def _is_pdf_structure_installed() -> bool:
+    from fnd.extras import EXTRAS, is_extra_installed
+
+    extra = EXTRAS.get("pdf-structure")
+    return extra is not None and is_extra_installed(extra)
+
+
+def _summary_pdf_status(_app: FNDApp) -> str:
+    """Trailing for the Status row inside Structured PDF extraction.
+
+    Format: '● Installed · ~N MB' or '○ Not installed · ~N MB to install'."""
+    from fnd.extras import EXTRAS, actual_disk_mb
+
+    extra = EXTRAS.get("pdf-structure")
+    if extra is None:
+        return "(unavailable)"
+    if _is_pdf_structure_installed():
+        return f"● Installed · ~{actual_disk_mb(extra)} MB"
+    est = sum(p.disk_mb for p in extra.packages)
+    return f"○ Not installed · ~{est} MB to install"
+
+
+def _summary_pdf_install_action(_app: FNDApp) -> str:
+    return "Uninstall…" if _is_pdf_structure_installed() else "Install…"
+
+
+def _pdf_install_label() -> str:
+    return "Uninstall…" if _is_pdf_structure_installed() else "Install…"
+
+
+def _open_pdf_install_confirm(app: FNDApp) -> None:
+    """Push the disclosure + Yes/Cancel confirm. On Yes the install (or
+    uninstall) progress modal lands — wired in step 6b."""
+    from fnd.tui.settings_screen import StructuredPdfConfirmScreen
+
+    app.push_screen(StructuredPdfConfirmScreen())
+
+
+def _get_indexer_auto_resume(app: FNDApp) -> bool:
+    cfg = app._config  # type: ignore[attr-defined]
+    return cfg.defaults.indexer_auto_resume if cfg is not None else True
+
+
+def _summary_indexing(app: FNDApp) -> str:
+    """Trailing summary for the Indexing root row. Combines auto-resume
+    state and cache footprint into a single glance."""
+    auto = "●" if _get_indexer_auto_resume(app) else "○"
+    cache_part = _cache_size_short()
+    if cache_part:
+        return f"{auto} auto-resume · {cache_part}"
+    return f"{auto} auto-resume"
+
+
+def _summary_cache_size_row(_app: FNDApp) -> str:
+    """Trailing for the Cache size row inside Indexing."""
+    from fnd.cache import ExtractionCache, default_cache_dir
+
+    root = default_cache_dir()
+    if not root.exists():
+        return "empty"
+    cache = ExtractionCache()
+    return f"{cache.entry_count()} entries · {_human_bytes(cache.total_size_bytes())}"
+
+
+def _cache_size_short() -> str:
+    """Compact 'N · S' for the root summary; empty string when no cache."""
+    from fnd.cache import ExtractionCache, default_cache_dir
+
+    root = default_cache_dir()
+    if not root.exists():
+        return ""
+    cache = ExtractionCache()
+    n = cache.entry_count()
+    if n == 0:
+        return ""
+    return f"cache {_human_bytes(cache.total_size_bytes())}"
+
+
+def _human_bytes(n: int) -> str:
+    if n < 1024:
+        return f"{n} B"
+    kb = n / 1024
+    if kb < 1024:
+        return f"{kb:.0f} KB"
+    mb = kb / 1024
+    if mb < 1024:
+        return f"{mb:.0f} MB"
+    return f"{mb / 1024:.1f} GB"
+
+
+def _open_cache_maintenance(app: FNDApp) -> None:
+    from fnd.tui.settings_screen import SettingsScreen
+
+    items = _provider_cache_maintenance(app)
+    app.push_screen(
+        SettingsScreen(
+            breadcrumb=("Indexing", "Cache maintenance"),
+            items=items,
+            provider=lambda a: tuple(_provider_cache_maintenance(a)),
+        )
+    )
+
+
+def _provider_cache_maintenance(_app: FNDApp) -> tuple[MenuItem, ...]:
+    """Cache-maintenance sub-screen content — prune (recoverable) and
+    clear (destructive)."""
+    return (
+        MenuItem(
+            id="cache.prune",
+            label="Prune stale entries…",
+            description=(
+                "Remove cache entries whose extractor signature differs "
+                "from the current extractor — safe; re-extracted on demand."
+            ),
+            kind=KIND_EXTERNAL,
+            external=_run_cache_prune,
+            value_getter=_summary_stale_entries,
+            keywords=("cache", "prune", "stale", "extractor"),
+        ),
+        MenuItem(
+            id="cache.clear",
+            label="Clear extraction cache…",
+            description=(
+                "⚠ Wipe the entire cache. Next reindex re-extracts every "
+                "file from scratch. Cannot be undone."
+            ),
+            kind=KIND_EXTERNAL,
+            external=_run_cache_clear,
+            value_getter=_summary_cache_size_row,
+            keywords=("cache", "clear", "delete", "wipe", "reset"),
+        ),
+    )
+
+
+def _summary_stale_entries(_app: FNDApp) -> str:
+    from fnd.cache import default_cache_dir
+    from fnd.extract.pdf import _extractor_signature
+
+    root = default_cache_dir()
+    if not root.exists():
+        return "0 stale"
+    current = _extractor_signature()
+    stale = 0
+    for shard in root.iterdir():
+        if not shard.is_dir():
+            continue
+        for entry in shard.glob("*.json"):
+            _, _, sig = entry.stem.partition("--")
+            if sig != current:
+                stale += 1
+    return f"{stale} stale"
+
+
+def _run_cache_prune(app: FNDApp) -> None:
+    """Count stale entries; confirm before deleting."""
+    import contextlib
+
+    from rich.text import Text
+
+    from fnd.cache import default_cache_dir
+    from fnd.extract.pdf import _extractor_signature
+    from fnd.tui.settings_screen import CacheMaintenanceConfirm
+
+    root = default_cache_dir()
+    if not root.exists():
+        with contextlib.suppress(Exception):
+            app.notify("Cache is empty.")
+        return
+    current = _extractor_signature()
+    stale: list[Path] = []
+    fresh = 0
+    for shard in root.iterdir():
+        if not shard.is_dir():
+            continue
+        for entry in shard.glob("*.json"):
+            _, _, sig = entry.stem.partition("--")
+            if sig == current:
+                fresh += 1
+            else:
+                stale.append(entry)
+    if not stale:
+        with contextlib.suppress(Exception):
+            app.notify(f"No stale entries · {fresh} fresh.")
+        return
+
+    summary = Text()
+    summary.append("Extractor signature: ", style="dim")
+    summary.append(f"{current}\n", style="bold")
+    summary.append("Fresh entries:  ", style="dim")
+    summary.append(f"{fresh}\n", style="bold")
+    summary.append("Stale entries:  ", style="dim")
+    summary.append(str(len(stale)), style="bold")
+
+    def _do_prune() -> int:
+        removed = 0
+        for p in stale:
+            try:
+                p.unlink()
+                removed += 1
+            except OSError:
+                continue
+        return removed
+
+    app.push_screen(
+        CacheMaintenanceConfirm(
+            title="Indexing › Cache maintenance › Prune stale",
+            summary=summary,
+            run=_do_prune,
+            confirm_label=f"Yes, remove {len(stale)} stale entries",
+            result_label="stale entries removed",
+            irreversible=False,
+        )
+    )
+
+
+def _run_cache_clear(app: FNDApp) -> None:
+    import contextlib
+
+    from rich.text import Text
+
+    from fnd.cache import ExtractionCache, default_cache_dir
+    from fnd.tui.settings_screen import CacheMaintenanceConfirm
+
+    root = default_cache_dir()
+    if not root.exists():
+        with contextlib.suppress(Exception):
+            app.notify("Cache is empty.")
+        return
+    cache = ExtractionCache()
+    n = cache.entry_count()
+    size = cache.total_size_bytes()
+
+    summary = Text()
+    summary.append("Entries: ", style="dim")
+    summary.append(f"{n}\n", style="bold")
+    summary.append("Size:    ", style="dim")
+    summary.append(f"{_human_bytes(size)}\n", style="bold")
+    summary.append("Path:    ", style="dim")
+    summary.append(f"{root}\n\n", style="bold")
+    summary.append(
+        "Next reindex will re-extract every PDF from scratch — "
+        "structured extraction is ~30 s per PDF.",
+        style="dim",
+    )
+
+    def _do_clear() -> int:
+        import shutil
+
+        shutil.rmtree(root, ignore_errors=True)
+        return n
+
+    app.push_screen(
+        CacheMaintenanceConfirm(
+            title="Indexing › Cache maintenance › Clear",
+            summary=summary,
+            run=_do_clear,
+            confirm_label="Yes, clear extraction cache",
+            result_label="entries removed",
+            irreversible=True,
+        )
+    )
+
+
 def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
     """Root settings menu — a clean, short list of categories. No
     content piled on top of each other. Each drill-in row pushes its
@@ -1261,22 +1623,35 @@ def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
             value_getter=_summary_keybindings,
         ),
         MenuItem(
+            id=f"root.{SECTION_INDEXING}",
+            label="Indexing",
+            description=(
+                "Structured-PDF extra, cache, and auto-resume behaviour — "
+                "everything that shapes how reindex runs."
+            ),
+            kind=KIND_EXTERNAL,
+            external=_open_section(SECTION_INDEXING),
+            value_getter=_summary_indexing,
+            keywords=("index", "indexer", "reindex", "pdf", "cache", "auto-resume"),
+        ),
+        header("External", level=2, anchor_id="external"),
+        MenuItem(
             id="root.open_config_file",
-            label="Open config file in editor",
-            description="Drop into $EDITOR on config.toml; reload on save. Shift+Enter reveals in Finder.",
+            label="↗ Config file",
+            description="Open config.toml in $EDITOR; reload on save. Shift+⏎ reveals in Finder.",
             kind=KIND_EXTERNAL,
             external=_open_config_file_action,
             value_getter=_summary_config_path,
-            keywords=("edit", "config", "toml"),
+            keywords=("edit", "config", "toml", "open", "external"),
         ),
         MenuItem(
             id="root.open_keybindings_file",
-            label="Open keybindings file in editor",
-            description="Drop into $EDITOR on keybindings.toml; Shift+Enter reveals in Finder.",
+            label="↗ Keybindings file",
+            description="Open keybindings.toml in $EDITOR. Shift+⏎ reveals in Finder.",
             kind=KIND_EXTERNAL,
             external=_open_keybindings_file_action,
             value_getter=_summary_keybindings_path,
-            keywords=("edit", "keybindings", "rebind"),
+            keywords=("edit", "keybindings", "rebind", "open", "external"),
         ),
     )
 
@@ -1292,12 +1667,14 @@ _SECTION_PROVIDERS: dict[str, Callable[[FNDApp], tuple[MenuItem, ...]]] = {
     SECTION_PREFERENCES: _provider_preferences,
     SECTION_COLLECTIONS: _provider_collections,
     SECTION_KEYBINDINGS: _provider_keybindings,
+    SECTION_INDEXING: _provider_indexing,
 }
 
 _SECTION_LABELS: dict[str, str] = {
     SECTION_PREFERENCES: "Preferences",
     SECTION_COLLECTIONS: "Collections",
     SECTION_KEYBINDINGS: "Keybindings",
+    SECTION_INDEXING: "Indexing",
 }
 
 

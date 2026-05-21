@@ -2566,6 +2566,263 @@ class DeleteCollectionScreen(Screen[None]):
         self.app.pop_screen()
 
 
+# ── Cache maintenance confirm ───────────────────────────────────────
+
+
+class CacheMaintenanceConfirm(Screen[None]):
+    """Confirm screen for cache prune / clear.
+
+    Mirrors :class:`DeleteCollectionScreen` chrome — same bordered
+    settings_box, same OptionList Yes/Cancel pattern, same key
+    bindings. Arrows navigate between options; Enter selects.
+    Destructive variants use ``$error`` border; reversible variants
+    use ``$warning``.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Cancel", show=False),
+        Binding("up,k", "cursor(-1)", show=False),
+        Binding("down,j", "cursor(1)", show=False),
+        Binding("enter", "activate", show=False),
+    ]
+
+    CSS = """
+    CacheMaintenanceConfirm { background: $surface; }
+    CacheMaintenanceConfirm > #settings_box {
+        height: auto;
+        border: round $warning;
+        padding: 0 1;
+        margin: 1 4;
+    }
+    CacheMaintenanceConfirm.-destructive > #settings_box { border: round $error; }
+    CacheMaintenanceConfirm #confirm_summary { padding: 0 0 1 0; }
+    CacheMaintenanceConfirm #confirm_irreversible {
+        color: $error; text-style: bold; padding: 0 0 1 0;
+    }
+    CacheMaintenanceConfirm #confirm_list { height: auto; }
+    CacheMaintenanceConfirm > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        summary: Text,
+        run: Callable[[], int],
+        confirm_label: str,
+        result_label: str,
+        irreversible: bool = False,
+    ) -> None:
+        super().__init__()
+        self._title = title
+        self._summary = summary
+        self._run_callback = run
+        self._confirm_label = confirm_label
+        self._result_label = result_label
+        self._irreversible = irreversible
+        if irreversible:
+            self.add_class("-destructive")
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings_box") as box:
+            box.border_title = self._title
+            yield Static(self._summary, id="confirm_summary")
+            if self._irreversible:
+                yield Static("⚠  Cannot be undone.", id="confirm_irreversible")
+            yield OptionList(
+                Option(Text(self._confirm_label, style="bold"), id="yes"),
+                Option("Cancel", id="no"),
+                id="confirm_list",
+            )
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        self.query_one("#confirm_list", OptionList).focus()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(app, (("↑↓", "Nav"), ("⏎", "Confirm"), ("Esc", "Cancel")))
+        )
+
+    def action_cursor(self, direction: int) -> None:
+        lst = self.query_one("#confirm_list", OptionList)
+        if direction > 0:
+            lst.action_cursor_down()
+        else:
+            lst.action_cursor_up()
+
+    def action_activate(self) -> None:
+        self.query_one("#confirm_list", OptionList).action_select()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    @on(OptionList.OptionSelected, "#confirm_list")
+    def _on_select(self, ev: OptionList.OptionSelected) -> None:
+        if ev.option.id == "no":
+            self.app.pop_screen()
+            return
+        try:
+            n = self._run_callback()
+        except Exception as e:
+            self.notify(f"Failed: {e}", severity="error")
+            self.app.pop_screen()
+            return
+        self.notify(f"✓ {n} {self._result_label}.", timeout=5)
+        self.app.pop_screen()
+
+
+# ── Structured PDF install/uninstall confirm ────────────────────────
+
+
+class StructuredPdfConfirmScreen(Screen[None]):
+    """Disclosure + Yes/Cancel for the pdf-structure extra.
+
+    Mirrors :class:`CacheMaintenanceConfirm` chrome — bordered
+    settings_box, OptionList Yes/Cancel, hint bar. State at mount
+    decides install vs uninstall copy. Confirming pushes the progress
+    modal wired in step 6b.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Cancel", show=False),
+        Binding("up,k", "cursor(-1)", show=False),
+        Binding("down,j", "cursor(1)", show=False),
+        Binding("enter", "activate", show=False),
+    ]
+
+    CSS = """
+    StructuredPdfConfirmScreen { background: $surface; }
+    StructuredPdfConfirmScreen > #settings_box {
+        height: auto;
+        border: round $primary 50%;
+        padding: 0 1;
+        margin: 1 4;
+    }
+    StructuredPdfConfirmScreen.-destructive > #settings_box {
+        border: round $warning;
+    }
+    StructuredPdfConfirmScreen #confirm_summary { padding: 0 0 1 0; }
+    StructuredPdfConfirmScreen #confirm_list { height: auto; }
+    StructuredPdfConfirmScreen > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        from fnd.extras import EXTRAS
+
+        self._extra = EXTRAS.get("pdf-structure")
+        self._installed = self._extra is not None and self._is_installed()
+        if self._installed:
+            # Uninstall is a recoverable-but-noisy action: $warning border.
+            self.add_class("-destructive")
+
+    def _is_installed(self) -> bool:
+        from fnd.extras import is_extra_installed
+
+        return self._extra is not None and is_extra_installed(self._extra)
+
+    def compose(self) -> ComposeResult:
+        title = (
+            "Indexing › Structured PDF › Uninstall"
+            if self._installed
+            else "Indexing › Structured PDF › Install"
+        )
+        with Vertical(id="settings_box") as box:
+            box.border_title = title
+            yield Static(self._summary_text(), id="confirm_summary")
+            confirm_label = (
+                "Yes, uninstall pdf-structure" if self._installed else "Yes, install pdf-structure"
+            )
+            yield OptionList(
+                Option(Text(confirm_label, style="bold"), id="yes"),
+                Option("Cancel", id="no"),
+                id="confirm_list",
+            )
+        yield Static("", id="footer_hints")
+
+    def _summary_text(self) -> Text:
+        from fnd.extras import actual_disk_mb, installed_packages
+
+        text = Text()
+        if self._extra is None:
+            text.append("pdf-structure extra is unavailable.", style="bold red")
+            return text
+        if self._installed:
+            text.append("Will remove\n", style="bold")
+            for p in installed_packages(self._extra):
+                text.append("  • ", style="dim")
+                text.append(f"{p.display}\n")
+            for c in self._extra.cache_dirs:
+                if c.exists():
+                    text.append("  • cache: ", style="dim")
+                    text.append(f"{c}\n")
+            text.append("\nDisk recovered: ", style="dim")
+            text.append(f"~{actual_disk_mb(self._extra)} MB\n\n", style="bold")
+            text.append(
+                "Indexed structured chunks stay in the index — previews\n"
+                "keep working until you reindex.",
+                style="dim",
+            )
+            return text
+        total_mb = sum(p.disk_mb for p in self._extra.packages)
+        text.append("Will install\n", style="bold")
+        for p in self._extra.packages:
+            text.append("  • ", style="dim")
+            text.append(p.display)
+            text.append(f"  ~{p.disk_mb} MB\n", style="dim")
+        text.append("\nDisk + download: ", style="dim")
+        text.append(f"~{total_mb} MB", style="bold")
+        text.append(" (ML weights on first use)\n\n", style="dim")
+        text.append("Indexing impact\n", style="bold")
+        text.append("  ~30 s per PDF on first reindex; cached thereafter.\n", style="dim")
+        text.append("  100 books ≈ 50 min · 500 books ≈ 4 h.\n", style="dim")
+        text.append("  Runs in background; auto-resumes on launch.\n", style="dim")
+        text.append("\nWithout this, PDFs render as flat text.", style="dim")
+        return text
+
+    def on_mount(self) -> None:
+        self.query_one("#confirm_list", OptionList).focus()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(app, (("↑↓", "Nav"), ("⏎", "Confirm"), ("Esc", "Cancel")))
+        )
+
+    def action_cursor(self, direction: int) -> None:
+        lst = self.query_one("#confirm_list", OptionList)
+        if direction > 0:
+            lst.action_cursor_down()
+        else:
+            lst.action_cursor_up()
+
+    def action_activate(self) -> None:
+        self.query_one("#confirm_list", OptionList).action_select()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    @on(OptionList.OptionSelected, "#confirm_list")
+    def _on_select(self, ev: OptionList.OptionSelected) -> None:
+        if ev.option.id == "no" or self._extra is None:
+            self.app.pop_screen()
+            return
+        from fnd.extras import install_commands, uninstall_commands
+        from fnd.tui.extras_install_progress import start_extras_install
+
+        if self._installed:
+            cmds = uninstall_commands(self._extra)
+            label = "Uninstall"
+        else:
+            cmds = install_commands(self._extra)
+            label = "Install"
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.app.pop_screen()
+        start_extras_install(app, cmds=cmds, action_label=label)
+
+
 # ── Clone-source flow (Phase 5) ─────────────────────────────────────
 
 

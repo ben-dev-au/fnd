@@ -1272,6 +1272,16 @@ class FNDApp(App[None]):
         self._indexer_last_event: Any = None
         self._indexer_collection: str = ""
         self._indexer_started_at: str = ""
+        # Structured-PDF extras install/uninstall — sibling to the
+        # indexer task so the modal can be dismissed (Background) and
+        # reopened against the live task. See
+        # fnd/tui/extras_install_progress.py.
+        self._extras_task: asyncio.Task[None] | None = None
+        self._extras_cancel: asyncio.Event | None = None
+        self._extras_events: asyncio.Queue[Any] | None = None
+        self._extras_last_event: Any = None
+        self._extras_proc: Any = None
+        self._extras_action_label: str = ""
         # Convenience aliases that point into the active container —
         # legacy code paths (_scroll_preview_to_chunk, etc.) read from
         # these instead of poking at the container directly.

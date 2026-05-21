@@ -31,11 +31,20 @@ See `SECURITY.md` for the threat model, disclosure policy, and the
 reasoning behind the install/verify story (no Apple Developer ID
 required — Homebrew installs bypass Gatekeeper via curl).
 
-## Optional extras
+## Indexing
 
-PDFs render as flat extracted text by default. To get structured
-preview (headings, lists, tables, bold/italic, recovered
-image-rendered tables), install the `pdf-structure` extra:
+### Structured PDF extraction (opt-in)
+
+PDFs render as flat extracted text by default. The opt-in
+`pdf-structure` extra adds headings, lists, tables, bold/italic, and
+recovered image-rendered tables.
+
+In the TUI: **Settings → Indexing → Status / Install…** shows current
+state, disk impact (`~900 MB`), and a tight disclosure before any
+download. Install runs in a modal with progress; **Esc** sends it to
+the background, **c** cancels (SIGTERM).
+
+From the CLI:
 
 ```sh
 fnd extras install pdf-structure   # ~900 MB total, with disclosure prompt
@@ -44,33 +53,46 @@ fnd extras status                  # disk usage per installed extra
 fnd extras uninstall pdf-structure # revert; indexed chunks remain in index
 ```
 
-After installing, run `fnd collection reindex <name>` to reprocess
-existing PDFs structurally. New PDFs added later are extracted
-structurally automatically.
+After installing, reindex from **Settings → Collections → ‹name› →
+Reindex** (or `fnd collection reindex <name>`). New PDFs added later
+are extracted structurally automatically.
 
-Structured extraction is **slow on first encounter** (~30 s per PDF on
-M1 Max for the pymupdf4llm pipeline; longer for pages that need the
-docling fallback). The output is cached at
-`~/Library/Caches/fnd/extraction/`, so subsequent reindexes only
-re-process files that have changed since last run. **A 200-book
-corpus is roughly a 2-hour one-time cost.**
+Two packages: `pymupdf4llm[layout]` (Polyform Noncommercial — fnd is
+non-commercial, acceptable) and `docling-slim[standard]` (Apache-2.0).
+ML weights (~400 MB) download on first use. Uninstall removes the
+packages; indexed structured chunks remain in the index until the
+next reindex.
 
-The reindex is **resumable**: Ctrl+C, computer sleep, terminal close,
-or fnd quit all leave the cache and a state file at
+### Cost on first reindex
+
+~30 s per PDF on M1 Max (pymupdf4llm; longer for pages routed through
+the docling fallback). **A 200-book corpus is roughly a 2-hour
+one-time cost.** Subsequent reindexes only re-process changed files.
+
+### Cache
+
+Extracted chunks are content-addressed at
+`~/Library/Caches/fnd/extraction/`. Shared across collections — the
+same file in two collections is extracted once.
+
+In the TUI: **Settings → Indexing → Cache size** shows entries + disk;
+**Cache maintenance…** drills to Prune stale (recoverable) and Clear
+(destructive, confirms with `⚠ Cannot be undone`).
+
+From the CLI: `fnd cache status / info / prune / clear`.
+
+### Auto-resume on launch
+
+A Ctrl+C, sleep, terminal close, or fnd quit during reindex leaves
+the cache and a state file at
 `~/Library/Application Support/fnd/reindex/<collection>.state.toml`.
-Next time you open the TUI it auto-resumes in the background —
-already-cached files return from the cache in milliseconds, so resume
-effectively starts where you left off. To disable auto-resume set
-`defaults.indexer_auto_resume = false` in your config.
 
-To inspect or prune the cache: `fnd cache status / info / prune / clear`.
+Reopen the TUI and indexing auto-resumes silently in the background.
+Already-cached files return in milliseconds, so resume effectively
+starts where you left off.
 
-The extra installs two packages: `pymupdf4llm[layout]` (Polyform
-Noncommercial — fnd is open-source non-commercial, acceptable; blocks
-commercial redistribution) and `docling-slim[standard]` (Apache-2.0).
-ML model weights (~400 MB) download on first use. Uninstall removes
-both; indexed structured chunks remain in the index so previews keep
-working until you reindex.
+Toggle off from **Settings → Indexing → Auto-resume on launch**, or
+set `defaults.indexer_auto_resume = false` in your config.
 
 ## Quick start (dev)
 
