@@ -42,7 +42,12 @@ if TYPE_CHECKING:
 
 
 def fmt_eta(seconds: float) -> str:
-    if seconds < 0 or seconds != seconds:  # NaN guard
+    """Format a duration in seconds. Returns ``—`` for unknown
+    durations (negative / NaN / infinite — all happen during the
+    ``started`` event before the first file completes)."""
+    import math
+
+    if seconds < 0 or math.isnan(seconds) or math.isinf(seconds):
         return "—"
     if seconds < 60:
         return f"{int(seconds)}s"
@@ -264,6 +269,31 @@ async def drive_indexer(
             events.put_nowait(ev)
         if ev.kind in ("done", "cancelled"):
             break
+
+    # Update-all-collections chain: when more collections are queued
+    # behind this one, dequeue the next and start it. The modal stays
+    # mounted across the chain so the user sees one continuous flow.
+    pending: list[str] = getattr(app, "_indexer_chain_remaining", None) or []
+    if pending and not cancel.is_set():
+        next_collection = pending.pop(0)
+        app._indexer_chain_remaining = pending  # type: ignore[attr-defined]
+        # Defer to the next event-loop tick so this task completes
+        # cleanly before the next one starts.
+        app.call_later(_start_next_in_chain, app, next_collection)
+
+
+def _start_next_in_chain(app: FNDApp, collection: str) -> None:
+    """Continuation that fires the next collection's Update index.
+    Lives at module scope so the closure capture is explicit and
+    pyright can type-check the call site."""
+    from fnd.config import load as _load_config
+
+    cfg = _load_config()
+    if collection not in cfg.collections:
+        return
+    col_cfg = cfg.collection(collection)
+    app._indexer_task = None  # type: ignore[attr-defined] # release
+    app.start_indexer(collection=collection, config=col_cfg, open_modal=False)
 
 
 def _event_to_state(ev: ProgressEvent, *, collection: str, started_at_default: str) -> IndexState:

@@ -4656,7 +4656,7 @@ class FNDApp(App[None]):
                             "source_id": source_id,
                         },
                     )
-        title = f"Collections — {n_full_collections}/{len(names)} active"
+        title = f"Collections · {n_full_collections}/{len(names)} active"
         if total_source_count and active_source_count:
             title += f", {active_source_count}/{total_source_count} sources"
         tree.border_title = title
@@ -4950,7 +4950,7 @@ class FNDApp(App[None]):
                 source_id = str(Path(str(s.path)).expanduser().resolve())
                 if source_id in active_sources:
                     active_source_count += 1
-        title = f"Collections — {n_full_collections}/{len(names)} active"
+        title = f"Collections · {n_full_collections}/{len(names)} active"
         if total_source_count and active_source_count:
             title += f", {active_source_count}/{total_source_count} sources"
         tree.border_title = title

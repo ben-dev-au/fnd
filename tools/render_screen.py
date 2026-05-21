@@ -162,11 +162,30 @@ async def _extras_progress_failed(pilot: Pilot[None]) -> None:
 
 
 async def _cache_clear_confirm(pilot: Pilot[None]) -> None:
-    """Destructive cache-clear confirm — red border + ⚠ Cannot be undone."""
+    """Destructive cache-clear confirm. Red border + Cannot be undone."""
     from fnd.tui.menu import _run_cache_clear
 
     _run_cache_clear(pilot.app)  # type: ignore[arg-type]
     await pilot.pause()
+
+
+async def _first_reindex_warning(pilot: Pilot[None]) -> None:
+    """First-reindex warning modal. Catches the modal that the user
+    saw with broken Start/Cancel buttons and excess prose."""
+    from fnd.tui.first_reindex_warning import FirstReindexWarningScreen
+
+    pilot.app.push_screen(FirstReindexWarningScreen(collection="CPL", n_pdfs=43))
+    for _ in range(4):
+        await pilot.pause()
+
+
+async def _update_all_confirm(pilot: Pilot[None]) -> None:
+    """Update-all-collections confirm with the new layout."""
+    from fnd.tui.settings_screen import UpdateAllConfirm
+
+    pilot.app.push_screen(UpdateAllConfirm(collection_names=["papers", "notes", "wine"]))
+    for _ in range(4):
+        await pilot.pause()
 
 
 SCENARIOS: dict[str, Callable[[Pilot[None]], Awaitable[None]]] = {
@@ -178,6 +197,8 @@ SCENARIOS: dict[str, Callable[[Pilot[None]], Awaitable[None]]] = {
     "extras_progress_done": _extras_progress_done,
     "extras_progress_failed": _extras_progress_failed,
     "cache_clear_confirm": _cache_clear_confirm,
+    "first_reindex_warning": _first_reindex_warning,
+    "update_all_confirm": _update_all_confirm,
 }
 
 

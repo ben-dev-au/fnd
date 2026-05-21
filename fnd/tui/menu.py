@@ -291,7 +291,7 @@ _KEYS_SETTINGS: tuple[tuple[str, str, str, str], ...] = (
         "Enter",
         "Activate",
         "",
-        "Open the focused row — picker rows show their chooser, scalar rows open the inline edit bar, drill-in rows push a sub-screen.",
+        "Open the focused row. Picker rows show their chooser; scalar rows open the inline edit bar; drill-in rows push a sub-screen.",
     ),
     (
         "→",
@@ -309,7 +309,7 @@ _KEYS_SETTINGS: tuple[tuple[str, str, str, str], ...] = (
         "/",
         "Filter rows",
         "",
-        "Filter rows across the current screen by label, key column, and keywords. Descriptions are excluded — they're advisory, not searchable.",
+        "Filter rows across the current screen by label, key column, and keywords. Descriptions are excluded; they're advisory, not searchable.",
     ),
     (
         "1-9",
@@ -375,7 +375,7 @@ _KEYS_OPEN_WITH: tuple[tuple[str, str, str, str], ...] = (
         "Enter",
         "Open with default",
         "",
-        "Fire the highlighted (★) app — the one the resolver would have used for `o`. ★ shows which app fnd thinks is best for this hit.",
+        "Fire the highlighted (★) app: the one the resolver would have used for `o`. ★ shows which app fnd thinks is best for this hit.",
     ),
     (
         "a-z",
@@ -408,7 +408,7 @@ _KEYS_AX_MODAL: tuple[tuple[str, str, str, str], ...] = (
         "Esc / q",
         "Dismiss",
         "",
-        "Close the modal. AX permission isn't required to use fnd — Preview will just open at page 1 without it.",
+        "Close the modal. AX permission isn't required to use fnd; Preview will just open at page 1 without it.",
     ),
 )
 
@@ -835,7 +835,7 @@ def _choices_apps_for_kind(app: FNDApp, kind: str) -> list[ChoiceOption]:
         ChoiceOption(
             value="",
             label="(auto-resolve)",
-            description="Let the resolver pick — skim → preview-if-AX → system for PDFs; system for others.",
+            description="Let the resolver pick: skim → preview-if-AX → system for PDFs; system for others.",
         )
     ]
     for app_id, app_def in registry.items():
@@ -1002,7 +1002,7 @@ def _provider_collections(app: FNDApp) -> tuple[MenuItem, ...]:
             id="collections.add",
             label="Add collection",
             description=(
-                "Open the new-collection wizard — pick a name, then add "
+                "Open the new-collection wizard: pick a name, then add "
                 "the first source. The collection becomes available as "
                 "`--collection <name>` once at least one source is indexed."
             ),
@@ -1016,9 +1016,9 @@ def _provider_collections(app: FNDApp) -> tuple[MenuItem, ...]:
             label="Update all collections",
             description=(
                 "Run Update index for every collection in sequence. "
-                "Same per-file rules as the per-collection Update index — "
+                "Per-file rules match the per-collection Update index: "
                 "unchanged files are skipped, the PDF structure cache "
-                "is consulted, not cleared."
+                "is consulted (not cleared)."
             ),
             kind=KIND_ACTION,
             action_label="Update",
@@ -1040,6 +1040,17 @@ def _provider_collections(app: FNDApp) -> tuple[MenuItem, ...]:
             )
         )
     return tuple(items)
+
+
+def _summary_collection_update(app: FNDApp, name: str) -> str:
+    """Trailing context on the per-collection Update row. Counts the
+    sources configured for the collection, plus an ETA based on the
+    calibrated per-PDF cost when pdf-structure is installed."""
+    cfg = app._config  # type: ignore[attr-defined]
+    if cfg is None or name not in cfg.collections:
+        return ""
+    n_sources = len(cfg.collections[name].sources)
+    return f"{n_sources} sources"
 
 
 def _summary_update_all(app: FNDApp) -> str:
@@ -1301,13 +1312,50 @@ def _summary_keybindings_path(_app: FNDApp) -> str:
 # ── Indexing section ────────────────────────────────────────────────
 
 
-def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
+def _provider_indexing(app: FNDApp) -> tuple[MenuItem, ...]:
     """Indexing sub-screen.
 
-    Three groups: structured PDF (status + install/uninstall), reindex
-    behaviour (auto-resume toggle), and PDF structure cache (size display
-    + maintenance drill)."""
+    Four groups: Index (run-the-thing actions for each collection plus
+    update-all), Structured PDF (status + install/uninstall), PDF
+    structure cache (size, location, maintenance), and Behaviour
+    (toggles)."""
+    cfg = app._config  # type: ignore[attr-defined]
+    names = sorted(cfg.collections.keys()) if cfg is not None else []
+    index_rows: list[MenuItem] = [
+        header("Index", level=2),
+        MenuItem(
+            id="indexing.update_all",
+            label="Update all collections",
+            description=(
+                "Run Update index for every collection in sequence. "
+                "Per-file rules: unchanged files are skipped, the PDF "
+                "structure cache is consulted (not cleared)."
+            ),
+            kind=KIND_ACTION,
+            action_label="Update",
+            external=_run_update_all_collections,
+            value_getter=_summary_update_all,
+            keywords=("update", "all", "index", "reindex", "everything"),
+        ),
+    ]
+    for name in names:
+        index_rows.append(
+            MenuItem(
+                id=f"indexing.update.{name}",
+                label=f"Update '{name}'",
+                description=(
+                    f"Re-scan '{name}'s sources. New / changed files are added; "
+                    "deleted files are removed; unchanged files are skipped."
+                ),
+                kind=KIND_ACTION,
+                action_label="Update",
+                external=_make_reindex(name),
+                value_getter=(lambda n: (lambda a: _summary_collection_update(a, n)))(name),
+                keywords=("update", "index", "reindex", name),
+            )
+        )
     return (
+        *index_rows,
         header("Structured PDF extraction", level=2),
         MenuItem(
             id="indexing.pdf_status",
@@ -1348,7 +1396,7 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
             id="indexing.cache_size",
             label="Size",
             description=(
-                "Per-file structured chunks. Shared across collections — same file "
+                "Per-file structured chunks. Shared across collections; same file "
                 "in two collections is extracted once and reused. Pruning or "
                 "clearing only affects the next Update index."
             ),
@@ -1373,7 +1421,7 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
             description=(
                 "Populate the PDF structure cache for every PDF in any "
                 "collection's sources that doesn't have an entry yet. Doesn't "
-                "touch the search index — runs only the structuring pipeline. "
+                "touch the search index; runs only the structuring pipeline. "
                 "Use to pre-warm before a big Update index."
             ),
             kind=KIND_ACTION,
@@ -1401,7 +1449,7 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
             label="Clear PDF structure cache",
             description=(
                 "Wipe the entire cache. PDFs render as flat text until the next "
-                "Update index, which will re-extract every PDF — see the cost "
+                "Update index, which will re-extract every PDF. See the cost "
                 "estimate before confirming."
             ),
             kind=KIND_ACTION,
@@ -1414,10 +1462,10 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
             id="indexing.auto_resume",
             label="Auto-resume on launch",
             description=(
-                "✓ On — an interrupted Update index (force-quit, sleep, "
+                "✓ On: an interrupted Update index (force-quit, sleep, "
                 "Ctrl+C) resumes silently in the background next time "
                 "you open fnd. Progress shows in the footer, not a modal. "
-                "✗ Off — Update index must be triggered manually."
+                "✗ Off: Update index must be triggered manually."
             ),
             kind=KIND_TOGGLE,
             toggle_getter=_get_indexer_auto_resume,
@@ -1432,7 +1480,7 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
                 "✓ On (default with pdf-structure installed): Update index "
                 "populates the cache for any PDF without an entry. "
                 "✗ Off: Update index uses cached entries on hit but skips "
-                "fresh extraction for new files — fast flat-text refresh, "
+                "fresh extraction for new files. Fast flat-text refresh, "
                 "useful when you're on battery or don't have CPU to spare."
             ),
             kind=KIND_TOGGLE,
@@ -1566,7 +1614,7 @@ def _run_update_cache(app: FNDApp) -> None:
 
     with contextlib.suppress(Exception):
         app.notify(
-            "Update cache action — worker wires up in Phase E. "
+            "Update cache action not yet wired through. "
             "For now, use Update index from a collection.",
             timeout=5,
         )
@@ -1752,6 +1800,9 @@ def _run_cache_clear(app: FNDApp) -> None:
     n = cache.entry_count()
     size = cache.total_size_bytes()
 
+    from fnd.tui.cost_estimate import estimate_seconds_for, format_duration
+
+    eta_s = estimate_seconds_for(n) if n else 0.0
     summary = Text()
     summary.append("Entries: ", style="dim")
     summary.append(f"{n}\n", style="bold")
@@ -1760,8 +1811,8 @@ def _run_cache_clear(app: FNDApp) -> None:
     summary.append("Path:    ", style="dim")
     summary.append(f"{root}\n\n", style="bold")
     summary.append(
-        "Next reindex will re-extract every PDF from scratch — "
-        "structured extraction is ~30 s per PDF.",
+        f"Next reindex will re-extract every PDF from scratch. "
+        f"Estimated cost: {format_duration(eta_s)}.",
         style="dim",
     )
 
@@ -1816,7 +1867,7 @@ def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
             id=f"root.{SECTION_INDEXING}",
             label="Indexing",
             description=(
-                "Structured-PDF extra, cache, and auto-resume behaviour — "
+                "Structured-PDF extra, cache, and auto-resume behaviour. "
                 "everything that shapes how reindex runs."
             ),
             kind=KIND_EXTERNAL,

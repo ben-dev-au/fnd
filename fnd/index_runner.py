@@ -355,16 +355,36 @@ async def run_indexer(
         _pdf._cache_singleton = prior_singleton
         _pdf.set_skip_structure_extraction(prior_skip)
 
-    # Clean completion — wipe the state file so next launch doesn't
+    # Clean completion. Wipe the state file so next launch doesn't
     # show a stale "resume?" prompt.
     clear_state(state_path)
+    final_elapsed = time.perf_counter() - t_start
+
+    # Persist throughput so future ETAs calibrate to this machine's
+    # actual speed. PDF count drives the per-PDF figure; runs of <3
+    # PDFs are dropped inside ``record_run`` because tiny runs are
+    # dominated by setup cost.
+    with contextlib.suppress(Exception):
+        from fnd.tui.cost_estimate import record_run
+
+        # ``paths`` is list[tuple[Path, kind]] — count PDFs by kind so
+        # the throughput record reflects only structured-extraction
+        # cost, not flat-text refresh of md / docx / etc.
+        n_pdfs = sum(1 for _path, kind in paths if kind == "pdf")
+        record_run(
+            n_pdfs=n_pdfs,
+            cache_hits=cache.hits,
+            cache_misses=cache.misses,
+            elapsed_s=final_elapsed,
+        )
+
     yield ProgressEvent(
         kind="done",
         files_done=state.files_completed,
         files_total=len(paths),
         cache_hits_total=cache.hits,
         cache_misses_total=cache.misses,
-        elapsed_s=time.perf_counter() - t_start,
+        elapsed_s=final_elapsed,
     )
 
 

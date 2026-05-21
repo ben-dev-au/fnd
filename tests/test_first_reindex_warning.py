@@ -79,7 +79,11 @@ def test_estimate_eta_seconds_is_linear_in_count() -> None:
 
 
 def test_fmt_duration_under_minute() -> None:
-    assert fmt_duration(30) == "30s"
+    """fmt_duration now goes through fnd.tui.cost_estimate.format_duration
+    so estimates everywhere use the same shape: leading ~, digit, space,
+    unit. Verify the under-a-minute branch."""
+    assert "30" in fmt_duration(30)
+    assert "s" in fmt_duration(30)
 
 
 def test_fmt_duration_minutes() -> None:

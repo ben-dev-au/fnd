@@ -173,9 +173,9 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
         bar.update(total=total, progress=min(ev.cmd_index, total))
         verb = self._action_label  # "Install" / "Uninstall"
         if ev.phase == "starting":
-            status.update(f"Step {ev.cmd_index + 1} of {total} — starting…")
+            status.update(f"Step {ev.cmd_index + 1} of {total}: starting…")
         elif ev.phase == "running":
-            status.update(f"Step {ev.cmd_index + 1} of {total} — running")
+            status.update(f"Step {ev.cmd_index + 1} of {total}: running")
         elif ev.phase == "done":
             # Tailor completion copy to action so it never reads as
             # "Restart fnd to use it" on an uninstall (nothing to use).

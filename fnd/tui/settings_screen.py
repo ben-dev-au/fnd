@@ -1868,7 +1868,7 @@ class SourceFormScreen(Screen[None]):
         out: list[ChoiceOption] = [
             ChoiceOption(
                 value="",
-                label="(default — use global resolver)",
+                label="(default: use global resolver)",
                 description="No per-source override; defer to app_defaults + auto-promote.",
             )
         ]
@@ -2147,7 +2147,7 @@ class SourceFormScreen(Screen[None]):
         app: FNDApp = self.app  # type: ignore[assignment]
         cfg = app._config  # type: ignore[attr-defined]
         if cfg is None or self._collection_name not in cfg.collections:
-            self._show_error("Collection vanished — please reopen the menu.")
+            self._show_error("Collection vanished. Please reopen the menu.")
             return
         col: CollectionConfig = cfg.collections[self._collection_name]
         if self._source_index is None:
@@ -2794,7 +2794,7 @@ class DeleteCollectionScreen(Screen[None]):
                         "its chunks dropped from the search index."
                     ),
                     cost=(
-                        "Cannot be reversed — re-adding the sources and "
+                        "Cannot be reversed. Re-adding the sources and "
                         "running Update index would rebuild."
                     ),
                     safety=(
@@ -3010,7 +3010,7 @@ class UpdateAllConfirm(Screen[None]):
             text.append("Outcome   ", style="dim")
             text.append(f"Every collection's index is refreshed ({len(self._names)} total).\n")
             text.append("Cost      ", style="dim")
-            text.append("Per-file rules same as Update index — unchanged files skipped.\n")
+            text.append("Per-file rules match Update index: unchanged files are skipped.\n")
             text.append("Safety    ", style="dim")
             text.append("Configuration unchanged. PDF structure cache only grows.\n")
             yield Static(text, id="confirm_summary")
@@ -3047,21 +3047,21 @@ class UpdateAllConfirm(Screen[None]):
         if ev.option.id == "no":
             self.app.pop_screen()
             return
-        # Pop the confirm, then chain the first collection. The user
-        # sees the IndexerScreen for each collection in turn; when one
-        # finishes the next starts via the normal modal lifecycle.
-        # Phase F replaces this with an aggregate progress modal.
+        # Pop the confirm, queue every remaining collection on the
+        # app, then trigger the first one. drive_indexer in
+        # fnd/tui/indexer_modal advances the chain as each completes.
         names = list(self._names)
         self.app.pop_screen()
         if not names:
             return
         app: FNDApp = self.app  # type: ignore[assignment]
-        # Best-effort: trigger the first collection's reindex. Phase F
-        # wires the chaining; today the user re-triggers if needed.
+        # First in the queue runs now; the rest queue up for chaining.
+        first, rest = names[0], names[1:]
+        app._indexer_chain_remaining = rest  # type: ignore[attr-defined]
         try:
-            app._reindex_with_warning_if_needed(names[0])  # type: ignore[attr-defined]
+            app._reindex_with_warning_if_needed(first)  # type: ignore[attr-defined]
         except Exception:
-            self.notify(f"Could not start Update index for {names[0]}", severity="error")
+            self.notify(f"Could not start Update index for {first}", severity="error")
 
 
 # ── Structured PDF install/uninstall confirm ────────────────────────
@@ -3183,13 +3183,16 @@ class StructuredPdfConfirmScreen(Screen[None]):
                 safety_label="Preserved",
                 safety=("Indexed structured PDFs keep working until reindex. " + cache_line),
             )
+        from fnd.tui.cost_estimate import estimate_per_pdf_seconds, has_calibration_data
+
         total_mb = sum(p.disk_mb for p in self._extra.packages)
+        secs_per_pdf = estimate_per_pdf_seconds()
+        first_run_note = f"First Update index spends about {secs_per_pdf:.1f} s per PDF " + (
+            "on your machine." if has_calibration_data() else "(rough estimate)."
+        )
         return build_confirm_body(
             outcome="PDFs gain structured rendering (headings, lists, tables).",
-            cost=(
-                f"~{total_mb} MB disk + ML weights on first use. "
-                "First Update index spends ~2 s per PDF on born-digital text."
-            ),
+            cost=(f"~{total_mb} MB disk + ML weights on first use. " + first_run_note),
             safety="Auto-resumes if interrupted. Existing flat indexes are preserved.",
         )
 
