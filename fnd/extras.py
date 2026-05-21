@@ -203,16 +203,45 @@ def actual_disk_mb(extra: Extra) -> int:
 
 def install_commands(extra: Extra) -> list[list[str]]:
     """Return the subprocess argv for each install step. Pure function;
-    the caller decides when (and whether) to run them."""
+    the caller decides when (and whether) to run them.
+
+    Pip-extras install via ``uv pip install`` with an explicit
+    ``--python <sys.executable>`` so the packages land in fnd's actual
+    runtime venv. ``uv sync --extra X`` (the previous choice) looks
+    for a pyproject.toml in the CWD and modifies that project's
+    ``.venv`` — wrong target when fnd is run from outside its repo,
+    and a source of "I installed but fnd still says not installed"
+    bugs after restart."""
+    import sys
+
     cmds: list[list[str]] = []
-    pip_extras = [p.spec for p in extra.packages if p.install_via == "pip-extra"]
-    if pip_extras:
-        extra_args = [arg for spec in pip_extras for arg in ("--extra", spec)]
-        cmds.append(["uv", "sync", *extra_args])
+    py = sys.executable
     for p in extra.packages:
-        if p.install_via == "uv-tool":
+        if p.install_via == "pip-extra":
+            # ``spec`` here is the optional-deps group name in
+            # pyproject.toml; resolve it to the actual pip requirement
+            # via the package's display field if needed. For now we
+            # rely on Package._install_specs being declared per pkg.
+            for req in _pip_install_specs(p):
+                cmds.append(["uv", "pip", "install", "--python", py, req])
+        elif p.install_via == "uv-tool":
             cmds.append(["uv", "tool", "install", p.spec])
     return cmds
+
+
+def _pip_install_specs(pkg: Package) -> list[str]:
+    """Pip requirement strings for a pip-extra Package. Defaults to
+    the package's ``uninstall_targets`` so install/uninstall pair up.
+    Falls back to the bare module name."""
+    if pkg.uninstall_targets:
+        # Use the bare names; uv pip install resolves them via the
+        # lockfile / pyproject. For pymupdf4llm we want the [layout]
+        # extra to come with it.
+        primary = pkg.detect.split(":", 1)[1]
+        # If primary is in uninstall_targets, use it with [layout]
+        # extras encoded in spec name when applicable.
+        return [primary + "[layout]"] if primary == "pymupdf4llm" else list(pkg.uninstall_targets)
+    return [pkg.detect.split(":", 1)[1]]
 
 
 def uninstall_commands(extra: Extra, *, assume_installed: bool = False) -> list[list[str]]:
@@ -236,7 +265,10 @@ def uninstall_commands(extra: Extra, *, assume_installed: bool = False) -> list[
        Each package's ``uninstall_targets`` lists the actual pip
        package names to remove (base + transitive extras).
     """
+    import sys
+
     cmds: list[list[str]] = []
+    py = sys.executable
     for p in extra.packages:
         if not assume_installed and not is_package_installed(p):
             continue
@@ -249,18 +281,19 @@ def uninstall_commands(extra: Extra, *, assume_installed: bool = False) -> list[
             else:
                 installed_targets = [t for t in targets if _pip_target_installed(t)]
             if installed_targets:
-                cmds.append(["uv", "pip", "uninstall", *installed_targets])
+                cmds.append(["uv", "pip", "uninstall", "--python", py, *installed_targets])
     return cmds
 
 
 def _pip_target_installed(name: str) -> bool:
-    """Lightweight `uv pip show NAME` probe — returns True when the
-    package is present in fnd's venv. Used to skip uninstall steps for
-    transitive extras that aren't actually installed (e.g.
-    ``pymupdf-layout`` when only the base ``pymupdf4llm`` survived).
-    """
+    """Lightweight ``uv pip show NAME`` probe against fnd's actual
+    Python. Used to skip uninstall steps for transitive extras that
+    aren't actually installed (e.g. ``pymupdf-layout`` when only the
+    base ``pymupdf4llm`` survived)."""
+    import sys
+
     proc = subprocess.run(
-        ["uv", "pip", "show", name],
+        ["uv", "pip", "show", "--python", sys.executable, name],
         capture_output=True,
         text=True,
         check=False,

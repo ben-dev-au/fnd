@@ -2766,12 +2766,15 @@ class DeleteCollectionScreen(Screen[None]):
     ]
 
     CSS = """
-    DeleteCollectionScreen { background: $surface; }
+    DeleteCollectionScreen { background: $surface; align: center middle; }
     DeleteCollectionScreen > #settings_box {
+        width: auto;
+        min-width: 60;
+        max-width: 100;
         height: auto;
+        max-height: 90%;
         border: round $error;
         padding: 0 1;
-        margin: 1 4;
     }
     DeleteCollectionScreen #confirm_summary { padding: 0 0 1 0; }
     DeleteCollectionScreen #confirm_list { height: auto; }
@@ -2880,12 +2883,15 @@ class CacheMaintenanceConfirm(Screen[None]):
     ]
 
     CSS = """
-    CacheMaintenanceConfirm { background: $surface; }
+    CacheMaintenanceConfirm { background: $surface; align: center middle; }
     CacheMaintenanceConfirm > #settings_box {
+        width: auto;
+        min-width: 60;
+        max-width: 100;
         height: auto;
+        max-height: 90%;
         border: round $warning;
         padding: 0 1;
-        margin: 1 4;
     }
     CacheMaintenanceConfirm.-destructive > #settings_box { border: round $error; }
     CacheMaintenanceConfirm #confirm_summary { padding: 0 0 1 0; }
@@ -2987,10 +2993,15 @@ class UpdateAllConfirm(Screen[None]):
     ]
 
     CSS = """
-    UpdateAllConfirm { background: $surface; }
+    UpdateAllConfirm { background: $surface; align: center middle; }
     UpdateAllConfirm > #settings_box {
-        height: auto; border: round $primary 50%;
-        padding: 0 1; margin: 1 4;
+        width: auto;
+        min-width: 60;
+        max-width: 100;
+        height: auto;
+        max-height: 90%;
+        border: round $primary 50%;
+        padding: 0 1;
     }
     UpdateAllConfirm #confirm_summary { padding: 0 0 1 0; }
     UpdateAllConfirm #confirm_list { height: auto; }
@@ -3005,14 +3016,19 @@ class UpdateAllConfirm(Screen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
-            box.border_title = "Collections › Update all"
+            box.border_title = f"Collections › Update all ({len(self._names)})"
             text = Text()
-            text.append("Outcome   ", style="dim")
-            text.append(f"Every collection's index is refreshed ({len(self._names)} total).\n")
-            text.append("Cost      ", style="dim")
-            text.append("Per-file rules match Update index: unchanged files are skipped.\n")
-            text.append("Safety    ", style="dim")
-            text.append("Configuration unchanged. PDF structure cache only grows.\n")
+            text.append("Queue     ", style="dim")
+            # List the collections so the user can see exactly what
+            # will run, not just a count.
+            text.append(", ".join(self._names))
+            text.append("\n")
+            text.append("Per file  ", style="dim")
+            text.append(
+                "Unchanged files are skipped. The PDF structure cache is consulted, not cleared.\n"
+            )
+            text.append("Order     ", style="dim")
+            text.append("Sequential. Each shows its own progress; queue advances on completion.\n")
             yield Static(text, id="confirm_summary")
             confirm = f"Yes, update all {len(self._names)} collections"
             yield OptionList(
@@ -3058,6 +3074,9 @@ class UpdateAllConfirm(Screen[None]):
         # First in the queue runs now; the rest queue up for chaining.
         first, rest = names[0], names[1:]
         app._indexer_chain_remaining = rest  # type: ignore[attr-defined]
+        # Total count is preserved so the IndexerScreen title can show
+        # "papers (1 of 5)" even after rest has been depleted.
+        app._indexer_chain_total = len(names)  # type: ignore[attr-defined]
         try:
             app._reindex_with_warning_if_needed(first)  # type: ignore[attr-defined]
         except Exception:
@@ -3105,12 +3124,15 @@ class StructuredPdfConfirmScreen(Screen[None]):
     ]
 
     CSS = """
-    StructuredPdfConfirmScreen { background: $surface; }
+    StructuredPdfConfirmScreen { background: $surface; align: center middle; }
     StructuredPdfConfirmScreen > #settings_box {
+        width: auto;
+        min-width: 60;
+        max-width: 100;
         height: auto;
+        max-height: 90%;
         border: round $primary 50%;
         padding: 0 1;
-        margin: 1 4;
     }
     StructuredPdfConfirmScreen.-recoverable > #settings_box { border: round $warning; }
     StructuredPdfConfirmScreen.-destructive > #settings_box { border: round $error; }

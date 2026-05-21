@@ -19,9 +19,8 @@ import asyncio
 import contextlib
 import signal
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -76,32 +75,22 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
     CSS = """
     ExtrasInstallProgressScreen { align: center middle; background: $surface 75%; }
     #extras_box {
-        width: 76;
+        width: auto;
+        min-width: 60;
+        max-width: 100;
         height: auto;
-        min-height: 11;
+        max-height: 90%;
         border: round $accent;
-        padding: 1 2;
-        background: $surface;
-    }
-    #extras_box > Static { height: auto; padding: 0 0 1 0; }
-    #extras_progress { width: 100%; height: 1; padding: 0 0 1 0; }
-
-    #extras_buttons_running, #extras_buttons_terminal {
-        width: 100%;
-        height: 1;
-        margin: 1 0 0 0;
-        color: $accent;
-        text-style: bold;
-    }
-    .-hidden { display: none; }
-
-    #extras_footer {
-        dock: bottom;
-        height: 1;
         padding: 0 1;
         background: $surface;
-        color: $text-muted;
     }
+    #extras_status { height: 1; padding: 0; }
+    #extras_progress { width: 100%; height: 1; padding: 0 0 1 0; }
+    #extras_actions_running, #extras_actions_terminal {
+        height: auto;
+        padding: 1 0 0 0;
+    }
+    .-hidden { display: none; }
     """
 
     def __init__(self, *, action_label: str) -> None:
@@ -110,25 +99,23 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
         self._is_terminal = False  # set True after done/cancelled/failed
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="extras_box"):
-            yield Static(f"[bold]{self._action_label} pdf-structure[/]", id="extras_title")
+        from textual.widgets import OptionList
+        from textual.widgets.option_list import Option
+
+        with Vertical(id="extras_box") as box:
+            box.border_title = f"{self._action_label} pdf-structure"
             yield Static("Starting…", id="extras_status")
             yield ProgressBar(total=1, show_eta=False, show_percentage=True, id="extras_progress")
-            yield Static(
-                "[ Background ]   [ Cancel ]",
-                id="extras_buttons_running",
-                markup=False,
+            yield OptionList(
+                Option("Run in background", id="background"),
+                Option("Cancel", id="cancel"),
+                id="extras_actions_running",
             )
-            yield Static(
-                "[ Close ]",
-                id="extras_buttons_terminal",
+            yield OptionList(
+                Option("Close", id="close"),
+                id="extras_actions_terminal",
                 classes="-hidden",
-                markup=False,
             )
-        yield Static(
-            "[dim]Esc / b[/] Background   [dim]c[/] Cancel",
-            id="extras_footer",
-        )
 
     async def on_mount(self) -> None:
         self._apply_latest()
@@ -200,17 +187,19 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
         # bar are enough signal.
 
     def _enter_terminal_state(self) -> None:
-        """Hide the Background/Cancel row, reveal the Close row.
-        Toggling pre-composed Statics is race-free — earlier attempts
-        to swap widgets via mount/remove hit a tick-ordering bug that
-        left the modal with no buttons."""
+        """Hide the Background/Cancel OptionList; reveal the Close one.
+        Toggling pre-composed widgets is race-free. Earlier attempts
+        to swap children via mount/remove hit a tick-ordering bug
+        that left the modal with no options."""
+        from textual.widgets import OptionList
+
         if self._is_terminal:
             return
         self._is_terminal = True
         try:
-            self.query_one("#extras_buttons_running", Static).add_class("-hidden")
-            self.query_one("#extras_buttons_terminal", Static).remove_class("-hidden")
-            self.query_one("#extras_footer", Static).update("[dim]⏎ / Esc[/] Close")
+            self.query_one("#extras_actions_running", OptionList).add_class("-hidden")
+            self.query_one("#extras_actions_terminal", OptionList).remove_class("-hidden")
+            self.query_one("#extras_actions_terminal", OptionList).focus()
         except Exception:
             pass
 
@@ -227,12 +216,13 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
             with contextlib.suppress(ProcessLookupError):
                 proc.send_signal(signal.SIGTERM)
 
-    async def on_click(self, _ev: events.Click) -> None:
-        """The button rows are plain Statics, not Buttons — click is
-        not the primary interaction (key bindings do the work) but
-        for terminal-state we still want clicks on the bottom row to
-        dismiss. Mouse handling is best-effort."""
-        return
+    async def on_option_list_option_selected(self, ev: Any) -> None:
+        if ev.option.id == "background":
+            await self.action_background()
+        elif ev.option.id == "cancel":
+            await self.action_cancel()
+        elif ev.option.id == "close":
+            self.dismiss(None)
 
     async def action_background_or_close(self) -> None:
         """Esc / b behaves as Close once the operation has finished —

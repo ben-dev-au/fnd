@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from textual.widgets import ProgressBar, Static
+from textual.widgets import ProgressBar
 
 from fnd.config import Config, load
 from fnd.index import build_index
@@ -74,8 +74,9 @@ async def test_progress_modal_chrome(
         assert isinstance(screen, ExtrasInstallProgressScreen)
         assert screen.query_one("#extras_box")
         assert screen.query_one("#extras_progress", ProgressBar)
-        # Title carries action label.
-        title = str(screen.query_one("#extras_title", Static).content)
+        # Title now lives on the box's border_title (set in compose).
+        box = screen.query_one("#extras_box")
+        title = str(getattr(box, "border_title", "") or "")
         assert "Install" in title
         assert "pdf-structure" in title
         # Wait for completion to avoid leaking the task into the next test.

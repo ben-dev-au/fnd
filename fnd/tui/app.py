@@ -1270,6 +1270,12 @@ class FNDApp(App[None]):
         self._indexer_events: asyncio.Queue[Any] | None = None
         self._indexer_state: Any = None
         self._indexer_last_event: Any = None
+        # Update-all-collections chain bookkeeping. The IndexerScreen
+        # title shows "(N of M)" when total > 1; drive_indexer in
+        # indexer_modal.py dequeues from _indexer_chain_remaining at
+        # the end of each collection's run.
+        self._indexer_chain_remaining: list[str] = []
+        self._indexer_chain_total: int = 1
         self._indexer_collection: str = ""
         self._indexer_started_at: str = ""
         # Structured-PDF extras install/uninstall — sibling to the
@@ -4050,7 +4056,14 @@ class FNDApp(App[None]):
         self._indexer_collection = collection
         self._indexer_started_at = _dt.datetime.now(tz=_dt.UTC).isoformat(timespec="seconds")
         self._indexer_cancel = asyncio.Event()
-        self._indexer_events = asyncio.Queue()
+        # Reuse the existing events queue when a chain run is in
+        # progress so the IndexerScreen's drain (which holds a
+        # reference to the queue from its on_mount) keeps seeing
+        # events from the next collection. Otherwise the modal would
+        # appear to stall after the first collection completes.
+        chain_active = bool(self._indexer_chain_remaining) or (self._indexer_chain_total or 1) > 1
+        if not chain_active or self._indexer_events is None:
+            self._indexer_events = asyncio.Queue()
         self._indexer_state = None
         self._indexer_last_event = None
         self._indexer_task = asyncio.create_task(
@@ -4065,7 +4078,16 @@ class FNDApp(App[None]):
             )
         )
         if open_modal:
-            self.push_screen(IndexerScreen(collection))
+            chain_total = getattr(self, "_indexer_chain_total", 1) or 1
+            chain_pending = getattr(self, "_indexer_chain_remaining", None) or []
+            chain_index = max(1, chain_total - len(chain_pending))
+            self.push_screen(
+                IndexerScreen(
+                    collection,
+                    chain_total=chain_total,
+                    chain_index=chain_index,
+                )
+            )
         return True
 
     def action_reindex_default(self) -> None:
@@ -4086,8 +4108,13 @@ class FNDApp(App[None]):
             has_been_seen,
         )
 
-        cfg = _load_config()
-        col_cfg = cfg.collection(collection)
+        # Prefer the in-memory config so tests / live edits don't get
+        # silently overridden by whatever's on disk.
+        cfg = self._config if self._config is not None else _load_config()
+        if collection not in cfg.collections:
+            self.notify(f"Collection '{collection}' not found.", severity="error")
+            return
+        col_cfg = cfg.collections[collection]
 
         # Only warn when extras are actually installed (otherwise the
         # cost is the old flat-extraction cost, which is sub-second/PDF).

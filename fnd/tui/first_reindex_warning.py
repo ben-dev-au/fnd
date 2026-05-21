@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 from pathlib import Path
+from typing import Any
 
 from platformdirs import user_data_dir
 from textual.app import ComposeResult
@@ -82,38 +83,37 @@ def fmt_duration(seconds: float) -> str:
 
 
 class FirstReindexWarningScreen(ModalScreen[bool]):
-    """Modal that warns the user about indexing time before the first
-    big reindex with structured PDF extraction enabled.
+    """One-time disclosure before the first structured-PDF run.
+
+    Visually matches the cache confirm screens: bordered box, title,
+    three-row labelled body, OptionList action rows. Keyboard: up/down
+    move through the options, Enter selects.
 
     Result via ``dismiss(True)``: user wants to proceed.
     Result via ``dismiss(False)``: user cancelled.
     """
 
     BINDINGS = [  # noqa: RUF012
-        Binding("enter", "start", "Start", show=True),
-        Binding("escape", "cancel", "Cancel", show=True),
-        Binding("d", "dont_show_again", "Don't show again", show=True),
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("up,k", "cursor(-1)", show=False),
+        Binding("down,j", "cursor(1)", show=False),
+        Binding("enter", "activate", show=False),
     ]
 
     CSS = """
     FirstReindexWarningScreen { align: center middle; background: $surface 75%; }
     #first_reindex_box {
-        width: 78;
+        width: auto;
+        min-width: 60;
+        max-width: 100;
         height: auto;
-        min-height: 12;
+        max-height: 90%;
         border: round $warning;
-        padding: 1 2;
+        padding: 0 1;
         background: $surface;
     }
-    #first_reindex_box > Static { height: auto; padding: 0 0 1 0; }
     #first_reindex_body { padding: 0 0 1 0; }
-    #first_reindex_buttons {
-        height: 1;
-        width: 100%;
-        margin: 1 0 0 0;
-        color: $accent;
-        text-style: bold;
-    }
+    #first_reindex_list { height: auto; }
     """
 
     def __init__(self, *, collection: str, n_pdfs: int) -> None:
@@ -123,44 +123,71 @@ class FirstReindexWarningScreen(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         from rich.text import Text
+        from textual.widgets import OptionList
+        from textual.widgets.option_list import Option
 
+        from fnd.tui.cost_estimate import has_calibration_data
         from fnd.tui.settings_screen import build_confirm_body
 
         eta_s = estimate_eta_seconds(self._n_pdfs)
+        time_caveat = "" if has_calibration_data() else " (rough estimate)"
         body = build_confirm_body(
             outcome_label="What",
             outcome=(
-                f"First reindex of '{self._collection}'. Extracts structure from "
-                f"{self._n_pdfs} PDFs (headings, lists, tables)."
+                f"Extracts structured layout from {self._n_pdfs} PDFs in "
+                f"'{self._collection}' (headings, lists, tables)."
             ),
             cost_label="Time",
-            cost=f"~{fmt_duration(eta_s)} on cold start. Future reindexes only touch changed files.",
+            cost=f"{fmt_duration(eta_s)} on first run{time_caveat}. Future runs only touch changed files.",
             safety_label="Background",
-            safety="Runs in the background. Keep searching while it works. Auto-resumes if you quit.",
+            safety="Keep searching while it works. Auto-resumes if you quit.",
         )
-        with Vertical(id="first_reindex_box"):
-            yield Static(
-                Text("First reindex with structured PDF support", style="bold yellow"),
-                id="first_reindex_title",
-                markup=False,
-            )
+        with Vertical(id="first_reindex_box") as box:
+            box.border_title = "First structured-PDF run"
             yield Static(body, id="first_reindex_body")
-            yield Static(
-                "[ Start ]   [ Cancel ]   [ Don't show again ]",
-                id="first_reindex_buttons",
-                markup=False,
+            yield OptionList(
+                Option(Text("Start", style="bold green"), id="start"),
+                Option("Don't show this again, start now", id="dont_show"),
+                Option("Cancel", id="cancel"),
+                id="first_reindex_list",
             )
+
+    def on_mount(self) -> None:
+        from textual.widgets import OptionList
+
+        self.query_one("#first_reindex_list", OptionList).focus()
+
+    def action_cursor(self, direction: int) -> None:
+        from textual.widgets import OptionList
+
+        lst = self.query_one("#first_reindex_list", OptionList)
+        if direction > 0:
+            lst.action_cursor_down()
+        else:
+            lst.action_cursor_up()
+
+    def action_activate(self) -> None:
+        from textual.widgets import OptionList
+
+        self.query_one("#first_reindex_list", OptionList).action_select()
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
 
     def action_start(self) -> None:
         mark_seen()
         self.dismiss(True)
 
-    def action_cancel(self) -> None:
-        self.dismiss(False)
-
     def action_dont_show_again(self) -> None:
         mark_seen()
         self.dismiss(True)
+
+    def on_option_list_option_selected(self, ev: Any) -> None:
+        if ev.option.id == "start" or ev.option.id == "dont_show":
+            mark_seen()
+            self.dismiss(True)
+        elif ev.option.id == "cancel":
+            self.dismiss(False)
 
 
 __all__ = [

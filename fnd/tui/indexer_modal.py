@@ -22,17 +22,18 @@ dismiss/reopen):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime as dt
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, ProgressBar, Static
+from textual.widgets import ProgressBar, Static
 
 from fnd.config import CollectionConfig
 from fnd.index_runner import IndexState, ProgressEvent, run_indexer
@@ -48,7 +49,7 @@ def fmt_eta(seconds: float) -> str:
     import math
 
     if seconds < 0 or math.isnan(seconds) or math.isinf(seconds):
-        return "—"
+        return "?"
     if seconds < 60:
         return f"{int(seconds)}s"
     if seconds < 3600:
@@ -80,33 +81,67 @@ class IndexerScreen(ModalScreen[None]):
     CSS = """
     IndexerScreen { align: center middle; background: $surface 75%; }
     #indexer_box {
-        width: 78; height: auto;
+        width: auto;
+        min-width: 60;
+        max-width: 100;
+        height: auto;
+        max-height: 90%;
         border: round $accent;
-        padding: 1 2; background: $surface;
+        padding: 0 1;
+        background: $surface;
     }
-    #indexer_box Static { padding: 0 0 1 0; }
-    #indexer_progress { width: 100%; }
-    #indexer_buttons { height: 3; padding-top: 1; }
-    #indexer_buttons Button { margin-right: 2; }
-    .indexer-stat-label { color: $text-muted; }
+    #indexer_status, #indexer_current_file, #indexer_timing, #indexer_cache {
+        height: 1;
+        padding: 0;
+    }
+    #indexer_progress { width: 100%; height: 1; padding: 0 0 1 0; }
+    #indexer_actions { height: auto; padding: 1 0 0 0; }
     """
 
-    def __init__(self, collection: str) -> None:
+    def __init__(self, collection: str, *, chain_total: int = 1, chain_index: int = 1) -> None:
         super().__init__()
         self._collection = collection
+        self._chain_total = chain_total
+        self._chain_index = chain_index
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="indexer_box"):
-            yield Static(f"[bold]Indexing: {self._collection}[/]", id="indexer_title")
+        from textual.widgets import OptionList
+        from textual.widgets.option_list import Option
+
+        with Vertical(id="indexer_box") as box:
+            box.border_title = self._title_text()
             yield Static("Starting…", id="indexer_status")
             yield ProgressBar(total=1, show_eta=False, show_percentage=True, id="indexer_progress")
             yield Static("", id="indexer_current_file")
             yield Static("", id="indexer_timing")
             yield Static("", id="indexer_cache")
-            with Horizontal(id="indexer_buttons"):
-                yield Button("Pause", id="indexer_pause")
-                yield Button("Run in background", id="indexer_background", variant="primary")
-                yield Button("Cancel", id="indexer_cancel", variant="warning")
+            yield OptionList(
+                Option("Run in background", id="background"),
+                Option("Cancel", id="cancel"),
+                id="indexer_actions",
+            )
+
+    def _title_text(self) -> str:
+        if self._chain_total > 1:
+            return (
+                f"Update index › {self._collection}  ({self._chain_index} of {self._chain_total})"
+            )
+        return f"Update index › {self._collection}"
+
+    def _refresh_title(self) -> None:
+        """Re-render the box title — used when the chain advances to
+        the next collection. Reads the new collection name + chain
+        index from the FNDApp."""
+        app = self._fnd_app()
+        new_name = getattr(app, "_indexer_collection", None) or self._collection
+        chain_pending = getattr(app, "_indexer_chain_remaining", None) or []
+        chain_total = getattr(app, "_indexer_chain_total", None) or self._chain_total
+        chain_index = max(1, chain_total - len(chain_pending))
+        self._collection = new_name
+        self._chain_total = chain_total
+        self._chain_index = chain_index
+        with contextlib.suppress(Exception):
+            self.query_one("#indexer_box", Vertical).border_title = self._title_text()
 
     async def on_mount(self) -> None:
         # Snapshot any progress events already buffered so we don't
@@ -130,6 +165,13 @@ class IndexerScreen(ModalScreen[None]):
         return self.app
 
     async def _drain_events(self) -> None:
+        """Keep draining while the chain has more work.
+
+        ``app._indexer_chain_remaining`` is populated by
+        ``UpdateAllConfirm`` with the collections still to process.
+        On ``done`` we only exit when that list is empty; otherwise we
+        keep listening so the next collection's events render in this
+        same modal. ``cancelled`` always exits."""
         app = self._fnd_app()
         queue = app._indexer_events
         if queue is None:
@@ -141,8 +183,17 @@ class IndexerScreen(ModalScreen[None]):
                 except TimeoutError:
                     continue
                 self._render_event(ev)
-                if ev.kind in ("done", "cancelled"):
+                if ev.kind == "cancelled":
                     break
+                if ev.kind == "done":
+                    pending = getattr(app, "_indexer_chain_remaining", None) or []
+                    if not pending:
+                        break
+                    # More collections queued — drive_indexer fires the
+                    # next via call_later; the new run_indexer will
+                    # emit a "started" event that re-initialises the
+                    # progress bar here. Stay in the loop.
+                    continue
         except asyncio.CancelledError:
             return
 
@@ -173,6 +224,9 @@ class IndexerScreen(ModalScreen[None]):
             return
 
         if ev.kind == "started":
+            # New collection starting — refresh the title in case the
+            # chain just advanced. Resets the progress bar too.
+            self._refresh_title()
             status.update(f"Indexing {ev.files_total} files…")
             bar.update(total=max(1, ev.files_total), progress=0)
         elif ev.kind == "file_complete":
@@ -209,24 +263,22 @@ class IndexerScreen(ModalScreen[None]):
         # drains the event and shows the status.
 
     async def action_pause(self) -> None:
-        """Pause is conceptually the same as Cancel for now —
-        re-running the reindex resumes via cache + state file."""
+        """Pause is conceptually the same as Cancel for now.
+        Re-running the reindex resumes via cache + state file."""
         await self.action_cancel()
 
-    # ---- button handlers ----
+    # ---- OptionList action dispatch ----
 
-    async def on_button_pressed(self, ev: Button.Pressed) -> None:
-        if ev.button.id == "indexer_background":
+    async def on_option_list_option_selected(self, ev: Any) -> None:
+        if ev.option.id == "background":
             await self.action_background()
-        elif ev.button.id == "indexer_cancel":
+        elif ev.option.id == "cancel":
             await self.action_cancel()
-        elif ev.button.id == "indexer_pause":
-            await self.action_pause()
 
 
 def _short_name(path: str) -> str:
     if not path:
-        return "—"
+        return "?"
     name = Path(path).name
     return name if len(name) <= 48 else name[:45] + "…"
 
@@ -280,6 +332,12 @@ async def drive_indexer(
         # Defer to the next event-loop tick so this task completes
         # cleanly before the next one starts.
         app.call_later(_start_next_in_chain, app, next_collection)
+    else:
+        # Chain is finished or was cancelled. Reset chain bookkeeping
+        # so a subsequent single-collection Update index doesn't
+        # render with a stale "1 of N" title.
+        app._indexer_chain_remaining = []  # type: ignore[attr-defined]
+        app._indexer_chain_total = 1  # type: ignore[attr-defined]
 
 
 def _start_next_in_chain(app: FNDApp, collection: str) -> None:
@@ -288,10 +346,12 @@ def _start_next_in_chain(app: FNDApp, collection: str) -> None:
     pyright can type-check the call site."""
     from fnd.config import load as _load_config
 
-    cfg = _load_config()
+    # Prefer in-memory config (tests / live edits) over disk.
+    in_memory_cfg = getattr(app, "_config", None)
+    cfg = in_memory_cfg if in_memory_cfg is not None else _load_config()
     if collection not in cfg.collections:
         return
-    col_cfg = cfg.collection(collection)
+    col_cfg = cfg.collections[collection]
     app._indexer_task = None  # type: ignore[attr-defined] # release
     app.start_indexer(collection=collection, config=col_cfg, open_modal=False)
 
