@@ -1414,9 +1414,10 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
             id="indexing.auto_resume",
             label="Auto-resume on launch",
             description=(
-                "When On, fnd resumes an interrupted Update index silently "
-                "in the background next time you open the app. When Off, "
-                "you have to trigger Update index manually after a quit."
+                "✓ On — an interrupted Update index (force-quit, sleep, "
+                "Ctrl+C) resumes silently in the background next time "
+                "you open fnd. Progress shows in the footer, not a modal. "
+                "✗ Off — Update index must be triggered manually."
             ),
             kind=KIND_TOGGLE,
             toggle_getter=_get_indexer_auto_resume,
@@ -1428,10 +1429,11 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
             id="indexing.cache_at_index_time",
             label="Update cache at index time",
             description=(
-                "When On (default), Update index also writes fresh cache entries "
-                "for any PDFs not already cached. When Off, Update index uses "
-                "cached entries on hit but skips fresh extraction — fast flat-text "
-                "refresh, useful on battery."
+                "✓ On (default with pdf-structure installed): Update index "
+                "populates the cache for any PDF without an entry. "
+                "✗ Off: Update index uses cached entries on hit but skips "
+                "fresh extraction for new files — fast flat-text refresh, "
+                "useful when you're on battery or don't have CPU to spare."
             ),
             kind=KIND_TOGGLE,
             toggle_getter=_get_cache_at_index_time,

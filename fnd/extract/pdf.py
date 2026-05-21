@@ -40,7 +40,17 @@ from fnd.extract.base import Block, Chunk, ExtractError
 # Lazy availability of the pdf-structure extra (`pymupdf4llm`). Computed
 # at module load — cheap; just a spec lookup. The actual import happens
 # inside _extract_page_md() to keep import-time cost zero for users
-# who haven't opted in.
+# who haven't opted in (NF7 invariant).
+#
+# Note: ``find_spec`` only tests importability, not functional
+# readiness. A half-uninstalled pymupdf4llm whose namespace directory
+# survives but whose ``to_markdown`` is gone will still pass this
+# check. ``_extract_page_md`` is defensive — its outer try/except
+# catches the AttributeError that surfaces from such a state and
+# returns "" (the page falls through to flat extraction). The TUI's
+# Status row uses the stricter ``fnd.extras.is_package_installed``
+# (which calls ``importlib.invalidate_caches`` + verifies
+# ``spec.origin`` exists) to report install state to the user.
 _HAS_PYMUPDF4LLM: bool = importlib.util.find_spec("pymupdf4llm") is not None
 
 # Runtime override for the structured-extraction path. The indexer sets

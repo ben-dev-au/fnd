@@ -102,16 +102,30 @@ def build_confirm_body(
     cost: str,
     safety: str,
     irreversible: bool = False,
+    outcome_label: str = "Outcome",
+    cost_label: str = "Cost",
+    safety_label: str = "Safety",
 ) -> Text:
-    """Three-column Outcome / Cost / Safety body shared by every confirm
-    screen. Labels in ``$text-muted``, values in ``$text``. When
-    ``irreversible`` is set, appends a red "Cannot be undone" line."""
+    """Three-row labelled body shared by every confirm screen.
+
+    Default labels (Outcome / Cost / Safety) describe a pay-then-gain
+    action — installing, deleting, paying CPU to rebuild. Some actions
+    don't fit that framing — uninstalling FREES disk rather than
+    costing it. Callers override the labels (e.g. ``cost_label="Disk
+    freed"``) so each screen reads naturally.
+
+    Labels render dim; values render in default text. When
+    ``irreversible`` is set, appends a red "Cannot be undone" line
+    below the rows."""
+    # Pad labels to a consistent column so the values align in the
+    # rendered output regardless of label length.
+    width = max(len(outcome_label), len(cost_label), len(safety_label))
     text = Text()
-    text.append("Outcome   ", style="dim")
+    text.append(outcome_label.ljust(width) + "   ", style="dim")
     text.append(outcome + "\n")
-    text.append("Cost      ", style="dim")
+    text.append(cost_label.ljust(width) + "   ", style="dim")
     text.append(cost + "\n")
-    text.append("Safety    ", style="dim")
+    text.append(safety_label.ljust(width) + "   ", style="dim")
     text.append(safety)
     if irreversible:
         text.append("\n\n")
@@ -2759,12 +2773,11 @@ class DeleteCollectionScreen(Screen[None]):
         padding: 0 1;
         margin: 1 4;
     }
-    DeleteCollectionScreen > #settings_box:focus-within { border: round $error; }
+    DeleteCollectionScreen #confirm_summary { padding: 0 0 1 0; }
     DeleteCollectionScreen #confirm_list { height: auto; }
     DeleteCollectionScreen > #footer_hints {
         dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
     }
-    DeleteCollectionScreen .warning { color: $warning; padding: 0 0 1 0; }
     """
 
     def __init__(self, *, collection_name: str) -> None:
@@ -2775,16 +2788,28 @@ class DeleteCollectionScreen(Screen[None]):
         with Vertical(id="settings_box") as box:
             box.border_title = f"Collections › {self._name} › Delete"
             yield Static(
-                f"Delete collection {self._name!r}?  This removes it from "
-                "config.toml AND drops its chunks from the index.",
-                classes="warning",
+                build_confirm_body(
+                    outcome=(
+                        f"Collection '{self._name}' removed from config; "
+                        "its chunks dropped from the search index."
+                    ),
+                    cost=(
+                        "Cannot be reversed — re-adding the sources and "
+                        "running Update index would rebuild."
+                    ),
+                    safety=(
+                        "Source files on disk are untouched. Other collections "
+                        "and the PDF structure cache are unaffected."
+                    ),
+                    irreversible=True,
+                ),
+                id="confirm_summary",
             )
-            opts = OptionList(
-                Option(Text(f"Yes, delete {self._name}", style="bold"), id="yes"),
+            yield OptionList(
+                confirm_yes_option(f"Yes, delete {self._name}", severity="destructive"),
                 Option("Cancel", id="no"),
                 id="confirm_list",
             )
-            yield opts
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
@@ -3042,6 +3067,27 @@ class UpdateAllConfirm(Screen[None]):
 # ── Structured PDF install/uninstall confirm ────────────────────────
 
 
+def _pdf_cache_size_human() -> str:
+    """Human-readable on-disk size of the PDF structure cache, or
+    "empty" when the directory doesn't exist yet."""
+    from fnd.cache import ExtractionCache, default_cache_dir
+
+    root = default_cache_dir()
+    if not root.exists():
+        return "empty"
+    cache = ExtractionCache()
+    n = cache.total_size_bytes()
+    if n < 1024:
+        return f"{n} B"
+    kb = n / 1024
+    if kb < 1024:
+        return f"{kb:.0f} KB"
+    mb = kb / 1024
+    if mb < 1024:
+        return f"{mb:.0f} MB"
+    return f"{mb / 1024:.1f} GB"
+
+
 class StructuredPdfConfirmScreen(Screen[None]):
     """Disclosure + Yes/Cancel for the pdf-structure extra.
 
@@ -3118,10 +3164,24 @@ class StructuredPdfConfirmScreen(Screen[None]):
         if self._extra is None:
             return Text("pdf-structure extra is unavailable.", style="bold red")
         if self._installed:
+            # Uninstall is a give-back action: framing is "what
+            # changes / what you get back / what's preserved." The
+            # PDF structure cache stays — it's a separate concept —
+            # so spell that out so the user isn't surprised by
+            # leftover disk usage.
+            cache_size = _pdf_cache_size_human()
+            cache_line = (
+                f"PDF structure cache ({cache_size}) stays. "
+                "Clear it separately via Settings → Indexing → Clear "
+                "PDF structure cache."
+            )
             return build_confirm_body(
+                outcome_label="What changes",
                 outcome="New PDF extractions revert to flat text.",
-                cost=f"~{actual_disk_mb(self._extra)} MB disk recovered.",
-                safety=("Previously-indexed structured PDFs keep working until reindex."),
+                cost_label="Disk freed",
+                cost=f"~{actual_disk_mb(self._extra)} MB (packages).",
+                safety_label="Preserved",
+                safety=("Indexed structured PDFs keep working until reindex. " + cache_line),
             )
         total_mb = sum(p.disk_mb for p in self._extra.packages)
         return build_confirm_body(
@@ -3130,7 +3190,7 @@ class StructuredPdfConfirmScreen(Screen[None]):
                 f"~{total_mb} MB disk + ML weights on first use. "
                 "First Update index spends ~2 s per PDF on born-digital text."
             ),
-            safety=("Auto-resumes if interrupted. Existing flat indexes are preserved."),
+            safety="Auto-resumes if interrupted. Existing flat indexes are preserved.",
         )
 
     def on_mount(self) -> None:

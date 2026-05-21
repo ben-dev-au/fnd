@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+
 # When the pdf-structure extra is installed in the dev venv, PDF chunks
 # carry body_md and the preview dispatcher routes them through the
 # structural Markdown widget. Most existing tests pre-date that and
@@ -16,7 +17,22 @@ import pytest
 # it. Default the whole test suite to flat-PDF routing so the
 # invariant tests stay green; the two structural-PDF tests opt out
 # explicitly via `monkeypatch.delenv("_FND_FORCE_FLAT", raising=False)`.
-_PDF_STRUCTURE_INSTALLED = importlib.util.find_spec("pymupdf4llm") is not None
+def _pdf_structure_actually_works() -> bool:
+    """``find_spec`` returns True even when pymupdf4llm has been
+    half-uninstalled (namespace dir survives, ``to_markdown`` gone).
+    Verify the entrypoint actually exists before claiming the extra
+    is installed."""
+    spec = importlib.util.find_spec("pymupdf4llm")
+    if spec is None:
+        return False
+    try:
+        import pymupdf4llm
+    except Exception:
+        return False
+    return hasattr(pymupdf4llm, "to_markdown")
+
+
+_PDF_STRUCTURE_INSTALLED = _pdf_structure_actually_works()
 
 
 @pytest.fixture(autouse=True)
@@ -54,6 +70,29 @@ def isolated_ui_state(  # pyright: ignore[reportUnusedFunction]
     p = tmp_path / "ui_state" / "scope.toml"
     monkeypatch.setattr("fnd.state._state_path", lambda: p)
     return p
+
+
+@pytest.fixture(autouse=True)
+def isolated_pdf_structure_cache(  # pyright: ignore[reportUnusedFunction]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point fnd's PDF structure cache at a per-test tmp dir.
+
+    Without this, tests share the user's real cache at
+    ``~/Library/Caches/fnd/pdf-structure/``. State from one test run
+    (or from interactive usage) can leak into the next: cached entries
+    with the same signature but stale content (e.g. body_md='' from a
+    pre-structured-extra run) make later tests see wrong data.
+
+    The PDF extractor caches its ExtractionCache instance in
+    ``_cache_singleton`` — reset it so the patched default_cache_dir
+    actually takes effect."""
+    root = tmp_path / "pdf-structure-cache"
+    monkeypatch.setattr("fnd.cache.default_cache_dir", lambda: root)
+    from fnd.extract import pdf as _pdf
+
+    monkeypatch.setattr(_pdf, "_cache_singleton", None)
+    return root
 
 
 @pytest.fixture(autouse=True)

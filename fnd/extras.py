@@ -16,6 +16,7 @@ structures, detection logic, disk accounting, and subprocess wrappers.
 from __future__ import annotations
 
 import contextlib
+import importlib
 import importlib.util
 import shutil
 import subprocess
@@ -86,9 +87,32 @@ EXTRAS: dict[str, Extra] = {PDF_STRUCTURE.name: PDF_STRUCTURE}
 
 
 def is_package_installed(pkg: Package) -> bool:
+    """Detect installation reality, not Python's import cache.
+
+    Python's path-importer cache holds onto the FileFinder for a
+    package's parent directory after a module has been resolved
+    once — so ``importlib.util.find_spec(name)`` keeps returning the
+    old spec even after the package has been uninstalled from disk
+    by an out-of-process tool (``uv sync``, ``pip uninstall``, …).
+    Call ``importlib.invalidate_caches()`` so subsequent checks see
+    the actual filesystem state.
+    """
+    importlib.invalidate_caches()
     kind, name = pkg.detect.split(":", 1)
     if kind == "module":
-        return importlib.util.find_spec(name) is not None
+        spec = importlib.util.find_spec(name)
+        if spec is None:
+            return False
+        # find_spec can also return a spec for a namespace package
+        # whose origin is a directory that's been emptied — verify
+        # the recorded origin file actually exists when one is set.
+        origin = getattr(spec, "origin", None)
+        if origin and origin != "built-in" and origin != "frozen":
+            from pathlib import Path
+
+            if not Path(origin).exists():
+                return False
+        return True
     if kind == "cli":
         return shutil.which(name) is not None
     return False

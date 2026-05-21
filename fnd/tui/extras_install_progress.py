@@ -64,26 +64,33 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
     CSS = """
     ExtrasInstallProgressScreen { align: center middle; background: $surface 75%; }
     #extras_box {
-        width: 78; height: auto;
+        width: 78;
+        height: auto;
+        min-height: 14;
         border: round $accent;
-        padding: 1 2; background: $surface;
+        padding: 1 2;
+        background: $surface;
     }
-    #extras_box Static { padding: 0 0 1 0; }
-    #extras_progress { width: 100%; }
-    #extras_buttons { height: 3; padding-top: 1; }
+    #extras_box > Static { height: auto; padding: 0 0 1 0; }
+    #extras_progress { width: 100%; height: 1; padding: 0 0 1 0; }
+    #extras_buttons {
+        height: 3;
+        padding-top: 1;
+        align-horizontal: left;
+    }
     #extras_buttons Button { margin-right: 2; }
     """
 
     def __init__(self, *, action_label: str) -> None:
         super().__init__()
         self._action_label = action_label
+        self._is_terminal = False  # set True after done/cancelled/failed
 
     def compose(self) -> ComposeResult:
         with Vertical(id="extras_box"):
             yield Static(f"[bold]{self._action_label} pdf-structure[/]", id="extras_title")
             yield Static("Starting…", id="extras_status")
             yield ProgressBar(total=1, show_eta=False, show_percentage=True, id="extras_progress")
-            yield Static("", id="extras_line")
             with Horizontal(id="extras_buttons"):
                 yield Button("Run in background", id="extras_background", variant="primary")
                 yield Button("Cancel", id="extras_cancel", variant="warning")
@@ -125,24 +132,50 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
         try:
             status = self.query_one("#extras_status", Static)
             bar = self.query_one("#extras_progress", ProgressBar)
-            line = self.query_one("#extras_line", Static)
         except Exception:
             return
         total = max(1, ev.cmd_total)
         bar.update(total=total, progress=min(ev.cmd_index, total))
+        verb = self._action_label  # "Install" / "Uninstall"
         if ev.phase == "starting":
-            status.update(f"Step {ev.cmd_index + 1}/{total}: starting…")
+            status.update(f"Step {ev.cmd_index + 1} of {total} — starting…")
         elif ev.phase == "running":
-            status.update(f"Step {ev.cmd_index + 1}/{total}: running")
+            status.update(f"Step {ev.cmd_index + 1} of {total} — running")
         elif ev.phase == "done":
-            status.update(f"[green]✓ {self._action_label} complete.[/]  Restart fnd to use it.")
+            # Tailor completion copy to action so it never reads as
+            # "Restart fnd to use it" on an uninstall (nothing to use).
+            if verb.lower().startswith("install"):
+                tail = "Restart fnd, then run Update index to populate the cache."
+            elif verb.lower().startswith("uninstall"):
+                tail = "Restart fnd to apply."
+            else:
+                tail = "Restart fnd to apply."
+            status.update(f"[bold green]✓ {verb} complete.[/]  {tail}")
             bar.update(progress=total)
+            self._enter_terminal_state()
         elif ev.phase == "cancelled":
-            status.update("[yellow]Cancelled.[/]  Run again to resume.")
+            status.update("[bold yellow]Cancelled.[/]  Re-run to resume.")
+            self._enter_terminal_state()
         elif ev.phase == "failed":
-            status.update(f"[red]✗ Failed.[/]  {ev.error}")
-        if ev.line:
-            line.update(f"[dim]{ev.line}[/]")
+            status.update(f"[bold red]✗ {verb} failed.[/]  {ev.error}")
+            self._enter_terminal_state()
+        # Raw subprocess stdout (e.g. "- tabulate==0.10.0") would
+        # leak implementation detail into the user-facing modal. We
+        # intentionally do not surface it; the status line + progress
+        # bar are enough signal.
+
+    def _enter_terminal_state(self) -> None:
+        """Swap Background/Cancel buttons for a single Close button
+        once the operation finishes (success, cancel, or failure)."""
+        if self._is_terminal:
+            return
+        self._is_terminal = True
+        try:
+            buttons = self.query_one("#extras_buttons", Horizontal)
+            buttons.remove_children()
+            buttons.mount(Button("Close", id="extras_close", variant="primary"))
+        except Exception:
+            pass
 
     async def action_background(self) -> None:
         self.dismiss(None)
@@ -162,6 +195,8 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
             await self.action_background()
         elif ev.button.id == "extras_cancel":
             await self.action_cancel()
+        elif ev.button.id == "extras_close":
+            self.dismiss(None)
 
 
 # ── Worker ──────────────────────────────────────────────────────────

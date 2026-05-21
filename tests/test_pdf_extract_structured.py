@@ -15,7 +15,18 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("pymupdf4llm")
+_pymupdf4llm = pytest.importorskip("pymupdf4llm")
+
+# Partial uninstalls leave pymupdf4llm importable but missing
+# ``to_markdown`` — the extra is effectively broken in that state.
+# Skip rather than fail; full reinstall fixes it.
+if not hasattr(_pymupdf4llm, "to_markdown"):
+    pytest.skip(
+        "pymupdf4llm is importable but has no `to_markdown` — "
+        "looks like a partial install. Run `fnd extras install "
+        "pdf-structure` to restore.",
+        allow_module_level=True,
+    )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "papers" / "test.pdf"
 
