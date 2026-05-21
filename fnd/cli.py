@@ -518,10 +518,16 @@ def extras_uninstall(
         raise typer.Exit(code=2)
 
     _print_uninstall_disclosure(extra)
-    cmds = uninstall_commands(extra)
+    # --dry-run is a planning preview — show the full plan as if
+    # everything were installed. The real uninstall (below) uses the
+    # filtered version that skips already-removed packages.
     if dry_run:
-        for c in cmds:
+        for c in uninstall_commands(extra, assume_installed=True):
             typer.echo("would run: " + " ".join(c))
+        return
+    cmds = uninstall_commands(extra)
+    if not cmds:
+        typer.echo(f"\n{name} is not currently installed — nothing to do.")
         return
     if not yes and not typer.confirm("Continue?", default=False):
         typer.echo("aborted")

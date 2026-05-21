@@ -41,6 +41,13 @@ class Package:
     disk_mb: int
     # How to detect this package is currently installed.
     detect: str  # "module:NAME" or "cli:NAME"
+    # Explicit pip package names to pass to ``uv pip uninstall`` for
+    # pip-extra packages. ``uv sync`` (no extras) was previously used
+    # to remove these, but it doesn't reliably clean partial
+    # installations (e.g. when macOS Finder leaves "name 2.py"
+    # detritus behind). Direct ``uv pip uninstall`` is surgical. For
+    # uv-tool packages this field is ignored.
+    uninstall_targets: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -63,6 +70,11 @@ PDF_STRUCTURE = Extra(
             display="pymupdf4llm[layout] (Polyform Noncommercial)",
             disk_mb=200,
             detect="module:pymupdf4llm",
+            # ``uv sync`` (no extras) doesn't reliably clean up
+            # pymupdf4llm's site-packages dir. Explicitly remove the
+            # base package plus its ``[layout]`` extra so the dir is
+            # gone after uninstall.
+            uninstall_targets=("pymupdf4llm", "pymupdf-layout"),
         ),
         Package(
             install_via="uv-tool",
@@ -89,13 +101,28 @@ EXTRAS: dict[str, Extra] = {PDF_STRUCTURE.name: PDF_STRUCTURE}
 def is_package_installed(pkg: Package) -> bool:
     """Detect installation reality, not Python's import cache.
 
-    Python's path-importer cache holds onto the FileFinder for a
-    package's parent directory after a module has been resolved
-    once — so ``importlib.util.find_spec(name)`` keeps returning the
-    old spec even after the package has been uninstalled from disk
-    by an out-of-process tool (``uv sync``, ``pip uninstall``, …).
-    Call ``importlib.invalidate_caches()`` so subsequent checks see
-    the actual filesystem state.
+    Multiple layers of stale state can fool naive detection:
+
+    - The path-importer cache keeps the FileFinder for a directory
+      after one module has been resolved — even when the files have
+      been removed by an out-of-process tool. ``invalidate_caches``
+      clears that.
+    - A regular package whose ``__init__.py`` has been removed but
+      whose parent directory still exists (macOS Finder occasionally
+      leaves ``__init__ 2.py`` after a sync conflict; uv's atomic
+      rename has been observed to do similar) is matched as a
+      *namespace* package — origin is None, submodule_search_locations
+      points at an empty husk.
+    - For ``cli:NAME`` detection, ``shutil.which`` returns ANY binary
+      with that name on ``PATH``. A user with a system-wide
+      ``docling`` (from another Python install) would be detected as
+      "installed" even after ``uv tool uninstall docling-slim``
+      removed fnd's copy. For uv-tool-installed packages, check the
+      uv tool install dir directly — that's what fnd manages.
+
+    A "really installed" module needs either a real ``origin`` file
+    or at least one submodule search location containing
+    ``__init__.{py,so}``. Anything else is detritus.
     """
     importlib.invalidate_caches()
     kind, name = pkg.detect.split(":", 1)
@@ -103,17 +130,28 @@ def is_package_installed(pkg: Package) -> bool:
         spec = importlib.util.find_spec(name)
         if spec is None:
             return False
-        # find_spec can also return a spec for a namespace package
-        # whose origin is a directory that's been emptied — verify
-        # the recorded origin file actually exists when one is set.
         origin = getattr(spec, "origin", None)
-        if origin and origin != "built-in" and origin != "frozen":
-            from pathlib import Path
-
-            if not Path(origin).exists():
-                return False
-        return True
+        if origin and origin not in ("built-in", "frozen"):
+            return Path(origin).exists()
+        # Namespace-package path: only really installed if at least
+        # one search location actually has an init module.
+        for path in getattr(spec, "submodule_search_locations", None) or []:
+            d = Path(path)
+            if not d.exists():
+                continue
+            if (d / "__init__.py").exists():
+                return True
+            if any(d.glob("__init__.*.so")):
+                return True
+        return False
     if kind == "cli":
+        # For uv-tool packages, ignore PATH — a system-wide binary
+        # with the same name isn't what fnd installed. Check the uv
+        # tool root specifically.
+        if pkg.install_via == "uv-tool":
+            tool_name = pkg.spec.split("[", 1)[0]
+            tool_root = Path.home() / ".local" / "share" / "uv" / "tools" / tool_name
+            return tool_root.exists()
         return shutil.which(name) is not None
     return False
 
@@ -177,17 +215,57 @@ def install_commands(extra: Extra) -> list[list[str]]:
     return cmds
 
 
-def uninstall_commands(extra: Extra) -> list[list[str]]:
-    """Return the subprocess argv for each uninstall step."""
+def uninstall_commands(extra: Extra, *, assume_installed: bool = False) -> list[list[str]]:
+    """Surgical uninstall commands.
+
+    Two robustness rules:
+
+    1. **Skip packages that aren't installed.** A user re-attempting an
+       uninstall after a previous partial run shouldn't see "exit 2"
+       because one of the chain commands tried to uninstall something
+       that's already gone. ``assume_installed=True`` overrides this
+       for planning-only callers (``--dry-run`` CLI preview, confirm
+       screens) that want to show the FULL plan regardless of state.
+
+    2. **Use ``uv pip uninstall`` for pip-extras.** ``uv sync`` (no
+       extras specified) was previously used here, but it has been
+       observed to leave the package's site-packages dir behind in
+       some half-removed states (the user's case: an
+       ``__init__ 2.py`` macOS Finder duplicate survives the sync).
+       Direct ``uv pip uninstall <pkg>`` reliably removes the dir.
+       Each package's ``uninstall_targets`` lists the actual pip
+       package names to remove (base + transitive extras).
+    """
     cmds: list[list[str]] = []
     for p in extra.packages:
+        if not assume_installed and not is_package_installed(p):
+            continue
         if p.install_via == "uv-tool":
             cmds.append(["uv", "tool", "uninstall", p.spec.split("[", 1)[0]])
-    pip_extras = [p.spec for p in extra.packages if p.install_via == "pip-extra"]
-    if pip_extras:
-        # `uv sync` without --extra removes the pip-extras from the env.
-        cmds.append(["uv", "sync"])
+        elif p.install_via == "pip-extra":
+            targets = list(p.uninstall_targets) or [p.detect.split(":", 1)[1]]
+            if assume_installed:
+                installed_targets = targets
+            else:
+                installed_targets = [t for t in targets if _pip_target_installed(t)]
+            if installed_targets:
+                cmds.append(["uv", "pip", "uninstall", *installed_targets])
     return cmds
+
+
+def _pip_target_installed(name: str) -> bool:
+    """Lightweight `uv pip show NAME` probe — returns True when the
+    package is present in fnd's venv. Used to skip uninstall steps for
+    transitive extras that aren't actually installed (e.g.
+    ``pymupdf-layout`` when only the base ``pymupdf4llm`` survived).
+    """
+    proc = subprocess.run(
+        ["uv", "pip", "show", name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode == 0
 
 
 def run_command(argv: list[str]) -> tuple[int, str, str]:

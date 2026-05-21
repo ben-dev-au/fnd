@@ -21,11 +21,12 @@ import signal
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, ProgressBar, Static
+from textual.widgets import ProgressBar, Static
 
 if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
@@ -57,28 +58,50 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
     survives modal dismissal."""
 
     BINDINGS = [  # noqa: RUF012
-        Binding("escape,b", "background", "Background", show=True),
+        Binding("escape,b", "background_or_close", "Background", show=True),
         Binding("c", "cancel", "Cancel", show=True),
+        Binding("enter", "close_if_terminal", "Close", show=False),
     ]
 
+    # Visual consistency with the rest of fnd's UI: brackets reserved
+    # for actions in the settings rows render exactly like the
+    # ``[ Run ]`` affordance. The Textual ``Button`` widget adds
+    # ``▔``/``▁`` decorative chrome that's wider than its label —
+    # never matched fnd's settings-row buttons. Use plain Statics.
+    #
+    # All three button states (Background / Cancel / Close) are
+    # composed up-front and toggled via the ``-hidden`` class. Swapping
+    # children at runtime hits a remove/mount race where the new
+    # widget never appears in the rendered tree.
     CSS = """
     ExtrasInstallProgressScreen { align: center middle; background: $surface 75%; }
     #extras_box {
-        width: 78;
+        width: 76;
         height: auto;
-        min-height: 14;
+        min-height: 11;
         border: round $accent;
         padding: 1 2;
         background: $surface;
     }
     #extras_box > Static { height: auto; padding: 0 0 1 0; }
     #extras_progress { width: 100%; height: 1; padding: 0 0 1 0; }
-    #extras_buttons {
-        height: 3;
-        padding-top: 1;
-        align-horizontal: left;
+
+    #extras_buttons_running, #extras_buttons_terminal {
+        width: 100%;
+        height: 1;
+        margin: 1 0 0 0;
+        color: $accent;
+        text-style: bold;
     }
-    #extras_buttons Button { margin-right: 2; }
+    .-hidden { display: none; }
+
+    #extras_footer {
+        dock: bottom;
+        height: 1;
+        padding: 0 1;
+        background: $surface;
+        color: $text-muted;
+    }
     """
 
     def __init__(self, *, action_label: str) -> None:
@@ -91,9 +114,21 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
             yield Static(f"[bold]{self._action_label} pdf-structure[/]", id="extras_title")
             yield Static("Starting…", id="extras_status")
             yield ProgressBar(total=1, show_eta=False, show_percentage=True, id="extras_progress")
-            with Horizontal(id="extras_buttons"):
-                yield Button("Run in background", id="extras_background", variant="primary")
-                yield Button("Cancel", id="extras_cancel", variant="warning")
+            yield Static(
+                "[ Background ]   [ Cancel ]",
+                id="extras_buttons_running",
+                markup=False,
+            )
+            yield Static(
+                "[ Close ]",
+                id="extras_buttons_terminal",
+                classes="-hidden",
+                markup=False,
+            )
+        yield Static(
+            "[dim]Esc / b[/] Background   [dim]c[/] Cancel",
+            id="extras_footer",
+        )
 
     async def on_mount(self) -> None:
         self._apply_latest()
@@ -165,15 +200,17 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
         # bar are enough signal.
 
     def _enter_terminal_state(self) -> None:
-        """Swap Background/Cancel buttons for a single Close button
-        once the operation finishes (success, cancel, or failure)."""
+        """Hide the Background/Cancel row, reveal the Close row.
+        Toggling pre-composed Statics is race-free — earlier attempts
+        to swap widgets via mount/remove hit a tick-ordering bug that
+        left the modal with no buttons."""
         if self._is_terminal:
             return
         self._is_terminal = True
         try:
-            buttons = self.query_one("#extras_buttons", Horizontal)
-            buttons.remove_children()
-            buttons.mount(Button("Close", id="extras_close", variant="primary"))
+            self.query_one("#extras_buttons_running", Static).add_class("-hidden")
+            self.query_one("#extras_buttons_terminal", Static).remove_class("-hidden")
+            self.query_one("#extras_footer", Static).update("[dim]⏎ / Esc[/] Close")
         except Exception:
             pass
 
@@ -190,12 +227,26 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
             with contextlib.suppress(ProcessLookupError):
                 proc.send_signal(signal.SIGTERM)
 
-    async def on_button_pressed(self, ev: Button.Pressed) -> None:
-        if ev.button.id == "extras_background":
-            await self.action_background()
-        elif ev.button.id == "extras_cancel":
-            await self.action_cancel()
-        elif ev.button.id == "extras_close":
+    async def on_click(self, _ev: events.Click) -> None:
+        """The button rows are plain Statics, not Buttons — click is
+        not the primary interaction (key bindings do the work) but
+        for terminal-state we still want clicks on the bottom row to
+        dismiss. Mouse handling is best-effort."""
+        return
+
+    async def action_background_or_close(self) -> None:
+        """Esc / b behaves as Close once the operation has finished —
+        the modal has no work to background at that point."""
+        if self._is_terminal:
+            self.dismiss(None)
+            return
+        await self.action_background()
+
+    async def action_close_if_terminal(self) -> None:
+        """Enter closes the modal only after the operation has
+        finished. While running, Enter is a no-op so a stray keystroke
+        doesn't dismiss in-flight work."""
+        if self._is_terminal:
             self.dismiss(None)
 
 

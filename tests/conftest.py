@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 from collections.abc import Generator
 from pathlib import Path
@@ -21,15 +22,19 @@ def _pdf_structure_actually_works() -> bool:
     """``find_spec`` returns True even when pymupdf4llm has been
     half-uninstalled (namespace dir survives, ``to_markdown`` gone).
     Verify the entrypoint actually exists before claiming the extra
-    is installed."""
+    is installed.
+
+    Uses ``importlib.import_module`` instead of a static ``import``
+    so static type-checkers (pyright) don't blow up when the package
+    isn't present in the analysis environment."""
     spec = importlib.util.find_spec("pymupdf4llm")
     if spec is None:
         return False
     try:
-        import pymupdf4llm
+        mod = importlib.import_module("pymupdf4llm")
     except Exception:
         return False
-    return hasattr(pymupdf4llm, "to_markdown")
+    return hasattr(mod, "to_markdown")
 
 
 _PDF_STRUCTURE_INSTALLED = _pdf_structure_actually_works()
