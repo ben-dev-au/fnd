@@ -23,8 +23,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from platformdirs import user_cache_dir
-
 InstallVia = Literal["pip-extra", "uv-tool"]
 
 
@@ -73,10 +71,12 @@ PDF_STRUCTURE = Extra(
             detect="cli:docling",
         ),
     ],
-    cache_dirs=[
-        Path(user_cache_dir("fnd")) / "bakeoff" / "docling",
-        Path(user_cache_dir("fnd")) / "docling-models",
-    ],
+    # ML model weights live alongside docling-slim's uv-tool install
+    # (``~/.local/share/uv/tools/docling-slim/...``) which is already
+    # walked by ``actual_disk_mb`` via ``tool_root``. The ``bakeoff/``
+    # path that used to be here was a Phase 0 harness leftover — fnd
+    # never wrote there in production. cache_dirs stays empty.
+    cache_dirs=[],
 )
 
 EXTRAS: dict[str, Extra] = {PDF_STRUCTURE.name: PDF_STRUCTURE}

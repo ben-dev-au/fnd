@@ -217,19 +217,22 @@ async def test_search_finds_auto_resume(built_index: Path, cfg: Config) -> None:
 def test_root_summary_reflects_toggle_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Auto-resume on → ● glyph; off → ○ glyph. Isolated cache dir so
+    """Auto-resume on → ✓ glyph; off → ✗ glyph. Isolated cache dir so
     the real user cache doesn't bleed into the summary."""
     monkeypatch.setattr("fnd.cache.default_cache_dir", lambda: tmp_path / "cache")
 
+    from fnd.tui.lazy_trailing import invalidate_all
     from fnd.tui.menu import _summary_indexing
+
+    invalidate_all()
 
     cfg_on = Config(defaults=Defaults(indexer_auto_resume=True))
     cfg_off = Config(defaults=Defaults(indexer_auto_resume=False))
     on_summary = _summary_indexing(cast(FNDApp, _DummyApp(config=cfg_on)))
     off_summary = _summary_indexing(cast(FNDApp, _DummyApp(config=cfg_off)))
-    assert "●" in on_summary
+    assert "✓" in on_summary
     assert "auto-resume" in on_summary
-    assert "○" in off_summary
+    assert "✗" in off_summary
     assert "auto-resume" in off_summary
 
 

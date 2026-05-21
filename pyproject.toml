@@ -50,6 +50,15 @@ pdf-structure = ["pymupdf4llm[layout]~=1.27"]
 markers = [
     "slow: long-running tests excluded from the fast suite",
 ]
+# fnd/tui/lazy_trailing.py schedules work via `app.call_from_thread` on
+# a worker thread. In production this blocks on the cross-thread future
+# and returns the callback's value cleanly; in `app.run_test()` the
+# event loop teardown races the worker so the internal `run_callback`
+# coroutine is occasionally orphaned. Behaviour is correct — the
+# warning is purely a test-env artifact.
+filterwarnings = [
+    "ignore:coroutine 'App.call_from_thread.<locals>.run_callback' was never awaited:RuntimeWarning",
+]
 
 [project.scripts]
 fnd = "fnd.cli:main"

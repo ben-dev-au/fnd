@@ -155,15 +155,60 @@ await pilot.pause()
 
 ## UI rule (cross-cutting)
 
-Plus the visual contract from
-`docs/plans/2026-05-21-settings-menu-rework.md` §7:
+Plus the visual contract from `docs/plans/2026-05-21-settings-menu-rework.md` (v3):
 
 - No prose paragraphs in screen bodies.
 - Numbers / units bold; explanation dim.
-- Status uses symbol + colour: `✓ ✗ ⚠ ● ○ ↗ … ⏎ ↑ ↓ ← →`.
-- Symbols must render in default macOS Terminal / iTerm fonts.
+- Status uses symbol + colour: `✓ ✗ ⚠ ↗ … ⏎ ↑ ↓ ← → ▸ ▾`.
+- Symbols must render in default macOS Terminal / iTerm fonts. No Nerd Fonts.
 
-A screen that fails the UI rule is a bug even if every test above
+### Row-kind visual language
+
+Each kind gets a distinct colour + glyph pairing — verified by direct
+unit test against `fnd.tui.settings_screen._trailing_segments` (see
+`tests/test_settings_visual_language.py`):
+
+| Kind | Trailing | Colour |
+|---|---|---|
+| Toggle | `✓ on` / `✗ off` | `bold green` / `bold red` |
+| Action | `[ Run ]` or `[ Run… ]` | `bold cyan` (accent) |
+| Sub-menu drill | trailing `▸` | `bold cyan` |
+| External drill | summary (dim) + `▸` | mixed |
+| External app | dim summary; leading `↗` on label | `bold cyan` arrow |
+| Picker | `value ▾` | bright value + accent caret |
+| Scalar | bare `value` (bold) | `bold` |
+| Display | bare `value` (bold); **label rendered dim** | `dim` label · `bold` value |
+
+Adding a new kind: add a branch to `_trailing_segments` and a row to
+the table here. Then add a parametrised case to
+`tests/test_settings_visual_language.py`.
+
+### Hint bar accuracy
+
+The `⏎` label in the footer hint must match what Enter does on the
+focused row. Implementation: `_hint_cluster()` inspects
+`cursor_item.kind` and rewrites the verb (Toggle / Edit / Choose /
+Open / Run / Open in editor / — for display). Test pattern lives in
+`tests/test_settings_hint_per_kind.py`.
+
+A footer that says "Open" while Enter actually toggles is a bug — the
+test catches it.
+
+### Async loading
+
+Any `value_getter` that walks the filesystem must route through
+`fnd.tui.lazy_trailing.get_or_schedule`. First render returns `…`;
+the worker populates the real value and re-renders the screen.
+
+Tests assert (`tests/test_settings_async_loading.py`):
+- First call returns the `PLACEHOLDER`.
+- Background worker populates the cache.
+- `invalidate(key)` forces recomputation.
+
+`on_screen_resume` invalidates relevant keys so reopening the screen
+recomputes.
+
+A screen that fails any rule above is a bug even if every test above
 passes.
 
 ## When this checklist applies

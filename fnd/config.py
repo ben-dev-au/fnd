@@ -312,6 +312,12 @@ class Defaults(BaseModel):
     # Ctrl+C resumes silently in the background. False disables the
     # behaviour entirely; the user must trigger the reindex manually.
     indexer_auto_resume: bool = True
+    # Populate the PDF structure cache during Update index runs. True
+    # (default when pdf-structure is installed) writes fresh entries for
+    # any PDF without one. False reads from the cache when entries exist
+    # but doesn't write new ones — fast flat-text refresh, useful on
+    # battery or slow CPUs.
+    cache_at_index_time: bool = True
 
 
 class Config(BaseModel):

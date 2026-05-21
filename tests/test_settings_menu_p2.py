@@ -55,8 +55,8 @@ async def test_root_menu_is_short_list_of_categories(built_index: Path) -> None:
             "Keybindings",
             "Indexing",
             "External",
-            "↗ Config file",
-            "↗ Keybindings file",
+            "Config file",
+            "Keybindings file",
         ]
         # The External row is a header; everything else is selectable.
         kinds = [it.kind for it in lst._items]
@@ -266,4 +266,4 @@ async def test_root_has_open_config_file_row(built_index: Path) -> None:
         assert isinstance(screen, SettingsScreen)
         lst = screen.query_one(SettingsList)
         labels = [item.label for item in lst._items]
-        assert "↗ Config file" in labels
+        assert "Config file" in labels

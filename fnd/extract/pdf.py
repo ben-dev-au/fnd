@@ -43,6 +43,23 @@ from fnd.extract.base import Block, Chunk, ExtractError
 # who haven't opted in.
 _HAS_PYMUPDF4LLM: bool = importlib.util.find_spec("pymupdf4llm") is not None
 
+# Runtime override for the structured-extraction path. The indexer sets
+# this to True for a single Update index run when the user has toggled
+# "Update cache at index time" Off — extract() still consults the cache
+# on hit, but on miss it runs only the flat path (no pymupdf4llm,
+# no docling) and skips the cache write. Used for fast battery-friendly
+# flat-text refreshes. Default False keeps existing behaviour.
+_skip_structure_extraction: bool = False
+
+
+def set_skip_structure_extraction(skip: bool) -> None:
+    """Toggle the run-scoped flag. The indexer reads
+    ``cfg.defaults.cache_at_index_time`` and calls this before
+    iterating files; resets it at end of run."""
+    global _skip_structure_extraction
+    _skip_structure_extraction = skip
+
+
 # Regex for the pymupdf4llm "couldn't decode this region" marker. When a
 # whole table is embedded as a raster image (common in HBR / finance
 # PDFs), pymupdf4llm emits a literal "==> picture [W x H] intentionally
@@ -448,9 +465,13 @@ def extract(path: Path) -> Iterator[Chunk]:
 
     # Best-effort cache write; if it fails (disk full, perms) we still
     # yield the freshly-extracted chunks — caller should never lose work
-    # because the cache had a bad day.
-    with contextlib.suppress(OSError):
-        cache.put(key, chunks)
+    # because the cache had a bad day. Skipped when the run-scoped
+    # battery-saver flag is on (no point caching flat extractions —
+    # they're already cheap to recompute and cache hits assume
+    # structured chunks).
+    if not _skip_structure_extraction:
+        with contextlib.suppress(OSError):
+            cache.put(key, chunks)
 
     yield from chunks
 
@@ -537,8 +558,11 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
             # Structured path (opt-in): populate body_md so the preview
             # dispatcher routes this page to the Markdown widget. Empty
             # when the pdf-structure extra isn't installed — keeps
-            # behaviour byte-identical to today.
-            body_md = _extract_page_md(doc, page_index) if _HAS_PYMUPDF4LLM else ""
+            # behaviour byte-identical to today. Also skipped when the
+            # run-scoped ``_skip_structure_extraction`` flag is set
+            # (battery-saver mode).
+            structure_on = _HAS_PYMUPDF4LLM and not _skip_structure_extraction
+            body_md = _extract_page_md(doc, page_index) if structure_on else ""
 
             # Phase 3 routing: if pymupdf4llm visibly missed structure
             # (e.g. a big image-rendered table), try docling as a

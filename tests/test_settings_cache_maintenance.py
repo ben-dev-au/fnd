@@ -68,6 +68,9 @@ def _make_chunk(seq: int = 0) -> Chunk:
 async def test_indexing_screen_has_cache_rows(
     built_index: Path, cfg: Config, isolated_cache: Path
 ) -> None:
+    """Phase D flattened the cache section — prune / clear / update
+    now live directly under PDF structure cache, no Cache maintenance
+    drill in between."""
     from fnd.tui.menu import SECTION_INDEXING
     from fnd.tui.settings_screen import SettingsList, open_settings_section
 
@@ -79,7 +82,13 @@ async def test_indexing_screen_has_cache_rows(
         lst = app.screen.query_one(SettingsList)
         ids = [it.id for it in lst._items]
         assert "indexing.cache_size" in ids
-        assert "indexing.cache_maintenance" in ids
+        assert "indexing.cache_location" in ids
+        assert "indexing.cache_update" in ids
+        assert "indexing.cache_prune" in ids
+        assert "indexing.cache_clear" in ids
+        assert "indexing.cache_at_index_time" in ids
+        # Old drill row is gone.
+        assert "indexing.cache_maintenance" not in ids
 
 
 @pytest.mark.asyncio
@@ -122,15 +131,17 @@ async def test_cache_size_row_shows_count_and_size(
         assert "B" in v or "KB" in v or "MB" in v
 
 
-# 2 — Cache maintenance sub-screen chrome
+# 2 — Cache rows are direct children of Indexing (no maintenance drill).
 
 
 @pytest.mark.asyncio
-async def test_cache_maintenance_drill_chrome(
+async def test_cache_actions_inline_under_indexing(
     built_index: Path, cfg: Config, isolated_cache: Path
 ) -> None:
+    """No drill needed — Update cache / Prune / Clear live on the
+    Indexing screen itself."""
     from fnd.tui.menu import SECTION_INDEXING
-    from fnd.tui.settings_screen import SettingsList, SettingsScreen, open_settings_section
+    from fnd.tui.settings_screen import SettingsList, open_settings_section
 
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
@@ -138,18 +149,11 @@ async def test_cache_maintenance_drill_chrome(
         open_settings_section(app, SECTION_INDEXING)
         await pilot.pause()
         lst = app.screen.query_one(SettingsList)
-        for i, it in enumerate(lst._items):
-            if it.id == "indexing.cache_maintenance":
-                lst.cursor_index = i
-                break
-        lst.action_activate()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
-        assert screen._breadcrumb == ("Indexing", "Cache maintenance")
-        ids = [it.id for it in screen.query_one(SettingsList)._items]
-        assert "cache.prune" in ids
-        assert "cache.clear" in ids
+        ids = [it.id for it in lst._items]
+        # All three actions visible on the Indexing screen.
+        assert "indexing.cache_update" in ids
+        assert "indexing.cache_prune" in ids
+        assert "indexing.cache_clear" in ids
 
 
 # 3 — Confirm dialog chrome + keyboard
@@ -302,12 +306,24 @@ async def test_prune_with_stale_opens_confirm(
 
 
 def test_root_summary_includes_cache(isolated_cache: Path, cfg: Config) -> None:
+    """Once the lazy worker has populated the cache-size slot, the
+    Indexing root summary surfaces both auto-resume state AND cache
+    footprint. Pre-seed the lazy cache to skip the worker for test
+    determinism."""
+    import time
+    from typing import cast
+
+    from fnd.tui.lazy_trailing import _CACHE, invalidate_all
+    from fnd.tui.menu import _summary_indexing
+
+    invalidate_all()
+
     cache = ExtractionCache(root=isolated_cache)
     cache.put("aa--v1", [_make_chunk(0)])
 
-    from typing import cast
-
-    from fnd.tui.menu import _summary_indexing
+    # Pre-seed the lazy slot — bypasses the worker so the test runs
+    # deterministically without needing a Textual event loop.
+    _CACHE["indexing.summary.cache_short"] = ("cache 1 KB", time.monotonic())
 
     class _App:
         def __init__(self) -> None:

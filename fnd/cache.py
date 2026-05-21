@@ -1,8 +1,9 @@
-"""Content-addressed extraction artifact cache.
+"""Content-addressed PDF structure cache.
 
-Stores serialised ``Chunk`` lists keyed by
-``sha256(file_bytes) || extractor_signature`` under
-``$XDG_CACHE_HOME/fnd/extraction/<shard>/<key>.json``. Lookup happens
+Stores serialised ``Chunk`` lists produced by the structuring pipeline
+(``pymupdf4llm`` primary, ``docling`` fallback for image-tables) keyed
+by ``sha256(file_bytes) || extractor_signature`` under
+``$XDG_CACHE_HOME/fnd/pdf-structure/<shard>/<key>.json``. Lookup happens
 at the top of an extractor; on hit, extraction is skipped entirely.
 
 Phase 2 of the real-PDF-support workstream. See
@@ -11,6 +12,12 @@ rationale — content-addressed beats mtime+path because mtime drifts on
 rsync / Dropbox / Syncthing, and per-PDF extraction is multi-second so
 the one-time sha256 cost (~10ms for a 5MB file on M1 Max) is rounding
 error.
+
+History: directory was previously ``$XDG_CACHE_HOME/fnd/extraction/``;
+class previously ``ExtractionCache``. Both renamed for clarity — this
+is fnd's PDF structure cache, not a generic extractor's. Old directory
+is migrated on first launch by :func:`_migrate_legacy_cache_dir` and
+``ExtractionCache`` remains as a deprecated alias for one release.
 """
 
 from __future__ import annotations
@@ -30,9 +37,23 @@ from fnd.extract.base import Block, Chunk
 
 CACHE_SCHEMA_VERSION = 1
 
+# Old directory name (kept for one-time migration on first launch).
+_LEGACY_CACHE_DIRNAME = "extraction"
+_CACHE_DIRNAME = "pdf-structure"
+
 
 def default_cache_dir() -> Path:
-    return Path(user_cache_dir("fnd")) / "extraction"
+    """Return fnd's PDF structure cache directory.
+
+    On first launch where the legacy ``extraction/`` directory exists,
+    rename it to ``pdf-structure/`` so users don't lose their cache."""
+    root = Path(user_cache_dir("fnd"))
+    new_dir = root / _CACHE_DIRNAME
+    legacy = root / _LEGACY_CACHE_DIRNAME
+    if legacy.exists() and not new_dir.exists():
+        with contextlib.suppress(OSError):
+            legacy.rename(new_dir)
+    return new_dir
 
 
 def sha256_file(path: Path, *, chunk_size: int = 1 << 20) -> str:
@@ -44,8 +65,8 @@ def sha256_file(path: Path, *, chunk_size: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
-class ExtractionCache:
-    """File-backed cache of extracted Chunk lists.
+class PdfStructureCache:
+    """File-backed cache of structured-PDF chunks.
 
     Storage layout: ``<root>/<first-2-of-key>/<key>.json``. The
     shard prefix keeps any one directory below typical filesystem
@@ -186,9 +207,14 @@ def _chunk_from_dict(d: dict[str, Any]) -> Chunk:
     )
 
 
+# Backwards-compatible alias. Use ``PdfStructureCache`` in new code.
+ExtractionCache = PdfStructureCache
+
+
 __all__ = [
     "CACHE_SCHEMA_VERSION",
     "ExtractionCache",
+    "PdfStructureCache",
     "default_cache_dir",
     "sha256_file",
 ]

@@ -49,7 +49,7 @@ async def test_walk_all_sections_includes_every_leaf(built_index: Path, fixtures
         assert any(item.label == "Quit" for _, item in all_items)
         assert any("Quit fnd" in item.description for _, item in all_items)
         # Root action:
-        assert "↗ Config file" in labels
+        assert "Config file" in labels
         # No headers leak through.
         assert not any(item.kind == KIND_HEADER for _, item in all_items)
 

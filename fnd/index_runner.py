@@ -242,6 +242,19 @@ async def run_indexer(
     prior_singleton = _pdf._cache_singleton
     _pdf._cache_singleton = cache
 
+    # Run-scoped "Update cache at index time" toggle. When the user has
+    # turned this off (battery-saver), extract() skips fresh structured
+    # extraction on cache misses and skips cache writes — see
+    # fnd/extract/pdf.py::set_skip_structure_extraction.
+    skip_structure = False
+    with contextlib.suppress(Exception):
+        from fnd.config import load as _load_config
+
+        full_cfg = _load_config()
+        skip_structure = not bool(full_cfg.defaults.cache_at_index_time)
+    prior_skip = _pdf._skip_structure_extraction
+    _pdf.set_skip_structure_extraction(skip_structure)
+
     started_at = dt.datetime.now(tz=dt.UTC).isoformat(timespec="seconds")
     t_start = time.perf_counter()
     paths = _enumerate_paths(config)
@@ -340,6 +353,7 @@ async def run_indexer(
         writer.wait_merging_threads()
     finally:
         _pdf._cache_singleton = prior_singleton
+        _pdf.set_skip_structure_extraction(prior_skip)
 
     # Clean completion — wipe the state file so next launch doesn't
     # show a stale "resume?" prompt.

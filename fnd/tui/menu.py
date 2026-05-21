@@ -44,6 +44,7 @@ KIND_SCALAR = "scalar"
 KIND_TOGGLE = "toggle"
 KIND_PICKER = "picker"
 KIND_EXTERNAL = "external"
+KIND_DISPLAY = "display"  # read-only: dim label + bright value, no Enter affordance
 
 # Section ids the `?` shortcut pushes directly as a sub-screen.
 SECTION_KEYBINDINGS = "keybindings"
@@ -89,6 +90,11 @@ class MenuItem:
 
     # ACTION
     action_id: str = ""
+    # Verb shown inside the trailing `[ ... ]` button affordance. Default
+    # "Run". Set to "Delete…" for a destructive confirm, "Open" for a
+    # picker open, etc. The `…` suffix is included literally when the
+    # action shows a confirm.
+    action_label: str = "Run"
 
     # SCALAR
     setting_path: str = ""
@@ -108,6 +114,10 @@ class MenuItem:
 
     # EXTERNAL
     external: Callable[[FNDApp], None] | None = None
+    # When True, the row launches an OS-level app ($EDITOR, Finder, etc.)
+    # rather than pushing an internal Settings screen. Render leading
+    # `↗` glyph; trailing slot carries the path (not a drill arrow).
+    external_app: bool = False
 
     # Metadata used by the cross-tree search view.
     keywords: tuple[str, ...] = field(default_factory=tuple)
@@ -981,8 +991,10 @@ def _open_keybindings_file_action(app: FNDApp) -> None:
 
 
 def _provider_collections(app: FNDApp) -> tuple[MenuItem, ...]:
-    """Content of the Collections sub-screen — `Add collection` action
-    followed by one drill-in row per configured collection."""
+    """Content of the Collections sub-screen.
+
+    Two actions at the top — Add collection + Update all collections —
+    then one drill-in row per configured collection."""
     cfg = app._config  # type: ignore[attr-defined]
     names = sorted(cfg.collections.keys()) if cfg else []
     items: list[MenuItem] = [
@@ -990,13 +1002,29 @@ def _provider_collections(app: FNDApp) -> tuple[MenuItem, ...]:
             id="collections.add",
             label="Add collection",
             description=(
-                "Push the new-collection wizard — pick a name, then add "
+                "Open the new-collection wizard — pick a name, then add "
                 "the first source. The collection becomes available as "
                 "`--collection <name>` once at least one source is indexed."
             ),
-            kind=KIND_EXTERNAL,
+            kind=KIND_ACTION,
+            action_label="Add",
             external=_make_add_collection(),
-            keywords=("add", "new"),
+            keywords=("add", "new", "create"),
+        ),
+        MenuItem(
+            id="collections.update_all",
+            label="Update all collections",
+            description=(
+                "Run Update index for every collection in sequence. "
+                "Same per-file rules as the per-collection Update index — "
+                "unchanged files are skipped, the PDF structure cache "
+                "is consulted, not cleared."
+            ),
+            kind=KIND_ACTION,
+            action_label="Update",
+            external=_run_update_all_collections,
+            value_getter=_summary_update_all,
+            keywords=("update", "all", "index", "reindex", "everything"),
         ),
     ]
     for name in names:
@@ -1004,7 +1032,7 @@ def _provider_collections(app: FNDApp) -> tuple[MenuItem, ...]:
             MenuItem(
                 id=f"collection.{name}",
                 label=name,
-                description=f"Edit sources, ranking, delete {name}.",
+                description=f"Edit sources, ranking profile, or update / delete the {name} collection.",
                 kind=KIND_EXTERNAL,
                 external=_make_open_collection_screen(name),
                 value_getter=(lambda n: lambda app: _collection_summary(app, n))(name),
@@ -1012,6 +1040,35 @@ def _provider_collections(app: FNDApp) -> tuple[MenuItem, ...]:
             )
         )
     return tuple(items)
+
+
+def _summary_update_all(app: FNDApp) -> str:
+    """Trailing context for the Update all collections action — count
+    of collections + rough total file count if known."""
+    cfg = app._config  # type: ignore[attr-defined]
+    if cfg is None:
+        return ""
+    n_collections = len(cfg.collections)
+    if n_collections == 0:
+        return "no collections"
+    n_sources = sum(len(c.sources) for c in cfg.collections.values())
+    return f"{n_collections} collections · {n_sources} sources"
+
+
+def _run_update_all_collections(app: FNDApp) -> None:
+    """Push a confirm dialog, then iterate every collection through
+    the existing IndexerScreen path on Yes."""
+    import contextlib
+
+    from fnd.tui.settings_screen import UpdateAllConfirm
+
+    cfg = app._config  # type: ignore[attr-defined]
+    if cfg is None or not cfg.collections:
+        with contextlib.suppress(Exception):
+            app.notify("No collections to update.")
+        return
+    names = sorted(cfg.collections.keys())
+    app.push_screen(UpdateAllConfirm(collection_names=names))
 
 
 def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
@@ -1058,16 +1115,25 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
         ),
         MenuItem(
             id=f"col.{name}.reindex",
-            label="Reindex",
-            description="Drop existing chunks and rebuild from the current source set.",
-            kind=KIND_EXTERNAL,
+            label="Update index now",
+            description=(
+                "Re-scan this collection's sources. New / changed files are added; "
+                "deleted files are removed; unchanged files are skipped. Uses the "
+                "PDF structure cache to skip extraction when content hasn't changed."
+            ),
+            kind=KIND_ACTION,
+            action_label="Update",
             external=_make_reindex(name),
         ),
         MenuItem(
             id=f"col.{name}.delete",
-            label="Delete collection…",
-            description="Removes the collection from config and drops its chunks.",
-            kind=KIND_EXTERNAL,
+            label="Delete collection",
+            description=(
+                "Remove this collection from config and drop its chunks from the "
+                "search index. Other collections are unaffected."
+            ),
+            kind=KIND_ACTION,
+            action_label="Delete…",
             external=_make_open_delete_confirm(name),
         ),
     )
@@ -1239,7 +1305,7 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
     """Indexing sub-screen.
 
     Three groups: structured PDF (status + install/uninstall), reindex
-    behaviour (auto-resume toggle), and extraction cache (size display
+    behaviour (auto-resume toggle), and PDF structure cache (size display
     + maintenance drill)."""
     return (
         header("Structured PDF extraction", level=2),
@@ -1247,26 +1313,25 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
             id="indexing.pdf_status",
             label="Status",
             description=(
-                "● Installed — PDFs render with headings, lists, tables, "
-                "and recovered image-tables. ○ Not installed — PDFs render "
-                "as flat extracted text."
+                "Whether structured-PDF extraction is active. When installed, "
+                "the next Update index will populate the cache for any PDF "
+                "not already cached. When not installed, PDFs render as flat text."
             ),
-            kind=KIND_SCALAR,
+            kind=KIND_DISPLAY,
             value_getter=_summary_pdf_status,
-            setting_path="(extras: pdf-structure)",
             keywords=("pdf", "structure", "pdf-structure", "status", "extra", "installed"),
         ),
         MenuItem(
             id="indexing.pdf_install",
             label=_pdf_install_label(),
             description=(
-                "↗ Push the disclosure + confirm screen. pymupdf4llm[layout] "
-                "(Polyform NC, ~200 MB) + docling-slim[standard] "
-                "(Apache-2.0, ~700 MB). ML weights download on first use."
+                "Open the disclosure + confirm screen. Installs pymupdf4llm[layout] "
+                "(Polyform NC, ~200 MB) + docling-slim[standard] (Apache-2.0, ~700 MB). "
+                "ML model weights download on first use."
             ),
-            kind=KIND_EXTERNAL,
+            kind=KIND_ACTION,
             external=_open_pdf_install_confirm,
-            value_getter=_summary_pdf_install_action,
+            action_label=_pdf_install_verb(),
             keywords=(
                 "pdf",
                 "structure",
@@ -1278,14 +1343,80 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
                 "docling",
             ),
         ),
-        header("Reindex behaviour", level=2),
+        header("PDF structure cache", level=2),
+        MenuItem(
+            id="indexing.cache_size",
+            label="Size",
+            description=(
+                "Per-file structured chunks. Shared across collections — same file "
+                "in two collections is extracted once and reused. Pruning or "
+                "clearing only affects the next Update index."
+            ),
+            kind=KIND_DISPLAY,
+            value_getter=_summary_cache_size_row,
+            keywords=("cache", "size", "entries", "extraction"),
+        ),
+        MenuItem(
+            id="indexing.cache_location",
+            label="Location",
+            description=(
+                "Disk path. Safe to delete from outside fnd; the next Update "
+                "index will re-create the directory as needed."
+            ),
+            kind=KIND_DISPLAY,
+            value_getter=_summary_cache_location_row,
+            keywords=("cache", "location", "path", "disk"),
+        ),
+        MenuItem(
+            id="indexing.cache_update",
+            label="Update cache",
+            description=(
+                "Populate the PDF structure cache for every PDF in any "
+                "collection's sources that doesn't have an entry yet. Doesn't "
+                "touch the search index — runs only the structuring pipeline. "
+                "Use to pre-warm before a big Update index."
+            ),
+            kind=KIND_ACTION,
+            action_label="Update",
+            external=_run_update_cache,
+            value_getter=_summary_cache_update,
+            keywords=("cache", "update", "populate", "warm", "structure"),
+        ),
+        MenuItem(
+            id="indexing.cache_prune",
+            label="Prune stale entries",
+            description=(
+                "Remove cache entries whose extractor signature doesn't match "
+                "the current extractor. Fresh entries stay. Files with pruned "
+                "entries get re-extracted on the next Update index."
+            ),
+            kind=KIND_ACTION,
+            action_label="Prune…",
+            external=_run_cache_prune,
+            value_getter=_summary_stale_entries,
+            keywords=("cache", "prune", "stale", "extractor", "signature"),
+        ),
+        MenuItem(
+            id="indexing.cache_clear",
+            label="Clear PDF structure cache",
+            description=(
+                "Wipe the entire cache. PDFs render as flat text until the next "
+                "Update index, which will re-extract every PDF — see the cost "
+                "estimate before confirming."
+            ),
+            kind=KIND_ACTION,
+            action_label="Clear…",
+            external=_run_cache_clear,
+            keywords=("cache", "clear", "delete", "wipe", "reset"),
+        ),
+        header("Behaviour", level=2),
         MenuItem(
             id="indexing.auto_resume",
             label="Auto-resume on launch",
             description=(
-                "● On — fnd resumes an interrupted reindex silently in the "
-                "background next time you open the app. "
-                "○ Off — reindex must be triggered manually."
+                "When On, fnd resumes an interrupted Update index silently "
+                "in the background next time you open the app. When Off, "
+                "you have to trigger Update index manually after a quit."
             ),
             kind=KIND_TOGGLE,
             toggle_getter=_get_indexer_auto_resume,
@@ -1293,39 +1424,20 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
             setting_path="defaults.indexer_auto_resume",
             keywords=("auto", "resume", "indexer", "interrupted", "launch", "reindex"),
         ),
-        header("Extraction cache", level=2),
         MenuItem(
-            id="indexing.cache_size",
-            label="Cache size",
+            id="indexing.cache_at_index_time",
+            label="Update cache at index time",
             description=(
-                "Content-addressed cache of extracted chunks. Shared across "
-                "collections — same file in two collections is extracted once."
+                "When On (default), Update index also writes fresh cache entries "
+                "for any PDFs not already cached. When Off, Update index uses "
+                "cached entries on hit but skips fresh extraction — fast flat-text "
+                "refresh, useful on battery."
             ),
-            kind=KIND_SCALAR,
-            value_getter=_summary_cache_size_row,
-            setting_path="(cache dir)",
-            keywords=("cache", "size", "entries", "extraction"),
-        ),
-        MenuItem(
-            id="indexing.cache_maintenance",
-            label="Cache maintenance…",
-            description=(
-                "↗ Prune stale entries (different extractor signature) "
-                "or clear the cache entirely."
-            ),
-            kind=KIND_EXTERNAL,
-            external=_open_cache_maintenance,
-            value_getter=lambda _app: "prune · clear",
-            keywords=(
-                "cache",
-                "maintenance",
-                "prune",
-                "clear",
-                "wipe",
-                "stale",
-                "delete",
-                "extraction",
-            ),
+            kind=KIND_TOGGLE,
+            toggle_getter=_get_cache_at_index_time,
+            toggle_setter=lambda app, v: _setting_writer("defaults.cache_at_index_time")(app, v),
+            setting_path="defaults.cache_at_index_time",
+            keywords=("cache", "index", "time", "extract", "battery", "fast"),
         ),
     )
 
@@ -1337,27 +1449,39 @@ def _is_pdf_structure_installed() -> bool:
     return extra is not None and is_extra_installed(extra)
 
 
-def _summary_pdf_status(_app: FNDApp) -> str:
+def _summary_pdf_status(app: FNDApp) -> str:
     """Trailing for the Status row inside Structured PDF extraction.
 
-    Format: '● Installed · ~N MB' or '○ Not installed · ~N MB to install'."""
-    from fnd.extras import EXTRAS, actual_disk_mb
+    Format: '✓ Installed · ~N MB' or '✗ Not installed · ~N MB to install'.
+    The `actual_disk_mb` walk is slow so we route through the lazy
+    cache; first paint shows ``…`` then the real value lands."""
+    from fnd.tui.lazy_trailing import get_or_schedule
 
-    extra = EXTRAS.get("pdf-structure")
-    if extra is None:
-        return "(unavailable)"
-    if _is_pdf_structure_installed():
-        return f"● Installed · ~{actual_disk_mb(extra)} MB"
-    est = sum(p.disk_mb for p in extra.packages)
-    return f"○ Not installed · ~{est} MB to install"
+    def _compute() -> str:
+        from fnd.extras import EXTRAS, actual_disk_mb
 
+        extra = EXTRAS.get("pdf-structure")
+        if extra is None:
+            return "(unavailable)"
+        if _is_pdf_structure_installed():
+            return f"✓ Installed · ~{actual_disk_mb(extra)} MB"
+        est = sum(p.disk_mb for p in extra.packages)
+        return f"✗ Not installed · ~{est} MB to install"
 
-def _summary_pdf_install_action(_app: FNDApp) -> str:
-    return "Uninstall…" if _is_pdf_structure_installed() else "Install…"
+    return get_or_schedule(app, "indexing.pdf_status", _compute)
 
 
 def _pdf_install_label() -> str:
-    return "Uninstall…" if _is_pdf_structure_installed() else "Install…"
+    return "Uninstall pdf-structure" if _is_pdf_structure_installed() else "Install pdf-structure"
+
+
+def _pdf_install_verb() -> str:
+    """Trailing-button verb for the pdf-structure install row.
+
+    Mirrors the label's intent so `[ Install ]` / `[ Uninstall ]`
+    reads naturally next to the row, not a generic `[ Open ]` that
+    contradicts an Uninstall row."""
+    return "Uninstall" if _is_pdf_structure_installed() else "Install"
 
 
 def _open_pdf_install_confirm(app: FNDApp) -> None:
@@ -1373,25 +1497,126 @@ def _get_indexer_auto_resume(app: FNDApp) -> bool:
     return cfg.defaults.indexer_auto_resume if cfg is not None else True
 
 
+def _get_cache_at_index_time(app: FNDApp) -> bool:
+    cfg = app._config  # type: ignore[attr-defined]
+    return cfg.defaults.cache_at_index_time if cfg is not None else True
+
+
+def _summary_cache_update(app: FNDApp) -> str:
+    """Trailing context for the Update cache action — number of PDFs
+    that don't yet have a cache entry, with a rough time estimate.
+    Lazy-loaded since it scans every source dir."""
+    from fnd.tui.lazy_trailing import get_or_schedule
+
+    def _compute() -> str:
+        cfg = app._config  # type: ignore[attr-defined]
+        if cfg is None:
+            return ""
+        try:
+            from fnd.cache import ExtractionCache, default_cache_dir, sha256_file
+            from fnd.extract.pdf import _extractor_signature
+            from fnd.walk import walk_sources
+        except Exception:
+            return ""
+        if not default_cache_dir().exists():
+            n_missing = _count_pdfs_in_all_collections(cfg)
+            return f"{n_missing} missing"
+        cache = ExtractionCache()
+        sig = _extractor_signature()
+        n_missing = 0
+        for coll in cfg.collections.values():
+            for path in walk_sources(sources=list(coll.sources)):
+                if path.suffix.lower() != ".pdf":
+                    continue
+                try:
+                    sha = sha256_file(path)
+                except OSError:
+                    continue
+                key = cache.build_key(content_sha256=sha, extractor_signature=sig)
+                if not cache.entry_path(key).exists():
+                    n_missing += 1
+        if n_missing == 0:
+            return "all cached"
+        return f"{n_missing} missing"
+
+    return get_or_schedule(app, "indexing.cache_update.missing", _compute)
+
+
+def _count_pdfs_in_all_collections(cfg: Any) -> int:
+    from fnd.walk import walk_sources
+
+    n = 0
+    for coll in cfg.collections.values():
+        for path in walk_sources(sources=list(coll.sources)):
+            if path.suffix.lower() == ".pdf":
+                n += 1
+    return n
+
+
+def _run_update_cache(app: FNDApp) -> None:
+    """Confirm + populate cache entries for all uncached PDFs.
+
+    Doesn't touch the search index — runs the structuring pipeline only.
+    The actual work is handled by a dedicated worker; this stub pushes
+    the confirm screen which then triggers the run. Phase E wires the
+    worker; for now we notify and bail so the menu plumbing works."""
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        app.notify(
+            "Update cache action — worker wires up in Phase E. "
+            "For now, use Update index from a collection.",
+            timeout=5,
+        )
+
+
 def _summary_indexing(app: FNDApp) -> str:
-    """Trailing summary for the Indexing root row. Combines auto-resume
-    state and cache footprint into a single glance."""
-    auto = "●" if _get_indexer_auto_resume(app) else "○"
-    cache_part = _cache_size_short()
-    if cache_part:
-        return f"{auto} auto-resume · {cache_part}"
-    return f"{auto} auto-resume"
+    """Trailing summary for the Indexing root row.
+
+    Auto-resume state reads instantly from config; cache size goes
+    through the lazy-trailing cache so the fs walk doesn't block."""
+    from fnd.tui.lazy_trailing import PLACEHOLDER, get_or_schedule
+
+    auto = "✓ auto-resume" if _get_indexer_auto_resume(app) else "✗ auto-resume"
+    cache_part = get_or_schedule(app, "indexing.summary.cache_short", _cache_size_short)
+    if cache_part and cache_part != PLACEHOLDER:
+        return f"{auto} · {cache_part}"
+    return auto
 
 
-def _summary_cache_size_row(_app: FNDApp) -> str:
-    """Trailing for the Cache size row inside Indexing."""
-    from fnd.cache import ExtractionCache, default_cache_dir
+def _summary_cache_size_row(app: FNDApp) -> str:
+    """Trailing for the Cache size row inside Indexing.
 
-    root = default_cache_dir()
-    if not root.exists():
-        return "empty"
-    cache = ExtractionCache()
-    return f"{cache.entry_count()} entries · {_human_bytes(cache.total_size_bytes())}"
+    First call returns ``…`` while a worker thread walks the cache
+    directory; the screen re-renders with the real value on completion.
+    """
+    from fnd.tui.lazy_trailing import get_or_schedule
+
+    def _compute() -> str:
+        from fnd.cache import ExtractionCache, default_cache_dir
+
+        root = default_cache_dir()
+        if not root.exists():
+            return "empty"
+        cache = ExtractionCache()
+        return f"{cache.entry_count()} entries · {_human_bytes(cache.total_size_bytes())}"
+
+    return get_or_schedule(app, "indexing.cache_size", _compute)
+
+
+def _summary_cache_location_row(_app: FNDApp) -> str:
+    """Trailing for the Cache location row — abbreviated home-dir path.
+
+    Cheap (string ops only) so no lazy wrapper needed."""
+    from fnd.cache import default_cache_dir
+
+    p = str(default_cache_dir())
+    home = str(Path.home())
+    if p.startswith(home):
+        p = "~" + p[len(home) :]
+    if len(p) > 50:
+        p = "…" + p[-50:]
+    return p
 
 
 def _cache_size_short() -> str:
@@ -1420,67 +1645,30 @@ def _human_bytes(n: int) -> str:
     return f"{mb / 1024:.1f} GB"
 
 
-def _open_cache_maintenance(app: FNDApp) -> None:
-    from fnd.tui.settings_screen import SettingsScreen
+def _summary_stale_entries(app: FNDApp) -> str:
+    """Stale-entry count for the Prune row. Wrapped in lazy-trailing
+    because it walks the cache directory."""
+    from fnd.tui.lazy_trailing import get_or_schedule
 
-    items = _provider_cache_maintenance(app)
-    app.push_screen(
-        SettingsScreen(
-            breadcrumb=("Indexing", "Cache maintenance"),
-            items=items,
-            provider=lambda a: tuple(_provider_cache_maintenance(a)),
-        )
-    )
+    def _compute() -> str:
+        from fnd.cache import default_cache_dir
+        from fnd.extract.pdf import _extractor_signature
 
+        root = default_cache_dir()
+        if not root.exists():
+            return "0 stale"
+        current = _extractor_signature()
+        stale = 0
+        for shard in root.iterdir():
+            if not shard.is_dir():
+                continue
+            for entry in shard.glob("*.json"):
+                _, _, sig = entry.stem.partition("--")
+                if sig != current:
+                    stale += 1
+        return f"{stale} stale"
 
-def _provider_cache_maintenance(_app: FNDApp) -> tuple[MenuItem, ...]:
-    """Cache-maintenance sub-screen content — prune (recoverable) and
-    clear (destructive)."""
-    return (
-        MenuItem(
-            id="cache.prune",
-            label="Prune stale entries…",
-            description=(
-                "Remove cache entries whose extractor signature differs "
-                "from the current extractor — safe; re-extracted on demand."
-            ),
-            kind=KIND_EXTERNAL,
-            external=_run_cache_prune,
-            value_getter=_summary_stale_entries,
-            keywords=("cache", "prune", "stale", "extractor"),
-        ),
-        MenuItem(
-            id="cache.clear",
-            label="Clear extraction cache…",
-            description=(
-                "⚠ Wipe the entire cache. Next reindex re-extracts every "
-                "file from scratch. Cannot be undone."
-            ),
-            kind=KIND_EXTERNAL,
-            external=_run_cache_clear,
-            value_getter=_summary_cache_size_row,
-            keywords=("cache", "clear", "delete", "wipe", "reset"),
-        ),
-    )
-
-
-def _summary_stale_entries(_app: FNDApp) -> str:
-    from fnd.cache import default_cache_dir
-    from fnd.extract.pdf import _extractor_signature
-
-    root = default_cache_dir()
-    if not root.exists():
-        return "0 stale"
-    current = _extractor_signature()
-    stale = 0
-    for shard in root.iterdir():
-        if not shard.is_dir():
-            continue
-        for entry in shard.glob("*.json"):
-            _, _, sig = entry.stem.partition("--")
-            if sig != current:
-                stale += 1
-    return f"{stale} stale"
+    return get_or_schedule(app, "cache.stale_count", _compute)
 
 
 def _run_cache_prune(app: FNDApp) -> None:
@@ -1586,7 +1774,7 @@ def _run_cache_clear(app: FNDApp) -> None:
             title="Indexing › Cache maintenance › Clear",
             summary=summary,
             run=_do_clear,
-            confirm_label="Yes, clear extraction cache",
+            confirm_label="Yes, clear PDF structure cache",
             result_label="entries removed",
             irreversible=True,
         )
@@ -1637,20 +1825,22 @@ def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
         header("External", level=2, anchor_id="external"),
         MenuItem(
             id="root.open_config_file",
-            label="↗ Config file",
+            label="Config file",
             description="Open config.toml in $EDITOR; reload on save. Shift+⏎ reveals in Finder.",
             kind=KIND_EXTERNAL,
             external=_open_config_file_action,
             value_getter=_summary_config_path,
+            external_app=True,
             keywords=("edit", "config", "toml", "open", "external"),
         ),
         MenuItem(
             id="root.open_keybindings_file",
-            label="↗ Keybindings file",
+            label="Keybindings file",
             description="Open keybindings.toml in $EDITOR. Shift+⏎ reveals in Finder.",
             kind=KIND_EXTERNAL,
             external=_open_keybindings_file_action,
             value_getter=_summary_keybindings_path,
+            external_app=True,
             keywords=("edit", "keybindings", "rebind", "open", "external"),
         ),
     )

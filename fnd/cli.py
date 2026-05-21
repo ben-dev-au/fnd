@@ -39,7 +39,7 @@ app = typer.Typer(name="fnd", help=_ROOT_HELP)
 config_app = typer.Typer(name="config", help="Manage fnd's TOML config file.")
 collection_app = typer.Typer(name="collection", help="Manage indexed collections.")
 extras_app = typer.Typer(name="extras", help="Manage opt-in feature extras.")
-cache_app = typer.Typer(name="cache", help="Manage the on-disk extraction cache.")
+cache_app = typer.Typer(name="cache", help="Manage the on-disk PDF structure cache.")
 app.add_typer(config_app, name="config")
 app.add_typer(collection_app, name="collection")
 app.add_typer(extras_app, name="extras")
@@ -553,7 +553,7 @@ def _human_bytes(n: int) -> str:
 
 @cache_app.command("status")
 def cache_status() -> None:
-    """Show on-disk extraction cache location, entry count, and size."""
+    """Show on-disk PDF structure cache location, entry count, and size."""
     from fnd.cache import ExtractionCache, default_cache_dir
 
     cache = ExtractionCache()
@@ -570,7 +570,7 @@ def cache_status() -> None:
 def cache_clear(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
 ) -> None:
-    """Remove the entire extraction cache. Next reindex will re-extract."""
+    """Remove the entire PDF structure cache. Next reindex will re-extract."""
     import shutil
 
     from fnd.cache import default_cache_dir

@@ -45,15 +45,13 @@ def cfg(cfg_path: Path) -> Config:
         ("pdf-structure", "indexing.pdf_status"),
         ("pdf-structure", "indexing.pdf_install"),
         ("cache", "indexing.cache_size"),
-        ("cache", "indexing.cache_maintenance"),
-        # Maintenance children (cache.prune, cache.clear) aren't in the
-        # walk because they live behind a sub-drill — but their
-        # keywords flow up to the maintenance row so users searching
-        # for "prune" / "clear" still land in the right place.
-        ("prune", "indexing.cache_maintenance"),
-        ("clear", "indexing.cache_maintenance"),
-        ("wipe", "indexing.cache_maintenance"),
-        ("stale", "indexing.cache_maintenance"),
+        # Phase D flattened the cache section — prune / clear / update
+        # are now direct rows on the Indexing screen and discoverable
+        # by search.
+        ("prune", "indexing.cache_prune"),
+        ("clear", "indexing.cache_clear"),
+        ("wipe", "indexing.cache_clear"),
+        ("stale", "indexing.cache_prune"),
         ("docling", "indexing.pdf_install"),
         ("pymupdf4llm", "indexing.pdf_install"),
     ],

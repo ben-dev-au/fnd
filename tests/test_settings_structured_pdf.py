@@ -83,11 +83,25 @@ async def test_status_row_not_installed(built_index: Path, cfg: Config) -> None:
         await pilot.pause()
         open_settings_section(app, SECTION_INDEXING)
         await pilot.pause()
+        # Trailing value goes through lazy_trailing; wait a tick for the
+        # worker thread to populate it.
+        from fnd.tui.lazy_trailing import invalidate
+
+        invalidate("indexing.pdf_status")
         lst = app.screen.query_one(SettingsList)
         row = next(it for it in lst._items if it.id == "indexing.pdf_status")
-        v = row.trailing_value(app)
+        # First call schedules the worker and returns "…"; second call
+        # after a pause returns the real value.
+        row.trailing_value(app)
+        for _ in range(20):
+            await pilot.pause()
+            v = row.trailing_value(app)
+            if "Not installed" in v:
+                break
+        else:
+            v = row.trailing_value(app)
         assert "Not installed" in v
-        assert "○" in v
+        assert "✗" in v
 
 
 @pytest.mark.usefixtures("_fake_installed")
@@ -149,8 +163,8 @@ async def test_uninstall_confirm_chrome_when_installed(built_index: Path, cfg: C
         assert isinstance(screen, StructuredPdfConfirmScreen)
         box = screen.query_one("#settings_box")
         assert "Uninstall" in (box.border_title or "")
-        # Uninstall is recoverable-but-noisy: $warning border.
-        assert screen.has_class("-destructive")
+        # Phase E: uninstall is recoverable severity → -recoverable class.
+        assert screen.has_class("-recoverable")
 
 
 # 3 — Body content covers the cost narrative
@@ -159,8 +173,9 @@ async def test_uninstall_confirm_chrome_when_installed(built_index: Path, cfg: C
 @pytest.mark.usefixtures("_fake_not_installed")
 @pytest.mark.asyncio
 async def test_install_disclosure_covers_costs(built_index: Path, cfg: Config) -> None:
-    """Install body must mention disk, ML weights, indexing-time, and
-    the flat-text fallback so the user knows what they're opting into."""
+    """Install body must mention disk + ML weights + per-PDF cost so
+    the user knows what they're opting into. Phase E body uses the
+    Outcome / Cost / Safety template — checks reflect that."""
     from fnd.tui.menu import _open_pdf_install_confirm
 
     app = FNDApp(index_dir=built_index, config=cfg)
@@ -169,10 +184,13 @@ async def test_install_disclosure_covers_costs(built_index: Path, cfg: Config) -
         _open_pdf_install_confirm(app)
         await pilot.pause()
         body = str(app.screen.query_one("#confirm_summary", Static).content)
+        assert "Outcome" in body
+        assert "Cost" in body
+        assert "Safety" in body
         assert "MB" in body
         assert "ML" in body or "weights" in body
-        assert "30 s" in body or "Indexing" in body
-        assert "flat text" in body
+        assert "per PDF" in body or "s per PDF" in body
+        assert "structured" in body
 
 
 # 4 — Keyboard equivalence

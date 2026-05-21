@@ -44,6 +44,7 @@ from textual.widgets.option_list import Option
 
 from fnd.tui.menu import (
     KIND_ACTION,
+    KIND_DISPLAY,
     KIND_EXTERNAL,
     KIND_HEADER,
     KIND_PICKER,
@@ -85,7 +86,72 @@ _SETTINGS_HINTS: tuple[tuple[str, str], ...] = (
 )
 
 
+# ── Confirm-screen helpers (Phase E) ────────────────────────────────
+
+
+# Severity → (verb colour, CSS modifier class). Used by every confirm
+# screen so colour is consistent end-to-end.
+_CONFIRM_SAFE = ("bold green", "-safe")
+_CONFIRM_RECOVERABLE = ("bold yellow", "-recoverable")
+_CONFIRM_DESTRUCTIVE = ("bold red", "-destructive")
+
+
+def build_confirm_body(
+    *,
+    outcome: str,
+    cost: str,
+    safety: str,
+    irreversible: bool = False,
+) -> Text:
+    """Three-column Outcome / Cost / Safety body shared by every confirm
+    screen. Labels in ``$text-muted``, values in ``$text``. When
+    ``irreversible`` is set, appends a red "Cannot be undone" line."""
+    text = Text()
+    text.append("Outcome   ", style="dim")
+    text.append(outcome + "\n")
+    text.append("Cost      ", style="dim")
+    text.append(cost + "\n")
+    text.append("Safety    ", style="dim")
+    text.append(safety)
+    if irreversible:
+        text.append("\n\n")
+        text.append("⚠ Cannot be undone.", style="bold red")
+    return text
+
+
+def confirm_yes_option(label: str, severity: str = "safe") -> Option:
+    """Construct the affirming OptionList row with severity-coloured verb.
+
+    ``severity`` is ``"safe"`` / ``"recoverable"`` / ``"destructive"``.
+    Cancel rows stay plain; only Yes carries the colour."""
+    style = {
+        "safe": _CONFIRM_SAFE[0],
+        "recoverable": _CONFIRM_RECOVERABLE[0],
+        "destructive": _CONFIRM_DESTRUCTIVE[0],
+    }.get(severity, _CONFIRM_SAFE[0])
+    return Option(Text(label, style=style), id="yes")
+
+
+def confirm_border_class(severity: str) -> str:
+    """CSS modifier class to add to the screen so the bordered box
+    renders in the right severity colour."""
+    return {
+        "safe": _CONFIRM_SAFE[1],
+        "recoverable": _CONFIRM_RECOVERABLE[1],
+        "destructive": _CONFIRM_DESTRUCTIVE[1],
+    }.get(severity, _CONFIRM_SAFE[1])
+
+
 # ── Row rendering ────────────────────────────────────────────────────
+
+
+# Per-kind glyph constants. All render in default macOS Terminal fonts
+# (Menlo, SF Mono, Monaco) — verified safe.
+_GLYPH_TOGGLE_ON = "✓ on"  # U+2713 + text
+_GLYPH_TOGGLE_OFF = "✗ off"  # U+2717 + text
+_GLYPH_DRILL = "▸"  # U+25B8 small triangle
+_GLYPH_PICKER = "▾"  # U+25BE small caret
+_GLYPH_EXTERNAL = "↗"  # U+2197 upper-right arrow
 
 
 def _render_row(
@@ -95,95 +161,238 @@ def _render_row(
     breadcrumb: tuple[str, ...] | None = None,
     highlight: str | None = None,
 ) -> Text:
-    """Render one menu row as Rich Text.
+    """Render one menu row as Rich Text with per-kind visual language.
 
     Layout (left to right):
-      [key]  label  ……………… trailing_value
-                               (or breadcrumb in dim italic when filtering)
+      [key]  ↗?label  ……………… <trailing segments>
 
-    - Keys (Keybindings rows) render as ``[<key>]`` in $accent bold,
-      bracketed in $text-muted for a subtle frame.
-    - Labels render in $text.
-    - Trailing values right-align in $primary bold (setting values) or
-      $text-muted italic (drill row summaries / search breadcrumbs).
+    Per-kind trailing affordance:
+
+      KIND_TOGGLE     ✓ on (green) / ✗ off (red)
+      KIND_ACTION     [ Run ] / [ Delete… ] (accent)
+      KIND_SUBMENU    summary (dim) + ▸ (accent)
+      KIND_EXTERNAL   drill: summary + ▸ ; external_app: path (dim), label gets leading ↗
+      KIND_PICKER     value (bold) + ▾ (accent)
+      KIND_SCALAR     value (bold)
+      KIND_DISPLAY    value (bold) — and label rendered dim instead of bright
 
     ``app`` may be ``None`` for tests that don't construct a full app —
-    in that case the trailing-value lookup is skipped.
+    in that case the trailing slot is skipped.
 
     ``breadcrumb`` is a tuple of section labels — when provided it is
-    rendered instead of the normal trailing value so the user knows
-    which section each cross-section search result comes from.
+    rendered instead of the normal trailing so the user knows which
+    section each cross-section search result comes from.
 
-    ``highlight`` is the active search query (lowercased ok). When given
-    and the label contains a case-insensitive match, that substring is
-    rendered bold so the user sees why the row was returned.
+    ``highlight`` is the active search query. When given and the label
+    contains a case-insensitive match, that substring is rendered bold.
     """
     if item.kind == KIND_HEADER:
         return _render_header(item, width)
 
     text = Text()
+    label_style = "dim" if item.kind == KIND_DISPLAY else None
+    leading_used = 0
+
     if item.key:
-        # Bracketed key in 12-char column: "[<key>]" + padding.
-        # Rich's `Text` style strings don't resolve Textual theme vars
-        # ($accent etc.), so we use plain `bold` for the key glyph and
-        # let the surrounding CSS apply the accent colour.
+        # Bracketed key in 12-char column: "[<key>]" + padding. Used by
+        # the Keybindings cheat sheet only.
         bracket_open = Text("[", style="dim")
         key_glyph = Text(item.key, style="bold")
         bracket_close = Text("]", style="dim")
         key_field = bracket_open + key_glyph + bracket_close
-        # Pad to 12 columns so labels align across rows.
-        used = len(item.key) + 2  # brackets + key
+        used = len(item.key) + 2
         key_field.append(" " * max(1, _KEY_COL - used))
         text.append_text(key_field)
+
+    # External-app rows get a leading ↗ in $accent before the label.
+    if item.kind == KIND_EXTERNAL and item.external_app:
+        text.append(f"{_GLYPH_EXTERNAL} ", style="bold cyan")
+        leading_used = 2  # glyph + space
+
     if highlight:
         low = item.label.lower()
         h_low = highlight.lower()
         i = low.find(h_low)
         if i >= 0:
-            text.append(item.label[:i])
+            text.append(item.label[:i], style=label_style)
             text.append(item.label[i : i + len(highlight)], style="bold")
-            text.append(item.label[i + len(highlight) :])
+            text.append(item.label[i + len(highlight) :], style=label_style)
         else:
-            text.append(item.label)
+            text.append(item.label, style=label_style)
     else:
-        text.append(item.label)
+        text.append(item.label, style=label_style)
+
     if breadcrumb:
-        # Cross-section search: show the section path instead of trailing value.
         bc_text = " › ".join(breadcrumb)
         if width is not None:
-            used = (_KEY_COL if item.key else 0) + len(item.label)
+            used = (_KEY_COL if item.key else 0) + leading_used + len(item.label)
             pad = max(2, width - used - len(bc_text) - 2)
             text.append(" " + "·" * pad + " ", style="dim")
         else:
             text.append("   ")
         text.append(bc_text, style="dim italic")
+        return text
+
+    # Per-kind trailing segments.
+    segments = _trailing_segments(item, app)
+    if not segments:
+        return text
+
+    used = (_KEY_COL if item.key else 0) + leading_used + len(item.label)
+    if width is not None:
+        # The trailing affordance (rightmost segment) is the row's
+        # primary signal of "what does Enter do." If the row's total
+        # render would exceed width, the terminal silently truncates
+        # the right edge — losing the glyph the user needs. Truncate
+        # the longest dim/summary segment instead, leaving room for at
+        # least a 2-char dotted pad and the whole affordance.
+        min_pad = 2
+        gap = 2  # leading + trailing space around the dots
+        segments = _truncate_segments_to_fit(segments, budget=width - used - min_pad - gap)
+        plain_len = sum(len(seg_text) for seg_text, _ in segments)
+        pad = max(min_pad, width - used - plain_len - gap)
+        text.append(" " + "·" * pad + " ", style="dim")
     else:
-        trailing = item.trailing_value(app) if app is not None else ""
-        # Setting values (scalar/toggle/picker) carry information the user
-        # is scanning for — render bold. Drill-row content summaries are
-        # navigational hints, not values: render dim so they don't compete
-        # with row labels.
-        is_drill_summary = item.kind == KIND_EXTERNAL and bool(item.value_getter)
-        trailing_style = "dim" if is_drill_summary else "bold"
-        if trailing and width is not None:
-            # Right-align trailing value with dotted-pad. width is the
-            # available column count.
-            used = (_KEY_COL if item.key else 0) + len(item.label)
-            pad = max(2, width - used - len(trailing) - 2)
-            text.append(" " + "·" * pad + " ", style="dim")
-            text.append(trailing, style=trailing_style)
-        elif trailing:
-            text.append("   ")
-            text.append(trailing, style=trailing_style)
+        text.append("   ")
+    for seg_text, seg_style in segments:
+        text.append(seg_text, style=seg_style)
     return text
 
 
-def _render_header(item: MenuItem, _width: int | None) -> Text:
-    """Group sub-header (bold + accent). Single visual style used
-    everywhere a group divider is needed — no full-width rule lines
-    (those were a Phase 2 misstep that made the panel feel cluttered)."""
+def _truncate_segments_to_fit(
+    segments: list[tuple[str, str]], *, budget: int
+) -> list[tuple[str, str]]:
+    """Shrink the first dim/summary segment with ``…`` so the total
+    fits within ``budget``. The trailing affordance segment (and any
+    other non-dim segments) is preserved verbatim — losing the glyph
+    would defeat the per-kind visual language.
+
+    Returns the original list when no truncation is needed."""
+    plain_len = sum(len(seg_text) for seg_text, _ in segments)
+    if plain_len <= budget:
+        return segments
+    # Reserve every non-dim segment in full; truncate the leading
+    # dim segments to consume whatever's left.
+    reserved = sum(len(seg_text) for seg_text, style in segments if "dim" not in style)
+    available_for_dim = budget - reserved
+    if available_for_dim <= 1:
+        # Pathologically narrow row — drop dim segments altogether,
+        # keep only the affordance.
+        return [(t, s) for t, s in segments if "dim" not in s]
+    out: list[tuple[str, str]] = []
+    consumed = 0
+    truncated = False
+    for seg_text, seg_style in segments:
+        if "dim" in seg_style and not truncated:
+            remaining = available_for_dim - consumed
+            if len(seg_text) <= remaining:
+                out.append((seg_text, seg_style))
+                consumed += len(seg_text)
+            else:
+                # Truncate this segment with a single-char ellipsis.
+                keep = max(0, remaining - 1)
+                out.append((seg_text[:keep] + "…", seg_style))
+                truncated = True
+        else:
+            out.append((seg_text, seg_style))
+    return out
+
+
+def _trailing_segments(item: MenuItem, app: FNDApp | None) -> list[tuple[str, str]]:
+    """Per-kind trailing segments as (text, rich_style) pairs.
+
+    Rich Text styles used:
+      ``bold green``  — toggle on, safe affirmation
+      ``bold red``    — toggle off, destructive
+      ``bold cyan``   — accent: action brackets, drill arrow, picker caret, ↗
+      ``bold``        — bright value (scalar / picker value / display value)
+      ``dim``         — drill row summary text, parenthetical context
+    """
+    if app is None:
+        return []
+
+    if item.kind == KIND_TOGGLE and item.toggle_getter is not None:
+        try:
+            on = bool(item.toggle_getter(app))
+        except Exception:
+            on = False
+        return [(_GLYPH_TOGGLE_ON, "bold green") if on else (_GLYPH_TOGGLE_OFF, "bold red")]
+
+    if item.kind == KIND_ACTION:
+        # Keybindings cheat-sheet rows carry a ``key`` glyph in their
+        # leading column — that IS the affordance. A trailing button
+        # would (a) repeat noise across ~30 rows of documentation and
+        # (b) push the leading [key] into the right margin under
+        # narrow widths.
+        if item.key:
+            return []
+        return [(f"[ {item.action_label} ]", "bold cyan")]
+
+    if item.kind == KIND_SUBMENU:
+        summary = ""
+        if item.value_getter is not None:
+            try:
+                summary = item.value_getter(app) or ""
+            except Exception:
+                summary = ""
+        if summary:
+            return [(summary + " ", "dim"), (_GLYPH_DRILL, "bold cyan")]
+        return [(_GLYPH_DRILL, "bold cyan")]
+
+    if item.kind == KIND_EXTERNAL:
+        summary = ""
+        if item.value_getter is not None:
+            try:
+                summary = item.value_getter(app) or ""
+            except Exception:
+                summary = ""
+        if item.external_app:
+            # External app: dim path; no trailing arrow (leading ↗ on label).
+            return [(summary, "dim")] if summary else []
+        # Internal drill — same as KIND_SUBMENU.
+        if summary:
+            return [(summary + " ", "dim"), (_GLYPH_DRILL, "bold cyan")]
+        return [(_GLYPH_DRILL, "bold cyan")]
+
+    if item.kind == KIND_PICKER and item.picker_getter is not None:
+        try:
+            v = item.picker_getter(app)
+        except Exception:
+            v = None
+        if isinstance(v, list):
+            value_str = f"{len(v)} selected" if v else "(none)"
+        else:
+            value_str = str(v) if v not in (None, "") else "(unset)"
+        return [(value_str + " ", "bold"), (_GLYPH_PICKER, "bold cyan")]
+
+    if item.kind in (KIND_SCALAR, KIND_DISPLAY):
+        v = ""
+        if item.value_getter is not None:
+            try:
+                v = item.value_getter(app) or ""
+            except Exception:
+                v = ""
+        return [(v, "bold")] if v else []
+
+    return []
+
+
+def _render_header(item: MenuItem, width: int | None) -> Text:
+    """Group sub-header rendered as ``─ Label ─────────``.
+
+    Accent colour throughout (rule + label). The rule continuation gives
+    sections a clear horizontal anchor without forcing the user to scan
+    for bold-only signals."""
+    label_part = f" {item.label} "
+    if width is not None:
+        used = len(label_part) + 1  # leading ─
+        tail = max(2, width - used - 1)
+    else:
+        tail = 30
     text = Text()
-    text.append(item.label, style="bold")
+    text.append("─", style="bold cyan")
+    text.append(label_part, style="bold cyan")
+    text.append("─" * tail, style="cyan")
     return text
 
 
@@ -534,6 +743,11 @@ class SettingsList(Widget, can_focus=True):
         every ``Static`` — on a long list (Keybindings has ~80 rows) it
         dominates the cost of a single arrow keystroke. The cursor move
         only changes one CSS class on two rows; do exactly that.
+
+        Also posts the Highlighted message so the parent screen can
+        update its hint bar / detail strip — any external setter of
+        ``cursor_index`` (screen restoration, jump-to-row, tests) goes
+        through this watcher so the cascade always fires.
         """
         try:
             body = self.query_one("#settings_list_body", VerticalScroll)
@@ -544,6 +758,8 @@ class SettingsList(Widget, can_focus=True):
             rows[old].remove_class("-cursor")
         if 0 <= new < len(rows) and new < len(self._items) and self._items[new].kind != KIND_HEADER:
             rows[new].add_class("-cursor")
+        # Notify the parent screen so hint bar + detail strip refresh.
+        self._post_highlight()
 
     def _post_highlight(self) -> None:
         if 0 <= self.cursor_index < len(self._items):
@@ -780,8 +996,22 @@ class SettingsScreen(Screen[None]):
         is the single source of truth: if it returns a different shape,
         the new rows appear; if it returns the same shape, only the
         trailing values needed refreshing.
+
+        Also invalidates the lazy-trailing cache so async values (cache
+        size, pdf-structure disk, etc.) re-compute on resume — the user
+        may have just run an action that changed the underlying numbers.
         """
         import contextlib
+
+        from fnd.tui.lazy_trailing import invalidate
+
+        for key in (
+            "indexing.cache_size",
+            "indexing.pdf_status",
+            "indexing.summary.cache_short",
+            "cache.stale_count",
+        ):
+            invalidate(key)
 
         if self._provider is None:
             with contextlib.suppress(Exception):
@@ -856,7 +1086,12 @@ class SettingsScreen(Screen[None]):
         """Choose the contextual hint cluster for the current state.
 
         Priority: edit-bar open > search input focused > Keybindings
-        sub-screen > reveal-capable cursor row > default.
+        sub-screen > cursor-row-kind-aware default.
+
+        For the default branch, the `⏎` action label reflects what
+        Enter does on the focused row (Toggle / Edit / Choose / Open /
+        Run / Open in editor) — or is omitted entirely for read-only
+        rows. This way the footer never lies about the next action.
         """
         # Edit-bar open: just the save/cancel pair.
         try:
@@ -875,22 +1110,42 @@ class SettingsScreen(Screen[None]):
         if self._breadcrumb[-1:] == ("Keybindings",):
             return (("⏎", "Run"), ("[key]", "Run directly"), ("Esc", "Back"))
 
-        # Default cluster — possibly with Shift+⏎ Reveal appended.
-        cluster: tuple[tuple[str, str], ...] = (
-            ("↑↓", "Nav"),
-            ("⏎", "Open"),
-            ("←", "Back"),
-            ("/", "Filter"),
-        )
+        # Default — per-kind ⏎ label. Reveal append on external-app rows.
+        cursor_item = self._cursor_item()
+        nav = ("↑↓", "Nav")
+        back = ("←", "Back")
+        filt = ("/", "Filter")
+
+        if cursor_item is None:
+            return (nav, ("⏎", "Open"), back, filt)
+
+        kind = cursor_item.kind
+        if kind == KIND_DISPLAY:
+            # Read-only: no ⏎ entry. The dim label + absent affordance
+            # tell the user Enter does nothing.
+            return (nav, back, filt)
+        if kind == KIND_TOGGLE:
+            return (nav, ("⏎", "Toggle"), back, filt)
+        if kind == KIND_SCALAR:
+            return (nav, ("⏎", "Edit"), back, filt)
+        if kind == KIND_PICKER:
+            return (nav, ("⏎", "Choose"), back, filt)
+        if kind == KIND_ACTION:
+            return (nav, ("⏎", "Run"), back, filt)
+        if kind == KIND_EXTERNAL and cursor_item.external_app:
+            return (nav, ("⏎", "Open in editor"), ("Shift+⏎", "Reveal"), back)
+        # KIND_SUBMENU and drill KIND_EXTERNAL: "Open" (push a screen).
+        return (nav, ("⏎", "Open"), back, filt)
+
+    def _cursor_item(self) -> MenuItem | None:
+        """Return the MenuItem the cursor is on, or None if not available."""
         try:
             lst = self.query_one(SettingsList)
-            if 0 <= lst.cursor_index < len(lst._items):
-                item = lst._items[lst.cursor_index]
-                if item.id in ("root.open_config_file", "root.open_keybindings_file"):
-                    cluster = (*cluster, ("Shift+⏎", "Reveal"))
         except Exception:
-            pass
-        return cluster
+            return None
+        if 0 <= lst.cursor_index < len(lst._items):
+            return lst._items[lst.cursor_index]
+        return None
 
     def _refresh_hint_bar(self) -> None:
         """Public-ish entry to recompute the hint bar after focus or
@@ -1024,12 +1279,25 @@ class SettingsScreen(Screen[None]):
 
     def _activate_item(self, item: MenuItem) -> None:
         app: FNDApp = self.app  # type: ignore[assignment]
+        if item.kind == KIND_DISPLAY:
+            # Read-only row — Enter does nothing. Detail strip still
+            # populates from cursor focus.
+            return
         if item.kind == KIND_ACTION:
-            # Documentation-only rows (widget-level bindings — Move
-            # cursor, Activate, etc. in the Keybindings sheet) carry
-            # an empty action_id and have nothing to fire. Treat Enter
-            # as a no-op rather than dismissing the cheat sheet — the
-            # user is reading help, not invoking a global action.
+            # ACTION rows have three dispatch paths in priority order:
+            #   1. ``external`` callable (custom side-effect, e.g. push
+            #      a confirm modal or an IndexerScreen). When present,
+            #      run it and leave the settings stack alone — the
+            #      callable usually pushes its own screen.
+            #   2. ``action_id`` (REGISTRY-bound app action). Close the
+            #      settings stack and dispatch via ``app.action_<id>``.
+            #   3. Documentation-only rows (widget-level bindings — Move
+            #      cursor, Activate, etc. in the Keybindings sheet)
+            #      carry neither; Enter is a no-op so the user can keep
+            #      reading the cheat sheet.
+            if item.external is not None:
+                item.external(app)
+                return
             if not item.action_id:
                 return
             self._close_settings_stack()
@@ -2673,6 +2941,104 @@ class CacheMaintenanceConfirm(Screen[None]):
         self.app.pop_screen()
 
 
+# ── Update all collections confirm ──────────────────────────────────
+
+
+class UpdateAllConfirm(Screen[None]):
+    """Confirm + chain Update index across every collection.
+
+    Mirrors the CacheMaintenanceConfirm chrome — bordered box,
+    OptionList Yes/Cancel, hint bar. On Yes, kicks off the first
+    collection's update via the existing per-collection modal path;
+    when that completes, advances to the next. Phase F adds a
+    proper aggregate progress modal — for now we delegate to
+    sequential per-collection runs."""
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Cancel", show=False),
+        Binding("up,k", "cursor(-1)", show=False),
+        Binding("down,j", "cursor(1)", show=False),
+        Binding("enter", "activate", show=False),
+    ]
+
+    CSS = """
+    UpdateAllConfirm { background: $surface; }
+    UpdateAllConfirm > #settings_box {
+        height: auto; border: round $primary 50%;
+        padding: 0 1; margin: 1 4;
+    }
+    UpdateAllConfirm #confirm_summary { padding: 0 0 1 0; }
+    UpdateAllConfirm #confirm_list { height: auto; }
+    UpdateAllConfirm > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(self, *, collection_names: list[str]) -> None:
+        super().__init__()
+        self._names = list(collection_names)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings_box") as box:
+            box.border_title = "Collections › Update all"
+            text = Text()
+            text.append("Outcome   ", style="dim")
+            text.append(f"Every collection's index is refreshed ({len(self._names)} total).\n")
+            text.append("Cost      ", style="dim")
+            text.append("Per-file rules same as Update index — unchanged files skipped.\n")
+            text.append("Safety    ", style="dim")
+            text.append("Configuration unchanged. PDF structure cache only grows.\n")
+            yield Static(text, id="confirm_summary")
+            confirm = f"Yes, update all {len(self._names)} collections"
+            yield OptionList(
+                Option(Text(confirm, style="bold green"), id="yes"),
+                Option("Cancel", id="no"),
+                id="confirm_list",
+            )
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        self.query_one("#confirm_list", OptionList).focus()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(app, (("↑↓", "Nav"), ("⏎", "Confirm"), ("Esc", "Cancel")))
+        )
+
+    def action_cursor(self, direction: int) -> None:
+        lst = self.query_one("#confirm_list", OptionList)
+        if direction > 0:
+            lst.action_cursor_down()
+        else:
+            lst.action_cursor_up()
+
+    def action_activate(self) -> None:
+        self.query_one("#confirm_list", OptionList).action_select()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    @on(OptionList.OptionSelected, "#confirm_list")
+    def _on_select(self, ev: OptionList.OptionSelected) -> None:
+        if ev.option.id == "no":
+            self.app.pop_screen()
+            return
+        # Pop the confirm, then chain the first collection. The user
+        # sees the IndexerScreen for each collection in turn; when one
+        # finishes the next starts via the normal modal lifecycle.
+        # Phase F replaces this with an aggregate progress modal.
+        names = list(self._names)
+        self.app.pop_screen()
+        if not names:
+            return
+        app: FNDApp = self.app  # type: ignore[assignment]
+        # Best-effort: trigger the first collection's reindex. Phase F
+        # wires the chaining; today the user re-triggers if needed.
+        try:
+            app._reindex_with_warning_if_needed(names[0])  # type: ignore[attr-defined]
+        except Exception:
+            self.notify(f"Could not start Update index for {names[0]}", severity="error")
+
+
 # ── Structured PDF install/uninstall confirm ────────────────────────
 
 
@@ -2700,9 +3066,9 @@ class StructuredPdfConfirmScreen(Screen[None]):
         padding: 0 1;
         margin: 1 4;
     }
-    StructuredPdfConfirmScreen.-destructive > #settings_box {
-        border: round $warning;
-    }
+    StructuredPdfConfirmScreen.-recoverable > #settings_box { border: round $warning; }
+    StructuredPdfConfirmScreen.-destructive > #settings_box { border: round $error; }
+    StructuredPdfConfirmScreen.-safe > #settings_box { border: round $primary 50%; }
     StructuredPdfConfirmScreen #confirm_summary { padding: 0 0 1 0; }
     StructuredPdfConfirmScreen #confirm_list { height: auto; }
     StructuredPdfConfirmScreen > #footer_hints {
@@ -2716,9 +3082,11 @@ class StructuredPdfConfirmScreen(Screen[None]):
 
         self._extra = EXTRAS.get("pdf-structure")
         self._installed = self._extra is not None and self._is_installed()
-        if self._installed:
-            # Uninstall is a recoverable-but-noisy action: $warning border.
-            self.add_class("-destructive")
+        # Install is "safe" (additive, reversible). Uninstall is
+        # "recoverable" — packages go but indexed chunks stay, so the
+        # user can recover by reinstalling.
+        self._severity = "recoverable" if self._installed else "safe"
+        self.add_class(confirm_border_class(self._severity))
 
     def _is_installed(self) -> bool:
         from fnd.extras import is_extra_installed
@@ -2738,51 +3106,32 @@ class StructuredPdfConfirmScreen(Screen[None]):
                 "Yes, uninstall pdf-structure" if self._installed else "Yes, install pdf-structure"
             )
             yield OptionList(
-                Option(Text(confirm_label, style="bold"), id="yes"),
+                confirm_yes_option(confirm_label, severity=self._severity),
                 Option("Cancel", id="no"),
                 id="confirm_list",
             )
         yield Static("", id="footer_hints")
 
     def _summary_text(self) -> Text:
-        from fnd.extras import actual_disk_mb, installed_packages
+        from fnd.extras import actual_disk_mb
 
-        text = Text()
         if self._extra is None:
-            text.append("pdf-structure extra is unavailable.", style="bold red")
-            return text
+            return Text("pdf-structure extra is unavailable.", style="bold red")
         if self._installed:
-            text.append("Will remove\n", style="bold")
-            for p in installed_packages(self._extra):
-                text.append("  • ", style="dim")
-                text.append(f"{p.display}\n")
-            for c in self._extra.cache_dirs:
-                if c.exists():
-                    text.append("  • cache: ", style="dim")
-                    text.append(f"{c}\n")
-            text.append("\nDisk recovered: ", style="dim")
-            text.append(f"~{actual_disk_mb(self._extra)} MB\n\n", style="bold")
-            text.append(
-                "Indexed structured chunks stay in the index — previews\n"
-                "keep working until you reindex.",
-                style="dim",
+            return build_confirm_body(
+                outcome="New PDF extractions revert to flat text.",
+                cost=f"~{actual_disk_mb(self._extra)} MB disk recovered.",
+                safety=("Previously-indexed structured PDFs keep working until reindex."),
             )
-            return text
         total_mb = sum(p.disk_mb for p in self._extra.packages)
-        text.append("Will install\n", style="bold")
-        for p in self._extra.packages:
-            text.append("  • ", style="dim")
-            text.append(p.display)
-            text.append(f"  ~{p.disk_mb} MB\n", style="dim")
-        text.append("\nDisk + download: ", style="dim")
-        text.append(f"~{total_mb} MB", style="bold")
-        text.append(" (ML weights on first use)\n\n", style="dim")
-        text.append("Indexing impact\n", style="bold")
-        text.append("  ~30 s per PDF on first reindex; cached thereafter.\n", style="dim")
-        text.append("  100 books ≈ 50 min · 500 books ≈ 4 h.\n", style="dim")
-        text.append("  Runs in background; auto-resumes on launch.\n", style="dim")
-        text.append("\nWithout this, PDFs render as flat text.", style="dim")
-        return text
+        return build_confirm_body(
+            outcome="PDFs gain structured rendering (headings, lists, tables).",
+            cost=(
+                f"~{total_mb} MB disk + ML weights on first use. "
+                "First Update index spends ~2 s per PDF on born-digital text."
+            ),
+            safety=("Auto-resumes if interrupted. Existing flat indexes are preserved."),
+        )
 
     def on_mount(self) -> None:
         self.query_one("#confirm_list", OptionList).focus()

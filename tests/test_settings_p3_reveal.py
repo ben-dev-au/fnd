@@ -45,7 +45,7 @@ async def test_root_has_open_keybindings_file(built_index: Path) -> None:
         await pilot.pause()
         lst = app.screen.query_one(SettingsList)
         labels = [it.label for it in lst._items]
-        assert "↗ Keybindings file" in labels
+        assert "Keybindings file" in labels
 
 
 @pytest.mark.asyncio
