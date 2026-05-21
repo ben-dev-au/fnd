@@ -19,6 +19,7 @@ import asyncio
 import contextlib
 import signal
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from textual.app import ComposeResult
@@ -243,6 +244,43 @@ class ExtrasInstallProgressScreen(ModalScreen[None]):
 # ── Worker ──────────────────────────────────────────────────────────
 
 
+def repair_orphan_dist_info(venv_site_packages: Path) -> list[str]:
+    """Remove ``.dist-info/`` directories that are missing their
+    ``METADATA`` file. Returns the names of the packages cleaned.
+
+    macOS Finder / iCloud / Dropbox sync conflicts occasionally
+    duplicate files in a venv with a `` 2`` suffix
+    (``METADATA 2``, ``__init__ 2.py``, ...). The original is gone
+    and the package's dist-info directory survives without
+    ``METADATA``. ``uv pip install`` refuses to operate on a venv in
+    this state with "Failed to read metadata from installed package
+    ...". Sweep them so the next install succeeds."""
+    cleaned: list[str] = []
+    if not venv_site_packages.exists():
+        return cleaned
+    for path in venv_site_packages.glob("*.dist-info"):
+        if not (path / "METADATA").exists():
+            import shutil as _shutil
+
+            with contextlib.suppress(OSError):
+                _shutil.rmtree(path)
+                cleaned.append(path.name)
+    return cleaned
+
+
+def _venv_site_packages(python_executable: str) -> Path | None:
+    """Resolve the site-packages dir for a venv's python."""
+    bin_dir = Path(python_executable).parent
+    venv_root = bin_dir.parent
+    lib_dir = venv_root / "lib"
+    if not lib_dir.exists():
+        return None
+    for child in lib_dir.iterdir():
+        if child.name.startswith("python") and (child / "site-packages").exists():
+            return child / "site-packages"
+    return None
+
+
 async def run_install(
     app: FNDApp,
     *,
@@ -254,9 +292,19 @@ async def run_install(
     boundary and for every stderr line (which uv uses for its
     progress / installed lines).
 
+    Before the first command, repair any orphan dist-info dirs in
+    fnd's venv. These are left behind by macOS sync conflicts and
+    cause ``uv pip install`` to fail with exit 1.
+
     Cancellation: setting ``cancel`` sends SIGTERM to the active
     subprocess; the chain stops at the next boundary.
     """
+    import sys
+
+    site_packages = _venv_site_packages(sys.executable)
+    if site_packages is not None:
+        repair_orphan_dist_info(site_packages)
+
     total = len(cmds)
     for i, argv in enumerate(cmds):
         events.put_nowait(

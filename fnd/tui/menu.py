@@ -1792,13 +1792,13 @@ def _run_cache_clear(app: FNDApp) -> None:
     from fnd.tui.settings_screen import CacheMaintenanceConfirm
 
     root = default_cache_dir()
-    if not root.exists():
+    cache = ExtractionCache()
+    n = cache.entry_count() if root.exists() else 0
+    size = cache.total_size_bytes() if root.exists() else 0
+    if n == 0:
         with contextlib.suppress(Exception):
             app.notify("Cache is empty.")
         return
-    cache = ExtractionCache()
-    n = cache.entry_count()
-    size = cache.total_size_bytes()
 
     from fnd.tui.cost_estimate import estimate_seconds_for, format_duration
 
