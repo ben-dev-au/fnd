@@ -955,8 +955,9 @@ def _make_open_delete_confirm(name: str) -> Callable[[FNDApp], None]:
 
 def _make_reindex(name: str) -> Callable[[FNDApp], None]:
     def _run(app: FNDApp) -> None:
-        # Use the existing background-worker entry point on the app.
-        app._reindex_collection_async(name)  # type: ignore[attr-defined]
+        # Route through the warning + IndexerScreen modal so the user
+        # sees progress instead of a silent background task.
+        app._reindex_with_warning_if_needed(name)  # type: ignore[attr-defined]
 
     return _run
 

@@ -41,7 +41,7 @@ column tracking implementation + verification status. Updated as Phase
 | F19 | Cancel clears state file so next launch doesn't auto-resume | `tests/test_index_runner.py::test_run_indexer_clears_state_file_on_done` | test |
 | F20 | Cache-hit files reported on `file_complete` event | `tests/test_index_runner.py::test_cache_hit_reported_on_warm_run` | test |
 | F21 | First-reindex warning shown once then suppressed | `tests/test_first_reindex_warning.py` (10 tests) | test |
-| F22 | `indexer.auto_resume = false` suppresses auto-resume on launch | `_maybe_resume_indexer` reads config flag | done |
+| F22 | `defaults.indexer_auto_resume = false` suppresses auto-resume on launch | `_maybe_resume_indexer` reads config flag; declared on Defaults | done |
 
 ## Non-functional requirements
 

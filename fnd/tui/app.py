@@ -4116,12 +4116,12 @@ class FNDApp(App[None]):
         state = load_state(state_file_for("default"))
         if state is None or state.files_completed >= state.total_files:
             return
-        # Auto-resume opt-out via config flag (see indexer.auto_resume).
+        # Auto-resume opt-out via config flag (defaults.indexer_auto_resume).
         try:
             from fnd.config import load as _load_config
 
             cfg = _load_config()
-            if not getattr(cfg, "indexer_auto_resume", True):
+            if not cfg.defaults.indexer_auto_resume:
                 return
         except Exception:
             pass

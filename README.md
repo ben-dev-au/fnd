@@ -60,8 +60,8 @@ or fnd quit all leave the cache and a state file at
 `~/Library/Application Support/fnd/reindex/<collection>.state.toml`.
 Next time you open the TUI it auto-resumes in the background —
 already-cached files return from the cache in milliseconds, so resume
-effectively starts where you left off. To disable auto-resume add
-`indexer_auto_resume = false` to your config.
+effectively starts where you left off. To disable auto-resume set
+`defaults.indexer_auto_resume = false` in your config.
 
 To inspect or prune the cache: `fnd cache status / info / prune / clear`.
 

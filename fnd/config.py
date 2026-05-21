@@ -307,6 +307,11 @@ class Defaults(BaseModel):
     # stems, so values 0-3 are no-ops vs current behavior; 4+ extends
     # the floor.
     fuzzy_min_term_chars: int = 3
+    # Auto-resume an interrupted reindex on app launch. When True (the
+    # default), an existing state file from a previous quit / crash /
+    # Ctrl+C resumes silently in the background. False disables the
+    # behaviour entirely; the user must trigger the reindex manually.
+    indexer_auto_resume: bool = True
 
 
 class Config(BaseModel):
