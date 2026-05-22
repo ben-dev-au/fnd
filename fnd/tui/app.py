@@ -1276,6 +1276,14 @@ class FNDApp(App[None]):
         # the end of each collection's run.
         self._indexer_chain_remaining: list[str] = []
         self._indexer_chain_total: int = 1
+        # True between drive_indexer scheduling the next chain step via
+        # call_later and the deferred task actually starting. The
+        # IndexerScreen drain reads this so the modal stays mounted
+        # across that gap. Without the guard the drain pops the modal
+        # as soon as _indexer_chain_remaining empties (which happens
+        # synchronously before call_later fires) and the next
+        # collection's events have no consumer.
+        self._indexer_chain_callback_pending: bool = False
         self._indexer_collection: str = ""
         self._indexer_started_at: str = ""
         # Structured-PDF extras install/uninstall — sibling to the

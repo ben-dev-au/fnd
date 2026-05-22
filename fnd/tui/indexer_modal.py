@@ -187,12 +187,16 @@ class IndexerScreen(ModalScreen[None]):
                     break
                 if ev.kind == "done":
                     pending = getattr(app, "_indexer_chain_remaining", None) or []
-                    if not pending:
+                    callback_pending = getattr(app, "_indexer_chain_callback_pending", False)
+                    if not pending and not callback_pending:
                         break
-                    # More collections queued — drive_indexer fires the
-                    # next via call_later; the new run_indexer will
-                    # emit a "started" event that re-initialises the
-                    # progress bar here. Stay in the loop.
+                    # More work queued. drive_indexer fires the next
+                    # collection via call_later; the new run_indexer
+                    # emits a "started" event that re-initialises the
+                    # progress bar here. callback_pending covers the
+                    # window where drive_indexer has already popped
+                    # the next name (so pending is empty) but
+                    # call_later has not yet fired the new task.
                     continue
         except asyncio.CancelledError:
             return
@@ -303,24 +307,38 @@ async def drive_indexer(
     the footer indicator + a re-opened modal can read current state
     without subscribing to the queue mid-stream.
     """
-    async for ev in run_indexer(
+    # Bind the generator so we can explicitly aclose() it after the
+    # break. Async generators do not release resources just because
+    # iteration stopped - the suspended frame keeps the tantivy
+    # IndexWriter (and its directory lock) alive until aclose runs.
+    # With the Update-all chain landing the next call_later quickly,
+    # that lingering lock collided with the next collection's writer
+    # when both shared an index_dir.
+    gen = run_indexer(
         config=config,
         collection=collection,
         index_dir=index_dir,
         rebuild=rebuild,
         cancel=cancel,
-    ):
-        # Mirror into the snapshot first so footer/late-attach modal
-        # see fresh data even before the queue consumer wakes.
-        snap = _event_to_state(
-            ev, collection=collection, started_at_default=app._indexer_started_at
-        )
-        app._indexer_state = snap
-        app._indexer_last_event = ev
-        with _SuppressFullQueueLoss():
-            events.put_nowait(ev)
-        if ev.kind in ("done", "cancelled"):
-            break
+    )
+    try:
+        async for ev in gen:
+            # Mirror into the snapshot first so footer/late-attach
+            # modal see fresh data even before the queue consumer wakes.
+            snap = _event_to_state(
+                ev, collection=collection, started_at_default=app._indexer_started_at
+            )
+            app._indexer_state = snap
+            app._indexer_last_event = ev
+            with _SuppressFullQueueLoss():
+                events.put_nowait(ev)
+            if ev.kind in ("done", "cancelled"):
+                break
+    finally:
+        # run_indexer is annotated as AsyncIterator but actually returns
+        # an AsyncGenerator; aclose() exists at runtime but the static
+        # type does not advertise it.
+        await gen.aclose()  # type: ignore[attr-defined]
 
     # Update-all-collections chain: when more collections are queued
     # behind this one, dequeue the next and start it. The modal stays
@@ -329,6 +347,11 @@ async def drive_indexer(
     if pending and not cancel.is_set():
         next_collection = pending.pop(0)
         app._indexer_chain_remaining = pending  # type: ignore[attr-defined]
+        # Set the guard BEFORE scheduling. The drain loop checks both
+        # this flag and the remaining list when it sees "done"; without
+        # the guard, a chain step that empties the list (the final
+        # popped name) would let the modal pop before call_later fires.
+        app._indexer_chain_callback_pending = True  # type: ignore[attr-defined]
         # Defer to the next event-loop tick so this task completes
         # cleanly before the next one starts.
         app.call_later(_start_next_in_chain, app, next_collection)
@@ -338,6 +361,7 @@ async def drive_indexer(
         # render with a stale "1 of N" title.
         app._indexer_chain_remaining = []  # type: ignore[attr-defined]
         app._indexer_chain_total = 1  # type: ignore[attr-defined]
+        app._indexer_chain_callback_pending = False  # type: ignore[attr-defined]
 
 
 def _start_next_in_chain(app: FNDApp, collection: str) -> None:
@@ -346,6 +370,11 @@ def _start_next_in_chain(app: FNDApp, collection: str) -> None:
     pyright can type-check the call site."""
     from fnd.config import load as _load_config
 
+    # Clear the guard now that the deferred step is running. The drain
+    # loop relies on this flag flipping False before the new task's
+    # first "started" event arrives, otherwise the modal could exit
+    # if the new run somehow finished synchronously.
+    app._indexer_chain_callback_pending = False  # type: ignore[attr-defined]
     # Prefer in-memory config (tests / live edits) over disk.
     in_memory_cfg = getattr(app, "_config", None)
     cfg = in_memory_cfg if in_memory_cfg is not None else _load_config()

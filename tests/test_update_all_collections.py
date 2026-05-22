@@ -19,6 +19,8 @@ from fnd.config import CollectionConfig, Config, Defaults, SourceConfig
 from fnd.index import build_index
 from fnd.tui import FNDApp
 
+from ._pilot_wait import safe_pause, wait_until
+
 
 def _make_cfg(tmp_path: Path, names: list[str]) -> tuple[Config, Path]:
     """Build a tiny multi-collection config + index. Each collection
@@ -63,20 +65,18 @@ async def test_update_all_visits_every_collection(tmp_path: Path) -> None:
     app.start_indexer = _recorder  # type: ignore[method-assign]
 
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         app.push_screen(UpdateAllConfirm(collection_names=names))
-        await pilot.pause()
+        await safe_pause(pilot)
         await pilot.press("enter")
-        # Pump the loop until the chain has fully drained or we hit a
-        # generous timeout — the chain advances via call_later so we
-        # need multiple ticks per collection.
-        for _ in range(40):
-            await pilot.pause()
-            if len(invocations) >= len(names):
-                # All collections invoked; one more tick to let the
-                # final task complete.
-                await pilot.pause()
-                break
+        await wait_until(
+            pilot,
+            lambda: len(invocations) >= len(names),
+            timeout=15.0,
+            message=f"chain never invoked {len(names)} collections; saw {invocations}",
+        )
+        # One more tick to let the final task finish.
+        await safe_pause(pilot)
 
     assert invocations == names, (
         f"Expected start_indexer to fire once per collection in queue order; " f"got {invocations}."
@@ -105,14 +105,16 @@ async def test_update_all_sets_chain_total_for_modal_title(tmp_path: Path) -> No
     app.start_indexer = _capture  # type: ignore[method-assign]
 
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         app.push_screen(UpdateAllConfirm(collection_names=names))
-        await pilot.pause()
+        await safe_pause(pilot)
         await pilot.press("enter")
-        for _ in range(40):
-            await pilot.pause()
-            if len(captured_totals) >= 2:
-                break
+        await wait_until(
+            pilot,
+            lambda: len(captured_totals) >= 2,
+            timeout=15.0,
+            message=f"chain never reached the second collection; captured {captured_totals}",
+        )
 
     # First start_indexer call sees the configured total. The chain's
     # subsequent call also sees it (drive_indexer only resets on the
