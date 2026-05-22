@@ -460,10 +460,15 @@ def extract(path: Path) -> Iterator[Chunk]:
             yield chunk
         return
 
-    chunks: list[Chunk] = []
+    # Dispatch the heavy extraction to a subprocess. pymupdf-layout
+    # holds the GIL across long pages; running it in-thread (even via
+    # asyncio.to_thread) starves the main asyncio loop and the user
+    # sees a frozen UI. The subprocess pool gives the worker its own
+    # GIL so the caller's event loop stays responsive throughout.
+    from fnd.extract._worker import collect_pdf_chunks, run_in_pool_sync
+
     try:
-        for chunk in _extract_inner(path):
-            chunks.append(chunk)
+        chunks = run_in_pool_sync(collect_pdf_chunks, path, _skip_structure_extraction)
     except ExtractError:
         raise
     except Exception as e:
@@ -498,7 +503,9 @@ def _get_cache() -> ExtractionCache:
 _cache_singleton: ExtractionCache | None = None
 
 
-def _extract_inner(path: Path) -> Iterator[Chunk]:
+# Invoked from the subprocess pool via fnd.extract._worker.collect_pdf_chunks,
+# which looks the function up dynamically; pyright can't see that call.
+def _extract_inner(path: Path) -> Iterator[Chunk]:  # pyright: ignore[reportUnusedFunction]
     parent_id = _parent_id(path)
     mtime = int(path.stat().st_mtime)
 
