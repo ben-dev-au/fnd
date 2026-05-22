@@ -28,7 +28,7 @@ import importlib.util
 import json
 import os
 import re
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -465,10 +465,29 @@ def extract(path: Path) -> Iterator[Chunk]:
     # asyncio.to_thread) starves the main asyncio loop and the user
     # sees a frozen UI. The subprocess pool gives the worker its own
     # GIL so the caller's event loop stays responsive throughout.
-    from fnd.extract._worker import collect_pdf_chunks, run_in_pool_sync
+    #
+    # The worker emits a per-page heartbeat; the parent kills the
+    # worker if no heartbeat arrives for ``stall_seconds``. This is
+    # the safety net for an unattended index hitting a genuinely hung
+    # native call. The threshold is large enough that any legitimately
+    # slow but progressing PDF (image-dense pages, docling fallback)
+    # stays alive.
+    from fnd.extract._worker import (
+        StallError,
+        collect_pdf_chunks_with_heartbeat,
+        run_in_pool_sync_with_stall_detection,
+    )
 
     try:
-        chunks = run_in_pool_sync(collect_pdf_chunks, path, _skip_structure_extraction)
+        chunks = run_in_pool_sync_with_stall_detection(
+            collect_pdf_chunks_with_heartbeat,
+            path,
+            _skip_structure_extraction,
+            stall_seconds=120.0,
+            first_beat_grace_seconds=180.0,
+        )
+    except StallError as e:
+        raise ExtractError(str(path), f"extractor wedged: {e}") from e
     except ExtractError:
         raise
     except Exception as e:
@@ -505,7 +524,11 @@ _cache_singleton: ExtractionCache | None = None
 
 # Invoked from the subprocess pool via fnd.extract._worker.collect_pdf_chunks,
 # which looks the function up dynamically; pyright can't see that call.
-def _extract_inner(path: Path) -> Iterator[Chunk]:  # pyright: ignore[reportUnusedFunction]
+def _extract_inner(  # pyright: ignore[reportUnusedFunction]
+    path: Path,
+    *,
+    on_page: Callable[[int], None] | None = None,
+) -> Iterator[Chunk]:
     parent_id = _parent_id(path)
     mtime = int(path.stat().st_mtime)
 
@@ -531,6 +554,11 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:  # pyright: ignore[reportUnus
         meta_labels: list[str] = []
         margin_candidates: list[list[int]] = []
         for page_index in range(doc.page_count):
+            # Heartbeat for the parent's stall detector. Fires before
+            # the heavy structured-extraction call on this page so a
+            # wedge inside a single page is still detectable.
+            if on_page is not None:
+                on_page(page_index)
             page = doc[page_index]
             page_no = page_index + 1
             try:
