@@ -25,19 +25,20 @@ from fnd.config import Config
 from fnd.tui import FNDApp
 
 
-def test_install_commands_target_fnd_python() -> None:
-    """install_commands must pin --python to sys.executable so the
-    install lands in fnd's runtime venv, not whatever pyproject is in
-    the cwd."""
-    from fnd.extras import PDF_STRUCTURE, install_commands
+def test_install_commands_use_group_sync_in_project_venv() -> None:
+    """Inside a uv-managed project venv install_commands resolves to
+    ``uv sync --group pdf-structure``. The sync targets the venv that
+    owns sys.executable by construction, which is also fnd's runtime
+    venv, so the install lands where fnd reads from on next launch."""
+    from fnd.extras import PDF_STRUCTURE, _project_pyproject_for_python, install_commands
+
+    assert (
+        _project_pyproject_for_python(sys.executable) is not None
+    ), "test must run inside the project venv; was sys.executable redirected?"
 
     cmds = install_commands(PDF_STRUCTURE)
-    # First command is uv pip install for pymupdf4llm; second is
-    # uv tool install docling-slim.
-    pip_install_cmd = next(c for c in cmds if c[:3] == ["uv", "pip", "install"])
-    assert "--python" in pip_install_cmd, f"missing --python pin in {pip_install_cmd}"
-    py_idx = pip_install_cmd.index("--python")
-    assert pip_install_cmd[py_idx + 1] == sys.executable
+    sync_cmd = next(c for c in cmds if c[:2] == ["uv", "sync"])
+    assert sync_cmd == ["uv", "sync", "--group", "pdf-structure"]
 
 
 def test_pre_install_clears_orphan_dist_info(tmp_path: Path) -> None:

@@ -39,14 +39,22 @@ async def test_yes_runs_every_collection(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        # Record the pre-confirm baseline. Auto-resume on launch can
+        # call start_indexer for an inherited "default" collection
+        # before the test pushes its confirm; that invocation is not
+        # part of what this test exercises.
+        baseline = len(invocations)
         app.push_screen(UpdateAllConfirm(collection_names=["alpha", "beta", "gamma"]))
         await pilot.pause()
         await pilot.press("enter")
 
-        ok = await wait_until(pilot, lambda: len(invocations) >= 3, timeout=8.0, ticks=80)
+        ok = await wait_until(
+            pilot, lambda: len(invocations) - baseline >= 3, timeout=8.0, ticks=80
+        )
 
-    assert ok, f"chain didn't fire 3 collections within timeout (saw {invocations})"
-    assert invocations == ["alpha", "beta", "gamma"], invocations
+    triggered = invocations[baseline:]
+    assert ok, f"chain didn't fire 3 collections within timeout (saw {triggered})"
+    assert triggered == ["alpha", "beta", "gamma"], triggered
 
 
 @pytest.mark.asyncio

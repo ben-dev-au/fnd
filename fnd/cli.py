@@ -494,6 +494,9 @@ def extras_install(
     if not yes and not typer.confirm("Continue?", default=False):
         typer.echo("aborted")
         raise typer.Exit(code=1)
+    # Flip default-groups before sync runs so the install persists
+    # across subsequent ``uv sync`` calls.
+    _toggle_default_group_for_extra(name, present=True)
     for c in cmds:
         typer.echo("$ " + " ".join(c))
         rc, _stdout, stderr = run_command(c)
@@ -532,6 +535,9 @@ def extras_uninstall(
     if not yes and not typer.confirm("Continue?", default=False):
         typer.echo("aborted")
         raise typer.Exit(code=1)
+    # Drop default-groups membership first; uv sync --no-group then
+    # removes the packages and leaves the project unsubscribed.
+    _toggle_default_group_for_extra(name, present=False)
     for c in cmds:
         typer.echo("$ " + " ".join(c))
         rc, _stdout, stderr = run_command(c)
@@ -539,6 +545,30 @@ def extras_uninstall(
             typer.echo(f"command failed (exit {rc}):\n{stderr}", err=True)
             raise typer.Exit(code=rc)
     typer.echo(f"\nUninstalled {name}.")
+
+
+def _toggle_default_group_for_extra(name: str, *, present: bool) -> None:
+    """If fnd is running inside a uv-managed project venv, flip the
+    extra's PEP-735 group in ``[tool.uv] default-groups`` so the
+    install survives subsequent ``uv sync`` calls. No-op when there's
+    no owning pyproject.toml (uv tool install / system Python case)."""
+    import sys
+
+    from fnd.extras import (
+        _project_pyproject_for_python,  # type: ignore[attr-defined]
+        disable_pdf_structure_default_group,
+        enable_pdf_structure_default_group,
+    )
+
+    if name != "pdf-structure":
+        return  # only pdf-structure has a group toggle wired today
+    pyproject = _project_pyproject_for_python(sys.executable)
+    if pyproject is None:
+        return
+    if present:
+        enable_pdf_structure_default_group(pyproject)
+    else:
+        disable_pdf_structure_default_group(pyproject)
 
 
 # ---- cache ----------------------------------------------------------------

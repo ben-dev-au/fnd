@@ -3243,13 +3243,32 @@ class StructuredPdfConfirmScreen(Screen[None]):
         if ev.option.id == "no" or self._extra is None:
             self.app.pop_screen()
             return
-        from fnd.extras import install_commands, uninstall_commands
+        import sys
+
+        from fnd.extras import (
+            _project_pyproject_for_python,  # type: ignore[attr-defined]
+            disable_pdf_structure_default_group,
+            enable_pdf_structure_default_group,
+            install_commands,
+            uninstall_commands,
+        )
         from fnd.tui.extras_install_progress import start_extras_install
 
+        # When fnd is running inside a uv-managed project venv, toggle
+        # the ``pdf-structure`` group in ``[tool.uv] default-groups``
+        # BEFORE running the sync. Otherwise a subsequent ``uv sync``
+        # would wipe the install (extras / non-default groups are
+        # removed when not flagged active).
+        pyproject = _project_pyproject_for_python(sys.executable)
+
         if self._installed:
+            if pyproject is not None and self._extra.name == "pdf-structure":
+                disable_pdf_structure_default_group(pyproject)
             cmds = uninstall_commands(self._extra)
             label = "Uninstall"
         else:
+            if pyproject is not None and self._extra.name == "pdf-structure":
+                enable_pdf_structure_default_group(pyproject)
             cmds = install_commands(self._extra)
             label = "Install"
         app: FNDApp = self.app  # type: ignore[assignment]

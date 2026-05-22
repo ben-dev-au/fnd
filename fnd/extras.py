@@ -202,31 +202,118 @@ def actual_disk_mb(extra: Extra) -> int:
 
 
 def install_commands(extra: Extra) -> list[list[str]]:
-    """Return the subprocess argv for each install step. Pure function;
-    the caller decides when (and whether) to run them.
+    """Return the subprocess argv for each install step.
 
-    Pip-extras install via ``uv pip install`` with an explicit
-    ``--python <sys.executable>`` so the packages land in fnd's actual
-    runtime venv. ``uv sync --extra X`` (the previous choice) looks
-    for a pyproject.toml in the CWD and modifies that project's
-    ``.venv`` — wrong target when fnd is run from outside its repo,
-    and a source of "I installed but fnd still says not installed"
-    bugs after restart."""
+    Strategy depends on whether fnd's runtime ``sys.executable`` lives
+    inside a uv-managed project venv:
+
+    - **uv-managed project venv** (the developer case — ``sys.executable``
+      is ``<project>/.venv/bin/python3.X`` and the project's
+      ``pyproject.toml`` declares a matching ``[dependency-groups].<name>``):
+      install via ``uv sync --group <name>``. The caller is also
+      expected to flip the group into ``[tool.uv] default-groups`` via
+      :func:`enable_pdf_structure_default_group` so subsequent
+      ``uv sync`` calls (without a ``--group`` flag) don't wipe the
+      install. This is the persistence fix for "I installed but fnd
+      says not installed after restart" — without the default-group
+      flip, any ``uv run`` re-syncs the venv and removes the extra.
+
+    - **uv-tool install / standalone** (``sys.executable`` is in a
+      uv tool venv or a system Python): install via
+      ``uv pip install --python <sys.executable> <req>``. Tool venvs
+      aren't managed by ``uv sync`` so the install persists.
+    """
     import sys
 
     cmds: list[list[str]] = []
     py = sys.executable
+    project_pyproject = _project_pyproject_for_python(py)
+
     for p in extra.packages:
         if p.install_via == "pip-extra":
-            # ``spec`` here is the optional-deps group name in
-            # pyproject.toml; resolve it to the actual pip requirement
-            # via the package's display field if needed. For now we
-            # rely on Package._install_specs being declared per pkg.
-            for req in _pip_install_specs(p):
-                cmds.append(["uv", "pip", "install", "--python", py, req])
+            if project_pyproject is not None and _group_exists_in_pyproject(
+                project_pyproject, _group_name_for_pkg(p)
+            ):
+                # Project venv path: use --group; persistence relies on
+                # the caller flipping default-groups before sync runs.
+                cmds.append(["uv", "sync", "--group", _group_name_for_pkg(p)])
+            else:
+                for req in _pip_install_specs(p):
+                    cmds.append(["uv", "pip", "install", "--python", py, req])
         elif p.install_via == "uv-tool":
             cmds.append(["uv", "tool", "install", p.spec])
     return cmds
+
+
+def _group_name_for_pkg(pkg: Package) -> str:
+    """The PEP 735 dependency-group name fnd uses for the package's
+    runtime extras. For pdf-structure the spec is already the group
+    name. Other pip-extras would follow the same convention."""
+    return pkg.spec
+
+
+def _project_pyproject_for_python(py: str) -> Path | None:
+    """Walk up from ``sys.executable``'s venv to find the owning
+    pyproject.toml. Returns the path if found, else None (e.g.,
+    fnd is installed via uv tool / system python and there's no
+    project to manage)."""
+    bin_dir = Path(py).parent
+    venv_root = bin_dir.parent
+    parent = venv_root.parent
+    candidate = parent / "pyproject.toml"
+    return candidate if candidate.exists() else None
+
+
+def _group_exists_in_pyproject(pyproject: Path, group_name: str) -> bool:
+    """Cheap check: does ``[dependency-groups].<group_name>`` appear
+    in the file? Avoids importing a TOML parser at hot-path import
+    time; the substring match is good enough because the section
+    name is unambiguous in fnd's pyproject."""
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return group_name in text and "[dependency-groups]" in text
+
+
+def enable_pdf_structure_default_group(pyproject: Path) -> None:
+    """Add ``pdf-structure`` to ``[tool.uv] default-groups`` so a
+    subsequent ``uv sync`` (without a ``--group`` flag) keeps the
+    install. Idempotent — no-op when the group is already in the
+    list. Preserves comments + ordering via tomlkit."""
+    _ensure_group_membership(pyproject, "pdf-structure", present=True)
+
+
+def disable_pdf_structure_default_group(pyproject: Path) -> None:
+    """Remove ``pdf-structure`` from ``[tool.uv] default-groups`` so
+    ``uv sync`` no longer keeps it. Idempotent."""
+    _ensure_group_membership(pyproject, "pdf-structure", present=False)
+
+
+def _ensure_group_membership(pyproject: Path, group: str, *, present: bool) -> None:
+    import tomlkit
+
+    if not pyproject.exists():
+        return
+    doc = tomlkit.parse(pyproject.read_text(encoding="utf-8"))
+    tool = doc.setdefault("tool", tomlkit.table())
+    uv = tool.setdefault("uv", tomlkit.table())  # type: ignore[union-attr]
+    groups = uv.get("default-groups", None)  # type: ignore[union-attr]
+    if groups is None:
+        groups = tomlkit.array()
+        if present:
+            groups.append("dev")
+            groups.append(group)
+        uv["default-groups"] = groups  # type: ignore[union-attr,index]
+    else:
+        as_list = list(groups)
+        if present and group not in as_list:
+            groups.append(group)
+        elif not present and group in as_list:
+            # tomlkit Array exposes remove
+            with contextlib.suppress(ValueError):
+                groups.remove(group)
+    pyproject.write_text(tomlkit.dumps(doc), encoding="utf-8")
 
 
 def _pip_install_specs(pkg: Package) -> list[str]:
@@ -269,19 +356,31 @@ def uninstall_commands(extra: Extra, *, assume_installed: bool = False) -> list[
 
     cmds: list[list[str]] = []
     py = sys.executable
+    project_pyproject = _project_pyproject_for_python(py)
+
     for p in extra.packages:
         if not assume_installed and not is_package_installed(p):
             continue
         if p.install_via == "uv-tool":
             cmds.append(["uv", "tool", "uninstall", p.spec.split("[", 1)[0]])
         elif p.install_via == "pip-extra":
-            targets = list(p.uninstall_targets) or [p.detect.split(":", 1)[1]]
-            if assume_installed:
-                installed_targets = targets
+            group_name = _group_name_for_pkg(p)
+            if project_pyproject is not None and _group_exists_in_pyproject(
+                project_pyproject, group_name
+            ):
+                # Project venv path: ``uv sync --no-group <name>``.
+                # Caller is expected to drop the group from
+                # default-groups via disable_pdf_structure_default_group
+                # so the next bare ``uv sync`` keeps it removed.
+                cmds.append(["uv", "sync", "--no-group", group_name])
             else:
-                installed_targets = [t for t in targets if _pip_target_installed(t)]
-            if installed_targets:
-                cmds.append(["uv", "pip", "uninstall", "--python", py, *installed_targets])
+                targets = list(p.uninstall_targets) or [p.detect.split(":", 1)[1]]
+                if assume_installed:
+                    installed_targets = targets
+                else:
+                    installed_targets = [t for t in targets if _pip_target_installed(t)]
+                if installed_targets:
+                    cmds.append(["uv", "pip", "uninstall", "--python", py, *installed_targets])
     return cmds
 
 

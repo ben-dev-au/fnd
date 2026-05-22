@@ -34,14 +34,6 @@ dependencies = [
 
 [project.optional-dependencies]
 ocr = ["ocrmypdf~=17.0"]
-# Structured PDF rendering — opt-in via `fnd extras install pdf-structure`.
-# Includes pymupdf-layout (an Artifex add-on under Polyform Noncommercial
-# 1.0 — acceptable for fnd because fnd is open-source and non-commercial).
-# Without pymupdf-layout, pymupdf4llm rejects the no-OCR flag combo we
-# need to keep extraction cheap on figure-heavy PDFs.
-# docling-slim is installed separately into its own uv tool venv
-# (transitive version conflicts with fnd's deps make it unsafe in this venv).
-pdf-structure = ["pymupdf4llm[layout]~=1.27"]
 
 [tool.pytest.ini_options]
 # `slow` flags long-running tests (perf benches, fuzz harness). The
@@ -75,7 +67,27 @@ dev = [
     # Used by tools/pdf_bakeoff to normalise ML extractor output before
     # comparison. Not loaded by fnd itself.
     "mdformat>=0.7",
+    "pyte>=0.8.2",
 ]
+# Structured PDF rendering — opt-in. Lives in a PEP 735 dependency
+# group rather than [project.optional-dependencies] so the user can
+# opt in via [tool.uv] default-groups below, and a subsequent
+# ``uv sync`` (no flags) won't wipe the install. ``fnd extras
+# install pdf-structure`` flips the toggle in default-groups.
+#
+# pymupdf4llm[layout] pulls pymupdf-layout (Artifex, Polyform
+# Noncommercial 1.0 — acceptable because fnd is open-source and
+# non-commercial). docling-slim is installed separately into its own
+# uv tool venv (transitive version conflicts make it unsafe to
+# co-install in fnd's venv).
+pdf-structure = ["pymupdf4llm[layout]~=1.27"]
+
+[tool.uv]
+# Groups installed by ``uv sync`` when no --group flag is passed.
+# ``fnd extras install/uninstall pdf-structure`` edits this list so
+# the install persists across subsequent ``uv sync`` calls. ``dev``
+# stays the default for the development environment.
+default-groups = ["dev", "pdf-structure"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["fnd"]

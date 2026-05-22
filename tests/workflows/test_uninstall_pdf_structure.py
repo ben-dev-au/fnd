@@ -17,32 +17,35 @@ from pathlib import Path
 from fnd.extras import Package, is_package_installed
 
 
-def test_uninstall_commands_target_fnd_python() -> None:
-    """Uninstall must use --python <sys.executable> so the removal
-    targets the venv fnd reads from."""
-    from fnd.extras import PDF_STRUCTURE, uninstall_commands
+def test_uninstall_commands_use_group_sync_in_project_venv() -> None:
+    """Inside a uv-managed project venv uninstall_commands resolves to
+    ``uv sync --no-group pdf-structure``. The sync removes the group's
+    packages from the venv that owns sys.executable, which is fnd's
+    runtime venv."""
+    from fnd.extras import PDF_STRUCTURE, _project_pyproject_for_python, uninstall_commands
 
-    # assume_installed=True bypasses the live detection and gives us
-    # the full plan to inspect.
+    assert (
+        _project_pyproject_for_python(sys.executable) is not None
+    ), "test must run inside the project venv; was sys.executable redirected?"
+
     cmds = uninstall_commands(PDF_STRUCTURE, assume_installed=True)
-    pip_cmds = [c for c in cmds if c[:3] == ["uv", "pip", "uninstall"]]
-    assert pip_cmds, "expected a uv pip uninstall command"
-    for cmd in pip_cmds:
-        assert "--python" in cmd
-        assert cmd[cmd.index("--python") + 1] == sys.executable
+    sync_cmd = next(c for c in cmds if c[:2] == ["uv", "sync"])
+    assert sync_cmd == ["uv", "sync", "--no-group", "pdf-structure"]
 
 
 def test_dry_run_assume_installed_shows_full_plan() -> None:
     """The --dry-run CLI preview should show the full plan regardless
-    of whether the extra is currently installed."""
+    of whether the extra is currently installed. Inside the project
+    venv the plan now consists of group-level sync commands, not
+    per-package pip uninstall calls."""
     from fnd.extras import PDF_STRUCTURE, uninstall_commands
 
     plan = uninstall_commands(PDF_STRUCTURE, assume_installed=True)
-    targets = []
-    for cmd in plan:
-        targets.extend(cmd[cmd.index("--python") + 2 :] if "--python" in cmd else cmd[3:])
-    # Expect at least pymupdf4llm in the plan.
-    assert "pymupdf4llm" in targets
+    # At least one command must reference the pdf-structure group so
+    # the dry-run preview tells the user what is about to change.
+    assert any(
+        "pdf-structure" in cmd for cmd in plan
+    ), f"expected pdf-structure to appear in the plan, got {plan!r}"
 
 
 def test_namespace_husk_detected_as_not_installed(tmp_path: Path, monkeypatch: object) -> None:
