@@ -68,6 +68,11 @@ dev = [
     # comparison. Not loaded by fnd itself.
     "mdformat>=0.7",
     "pyte>=0.8.2",
+    # pytest-testmon: pre-commit only re-runs tests whose imported
+    # lines changed in the diff. .testmondata is per-developer and
+    # gitignored; CI runs the full suite without --testmon as the
+    # safety net.
+    "pytest-testmon>=2.1",
 ]
 # Structured PDF rendering — opt-in. Lives in a PEP 735 dependency
 # group rather than [project.optional-dependencies] so the user can

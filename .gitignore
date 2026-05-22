@@ -11,6 +11,9 @@ build/
 .DS_Store
 .coverage
 htmlcov/
+# pytest-testmon per-developer test-impact cache
+.testmondata
+.testmondata-journal
 .vscode/
 .idea/
 tests/fixtures/.cache/

@@ -26,8 +26,14 @@ repos:
         pass_filenames: false
 
       - id: pytest-fast
-        name: pytest (fast)
-        entry: uv run pytest -q -m "not slow"
+        name: "pytest (testmon: only tests whose code paths changed)"
+        # --testmon caches per-test code dependencies in
+        # ``.testmondata`` (gitignored). First run pays the full suite
+        # cost while the baseline is built; subsequent commits only
+        # re-run tests whose tracked files changed in the diff. CI
+        # runs the full serial suite without --testmon as the
+        # gold-standard catch-all.
+        entry: uv run pytest -q -m "not slow" --testmon
         language: system
         types: [python]
         pass_filenames: false
