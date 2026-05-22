@@ -44,15 +44,22 @@ async def test_flat_preview_scrolls_after_second_query(built_index: Path) -> Non
     async with app.run_test(size=(120, 40)) as pilot:
         await wait_until(
             pilot,
-            lambda: app._active_flat_buffer is not None,
+            lambda: app._active_flat_buffer is not None and app._active_flat_buffer._fv is not None,
             timeout=15.0,
             message="initial flat buffer never activated",
         )
+        # Snapshot the FileView the first query installed. ``_run_query``
+        # below either swaps in a new FileView (different match lines)
+        # or clears it; either way ``_fv`` identity changes. Without
+        # this token the predicate can match the first query's already-
+        # scrolled buffer before the second query has rewired it.
+        pre_fv = app._active_flat_buffer._fv  # type: ignore[union-attr]
         app._run_query("blue penguin sandwich")
         await wait_until(
             pilot,
             lambda: (
                 app._active_flat_buffer is not None
+                and app._active_flat_buffer._fv is not pre_fv
                 and (app._active_flat_buffer.scroll_y > 0 or not app._active_flat_buffer._fv)
             ),
             timeout=15.0,
@@ -146,17 +153,28 @@ async def test_navigating_down_results_scrolls_each_preview(
             message="results never accumulated 2 groups",
         )
         for i, _g in enumerate(app._groups):
+            expected_parent = app._groups[i].parent_id
             rtree.focus()
             await safe_pause(pilot)
             rtree.cursor_line = rtree.cursor_line + 1 if i > 0 else 1
-            # Each file switch resets scroll_y to 0 while the new
-            # PreviewContainer mounts; wait for the end-of-mount
-            # re-anchor to fire.
+            # Each file switch swaps in a new PreviewContainer (scroll_y
+            # resets to 0 mid-mount). Predicate must bind to THIS
+            # iteration's container, otherwise the leftover scroll_y
+            # from the previous file passes the check before the swap
+            # has landed.
             await wait_until(
                 pilot,
-                lambda: pane.scroll_y > 0,
+                lambda parent=expected_parent: (
+                    app._active_preview is not None
+                    and app._active_preview.parent_doc_id == parent
+                    and pane.scroll_y > 0
+                ),
                 timeout=20.0,
-                message=f"result {i} scroll_y={pane.scroll_y}",
+                message=(
+                    f"result {i} parent={expected_parent} "
+                    f"active={app._active_preview.parent_doc_id if app._active_preview else None} "
+                    f"scroll_y={pane.scroll_y}"
+                ),
             )
 
 
