@@ -11,6 +11,7 @@ from textual.widgets import Tree
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.line_buffer import LineBufferPreview
+from tests._pilot_wait import safe_pause, wait_until
 
 
 @pytest.fixture
@@ -23,9 +24,16 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 async def test_flat_preview_scrolls_to_match_on_initial_query(built_index: Path) -> None:
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test(size=(120, 40)) as pilot:
-        for _ in range(5):
-            await pilot.pause()
-        assert app._groups
+        await wait_until(
+            pilot,
+            lambda: (
+                bool(app._groups)
+                and bool(list(app.query(LineBufferPreview)))
+                and next(iter(app.query(LineBufferPreview))).scroll_y > 0
+            ),
+            timeout=15.0,
+            message="flat preview never scrolled to match",
+        )
         buf = next(iter(app.query(LineBufferPreview)))
         assert buf.scroll_y > 0
 
@@ -34,11 +42,22 @@ async def test_flat_preview_scrolls_to_match_on_initial_query(built_index: Path)
 async def test_flat_preview_scrolls_after_second_query(built_index: Path) -> None:
     app = FNDApp(index_dir=built_index, initial_query="introduction")
     async with app.run_test(size=(120, 40)) as pilot:
-        for _ in range(5):
-            await pilot.pause()
+        await wait_until(
+            pilot,
+            lambda: app._active_flat_buffer is not None,
+            timeout=15.0,
+            message="initial flat buffer never activated",
+        )
         app._run_query("blue penguin sandwich")
-        for _ in range(5):
-            await pilot.pause()
+        await wait_until(
+            pilot,
+            lambda: (
+                app._active_flat_buffer is not None
+                and (app._active_flat_buffer.scroll_y > 0 or not app._active_flat_buffer._fv)
+            ),
+            timeout=15.0,
+            message="flat buffer never settled after second query",
+        )
         active = app._active_flat_buffer
         assert active is not None
         assert active.scroll_y > 0 or not active._fv
@@ -58,10 +77,12 @@ async def test_md_preview_scrolls_to_match_chunk(tmp_path: Path, tmp_index_dir: 
     app = FNDApp(index_dir=tmp_index_dir, initial_query="unicorn-anchor")
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one("#preview_pane", VerticalScroll)
-        for _ in range(80):
-            await pilot.pause()
-            if pane.scroll_y > 0:
-                break
+        await wait_until(
+            pilot,
+            lambda: pane.scroll_y > 0,
+            timeout=15.0,
+            message=f"preview never scrolled; scroll_y={pane.scroll_y}",
+        )
         assert app._groups
         assert app._groups[0].hits[0].chunk_seq > 0
         assert pane.scroll_y > 0, f"scroll_y={pane.scroll_y}"
@@ -88,10 +109,12 @@ async def test_md_preview_scrolls_when_match_is_in_first_chunk(
     app = FNDApp(index_dir=tmp_index_dir, initial_query="compromise")
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one("#preview_pane", VerticalScroll)
-        for _ in range(80):
-            await pilot.pause()
-            if pane.scroll_y > 0:
-                break
+        await wait_until(
+            pilot,
+            lambda: pane.scroll_y > 0,
+            timeout=15.0,
+            message=f"preview never scrolled; scroll_y={pane.scroll_y}",
+        )
         assert pane.scroll_y > 0, f"scroll_y={pane.scroll_y}"
 
 
@@ -116,21 +139,25 @@ async def test_navigating_down_results_scrolls_each_preview(
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one("#preview_pane", VerticalScroll)
         rtree = app.query_one("#results_pane", Tree)
-        for _ in range(10):
-            await pilot.pause()
-        assert len(app._groups) >= 2
+        await wait_until(
+            pilot,
+            lambda: len(app._groups) >= 2,
+            timeout=15.0,
+            message="results never accumulated 2 groups",
+        )
         for i, _g in enumerate(app._groups):
             rtree.focus()
-            await pilot.pause()
+            await safe_pause(pilot)
             rtree.cursor_line = rtree.cursor_line + 1 if i > 0 else 1
             # Each file switch resets scroll_y to 0 while the new
-            # PreviewContainer mounts; wait long enough for layout +
-            # the end-of-mount re-anchor to fire.
-            for _ in range(120):
-                await pilot.pause()
-                if pane.scroll_y > 0:
-                    break
-            assert pane.scroll_y > 0, f"result {i} scroll_y={pane.scroll_y}"
+            # PreviewContainer mounts; wait for the end-of-mount
+            # re-anchor to fire.
+            await wait_until(
+                pilot,
+                lambda: pane.scroll_y > 0,
+                timeout=20.0,
+                message=f"result {i} scroll_y={pane.scroll_y}",
+            )
 
 
 @pytest.mark.asyncio
@@ -164,10 +191,12 @@ async def test_md_preview_scrolls_when_first_match_is_in_a_table(
     app = FNDApp(index_dir=tmp_index_dir, initial_query="compromise")
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one("#preview_pane", VerticalScroll)
-        for _ in range(80):
-            await pilot.pause()
-            if pane.scroll_y > 0:
-                break
+        await wait_until(
+            pilot,
+            lambda: pane.scroll_y > 0,
+            timeout=15.0,
+            message=f"preview never scrolled; scroll_y={pane.scroll_y}",
+        )
         assert pane.scroll_y > 0, f"scroll_y={pane.scroll_y}"
 
 
@@ -222,10 +251,12 @@ Wrap-up paragraph.
     app = FNDApp(index_dir=tmp_index_dir, initial_query="compromise")
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one("#preview_pane", VerticalScroll)
-        for _ in range(80):
-            await pilot.pause()
-            if pane.scroll_y > 0:
-                break
+        await wait_until(
+            pilot,
+            lambda: pane.scroll_y > 0,
+            timeout=15.0,
+            message=f"preview never scrolled; scroll_y={pane.scroll_y}",
+        )
         assert pane.scroll_y > 0, f"scroll_y={pane.scroll_y}"
 
 
@@ -243,13 +274,13 @@ async def test_flat_preview_no_jump_on_install(tmp_path: Path, tmp_index_dir: Pa
 
     app = FNDApp(index_dir=tmp_index_dir, initial_query="unicorn-anchor")
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        active: LineBufferPreview | None = None
-        for _ in range(60):
-            await pilot.pause()
-            active = app._active_flat_buffer
-            if active is not None and active.scroll_y > 0:
-                break
+        await wait_until(
+            pilot,
+            lambda: app._active_flat_buffer is not None and app._active_flat_buffer.scroll_y > 0,
+            timeout=15.0,
+            message="flat buffer never scrolled",
+        )
+        active = app._active_flat_buffer
         assert active is not None, "no active flat buffer"
         assert (
             active.scroll_y > 0

@@ -20,6 +20,7 @@ from fnd.index import build_index
 from fnd.render import HIGHLIGHT_STYLE
 from fnd.tui import FNDApp
 from fnd.tui.app import FNDMarkdown
+from tests._pilot_wait import safe_pause, safe_press, wait_until
 
 
 def _write(p: Path, body: str) -> None:
@@ -72,13 +73,17 @@ async def test_highlights_default_on(cfg: Config, md_index: Path) -> None:
     any user interaction — the default state is "highlights on"."""
     app = FNDApp(index_dir=md_index, config=cfg, collection="notes", initial_query="templates")
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause()
-        assert app._highlights_enabled is True
         pane = app.query_one("#preview_pane", VerticalScroll)
-        assert _has_highlight_span(pane), "expected highlights on by default"
+        await wait_until(
+            pilot,
+            lambda: _has_highlight_span(pane),
+            timeout=15.0,
+            message="expected highlights on by default",
+        )
+        assert app._highlights_enabled is True
 
 
 @pytest.mark.asyncio
@@ -87,24 +92,34 @@ async def test_h_key_toggles_highlights_off_then_on(cfg: Config, md_index: Path)
     again restores them — same query, no re-search."""
     app = FNDApp(index_dir=md_index, config=cfg, collection="notes", initial_query="templates")
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
-        assert _has_highlight_span(pane)
+        await wait_until(
+            pilot,
+            lambda: _has_highlight_span(pane),
+            timeout=15.0,
+            message="initial highlights never rendered",
+        )
 
         # Toggle off.
-        await pilot.press("h")
-        await pilot.pause()
-        assert app._highlights_enabled is False
-        assert not _has_highlight_span(pane), "expected no highlight spans after toggling off"
+        await safe_press(pilot, "h")
+        await wait_until(
+            pilot,
+            lambda: app._highlights_enabled is False and not _has_highlight_span(pane),
+            timeout=15.0,
+            message="highlights didn't clear after first toggle",
+        )
 
         # Toggle back on — same query, highlights restored.
-        await pilot.press("h")
-        await pilot.pause()
-        assert app._highlights_enabled is True
-        assert _has_highlight_span(pane), "expected highlights restored after toggling back on"
+        await safe_press(pilot, "h")
+        await wait_until(
+            pilot,
+            lambda: app._highlights_enabled is True and _has_highlight_span(pane),
+            timeout=15.0,
+            message="highlights didn't restore after second toggle",
+        )
 
 
 @pytest.mark.asyncio
@@ -115,8 +130,8 @@ async def test_h_typed_in_query_bar_does_not_toggle(cfg: Config, md_index: Path)
     'h')."""
     app = FNDApp(index_dir=md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         # Default focus is the query input on launch with no query.
-        await pilot.press("h")
-        await pilot.pause()
+        await safe_press(pilot, "h")
+        await safe_pause(pilot)
         assert app._highlights_enabled is True

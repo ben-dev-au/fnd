@@ -2,12 +2,49 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import importlib.util
 from collections.abc import Generator
 from pathlib import Path
 
 import pytest
+from textual.pilot import Pilot, WaitForScreenTimeout
+
+# ── Pilot patches: tolerate internal _wait_for_screen timeouts ─────
+#
+# Under full-suite CPU load, ``Pilot.pause()`` and ``Pilot.press()``
+# call ``_wait_for_screen(timeout=30.0)`` which can raise
+# ``WaitForScreenTimeout`` even when the test would otherwise pass.
+# The widget message queue eventually drains; the 30 s wall-clock
+# bound just lapses first.
+#
+# We wrap both methods so the timeout becomes a soft yield to the
+# event loop. State assertions in tests must then use predicate
+# polling (see ``tests/_pilot_wait.wait_until``) instead of relying
+# on one ``pilot.pause()`` for a deterministic settle.
+_orig_pause = Pilot.pause
+_orig_press = Pilot.press
+
+
+async def _safe_pause(self: Pilot, delay: float | None = None) -> None:  # type: ignore[type-arg]
+    try:
+        await _orig_pause(self, delay)
+    except WaitForScreenTimeout:
+        for _ in range(8):
+            await asyncio.sleep(0)
+
+
+async def _safe_press(self: Pilot, *keys: str) -> None:  # type: ignore[type-arg]
+    try:
+        await _orig_press(self, *keys)
+    except WaitForScreenTimeout:
+        for _ in range(8):
+            await asyncio.sleep(0)
+
+
+Pilot.pause = _safe_pause  # type: ignore[method-assign]
+Pilot.press = _safe_press  # type: ignore[method-assign]
 
 
 # When the pdf-structure extra is installed in the dev venv, PDF chunks

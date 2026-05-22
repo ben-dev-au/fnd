@@ -27,6 +27,7 @@ from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.line_buffer import LineBufferPreview
 from fnd.tui.preview_scrollbar import MatchAwareScrollBar
+from tests._pilot_wait import safe_pause, safe_press, wait_until
 
 
 @pytest.fixture
@@ -128,14 +129,14 @@ async def test_pdf_preview_uses_line_buffer(pdf_index: Path) -> None:
     no PreviewContainer is active."""
     app = FNDApp(index_dir=pdf_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         tree = app.query_one("#results_pane", Tree)
         first = next(iter(tree.root.children))
         first.expand()
-        await pilot.pause()
+        await safe_pause(pilot)
         tree.focus()
-        await pilot.press("down")
-        await pilot.pause()
+        await safe_press(pilot, "down")
+        await safe_pause(pilot)
         assert app._active_flat_buffer is not None
         assert app._active_preview is None
         pane = app.query_one("#preview_pane")
@@ -154,14 +155,14 @@ async def test_flat_buffer_scrollbar_carries_line_precise_markers(
     markers paint without any wiring from the host."""
     app = FNDApp(index_dir=pdf_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         tree = app.query_one("#results_pane", Tree)
         first = next(iter(tree.root.children))
         first.expand()
-        await pilot.pause()
+        await safe_pause(pilot)
         tree.focus()
-        await pilot.press("down")
-        await pilot.pause()
+        await safe_press(pilot, "down")
+        await safe_pause(pilot)
         buf = app._active_flat_buffer
         assert buf is not None
         bar = buf.vertical_scrollbar
@@ -187,15 +188,15 @@ async def test_cursor_between_sections_calls_scroll_to_chunk_each_time(
     whether the buffer is tall enough to actually scroll)."""
     app = FNDApp(index_dir=multi_match_pdf_index, initial_query="zebra")
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         tree = app.query_one("#results_pane", Tree)
         first = next(iter(tree.root.children))
         first.expand()
-        await pilot.pause()
+        await safe_pause(pilot)
         tree.focus()
         # Cursor down once to land on the first section.
-        await pilot.press("down")
-        await pilot.pause()
+        await safe_press(pilot, "down")
+        await safe_pause(pilot)
         buf = app._active_flat_buffer
         assert buf is not None
         # The file should have multiple section children — bail clearly
@@ -218,10 +219,10 @@ async def test_cursor_between_sections_calls_scroll_to_chunk_each_time(
         buf.scroll_to_chunk = spy  # type: ignore[method-assign]
 
         # Move to the next section, and the one after.
-        await pilot.press("down")
-        await pilot.pause()
-        await pilot.press("down")
-        await pilot.pause()
+        await safe_press(pilot, "down")
+        await safe_pause(pilot)
+        await safe_press(pilot, "down")
+        await safe_pause(pilot)
 
         # Two cursor moves -> at least two scroll_to_chunk calls with
         # distinct chunk_seq values (each section maps to a different
@@ -245,15 +246,15 @@ async def test_only_one_flat_buffer_is_visible_at_a_time(
     pane is visible (display != none) at any time."""
     app = FNDApp(index_dir=multi_match_pdf_index, initial_query="zebra")
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         tree = app.query_one("#results_pane", Tree)
         first = next(iter(tree.root.children))
         first.expand()
-        await pilot.pause()
+        await safe_pause(pilot)
         tree.focus()
         for _ in range(3):
-            await pilot.press("down")
-            await pilot.pause()
+            await safe_press(pilot, "down")
+            await safe_pause(pilot)
         pane = app.query_one("#preview_pane")
         # Count buffers that are actually rendered (not display:none).
         visible_buffers = [b for b in pane.query(LineBufferPreview) if b.display]
@@ -298,22 +299,34 @@ async def test_switching_md_to_pdf_hides_structural_container(
 
     app = FNDApp(index_dir=combined_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         tree = app.query_one("#results_pane", Tree)
         # Walk the first two file rows, expanding each and stepping to
         # its first section. This guarantees we exercise both pipelines.
         for child in list(tree.root.children)[:2]:
             child.expand()
-            await pilot.pause()
+            await safe_pause(pilot)
             tree.move_cursor(child.children[0] if child.children else child)
-            await pilot.pause()
+            await safe_pause(pilot)
 
         pane = app.query_one("#preview_pane")
         from fnd.tui.app import PreviewContainer
 
+        # Settle until exactly one pipeline owns the visible widget.
+        await wait_until(
+            pilot,
+            lambda: (
+                (
+                    len([b for b in pane.query(LineBufferPreview) if b.display])
+                    + len([c for c in pane.query(PreviewContainer) if c.display])
+                )
+                <= 1
+            ),
+            timeout=15.0,
+            message="both preview pipelines left widgets visible",
+        )
         visible_buffers = [b for b in pane.query(LineBufferPreview) if b.display]
         visible_containers = [c for c in pane.query(PreviewContainer) if c.display]
-        # Exactly one preview widget visible across BOTH pipelines.
         assert len(visible_buffers) + len(visible_containers) <= 1, (
             f"both pipelines left widgets visible: "
             f"{len(visible_buffers)} buffers + {len(visible_containers)} containers"
@@ -326,21 +339,21 @@ async def test_flat_buffer_cache_hit_reuses_widget(pdf_index: Path) -> None:
     cached LineBufferPreview is flipped visible again."""
     app = FNDApp(index_dir=pdf_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         tree = app.query_one("#results_pane", Tree)
         first = next(iter(tree.root.children))
         first.expand()
-        await pilot.pause()
+        await safe_pause(pilot)
         tree.focus()
-        await pilot.press("down")
-        await pilot.pause()
+        await safe_press(pilot, "down")
+        await safe_pause(pilot)
         buf_first_visit = app._active_flat_buffer
         assert buf_first_visit is not None
         # Move the cursor away then back to the same file.
-        await pilot.press("up")
-        await pilot.pause()
-        await pilot.press("down")
-        await pilot.pause()
+        await safe_press(pilot, "up")
+        await safe_pause(pilot)
+        await safe_press(pilot, "down")
+        await safe_pause(pilot)
         assert (
             app._active_flat_buffer is buf_first_visit
         ), "cache hit should reuse the existing buffer, not remount a fresh one"
@@ -355,16 +368,19 @@ async def test_md_preview_keeps_structural_path(cfg: Config, md_index: Path) -> 
     path is unchanged by the Phase 5 wire-in."""
     app = FNDApp(index_dir=md_index, config=cfg, initial_query="susy")
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         tree = app.query_one("#results_pane", Tree)
         first = next(iter(tree.root.children))
         first.expand()
-        await pilot.pause()
+        await safe_pause(pilot)
         tree.focus()
-        await pilot.press("down")
-        await pilot.pause()
-        assert app._active_preview is not None
-        assert app._active_flat_buffer is None
+        await safe_press(pilot, "down")
+        await wait_until(
+            pilot,
+            lambda: app._active_preview is not None and app._active_flat_buffer is None,
+            timeout=15.0,
+            message="markdown preview never activated structural container",
+        )
         # The pane carries the placeholder OR a PreviewContainer
         # (not a LineBufferPreview).
         pane = app.query_one("#preview_pane")

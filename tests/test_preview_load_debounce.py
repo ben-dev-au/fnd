@@ -10,6 +10,7 @@ import pytest
 from fnd.config import Config, Defaults
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import safe_pause, wait_until
 
 
 @pytest.fixture
@@ -34,7 +35,7 @@ async def test_rapid_cursor_sweep_dispatches_once(
     """Several quick highlights only fire one ``_render_full_doc``."""
     app = FNDApp(index_dir=built_index, config=cfg_with_debounce, initial_query="results")
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
 
         render_calls: list[tuple[str, int]] = []
         original = app._render_full_doc
@@ -54,8 +55,14 @@ async def test_rapid_cursor_sweep_dispatches_once(
         app._schedule_preview_load("p5", 0)
         assert render_calls == [], "no load should fire before the timer matures"
 
-        # Wait past the 150 ms debounce.
-        await pilot.pause(0.3)
+        # Wait past the 150 ms debounce — predicate-driven so a load
+        # spike that delays the timer past 300 ms doesn't fail.
+        await wait_until(
+            pilot,
+            lambda: len(render_calls) >= 1,
+            timeout=15.0,
+            message="debounce timer never fired",
+        )
 
         assert len(render_calls) == 1, render_calls
         assert render_calls[0][0] == "p5"
@@ -70,7 +77,7 @@ async def test_zero_delay_dispatches_synchronously(
     cfg = Config(defaults=Defaults(preview_load_debounce_ms=0))
     app = FNDApp(index_dir=built_index, config=cfg, initial_query="results")
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         render_calls: list[str] = []
         original = app._render_full_doc
 
@@ -91,7 +98,7 @@ async def test_query_change_cancels_pending_load(
     target from the prior result set must not fire after rebuild."""
     app = FNDApp(index_dir=built_index, config=cfg_with_debounce, initial_query="results")
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         # Arm a debounced load that points at a parent_id we won't have
         # any more after the rebuild.
         app._schedule_preview_load("stale-parent-id", 0)
@@ -99,6 +106,9 @@ async def test_query_change_cancels_pending_load(
         # Run a fresh query: this calls _refresh_results_tree, which
         # cancels pending loads.
         app._run_query("nonsense-query-that-matches-nothing")
-        await pilot.pause()
-        assert app._preview_load_target is None
-        assert app._preview_load_timer is None
+        await wait_until(
+            pilot,
+            lambda: app._preview_load_target is None and app._preview_load_timer is None,
+            timeout=15.0,
+            message="pending load wasn't cancelled by query change",
+        )
