@@ -25,7 +25,7 @@ from fnd.tui.menu import (
 )
 
 # Provider IDs we can walk without a real config object.
-_SECTION_IDS = ("preferences", "collections", "keybindings", "indexing")
+_SECTION_IDS = ("preferences", "collections", "keybindings", "indexing-pdf-texture")
 
 
 class _StubApp:

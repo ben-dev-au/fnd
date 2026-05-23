@@ -79,8 +79,8 @@ async def test_search_finds_indexing_row(
 
 @pytest.mark.asyncio
 async def test_search_breadcrumb_is_indexing(built_index: Path, cfg: Config) -> None:
-    """Indexing rows should carry an Indexing breadcrumb so the user
-    sees the section context in the filtered view."""
+    """Indexing rows should carry the combined-section breadcrumb so the
+    user sees the section context in the filtered view."""
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -95,6 +95,6 @@ async def test_search_breadcrumb_is_indexing(built_index: Path, cfg: Config) -> 
         for item in lst._items:
             if item.id == "indexing.auto_resume":
                 bc = screen._search_breadcrumbs.get(id(item))
-                assert bc == ("Indexing",), f"expected Indexing breadcrumb; got {bc}"
+                assert bc == ("Indexing & PDF Texture",), f"expected combined breadcrumb; got {bc}"
                 return
         pytest.fail("indexing.auto_resume not in filtered results")

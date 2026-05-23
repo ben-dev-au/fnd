@@ -107,7 +107,7 @@ async def test_indexing_subscreen_chrome(built_index: Path, cfg: Config) -> None
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
-        assert screen._breadcrumb == ("Indexing",)
+        assert screen._breadcrumb == ("Indexing & PDF Texture",)
         assert screen.query_one("#settings_box")
         assert screen.query_one("#footer_hints")
         lst = screen.query_one(SettingsList)

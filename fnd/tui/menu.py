@@ -50,8 +50,12 @@ KIND_DISPLAY = "display"  # read-only: dim label + bright value, no Enter afford
 SECTION_KEYBINDINGS = "keybindings"
 SECTION_PREFERENCES = "preferences"
 SECTION_COLLECTIONS = "collections"
-SECTION_INDEXING = "indexing"
-SECTION_PDF_TEXTURE = "pdf-texture"
+SECTION_INDEXING_PDF_TEXTURE = "indexing-pdf-texture"
+# Legacy aliases retained so any saved jump-state or external link that
+# referenced the pre-combine section ids still routes into the combined
+# screen instead of crashing.
+SECTION_INDEXING = SECTION_INDEXING_PDF_TEXTURE
+SECTION_PDF_TEXTURE = SECTION_INDEXING_PDF_TEXTURE
 
 
 # ── Models ───────────────────────────────────────────────────────────
@@ -122,6 +126,11 @@ class MenuItem:
 
     # Metadata used by the cross-tree search view.
     keywords: tuple[str, ...] = field(default_factory=tuple)
+
+    # Renders contiguous items with the same subsection inside one
+    # bordered Vertical with this string as its border_title. None =
+    # outside any bordered group (the default for every existing item).
+    subsection: str | None = None
 
     @property
     def is_header(self) -> bool:
@@ -1530,6 +1539,22 @@ def _provider_pdf_texture(_app: FNDApp) -> tuple[MenuItem, ...]:
     )
 
 
+def _provider_indexing_pdf_texture(app: FNDApp) -> tuple[MenuItem, ...]:
+    """Combined screen: shared actions at the top (subsection=None),
+    then two bordered subsections grouping the Indexing and PDF Texture
+    items respectively. The contributing providers' items are reused
+    verbatim; only the ``subsection`` field is stamped on them."""
+    import dataclasses as _dc
+
+    indexing_items = tuple(
+        _dc.replace(item, subsection="Indexing") for item in _provider_indexing(app)
+    )
+    pdf_texture_items = tuple(
+        _dc.replace(item, subsection="PDF Texture") for item in _provider_pdf_texture(app)
+    )
+    return indexing_items + pdf_texture_items
+
+
 def _is_pdf_structure_installed() -> bool:
     from fnd.extras import EXTRAS, is_extra_installed
 
@@ -1663,21 +1688,12 @@ def _run_update_cache(app: FNDApp) -> None:
 
 
 def _summary_indexing(app: FNDApp) -> str:
-    """Trailing summary for the Indexing root row.
-
-    Indexing's pane now holds the cross-collection process action and
-    behaviour toggles only; per-collection updates and PDF Texturising
-    moved to their own sections. Surface the auto-resume state as the
-    single at-a-glance value."""
+    """Auto-resume chip — still used by tests after the section combine."""
     return "✓ auto-resume" if _get_indexer_auto_resume(app) else "✗ auto-resume"
 
 
 def _summary_pdf_texture(app: FNDApp) -> str:
-    """Trailing summary for the PDF Texture root row.
-
-    Shows the engine state plus a short cache size when the texturing
-    walk has been cached; lazy-loaded so the fs scan never blocks first
-    paint."""
+    """Engine + cache chip — still used by tests after the section combine."""
     from fnd.tui.lazy_trailing import PLACEHOLDER, get_or_schedule
 
     engine = "✓ engine on" if _is_pdf_structure_installed() else "✗ engine off"
@@ -1685,6 +1701,14 @@ def _summary_pdf_texture(app: FNDApp) -> str:
     if cache_part and cache_part != PLACEHOLDER:
         return f"{engine} · {cache_part}"
     return engine
+
+
+def _summary_indexing_pdf_texture(app: FNDApp) -> str:
+    """Trailing summary for the combined Indexing & PDF Texture root row.
+
+    Composes the two prior chip summaries so the root row carries the
+    most actionable status bits from both subsections at a glance."""
+    return f"{_summary_indexing(app)} · {_summary_pdf_texture(app)}"
 
 
 def _summary_cache_size_row(app: FNDApp) -> str:
@@ -1915,31 +1939,24 @@ def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
             value_getter=_summary_keybindings,
         ),
         MenuItem(
-            id=f"root.{SECTION_INDEXING}",
-            label="Indexing",
+            id=f"root.{SECTION_INDEXING_PDF_TEXTURE}",
+            label="Indexing & PDF Texture",
             description=(
-                "Process new files across all collections and auto-resume "
-                "behaviour. App-wide actions only; per-collection updates "
-                "live under each collection."
+                "Run Update across all collections, manage the texturising "
+                "engine and PDF Texture Cache, and tune auto-resume + "
+                "while-indexing behaviour. Per-collection updates live "
+                "under each collection."
             ),
             kind=KIND_EXTERNAL,
-            external=_open_section(SECTION_INDEXING),
-            value_getter=_summary_indexing,
-            keywords=("index", "indexer", "reindex", "process", "new", "auto-resume"),
-        ),
-        MenuItem(
-            id=f"root.{SECTION_PDF_TEXTURE}",
-            label="PDF Texture",
-            description=(
-                "Texturising engine status, saved texturings, and the "
-                "PDF Texture Cache. Texturising adds structure (headings, "
-                "lists, tables) to the PDF preview pane; search works "
-                "the same either way."
-            ),
-            kind=KIND_EXTERNAL,
-            external=_open_section(SECTION_PDF_TEXTURE),
-            value_getter=_summary_pdf_texture,
+            external=_open_section(SECTION_INDEXING_PDF_TEXTURE),
+            value_getter=_summary_indexing_pdf_texture,
             keywords=(
+                "index",
+                "indexer",
+                "reindex",
+                "process",
+                "new",
+                "auto-resume",
                 "pdf",
                 "texture",
                 "texturise",
@@ -1989,16 +2006,14 @@ _SECTION_PROVIDERS: dict[str, Callable[[FNDApp], tuple[MenuItem, ...]]] = {
     SECTION_PREFERENCES: _provider_preferences,
     SECTION_COLLECTIONS: _provider_collections,
     SECTION_KEYBINDINGS: _provider_keybindings,
-    SECTION_INDEXING: _provider_indexing,
-    SECTION_PDF_TEXTURE: _provider_pdf_texture,
+    SECTION_INDEXING_PDF_TEXTURE: _provider_indexing_pdf_texture,
 }
 
 _SECTION_LABELS: dict[str, str] = {
     SECTION_PREFERENCES: "Preferences",
     SECTION_COLLECTIONS: "Collections",
     SECTION_KEYBINDINGS: "Keybindings",
-    SECTION_INDEXING: "Indexing",
-    SECTION_PDF_TEXTURE: "PDF Texture",
+    SECTION_INDEXING_PDF_TEXTURE: "Indexing & PDF Texture",
 }
 
 

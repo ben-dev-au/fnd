@@ -603,6 +603,13 @@ class SettingsList(Widget, can_focus=True):
     SettingsList Static.row { height: 1; padding: 0 1; }
     SettingsList Static.row.-header-1 { padding: 1 0 0 0; height: 2; }
     SettingsList Static.row.-header-2 { padding: 0 0 0 0; }
+    SettingsList .subsection {
+        border: round $primary 50%;
+        padding: 0 1;
+        margin: 1 0 0 0;
+        height: auto;
+    }
+    SettingsList .subsection:focus-within { border: round $accent; }
     /* Context-relevant section (Keybindings cheat sheet only today):
        header gets an accent border-left + bold; body rows get a faint
        tint so the eye lands on the section the user came from. */
@@ -686,7 +693,28 @@ class SettingsList(Widget, can_focus=True):
         # if so, every body row until the next header gets the same
         # ``-hint-section`` class so the whole band paints together.
         in_hint_section = False
+        # Group contiguous items that share a non-None `subsection` into
+        # a bordered Vertical with the subsection name as border_title.
+        # Items with subsection=None mount at the top level (the existing
+        # flat-list behaviour). Suppressed in cross-tree search results
+        # (where ``breadcrumbs`` is populated) since the per-row
+        # breadcrumb already carries the section context and subsection
+        # borders would fragment the result list.
+        rendering_search = bool(self._search_breadcrumbs)
+        current_subsection: str | None = None
+        current_container: Vertical | VerticalScroll = body
         for item in items:
+            target_sub = None if rendering_search else item.subsection
+            if target_sub != current_subsection:
+                # Close previous bordered group, open a new one if needed.
+                if target_sub is None:
+                    current_container = body
+                else:
+                    sub = Vertical(classes="subsection")
+                    sub.border_title = target_sub
+                    body.mount(sub)
+                    current_container = sub
+                current_subsection = target_sub
             cls = "row"
             if item.kind == KIND_HEADER:
                 cls += f" -header-{item.header_level or 1}"
@@ -695,7 +723,7 @@ class SettingsList(Widget, can_focus=True):
                     cls += " -hint-section"
             elif in_hint_section:
                 cls += " -hint-section"
-            body.mount(Static("", classes=cls))
+            current_container.mount(Static("", classes=cls))
         self.call_after_refresh(self._init_cursor)
 
     def _init_cursor(self) -> None:
