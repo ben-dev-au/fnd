@@ -212,7 +212,8 @@ class IndexerScreen(ModalScreen[None]):
                 f"[dim]Current:[/] {_short_name(state.current_file)}"
             )
             self.query_one("#indexer_cache", Static).update(
-                f"[dim]Cache:[/] {state.cache_hits} hits, {state.cache_misses} misses"
+                f"[dim]Texturising:[/] {state.cache_hits} already textured, "
+                f"{state.cache_misses} newly textured"
             )
         except Exception:
             pass
@@ -250,7 +251,8 @@ class IndexerScreen(ModalScreen[None]):
             f"[dim]Elapsed:[/] {fmt_eta(ev.elapsed_s)}    " f"[dim]ETA:[/] {fmt_eta(eta)}"
         )
         cache_line.update(
-            f"[dim]Cache:[/] {ev.cache_hits_total} hits, " f"{ev.cache_misses_total} misses"
+            f"[dim]Texturising:[/] {ev.cache_hits_total} already textured, "
+            f"{ev.cache_misses_total} newly textured"
         )
 
     # ---- bindings ----

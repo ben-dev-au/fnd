@@ -2802,7 +2802,7 @@ class DeleteCollectionScreen(Screen[None]):
                     ),
                     safety=(
                         "Source files on disk are untouched. Other collections "
-                        "and the PDF structure cache are unaffected."
+                        "and the PDF Texture Cache are unaffected."
                     ),
                     irreversible=True,
                 ),
@@ -3025,7 +3025,7 @@ class UpdateAllConfirm(Screen[None]):
             text.append("\n")
             text.append("Per file  ", style="dim")
             text.append(
-                "Unchanged files are skipped. The PDF structure cache is consulted, not cleared.\n"
+                "Unchanged files are skipped. The PDF Texture Cache is consulted, not cleared.\n"
             )
             text.append("Order     ", style="dim")
             text.append("Sequential. Each shows its own progress; queue advances on completion.\n")
@@ -3163,15 +3163,17 @@ class StructuredPdfConfirmScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         title = (
-            "Indexing › Structured PDF › Uninstall"
+            "Indexing › PDF Texturising › Uninstall engine"
             if self._installed
-            else "Indexing › Structured PDF › Install"
+            else "Indexing › PDF Texturising › Install engine"
         )
         with Vertical(id="settings_box") as box:
             box.border_title = title
             yield Static(self._summary_text(), id="confirm_summary")
             confirm_label = (
-                "Yes, uninstall pdf-structure" if self._installed else "Yes, install pdf-structure"
+                "Yes, uninstall the texturising engine"
+                if self._installed
+                else "Yes, install the texturising engine"
             )
             yield OptionList(
                 confirm_yes_option(confirm_label, severity=self._severity),
@@ -3184,26 +3186,29 @@ class StructuredPdfConfirmScreen(Screen[None]):
         from fnd.extras import actual_disk_mb
 
         if self._extra is None:
-            return Text("pdf-structure extra is unavailable.", style="bold red")
+            return Text("Texturising engine is unavailable.", style="bold red")
         if self._installed:
             # Uninstall is a give-back action: framing is "what
             # changes / what you get back / what's preserved." The
-            # PDF structure cache stays — it's a separate concept —
-            # so spell that out so the user isn't surprised by
-            # leftover disk usage.
+            # PDF Texture Cache stays - it's a separate concept - so
+            # spell that out so the user isn't surprised by leftover
+            # disk usage.
             cache_size = _pdf_cache_size_human()
             cache_line = (
-                f"PDF structure cache ({cache_size}) stays. "
-                "Clear it separately via Settings → Indexing → Clear "
-                "PDF structure cache."
+                f"PDF Texture Cache ({cache_size}) stays. "
+                "Forget it separately via Settings → Indexing → "
+                "Forget every saved texturing."
             )
             return build_confirm_body(
                 outcome_label="What changes",
-                outcome="New PDF extractions revert to flat text.",
+                outcome="New PDFs render as flat text in the preview pane.",
                 cost_label="Disk freed",
                 cost=f"~{actual_disk_mb(self._extra)} MB (packages).",
                 safety_label="Preserved",
-                safety=("Indexed structured PDFs keep working until reindex. " + cache_line),
+                safety=(
+                    "Already-textured PDFs keep rendering with structure "
+                    "until the next Update index. " + cache_line
+                ),
             )
         from fnd.tui.cost_estimate import estimate_per_pdf_seconds, has_calibration_data
 
@@ -3213,9 +3218,9 @@ class StructuredPdfConfirmScreen(Screen[None]):
             "on your machine." if has_calibration_data() else "(rough estimate)."
         )
         return build_confirm_body(
-            outcome="PDFs gain structured rendering (headings, lists, tables).",
+            outcome=("PDFs gain structured preview rendering " "(headings, lists, tables)."),
             cost=(f"~{total_mb} MB disk + ML weights on first use. " + first_run_note),
-            safety="Auto-resumes if interrupted. Existing flat indexes are preserved.",
+            safety="Auto-resumes if interrupted. Already-indexed PDFs keep working.",
         )
 
     def on_mount(self) -> None:

@@ -39,7 +39,7 @@ app = typer.Typer(name="fnd", help=_ROOT_HELP)
 config_app = typer.Typer(name="config", help="Manage fnd's TOML config file.")
 collection_app = typer.Typer(name="collection", help="Manage indexed collections.")
 extras_app = typer.Typer(name="extras", help="Manage opt-in feature extras.")
-cache_app = typer.Typer(name="cache", help="Manage the on-disk PDF structure cache.")
+cache_app = typer.Typer(name="cache", help="Manage the on-disk PDF Texture Cache.")
 app.add_typer(config_app, name="config")
 app.add_typer(collection_app, name="collection")
 app.add_typer(extras_app, name="extras")
@@ -589,36 +589,36 @@ def _human_bytes(n: int) -> str:
 
 @cache_app.command("status")
 def cache_status() -> None:
-    """Show on-disk PDF structure cache location, entry count, and size."""
+    """Show PDF Texture Cache location, count of saved texturings, and size."""
     from fnd.cache import ExtractionCache, default_cache_dir
 
     cache = ExtractionCache()
     root = default_cache_dir()
     if not root.exists():
-        typer.echo(f"cache dir: {root}  (not yet created)")
+        typer.echo(f"PDF Texture Cache: {root}  (not yet created)")
         return
-    typer.echo(f"cache dir:    {root}")
-    typer.echo(f"entries:      {cache.entry_count()}")
-    typer.echo(f"total size:   {_human_bytes(cache.total_size_bytes())}")
+    typer.echo(f"PDF Texture Cache:  {root}")
+    typer.echo(f"saved texturings:   {cache.entry_count()}")
+    typer.echo(f"disk used:          {_human_bytes(cache.total_size_bytes())}")
 
 
 @cache_app.command("clear")
 def cache_clear(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
 ) -> None:
-    """Remove the entire PDF structure cache. Next reindex will re-extract."""
+    """Forget every saved texturing. Next Update index will texturise every PDF."""
     import shutil
 
     from fnd.cache import default_cache_dir
 
     root = default_cache_dir()
     if not root.exists():
-        typer.echo("cache is empty (no directory)")
+        typer.echo("PDF Texture Cache is empty (no directory)")
         return
 
     if not yes:
-        typer.echo(f"About to remove {root} and all extraction artifacts.")
-        typer.echo("Next reindex will re-extract every file from scratch.")
+        typer.echo(f"About to remove {root} and every saved texturing.")
+        typer.echo("Next Update index will texturise every PDF from scratch.")
         if not typer.confirm("Continue?", default=False):
             typer.echo("aborted")
             raise typer.Exit(code=1)

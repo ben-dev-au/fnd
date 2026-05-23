@@ -1017,7 +1017,7 @@ def _provider_collections(app: FNDApp) -> tuple[MenuItem, ...]:
             description=(
                 "Run Update index for every collection in sequence. "
                 "Per-file rules match the per-collection Update index: "
-                "unchanged files are skipped, the PDF structure cache "
+                "unchanged files are skipped, the PDF Texture Cache "
                 "is consulted (not cleared)."
             ),
             kind=KIND_ACTION,
@@ -1129,8 +1129,9 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
             label="Update index now",
             description=(
                 "Re-scan this collection's sources. New / changed files are added; "
-                "deleted files are removed; unchanged files are skipped. Uses the "
-                "PDF structure cache to skip extraction when content hasn't changed."
+                "deleted files are removed; unchanged files are skipped. Reuses "
+                "the PDF Texture Cache so PDFs that have not changed are not "
+                "texturised again."
             ),
             kind=KIND_ACTION,
             action_label="Update",
@@ -1316,8 +1317,8 @@ def _provider_indexing(app: FNDApp) -> tuple[MenuItem, ...]:
     """Indexing sub-screen.
 
     Four groups: Index (run-the-thing actions for each collection plus
-    update-all), Structured PDF (status + install/uninstall), PDF
-    structure cache (size, location, maintenance), and Behaviour
+    update-all), PDF Texturising (engine status + install/uninstall),
+    PDF Texture Cache (size, location, maintenance), and Behaviour
     (toggles)."""
     cfg = app._config  # type: ignore[attr-defined]
     names = sorted(cfg.collections.keys()) if cfg is not None else []
@@ -1329,7 +1330,7 @@ def _provider_indexing(app: FNDApp) -> tuple[MenuItem, ...]:
             description=(
                 "Run Update index for every collection in sequence. "
                 "Per-file rules: unchanged files are skipped, the PDF "
-                "structure cache is consulted (not cleared)."
+                "Texture Cache is consulted (not cleared)."
             ),
             kind=KIND_ACTION,
             action_label="Update",
@@ -1356,18 +1357,32 @@ def _provider_indexing(app: FNDApp) -> tuple[MenuItem, ...]:
         )
     return (
         *index_rows,
-        header("Structured PDF extraction", level=2),
+        header("PDF Texturising", level=2),
         MenuItem(
             id="indexing.pdf_status",
-            label="Status",
+            label="Texturising engine",
             description=(
-                "Whether structured-PDF extraction is active. When installed, "
-                "the next Update index will populate the cache for any PDF "
-                "not already cached. When not installed, PDFs render as flat text."
+                "Whether the texturising engine is installed. When installed, "
+                "the next Update index texturises any PDF that isn't already "
+                "textured. When not installed, every PDF stays flat in the "
+                "preview pane (search still works either way)."
             ),
             kind=KIND_DISPLAY,
             value_getter=_summary_pdf_status,
-            keywords=("pdf", "structure", "pdf-structure", "status", "extra", "installed"),
+            keywords=(
+                "pdf",
+                "texturise",
+                "texture",
+                "engine",
+                "status",
+                "installed",
+                # Legacy terms so existing user muscle memory still finds
+                # this row.
+                "structured",
+                "structure",
+                "pdf-structure",
+                "extra",
+            ),
         ),
         MenuItem(
             id="indexing.pdf_install",
@@ -1382,27 +1397,33 @@ def _provider_indexing(app: FNDApp) -> tuple[MenuItem, ...]:
             action_label=_pdf_install_verb(),
             keywords=(
                 "pdf",
-                "structure",
+                "texturise",
+                "texture",
+                "engine",
                 "install",
                 "uninstall",
-                "pdf-structure",
-                "extra",
                 "pymupdf4llm",
                 "docling",
+                # Legacy terms.
+                "structured",
+                "structure",
+                "pdf-structure",
+                "extra",
             ),
         ),
-        header("PDF structure cache", level=2),
+        header("PDF Texture Cache", level=2),
         MenuItem(
             id="indexing.cache_size",
-            label="Size",
+            label="Saved texturings",
             description=(
-                "Per-file structured chunks. Shared across collections; same file "
-                "in two collections is extracted once and reused. Pruning or "
-                "clearing only affects the next Update index."
+                "Per-file texturing results fnd has saved. Shared across "
+                "collections; the same PDF in two collections is texturised "
+                "once and reused. Removing leftovers or forgetting saved "
+                "texturings only affects the next Update index."
             ),
             kind=KIND_DISPLAY,
             value_getter=_summary_cache_size_row,
-            keywords=("cache", "size", "entries", "extraction"),
+            keywords=("cache", "texture", "saved", "texturings", "size"),
         ),
         MenuItem(
             id="indexing.cache_location",
@@ -1413,49 +1434,61 @@ def _provider_indexing(app: FNDApp) -> tuple[MenuItem, ...]:
             ),
             kind=KIND_DISPLAY,
             value_getter=_summary_cache_location_row,
-            keywords=("cache", "location", "path", "disk"),
+            keywords=("cache", "texture", "location", "path", "disk"),
         ),
         MenuItem(
             id="indexing.cache_update",
-            label="Update cache",
+            label="Texturise PDFs that are still flat",
             description=(
-                "Populate the PDF structure cache for every PDF in any "
-                "collection's sources that doesn't have an entry yet. Doesn't "
-                "touch the search index; runs only the structuring pipeline. "
-                "Use to pre-warm before a big Update index."
+                "Texturise every PDF in any collection's sources that isn't "
+                "already textured. Doesn't touch the search index; runs only "
+                "the texturising pipeline. Use to pre-warm before a big "
+                "Update index."
             ),
             kind=KIND_ACTION,
-            action_label="Update",
+            action_label="Run",
             external=_run_update_cache,
             value_getter=_summary_cache_update,
-            keywords=("cache", "update", "populate", "warm", "structure"),
+            keywords=("cache", "texture", "texturise", "flat", "warm", "populate"),
         ),
         MenuItem(
             id="indexing.cache_prune",
-            label="Prune stale entries",
+            label="Remove leftovers from older texturising",
             description=(
-                "Remove cache entries whose extractor signature doesn't match "
-                "the current extractor. Fresh entries stay. Files with pruned "
-                "entries get re-extracted on the next Update index."
+                "Remove saved texturings made before the texturising engine "
+                "was upgraded (or before a config change). Current texturings "
+                "stay. PDFs whose leftovers are removed get texturised again "
+                "on the next Update index."
             ),
             kind=KIND_ACTION,
-            action_label="Prune…",
+            action_label="Remove…",
             external=_run_cache_prune,
             value_getter=_summary_stale_entries,
-            keywords=("cache", "prune", "stale", "extractor", "signature"),
+            keywords=(
+                "cache",
+                "texture",
+                "leftover",
+                "old",
+                "upgrade",
+                # Legacy terms.
+                "prune",
+                "stale",
+                "extractor",
+                "signature",
+            ),
         ),
         MenuItem(
             id="indexing.cache_clear",
-            label="Clear PDF structure cache",
+            label="Forget every saved texturing",
             description=(
-                "Wipe the entire cache. PDFs render as flat text until the next "
-                "Update index, which will re-extract every PDF. See the cost "
-                "estimate before confirming."
+                "Wipe every saved texturing. PDFs render as flat in the "
+                "preview pane until the next Update index, which re-texturises "
+                "every PDF. See the cost estimate before confirming."
             ),
             kind=KIND_ACTION,
-            action_label="Clear…",
+            action_label="Forget…",
             external=_run_cache_clear,
-            keywords=("cache", "clear", "delete", "wipe", "reset"),
+            keywords=("cache", "texture", "forget", "clear", "delete", "wipe", "reset"),
         ),
         header("Behaviour", level=2),
         MenuItem(
@@ -1475,19 +1508,19 @@ def _provider_indexing(app: FNDApp) -> tuple[MenuItem, ...]:
         ),
         MenuItem(
             id="indexing.cache_at_index_time",
-            label="Update cache at index time",
+            label="Texturise PDFs while indexing",
             description=(
-                "✓ On (default with pdf-structure installed): Update index "
-                "populates the cache for any PDF without an entry. "
-                "✗ Off: Update index uses cached entries on hit but skips "
-                "fresh extraction for new files. Fast flat-text refresh, "
-                "useful when you're on battery or don't have CPU to spare."
+                "✓ On (default when the texturising engine is installed): "
+                "Update index texturises new PDFs as it goes. ✗ Off: Update "
+                "index reuses saved texturings if they exist but skips "
+                "texturising new PDFs. Fast flat-only refresh, useful when "
+                "you're on battery or don't have CPU to spare."
             ),
             kind=KIND_TOGGLE,
             toggle_getter=_get_cache_at_index_time,
             toggle_setter=lambda app, v: _setting_writer("defaults.cache_at_index_time")(app, v),
             setting_path="defaults.cache_at_index_time",
-            keywords=("cache", "index", "time", "extract", "battery", "fast"),
+            keywords=("cache", "texture", "texturise", "index", "battery", "fast"),
         ),
     )
 
@@ -1522,7 +1555,11 @@ def _summary_pdf_status(app: FNDApp) -> str:
 
 
 def _pdf_install_label() -> str:
-    return "Uninstall pdf-structure" if _is_pdf_structure_installed() else "Install pdf-structure"
+    return (
+        "Uninstall texturising engine"
+        if _is_pdf_structure_installed()
+        else "Install texturising engine"
+    )
 
 
 def _pdf_install_verb() -> str:
@@ -1734,36 +1771,34 @@ def _run_cache_prune(app: FNDApp) -> None:
     root = default_cache_dir()
     if not root.exists():
         with contextlib.suppress(Exception):
-            app.notify("Cache is empty.")
+            app.notify("PDF Texture Cache is empty.")
         return
     current = _extractor_signature()
-    stale: list[Path] = []
-    fresh = 0
+    leftovers: list[Path] = []
+    current_count = 0
     for shard in root.iterdir():
         if not shard.is_dir():
             continue
         for entry in shard.glob("*.json"):
             _, _, sig = entry.stem.partition("--")
             if sig == current:
-                fresh += 1
+                current_count += 1
             else:
-                stale.append(entry)
-    if not stale:
+                leftovers.append(entry)
+    if not leftovers:
         with contextlib.suppress(Exception):
-            app.notify(f"No stale entries · {fresh} fresh.")
+            app.notify(f"No leftovers from older texturising · " f"{current_count} current.")
         return
 
     summary = Text()
-    summary.append("Extractor signature: ", style="dim")
-    summary.append(f"{current}\n", style="bold")
-    summary.append("Fresh entries:  ", style="dim")
-    summary.append(f"{fresh}\n", style="bold")
-    summary.append("Stale entries:  ", style="dim")
-    summary.append(str(len(stale)), style="bold")
+    summary.append("Current texturings:  ", style="dim")
+    summary.append(f"{current_count}\n", style="bold")
+    summary.append("Older leftovers:     ", style="dim")
+    summary.append(str(len(leftovers)), style="bold")
 
     def _do_prune() -> int:
         removed = 0
-        for p in stale:
+        for p in leftovers:
             try:
                 p.unlink()
                 removed += 1
@@ -1773,11 +1808,11 @@ def _run_cache_prune(app: FNDApp) -> None:
 
     app.push_screen(
         CacheMaintenanceConfirm(
-            title="Indexing › Cache maintenance › Prune stale",
+            title="Indexing › PDF Texture Cache › Remove leftovers",
             summary=summary,
             run=_do_prune,
-            confirm_label=f"Yes, remove {len(stale)} stale entries",
-            result_label="stale entries removed",
+            confirm_label=f"Yes, remove {len(leftovers)} leftover texturings",
+            result_label="leftover texturings removed",
             irreversible=False,
         )
     )
@@ -1797,21 +1832,21 @@ def _run_cache_clear(app: FNDApp) -> None:
     size = cache.total_size_bytes() if root.exists() else 0
     if n == 0:
         with contextlib.suppress(Exception):
-            app.notify("Cache is empty.")
+            app.notify("PDF Texture Cache is empty.")
         return
 
     from fnd.tui.cost_estimate import estimate_seconds_for, format_duration
 
     eta_s = estimate_seconds_for(n) if n else 0.0
     summary = Text()
-    summary.append("Entries: ", style="dim")
+    summary.append("Saved texturings: ", style="dim")
     summary.append(f"{n}\n", style="bold")
-    summary.append("Size:    ", style="dim")
+    summary.append("Size:             ", style="dim")
     summary.append(f"{_human_bytes(size)}\n", style="bold")
-    summary.append("Path:    ", style="dim")
+    summary.append("Path:             ", style="dim")
     summary.append(f"{root}\n\n", style="bold")
     summary.append(
-        f"Next reindex will re-extract every PDF from scratch. "
+        f"Next Update index will texturise every PDF from scratch. "
         f"Estimated cost: {format_duration(eta_s)}.",
         style="dim",
     )
@@ -1824,11 +1859,11 @@ def _run_cache_clear(app: FNDApp) -> None:
 
     app.push_screen(
         CacheMaintenanceConfirm(
-            title="Indexing › Cache maintenance › Clear",
+            title="Indexing › PDF Texture Cache › Forget every saved texturing",
             summary=summary,
             run=_do_clear,
-            confirm_label="Yes, clear PDF structure cache",
-            result_label="entries removed",
+            confirm_label="Yes, forget every saved texturing",
+            result_label="saved texturings removed",
             irreversible=True,
         )
     )

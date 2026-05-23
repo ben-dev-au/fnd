@@ -44,7 +44,7 @@ def test_cache_status_when_empty() -> None:
 
 
 def test_cache_status_with_entries(cache_dir: Path) -> None:
-    """Status reports entry count + size after a put."""
+    """Status reports saved-texturing count + size after a put."""
     # Write a fake entry directly
     shard = cache_dir / "ab"
     shard.mkdir(parents=True)
@@ -53,9 +53,9 @@ def test_cache_status_with_entries(cache_dir: Path) -> None:
 
     code, out = _run("cache", "status")
     assert code == 0
-    assert "entries:" in out
+    assert "saved texturings:" in out
     assert "1" in out
-    assert "total size:" in out
+    assert "disk used:" in out
 
 
 def test_cache_clear_aborts_without_yes(cache_dir: Path) -> None:
