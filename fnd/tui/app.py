@@ -4039,7 +4039,6 @@ class FNDApp(App[None]):
         """
         import datetime as _dt
 
-        from fnd.config import default_index_dir
         from fnd.config import load as _load_config
 
         if self._indexer_task is not None and not self._indexer_task.done():
@@ -4050,7 +4049,12 @@ class FNDApp(App[None]):
             cfg = _load_config()
             config = cfg.collection(collection)
         if index_dir is None:
-            index_dir = default_index_dir()
+            # Use the app's configured index_dir so a test or CLI
+            # caller that constructed FNDApp(index_dir=...) actually
+            # writes to that directory. ``self._index_dir`` is set
+            # from the constructor (falling back to ``default_index_dir()``
+            # there) and is always non-None.
+            index_dir = self._index_dir
         self._indexer_collection = collection
         self._indexer_started_at = _dt.datetime.now(tz=_dt.UTC).isoformat(timespec="seconds")
         self._indexer_cancel = asyncio.Event()

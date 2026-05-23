@@ -3,8 +3,8 @@
 A genuinely hung native call (rare but possible) inside the subprocess
 worker would leave the indexer stuck forever during an unattended run,
 because the asyncio loop has no signal that progress has stopped. The
-worker emits a heartbeat into a multiprocessing.Queue on each per-page
-boundary; the parent watches that queue and kills the worker if no
+worker emits a heartbeat over a multiprocessing.Pipe on each per-page
+boundary; the parent watches that pipe and kills the worker if no
 heartbeat arrives for ``stall_seconds``.
 
 The threshold is intentionally large (120s by default) so a slow but
@@ -20,18 +20,18 @@ from typing import Any
 import pytest
 
 
-def _quiet_worker(queue: Any, seconds: float) -> str:
-    """Sleeps without putting anything on the queue. Used to simulate
-    a wedged native call inside the subprocess."""
+def _quiet_worker(sender: Any, seconds: float) -> str:
+    """Sleeps without sending a heartbeat. Used to simulate a wedged
+    native call inside the subprocess."""
     time.sleep(seconds)
     return "done"
 
 
-def _chatty_worker(queue: Any, n_beats: int, interval: float) -> str:
+def _chatty_worker(sender: Any, n_beats: int, interval: float) -> str:
     """Emits ``n_beats`` heartbeats ``interval`` seconds apart, then
     returns. Models a slow-but-progressing extractor."""
     for i in range(n_beats):
-        queue.put(("beat", i))
+        sender.send(("beat", i))
         time.sleep(interval)
     return "done"
 
