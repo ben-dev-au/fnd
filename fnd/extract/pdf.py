@@ -385,10 +385,24 @@ def _extract_page_md(doc: pymupdf.Document, page_index: int) -> str:
     return str(first.get("text", "")) if isinstance(first, dict) else str(first)
 
 
-def _extractor_signature() -> str:
+def _config_hash() -> str:
+    """Hash of config-shaping flags; any tuning change bumps the key."""
+    config = {
+        "force_text": False,
+        "ignore_images": True,
+        "ignore_graphics": False,
+        "table_strategy": "lines",
+        "fallback_area_ratio": _FALLBACK_AREA_RATIO,
+        "table_label_re": _TABLE_LABEL_RE.pattern,
+    }
+    return hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()[:8]
+
+
+def extractor_signature() -> str:
     """Stable string identifying this extractor's behaviour.
 
-    Different signature → different cache key. Captures:
+    Different signature → different cache key, and different throughput
+    cohort for ETA calibration. Captures:
     - flat vs structured path (gated by pymupdf4llm availability)
     - whether docling fallback is wired in (gated by `docling` CLI)
     - config flag hash so a future tuning change forces re-extraction
@@ -403,18 +417,23 @@ def _extractor_signature() -> str:
         parts = [f"pymupdf4llm-{ver}"]
         if _has_docling():
             parts.append("docling")
-    # Hash the config-shaping flags so any tuning change bumps the key.
-    config = {
-        "force_text": False,
-        "ignore_images": True,
-        "ignore_graphics": False,
-        "table_strategy": "lines",
-        "fallback_area_ratio": _FALLBACK_AREA_RATIO,
-        "table_label_re": _TABLE_LABEL_RE.pattern,
-    }
-    config_hash = hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()[:8]
-    parts.append(f"cfg-{config_hash}")
+    parts.append(f"cfg-{_config_hash()}")
     return "|".join(parts)
+
+
+def legacy_flat_signature() -> str:
+    """Signature for flat-only extraction under the current cfg.
+
+    Used by ETA calibration to retag un-tagged history entries (which
+    predate signature tracking) so a user who indexed before installing
+    ``pdf-structure`` keeps their fast-machine baseline for flat runs.
+    """
+    return "|".join(["flat", f"cfg-{_config_hash()}"])
+
+
+# Back-compat private alias. Existing call sites in this module use the
+# underscored name; keep them working without churning surrounding code.
+_extractor_signature = extractor_signature
 
 
 def _has_docling() -> bool:
