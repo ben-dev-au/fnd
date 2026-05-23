@@ -54,15 +54,16 @@ async def test_root_menu_is_short_list_of_categories(built_index: Path) -> None:
             "Collections",
             "Keybindings",
             "Indexing",
+            "PDF Texture",
             "External",
             "Config file",
             "Keybindings file",
         ]
         # The External row is a header; everything else is selectable.
         kinds = [it.kind for it in lst._items]
-        assert kinds[4] == KIND_HEADER
-        assert kinds[:4] == [KIND_EXTERNAL] * 4
-        assert kinds[5:] == [KIND_EXTERNAL, KIND_EXTERNAL]
+        assert kinds[5] == KIND_HEADER
+        assert kinds[:5] == [KIND_EXTERNAL] * 5
+        assert kinds[6:] == [KIND_EXTERNAL, KIND_EXTERNAL]
         # Cursor skips the header and lands on the first selectable row.
         assert lst._items[lst.cursor_index].label == "Preferences"
 

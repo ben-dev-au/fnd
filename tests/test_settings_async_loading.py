@@ -140,7 +140,7 @@ async def test_cache_size_row_shows_placeholder_then_value(
     from fnd.extract.base import Block, Chunk
     from fnd.index import build_index
     from fnd.tui import FNDApp
-    from fnd.tui.menu import SECTION_INDEXING
+    from fnd.tui.menu import SECTION_PDF_TEXTURE
     from fnd.tui.settings_screen import SettingsList, open_settings_section
 
     invalidate_all()
@@ -178,10 +178,10 @@ async def test_cache_size_row_shows_placeholder_then_value(
     app = FNDApp(index_dir=index_dir, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        open_settings_section(app, SECTION_INDEXING)
+        open_settings_section(app, SECTION_PDF_TEXTURE)
         await pilot.pause()
         lst = app.screen.query_one(SettingsList)
-        row = next(it for it in lst._items if it.id == "indexing.cache_size")
+        row = next(it for it in lst._items if it.id == "pdf_texture.cache_size")
 
         # Worker may or may not have completed by now — keep polling
         # until we see a populated entries-count string.

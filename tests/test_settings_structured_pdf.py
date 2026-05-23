@@ -58,38 +58,38 @@ def _fake_installed(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore
 @pytest.mark.usefixtures("_fake_not_installed")
 @pytest.mark.asyncio
 async def test_indexing_screen_has_pdf_rows(built_index: Path, cfg: Config) -> None:
-    from fnd.tui.menu import SECTION_INDEXING
+    from fnd.tui.menu import SECTION_PDF_TEXTURE
     from fnd.tui.settings_screen import SettingsList, open_settings_section
 
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        open_settings_section(app, SECTION_INDEXING)
+        open_settings_section(app, SECTION_PDF_TEXTURE)
         await pilot.pause()
         lst = app.screen.query_one(SettingsList)
         ids = [it.id for it in lst._items]
-        assert "indexing.pdf_status" in ids
-        assert "indexing.pdf_install" in ids
+        assert "pdf_texture.engine_status" in ids
+        assert "pdf_texture.install" in ids
 
 
 @pytest.mark.usefixtures("_fake_not_installed")
 @pytest.mark.asyncio
 async def test_status_row_not_installed(built_index: Path, cfg: Config) -> None:
-    from fnd.tui.menu import SECTION_INDEXING
+    from fnd.tui.menu import SECTION_PDF_TEXTURE
     from fnd.tui.settings_screen import SettingsList, open_settings_section
 
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        open_settings_section(app, SECTION_INDEXING)
+        open_settings_section(app, SECTION_PDF_TEXTURE)
         await pilot.pause()
         # Trailing value goes through lazy_trailing; wait a tick for the
         # worker thread to populate it.
         from fnd.tui.lazy_trailing import invalidate
 
-        invalidate("indexing.pdf_status")
+        invalidate("pdf_texture.engine_status")
         lst = app.screen.query_one(SettingsList)
-        row = next(it for it in lst._items if it.id == "indexing.pdf_status")
+        row = next(it for it in lst._items if it.id == "pdf_texture.engine_status")
         # First call schedules the worker and returns "…"; second call
         # after a pause returns the real value.
         row.trailing_value(app)
@@ -107,16 +107,16 @@ async def test_status_row_not_installed(built_index: Path, cfg: Config) -> None:
 @pytest.mark.usefixtures("_fake_installed")
 @pytest.mark.asyncio
 async def test_install_label_flips_when_installed(built_index: Path, cfg: Config) -> None:
-    from fnd.tui.menu import SECTION_INDEXING
+    from fnd.tui.menu import SECTION_PDF_TEXTURE
     from fnd.tui.settings_screen import SettingsList, open_settings_section
 
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        open_settings_section(app, SECTION_INDEXING)
+        open_settings_section(app, SECTION_PDF_TEXTURE)
         await pilot.pause()
         lst = app.screen.query_one(SettingsList)
-        row = next(it for it in lst._items if it.id == "indexing.pdf_install")
+        row = next(it for it in lst._items if it.id == "pdf_texture.install")
         assert "Uninstall" in row.label
 
 
@@ -253,5 +253,5 @@ async def test_search_finds_pdf_structure(built_index: Path, cfg: Config) -> Non
         lst = screen.query_one(SettingsList)
         selectable = [it for it in lst._items if it.kind != KIND_HEADER]
         # Status + Install rows both match.
-        assert any(it.id == "indexing.pdf_status" for it in selectable)
-        assert any(it.id == "indexing.pdf_install" for it in selectable)
+        assert any(it.id == "pdf_texture.engine_status" for it in selectable)
+        assert any(it.id == "pdf_texture.install" for it in selectable)

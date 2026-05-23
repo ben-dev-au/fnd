@@ -71,22 +71,22 @@ async def test_indexing_screen_has_cache_rows(
     """Phase D flattened the cache section — prune / clear / update
     now live directly under PDF structure cache, no Cache maintenance
     drill in between."""
-    from fnd.tui.menu import SECTION_INDEXING
+    from fnd.tui.menu import SECTION_PDF_TEXTURE
     from fnd.tui.settings_screen import SettingsList, open_settings_section
 
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        open_settings_section(app, SECTION_INDEXING)
+        open_settings_section(app, SECTION_PDF_TEXTURE)
         await pilot.pause()
         lst = app.screen.query_one(SettingsList)
         ids = [it.id for it in lst._items]
-        assert "indexing.cache_size" in ids
-        assert "indexing.cache_location" in ids
-        assert "indexing.cache_update" in ids
-        assert "indexing.cache_prune" in ids
-        assert "indexing.cache_clear" in ids
-        assert "indexing.cache_at_index_time" in ids
+        assert "pdf_texture.cache_size" in ids
+        assert "pdf_texture.cache_location" in ids
+        assert "pdf_texture.update" in ids
+        assert "pdf_texture.cache_prune" in ids
+        assert "pdf_texture.cache_clear" in ids
+        assert "pdf_texture.texturise_while_indexing" in ids
         # Old drill row is gone.
         assert "indexing.cache_maintenance" not in ids
 
@@ -95,16 +95,16 @@ async def test_indexing_screen_has_cache_rows(
 async def test_cache_size_row_shows_empty_when_no_cache(
     built_index: Path, cfg: Config, isolated_cache: Path
 ) -> None:
-    from fnd.tui.menu import SECTION_INDEXING
+    from fnd.tui.menu import SECTION_PDF_TEXTURE
     from fnd.tui.settings_screen import SettingsList, open_settings_section
 
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        open_settings_section(app, SECTION_INDEXING)
+        open_settings_section(app, SECTION_PDF_TEXTURE)
         await pilot.pause()
         lst = app.screen.query_one(SettingsList)
-        row = next(it for it in lst._items if it.id == "indexing.cache_size")
+        row = next(it for it in lst._items if it.id == "pdf_texture.cache_size")
         assert row.trailing_value(app) == "empty"
 
 
@@ -116,16 +116,16 @@ async def test_cache_size_row_shows_count_and_size(
     cache.put("aa--v1", [_make_chunk(0)])
     cache.put("bb--v1", [_make_chunk(1)])
 
-    from fnd.tui.menu import SECTION_INDEXING
+    from fnd.tui.menu import SECTION_PDF_TEXTURE
     from fnd.tui.settings_screen import SettingsList, open_settings_section
 
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        open_settings_section(app, SECTION_INDEXING)
+        open_settings_section(app, SECTION_PDF_TEXTURE)
         await pilot.pause()
         lst = app.screen.query_one(SettingsList)
-        row = next(it for it in lst._items if it.id == "indexing.cache_size")
+        row = next(it for it in lst._items if it.id == "pdf_texture.cache_size")
         v = row.trailing_value(app)
         assert "2 entries" in v
         assert "B" in v or "KB" in v or "MB" in v
@@ -140,20 +140,20 @@ async def test_cache_actions_inline_under_indexing(
 ) -> None:
     """No drill needed — Update cache / Prune / Clear live on the
     Indexing screen itself."""
-    from fnd.tui.menu import SECTION_INDEXING
+    from fnd.tui.menu import SECTION_PDF_TEXTURE
     from fnd.tui.settings_screen import SettingsList, open_settings_section
 
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        open_settings_section(app, SECTION_INDEXING)
+        open_settings_section(app, SECTION_PDF_TEXTURE)
         await pilot.pause()
         lst = app.screen.query_one(SettingsList)
         ids = [it.id for it in lst._items]
         # All three actions visible on the Indexing screen.
-        assert "indexing.cache_update" in ids
-        assert "indexing.cache_prune" in ids
-        assert "indexing.cache_clear" in ids
+        assert "pdf_texture.update" in ids
+        assert "pdf_texture.cache_prune" in ids
+        assert "pdf_texture.cache_clear" in ids
 
 
 # 3 — Confirm dialog chrome + keyboard
@@ -314,7 +314,7 @@ def test_root_summary_includes_cache(isolated_cache: Path, cfg: Config) -> None:
     from typing import cast
 
     from fnd.tui.lazy_trailing import _CACHE, invalidate_all
-    from fnd.tui.menu import _summary_indexing
+    from fnd.tui.menu import _summary_pdf_texture
 
     invalidate_all()
 
@@ -323,12 +323,12 @@ def test_root_summary_includes_cache(isolated_cache: Path, cfg: Config) -> None:
 
     # Pre-seed the lazy slot — bypasses the worker so the test runs
     # deterministically without needing a Textual event loop.
-    _CACHE["indexing.summary.cache_short"] = ("cache 1 KB", time.monotonic())
+    _CACHE["pdf_texture.summary.cache_short"] = ("cache 1 KB", time.monotonic())
 
     class _App:
         def __init__(self) -> None:
             self._config = cfg
 
-    summary = _summary_indexing(cast(FNDApp, _App()))
+    summary = _summary_pdf_texture(cast(FNDApp, _App()))
     assert "cache" in summary
-    assert "auto-resume" in summary
+    assert "engine" in summary

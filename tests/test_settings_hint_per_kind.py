@@ -74,7 +74,7 @@ async def test_hint_says_run_on_action_row(built_index: Path, cfg: Config) -> No
         await pilot.pause()
         lst = app.screen.query_one(SettingsList)
         for i, it in enumerate(lst._items):
-            if it.id == "indexing.cache_prune":
+            if it.id == "pdf_texture.cache_prune":
                 lst.cursor_index = i
                 break
         await pilot.pause()
@@ -86,18 +86,18 @@ async def test_hint_says_run_on_action_row(built_index: Path, cfg: Config) -> No
 @pytest.mark.asyncio
 async def test_hint_omits_enter_on_display_row(built_index: Path, cfg: Config) -> None:
     """Display rows have no Enter action. Footer must NOT advertise ⏎."""
-    from fnd.tui.menu import SECTION_INDEXING
+    from fnd.tui.menu import SECTION_PDF_TEXTURE
     from fnd.tui.settings_screen import SettingsList, open_settings_section
 
     app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        open_settings_section(app, SECTION_INDEXING)
+        open_settings_section(app, SECTION_PDF_TEXTURE)
         await pilot.pause()
         lst = app.screen.query_one(SettingsList)
         # Move cursor to a KIND_DISPLAY row.
         for i, it in enumerate(lst._items):
-            if it.id == "indexing.cache_size":
+            if it.id == "pdf_texture.cache_size":
                 lst.cursor_index = i
                 break
         await pilot.pause()
@@ -121,7 +121,7 @@ async def test_display_row_enter_does_nothing(built_index: Path, cfg: Config) ->
         await pilot.pause()
         lst = app.screen.query_one(SettingsList)
         for i, it in enumerate(lst._items):
-            if it.id == "indexing.cache_size":
+            if it.id == "pdf_texture.cache_size":
                 lst.cursor_index = i
                 break
         lst.action_activate()

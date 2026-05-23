@@ -51,6 +51,7 @@ SECTION_KEYBINDINGS = "keybindings"
 SECTION_PREFERENCES = "preferences"
 SECTION_COLLECTIONS = "collections"
 SECTION_INDEXING = "indexing"
+SECTION_PDF_TEXTURE = "pdf-texture"
 
 
 # ── Models ───────────────────────────────────────────────────────────
@@ -1136,6 +1137,7 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
             kind=KIND_ACTION,
             action_label="Update",
             external=_make_reindex(name),
+            value_getter=(lambda n: (lambda a: _summary_collection_update(a, n)))(name),
         ),
         MenuItem(
             id=f"col.{name}.delete",
@@ -1313,53 +1315,70 @@ def _summary_keybindings_path(_app: FNDApp) -> str:
 # ── Indexing section ────────────────────────────────────────────────
 
 
-def _provider_indexing(app: FNDApp) -> tuple[MenuItem, ...]:
-    """Indexing sub-screen.
+def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
+    """Indexing sub-screen — app-wide search-index actions and behaviour.
 
-    Four groups: Index (run-the-thing actions for each collection plus
-    update-all), PDF Texturising (engine status + install/uninstall),
-    PDF Texture Cache (size, location, maintenance), and Behaviour
-    (toggles)."""
-    cfg = app._config  # type: ignore[attr-defined]
-    names = sorted(cfg.collections.keys()) if cfg is not None else []
-    index_rows: list[MenuItem] = [
-        header("Index", level=2),
+    Per-collection update actions live under Collections › ‹name›. PDF
+    Texturising and the PDF Texture Cache live under their own sibling
+    section (see ``_provider_pdf_texture``)."""
+    return (
         MenuItem(
             id="indexing.update_all",
-            label="Update all collections",
+            label="Process new files in all collections",
             description=(
                 "Run Update index for every collection in sequence. "
-                "Per-file rules: unchanged files are skipped, the PDF "
+                "Indexes new files (md, pptx, docx, txt, PDFs); also "
+                "texturises new PDFs if the texturising engine is "
+                "installed. Files already indexed are skipped; the PDF "
                 "Texture Cache is consulted (not cleared)."
             ),
             kind=KIND_ACTION,
-            action_label="Update",
+            action_label="Run",
             external=_run_update_all_collections,
             value_getter=_summary_update_all,
-            keywords=("update", "all", "index", "reindex", "everything"),
+            keywords=(
+                "process",
+                "new",
+                "update",
+                "all",
+                "index",
+                "reindex",
+                "everything",
+                "texturise",
+            ),
         ),
-    ]
-    for name in names:
-        index_rows.append(
-            MenuItem(
-                id=f"indexing.update.{name}",
-                label=f"Update '{name}'",
-                description=(
-                    f"Re-scan '{name}'s sources. New / changed files are added; "
-                    "deleted files are removed; unchanged files are skipped."
-                ),
-                kind=KIND_ACTION,
-                action_label="Update",
-                external=_make_reindex(name),
-                value_getter=(lambda n: (lambda a: _summary_collection_update(a, n)))(name),
-                keywords=("update", "index", "reindex", name),
-            )
-        )
-    return (
-        *index_rows,
-        header("PDF Texturising", level=2),
+        header("Behaviour", level=2),
         MenuItem(
-            id="indexing.pdf_status",
+            id="indexing.auto_resume",
+            label="Auto-resume on launch",
+            description=(
+                "✓ On: an interrupted Update index (force-quit, sleep, "
+                "Ctrl+C) resumes silently in the background next time "
+                "you open fnd. Progress shows in the footer, not a modal. "
+                "✗ Off: Update index must be triggered manually."
+            ),
+            kind=KIND_TOGGLE,
+            toggle_getter=_get_indexer_auto_resume,
+            toggle_setter=lambda app, v: _setting_writer("defaults.indexer_auto_resume")(app, v),
+            setting_path="defaults.indexer_auto_resume",
+            keywords=("auto", "resume", "indexer", "interrupted", "launch", "reindex"),
+        ),
+    )
+
+
+def _provider_pdf_texture(_app: FNDApp) -> tuple[MenuItem, ...]:
+    """PDF Texture sub-screen — engine, status / actions, cache, and
+    texturising-while-indexing behaviour.
+
+    Texturising is the act of turning a PDF's pages into structured
+    Markdown (headings, lists, tables) for the preview pane. It does
+    NOT affect search behaviour - PDFs are always searchable; a flat
+    PDF is just a PDF whose preview is plain text rather than
+    formatted."""
+    return (
+        header("Engine", level=2),
+        MenuItem(
+            id="pdf_texture.engine_status",
             label="Texturising engine",
             description=(
                 "Whether the texturising engine is installed. When installed, "
@@ -1385,7 +1404,7 @@ def _provider_indexing(app: FNDApp) -> tuple[MenuItem, ...]:
             ),
         ),
         MenuItem(
-            id="indexing.pdf_install",
+            id="pdf_texture.install",
             label=_pdf_install_label(),
             description=(
                 "Open the disclosure + confirm screen. Installs pymupdf4llm[layout] "
@@ -1411,33 +1430,9 @@ def _provider_indexing(app: FNDApp) -> tuple[MenuItem, ...]:
                 "extra",
             ),
         ),
-        header("PDF Texture Cache", level=2),
+        header("Status / actions", level=2),
         MenuItem(
-            id="indexing.cache_size",
-            label="Saved texturings",
-            description=(
-                "Per-file texturing results fnd has saved. Shared across "
-                "collections; the same PDF in two collections is texturised "
-                "once and reused. Removing leftovers or forgetting saved "
-                "texturings only affects the next Update index."
-            ),
-            kind=KIND_DISPLAY,
-            value_getter=_summary_cache_size_row,
-            keywords=("cache", "texture", "saved", "texturings", "size"),
-        ),
-        MenuItem(
-            id="indexing.cache_location",
-            label="Location",
-            description=(
-                "Disk path. Safe to delete from outside fnd; the next Update "
-                "index will re-create the directory as needed."
-            ),
-            kind=KIND_DISPLAY,
-            value_getter=_summary_cache_location_row,
-            keywords=("cache", "texture", "location", "path", "disk"),
-        ),
-        MenuItem(
-            id="indexing.cache_update",
+            id="pdf_texture.update",
             label="Texturise PDFs that are still flat",
             description=(
                 "Texturise every PDF in any collection's sources that isn't "
@@ -1451,8 +1446,33 @@ def _provider_indexing(app: FNDApp) -> tuple[MenuItem, ...]:
             value_getter=_summary_cache_update,
             keywords=("cache", "texture", "texturise", "flat", "warm", "populate"),
         ),
+        header("Cache", level=2),
         MenuItem(
-            id="indexing.cache_prune",
+            id="pdf_texture.cache_size",
+            label="Saved texturings",
+            description=(
+                "Per-file texturing results fnd has saved. Shared across "
+                "collections; the same PDF in two collections is texturised "
+                "once and reused. Removing leftovers or forgetting saved "
+                "texturings only affects the next Update index."
+            ),
+            kind=KIND_DISPLAY,
+            value_getter=_summary_cache_size_row,
+            keywords=("cache", "texture", "saved", "texturings", "size"),
+        ),
+        MenuItem(
+            id="pdf_texture.cache_location",
+            label="Location",
+            description=(
+                "Disk path. Safe to delete from outside fnd; the next Update "
+                "index will re-create the directory as needed."
+            ),
+            kind=KIND_DISPLAY,
+            value_getter=_summary_cache_location_row,
+            keywords=("cache", "texture", "location", "path", "disk"),
+        ),
+        MenuItem(
+            id="pdf_texture.cache_prune",
             label="Remove leftovers from older texturising",
             description=(
                 "Remove saved texturings made before the texturising engine "
@@ -1478,7 +1498,7 @@ def _provider_indexing(app: FNDApp) -> tuple[MenuItem, ...]:
             ),
         ),
         MenuItem(
-            id="indexing.cache_clear",
+            id="pdf_texture.cache_clear",
             label="Forget every saved texturing",
             description=(
                 "Wipe every saved texturing. PDFs render as flat in the "
@@ -1492,22 +1512,7 @@ def _provider_indexing(app: FNDApp) -> tuple[MenuItem, ...]:
         ),
         header("Behaviour", level=2),
         MenuItem(
-            id="indexing.auto_resume",
-            label="Auto-resume on launch",
-            description=(
-                "✓ On: an interrupted Update index (force-quit, sleep, "
-                "Ctrl+C) resumes silently in the background next time "
-                "you open fnd. Progress shows in the footer, not a modal. "
-                "✗ Off: Update index must be triggered manually."
-            ),
-            kind=KIND_TOGGLE,
-            toggle_getter=_get_indexer_auto_resume,
-            toggle_setter=lambda app, v: _setting_writer("defaults.indexer_auto_resume")(app, v),
-            setting_path="defaults.indexer_auto_resume",
-            keywords=("auto", "resume", "indexer", "interrupted", "launch", "reindex"),
-        ),
-        MenuItem(
-            id="indexing.cache_at_index_time",
+            id="pdf_texture.texturise_while_indexing",
             label="Texturise PDFs while indexing",
             description=(
                 "✓ On (default when the texturising engine is installed): "
@@ -1660,15 +1665,26 @@ def _run_update_cache(app: FNDApp) -> None:
 def _summary_indexing(app: FNDApp) -> str:
     """Trailing summary for the Indexing root row.
 
-    Auto-resume state reads instantly from config; cache size goes
-    through the lazy-trailing cache so the fs walk doesn't block."""
+    Indexing's pane now holds the cross-collection process action and
+    behaviour toggles only; per-collection updates and PDF Texturising
+    moved to their own sections. Surface the auto-resume state as the
+    single at-a-glance value."""
+    return "✓ auto-resume" if _get_indexer_auto_resume(app) else "✗ auto-resume"
+
+
+def _summary_pdf_texture(app: FNDApp) -> str:
+    """Trailing summary for the PDF Texture root row.
+
+    Shows the engine state plus a short cache size when the texturing
+    walk has been cached; lazy-loaded so the fs scan never blocks first
+    paint."""
     from fnd.tui.lazy_trailing import PLACEHOLDER, get_or_schedule
 
-    auto = "✓ auto-resume" if _get_indexer_auto_resume(app) else "✗ auto-resume"
-    cache_part = get_or_schedule(app, "indexing.summary.cache_short", _cache_size_short)
+    engine = "✓ engine on" if _is_pdf_structure_installed() else "✗ engine off"
+    cache_part = get_or_schedule(app, "pdf_texture.summary.cache_short", _cache_size_short)
     if cache_part and cache_part != PLACEHOLDER:
-        return f"{auto} · {cache_part}"
-    return auto
+        return f"{engine} · {cache_part}"
+    return engine
 
 
 def _summary_cache_size_row(app: FNDApp) -> str:
@@ -1902,13 +1918,41 @@ def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
             id=f"root.{SECTION_INDEXING}",
             label="Indexing",
             description=(
-                "Structured-PDF extra, cache, and auto-resume behaviour. "
-                "everything that shapes how reindex runs."
+                "Process new files across all collections and auto-resume "
+                "behaviour. App-wide actions only; per-collection updates "
+                "live under each collection."
             ),
             kind=KIND_EXTERNAL,
             external=_open_section(SECTION_INDEXING),
             value_getter=_summary_indexing,
-            keywords=("index", "indexer", "reindex", "pdf", "cache", "auto-resume"),
+            keywords=("index", "indexer", "reindex", "process", "new", "auto-resume"),
+        ),
+        MenuItem(
+            id=f"root.{SECTION_PDF_TEXTURE}",
+            label="PDF Texture",
+            description=(
+                "Texturising engine status, saved texturings, and the "
+                "PDF Texture Cache. Texturising adds structure (headings, "
+                "lists, tables) to the PDF preview pane; search works "
+                "the same either way."
+            ),
+            kind=KIND_EXTERNAL,
+            external=_open_section(SECTION_PDF_TEXTURE),
+            value_getter=_summary_pdf_texture,
+            keywords=(
+                "pdf",
+                "texture",
+                "texturise",
+                "textured",
+                "flat",
+                "engine",
+                "cache",
+                # Legacy.
+                "structured",
+                "structure",
+                "pdf-structure",
+                "extraction",
+            ),
         ),
         header("External", level=2, anchor_id="external"),
         MenuItem(
@@ -1946,6 +1990,7 @@ _SECTION_PROVIDERS: dict[str, Callable[[FNDApp], tuple[MenuItem, ...]]] = {
     SECTION_COLLECTIONS: _provider_collections,
     SECTION_KEYBINDINGS: _provider_keybindings,
     SECTION_INDEXING: _provider_indexing,
+    SECTION_PDF_TEXTURE: _provider_pdf_texture,
 }
 
 _SECTION_LABELS: dict[str, str] = {
@@ -1953,6 +1998,7 @@ _SECTION_LABELS: dict[str, str] = {
     SECTION_COLLECTIONS: "Collections",
     SECTION_KEYBINDINGS: "Keybindings",
     SECTION_INDEXING: "Indexing",
+    SECTION_PDF_TEXTURE: "PDF Texture",
 }
 
 

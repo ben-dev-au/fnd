@@ -42,18 +42,18 @@ def cfg(cfg_path: Path) -> Config:
     ("query", "expected_id"),
     [
         ("auto-resume", "indexing.auto_resume"),
-        ("pdf-structure", "indexing.pdf_status"),
-        ("pdf-structure", "indexing.pdf_install"),
-        ("cache", "indexing.cache_size"),
-        # Phase D flattened the cache section — prune / clear / update
-        # are now direct rows on the Indexing screen and discoverable
-        # by search.
-        ("prune", "indexing.cache_prune"),
-        ("clear", "indexing.cache_clear"),
-        ("wipe", "indexing.cache_clear"),
-        ("stale", "indexing.cache_prune"),
-        ("docling", "indexing.pdf_install"),
-        ("pymupdf4llm", "indexing.pdf_install"),
+        # PDF Texturising + cache split into the dedicated PDF Texture
+        # sibling section, so its ids now live under `pdf_texture.*`.
+        # Cross-section search must still surface them.
+        ("pdf-structure", "pdf_texture.engine_status"),
+        ("pdf-structure", "pdf_texture.install"),
+        ("cache", "pdf_texture.cache_size"),
+        ("prune", "pdf_texture.cache_prune"),
+        ("clear", "pdf_texture.cache_clear"),
+        ("wipe", "pdf_texture.cache_clear"),
+        ("stale", "pdf_texture.cache_prune"),
+        ("docling", "pdf_texture.install"),
+        ("pymupdf4llm", "pdf_texture.install"),
     ],
 )
 @pytest.mark.asyncio
