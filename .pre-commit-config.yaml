@@ -37,3 +37,17 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+
+      - id: harness-indexing
+        name: "harness: indexer status lines (synthetic, fast)"
+        # Pre-push only - runs the synthetic indexer harness when
+        # touching code that controls how PDFs reach the index.
+        # Catches cascading worker death and counter regressions
+        # without paying the cost on every commit. Real-corpus
+        # validation lives behind FND_AUDIT_REAL_CORPUS=1 and is
+        # opt-in via `pre-commit run --hook-stage manual`.
+        stages: [pre-push]
+        entry: uv run python dev/tools/workflow_audit_tmux.py indexer_status_lines indexer_status_lines_md_only
+        language: system
+        files: ^(fnd/extract/|fnd/index|fnd/walk\.py|fnd/tui/indexer_modal\.py|dev/tools/workflow_audit_tmux\.py)
+        pass_filenames: false

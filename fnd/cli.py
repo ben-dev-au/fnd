@@ -124,6 +124,16 @@ def tui(
 
     prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg)
 
+    # Spawn the PDF extraction worker before Textual's run() rewires
+    # stdin/stderr. macOS multiprocessing.spawn validates fds_to_keep
+    # against the current FD table; once Textual has registered the
+    # alt-screen and signal-wakeup pipes, that validation fails and
+    # every PDF in an indexer chain dies as ExtractError. Warming the
+    # pool here captures the clean FD state.
+    from fnd.extract._worker import warm_pool
+
+    warm_pool()
+
     FNDApp(collection=collection, initial_query=initial_query, config=cfg).run()
 
 

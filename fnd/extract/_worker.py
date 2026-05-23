@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import faulthandler
 import multiprocessing as mp
 import os
 import signal
@@ -23,6 +24,33 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from typing import Any
+
+# Optional per-process trace. FND_WORKER_TRACE=/path enables it; unset
+# means zero cost. Lets a future cascade debug tell "worker never
+# spawned" from "worker spawned but died inside native code" - both
+# look identical from the parent's BrokenProcessPool.
+_trace_path = os.environ.get("FND_WORKER_TRACE")
+
+
+def _trace(msg: str) -> None:
+    if not _trace_path:
+        return
+    try:
+        with open(_trace_path, "a") as f:
+            f.write(f"[{os.getpid()}] {msg}\n")
+    except OSError:
+        pass
+
+
+if _trace_path:
+    _trace(f"module-imported ppid={os.getppid()}")
+    try:
+        # faulthandler needs the file kept open for the process lifetime,
+        # so a `with` block here would close it too early.
+        _fh_file = open(_trace_path, "a")  # noqa: SIM115
+        faulthandler.enable(file=_fh_file, all_threads=True)
+    except OSError:
+        pass
 
 
 class StallError(RuntimeError):
@@ -48,6 +76,29 @@ def _get_pool() -> ProcessPoolExecutor:
         )
         atexit.register(shutdown_pool)
     return _pool
+
+
+def _noop_worker() -> int:
+    return 0
+
+
+def warm_pool() -> None:
+    """Spawn the PDF extraction worker now, before the caller does
+    anything that would mutate the parent's FD table.
+
+    Once Textual's run() has rewired stdin/stderr and registered
+    signal-wakeup pipes, ``_posixsubprocess.fork_exec`` rejects the
+    next spawn with ``ValueError: bad value(s) in fds_to_keep`` and
+    every PDF in the chain fails. Forcing the spawn now (the submit-
+    and-wait actually starts the subprocess, not just the executor's
+    bookkeeping) captures the clean FD state."""
+    import contextlib
+
+    pool = _get_pool()
+    # Best-effort: if warming fails, the regular extraction path will
+    # surface the real error. Don't crash the TUI launch.
+    with contextlib.suppress(Exception):
+        pool.submit(_noop_worker).result(timeout=30)
 
 
 def shutdown_pool() -> None:
@@ -113,6 +164,27 @@ def collect_pdf_chunks(path: Any, skip_structure: bool) -> list[Any]:
     return list(_pdf._extract_inner(path))
 
 
+def _redirect_native_stderr_to_log() -> None:
+    """Point FD 2 of the worker at a log file under the user cache.
+
+    pymupdf-layout calls leptonica, which prints "pixScaleSmooth" /
+    "Image too small to scale" via C-level fprintf(stderr). Python's
+    sys.stderr redirect is invisible to that, so the warnings would
+    otherwise flood the parent tmux pane on top of the IndexerScreen
+    modal during every PDF-heavy reindex."""
+    try:
+        from platformdirs import user_cache_dir
+
+        log_dir = os.path.join(user_cache_dir("fnd"), "worker-logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "extractor-stderr.log")
+        log_fd = os.open(log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        os.dup2(log_fd, 2)
+        os.close(log_fd)
+    except OSError:
+        pass
+
+
 def collect_pdf_chunks_with_heartbeat(
     heartbeat_sender: Any, path: Any, skip_structure: bool
 ) -> list[Any]:
@@ -120,20 +192,24 @@ def collect_pdf_chunks_with_heartbeat(
     on ``heartbeat_sender`` (a :class:`multiprocessing.Connection`) so
     the parent's stall detector can tell a slow PDF apart from a
     wedged one."""
+    _redirect_native_stderr_to_log()
+    _trace(f"enter path={path}")
+
     from fnd.extract import pdf as _pdf
 
     _pdf.set_skip_structure_extraction(skip_structure)
 
     def _on_page(page_index: int) -> None:
-        # ``send`` is non-blocking against a small pipe buffer for the
-        # tiny payloads we use; the parent drains as fast as it can.
-        # Dropping a beat does not hurt correctness — the next beat
-        # resets the watchdog.
         with _suppress(BrokenPipeError, EOFError, OSError):
             heartbeat_sender.send(("page", page_index))
 
     try:
-        return list(_pdf._extract_inner(path, on_page=_on_page))
+        chunks = list(_pdf._extract_inner(path, on_page=_on_page))
+        _trace(f"exit chunks={len(chunks)} path={path}")
+        return chunks
+    except BaseException as e:
+        _trace(f"raise {type(e).__name__}: {e}")
+        raise
     finally:
         with _suppress(Exception):
             heartbeat_sender.close()
@@ -215,8 +291,16 @@ def run_in_pool_sync_with_stall_detection[T](
     progressing PDF (image-dense pages, docling fallback, large file)
     stays alive. We are detecting "no progress at all", not "took
     longer than a budget"."""
+    from concurrent.futures.process import BrokenProcessPool
+
     # ``fds_to_keep`` recovery retries once with a fresh pool; if the
     # second attempt also fails the caller surfaces the error.
+    # BrokenProcessPool from a transient worker death (inherited bad
+    # state after a sibling PDF crashed pymupdf, OOM-killer hit a
+    # neighbour) also gets one retry: the inner handler has already
+    # torn the pool down, so the retry spawns a fresh worker. A
+    # truly-poisonous PDF still fails on the second attempt and
+    # surfaces as ExtractError.
     last_exc: BaseException | None = None
     for attempt in range(2):
         try:
@@ -226,6 +310,12 @@ def run_in_pool_sync_with_stall_detection[T](
                 stall_seconds=stall_seconds,
                 first_beat_grace_seconds=first_beat_grace_seconds,
             )
+        except BrokenProcessPool as e:
+            last_exc = e
+            if attempt == 0:
+                # Pool was already shutdown_pool'd by the inner handler.
+                continue
+            raise
         except Exception as e:
             last_exc = e
             if _is_stale_fd_error(e) and attempt == 0:
@@ -249,15 +339,11 @@ def _submit_with_stall_detection[T](
     from concurrent.futures.process import BrokenProcessPool
 
     grace = first_beat_grace_seconds if first_beat_grace_seconds is not None else stall_seconds
-    # Per-submit Pipe instead of a long-lived Manager Queue. Manager
-    # queues went through a separate server process; each
-    # ``manager.Queue()`` call allocated a Unix socket FD on the parent
-    # that lingered until GC, eventually overflowing the FD set passed
-    # to ``_posixsubprocess.fork_exec`` ("bad value(s) in fds_to_keep")
-    # and breaking every subsequent worker spawn. A raw Pipe owns just
-    # two FDs that we close explicitly after the worker is done with
-    # them (closing earlier would race the spawn and synthesise the
-    # very fds_to_keep failure we are trying to avoid).
+    # Per-submit Pipe instead of a long-lived Manager Queue. The
+    # previous Manager.Queue path leaked Unix-socket FDs and tripped
+    # `_posixsubprocess.fork_exec` with "bad value(s) in fds_to_keep"
+    # after enough PDFs; raw Pipe + explicit close-in-finally keeps
+    # the parent's FD set bounded.
     ctx = mp.get_context("spawn")
     parent_conn, child_conn = ctx.Pipe(duplex=False)
     pool = _get_pool()
@@ -265,8 +351,6 @@ def _submit_with_stall_detection[T](
 
     start = time.monotonic()
     last_beat: float | None = None
-    # Keep the poll shorter than stall_seconds so a long poll does not
-    # falsely trip the stall check after a fast-completing worker.
     poll_seconds = max(0.05, min(1.0, stall_seconds / 4.0))
     try:
         while not future.done():
@@ -275,13 +359,8 @@ def _submit_with_stall_detection[T](
                     parent_conn.recv()
                     last_beat = time.monotonic()
             except (EOFError, OSError):
-                # Worker closed its end; rely on future.done() / result
-                # to surface the real outcome.
                 break
 
-            # If the worker returned while we were blocked in poll, do
-            # not raise a stall against a future that has already
-            # produced its result.
             if future.done():
                 break
 
@@ -291,6 +370,10 @@ def _submit_with_stall_detection[T](
             else:
                 baseline, threshold = start, grace
             if now - baseline > threshold:
+                _trace(
+                    f"stall-raise threshold={threshold:.1f}s "
+                    f"first_beat={last_beat is not None} arg={args[0] if args else '?'}"
+                )
                 _kill_pool_workers(pool)
                 shutdown_pool()
                 raise StallError(f"no heartbeat for {threshold:.1f}s; worker killed")
@@ -298,12 +381,10 @@ def _submit_with_stall_detection[T](
         try:
             return future.result()
         except BrokenProcessPool:
+            _trace(f"future-broken arg={args[0] if args else '?'}")
             shutdown_pool()
             raise
     finally:
-        # Worker has finished (or been killed); now safe to release
-        # both ends. Without this, each submission would leave a Pipe's
-        # two FDs lingering in the parent until GC.
         with _suppress(Exception):
             parent_conn.close()
         with _suppress(Exception):
