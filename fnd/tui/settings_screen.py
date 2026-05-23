@@ -1676,6 +1676,7 @@ class SourceFormScreen(Screen[None]):
         Binding("tab", "cycle_focus(1)", show=False),
         Binding("shift+tab", "cycle_focus(-1)", show=False),
         Binding("ctrl+s", "save_close", show=False),
+        Binding("ctrl+a", "save_add_another", show=False),
         Binding("ctrl+d", "delete_source", "Delete", show=False),
     ]
 
@@ -2197,6 +2198,25 @@ class SourceFormScreen(Screen[None]):
         if self._snapshot != self._fields or self._source_index is None:
             app._reindex_collection_async(self._collection_name)  # type: ignore[attr-defined]
         self.app.pop_screen()
+
+    def action_save_add_another(self) -> None:
+        """Save the current source, then immediately re-open the form
+        for another new source in the same collection. Only meaningful
+        when adding new (source_index is None); in edit-mode behaves
+        like Ctrl+S."""
+        collection = self._collection_name
+        was_new = self._source_index is None
+        self.action_save_close()
+        if not was_new:
+            return
+
+        # action_save_close pops; push a fresh form once the pop has
+        # settled so the user can continue adding without going back to
+        # the SourcesScreen and re-triggering Add source.
+        def _chain() -> None:
+            self.app.push_screen(SourceFormScreen(collection_name=collection, source_index=None))
+
+        self.app.call_later(_chain)
 
     def action_back(self) -> None:
         self.app.pop_screen()
@@ -3038,9 +3058,25 @@ class UpdateAllConfirm(Screen[None]):
     }
     """
 
-    def __init__(self, *, collection_names: list[str]) -> None:
+    def __init__(
+        self,
+        *,
+        collection_names: list[str],
+        texturise_override: bool | None = None,
+    ) -> None:
         super().__init__()
         self._names = list(collection_names)
+        # None = follow the toggle (the original action), True = always
+        # texturise (the shared "Update everything" action), False =
+        # never texturise (the "Process new files index-only" action).
+        self._texturise_override = texturise_override
+
+    def _mode_label(self) -> str:
+        if self._texturise_override is True:
+            return "Index + texturise (toggle ignored)"
+        if self._texturise_override is False:
+            return "Index only - skip texturising (toggle ignored)"
+        return "Follow Texturise-while-indexing toggle"
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
@@ -3050,6 +3086,9 @@ class UpdateAllConfirm(Screen[None]):
             # List the collections so the user can see exactly what
             # will run, not just a count.
             text.append(", ".join(self._names))
+            text.append("\n")
+            text.append("Mode      ", style="dim")
+            text.append(self._mode_label())
             text.append("\n")
             text.append("Per file  ", style="dim")
             text.append(
@@ -3105,8 +3144,14 @@ class UpdateAllConfirm(Screen[None]):
         # Total count is preserved so the IndexerScreen title can show
         # "papers (1 of 5)" even after rest has been depleted.
         app._indexer_chain_total = len(names)  # type: ignore[attr-defined]
+        # Stash the override so _start_next_in_chain re-applies it to
+        # every subsequent collection (and so a re-trigger of this
+        # confirm with a different mode replaces it).
+        app._indexer_texturise_override = self._texturise_override  # type: ignore[attr-defined]
         try:
-            app._reindex_with_warning_if_needed(first)  # type: ignore[attr-defined]
+            app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
+                first, texturise_override=self._texturise_override
+            )
         except Exception:
             self.notify(f"Could not start Update index for {first}", severity="error")
 
@@ -3680,3 +3725,203 @@ def open_settings_section(
             ),
         )
     )
+
+
+# ── Still-flat drill-in ─────────────────────────────────────────────
+
+
+def _flat_pdfs_with_reasons(*, collection: str | None = None) -> list[tuple[str, str, str]]:
+    """Return a list of ``(collection, path, reason)`` for every PDF
+    that is on disk but has no body_struct-bearing chunk in the
+    tantivy index. Reasons are sourced from the failure log when
+    present; otherwise inferred from current state (engine off /
+    battery-saver toggle / unknown)."""
+    import contextlib
+    from pathlib import Path
+
+    import tantivy
+
+    from fnd.config import default_index_dir, load
+    from fnd.schema import F_BODY_STRUCT, F_COLLECTION, F_KIND, F_PATH
+    from fnd.tui.failure_log import list_failures
+
+    cfg = load()
+    target_cols = [collection] if collection is not None else list(cfg.collections)
+    # Build per-collection on-disk PDF inventories.
+    on_disk: dict[str, set[str]] = {}
+    for name in target_cols:
+        col = cfg.collections.get(name)
+        if col is None:
+            continue
+        paths: set[str] = set()
+        for src in col.sources:
+            root = Path(src.path).expanduser()
+            if not root.exists():
+                continue
+            for p in root.rglob("*.pdf"):
+                if p.is_file():
+                    paths.add(str(p.resolve()))
+        on_disk[name] = paths
+
+    # Per-collection textured-path sets via tantivy.
+    textured: dict[str, set[str]] = {name: set() for name in on_disk}
+    index_dir = default_index_dir()
+    if index_dir.exists():
+        try:
+            index = tantivy.Index.open(str(index_dir))
+            index.reload()
+            searcher = index.searcher()
+            for name in on_disk:
+                col_q = tantivy.Query.term_query(index.schema, F_COLLECTION, name)
+                pdf_q = tantivy.Query.boolean_query(
+                    [
+                        (tantivy.Occur.Must, col_q),
+                        (tantivy.Occur.Must, tantivy.Query.term_query(index.schema, F_KIND, "pdf")),
+                    ]
+                )
+                for _score, addr in searcher.search(pdf_q, limit=200000).hits:
+                    doc = searcher.doc(addr)
+                    if not doc.get_first(F_BODY_STRUCT):  # type: ignore[attr-defined]
+                        continue
+                    p = doc.get_first(F_PATH)  # type: ignore[attr-defined]
+                    if p:
+                        with contextlib.suppress(OSError):
+                            textured[name].add(str(Path(str(p)).resolve()))
+        except Exception:
+            pass
+
+    # Failure-log records keyed by (collection, path).
+    failure_by_key: dict[tuple[str, str], str] = {}
+    for r in list_failures():
+        with contextlib.suppress(OSError):
+            failure_by_key[(r.collection, str(Path(r.path).resolve()))] = r.reason
+
+    # Reason fallback when no failure record exists.
+    from fnd.tui.menu import _is_pdf_structure_installed
+
+    engine_on = _is_pdf_structure_installed()
+    try:
+        full_cfg = load()
+        battery_saver = not bool(full_cfg.defaults.cache_at_index_time)
+    except Exception:
+        battery_saver = False
+
+    out: list[tuple[str, str, str]] = []
+    for name, paths in on_disk.items():
+        flat = paths - textured.get(name, set())
+        for p in sorted(flat):
+            reason = failure_by_key.get((name, p))
+            if reason is None:
+                if not engine_on:
+                    reason = "Texturising engine is not installed"
+                elif battery_saver:
+                    reason = "Texturise-while-indexing toggle is OFF"
+                else:
+                    reason = "Indexed flat (no failure recorded)"
+            out.append((name, p, reason))
+    return out
+
+
+class StillFlatDrillIn(Screen[None]):
+    """List of every PDF whose preview is flat, grouped one row per file
+    with its reason and a Retry action.
+
+    Retry re-runs Update for the file's collection with texturising
+    forced on; the cache short-circuits already-textured PDFs so the
+    cost is roughly one texturising pass per still-flat PDF."""
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Back", show=False),
+        Binding("up,k", "move(-1)", show=False),
+        Binding("down,j", "move(1)", show=False),
+        Binding("enter,r", "retry", "Retry", show=True),
+    ]
+
+    CSS = """
+    StillFlatDrillIn { background: $surface; }
+    StillFlatDrillIn > #settings_box {
+        height: 1fr;
+        border: round $primary 50%;
+        padding: 0 1;
+    }
+    StillFlatDrillIn > #settings_box:focus-within { border: round $accent; }
+    StillFlatDrillIn #empty_state { padding: 1 1; color: $text-muted; }
+    StillFlatDrillIn > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(self, *, collection: str | None = None) -> None:
+        super().__init__()
+        self._collection_filter = collection
+        self._rows: list[tuple[str, str, str]] = []
+        self._cursor = 0
+
+    def compose(self) -> ComposeResult:
+        title = "Still-flat PDFs"
+        if self._collection_filter:
+            title += f" - {self._collection_filter}"
+        with Vertical(id="settings_box") as box:
+            box.border_title = title
+            yield VerticalScroll(id="still_flat_body")
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        import contextlib as _ctx
+
+        self._refresh()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        with _ctx.suppress(Exception):
+            self.query_one("#footer_hints", Static).update(
+                _hint_bar(app, (("↑↓", "Nav"), ("⏎ / r", "Retry"), ("Esc", "Back")))
+            )
+
+    def _refresh(self) -> None:
+        self._rows = _flat_pdfs_with_reasons(collection=self._collection_filter)
+        body = self.query_one("#still_flat_body", VerticalScroll)
+        for child in list(body.children):
+            child.remove()
+        if not self._rows:
+            body.mount(Static("No PDFs are still flat.", id="empty_state"))
+            return
+        for i, (col, path, reason) in enumerate(self._rows):
+            body.mount(Static(self._format_row(i, col, path, reason), classes="row"))
+
+    def _format_row(self, i: int, col: str, path: str, reason: str) -> str:
+        cursor = "▸ " if i == self._cursor else "  "
+        name = Path(path).name
+        return f"{cursor}[{col}] {name}\n      [dim]{reason}[/]"
+
+    def action_move(self, delta: int) -> None:
+        if not self._rows:
+            return
+        self._cursor = max(0, min(len(self._rows) - 1, self._cursor + delta))
+        self._refresh_cursor()
+
+    def _refresh_cursor(self) -> None:
+        body = self.query_one("#still_flat_body", VerticalScroll)
+        rows = list(body.query(Static))
+        for i, row in enumerate(rows):
+            if i >= len(self._rows):
+                continue
+            col, path, reason = self._rows[i]
+            row.update(self._format_row(i, col, path, reason))
+
+    def action_retry(self) -> None:
+        if not self._rows:
+            return
+        col, _path, _reason = self._rows[self._cursor]
+        app: FNDApp = self.app  # type: ignore[assignment]
+        # Per-file precision would need either a single-file extract
+        # path through extract() or a temp-config filter; route through
+        # the existing per-collection Update with texturise forced on,
+        # which the cache makes cheap for already-textured PDFs.
+        try:
+            app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
+                col, texturise_override=True
+            )
+        except Exception as e:
+            self.notify(f"Could not start retry for {col}: {e}", severity="error")
+
+    def action_back(self) -> None:
+        self.app.pop_screen()

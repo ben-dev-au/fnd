@@ -268,12 +268,21 @@ async def run_indexer(
     rebuild: bool = False,
     state_path: Path | None = None,
     cancel: asyncio.Event | None = None,
+    texturise_override: bool | None = None,
 ) -> AsyncIterator[ProgressEvent]:
     """Async generator yielding ProgressEvents as the index builds.
 
     Drop-in replacement for ``build_index_from_config`` when called
     from an async context (TUI). The CLI's existing sync entrypoint
     keeps working via ``run_sync()`` below.
+
+    ``texturise_override`` lets the caller override the "Texturise PDFs
+    while indexing" toggle for this run only:
+    - ``None`` (default) follows the toggle
+    - ``True`` forces texturising on regardless of the toggle (the
+      shared "Update everything (index + texturise)" action)
+    - ``False`` forces texturising off regardless of the toggle (the
+      "Process new files (index only)" action)
     """
     state_path = state_path or state_file_for(collection)
 
@@ -289,13 +298,19 @@ async def run_indexer(
     # Run-scoped "Update cache at index time" toggle. When the user has
     # turned this off (battery-saver), extract() skips fresh structured
     # extraction on cache misses and skips cache writes — see
-    # fnd/extract/pdf.py::set_skip_structure_extraction.
-    skip_structure = False
-    with contextlib.suppress(Exception):
-        from fnd.config import load as _load_config
+    # fnd/extract/pdf.py::set_skip_structure_extraction. An explicit
+    # texturise_override from the caller wins over the toggle.
+    if texturise_override is True:
+        skip_structure = False
+    elif texturise_override is False:
+        skip_structure = True
+    else:
+        skip_structure = False
+        with contextlib.suppress(Exception):
+            from fnd.config import load as _load_config
 
-        full_cfg = _load_config()
-        skip_structure = not bool(full_cfg.defaults.cache_at_index_time)
+            full_cfg = _load_config()
+            skip_structure = not bool(full_cfg.defaults.cache_at_index_time)
     prior_skip = _pdf._skip_structure_extraction
     _pdf.set_skip_structure_extraction(skip_structure)
 
@@ -391,6 +406,12 @@ async def run_indexer(
 
             if err:
                 print(f"[fnd skip] {err}", file=sys.stderr)
+                # Persist the failure so the still-flat drill-in screen
+                # can show per-file reasons + retry buttons.
+                with contextlib.suppress(Exception):
+                    from fnd.tui.failure_log import record_failure
+
+                    record_failure(collection=collection, path=str(path), reason=err)
                 yield _emit(
                     "file_error",
                     current_file=str(path),
@@ -399,6 +420,13 @@ async def run_indexer(
                     is_pdf=is_pdf,
                     is_dataless=was_dataless,
                 )
+            else:
+                # A previously-failed file just succeeded; clear the
+                # stale record so the drill-in stops listing it.
+                with contextlib.suppress(Exception):
+                    from fnd.tui.failure_log import clear_failure
+
+                    clear_failure(collection=collection, path=str(path))
 
             if written % _COMMIT_BATCH == 0 and written > 0:
                 writer.commit()

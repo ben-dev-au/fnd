@@ -76,6 +76,7 @@ class IndexerScreen(ModalScreen[None]):
         Binding("escape,b", "background", "Background", show=True),
         Binding("c", "cancel", "Cancel", show=True),
         Binding("p", "pause", "Pause", show=True),
+        Binding("f", "show_failed", "Failed", show=True),
     ]
 
     CSS = """
@@ -309,6 +310,16 @@ class IndexerScreen(ModalScreen[None]):
         Re-running the reindex resumes via cache + state file."""
         await self.action_cancel()
 
+    def action_show_failed(self) -> None:
+        """Open the still-flat / failed PDFs drill-in for the current
+        collection. Scoped to the active collection when running a
+        single Update; unscoped when invoked mid-chain since the chain
+        cycles through multiple collections."""
+        from fnd.tui.settings_screen import StillFlatDrillIn
+
+        scope = self._collection if self._chain_total <= 1 else None
+        self.app.push_screen(StillFlatDrillIn(collection=scope))
+
     # ---- OptionList action dispatch ----
 
     async def on_option_list_option_selected(self, ev: Any) -> None:
@@ -357,6 +368,7 @@ async def drive_indexer(
     rebuild: bool = False,
     cancel: asyncio.Event,
     events: asyncio.Queue[ProgressEvent],
+    texturise_override: bool | None = None,
 ) -> None:
     """Owns the async indexer for the app's lifetime of this run.
 
@@ -364,7 +376,9 @@ async def drive_indexer(
     and also writes the latest snapshot to ``app._indexer_state`` so
     the footer indicator + a re-opened modal can read current state
     without subscribing to the queue mid-stream.
-    """
+
+    ``texturise_override`` mirrors ``run_indexer``'s parameter: None
+    follows the toggle, True/False force on/off for this run."""
     # Bind the generator so we can explicitly aclose() it after the
     # break. Async generators do not release resources just because
     # iteration stopped - the suspended frame keeps the tantivy
@@ -378,6 +392,7 @@ async def drive_indexer(
         index_dir=index_dir,
         rebuild=rebuild,
         cancel=cancel,
+        texturise_override=texturise_override,
     )
     try:
         async for ev in gen:
@@ -440,7 +455,17 @@ def _start_next_in_chain(app: FNDApp, collection: str) -> None:
         return
     col_cfg = cfg.collections[collection]
     app._indexer_task = None  # type: ignore[attr-defined] # release
-    app.start_indexer(collection=collection, config=col_cfg, open_modal=False)
+    # The chain stores its texturise override on the app so successive
+    # call_later steps keep the same mode the user picked at the
+    # confirm step (e.g. "Update everything (index + texturise)" stays
+    # texturising across all four collections, not just the first).
+    override = getattr(app, "_indexer_texturise_override", None)
+    app.start_indexer(
+        collection=collection,
+        config=col_cfg,
+        open_modal=False,
+        texturise_override=override,
+    )
 
 
 def _event_to_state(ev: ProgressEvent, *, collection: str, started_at_default: str) -> IndexState:

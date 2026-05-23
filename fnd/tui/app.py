@@ -1274,6 +1274,12 @@ class FNDApp(App[None]):
         # synchronously before call_later fires) and the next
         # collection's events have no consumer.
         self._indexer_chain_callback_pending: bool = False
+        # Per-run texturise override carried across chain steps. None
+        # means follow the "Texturise PDFs while indexing" toggle; True
+        # forces texturising on (set by the shared "Update everything"
+        # action); False forces it off (set by the "Process new files
+        # index-only" action). Reset to None when the chain finishes.
+        self._indexer_texturise_override: bool | None = None
         self._indexer_collection: str = ""
         self._indexer_started_at: str = ""
         # Structured-PDF extras install/uninstall — sibling to the
@@ -1433,6 +1439,10 @@ class FNDApp(App[None]):
         # TUI from launching.
         with contextlib.suppress(Exception):
             self._maybe_resume_indexer()
+        # Surface pre-upgrade cache entries on launch (Slice 6 of the
+        # indexing-and-texture-ui plan). Deferred via call_later so any
+        # in-flight resume modal lands first.
+        self.call_later(self._maybe_show_upgrade_banner)
 
     # ── Ranking profile (§7) ──────────────────────────────────────
 
@@ -4030,10 +4040,16 @@ class FNDApp(App[None]):
         index_dir: Path | None = None,
         rebuild: bool = False,
         open_modal: bool = True,
+        texturise_override: bool | None = None,
     ) -> bool:
         """Spawn the async indexer task for ``collection``. Idempotent —
         if a task is already running, returns False without starting a
         second one.
+
+        ``texturise_override`` (None/True/False) is forwarded through
+        ``drive_indexer`` to ``run_indexer``; for chain runs the value
+        is stashed on ``self._indexer_texturise_override`` so subsequent
+        chain steps inherit the same mode.
 
         Returns True when a new task was spawned.
         """
@@ -4057,6 +4073,10 @@ class FNDApp(App[None]):
             index_dir = self._index_dir
         self._indexer_collection = collection
         self._indexer_started_at = _dt.datetime.now(tz=_dt.UTC).isoformat(timespec="seconds")
+        # First step of a chain (or single-collection run) sets the
+        # override; later chain steps re-enter start_indexer via
+        # _start_next_in_chain, which passes the stashed value back.
+        self._indexer_texturise_override = texturise_override
         self._indexer_cancel = asyncio.Event()
         # Reuse the existing events queue when a chain run is in
         # progress so the IndexerScreen's drain (which holds a
@@ -4077,6 +4097,7 @@ class FNDApp(App[None]):
                 rebuild=rebuild,
                 cancel=self._indexer_cancel,
                 events=self._indexer_events,
+                texturise_override=texturise_override,
             )
         )
         if open_modal:
@@ -4099,7 +4120,9 @@ class FNDApp(App[None]):
         except Exception as e:
             self.notify(f"Could not start indexer: {e}", severity="error")
 
-    def _reindex_with_warning_if_needed(self, collection: str) -> None:
+    def _reindex_with_warning_if_needed(
+        self, collection: str, *, texturise_override: bool | None = None
+    ) -> None:
         """If the pdf-structure extra is installed and the first-reindex
         warning hasn't been seen, show it; on confirm, start the
         indexer. Otherwise start the indexer directly."""
@@ -4129,19 +4152,88 @@ class FNDApp(App[None]):
             n_pdfs = count_pdfs(col_cfg)
             if n_pdfs == 0:
                 # No PDFs in this collection; skip the warning entirely.
-                self.start_indexer(collection=collection, config=col_cfg)
+                self.start_indexer(
+                    collection=collection,
+                    config=col_cfg,
+                    texturise_override=texturise_override,
+                )
                 return
 
             def _after_warning(confirmed: bool | None) -> None:
                 if confirmed:
-                    self.start_indexer(collection=collection, config=col_cfg)
+                    self.start_indexer(
+                        collection=collection,
+                        config=col_cfg,
+                        texturise_override=texturise_override,
+                    )
 
             self.push_screen(
                 FirstReindexWarningScreen(collection=collection, n_pdfs=n_pdfs),
                 _after_warning,
             )
         else:
-            self.start_indexer(collection=collection, config=col_cfg)
+            self.start_indexer(
+                collection=collection,
+                config=col_cfg,
+                texturise_override=texturise_override,
+            )
+
+    def _maybe_show_upgrade_banner(self) -> None:
+        """Push the texturising-upgrade banner when (a) the engine is
+        installed, (b) the on-disk cache holds entries from a previous
+        texturising signature, and (c) the user has not already
+        dismissed this exact (old, current) pair."""
+        import contextlib as _ctx
+
+        try:
+            from fnd.extract.pdf import extractor_signature
+
+            # The combined Indexing & PDF Texture screen's status row
+            # already shows engine state; mirror the same gate so the
+            # banner only fires when texturising can actually be
+            # re-run.
+            from fnd.extras import EXTRAS, is_extra_installed
+            from fnd.tui.upgrade_banner import (
+                UpgradeBannerScreen,
+                count_pre_upgrade_entries,
+                is_dismissed,
+            )
+
+            extra = EXTRAS.get("pdf-structure")
+            if extra is None or not is_extra_installed(extra):
+                return
+            n_entries, old_sig = count_pre_upgrade_entries()
+            if n_entries == 0 or old_sig is None:
+                return
+            current = extractor_signature()
+            if is_dismissed(old_sig, current):
+                return
+
+            def _after(choice: str | None) -> None:
+                if choice == "now":
+                    # Re-run Update across every collection with
+                    # texturising forced on; the cache short-circuits
+                    # already-textured PDFs so the cost is one
+                    # texturising pass per affected PDF.
+                    with _ctx.suppress(Exception):
+                        from fnd.tui.menu import _run_update_all_index_and_texturise
+
+                        _run_update_all_index_and_texturise(self)
+                # "later" and "dismiss" are no-ops here; "dismiss"
+                # already persisted inside the screen.
+
+            self.push_screen(
+                UpgradeBannerScreen(
+                    n_entries=n_entries,
+                    old_sig=old_sig,
+                    current_sig=current,
+                ),
+                _after,
+            )
+        except Exception:
+            # Banner is opt-in surfacing; never block the TUI from
+            # launching because of a counting / parsing glitch.
+            pass
 
     def _maybe_resume_indexer(self) -> None:
         """If a state file from a previous run exists, restart the
