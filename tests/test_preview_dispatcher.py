@@ -12,7 +12,7 @@ import pytest
 
 from fnd.extract.base import Block
 from fnd.query import FileChunk
-from fnd.tui.preview_dispatcher import choose_preview_mode
+from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
 
 
 def _chunk(kind: str, body_md: str = "") -> FileChunk:
@@ -89,3 +89,15 @@ def test_empty_chunks_takes_flat_path() -> None:
     on an empty FileView; the structural path would try to mount nothing
     and surface a less useful error)."""
     assert choose_preview_mode([]) == "flat"
+
+
+def test_uses_markdown_renderer_pdf_with_body_md() -> None:
+    """Per-chunk routing must agree with ``choose_preview_mode`` — PDF
+    chunks with ``body_md`` route through the markdown renderer at mount
+    time. Drift between this helper and ``_MARKDOWN_RENDERED_KINDS``
+    caused PDFs to render flat despite the dispatcher selecting
+    structural mode."""
+    assert uses_markdown_renderer(_chunk("pdf", body_md="# heading")) is True
+    assert uses_markdown_renderer(_chunk("pdf", body_md="")) is False
+    assert uses_markdown_renderer(_chunk("md", body_md="# h")) is True
+    assert uses_markdown_renderer(_chunk("txt", body_md="ignored")) is False

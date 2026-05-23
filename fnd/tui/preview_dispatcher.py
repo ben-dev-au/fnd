@@ -24,14 +24,27 @@ from typing import Literal
 
 from fnd.query import FileChunk
 
-# Kinds whose extractor emits a Markdown serialisation in ``body_md``;
-# these go through the structural Markdown widget. PDFs are included
-# only when the optional ``pdf-structure`` extra is installed — without
-# it, ``body_md`` stays empty and the any-chunk predicate below keeps
-# PDFs on the flat path automatically.
+# Kinds whose extractor can emit a Markdown serialisation in
+# ``body_md``; these route through the structural Markdown widget when
+# the chunk actually has ``body_md`` populated. PDF is included because
+# the optional ``pdf-structure`` extra populates ``body_md`` on PDF
+# chunks; without that extra ``body_md`` stays empty and the predicate
+# below keeps PDFs on the flat path automatically.
 _MARKDOWN_RENDERED_KINDS: frozenset[str] = frozenset({"md", "docx", "pptx", "pdf"})
 
 PreviewMode = Literal["flat", "structural"]
+
+
+def uses_markdown_renderer(c: FileChunk) -> bool:
+    """True when this chunk should mount through the structural Markdown
+    renderer. A chunk needs both a markdown-capable kind AND non-empty
+    ``body_md``; chunks failing either condition take the flat per-line
+    path.
+
+    Public so ``app.py``'s per-chunk mount loop and the file-level
+    ``choose_preview_mode`` decision share one source of truth.
+    """
+    return c.kind in _MARKDOWN_RENDERED_KINDS and bool(c.body_md)
 
 
 def choose_preview_mode(chunks: list[FileChunk]) -> PreviewMode:
@@ -43,8 +56,8 @@ def choose_preview_mode(chunks: list[FileChunk]) -> PreviewMode:
     to ``"flat"`` so the empty-state path doesn't try to mount the
     structural widget against zero blocks.
 
-    The any-chunk semantics matches the legacy ``_uses_markdown_renderer``
-    helper which decided per-chunk. Mixed files (a markdown file with a
+    The any-chunk semantics matches :func:`uses_markdown_renderer`
+    which decides per-chunk. Mixed files (a markdown file with a
     handful of stale-body chunks) keep their structural path; pure
     text/PDF files take the flat path.
     """
@@ -56,9 +69,9 @@ def choose_preview_mode(chunks: list[FileChunk]) -> PreviewMode:
     if force == "pdf" and chunks and all(c.kind == "pdf" for c in chunks):
         return "flat"
     for c in chunks:
-        if c.kind in _MARKDOWN_RENDERED_KINDS and c.body_md:
+        if uses_markdown_renderer(c):
             return "structural"
     return "flat"
 
 
-__all__ = ["PreviewMode", "choose_preview_mode"]
+__all__ = ["PreviewMode", "choose_preview_mode", "uses_markdown_renderer"]

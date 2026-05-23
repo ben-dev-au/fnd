@@ -75,7 +75,7 @@ from fnd.tui.line_buffer import (
     build_file_view,
     build_rendered_document,
 )
-from fnd.tui.preview_dispatcher import choose_preview_mode
+from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
 from fnd.tui.preview_scrollbar import MatchAwareScroll
 from fnd.tui.progress import FNDProgressBar, ProgressFacility, ProgressSession
 
@@ -818,20 +818,10 @@ def _build_label(text: str, score: float, max_score: float) -> Any:
     return label
 
 
-# Formats whose extractor produces a ``body_md`` markdown source
-# suitable for the FNDMarkdown structural renderer. Other formats
-# (pdf, txt) stay on the per-line plain renderer that targets
-# specific matched lines for scroll precision.
-_MARKDOWN_RENDERED_KINDS: frozenset[str] = frozenset({"md", "docx", "pptx"})
-
-
-def _uses_markdown_renderer(c: FileChunk) -> bool:
-    """True when this chunk should mount through ``FNDMarkdown``.
-    A chunk needs both a markdown-capable kind AND non-empty
-    ``body_md``; the empty-source fallback (defensive — schema-version
-    refusal should make it unreachable) keeps stale-index loads from
-    crashing the renderer."""
-    return c.kind in _MARKDOWN_RENDERED_KINDS and bool(c.body_md)
+# Per-chunk renderer choice lives in ``preview_dispatcher`` so the
+# file-level ``choose_preview_mode`` decision and the per-chunk mount
+# loop can't drift apart on which kinds are markdown-rendered.
+_uses_markdown_renderer = uses_markdown_renderer
 
 
 def _legacy_blocks_to_md(blocks: list[Any]) -> str:
