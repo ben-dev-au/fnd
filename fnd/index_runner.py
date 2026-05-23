@@ -49,7 +49,7 @@ from fnd.index import (
 )
 from fnd.meta_blob import encode as encode_meta_blob
 from fnd.schema import F_COLLECTION, F_PARENT_ID
-from fnd.walk import walk_sources
+from fnd.walk import is_dataless, walk_sources
 
 EventKind = Literal[
     "started",
@@ -66,6 +66,7 @@ class ProgressEvent:
     kind: EventKind
     files_done: int = 0
     files_total: int = 0
+    pdfs_total: int = 0
     current_file: str = ""
     file_elapsed_ms: float = 0.0
     cache_hit: bool = False
@@ -73,6 +74,18 @@ class ProgressEvent:
     cache_misses_total: int = 0
     elapsed_s: float = 0.0
     error: str = ""
+    # Per-file classification (set on file_complete / file_error).
+    is_pdf: bool = False
+    is_dataless: bool = False
+    has_textured_chunk: bool = False
+    # Running totals across the run; modal renders the Indexed +
+    # Texturising lines from these.
+    indexed_newly_total: int = 0
+    indexed_already_total: int = 0
+    textured_newly_total: int = 0
+    textured_already_total: int = 0
+    still_flat_total: int = 0
+    failed_total: int = 0
 
 
 @dataclass(slots=True)
@@ -82,9 +95,16 @@ class IndexState:
     collection: str
     started_at: str
     total_files: int
+    pdfs_total: int = 0
     files_completed: int = 0
     cache_hits: int = 0
     cache_misses: int = 0
+    indexed_newly: int = 0
+    indexed_already: int = 0
+    textured_newly: int = 0
+    textured_already: int = 0
+    still_flat: int = 0
+    failed: int = 0
     current_file: str = ""
     last_update: str = ""
 
@@ -94,9 +114,16 @@ class IndexState:
                 "collection": self.collection,
                 "started_at": self.started_at,
                 "total_files": self.total_files,
+                "pdfs_total": self.pdfs_total,
                 "files_completed": self.files_completed,
                 "cache_hits": self.cache_hits,
                 "cache_misses": self.cache_misses,
+                "indexed_newly": self.indexed_newly,
+                "indexed_already": self.indexed_already,
+                "textured_newly": self.textured_newly,
+                "textured_already": self.textured_already,
+                "still_flat": self.still_flat,
+                "failed": self.failed,
                 "current_file": self.current_file,
                 "last_update": self.last_update,
             }
@@ -112,9 +139,16 @@ class IndexState:
             collection=str(s.get("collection", "")),
             started_at=str(s.get("started_at", "")),
             total_files=int(s.get("total_files", 0) or 0),
+            pdfs_total=int(s.get("pdfs_total", 0) or 0),
             files_completed=int(s.get("files_completed", 0) or 0),
             cache_hits=int(s.get("cache_hits", 0) or 0),
             cache_misses=int(s.get("cache_misses", 0) or 0),
+            indexed_newly=int(s.get("indexed_newly", 0) or 0),
+            indexed_already=int(s.get("indexed_already", 0) or 0),
+            textured_newly=int(s.get("textured_newly", 0) or 0),
+            textured_already=int(s.get("textured_already", 0) or 0),
+            still_flat=int(s.get("still_flat", 0) or 0),
+            failed=int(s.get("failed", 0) or 0),
             current_file=str(s.get("current_file", "")),
             last_update=str(s.get("last_update", "")),
         )
@@ -179,12 +213,19 @@ def _process_one_file(
     writer: Any,  # tantivy IndexWriter (no public type stub)
     cache_before_hits: int,
     cache: ExtractionCache,
-) -> tuple[int, bool, str]:
+) -> tuple[int, bool, bool, str]:
     """Synchronous per-file work — extraction + write to Tantivy.
 
-    Returns ``(chunks_written, cache_hit, error_msg)``. Run inside
+    Returns ``(chunks_written, cache_hit, has_textured_chunk, error_msg)``.
+    ``has_textured_chunk`` is True iff any emitted chunk carries a non-empty
+    ``body_md`` (PDFs that hit the structured pipeline). Run inside
     ``asyncio.to_thread`` so the caller's event loop stays responsive.
     """
+    # iCloud-offloaded placeholder: skip rather than triggering a sync
+    # download that could blow the worker's stall budget.
+    if is_dataless(path):
+        return 0, False, False, "iCloud-offloaded - download in Finder before indexing"
+
     meta_blob_bytes = b""
     if path.suffix.lower() == ".md":
         try:
@@ -197,8 +238,11 @@ def _process_one_file(
     parent_id = _path_parent_id(path)
     writer.delete_documents(F_PARENT_ID, parent_id)
     n_chunks = 0
+    has_textured = False
     try:
         for chunk in extract(path):
+            if chunk.body_md:
+                has_textured = True
             writer.add_document(
                 _doc_for_chunk(
                     chunk,
@@ -210,10 +254,10 @@ def _process_one_file(
             n_chunks += 1
     except ExtractError as e:
         writer.delete_documents(F_PARENT_ID, parent_id)
-        return n_chunks, False, str(e)
+        return n_chunks, False, False, str(e)
 
     hit = cache.hits > cache_before_hits
-    return n_chunks, hit, ""
+    return n_chunks, hit, has_textured, ""
 
 
 async def run_indexer(
@@ -258,15 +302,34 @@ async def run_indexer(
     started_at = dt.datetime.now(tz=dt.UTC).isoformat(timespec="seconds")
     t_start = time.perf_counter()
     paths = _enumerate_paths(config)
-    state = IndexState(collection=collection, started_at=started_at, total_files=len(paths))
+    pdfs_total = sum(1 for p, _src in paths if p.suffix.lower() == ".pdf")
+    state = IndexState(
+        collection=collection,
+        started_at=started_at,
+        total_files=len(paths),
+        pdfs_total=pdfs_total,
+    )
     save_state(state_path, state)
 
-    yield ProgressEvent(
-        kind="started",
-        files_done=0,
-        files_total=len(paths),
-        elapsed_s=0.0,
-    )
+    def _emit(kind: EventKind, **extra: Any) -> ProgressEvent:
+        return ProgressEvent(
+            kind=kind,
+            files_done=state.files_completed,
+            files_total=len(paths),
+            pdfs_total=pdfs_total,
+            cache_hits_total=cache.hits,
+            cache_misses_total=cache.misses,
+            indexed_newly_total=state.indexed_newly,
+            indexed_already_total=state.indexed_already,
+            textured_newly_total=state.textured_newly,
+            textured_already_total=state.textured_already,
+            still_flat_total=state.still_flat,
+            failed_total=state.failed,
+            elapsed_s=time.perf_counter() - t_start,
+            **extra,
+        )
+
+    yield _emit("started")
 
     try:
         index = _ensure_index(index_dir, force=rebuild)
@@ -278,31 +341,17 @@ async def run_indexer(
         written = 0
         for path, source_id in paths:
             if cancel is not None and cancel.is_set():
-                yield ProgressEvent(
-                    kind="cancelled",
-                    files_done=state.files_completed,
-                    files_total=len(paths),
-                    cache_hits_total=cache.hits,
-                    cache_misses_total=cache.misses,
-                    elapsed_s=time.perf_counter() - t_start,
-                )
+                yield _emit("cancelled")
                 # Leave state file in place so we can resume.
                 return
 
+            is_pdf = path.suffix.lower() == ".pdf"
             state.current_file = str(path)
-            yield ProgressEvent(
-                kind="file_processing",
-                files_done=state.files_completed,
-                files_total=len(paths),
-                current_file=str(path),
-                cache_hits_total=cache.hits,
-                cache_misses_total=cache.misses,
-                elapsed_s=time.perf_counter() - t_start,
-            )
+            yield _emit("file_processing", current_file=str(path), is_pdf=is_pdf)
 
             hits_before = cache.hits
             t_file = time.perf_counter()
-            chunks_written, was_hit, err = await asyncio.to_thread(
+            chunks_written, was_hit, has_textured, err = await asyncio.to_thread(
                 _process_one_file,
                 path=path,
                 source_id=source_id,
@@ -312,20 +361,26 @@ async def run_indexer(
                 cache=cache,
             )
             file_elapsed_ms = (time.perf_counter() - t_file) * 1000.0
+            was_dataless = err.startswith("iCloud-offloaded") if err else False
 
             if err:
-                print(f"[fnd skip] {err}", file=sys.stderr)
-                yield ProgressEvent(
-                    kind="file_error",
-                    files_done=state.files_completed,
-                    files_total=len(paths),
-                    current_file=str(path),
-                    file_elapsed_ms=file_elapsed_ms,
-                    cache_hits_total=cache.hits,
-                    cache_misses_total=cache.misses,
-                    elapsed_s=time.perf_counter() - t_start,
-                    error=err,
-                )
+                state.failed += 1
+            else:
+                if is_pdf:
+                    if was_hit:
+                        state.textured_already += 1
+                        state.indexed_already += 1
+                    elif has_textured:
+                        state.textured_newly += 1
+                        state.indexed_newly += 1
+                    else:
+                        state.still_flat += 1
+                        state.indexed_newly += 1
+                else:
+                    if was_hit:
+                        state.indexed_already += 1
+                    else:
+                        state.indexed_newly += 1
 
             written += chunks_written
             state.files_completed += 1
@@ -334,19 +389,28 @@ async def run_indexer(
             # Atomic state update per file = resume granularity per file.
             save_state(state_path, state)
 
+            if err:
+                print(f"[fnd skip] {err}", file=sys.stderr)
+                yield _emit(
+                    "file_error",
+                    current_file=str(path),
+                    file_elapsed_ms=file_elapsed_ms,
+                    error=err,
+                    is_pdf=is_pdf,
+                    is_dataless=was_dataless,
+                )
+
             if written % _COMMIT_BATCH == 0 and written > 0:
                 writer.commit()
 
-            yield ProgressEvent(
-                kind="file_complete",
-                files_done=state.files_completed,
-                files_total=len(paths),
+            yield _emit(
+                "file_complete",
                 current_file=str(path),
                 file_elapsed_ms=file_elapsed_ms,
                 cache_hit=was_hit,
-                cache_hits_total=cache.hits,
-                cache_misses_total=cache.misses,
-                elapsed_s=time.perf_counter() - t_start,
+                is_pdf=is_pdf,
+                has_textured_chunk=has_textured,
+                is_dataless=was_dataless,
             )
 
         writer.commit()
@@ -367,25 +431,14 @@ async def run_indexer(
     with contextlib.suppress(Exception):
         from fnd.tui.cost_estimate import record_run
 
-        # ``paths`` is list[tuple[Path, kind]] — count PDFs by kind so
-        # the throughput record reflects only structured-extraction
-        # cost, not flat-text refresh of md / docx / etc.
-        n_pdfs = sum(1 for _path, kind in paths if kind == "pdf")
         record_run(
-            n_pdfs=n_pdfs,
+            n_pdfs=pdfs_total,
             cache_hits=cache.hits,
             cache_misses=cache.misses,
             elapsed_s=final_elapsed,
         )
 
-    yield ProgressEvent(
-        kind="done",
-        files_done=state.files_completed,
-        files_total=len(paths),
-        cache_hits_total=cache.hits,
-        cache_misses_total=cache.misses,
-        elapsed_s=final_elapsed,
-    )
+    yield _emit("done")
 
 
 def run_sync(

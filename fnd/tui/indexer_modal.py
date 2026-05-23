@@ -90,10 +90,12 @@ class IndexerScreen(ModalScreen[None]):
         padding: 0 1;
         background: $surface;
     }
-    #indexer_status, #indexer_current_file, #indexer_timing, #indexer_cache {
+    #indexer_status, #indexer_current_file, #indexer_timing,
+    #indexer_indexed_line, #indexer_texture_line {
         height: 1;
         padding: 0;
     }
+    #indexer_texture_line.hidden { display: none; }
     #indexer_progress { width: 100%; height: 1; padding: 0 0 1 0; }
     #indexer_actions { height: auto; padding: 1 0 0 0; }
     """
@@ -114,7 +116,8 @@ class IndexerScreen(ModalScreen[None]):
             yield ProgressBar(total=1, show_eta=False, show_percentage=True, id="indexer_progress")
             yield Static("", id="indexer_current_file")
             yield Static("", id="indexer_timing")
-            yield Static("", id="indexer_cache")
+            yield Static("", id="indexer_indexed_line")
+            yield Static("", id="indexer_texture_line", classes="hidden")
             yield OptionList(
                 Option("Run in background", id="background"),
                 Option("Cancel", id="cancel"),
@@ -211,9 +214,14 @@ class IndexerScreen(ModalScreen[None]):
             self.query_one("#indexer_current_file", Static).update(
                 f"[dim]Current:[/] {_short_name(state.current_file)}"
             )
-            self.query_one("#indexer_cache", Static).update(
-                f"[dim]Texturising:[/] {state.cache_hits} already textured, "
-                f"{state.cache_misses} newly textured"
+            self._update_status_lines(
+                pdfs_total=state.pdfs_total,
+                indexed_newly=state.indexed_newly,
+                indexed_already=state.indexed_already,
+                textured_newly=state.textured_newly,
+                textured_already=state.textured_already,
+                still_flat=state.still_flat,
+                failed=state.failed,
             )
         except Exception:
             pass
@@ -224,7 +232,6 @@ class IndexerScreen(ModalScreen[None]):
             bar = self.query_one("#indexer_progress", ProgressBar)
             current = self.query_one("#indexer_current_file", Static)
             timing = self.query_one("#indexer_timing", Static)
-            cache_line = self.query_one("#indexer_cache", Static)
         except Exception:
             return
 
@@ -247,13 +254,42 @@ class IndexerScreen(ModalScreen[None]):
         eta = estimate_eta_seconds(
             files_done=ev.files_done, files_total=ev.files_total, elapsed_s=ev.elapsed_s
         )
-        timing.update(
-            f"[dim]Elapsed:[/] {fmt_eta(ev.elapsed_s)}    " f"[dim]ETA:[/] {fmt_eta(eta)}"
+        timing.update(f"[dim]Elapsed:[/] {fmt_eta(ev.elapsed_s)}    [dim]ETA:[/] {fmt_eta(eta)}")
+        self._update_status_lines(
+            pdfs_total=ev.pdfs_total,
+            indexed_newly=ev.indexed_newly_total,
+            indexed_already=ev.indexed_already_total,
+            textured_newly=ev.textured_newly_total,
+            textured_already=ev.textured_already_total,
+            still_flat=ev.still_flat_total,
+            failed=ev.failed_total,
         )
-        cache_line.update(
-            f"[dim]Texturising:[/] {ev.cache_hits_total} already textured, "
-            f"{ev.cache_misses_total} newly textured"
-        )
+
+    def _update_status_lines(
+        self,
+        *,
+        pdfs_total: int,
+        indexed_newly: int,
+        indexed_already: int,
+        textured_newly: int,
+        textured_already: int,
+        still_flat: int,
+        failed: int,
+    ) -> None:
+        try:
+            indexed_line = self.query_one("#indexer_indexed_line", Static)
+            texture_line = self.query_one("#indexer_texture_line", Static)
+        except Exception:
+            return
+        indexed_line.update(_format_indexed_line(indexed_newly, indexed_already, failed))
+        if pdfs_total > 0:
+            texture_line.remove_class("hidden")
+            texture_line.update(
+                _format_texturising_line(textured_newly, textured_already, still_flat)
+            )
+        else:
+            texture_line.add_class("hidden")
+            texture_line.update("")
 
     # ---- bindings ----
 
@@ -287,6 +323,26 @@ def _short_name(path: str) -> str:
         return "?"
     name = Path(path).name
     return name if len(name) <= 48 else name[:45] + "…"
+
+
+def _format_indexed_line(newly: int, already: int, failed: int) -> str:
+    parts = [
+        f"{newly} newly indexed",
+        f"{already} already indexed",
+    ]
+    if failed > 0:
+        parts.append(f"[yellow]⚠ {failed} failed[/]")
+    return "[dim]Indexed:[/]     " + "    ".join(parts)
+
+
+def _format_texturising_line(newly: int, already: int, still_flat: int) -> str:
+    parts = [
+        f"{newly} newly textured",
+        f"{already} already textured",
+    ]
+    if still_flat > 0:
+        parts.append(f"[yellow]⚠ {still_flat} still flat[/]")
+    return "[dim]Texturising:[/] " + "    ".join(parts)
 
 
 # ---- App-side helpers ---------------------------------------------------
@@ -392,9 +448,16 @@ def _event_to_state(ev: ProgressEvent, *, collection: str, started_at_default: s
         collection=collection,
         started_at=started_at_default,
         total_files=ev.files_total,
+        pdfs_total=ev.pdfs_total,
         files_completed=ev.files_done,
         cache_hits=ev.cache_hits_total,
         cache_misses=ev.cache_misses_total,
+        indexed_newly=ev.indexed_newly_total,
+        indexed_already=ev.indexed_already_total,
+        textured_newly=ev.textured_newly_total,
+        textured_already=ev.textured_already_total,
+        still_flat=ev.still_flat_total,
+        failed=ev.failed_total,
         current_file=ev.current_file,
         last_update=dt.datetime.now(tz=dt.UTC).isoformat(timespec="seconds"),
     )
