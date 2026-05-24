@@ -226,6 +226,7 @@ def _process_one_file(
     source_id: str,
     collection: str,
     writer: Any,  # tantivy IndexWriter (no public type stub)
+    schema: Any,  # tantivy Schema (needed for delete-by-query)
     cache_before_hits: int,
     cache: ExtractionCache,
 ) -> tuple[int, bool, bool, str]:
@@ -270,7 +271,25 @@ def _process_one_file(
             non_pdf_sha = ""
 
     parent_id = _path_parent_id(path)
-    writer.delete_documents(F_PARENT_ID, parent_id)
+    # Delete only THIS collection's chunks for this file. The previous
+    # unscoped delete_documents(F_PARENT_ID, ...) was a per-path nuke
+    # that wiped sibling collections' chunks too when a file was
+    # shared (typical case: an Obsidian Vault listed under multiple
+    # collections' sources). On the next collection's chain step the
+    # file would be re-indexed under the new collection, but the
+    # earlier collections lost their copy and the file vanished from
+    # their search scope and the still-flat counter.
+    import tantivy as _tantivy
+
+    _collection_q = _tantivy.Query.term_query(schema, F_COLLECTION, collection)
+    _parent_q = _tantivy.Query.term_query(schema, F_PARENT_ID, parent_id)
+    _delete_q = _tantivy.Query.boolean_query(
+        [
+            (_tantivy.Occur.Must, _parent_q),
+            (_tantivy.Occur.Must, _collection_q),
+        ]
+    )
+    writer.delete_documents_by_query(_delete_q)
     n_chunks = 0
     has_textured = False
     # Per-page beats from the PDF worker feed the live-progress
@@ -292,7 +311,9 @@ def _process_one_file(
             )
             n_chunks += 1
     except ExtractError as e:
-        writer.delete_documents(F_PARENT_ID, parent_id)
+        # Same collection-scoped delete as above: never touch sibling
+        # collections' chunks on an extraction error.
+        writer.delete_documents_by_query(_delete_q)
         return n_chunks, False, False, str(e)
 
     if not is_pdf and non_pdf_sha:
@@ -467,6 +488,7 @@ async def run_indexer(
                 source_id=source_id,
                 collection=collection,
                 writer=writer,
+                schema=index.schema,
                 cache_before_hits=hits_before,
                 cache=cache,
             )

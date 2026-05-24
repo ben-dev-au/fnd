@@ -129,6 +129,33 @@ def isolated_seen_log(  # pyright: ignore[reportUnusedFunction]
 
 
 @pytest.fixture(autouse=True)
+def isolated_failure_log(  # pyright: ignore[reportUnusedFunction]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Redirect the per-(collection, file) failure log at a per-test
+    temp path. Without isolation, every test that exercises the
+    indexer's error path writes a pytest-tmp record into the user's
+    real ``indexer_failures.toml`` and the user ends up with a log
+    full of ``[t] broken.pdf`` entries from pytest-of-* tmp dirs."""
+    log_path = tmp_path / "failure-log" / "indexer_failures.toml"
+    monkeypatch.setattr("fnd.tui.failure_log._log_path", lambda: log_path)
+    return log_path
+
+
+@pytest.fixture(autouse=True)
+def isolated_dismissed_pdfs(  # pyright: ignore[reportUnusedFunction]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Same isolation for the user-dismissed-PDF marker store - a
+    test that exercises the Dismiss action would otherwise drop a
+    real-looking marker into the user's data dir and silently hide
+    the real file from their Texturising Error Log."""
+    dismissed_root = tmp_path / "dismissed"
+    monkeypatch.setattr("fnd.dismissed_pdfs._dismissed_root", lambda: dismissed_root)
+    return dismissed_root
+
+
+@pytest.fixture(autouse=True)
 def isolated_pdf_structure_cache(  # pyright: ignore[reportUnusedFunction]
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
