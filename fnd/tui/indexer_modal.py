@@ -29,11 +29,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import ProgressBar, Static, Tree
+from textual.widgets import OptionList, ProgressBar, Static, Tree
 
 from fnd.config import CollectionConfig
 from fnd.index_runner import IndexState, ProgressEvent, run_indexer
@@ -235,7 +236,10 @@ class IndexerScreen(ModalScreen[None]):
             # search Results pane.
             history_tree: Tree[str] = Tree("Completed", id="indexer_history_tree")
             history_tree.show_root = True
-            history_tree.root.expand()
+            # Start collapsed so it doesn't eat vertical space on a
+            # fresh chain start, and so the modal's initial focus
+            # (the Actions OptionList) stays the primary interaction.
+            history_tree.root.collapse()
             history_tree.add_class("hidden")
             yield history_tree
             yield Static("Starting…", id="indexer_status")
@@ -296,6 +300,12 @@ class IndexerScreen(ModalScreen[None]):
         # rather than waiting for the 1Hz tick.
         with contextlib.suppress(Exception):
             self._sync_action_options(self._fnd_app())
+        # Default focus on the Actions list (the primary interaction).
+        # The tree starts collapsed; user can Tab to it then Enter
+        # to expand. Without this, focus lands on whichever widget
+        # Textual picks first and arrows go to the wrong place.
+        with contextlib.suppress(Exception):
+            self.query_one("#indexer_actions", OptionList).focus()
         # Spawn a coroutine that drains the event queue and updates
         # the widgets until the screen is dismissed.
         self.run_worker(self._drain_events(), exclusive=False)
@@ -586,13 +596,16 @@ class IndexerScreen(ModalScreen[None]):
 
     def _refresh_history_band(self) -> None:
         """Sync the per-collection summary Tree to the current chain
-        history. Top-level nodes are finished collections, each
-        carrying a single detail child shown only when expanded.
+        history.
+
+        Single root node 'Completed (N)' with one leaf per finished
+        collection. Each leaf shows a compact row with colored
+        markers (✓ textured, ⚠ still flat, ✗ failed) instead of
+        spelling out the terminology - keeps the row narrow enough
+        for many collections to fit on screen.
 
         Rebuilt from scratch each call because the history can grow
-        mid-chain and Textual's Tree doesn't dedupe by label - we'd
-        accumulate duplicates if we appended naively. Cheap: a
-        4-collection chain is 4 nodes."""
+        mid-chain and we want the root label's count to track."""
         try:
             tree: Tree[str] = self.query_one("#indexer_history_tree", Tree)
         except Exception:
@@ -604,30 +617,13 @@ class IndexerScreen(ModalScreen[None]):
             tree.root.remove_children()
             return
         tree.remove_class("hidden")
-        # Preserve which collection the user had expanded across
-        # rebuilds so a new "done" event doesn't snap their open node
-        # shut. Tracked by collection name (unique within a chain).
-        previously_expanded = self._currently_expanded_collection(tree)
+        was_expanded = tree.root.is_expanded
         tree.root.remove_children()
+        tree.root.set_label(f"Completed ({len(history)})")
         for snap in history:
-            label = _format_chain_chip(snap)
-            node = tree.root.add(label, data=snap.collection)
-            node.add_leaf(_format_chain_detail(snap))
-            if snap.collection == previously_expanded:
-                node.expand()
-
-    @staticmethod
-    def _currently_expanded_collection(tree: Tree[str]) -> str | None:
-        """Return the collection name of the currently-expanded summary
-        node, or None when nothing is expanded. Lets the rebuild path
-        re-expand the user's selection across event-driven refreshes."""
-        for child in tree.root.children:
-            if child.is_expanded:
-                # `data` is the collection name we stamped on add().
-                value = getattr(child, "data", None)
-                if isinstance(value, str):
-                    return value
-        return None
+            tree.root.add_leaf(_format_chain_row(snap), data=snap.collection)
+        if was_expanded:
+            tree.root.expand()
 
     # ---- bindings ----
 
@@ -724,6 +720,45 @@ class IndexerScreen(ModalScreen[None]):
         elif ev.option.id == "todo":
             self.action_show_failed()
 
+    # ---- arrow-key crossover between Tree and Actions ----
+
+    def on_key(self, event: events.Key) -> None:
+        """Let arrows hop between the per-collection summary Tree and
+        the Actions list so the modal feels like one continuous list
+        instead of two disjoint focus contexts. Standard Tab still
+        works; this just adds the cheaper-to-discover up/down path."""
+        if event.key not in ("up", "down"):
+            return
+        focused = self.focused
+        if focused is None:
+            return
+        try:
+            tree = self.query_one("#indexer_history_tree", Tree)
+            actions = self.query_one("#indexer_actions", OptionList)
+        except Exception:
+            return
+        if focused is actions:
+            # Up at the first option → focus the Tree (only if it
+            # has any history to navigate; otherwise stay put).
+            at_top = getattr(actions, "highlighted", None) == 0
+            tree_visible = "hidden" not in tree.classes
+            if event.key == "up" and at_top and tree_visible:
+                tree.focus()
+                event.stop()
+        elif focused is tree:
+            # Down at the last visible row (or at the collapsed root)
+            # → focus the Actions list.
+            cursor = tree.cursor_node
+            at_root_collapsed = cursor is tree.root and not tree.root.is_expanded
+            at_last_leaf = (
+                tree.root.is_expanded
+                and bool(tree.root.children)
+                and cursor is tree.root.children[-1]
+            )
+            if event.key == "down" and (at_root_collapsed or at_last_leaf):
+                actions.focus()
+                event.stop()
+
 
 @dataclass(slots=True, frozen=True)
 class ChainStepSummary:
@@ -742,32 +777,25 @@ class ChainStepSummary:
     elapsed_s: float
 
 
-def _format_chain_chip(snap: ChainStepSummary) -> str:
-    """One-row rendering for the modal's per-collection summary Tree.
+def _format_chain_row(snap: ChainStepSummary) -> str:
+    """Compact one-line leaf row for the per-collection summary Tree.
 
-    `<name> Ntex Nfail` when there are failures; just `<name> Ntex`
-    otherwise. The full stat breakdown lives in the expanded child
-    node (see _format_chain_detail)."""
+    Uses colored single-char markers instead of spelling out
+    'textured / still flat / failed':
+        ✓ N   textured (green)
+        ⚠ N   still flat (yellow), only when > 0
+        ✗ N   failed (red), only when > 0
+
+    Trailing chip is a dim '<files> files · <elapsed>' so the user
+    can see scale + duration without expanding anything."""
     tex = snap.textured_newly + snap.textured_already
-    fail = snap.failed
-    if fail:
-        return f"[green]✓[/] {snap.collection}    {tex} textured · [yellow]⚠ {fail} failed[/]"
-    return f"[green]✓[/] {snap.collection}    {tex} textured"
-
-
-def _format_chain_detail(snap: ChainStepSummary) -> str:
-    """Detail child for the per-collection summary Tree. Shown when
-    the user expands a collection's row in the inline Done panel."""
-    tex_total = snap.textured_newly + snap.textured_already
-    parts = [
-        f"{snap.files_total} files",
-        f"{snap.pdfs_total} PDFs",
-        f"{tex_total} textured ({snap.textured_newly} new · {snap.textured_already} already)",
-        f"{snap.still_flat} still flat",
-        f"{snap.failed} failed",
-        fmt_duration(snap.elapsed_s),
-    ]
-    return "  ·  ".join(parts)
+    markers = [f"[green]✓{tex}[/]"]
+    if snap.still_flat > 0:
+        markers.append(f"[yellow]⚠{snap.still_flat}[/]")
+    if snap.failed > 0:
+        markers.append(f"[red]✗{snap.failed}[/]")
+    chip = f"[dim]{snap.files_total} files · {fmt_duration(snap.elapsed_s)}[/]"
+    return f"{snap.collection:<18} " + "  ".join(markers) + f"   {chip}"
 
 
 def _short_name(path: str) -> str:

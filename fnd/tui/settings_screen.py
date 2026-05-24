@@ -3870,10 +3870,19 @@ def _flat_pdfs_with_reasons(
     except Exception:
         battery_saver = False
 
+    # Drop user-dismissed PDFs - those are files the user has
+    # explicitly accepted as "fine flat" and don't want pestered
+    # about every time the log opens.
+    from fnd.cache import sha256_file as _sha256_file
+    from fnd.dismissed_pdfs import is_dismissed as _is_dismissed
+
     out: list[tuple[str, str, str, str | None]] = []
     for name, paths in on_disk.items():
         flat = paths - textured.get(name, set())
         for p in sorted(flat):
+            with contextlib.suppress(OSError):
+                if _is_dismissed(_sha256_file(Path(p))):
+                    continue
             record = failure_by_key.get((name, p))
             if record is None:
                 if not engine_on:
@@ -3881,7 +3890,10 @@ def _flat_pdfs_with_reasons(
                 elif battery_saver:
                     reason = "Texturise-while-indexing toggle is OFF"
                 else:
-                    reason = "Indexed flat (no failure recorded)"
+                    reason = (
+                        "Extraction yielded no structured content. "
+                        "Likely a scanned PDF or one with no extractable text."
+                    )
                 out.append((name, p, reason, None))
             else:
                 out.append((name, p, record[0], record[1]))
@@ -3901,6 +3913,9 @@ class StillFlatDrillIn(Screen[None]):
         Binding("up,k", "move(-1)", show=False),
         Binding("down,j", "move(1)", show=False),
         Binding("enter,r", "retry", "Retry", show=True),
+        Binding("shift+enter", "reveal", "Reveal", show=True),
+        Binding("d", "dismiss_pdf", "Dismiss", show=True),
+        Binding("c", "copy_path", "Copy path", show=True),
     ]
 
     CSS = """
@@ -3912,6 +3927,8 @@ class StillFlatDrillIn(Screen[None]):
     }
     StillFlatDrillIn > #settings_box:focus-within { border: round $accent; }
     StillFlatDrillIn #empty_state { padding: 1 1; color: $text-muted; }
+    StillFlatDrillIn .row { height: auto; padding: 1 1 0 1; }
+    StillFlatDrillIn .row.-cursor { background: $accent 20%; }
     StillFlatDrillIn > #footer_hints {
         dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
     }
@@ -3929,7 +3946,14 @@ class StillFlatDrillIn(Screen[None]):
             title += f" - {self._collection_filter}"
         with Vertical(id="settings_box") as box:
             box.border_title = title
-            yield VerticalScroll(id="still_flat_body")
+            # ``can_focus=False`` keeps the scroll container out of the
+            # focus chain so the screen-level Up/Down bindings fire
+            # for row navigation - the default focusable VerticalScroll
+            # eats arrows for its own scroll handling and the bindings
+            # never get a chance to run.
+            scroll = VerticalScroll(id="still_flat_body")
+            scroll.can_focus = False
+            yield scroll
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
@@ -3939,35 +3963,78 @@ class StillFlatDrillIn(Screen[None]):
         app: FNDApp = self.app  # type: ignore[assignment]
         with _ctx.suppress(Exception):
             self.query_one("#footer_hints", Static).update(
-                _hint_bar(app, (("↑↓", "Nav"), ("⏎ / r", "Retry"), ("Esc", "Back")))
+                _hint_bar(
+                    app,
+                    (
+                        ("↑↓", "Nav"),
+                        ("⏎ / r", "Retry"),
+                        ("⇧⏎", "Reveal"),
+                        ("d", "Dismiss"),
+                        ("c", "Copy path"),
+                        ("Esc", "Back"),
+                    ),
+                )
             )
 
     def _refresh(self) -> None:
         self._rows = _flat_pdfs_with_reasons(collection=self._collection_filter)
+        # Clamp cursor after a row is removed by Retry/Dismiss so the
+        # cursor doesn't index past the end.
+        if self._cursor >= len(self._rows):
+            self._cursor = max(0, len(self._rows) - 1)
         body = self.query_one("#still_flat_body", VerticalScroll)
         for child in list(body.children):
             child.remove()
         if not self._rows:
-            body.mount(Static("No PDFs are still flat.", id="empty_state"))
+            body.mount(Static("Nothing to fix - every PDF is textured.", id="empty_state"))
             return
         for i, (col, path, reason, recorded_at) in enumerate(self._rows):
+            cls = "row -cursor" if i == self._cursor else "row"
             body.mount(
                 Static(
                     self._format_row(i, col, path, reason, recorded_at),
-                    classes="row",
+                    classes=cls,
                 )
             )
 
     def _format_row(self, i: int, col: str, path: str, reason: str, recorded_at: str | None) -> str:
-        cursor = "▸ " if i == self._cursor else "  "
+        """Multi-line row: filename, then status chip + collection +
+        date + page-if-known on a second line, then the wrapped reason
+        in dim text. Page info is parsed out of the failure log's
+        '[last page beat: N/M]' marker so the user knows where the
+        worker wedged."""
+        import re
+
+        cursor = "▸" if i == self._cursor else " "
         name = Path(path).name
-        when = ""
+
+        # Status chip - "failed" when a failure record exists,
+        # "still flat" otherwise. Failed gets a red ✗; still-flat
+        # gets a yellow ⚠.
+        chip = "[red]✗ failed[/]" if recorded_at is not None else "[yellow]⚠ still flat[/]"
+
+        # Pull "[last page beat: N/M]" out of the reason so we can
+        # render the page hint separately and clean the reason text.
+        page_part = ""
+        clean_reason = reason
+        page_match = re.search(r"\[last page beat:\s*(\d+)/(\d+)\]", reason)
+        if page_match:
+            page_part = f"  ·  page {page_match.group(1)}/{page_match.group(2)}"
+            clean_reason = re.sub(r"\s*\[last page beat:[^\]]+\]\s*", " ", reason).strip()
+
+        # Meta line: status, collection, date (only for actual
+        # failure records; cache-flat files have no recorded run).
+        # Bare ``col`` would be eaten by Rich markup as ``[col]`` so
+        # we render the collection name as a plain dim chip.
+        meta_bits = [chip, f"[dim]{col}[/]"]
         if recorded_at:
-            # Compact local-time label (e.g. "today 14:18", "Mon 09:02",
-            # "May 23 14:18") so the user can tell fresh records from
-            # week-old ones without parsing ISO-8601 in their head.
-            when = f" · {_format_recorded_at(recorded_at)}"
-        return f"{cursor}[{col}] {name}{when}\n      [dim]{reason}[/]"
+            meta_bits.append(f"[dim]{_format_recorded_at(recorded_at)}[/]")
+        meta_str = "  ·  ".join(meta_bits) + page_part
+
+        header = f"{cursor} [bold]{name}[/]"
+        meta = f"     {meta_str}"
+        body = f"     [dim]{clean_reason}[/]"
+        return f"{header}\n{meta}\n{body}"
 
     def action_move(self, delta: int) -> None:
         if not self._rows:
@@ -3983,6 +4050,19 @@ class StillFlatDrillIn(Screen[None]):
                 continue
             col, path, reason, recorded_at = self._rows[i]
             row.update(self._format_row(i, col, path, reason, recorded_at))
+            # Move the -cursor class too so the background tint
+            # follows the active row, not just the ▸ character.
+            if i == self._cursor:
+                row.add_class("-cursor")
+            else:
+                row.remove_class("-cursor")
+        # Scroll the active row into view so a long log doesn't
+        # leave the cursor off-screen.
+        if 0 <= self._cursor < len(rows):
+            import contextlib as _ctx
+
+            with _ctx.suppress(Exception):
+                body.scroll_to_widget(rows[self._cursor])
 
     def action_retry(self) -> None:
         if not self._rows:
@@ -4015,6 +4095,81 @@ class StillFlatDrillIn(Screen[None]):
             )
         except Exception as e:
             self.notify(f"Could not start retry for {col}: {e}", severity="error")
+
+    def action_reveal(self) -> None:
+        """Open the OS file browser with the row's PDF selected.
+
+        macOS: ``open -R <path>`` selects the file in Finder.
+        Linux: best-effort ``xdg-open`` on the parent directory.
+        Windows: ``explorer /select``."""
+        if not self._rows:
+            return
+        _col, path, _reason, _recorded_at = self._rows[self._cursor]
+        import platform
+        import subprocess
+
+        system = platform.system()
+        try:
+            if system == "Darwin":
+                subprocess.Popen(["open", "-R", path])
+            elif system == "Windows":
+                subprocess.Popen(["explorer", "/select,", path])
+            else:
+                subprocess.Popen(["xdg-open", str(Path(path).parent)])
+        except OSError as e:
+            self.notify(f"Could not reveal: {e}", severity="error")
+
+    def action_dismiss_pdf(self) -> None:
+        """Mark the current row's PDF as 'fine flat - stop showing'.
+
+        Stored content-addressed in fnd.dismissed_pdfs so renaming /
+        moving the PDF preserves the dismissal.
+
+        Named ``action_dismiss_pdf`` rather than ``action_dismiss``
+        because Textual's ``Screen.action_dismiss`` is the modal-pop
+        helper and shadowing it tripped pyright's signature check."""
+        if not self._rows:
+            return
+        col, path, _reason, _recorded_at = self._rows[self._cursor]
+        import contextlib as _ctx
+
+        with _ctx.suppress(Exception):
+            from fnd.cache import sha256_file
+            from fnd.dismissed_pdfs import mark_dismissed
+            from fnd.tui.failure_log import clear_failure
+
+            sha = sha256_file(Path(path))
+            mark_dismissed(sha)
+            with _ctx.suppress(Exception):
+                clear_failure(collection=col, path=path)
+        self._refresh()
+        self.notify(f"Dismissed: {Path(path).name}", severity="information")
+
+    def action_copy_path(self) -> None:
+        """Copy the current row's absolute path to the OS clipboard."""
+        if not self._rows:
+            return
+        _col, path, _reason, _recorded_at = self._rows[self._cursor]
+        import platform
+        import subprocess
+
+        system = platform.system()
+        try:
+            if system == "Darwin":
+                proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
+            elif system == "Windows":
+                proc = subprocess.Popen(["clip"], stdin=subprocess.PIPE)
+            else:
+                try:
+                    proc = subprocess.Popen(["wl-copy"], stdin=subprocess.PIPE)
+                except FileNotFoundError:
+                    proc = subprocess.Popen(
+                        ["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE
+                    )
+            proc.communicate(input=path.encode("utf-8"))
+            self.notify(f"Copied: {path}", severity="information")
+        except (OSError, FileNotFoundError) as e:
+            self.notify(f"Could not copy: {e}", severity="error")
 
     def action_back(self) -> None:
         self.app.pop_screen()
