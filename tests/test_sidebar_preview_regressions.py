@@ -72,6 +72,7 @@ async def test_panel_collapse_writes_to_disk(built_index: Path, isolated_ui_stat
         await wait_until(
             pilot,
             lambda: "collapsed" in ctree.classes,
+            timeout=30.0,
             message="ctree never gained 'collapsed' class",
         )
         assert "collections_panel_tree" in app._collapsed_panels
@@ -120,6 +121,12 @@ async def test_enter_on_collection_does_not_undo_collapse(
     async with app.run_test() as pilot:
         await safe_pause(pilot)
         ctree = app.query_one("#collections_panel_tree", Tree)
+        await wait_until(
+            pilot,
+            lambda: _first_collection_node(ctree) is not None,
+            timeout=30.0,
+            message="collections tree never populated",
+        )
         coll = _first_collection_node(ctree)
         assert coll is not None
         coll.expand()
@@ -165,6 +172,7 @@ async def test_toggle_with_active_query_clears_results_without_focus_shift(
         await wait_until(
             pilot,
             lambda: app._groups == [],
+            timeout=30.0,
             message="toggling collection did not clear results",
         )
         assert app._focus_context() == "collections"
@@ -198,12 +206,19 @@ async def test_collapse_state_survives_collection_cli_flag(
         # Scope override took effect.
         assert app._collections == ["default"]
         # Panel layout was restored from disk — wait for the saved
-        # collapsed state to settle onto the trees.
+        # collapsed state to settle onto the trees, including the
+        # expanded_collections / expanded_filter_branches lists which
+        # restore through a separate async path that can lag the
+        # collapse classes under CI load.
         await wait_until(
             pilot,
-            lambda: "collapsed" in ctree.classes and "collapsed" in ftree.classes,
-            message="saved collapsed state not restored to trees",
+            lambda: (
+                "collapsed" in ctree.classes
+                and "collapsed" in ftree.classes
+                and "CPL" in app._expanded_collections
+                and "kinds" in app._expanded_filter_branches
+            ),
+            timeout=30.0,
+            message="saved sidebar state not fully restored",
         )
         assert app._collapsed_panels == {"collections_panel_tree", "filters_panel_tree"}
-        assert "CPL" in app._expanded_collections
-        assert "kinds" in app._expanded_filter_branches

@@ -398,7 +398,15 @@ async def test_pptx_preview_routes_through_fnd_markdown(cfg: Config, pptx_corpus
         tree.focus()
         await _settle(pilot)
         pane = app.query_one("#preview_pane", VerticalScroll)
-        assert list(pane.query(FNDMarkdown)), "pptx chunk should mount FNDMarkdown"
+        # _settle finds any FNDMarkdown in the app (including hidden
+        # prefetch containers); under CI load the user-side mount into
+        # the visible pane can lag. Wait specifically on the pane.
+        await wait_until(
+            pilot,
+            lambda: bool(list(pane.query(FNDMarkdown))),
+            timeout=30.0,
+            message="pptx FNDMarkdown not mounted in preview pane",
+        )
         assert list(pane.query(MarkdownTable)), "pptx table should render via MarkdownTable"
 
 
