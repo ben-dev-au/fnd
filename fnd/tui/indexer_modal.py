@@ -33,7 +33,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import ProgressBar, Static
+from textual.widgets import ProgressBar, Static, Tree
 
 from fnd.config import CollectionConfig
 from fnd.index_runner import IndexState, ProgressEvent, run_indexer
@@ -71,6 +71,47 @@ def fmt_duration(seconds: float) -> str:
 
 # Compat alias - older callers (tests) imported this as ``fmt_eta``.
 fmt_eta = fmt_duration
+
+
+_todo_cache: tuple[float, int] = (0.0, 0)
+_TODO_TTL_S = 5.0
+
+
+def _count_files_needing_attention() -> int:
+    """How many files belong on the to-do list right now.
+
+    Union of:
+    - PDFs on disk under a collection source that have no body_struct
+      chunk in tantivy (cache-hit-stays-flat or never-textured).
+    - Failed files recorded in the failure log.
+
+    Cached for ``_TODO_TTL_S`` seconds because the underlying call
+    walks every collection source on disk AND searches tantivy - too
+    heavy for the modal's 1Hz tick to invoke unconditionally."""
+    global _todo_cache
+    import time
+
+    now = time.monotonic()
+    cached_at, cached_count = _todo_cache
+    if now - cached_at < _TODO_TTL_S:
+        return cached_count
+    try:
+        from fnd.tui.settings_screen import _flat_pdfs_with_reasons
+
+        count = len(_flat_pdfs_with_reasons())
+    except Exception:
+        count = cached_count
+    _todo_cache = (now, count)
+    return count
+
+
+def invalidate_todo_count_cache() -> None:
+    """Force the next _count_files_needing_attention call to recompute.
+    Called when a chain finishes so the post-run count reflects the
+    just-resolved files immediately rather than after the next 5s
+    TTL window."""
+    global _todo_cache
+    _todo_cache = (0.0, 0)
 
 
 def _stuck_suffix() -> str:
@@ -112,7 +153,7 @@ class IndexerScreen(ModalScreen[None]):
         Binding("escape,b", "background", "Background", show=True),
         Binding("c", "cancel", "Cancel", show=True),
         Binding("p", "pause", "Pause", show=True),
-        Binding("f", "show_failed", "Failed", show=True),
+        Binding("f", "show_failed", "Needs attention", show=True),
     ]
 
     CSS = """
@@ -127,8 +168,16 @@ class IndexerScreen(ModalScreen[None]):
         padding: 1 2;
         background: $surface;
     }
-    #indexer_history { height: 1; color: $text-muted; margin: 0 0 1 0; }
-    #indexer_history.hidden { display: none; }
+    #indexer_history_tree {
+        height: auto;
+        max-height: 10;
+        margin: 0 0 1 0;
+        border: none;
+        background: $surface;
+        color: $text-muted;
+    }
+    #indexer_history_tree:focus-within { color: $text; }
+    #indexer_history_tree.hidden { display: none; }
     #indexer_status, #indexer_pages_label, #indexer_current_file,
     #indexer_timing, #indexer_indexed_line, #indexer_texture_line {
         height: 1;
@@ -167,6 +216,11 @@ class IndexerScreen(ModalScreen[None]):
         # Action options that should be REMOVED once the chain
         # finishes (Background + Cancel are meaningless post-Done).
         self._removed_options: set[str] = set()
+        # Last-rendered "Files needing attention" count so the option's
+        # label can be re-rendered when the count changes (a chain that
+        # resolves a wedge should drop the count from N to N-1, not
+        # leave the stale label sitting in the option list).
+        self._last_todo_count: int | None = None
 
     def compose(self) -> ComposeResult:
         from textual.widgets import OptionList
@@ -174,7 +228,16 @@ class IndexerScreen(ModalScreen[None]):
 
         with Vertical(id="indexer_box") as box:
             box.border_title = self._title_text()
-            yield Static("", id="indexer_history", classes="hidden")
+            # Per-collection summary tree. Top-level nodes are finished
+            # collections; expanding one reveals its stats inline so the
+            # user doesn't have to leave the modal to inspect them.
+            # Mirrors the file/matches expand pattern in the main
+            # search Results pane.
+            history_tree: Tree[str] = Tree("Completed", id="indexer_history_tree")
+            history_tree.show_root = True
+            history_tree.root.expand()
+            history_tree.add_class("hidden")
+            yield history_tree
             yield Static("Starting…", id="indexer_status")
             yield ProgressBar(total=1, show_eta=False, show_percentage=True, id="indexer_progress")
             yield Static("", id="indexer_current_file")
@@ -356,8 +419,9 @@ class IndexerScreen(ModalScreen[None]):
         """Show / hide action options based on chain state.
 
         Active run:  Background, Cancel [, Skip current file if stuck,
-                     Summary if any collection done]
-        Chain done:  Summary, Done   (Background + Cancel + Skip removed)"""
+                     Files needing attention if count > 0]
+        Chain done:  Files needing attention, Done   (Background +
+                     Cancel + Skip removed once the chain finishes)"""
         from textual.widgets import OptionList
         from textual.widgets.option_list import Option
 
@@ -365,25 +429,35 @@ class IndexerScreen(ModalScreen[None]):
             opts = self.query_one("#indexer_actions", OptionList)
         except Exception:
             return
-        history = getattr(app, "_indexer_chain_history", None) or []
-        want_summary = len(history) >= 1
         want_done = self._chain_finished(app)
         want_skip = (not want_done) and bool(_stuck_suffix())
+        todo_count = _count_files_needing_attention()
+        want_todo = todo_count > 0
         if want_skip and "skip" not in self._added_options:
             with contextlib.suppress(Exception):
                 opts.add_option(Option("Skip current file", id="skip"))
                 self._added_options.add("skip")
-        if want_summary and "summary" not in self._added_options:
+        if want_todo and todo_count != self._last_todo_count:
             with contextlib.suppress(Exception):
-                opts.add_option(Option("View per-collection summary", id="summary"))
-                self._added_options.add("summary")
+                if "todo" in self._added_options:
+                    opts.remove_option("todo")
+                opts.add_option(Option(f"Files needing attention ({todo_count})", id="todo"))
+                self._added_options.add("todo")
+                self._last_todo_count = todo_count
+        elif not want_todo and "todo" in self._added_options:
+            # Count dropped to 0 - remove the option so the user
+            # doesn't see a now-empty entry.
+            with contextlib.suppress(Exception):
+                opts.remove_option("todo")
+                self._added_options.discard("todo")
+                self._last_todo_count = 0
         if want_done and "done" not in self._added_options:
             with contextlib.suppress(Exception):
                 opts.add_option(Option("Done", id="done"))
                 self._added_options.add("done")
-        # Post-done: Background + Cancel are meaningless. Remove them
-        # so the only remaining choices are Summary + Done. Tracked in
-        # ``_removed_options`` so we don't try the remove a second time.
+        # Post-done: Background + Cancel + Skip are meaningless. Remove
+        # them so the only choices are the to-do (if any) and Done.
+        # Tracked in _removed_options so we don't try the remove twice.
         if want_done:
             for opt_id in ("background", "cancel", "skip"):
                 if opt_id in self._removed_options:
@@ -511,52 +585,49 @@ class IndexerScreen(ModalScreen[None]):
         self._refresh_history_band()
 
     def _refresh_history_band(self) -> None:
-        """Render a one-line chip strip summarising finished collections
-        in the current chain. Scales to many collections via "+N more"
-        condensation; the full list lives in the post-chain summary
-        screen accessible via the View per-collection summary action."""
+        """Sync the per-collection summary Tree to the current chain
+        history. Top-level nodes are finished collections, each
+        carrying a single detail child shown only when expanded.
+
+        Rebuilt from scratch each call because the history can grow
+        mid-chain and Textual's Tree doesn't dedupe by label - we'd
+        accumulate duplicates if we appended naively. Cheap: a
+        4-collection chain is 4 nodes."""
         try:
-            band = self.query_one("#indexer_history", Static)
+            tree: Tree[str] = self.query_one("#indexer_history_tree", Tree)
         except Exception:
             return
         app = self._fnd_app()
         history = getattr(app, "_indexer_chain_history", None) or []
         if not history:
-            band.add_class("hidden")
-            band.update("")
+            tree.add_class("hidden")
+            tree.root.remove_children()
             return
-        budget = max(40, (self.size.width or 80) - 6)
-        chips = [_format_chain_chip(snap) for snap in history]
-        sep = "   "
-        full = sep.join(chips)
-        if len(full) <= budget:
-            band.remove_class("hidden")
-            band.update(f"[dim]Done:[/]   {full}")
-            return
-        tail = chips[-2:]
-        head: list[str] = []
-        ix = 0
-        remaining = (
-            budget
-            - len(sep.join(tail))
-            - len(sep)
-            - len("(+0 more)")
-            - len(sep)
-            - len("[dim]Done:[/]   ")
-        )
-        while ix < len(chips) - 2:
-            cand = chips[ix]
-            cost = len(cand) + (len(sep) if head else 0)
-            if cost > remaining:
-                break
-            head.append(cand)
-            remaining -= cost
-            ix += 1
-        gap = len(chips) - len(head) - len(tail)
-        parts = [*head, f"(+{gap} more)" if gap > 0 else None, *tail]
-        rendered = sep.join(p for p in parts if p)
-        band.remove_class("hidden")
-        band.update(f"[dim]Done:[/]   {rendered}")
+        tree.remove_class("hidden")
+        # Preserve which collection the user had expanded across
+        # rebuilds so a new "done" event doesn't snap their open node
+        # shut. Tracked by collection name (unique within a chain).
+        previously_expanded = self._currently_expanded_collection(tree)
+        tree.root.remove_children()
+        for snap in history:
+            label = _format_chain_chip(snap)
+            node = tree.root.add(label, data=snap.collection)
+            node.add_leaf(_format_chain_detail(snap))
+            if snap.collection == previously_expanded:
+                node.expand()
+
+    @staticmethod
+    def _currently_expanded_collection(tree: Tree[str]) -> str | None:
+        """Return the collection name of the currently-expanded summary
+        node, or None when nothing is expanded. Lets the rebuild path
+        re-expand the user's selection across event-driven refreshes."""
+        for child in tree.root.children:
+            if child.is_expanded:
+                # `data` is the collection name we stamped on add().
+                value = getattr(child, "data", None)
+                if isinstance(value, str):
+                    return value
+        return None
 
     # ---- bindings ----
 
@@ -631,16 +702,6 @@ class IndexerScreen(ModalScreen[None]):
         scope = self._collection if self._chain_total <= 1 else None
         self.app.push_screen(StillFlatDrillIn(collection=scope))
 
-    def action_show_summary(self) -> None:
-        """Open the per-collection summary screen. Always available;
-        empty until at least one collection has finished in this
-        chain."""
-        from fnd.tui.settings_screen import ChainSummaryScreen
-
-        app = self._fnd_app()
-        history = getattr(app, "_indexer_chain_history", None) or []
-        self.app.push_screen(ChainSummaryScreen(history=list(history)))
-
     def action_done(self) -> None:
         """Close the indexer modal. Identical to Background except it
         also resets the chain-history snapshot so the next Update-all
@@ -654,22 +715,22 @@ class IndexerScreen(ModalScreen[None]):
     async def on_option_list_option_selected(self, ev: Any) -> None:
         if ev.option.id == "background":
             await self.action_background()
-        elif ev.option.id == "summary":
-            self.action_show_summary()
         elif ev.option.id == "done":
             self.action_done()
         elif ev.option.id == "cancel":
             await self.action_cancel()
         elif ev.option.id == "skip":
             await self.action_skip()
+        elif ev.option.id == "todo":
+            self.action_show_failed()
 
 
 @dataclass(slots=True, frozen=True)
 class ChainStepSummary:
     """Frozen per-collection snapshot captured when a chain step
-    completes. Drives both the in-modal history band and the post-chain
-    ChainSummaryScreen so the user never loses sight of what each
-    collection produced just because the chain moved on."""
+    completes. Drives the in-modal per-collection summary Tree so the
+    user never loses sight of what each collection produced just
+    because the chain moved on."""
 
     collection: str
     files_total: int
@@ -682,16 +743,31 @@ class ChainStepSummary:
 
 
 def _format_chain_chip(snap: ChainStepSummary) -> str:
-    """One-chip rendering for the modal's Done-history band.
+    """One-row rendering for the modal's per-collection summary Tree.
 
     `<name> Ntex Nfail` when there are failures; just `<name> Ntex`
-    otherwise. Kept short on purpose so a chain of many collections
-    fits before the condense-to-(+N more) fallback kicks in."""
+    otherwise. The full stat breakdown lives in the expanded child
+    node (see _format_chain_detail)."""
     tex = snap.textured_newly + snap.textured_already
     fail = snap.failed
     if fail:
-        return f"[green]✓[/] {snap.collection} {tex}t [yellow]⚠{fail}[/]"
-    return f"[green]✓[/] {snap.collection} {tex}t"
+        return f"[green]✓[/] {snap.collection}    {tex} textured · [yellow]⚠ {fail} failed[/]"
+    return f"[green]✓[/] {snap.collection}    {tex} textured"
+
+
+def _format_chain_detail(snap: ChainStepSummary) -> str:
+    """Detail child for the per-collection summary Tree. Shown when
+    the user expands a collection's row in the inline Done panel."""
+    tex_total = snap.textured_newly + snap.textured_already
+    parts = [
+        f"{snap.files_total} files",
+        f"{snap.pdfs_total} PDFs",
+        f"{tex_total} textured ({snap.textured_newly} new · {snap.textured_already} already)",
+        f"{snap.still_flat} still flat",
+        f"{snap.failed} failed",
+        fmt_duration(snap.elapsed_s),
+    ]
+    return "  ·  ".join(parts)
 
 
 def _short_name(path: str) -> str:
@@ -801,15 +877,13 @@ async def drive_indexer(
         app._indexer_chain_remaining = []  # type: ignore[attr-defined]
         app._indexer_chain_total = 1  # type: ignore[attr-defined]
         app._indexer_chain_callback_pending = False  # type: ignore[attr-defined]
-        history_final: list[Any] = getattr(app, "_indexer_chain_history", None) or []
-        if len(history_final) > 1 and not cancel.is_set():
-
-            def _push_summary() -> None:
-                from fnd.tui.settings_screen import ChainSummaryScreen
-
-                app.push_screen(ChainSummaryScreen(history=list(history_final)))
-
-            app.call_later(_push_summary)
+        # No auto-push of a separate summary screen at chain end - the
+        # in-modal Done tree carries the same data inline and the
+        # user explicitly didn't want a screen swap after indexing.
+        # Invalidate the to-do cache so the modal's Files-needing-
+        # attention count reflects the chain's just-resolved files
+        # without waiting for the 5s TTL.
+        invalidate_todo_count_cache()
 
 
 def _start_next_in_chain(app: FNDApp, collection: str) -> None:

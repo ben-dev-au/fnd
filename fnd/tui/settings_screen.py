@@ -3888,92 +3888,6 @@ def _flat_pdfs_with_reasons(
     return out
 
 
-class ChainSummaryScreen(Screen[None]):
-    """Post-chain summary of every collection's outcome.
-
-    Auto-pushed at end of a multi-collection Update-all chain. Each row
-    shows the collection's final counters and drills into the still-flat
-    drill-in scoped to that collection. Scales to many collections via
-    the VerticalScroll body."""
-
-    BINDINGS = [  # noqa: RUF012
-        Binding("escape,left", "back", "Back", show=False),
-        Binding("up,k", "move(-1)", show=False),
-        Binding("down,j", "move(1)", show=False),
-        Binding("enter,r", "drill", "Drill", show=True),
-    ]
-
-    CSS = """
-    ChainSummaryScreen { background: $surface; }
-    ChainSummaryScreen > #settings_box {
-        height: 1fr;
-        border: round $primary 50%;
-        padding: 0 1;
-    }
-    ChainSummaryScreen > #settings_box:focus-within { border: round $accent; }
-    ChainSummaryScreen > #footer_hints {
-        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
-    }
-    """
-
-    def __init__(self, *, history: list[Any]) -> None:
-        super().__init__()
-        self._history = list(history)
-        self._cursor = 0
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="settings_box") as box:
-            box.border_title = f"Update all - per-collection summary ({len(self._history)})"
-            yield VerticalScroll(id="chain_summary_body")
-        yield Static("", id="footer_hints")
-
-    def on_mount(self) -> None:
-        import contextlib as _ctx
-
-        self._refresh()
-        app: FNDApp = self.app  # type: ignore[assignment]
-        with _ctx.suppress(Exception):
-            self.query_one("#footer_hints", Static).update(
-                _hint_bar(app, (("↑↓", "Nav"), ("⏎ / r", "Still-flat drill-in"), ("Esc", "Back")))
-            )
-
-    def _refresh(self) -> None:
-        body = self.query_one("#chain_summary_body", VerticalScroll)
-        for child in list(body.children):
-            child.remove()
-        if not self._history:
-            body.mount(Static("No chain history captured.", id="empty_state"))
-            return
-        for i, snap in enumerate(self._history):
-            body.mount(Static(self._format_row(i, snap), classes="row"))
-
-    def _format_row(self, i: int, snap: Any) -> str:
-        cursor = "▸ " if i == self._cursor else "  "
-        tex = snap.textured_newly + snap.textured_already
-        chips = [f"{tex} textured"]
-        if snap.still_flat > 0:
-            chips.append(f"[yellow]⚠ {snap.still_flat} still flat[/]")
-        if snap.failed > 0:
-            chips.append(f"[yellow]⚠ {snap.failed} failed[/]")
-        chips.append(f"[dim]{snap.files_total} files · {snap.elapsed_s:.0f}s[/]")
-        return f"{cursor}[bold]{snap.collection}[/]   " + "   ".join(chips)
-
-    def action_move(self, delta: int) -> None:
-        if not self._history:
-            return
-        self._cursor = max(0, min(len(self._history) - 1, self._cursor + delta))
-        self._refresh()
-
-    def action_drill(self) -> None:
-        if not self._history:
-            return
-        snap = self._history[self._cursor]
-        self.app.push_screen(StillFlatDrillIn(collection=snap.collection))
-
-    def action_back(self) -> None:
-        self.app.pop_screen()
-
-
 class StillFlatDrillIn(Screen[None]):
     """List of every PDF whose preview is flat, grouped one row per file
     with its reason and a Retry action.
@@ -4010,7 +3924,7 @@ class StillFlatDrillIn(Screen[None]):
         self._cursor = 0
 
     def compose(self) -> ComposeResult:
-        title = "Still-flat PDFs"
+        title = "Files needing attention"
         if self._collection_filter:
             title += f" - {self._collection_filter}"
         with Vertical(id="settings_box") as box:
