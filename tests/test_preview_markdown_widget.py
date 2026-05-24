@@ -181,18 +181,18 @@ async def test_preview_md_renders_table_with_cell_highlight(cfg: Config, table_i
         # Header content carries no highlights (query doesn't match
         # "Item"/"Price").
         for header_content in table._headers:
-            assert all(
-                s.style != "search-highlight" for s in header_content.spans
-            ), header_content.spans
+            assert all(s.style != "search-highlight" for s in header_content.spans), (
+                header_content.spans
+            )
         # Body rows: exactly one cell across all rows has the highlight,
         # and it bounds the matched substring.
         all_cell_contents = [cell for row in table._rows for cell in row]
         highlighted = [
             cell for cell in all_cell_contents if any(_is_highlight_span(s) for s in cell.spans)
         ]
-        assert (
-            len(highlighted) == 1
-        ), f"expected exactly one highlighted cell, got {len(highlighted)}"
+        assert len(highlighted) == 1, (
+            f"expected exactly one highlighted cell, got {len(highlighted)}"
+        )
         cell = highlighted[0]
         spans = [s for s in cell.spans if _is_highlight_span(s)]
         assert len(spans) == 1

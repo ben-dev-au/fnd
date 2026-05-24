@@ -228,9 +228,9 @@ async def test_cursor_between_sections_calls_scroll_to_chunk_each_time(
         # distinct chunk_seq values (each section maps to a different
         # PDF page → different chunk).
         assert len(calls) >= 2, f"expected at least 2 scroll_to_chunk calls, got {calls}"
-        assert (
-            calls[-1] != calls[-2]
-        ), f"consecutive cursor moves landed on the same chunk_seq: {calls}"
+        assert calls[-1] != calls[-2], (
+            f"consecutive cursor moves landed on the same chunk_seq: {calls}"
+        )
 
 
 @pytest.mark.asyncio
@@ -258,9 +258,9 @@ async def test_only_one_flat_buffer_is_visible_at_a_time(
         pane = app.query_one("#preview_pane")
         # Count buffers that are actually rendered (not display:none).
         visible_buffers = [b for b in pane.query(LineBufferPreview) if b.display]
-        assert (
-            len(visible_buffers) <= 1
-        ), f"expected ≤1 visible LineBufferPreview, got {len(visible_buffers)}"
+        assert len(visible_buffers) <= 1, (
+            f"expected ≤1 visible LineBufferPreview, got {len(visible_buffers)}"
+        )
 
 
 @pytest.mark.asyncio
@@ -354,9 +354,9 @@ async def test_flat_buffer_cache_hit_reuses_widget(pdf_index: Path) -> None:
         await safe_pause(pilot)
         await safe_press(pilot, "down")
         await safe_pause(pilot)
-        assert (
-            app._active_flat_buffer is buf_first_visit
-        ), "cache hit should reuse the existing buffer, not remount a fresh one"
+        assert app._active_flat_buffer is buf_first_visit, (
+            "cache hit should reuse the existing buffer, not remount a fresh one"
+        )
 
 
 # ── Markdown stays on the structural path ──────────────────────────

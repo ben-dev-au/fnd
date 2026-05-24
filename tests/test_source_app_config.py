@@ -124,7 +124,7 @@ def test_open_smart_passes_vault_through_to_request(
     monkeypatch.setattr(
         apps_mod.subprocess,
         "run",
-        lambda argv, **kw: (captured.append(list(argv)) or type("R", (), {"returncode": 0})()),
+        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
     )
     monkeypatch.setattr(apps_mod, "_obsidian_app_exists", lambda: True)
     # Make config loading return a minimal Config that defaults md→obsidian.

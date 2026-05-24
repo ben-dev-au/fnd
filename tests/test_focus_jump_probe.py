@@ -80,9 +80,9 @@ async def test_cursor_stays_after_expand_during_real_pdf_load(
             (i for i, n in enumerate(results) if "wellarchitected" in str(n.label)),
             None,
         )
-        assert (
-            pdf_idx is not None
-        ), f"PDF result not in tree; labels: {[str(n.label) for n in results]}"
+        assert pdf_idx is not None, (
+            f"PDF result not in tree; labels: {[str(n.label) for n in results]}"
+        )
         pdf_node = results[pdf_idx]
         # Instrument the tree's mutators so we see exactly which call
         # path moves the cursor. cursor_line is a Reactive (not a

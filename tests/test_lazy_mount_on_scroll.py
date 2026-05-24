@@ -149,9 +149,9 @@ async def test_scroll_above_after_settled_triggers_lazy_mount(
         # Initial window is focus ± 7 = 43..57. min_mounted should be 43.
         mounted_initial = set(container.mounted_indices)
         min_initial = min(mounted_initial)
-        assert (
-            min_initial > 0
-        ), f"test setup needs unmounted above; mounted={sorted(mounted_initial)}"
+        assert min_initial > 0, (
+            f"test setup needs unmounted above; mounted={sorted(mounted_initial)}"
+        )
         # Force scroll to the absolute top of the mounted region — that
         # puts scroll_y inside the trigger margin so the watcher fires.
         # Clear the suppression gate first; otherwise the timer set by

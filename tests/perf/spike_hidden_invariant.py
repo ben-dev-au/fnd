@@ -80,8 +80,7 @@ async def main() -> int:
             containers = list(app.query(PreviewContainer))
             print(f"\ncached PreviewContainers: {len(containers)}")
             print(
-                f"active_preview parent_id: "
-                f"{getattr(app._active_preview, 'parent_doc_id', None)}"
+                f"active_preview parent_id: {getattr(app._active_preview, 'parent_doc_id', None)}"
             )
             for c in containers:
                 is_active = c is app._active_preview

@@ -86,7 +86,7 @@ def test_open_smart_auto_promotes_preview_when_no_skim_and_ax_granted(
     monkeypatch.setattr(
         apps_mod.subprocess,
         "run",
-        lambda argv, **kw: (captured.append(list(argv)) or type("R", (), {"returncode": 0})()),
+        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
     )
 
     f = tmp_path / "paper.pdf"
@@ -117,7 +117,7 @@ def test_open_smart_falls_through_to_system_when_no_skim_no_ax(
     monkeypatch.setattr(
         apps_mod.subprocess,
         "run",
-        lambda argv, **kw: (captured.append(list(argv)) or type("R", (), {"returncode": 0})()),
+        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
     )
 
     f = tmp_path / "paper.pdf"
@@ -146,7 +146,7 @@ def test_open_smart_user_override_wins_over_auto_promote(
     monkeypatch.setattr(
         apps_mod.subprocess,
         "run",
-        lambda argv, **kw: (captured.append(list(argv)) or type("R", (), {"returncode": 0})()),
+        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
     )
 
     f = tmp_path / "paper.pdf"

@@ -67,7 +67,7 @@ def test_body_md_empty_without_extra() -> None:
 
     for c in extract(FIXTURE):
         assert c.body_md == "", (
-            f"body_md must be empty without the pdf-structure extra; got " f"{c.body_md[:80]!r}"
+            f"body_md must be empty without the pdf-structure extra; got {c.body_md[:80]!r}"
         )
 
 
@@ -80,6 +80,6 @@ def test_optional_extractors_not_imported_eagerly(modname: str) -> None:
         if modname in k or k.startswith("fnd.extract.pdf"):
             sys.modules.pop(k, None)
     importlib.import_module("fnd.extract.pdf")
-    assert (
-        modname not in sys.modules
-    ), f"{modname} was imported at fnd.extract.pdf import time — should be lazy"
+    assert modname not in sys.modules, (
+        f"{modname} was imported at fnd.extract.pdf import time — should be lazy"
+    )

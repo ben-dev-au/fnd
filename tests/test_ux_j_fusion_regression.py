@@ -82,7 +82,7 @@ async def test_fusion_default_returns_many_files(cfg: Config, wide_index: Path) 
         app._run_query("templates")
         await pilot.pause()
         assert len(app._groups) >= 10, (
-            f"expected >=10 files for a 15-file 'templates' corpus, " f"got {len(app._groups)}"
+            f"expected >=10 files for a 15-file 'templates' corpus, got {len(app._groups)}"
         )
 
 

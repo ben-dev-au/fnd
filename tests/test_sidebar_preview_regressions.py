@@ -19,6 +19,7 @@ from textual.widgets import Tree
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import safe_pause, safe_press, settle, wait_until
 
 
 @pytest.fixture
@@ -61,15 +62,18 @@ async def test_preview_loads_after_back_to_back_queries(built_index: Path) -> No
 async def test_panel_collapse_writes_to_disk(built_index: Path, isolated_ui_state: Path) -> None:
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         ctree = app.query_one("#collections_panel_tree", Tree)
         ctree.focus()
-        await pilot.pause()
+        await settle(pilot)
         ctree.cursor_line = 0
-        await pilot.pause()
-        await pilot.press("left")
-        await pilot.pause()
-        assert "collapsed" in ctree.classes
+        await safe_pause(pilot)
+        await safe_press(pilot, "left")
+        await wait_until(
+            pilot,
+            lambda: "collapsed" in ctree.classes,
+            message="ctree never gained 'collapsed' class",
+        )
         assert "collections_panel_tree" in app._collapsed_panels
         assert "collections_panel_tree" in isolated_ui_state.read_text()
 
@@ -114,25 +118,25 @@ async def test_enter_on_collection_does_not_undo_collapse(
     toggled the collection's enable state."""
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         ctree = app.query_one("#collections_panel_tree", Tree)
         coll = _first_collection_node(ctree)
         assert coll is not None
         coll.expand()
-        await pilot.pause()
+        await safe_pause(pilot)
         coll.collapse()
-        await pilot.pause()
+        await safe_pause(pilot)
         assert coll.data is not None
         assert coll.data["name"] not in app._expanded_collections
         ctree.focus()
-        await pilot.pause()
+        await settle(pilot)
         for i, n in enumerate(ctree.root.children):
             if n is coll:
                 ctree.cursor_line = i
                 break
-        await pilot.pause()
-        await pilot.press("enter")
-        await pilot.pause()
+        await safe_pause(pilot)
+        await safe_press(pilot, "enter")
+        await settle(pilot)
         assert not coll.is_expanded
         assert coll.data["name"] not in app._expanded_collections
 
@@ -146,21 +150,24 @@ async def test_toggle_with_active_query_clears_results_without_focus_shift(
 ) -> None:
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         assert app._groups, "test setup — initial query produced no results"
         ctree = app.query_one("#collections_panel_tree", Tree)
         ctree.focus()
-        await pilot.pause()
+        await settle(pilot)
         assert app._focus_context() == "collections"
         for i, n in enumerate(ctree.root.children):
             if isinstance(n.data, dict) and n.data.get("kind") == "collection":
                 ctree.cursor_line = i
                 break
-        await pilot.pause()
-        await pilot.press("enter")
-        await pilot.pause()
+        await safe_pause(pilot)
+        await safe_press(pilot, "enter")
+        await wait_until(
+            pilot,
+            lambda: app._groups == [],
+            message="toggling collection did not clear results",
+        )
         assert app._focus_context() == "collections"
-        assert app._groups == []
 
 
 @pytest.mark.asyncio
@@ -185,14 +192,18 @@ async def test_collapse_state_survives_collection_cli_flag(
     # collapse-to-header state on the two sidebar panels.
     app = FNDApp(index_dir=built_index, collection="default")
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await settle(pilot)
         ctree = app.query_one("#collections_panel_tree", Tree)
         ftree = app.query_one("#filters_panel_tree", Tree)
         # Scope override took effect.
         assert app._collections == ["default"]
-        # Panel layout was restored from disk.
-        assert "collapsed" in ctree.classes
-        assert "collapsed" in ftree.classes
+        # Panel layout was restored from disk — wait for the saved
+        # collapsed state to settle onto the trees.
+        await wait_until(
+            pilot,
+            lambda: "collapsed" in ctree.classes and "collapsed" in ftree.classes,
+            message="saved collapsed state not restored to trees",
+        )
         assert app._collapsed_panels == {"collections_panel_tree", "filters_panel_tree"}
         assert "CPL" in app._expanded_collections
         assert "kinds" in app._expanded_filter_branches

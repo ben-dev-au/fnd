@@ -50,9 +50,9 @@ async def test_prefetch_populates_chunk_cache(
                 break
         assert app._groups, "search returned no results"
         top = app._groups[0]
-        assert (
-            top.parent_id in app._chunk_cache
-        ), f"prefetch didn't warm {top.parent_id} in _chunk_cache"
+        assert top.parent_id in app._chunk_cache, (
+            f"prefetch didn't warm {top.parent_id} in _chunk_cache"
+        )
 
 
 @pytest.mark.asyncio
@@ -183,20 +183,35 @@ async def test_prefetch_premounts_structural_container(multi_md_index: Path) -> 
         await pilot.pause()
         app._run_query("prefetch-anchor")
         sig = app._current_query_signature()
-        for _ in range(80):
+
+        def _non_top_done() -> bool:
+            if len(app._groups) < 3:
+                return False
+            for g in app._groups[1:]:
+                c = app._preview_cache.get(g.parent_id, sig)
+                if c is None or not c.mounted_indices:
+                    return False
+            return True
+
+        # Two-phase wait: first let the initial deferred prefetch run; if
+        # the user-mount was still in flight when it walked the targets,
+        # it bails without caching anything, so nudge it once user-mount
+        # has cleared. Cap total wait at ~12s.
+        nudged = False
+        for _ in range(240):
             await pilot.pause()
             await asyncio.sleep(0.05)
-            if len(app._groups) >= 3:
-                non_top = [g.parent_id for g in app._groups[1:]]
-                if all(app._preview_cache.get(pid, sig) is not None for pid in non_top):
-                    break
+            if _non_top_done():
+                break
+            if not nudged and not app._user_mount_in_flight() and len(app._groups) >= 3:
+                app._prefetch_top_results()
+                nudged = True
         assert len(app._groups) >= 3, "expected three md results in this corpus"
-        non_top = [g.parent_id for g in app._groups[1:]]
-        for pid in non_top:
-            cont = app._preview_cache.get(pid, sig)
-            assert cont is not None, f"prefetch failed to pre-mount {pid}"
-            assert "-hidden" in cont.classes, f"prefetched {pid} not hidden"
-            assert cont.mounted_indices, f"prefetched {pid} has no mounted chunks"
+        for g in app._groups[1:]:
+            cont = app._preview_cache.get(g.parent_id, sig)
+            assert cont is not None, f"prefetch failed to pre-mount {g.parent_id}"
+            assert "-hidden" in cont.classes, f"prefetched {g.parent_id} not hidden"
+            assert cont.mounted_indices, f"prefetched {g.parent_id} has no mounted chunks"
 
 
 @pytest.mark.asyncio

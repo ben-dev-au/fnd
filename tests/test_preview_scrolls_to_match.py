@@ -306,6 +306,6 @@ async def test_flat_preview_no_jump_on_install(tmp_path: Path, tmp_index_dir: Pa
         )
         active = app._active_flat_buffer
         assert active is not None, "no active flat buffer"
-        assert (
-            active.scroll_y > 0
-        ), f"buffer revealed at scroll_y=0; virtual_size={active.virtual_size}"
+        assert active.scroll_y > 0, (
+            f"buffer revealed at scroll_y=0; virtual_size={active.virtual_size}"
+        )

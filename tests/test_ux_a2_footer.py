@@ -57,9 +57,9 @@ async def test_footer_query_context_shows_submit_not_open(built_index: Path) -> 
         text = _footer_text(app)
         # Open / peek / default-app are result actions — they should not
         # appear when no result is even selectable.
-        assert (
-            "Open" not in text or "Peek" not in text or "Default" not in text
-        ), f"query-context footer should hide result-only actions: {text!r}"
+        assert "Open" not in text or "Peek" not in text or "Default" not in text, (
+            f"query-context footer should hide result-only actions: {text!r}"
+        )
 
 
 @pytest.mark.asyncio

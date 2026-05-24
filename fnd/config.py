@@ -352,8 +352,7 @@ class Config(BaseModel):
                 )
             if app_id not in known_ids:
                 raise ValueError(
-                    f"app_defaults.{kind} = {app_id!r}: unknown app id "
-                    f"(known: {sorted(known_ids)})"
+                    f"app_defaults.{kind} = {app_id!r}: unknown app id (known: {sorted(known_ids)})"
                 )
         # Per-source app references — same id-existence rule applies.
         for coll_name, coll in self.collections.items():
@@ -361,8 +360,7 @@ class Config(BaseModel):
                 where = f"collections.{coll_name}.sources[{idx}]"
                 if src.app is not None and src.app not in known_ids:
                     raise ValueError(
-                        f"{where}.app = {src.app!r}: unknown app id "
-                        f"(known: {sorted(known_ids)})"
+                        f"{where}.app = {src.app!r}: unknown app id (known: {sorted(known_ids)})"
                     )
                 for kind, app_id in src.app_for.items():
                     if kind not in ALLOWED_HANDLES or kind == "*":

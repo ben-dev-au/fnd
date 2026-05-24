@@ -54,7 +54,7 @@ def test_hit_line_round_trips_through_index(tmp_path: Path) -> None:
     root.mkdir()
     md = root / "note.md"
     md.write_text(
-        "# Intro\n\nopening prose\n\n## Findings\n\n" "the unique-keyword-here landmark phrase\n"
+        "# Intro\n\nopening prose\n\n## Findings\n\nthe unique-keyword-here landmark phrase\n"
     )
     idx = tmp_path / "idx"
     build_index(roots=[root], index_dir=idx, collection="notes")

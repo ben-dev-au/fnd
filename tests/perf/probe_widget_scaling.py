@@ -113,10 +113,7 @@ async def main() -> int:
                     statistics.quantiles(samples, n=20)[-1] if len(samples) >= 20 else max(samples)
                 )
                 mx = max(samples)
-                print(
-                    f"{target:>7} {t:>7} {p:>7} {tk:>7} "
-                    f"{med:>9.1f}ms {p95:>9.1f}ms {mx:>9.1f}ms"
-                )
+                print(f"{target:>7} {t:>7} {p:>7} {tk:>7} {med:>9.1f}ms {p95:>9.1f}ms {mx:>9.1f}ms")
         return 0
 
 

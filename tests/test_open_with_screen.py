@@ -106,7 +106,7 @@ def _isolate_ax(  # pyright: ignore[reportUnusedFunction]
 
 
 def _fake_run(captured: list[list[str]]) -> Any:
-    return lambda argv, **kw: (captured.append(list(argv)) or type("R", (), {"returncode": 0})())
+    return lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})()
 
 
 @pytest.mark.asyncio
@@ -251,9 +251,9 @@ async def test_modal_arrow_keys_move_cursor_and_enter_fires_highlighted(
     assert len(captured) == 1
     argv = captured[0]
     # Whichever app sits below skim must have fired — NOT skim.
-    assert not (
-        argv[0] == "open" and argv[1].startswith("skim://")
-    ), f"expected ↓+Enter to fire a non-skim app; got {argv}"
+    assert not (argv[0] == "open" and argv[1].startswith("skim://")), (
+        f"expected ↓+Enter to fire a non-skim app; got {argv}"
+    )
 
 
 @pytest.mark.asyncio

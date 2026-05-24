@@ -47,9 +47,9 @@ async def test_left_on_leaf_collapses_parent(built_index: Path) -> None:
         await pilot.press("left")
         await pilot.pause()
         assert not first_file.is_expanded, "Left on a leaf should collapse its parent"
-        assert (
-            tree.cursor_node is first_file
-        ), "Left on a leaf should move the cursor up to the parent"
+        assert tree.cursor_node is first_file, (
+            "Left on a leaf should move the cursor up to the parent"
+        )
 
 
 @pytest.mark.asyncio

@@ -3325,7 +3325,7 @@ class StructuredPdfConfirmScreen(Screen[None]):
             "on your machine." if has_calibration_data() else "(rough estimate)."
         )
         return build_confirm_body(
-            outcome=("PDFs gain structured preview rendering " "(headings, lists, tables)."),
+            outcome=("PDFs gain structured preview rendering (headings, lists, tables)."),
             cost=(f"~{total_mb} MB disk + ML weights on first use. " + first_run_note),
             safety="Auto-resumes if interrupted. Already-indexed PDFs keep working.",
         )

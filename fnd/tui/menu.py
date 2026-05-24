@@ -1236,7 +1236,7 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
             kind=KIND_ACTION,
             action_label="Update",
             external=_make_reindex(name),
-            value_getter=(lambda n: (lambda a: _summary_collection_update(a, n)))(name),
+            value_getter=(lambda n: lambda a: _summary_collection_update(a, n))(name),
         ),
         MenuItem(
             id=f"col.{name}.texturise_flat",
@@ -1251,7 +1251,7 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
             kind=KIND_ACTION,
             action_label="Run",
             external=_make_texturise_flat(name),
-            value_getter=(lambda n: (lambda a: _summary_flat_pdfs(a, n)))(name),
+            value_getter=(lambda n: lambda a: _summary_flat_pdfs(a, n))(name),
             keywords=("texturise", "flat", "pdf", "retry", "engine"),
         ),
         MenuItem(
@@ -2129,7 +2129,7 @@ def _run_cache_prune(app: FNDApp) -> None:
                 leftovers.append(entry)
     if not leftovers:
         with contextlib.suppress(Exception):
-            app.notify(f"No leftovers from older texturising · " f"{current_count} current.")
+            app.notify(f"No leftovers from older texturising · {current_count} current.")
         return
 
     summary = Text()

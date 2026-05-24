@@ -85,7 +85,7 @@ async def test_update_all_visits_every_collection(tmp_path: Path) -> None:
         await safe_pause(pilot)
 
     assert invocations == names, (
-        f"Expected start_indexer to fire once per collection in queue order; " f"got {invocations}."
+        f"Expected start_indexer to fire once per collection in queue order; got {invocations}."
     )
 
 
@@ -132,6 +132,5 @@ async def test_update_all_sets_chain_total_for_modal_title(tmp_path: Path) -> No
     # final run's completion).
     assert captured_totals, "start_indexer was never called"
     assert captured_totals[0] == 2, (
-        f"Expected _indexer_chain_total=2 at the first start_indexer call; "
-        f"got {captured_totals}."
+        f"Expected _indexer_chain_total=2 at the first start_indexer call; got {captured_totals}."
     )

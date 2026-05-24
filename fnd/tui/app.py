@@ -3120,10 +3120,19 @@ class FNDApp(App[None]):
                 f"mounted_size={len(container.mounted_indices)} "
                 f"is_complete={container.is_complete}"
             )
-            evicted = self._preview_cache.put(container, protect=self._active_preview)
-            for old in evicted:
+            if container.mounted_indices:
+                evicted = self._preview_cache.put(container, protect=self._active_preview)
+                for old in evicted:
+                    with contextlib.suppress(Exception):
+                        old.remove()
+            else:
+                # Loop bailed on user-mount-in-flight (or every mount raised)
+                # before any chunk landed. Caching the empty container would
+                # block the next prefetch attempt for this (parent_id, sig)
+                # via the already-cached short-circuit; instead, drop it so a
+                # later trigger (cursor move, second query) can retry cleanly.
                 with contextlib.suppress(Exception):
-                    old.remove()
+                    container.remove()
 
     def _user_mount_in_flight(self) -> bool:
         task = self._preview_mount_task

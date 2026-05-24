@@ -49,9 +49,9 @@ def test_default_keymap_includes_every_action_with_default_key() -> None:
     km = load_keymap(path=Path("/nonexistent"))
     for a in REGISTRY:
         if a.default_key is not None:
-            assert (
-                km.for_action(a.id) == a.default_key
-            ), f"action {a.id} default {a.default_key} missing"
+            assert km.for_action(a.id) == a.default_key, (
+                f"action {a.id} default {a.default_key} missing"
+            )
 
 
 def test_user_overrides_replace_default(tmp_path: Path) -> None:

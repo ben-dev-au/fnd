@@ -81,7 +81,7 @@ def test_get_miss_returns_none(tmp_path: Path) -> None:
 def test_get_corrupt_json_returns_none(tmp_path: Path) -> None:
     """F14: corrupt JSON → silent miss, no exception."""
     cache = ExtractionCache(root=tmp_path)
-    key = "corruptkey--v1"
+    key = "test-cache-entry-1"
     path = cache.entry_path(key)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{not valid json")

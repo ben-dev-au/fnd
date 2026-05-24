@@ -49,9 +49,9 @@ def test_install_dry_run_discloses_disk_and_network() -> None:
     # Disclosure components:
     assert "MB" in out or "GB" in out, "must show approximate size"
     assert "Will install" in out, "must enumerate packages"
-    assert (
-        "flat text" in out or "current behaviour" in out
-    ), "must remind users of the fallback if they don't opt in"
+    assert "flat text" in out or "current behaviour" in out, (
+        "must remind users of the fallback if they don't opt in"
+    )
     # Should print the commands it would run (dry-run).
     assert "would run" in out, "must show planned subprocess commands"
     assert "uv sync" in out or "uv tool install" in out
@@ -63,13 +63,13 @@ def test_install_dry_run_discloses_indexing_time_for_pdf_structure() -> None:
     requires hours of one-time CPU on real corpora."""
     code, out = _run("extras", "install", "pdf-structure", "--dry-run")
     assert code == 0
-    assert (
-        "Indexing-time impact" in out
-    ), "must include the indexing-time section explaining the ~30s/PDF cost"
+    assert "Indexing-time impact" in out, (
+        "must include the indexing-time section explaining the ~30s/PDF cost"
+    )
     assert "30s" in out or "per PDF" in out
-    assert (
-        "auto-resumes" in out or "background" in out
-    ), "must reassure the user that the long indexing is interruptible"
+    assert "auto-resumes" in out or "background" in out, (
+        "must reassure the user that the long indexing is interruptible"
+    )
 
 
 def test_install_unknown_extra_fails_cleanly() -> None:

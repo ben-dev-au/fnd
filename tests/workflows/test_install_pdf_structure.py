@@ -32,9 +32,9 @@ def test_install_commands_use_group_sync_in_project_venv() -> None:
     venv, so the install lands where fnd reads from on next launch."""
     from fnd.extras import PDF_STRUCTURE, _project_pyproject_for_python, install_commands
 
-    assert (
-        _project_pyproject_for_python(sys.executable) is not None
-    ), "test must run inside the project venv; was sys.executable redirected?"
+    assert _project_pyproject_for_python(sys.executable) is not None, (
+        "test must run inside the project venv; was sys.executable redirected?"
+    )
 
     cmds = install_commands(PDF_STRUCTURE)
     sync_cmd = next(c for c in cmds if c[:2] == ["uv", "sync"])

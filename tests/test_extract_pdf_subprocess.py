@@ -33,9 +33,9 @@ async def test_extraction_dispatches_to_a_subprocess() -> None:
     parent_pid = os.getpid()
     worker_pid = await run_in_pool(os.getpid)
 
-    assert (
-        worker_pid != parent_pid
-    ), f"extraction must run out-of-process; got same pid {parent_pid}"
+    assert worker_pid != parent_pid, (
+        f"extraction must run out-of-process; got same pid {parent_pid}"
+    )
 
 
 @pytest.mark.asyncio

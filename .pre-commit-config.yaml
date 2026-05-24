@@ -10,7 +10,10 @@ repos:
         args: ["--maxkb=2000"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    # Keep in sync with the ruff pin in pyproject.toml dev deps; CI runs
+    # `uv run ruff format --check .` so drift here will reformat files
+    # locally that CI then rejects.
+    rev: v0.15.14
     hooks:
       - id: ruff-format
       - id: ruff

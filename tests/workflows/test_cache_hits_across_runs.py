@@ -41,8 +41,7 @@ def test_second_extract_of_same_file_hits(tmp_path: Path, monkeypatch: pytest.Mo
     # Second extraction of the same file: should hit.
     list(pdf.extract(fixture))
     assert cache.hits >= 1, (
-        f"second extraction of the same file should hit; "
-        f"hits={cache.hits} misses={cache.misses}"
+        f"second extraction of the same file should hit; hits={cache.hits} misses={cache.misses}"
     )
 
 

@@ -35,15 +35,14 @@ def test_body_md_populated_when_extra_present() -> None:
     """F5: body_md should be non-empty when pymupdf4llm is importable."""
     from fnd.extract import pdf
 
-    assert (
-        pdf._HAS_PYMUPDF4LLM
-    ), "extras present but _HAS_PYMUPDF4LLM is False — module detection bug"
+    assert pdf._HAS_PYMUPDF4LLM, (
+        "extras present but _HAS_PYMUPDF4LLM is False — module detection bug"
+    )
     chunks = list(pdf.extract(FIXTURE))
     assert chunks, "extract() must yield chunks"
     populated = [c for c in chunks if c.body_md]
     assert len(populated) == len(chunks), (
-        f"expected every chunk to have body_md populated; "
-        f"only {len(populated)}/{len(chunks)} did"
+        f"expected every chunk to have body_md populated; only {len(populated)}/{len(chunks)} did"
     )
 
 
@@ -68,9 +67,9 @@ def test_body_struct_still_populated_flat() -> None:
         assert c.body_struct, "body_struct should still be populated"
         for block in c.body_struct:
             # No Markdown markers in body_struct — those go in body_md.
-            assert (
-                "**" not in block.text
-            ), f"bold marker leaked into body_struct: {block.text[:80]!r}"
-            assert not block.text.lstrip().startswith(
-                "# "
-            ), f"heading marker leaked into body_struct: {block.text[:80]!r}"
+            assert "**" not in block.text, (
+                f"bold marker leaked into body_struct: {block.text[:80]!r}"
+            )
+            assert not block.text.lstrip().startswith("# "), (
+                f"heading marker leaked into body_struct: {block.text[:80]!r}"
+            )

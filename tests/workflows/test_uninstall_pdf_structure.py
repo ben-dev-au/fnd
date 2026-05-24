@@ -24,9 +24,9 @@ def test_uninstall_commands_use_group_sync_in_project_venv() -> None:
     runtime venv."""
     from fnd.extras import PDF_STRUCTURE, _project_pyproject_for_python, uninstall_commands
 
-    assert (
-        _project_pyproject_for_python(sys.executable) is not None
-    ), "test must run inside the project venv; was sys.executable redirected?"
+    assert _project_pyproject_for_python(sys.executable) is not None, (
+        "test must run inside the project venv; was sys.executable redirected?"
+    )
 
     cmds = uninstall_commands(PDF_STRUCTURE, assume_installed=True)
     sync_cmd = next(c for c in cmds if c[:2] == ["uv", "sync"])
@@ -43,9 +43,9 @@ def test_dry_run_assume_installed_shows_full_plan() -> None:
     plan = uninstall_commands(PDF_STRUCTURE, assume_installed=True)
     # At least one command must reference the pdf-structure group so
     # the dry-run preview tells the user what is about to change.
-    assert any(
-        "pdf-structure" in cmd for cmd in plan
-    ), f"expected pdf-structure to appear in the plan, got {plan!r}"
+    assert any("pdf-structure" in cmd for cmd in plan), (
+        f"expected pdf-structure to appear in the plan, got {plan!r}"
+    )
 
 
 def test_namespace_husk_detected_as_not_installed(tmp_path: Path, monkeypatch: object) -> None:
