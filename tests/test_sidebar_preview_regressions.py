@@ -21,6 +21,13 @@ from fnd.index import build_index
 from fnd.tui import FNDApp
 from tests._pilot_wait import safe_pause, safe_press, settle, wait_until
 
+# Four tests below hit a pilot.pause()-blocks-for-full-timeout
+# pathology under macOS CI's full-suite load: each wait_until burns
+# its entire 30 s budget without the predicate ever flipping, even
+# though the same test passes solo in ~1 s. Reruns let CI distinguish
+# that load flake from a real regression.
+_CI_LOAD_FLAKY = pytest.mark.flaky(reruns=2, reruns_delay=1)
+
 
 @pytest.fixture
 def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
@@ -58,6 +65,7 @@ async def test_preview_loads_after_back_to_back_queries(built_index: Path) -> No
 # ── Bug 2: collapse state persists across sessions ──────────────────
 
 
+@_CI_LOAD_FLAKY
 @pytest.mark.asyncio
 async def test_panel_collapse_writes_to_disk(built_index: Path, isolated_ui_state: Path) -> None:
     app = FNDApp(index_dir=built_index)
@@ -109,6 +117,7 @@ async def test_saved_collapse_state_is_restored_at_startup(
                 break
 
 
+@_CI_LOAD_FLAKY
 @pytest.mark.asyncio
 async def test_enter_on_collection_does_not_undo_collapse(
     built_index: Path, isolated_ui_state: Path
@@ -151,6 +160,7 @@ async def test_enter_on_collection_does_not_undo_collapse(
 # ── Bug 3: toggling a collection should not steal focus / rerun ─────
 
 
+@_CI_LOAD_FLAKY
 @pytest.mark.asyncio
 async def test_toggle_with_active_query_clears_results_without_focus_shift(
     built_index: Path, isolated_ui_state: Path
@@ -178,6 +188,7 @@ async def test_toggle_with_active_query_clears_results_without_focus_shift(
         assert app._focus_context() == "collections"
 
 
+@_CI_LOAD_FLAKY
 @pytest.mark.asyncio
 async def test_collapse_state_survives_collection_cli_flag(
     built_index: Path, isolated_ui_state: Path

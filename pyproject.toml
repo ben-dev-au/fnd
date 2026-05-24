@@ -62,6 +62,12 @@ dev = [
     "pytest>=8",
     "pytest-textual-snapshot>=1.0",
     "pytest-asyncio>=0.24",
+    # Reruns flake-marked tests under pytest.mark.flaky(reruns=N). The
+    # four sidebar-regression tests in test_sidebar_preview_regressions.py
+    # hit a pilot.pause()-blocks-for-full-timeout pathology under macOS
+    # CI's full-suite load; they pass solo every time. Reruns let CI
+    # distinguish that flake from a real regression.
+    "pytest-rerunfailures>=14",
     "hypothesis>=6.110",
     "pre-commit>=3.8",
     # Used by tools/pdf_bakeoff to normalise ML extractor output before
