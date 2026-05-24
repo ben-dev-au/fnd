@@ -48,7 +48,7 @@ from fnd.index import (
     _path_parent_id,
 )
 from fnd.meta_blob import encode as encode_meta_blob
-from fnd.schema import F_COLLECTION, F_PARENT_ID
+from fnd.schema import F_COLLECTION
 from fnd.walk import is_dataless, walk_sources
 
 EventKind = Literal[
@@ -275,20 +275,10 @@ def _process_one_file(
     # unscoped delete_documents(F_PARENT_ID, ...) was a per-path nuke
     # that wiped sibling collections' chunks too when a file was
     # shared (typical case: an Obsidian Vault listed under multiple
-    # collections' sources). On the next collection's chain step the
-    # file would be re-indexed under the new collection, but the
-    # earlier collections lost their copy and the file vanished from
-    # their search scope and the still-flat counter.
-    import tantivy as _tantivy
+    # collections' sources). See fnd.index._scoped_delete_query.
+    from fnd.index import _scoped_delete_query
 
-    _collection_q = _tantivy.Query.term_query(schema, F_COLLECTION, collection)
-    _parent_q = _tantivy.Query.term_query(schema, F_PARENT_ID, parent_id)
-    _delete_q = _tantivy.Query.boolean_query(
-        [
-            (_tantivy.Occur.Must, _parent_q),
-            (_tantivy.Occur.Must, _collection_q),
-        ]
-    )
+    _delete_q = _scoped_delete_query(schema, collection, parent_id)
     writer.delete_documents_by_query(_delete_q)
     n_chunks = 0
     has_textured = False

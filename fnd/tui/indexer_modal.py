@@ -743,8 +743,30 @@ class IndexerScreen(ModalScreen[None]):
         """Let arrows hop between the per-collection summary Tree and
         the Actions list so the modal feels like one continuous list
         instead of two disjoint focus contexts. Standard Tab still
-        works; this just adds the cheaper-to-discover up/down path."""
-        if event.key not in ("up", "down"):
+        works; this just adds the cheaper-to-discover up/down path.
+
+        Also adds Right/Left expand/collapse on the Tree (Textual's
+        default Tree bindings only have enter/space; the user expects
+        right/left like every other tree widget in the app)."""
+        if event.key not in ("up", "down", "right", "left"):
+            return
+        # Right/Left on the Tree → expand/collapse cursor node.
+        if event.key in ("right", "left"):
+            focused = self.focused
+            try:
+                tree = self.query_one("#indexer_history_tree", Tree)
+            except Exception:
+                return
+            if focused is not tree:
+                return
+            cursor = tree.cursor_node
+            if cursor is None:
+                return
+            if event.key == "right":
+                cursor.expand()
+            else:
+                cursor.collapse()
+            event.stop()
             return
         focused = self.focused
         if focused is None:
