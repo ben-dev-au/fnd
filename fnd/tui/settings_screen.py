@@ -3808,20 +3808,29 @@ def _flat_pdfs_with_reasons(
 
     cfg = load()
     target_cols = [collection] if collection is not None else list(cfg.collections)
-    # Build per-collection on-disk PDF inventories.
+    # Build per-collection on-disk PDF inventories using the SAME
+    # filter chain the indexer uses (includes/excludes + frontmatter).
+    # Earlier the function did a naive ``root.rglob('*.pdf')`` which
+    # included every PDF physically under the source root regardless of
+    # the source's ``includes: ['**/*.md']`` restriction or its
+    # ``frontmatter_filter``. A PDF the user explicitly scoped OUT of
+    # a collection would then show up forever in that collection's
+    # Texturising Error Log as "still flat" - the indexer can't index
+    # what isn't in its walk, so the file would never be cleared from
+    # the log no matter how many Updates the user ran.
+    from fnd.walk import walk_sources
+
     on_disk: dict[str, set[str]] = {}
     for name in target_cols:
         col = cfg.collections.get(name)
         if col is None:
             continue
         paths: set[str] = set()
-        for src in col.sources:
-            root = Path(src.path).expanduser()
-            if not root.exists():
+        for path in walk_sources(sources=list(col.sources)):
+            if path.suffix.lower() != ".pdf":
                 continue
-            for p in root.rglob("*.pdf"):
-                if p.is_file():
-                    paths.add(str(p.resolve()))
+            with contextlib.suppress(OSError):
+                paths.add(str(path.resolve()))
         on_disk[name] = paths
 
     # Per-collection textured-path sets via tantivy.

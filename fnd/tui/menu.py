@@ -2014,16 +2014,21 @@ def _compute_pdfs_textured() -> str:
         from fnd.schema import F_BODY_STRUCT, F_KIND, F_PATH
 
         cfg = load()
-        # Y: every PDF under any collection's source path.
+        # Y: every PDF the indexer would actually pick up under any
+        # collection's source. Uses the same walk_sources call the
+        # indexer uses so includes/excludes/frontmatter filters are
+        # honored - otherwise a vault that's md-only for some
+        # collections would inflate the total with PDFs that can
+        # never be indexed under any of those collections.
+        from fnd.walk import walk_sources
+
         on_disk: set[str] = set()
         for col in cfg.collections.values():
-            for src in col.sources:
-                root = Path(src.path).expanduser()
-                if not root.exists():
+            for path in walk_sources(sources=list(col.sources)):
+                if path.suffix.lower() != ".pdf":
                     continue
-                for p in root.rglob("*.pdf"):
-                    if p.is_file():
-                        on_disk.add(str(p.resolve()))
+                with contextlib.suppress(OSError):
+                    on_disk.add(str(path.resolve()))
         total = len(on_disk)
         if total == 0:
             return "no PDFs"
