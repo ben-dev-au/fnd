@@ -598,14 +598,21 @@ class IndexerScreen(ModalScreen[None]):
         """Sync the per-collection summary Tree to the current chain
         history.
 
-        Single root node 'Completed (N)' with one leaf per finished
-        collection. Each leaf shows a compact row with colored
-        markers (✓ textured, ⚠ still flat, ✗ failed) instead of
-        spelling out the terminology - keeps the row narrow enough
-        for many collections to fit on screen.
+        Layout mirrors the main progress section's two-line format
+        (Indexed:..., Texturising:...) sub-sectioned by collection.
+        Tree shape:
 
-        Rebuilt from scratch each call because the history can grow
-        mid-chain and we want the root label's count to track."""
+            ▼ Completed (N)
+            ├── ▼ default                                   ← collection
+            │   ├── Indexed:     2 newly indexed   28 already indexed
+            │   └── Texturising: 0 newly textured  28 already textured  ⚠ 1 still flat
+            └── ▼ second
+                └── Indexed:     1 newly indexed   0 already indexed
+
+        The root starts collapsed; each collection parent inside is
+        auto-expanded so a single Enter on the root reveals every
+        collection's stats at once (matching the main section's
+        always-visible layout)."""
         try:
             tree: Tree[str] = self.query_one("#indexer_history_tree", Tree)
         except Exception:
@@ -621,7 +628,17 @@ class IndexerScreen(ModalScreen[None]):
         tree.root.remove_children()
         tree.root.set_label(f"Completed ({len(history)})")
         for snap in history:
-            tree.root.add_leaf(_format_chain_row(snap), data=snap.collection)
+            collection_node = tree.root.add(snap.collection, data=snap.collection)
+            collection_node.add_leaf(
+                _format_indexed_line(snap.indexed_newly, snap.indexed_already, snap.failed)
+            )
+            if snap.pdfs_total > 0:
+                collection_node.add_leaf(
+                    _format_texturising_line(
+                        snap.textured_newly, snap.textured_already, snap.still_flat
+                    )
+                )
+            collection_node.expand()
         if was_expanded:
             tree.root.expand()
 
@@ -770,32 +787,13 @@ class ChainStepSummary:
     collection: str
     files_total: int
     pdfs_total: int
+    indexed_newly: int
+    indexed_already: int
     textured_newly: int
     textured_already: int
     still_flat: int
     failed: int
     elapsed_s: float
-
-
-def _format_chain_row(snap: ChainStepSummary) -> str:
-    """Compact one-line leaf row for the per-collection summary Tree.
-
-    Uses colored single-char markers instead of spelling out
-    'textured / still flat / failed':
-        ✓ N   textured (green)
-        ⚠ N   still flat (yellow), only when > 0
-        ✗ N   failed (red), only when > 0
-
-    Trailing chip is a dim '<files> files · <elapsed>' so the user
-    can see scale + duration without expanding anything."""
-    tex = snap.textured_newly + snap.textured_already
-    markers = [f"[green]✓{tex}[/]"]
-    if snap.still_flat > 0:
-        markers.append(f"[yellow]⚠{snap.still_flat}[/]")
-    if snap.failed > 0:
-        markers.append(f"[red]✗{snap.failed}[/]")
-    chip = f"[dim]{snap.files_total} files · {fmt_duration(snap.elapsed_s)}[/]"
-    return f"{snap.collection:<18} " + "  ".join(markers) + f"   {chip}"
 
 
 def _short_name(path: str) -> str:
@@ -886,6 +884,8 @@ async def drive_indexer(
                 collection=collection,
                 files_total=final_event.files_total,
                 pdfs_total=final_event.pdfs_total,
+                indexed_newly=final_event.indexed_newly_total,
+                indexed_already=final_event.indexed_already_total,
                 textured_newly=final_event.textured_newly_total,
                 textured_already=final_event.textured_already_total,
                 still_flat=final_event.still_flat_total,
