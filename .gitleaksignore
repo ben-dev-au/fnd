@@ -1,0 +1,6 @@
+# False positive: `key = "corruptkey--v1"` is a literal cache-key
+# fixture for the corrupt-JSON test. Renamed in a later commit on
+# this branch, but the historical commit still trips the
+# generic-api-key heuristic because gitleaks scans the full commit
+# range, not just HEAD.
+ac26e70dc720c7a3b44a5a09497a395814514b4f:tests/test_extraction_cache.py:generic-api-key:84
