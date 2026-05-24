@@ -1841,14 +1841,43 @@ def _count_pdfs_in_all_collections(cfg: Any) -> int:
 def _run_update_cache(app: FNDApp) -> None:
     """Texturise every still-flat PDF across every collection.
 
-    Routes through the existing Update-all chain with
-    texturise_override=True so the cache short-circuits already-
-    textured PDFs and only the still-flat ones cost real work. The
-    search index is touched by the same pass (delete + re-add), but
-    unchanged files cache-hit so the net cost is one texturising pass
-    per still-flat PDF - the same effective behaviour the old
-    dedicated 'texturise-only' worker was designed for."""
+    The cache stores extraction RESULTS (chunks), not extraction MODE.
+    A PDF cached with empty body_md (older entries, runs before docling
+    was installed, runs where docling timed out) will cache-hit on
+    every subsequent Update and never get re-attempted - the whole
+    point of this action is to force a fresh extraction pass on those
+    files. So: forget the cache entry for each still-flat PDF first,
+    THEN run the Update-all chain with texturise forced on. Cached
+    already-textured PDFs are left alone and short-circuit normally."""
+    _forget_cache_for_flat_pdfs()
     _push_update_all_confirm(app, texturise_override=True)
+
+
+def _forget_cache_for_flat_pdfs() -> None:
+    """Delete the structured-extraction cache entry for every PDF
+    that is currently flat in the index. Best-effort - any per-file
+    failure (sha read, cache write) is suppressed so a single bad
+    file doesn't take down the whole texturise run."""
+    import contextlib
+
+    try:
+        from fnd.cache import ExtractionCache, sha256_file
+        from fnd.extract.pdf import _extractor_signature
+        from fnd.tui.settings_screen import _flat_pdfs_with_reasons
+    except Exception:
+        return
+    cache = ExtractionCache()
+    sig = _extractor_signature()
+    for _collection, path, _reason, _recorded_at in _flat_pdfs_with_reasons():
+        with contextlib.suppress(OSError):
+            from pathlib import Path
+
+            sha = sha256_file(Path(path))
+            key = cache.build_key(content_sha256=sha, extractor_signature=sig)
+            entry = cache.entry_path(key)
+            if entry.exists():
+                with contextlib.suppress(OSError):
+                    entry.unlink()
 
 
 def _summary_indexing(app: FNDApp) -> str:

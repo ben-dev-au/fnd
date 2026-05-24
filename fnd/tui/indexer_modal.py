@@ -153,7 +153,7 @@ class IndexerScreen(ModalScreen[None]):
         Binding("escape,b", "background", "Background", show=True),
         Binding("c", "cancel", "Cancel", show=True),
         Binding("p", "pause", "Pause", show=True),
-        Binding("f", "show_failed", "Needs attention", show=True),
+        Binding("f", "show_failed", "Error log", show=True),
     ]
 
     CSS = """
@@ -216,7 +216,7 @@ class IndexerScreen(ModalScreen[None]):
         # Action options that should be REMOVED once the chain
         # finishes (Background + Cancel are meaningless post-Done).
         self._removed_options: set[str] = set()
-        # Last-rendered "Files needing attention" count so the option's
+        # Last-rendered Texturising Error Log count so the option's
         # label can be re-rendered when the count changes (a chain that
         # resolves a wedge should drop the count from N to N-1, not
         # leave the stale label sitting in the option list).
@@ -419,8 +419,8 @@ class IndexerScreen(ModalScreen[None]):
         """Show / hide action options based on chain state.
 
         Active run:  Background, Cancel [, Skip current file if stuck,
-                     Files needing attention if count > 0]
-        Chain done:  Files needing attention, Done   (Background +
+                     Texturising Error Log if count > 0]
+        Chain done:  Texturising Error Log, Done   (Background +
                      Cancel + Skip removed once the chain finishes)"""
         from textual.widgets import OptionList
         from textual.widgets.option_list import Option
@@ -441,7 +441,7 @@ class IndexerScreen(ModalScreen[None]):
             with contextlib.suppress(Exception):
                 if "todo" in self._added_options:
                     opts.remove_option("todo")
-                opts.add_option(Option(f"Files needing attention ({todo_count})", id="todo"))
+                opts.add_option(Option(f"Texturising Error Log ({todo_count})", id="todo"))
                 self._added_options.add("todo")
                 self._last_todo_count = todo_count
         elif not want_todo and "todo" in self._added_options:

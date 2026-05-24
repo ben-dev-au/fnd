@@ -3924,7 +3924,7 @@ class StillFlatDrillIn(Screen[None]):
         self._cursor = 0
 
     def compose(self) -> ComposeResult:
-        title = "Files needing attention"
+        title = "Texturising Error Log"
         if self._collection_filter:
             title += f" - {self._collection_filter}"
         with Vertical(id="settings_box") as box:
@@ -3987,12 +3987,28 @@ class StillFlatDrillIn(Screen[None]):
     def action_retry(self) -> None:
         if not self._rows:
             return
-        col, _path, _reason, _recorded_at = self._rows[self._cursor]
+        col, path, _reason, _recorded_at = self._rows[self._cursor]
         app: FNDApp = self.app  # type: ignore[assignment]
-        # Per-file precision would need either a single-file extract
-        # path through extract() or a temp-config filter; route through
-        # the existing per-collection Update with texturise forced on,
-        # which the cache makes cheap for already-textured PDFs.
+        # Forget THIS file's cache entry before re-running the update,
+        # otherwise the next Update cache-hits the previous flat
+        # extraction and the file stays flat forever. Per-file
+        # precision (instead of forget+run-whole-collection) would need
+        # a single-file extract path; routing through the existing
+        # per-collection Update is fine because other already-textured
+        # PDFs in the collection still short-circuit via cache.
+        import contextlib as _ctx
+
+        with _ctx.suppress(Exception):
+            from fnd.cache import ExtractionCache, sha256_file
+            from fnd.extract.pdf import _extractor_signature
+
+            cache = ExtractionCache()
+            sha = sha256_file(Path(path))
+            key = cache.build_key(content_sha256=sha, extractor_signature=_extractor_signature())
+            entry = cache.entry_path(key)
+            if entry.exists():
+                with _ctx.suppress(OSError):
+                    entry.unlink()
         try:
             app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
                 col, texturise_override=True
