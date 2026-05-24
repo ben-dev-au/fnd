@@ -6,7 +6,7 @@ lazygit-style TUI.
 
 ## Status
 
-Early development. See `docs/specs/` and `docs/plans/` for the design spec and phase plans.
+Early development.
 
 ## Install
 

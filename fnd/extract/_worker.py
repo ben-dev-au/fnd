@@ -20,6 +20,7 @@ import faulthandler
 import multiprocessing as mp
 import os
 import signal
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
@@ -82,16 +83,29 @@ def clear_cancel() -> None:
 
 
 def _get_pool() -> ProcessPoolExecutor:
+    """Cached singleton pool.
+
+    The prefetcher and indexer can both reach this from background
+    threads; without the lock two threads could each create a pool
+    and leak the loser's subprocess. Sequential happy path keeps the
+    fast read out of the lock.
+    """
     global _pool
-    if _pool is None:
-        # ``spawn`` is the macOS-safe start method; ``fork`` deadlocks
-        # under native libs that pre-spawn threads (pymupdf does).
-        _pool = ProcessPoolExecutor(
-            max_workers=1,
-            mp_context=mp.get_context("spawn"),
-        )
-        atexit.register(shutdown_pool)
+    if _pool is not None:
+        return _pool
+    with _pool_lock:
+        if _pool is None:
+            # ``spawn`` is the macOS-safe start method; ``fork`` deadlocks
+            # under native libs that pre-spawn threads (pymupdf does).
+            _pool = ProcessPoolExecutor(
+                max_workers=1,
+                mp_context=mp.get_context("spawn"),
+            )
+            atexit.register(shutdown_pool)
     return _pool
+
+
+_pool_lock = threading.Lock()
 
 
 def _noop_worker() -> int:

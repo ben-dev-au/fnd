@@ -15,8 +15,7 @@ and the user navigates by page number.
 
 When the optional ``pdf-structure`` extra is installed (pymupdf4llm +
 docling), a parallel structured-extraction path runs and populates
-``body_md`` for Markdown-rendered preview. See
-``docs/specs/2026-05-20-real-pdf-support.md``.
+``body_md`` for Markdown-rendered preview.
 """
 
 from __future__ import annotations
@@ -28,6 +27,7 @@ import importlib.util
 import json
 import os
 import re
+import threading
 from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -541,14 +541,22 @@ def extract(
 
 def _get_cache() -> ExtractionCache:
     """Cached singleton — building the path each call is cheap but
-    creating the directory tree once at first use is cleaner."""
+    creating the directory tree once at first use is cleaner.
+
+    The prefetcher and indexer can both reach this from background
+    threads, so guard the check-and-set with a lock to avoid two
+    instances racing into existence."""
     global _cache_singleton
-    if _cache_singleton is None:
-        _cache_singleton = ExtractionCache()
+    if _cache_singleton is not None:
+        return _cache_singleton
+    with _cache_lock:
+        if _cache_singleton is None:
+            _cache_singleton = ExtractionCache()
     return _cache_singleton
 
 
 _cache_singleton: ExtractionCache | None = None
+_cache_lock = threading.Lock()
 
 
 # Invoked from the subprocess pool via fnd.extract._worker.collect_pdf_chunks,

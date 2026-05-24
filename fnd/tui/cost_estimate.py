@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -123,9 +124,17 @@ def record_run(*, n_pdfs: int, cache_hits: int, cache_misses: int, elapsed_s: fl
         history = _load_history()
         history.append(rec)
         history = history[-_MAX_HISTORY:]
-        with path.open("w", encoding="utf-8") as fh:
+        # Write to a sibling temp file and os.replace into place so a
+        # crash mid-write leaves the previous history file intact rather
+        # than truncated. The throughput record is recoverable (next
+        # successful run rebuilds the calibration), but a corrupt file
+        # would mean every subsequent ETA falls back to the conservative
+        # bake-off constant until the next clean run.
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        with tmp_path.open("w", encoding="utf-8") as fh:
             for entry in history:
                 fh.write(json.dumps(asdict(entry)) + "\n")
+        os.replace(tmp_path, path)
 
 
 def estimate_per_pdf_seconds(signature: str | None = None) -> float:
