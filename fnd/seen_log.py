@@ -1,0 +1,55 @@
+"""Per-content-hash 'has been indexed before' marker store.
+
+Non-PDF extractors (md, txt, pptx, docx) don't use the structured-
+extraction cache because they have nothing expensive to cache - their
+extraction is already <1ms per file. Without a separate 'seen' record,
+the runner has no way to distinguish 'this file is new to the index'
+from 'this file was already indexed in a previous run', so non-PDFs
+would always count as ``indexed_newly`` and an Update on a stable
+corpus would mis-report '24 newly indexed' every launch.
+
+Markers are tiny zero-byte files under ``<cache_root>/seen/<2-hex>/<sha>``.
+The presence check is a single ``Path.exists()``; marking is a single
+``Path.touch()``. Atomic on POSIX, content-addressed so file renames /
+moves do not invalidate (extraction output depends on bytes, not path).
+"""
+
+from __future__ import annotations
+
+import contextlib
+from pathlib import Path
+
+from platformdirs import user_cache_dir
+
+_SEEN_DIRNAME = "seen"
+
+
+def _seen_root() -> Path:
+    # Computed per call (not cached) so test fixtures that monkeypatch
+    # ``user_cache_dir`` or set ``XDG_CACHE_HOME`` see isolation
+    # immediately - a cached path would bleed across tests and cause
+    # spurious "already indexed" results on unrelated content.
+    return Path(user_cache_dir("fnd")) / _SEEN_DIRNAME
+
+
+def _marker_path(sha: str) -> Path:
+    return _seen_root() / sha[:2] / sha
+
+
+def has_seen(sha: str) -> bool:
+    """True iff ``mark_seen(sha)`` was called in a prior run."""
+    return _marker_path(sha).exists()
+
+
+def mark_seen(sha: str) -> None:
+    """Record that ``sha`` has been successfully indexed. Idempotent;
+    a re-mark is cheap (single exists+touch)."""
+    path = _marker_path(sha)
+    if path.exists():
+        return
+    with contextlib.suppress(OSError):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+
+
+__all__ = ["has_seen", "mark_seen"]

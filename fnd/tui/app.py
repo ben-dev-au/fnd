@@ -1280,6 +1280,12 @@ class FNDApp(App[None]):
         # action); False forces it off (set by the "Process new files
         # index-only" action). Reset to None when the chain finishes.
         self._indexer_texturise_override: bool | None = None
+        # Per-collection final snapshots captured as each chain step
+        # finishes. Drives the IndexerScreen's history band and the
+        # post-chain summary screen so the user can see what every
+        # finished collection produced - even after the modal moved
+        # on. Cleared by the Done action on IndexerScreen.
+        self._indexer_chain_history: list[Any] = []
         self._indexer_collection: str = ""
         self._indexer_started_at: str = ""
         # Structured-PDF extras install/uninstall — sibling to the
@@ -4086,6 +4092,13 @@ class FNDApp(App[None]):
         chain_active = bool(self._indexer_chain_remaining) or (self._indexer_chain_total or 1) > 1
         if not chain_active or self._indexer_events is None:
             self._indexer_events = asyncio.Queue()
+        if not chain_active:
+            # Fresh chain start: clear session-wide per-page counters
+            # so this run reports its own avg from scratch.
+            with contextlib.suppress(Exception):
+                from fnd.tui.live_progress import reset_session as _live_reset_session
+
+                _live_reset_session()
         self._indexer_state = None
         self._indexer_last_event = None
         self._indexer_task = asyncio.create_task(

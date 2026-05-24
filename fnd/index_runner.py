@@ -67,6 +67,21 @@ class ProgressEvent:
     files_done: int = 0
     files_total: int = 0
     pdfs_total: int = 0
+    # Size-weighted progress. ETA derived from file count alone treats
+    # a 12MB AWS PDF the same as a 4KB note, so the ETA snaps when a
+    # heavy file finishes. bytes_done/bytes_total tracks the same
+    # progression weighted by file size - a much better proxy for
+    # remaining work than file count.
+    bytes_done: int = 0
+    bytes_total: int = 0
+    # Cache-miss-only counters for the ETA rate. Cache hits cost ~ms
+    # but bump bytes_done; if the ETA used the overall rate it would
+    # read ~0 for a cache-heavy run with a slow fresh PDF still in
+    # the queue. Tracking extract-only bytes + extract-only seconds
+    # gives an honest per-byte extraction rate that survives mixed
+    # workloads.
+    extract_bytes_done: int = 0
+    extract_seconds_spent: float = 0.0
     current_file: str = ""
     file_elapsed_ms: float = 0.0
     cache_hit: bool = False
@@ -235,12 +250,36 @@ def _process_one_file(
         if fm:
             meta_blob_bytes = encode_meta_blob(fm)
 
+    is_pdf = path.suffix.lower() == ".pdf"
+    # Non-PDFs don't use the structured-extraction cache (their
+    # extraction is already cheap), so cache.hits never increments
+    # for them and they'd otherwise always count as "newly indexed"
+    # on every launch. The seen log gives them a comparable
+    # "have we processed this content before?" signal so a stable
+    # md corpus reports "already indexed" on re-runs.
+    non_pdf_sha = ""
+    non_pdf_was_seen = False
+    if not is_pdf:
+        from fnd.cache import sha256_file
+        from fnd.seen_log import has_seen
+
+        try:
+            non_pdf_sha = sha256_file(path)
+            non_pdf_was_seen = has_seen(non_pdf_sha)
+        except OSError:
+            non_pdf_sha = ""
+
     parent_id = _path_parent_id(path)
     writer.delete_documents(F_PARENT_ID, parent_id)
     n_chunks = 0
     has_textured = False
+    # Per-page beats from the PDF worker feed the live-progress
+    # channel so the modal's 1Hz ETA can refine while a long PDF is
+    # mid-extraction (instead of waiting for the file_complete event).
+    from fnd.tui.live_progress import report_heartbeat as _report_heartbeat
+
     try:
-        for chunk in extract(path):
+        for chunk in extract(path, on_heartbeat=_report_heartbeat):
             if chunk.body_md:
                 has_textured = True
             writer.add_document(
@@ -256,7 +295,12 @@ def _process_one_file(
         writer.delete_documents(F_PARENT_ID, parent_id)
         return n_chunks, False, False, str(e)
 
-    hit = cache.hits > cache_before_hits
+    if not is_pdf and non_pdf_sha:
+        from fnd.seen_log import mark_seen
+
+        mark_seen(non_pdf_sha)
+
+    hit = (cache.hits > cache_before_hits) if is_pdf else non_pdf_was_seen
     return n_chunks, hit, has_textured, ""
 
 
@@ -314,10 +358,36 @@ async def run_indexer(
     prior_skip = _pdf._skip_structure_extraction
     _pdf.set_skip_structure_extraction(skip_structure)
 
+    # Clear any cancel beacon left over from a previous Cancel click
+    # so a fresh run isn't aborted by stale state.
+    with contextlib.suppress(Exception):
+        from fnd.extract._worker import clear_cancel as _clear_cancel
+
+        _clear_cancel()
+
     started_at = dt.datetime.now(tz=dt.UTC).isoformat(timespec="seconds")
     t_start = time.perf_counter()
     paths = _enumerate_paths(config)
     pdfs_total = sum(1 for p, _src in paths if p.suffix.lower() == ".pdf")
+    # Per-file byte sizes for the size-weighted ETA. A non-existent /
+    # unreadable file contributes 0 and is counted as 0-byte done at
+    # completion - same outcome as the file-count fallback for that
+    # entry without distorting the rate for the rest.
+    sizes: dict[str, int] = {}
+    for p, _src in paths:
+        try:
+            sizes[str(p)] = p.stat().st_size
+        except OSError:
+            sizes[str(p)] = 0
+    bytes_total = sum(sizes.values())
+    bytes_done_state = [0]  # mutable closure-cell so _emit reads latest
+    # Cache-miss-only counters: bytes processed via real extraction
+    # and the seconds we spent doing it. Drives the ETA rate so a
+    # cache-heavy chain doesn't collapse ETA to 0 just because the
+    # cache hits ramped bytes_done while contributing ~0 time.
+    extract_bytes_state = [0]
+    extract_seconds_state = [0.0]
+
     state = IndexState(
         collection=collection,
         started_at=started_at,
@@ -332,6 +402,10 @@ async def run_indexer(
             files_done=state.files_completed,
             files_total=len(paths),
             pdfs_total=pdfs_total,
+            bytes_done=bytes_done_state[0],
+            bytes_total=bytes_total,
+            extract_bytes_done=extract_bytes_state[0],
+            extract_seconds_spent=extract_seconds_state[0],
             cache_hits_total=cache.hits,
             cache_misses_total=cache.misses,
             indexed_newly_total=state.indexed_newly,
@@ -356,12 +430,33 @@ async def run_indexer(
         written = 0
         for path, source_id in paths:
             if cancel is not None and cancel.is_set():
+                # Save everything we processed before cancel fired so
+                # the user doesn't lose those files on the next launch.
+                with contextlib.suppress(Exception):
+                    writer.commit()
                 yield _emit("cancelled")
                 # Leave state file in place so we can resume.
                 return
+            # Reset the worker-level cancel beacon at file boundary.
+            # A previous Skip / Cancel set it to bypass the retry for
+            # the file that just failed; if we left it set, this new
+            # file would silently bypass its own legitimate retry on a
+            # transient BrokenProcessPool / StallError and surface as
+            # a spurious failure.
+            with contextlib.suppress(Exception):
+                from fnd.extract._worker import clear_cancel as _clear_cancel
+
+                _clear_cancel()
 
             is_pdf = path.suffix.lower() == ".pdf"
             state.current_file = str(path)
+            # Clear the live-progress snapshot before the new file so a
+            # stale heartbeat from the previous extraction can't bleed
+            # into this file's ETA.
+            with contextlib.suppress(Exception):
+                from fnd.tui.live_progress import reset as _live_reset
+
+                _live_reset()
             yield _emit("file_processing", current_file=str(path), is_pdf=is_pdf)
 
             hits_before = cache.hits
@@ -383,8 +478,19 @@ async def run_indexer(
             else:
                 if is_pdf:
                     if was_hit:
-                        state.textured_already += 1
+                        # Cache hits can be either textured or flat -
+                        # the cache stores whatever the original
+                        # extraction produced. Older entries (or runs
+                        # where docling wasn't installed yet) may have
+                        # empty body_md, so a hit doesn't imply
+                        # texturised. Checking has_textured here means
+                        # the settings status "N still flat" matches
+                        # the indexer's own count instead of drifting.
                         state.indexed_already += 1
+                        if has_textured:
+                            state.textured_already += 1
+                        else:
+                            state.still_flat += 1
                     elif has_textured:
                         state.textured_newly += 1
                         state.indexed_newly += 1
@@ -401,11 +507,38 @@ async def run_indexer(
             state.files_completed += 1
             state.cache_hits = cache.hits
             state.cache_misses = cache.misses
+            # Whether the file succeeded or failed, the time we spent on
+            # it is "used up" - count its bytes toward the size-weighted
+            # progress so the ETA reflects elapsed-vs-remaining bytes,
+            # not just elapsed-vs-remaining file count.
+            file_size = sizes.get(str(path), 0)
+            bytes_done_state[0] += file_size
+            # Track extract-only metrics for the ETA rate. Cache hits
+            # cost ~ms but bump bytes_done; if the ETA used the
+            # overall rate the cache-hit barrage at chain start would
+            # crush the per-byte rate and ETA would read 0 even with
+            # a multi-minute uncached PDF still pending. Only the
+            # actual extraction work feeds the rate.
+            if not was_hit:
+                extract_bytes_state[0] += file_size
+                extract_seconds_state[0] += file_elapsed_ms / 1000.0
             # Atomic state update per file = resume granularity per file.
             save_state(state_path, state)
 
             if err:
-                print(f"[fnd skip] {err}", file=sys.stderr)
+                # Enrich the error with the page where the wedge happened
+                # so the still-flat drill-in shows "stuck at page 15/23"
+                # not just "extractor wedged". The live-progress snapshot
+                # is the last page beat the worker emitted before dying.
+                if is_pdf:
+                    with contextlib.suppress(Exception):
+                        from fnd.tui.live_progress import snapshot as _lp_snapshot
+
+                        _p, _done, _total, _start = _lp_snapshot()
+                        if _total > 0 and _done > 0 and _done < _total:
+                            err = f"{err}  [last page beat: {_done}/{_total}]"
+                ts = dt.datetime.now(tz=dt.UTC).isoformat(timespec="seconds")
+                print(f"[fnd skip {ts}] {err}", file=sys.stderr)
                 # Persist the failure so the still-flat drill-in screen
                 # can show per-file reasons + retry buttons.
                 with contextlib.suppress(Exception):
@@ -428,7 +561,15 @@ async def run_indexer(
 
                     clear_failure(collection=collection, path=str(path))
 
-            if written % _COMMIT_BATCH == 0 and written > 0:
+            # Commit on EITHER cadence: every 500 chunks (the existing
+            # batch boundary) OR every 10 files. Without the per-file
+            # ceiling, a chain that hangs on file 25 would lose the
+            # first 24 if their chunks didn't add up to 500; the user
+            # would re-extract them on next launch.
+            commit_due = (written % _COMMIT_BATCH == 0 and written > 0) or (
+                state.files_completed % 10 == 0
+            )
+            if commit_due:
                 writer.commit()
 
             yield _emit(
@@ -466,6 +607,14 @@ async def run_indexer(
             elapsed_s=final_elapsed,
         )
 
+    # Cancel-during-last-file: the top-of-loop check at line ~408
+    # only fires on the NEXT iteration, so a Cancel pressed while the
+    # final file is in flight would otherwise emit "done" and look to
+    # the user as if Cancel was ignored. Honour the flag here so the
+    # modal sees the truthful "cancelled" terminal event.
+    if cancel is not None and cancel.is_set():
+        yield _emit("cancelled")
+        return
     yield _emit("done")
 
 

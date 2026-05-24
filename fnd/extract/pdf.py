@@ -443,7 +443,11 @@ def _has_docling() -> bool:
     return shutil.which("docling") is not None
 
 
-def extract(path: Path) -> Iterator[Chunk]:
+def extract(
+    path: Path,
+    *,
+    on_heartbeat: Callable[[Any], None] | None = None,
+) -> Iterator[Chunk]:
     """Extract PDF chunks, consulting the on-disk cache first.
 
     On cache hit: yields chunks directly from the JSON blob, skipping
@@ -452,6 +456,11 @@ def extract(path: Path) -> Iterator[Chunk]:
     On miss: runs the normal extraction, then writes the result back
     to the cache before yielding (so a Ctrl+C *after* the put is
     safe — next reindex will hit).
+
+    ``on_heartbeat`` receives per-page ("page", index) tuples plus a
+    ("total", N) opener and ("file-start", path) reset. Used by the
+    indexer runner's live-progress channel so the IndexerScreen ETA
+    refines as a single long PDF processes its pages.
     """
     cache = _get_cache()
     try:
@@ -504,6 +513,7 @@ def extract(path: Path) -> Iterator[Chunk]:
             _skip_structure_extraction,
             stall_seconds=120.0,
             first_beat_grace_seconds=180.0,
+            on_heartbeat=on_heartbeat,
         )
     except StallError as e:
         raise ExtractError(str(path), f"extractor wedged: {e}") from e

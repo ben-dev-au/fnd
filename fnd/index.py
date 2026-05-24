@@ -6,6 +6,7 @@ fsevents incremental updates and the long-running watcher.
 
 from __future__ import annotations
 
+import datetime as _dt
 import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -46,6 +47,12 @@ _WRITER_HEAP = 50_000_000
 
 # Commit every N chunks so partial-progress is queryable mid-index.
 _COMMIT_BATCH = 500
+
+
+def _skip_stamp() -> str:
+    """ISO-8601 UTC second-precision timestamp for the [fnd skip ...]
+    prefix; matches the form used by the async indexer runner."""
+    return _dt.datetime.now(tz=_dt.UTC).isoformat(timespec="seconds")
 
 
 def _ensure_index(index_dir: Path, *, force: bool = False) -> Index:
@@ -193,7 +200,7 @@ def build_index(
             # otherwise a parser that crashes after yielding N pages
             # leaves a partial document indexed.
             writer.delete_documents(F_PARENT_ID, parent_id)
-            print(f"[fnd skip] {err}", file=sys.stderr)
+            print(f"[fnd skip {_skip_stamp()}] {err}", file=sys.stderr)
     writer.commit()
     writer.wait_merging_threads()
     return written
@@ -261,7 +268,7 @@ def build_index_from_config(
                 # extractor crash mid-iteration doesn't leave partial
                 # chunks indexed.
                 writer.delete_documents(F_PARENT_ID, parent_id)
-                print(f"[fnd skip] {err}", file=sys.stderr)
+                print(f"[fnd skip {_skip_stamp()}] {err}", file=sys.stderr)
     writer.commit()
     writer.wait_merging_threads()
     return written

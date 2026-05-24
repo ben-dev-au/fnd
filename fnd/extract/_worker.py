@@ -64,6 +64,22 @@ class StallError(RuntimeError):
 # get a fresh executor.
 _pool: ProcessPoolExecutor | None = None
 
+# Cancel beacon. When the TUI's action_cancel sets this, the retry
+# wrapper sees it and bails after the first attempt instead of
+# spawning a fresh worker on the same slow PDF (which would restart
+# the user's wait clock). Cleared at the start of every run.
+_cancel_requested = False
+
+
+def request_cancel() -> None:
+    global _cancel_requested
+    _cancel_requested = True
+
+
+def clear_cancel() -> None:
+    global _cancel_requested
+    _cancel_requested = False
+
 
 def _get_pool() -> ProcessPoolExecutor:
     global _pool
@@ -185,15 +201,55 @@ def _redirect_native_stderr_to_log() -> None:
         pass
 
 
+def _maybe_inject_test_slowdown(heartbeat_sender: Any) -> None:
+    """Test hook: when FND_TEST_SLOW_EXTRACT_SECONDS is set, sleep
+    that many seconds before extracting so the UI can observably
+    test cancel + stall behaviour. Sends one heartbeat first so the
+    stall detector doesn't time out during the sleep."""
+    raw = os.environ.get("FND_TEST_SLOW_EXTRACT_SECONDS")
+    if not raw:
+        return
+    try:
+        secs = float(raw)
+    except ValueError:
+        return
+    with _suppress(BrokenPipeError, EOFError, OSError):
+        heartbeat_sender.send(("test-slowdown-start", 0))
+    chunks = max(1, int(secs))
+    for i in range(chunks):
+        time.sleep(secs / chunks)
+        with _suppress(BrokenPipeError, EOFError, OSError):
+            heartbeat_sender.send(("test-slowdown-tick", i))
+
+
 def collect_pdf_chunks_with_heartbeat(
     heartbeat_sender: Any, path: Any, skip_structure: bool
 ) -> list[Any]:
     """Like :func:`collect_pdf_chunks` but emits a per-page heartbeat
     on ``heartbeat_sender`` (a :class:`multiprocessing.Connection`) so
     the parent's stall detector can tell a slow PDF apart from a
-    wedged one."""
+    wedged one. Also emits a ("total", N) beat at the start so the
+    parent's ETA can size the per-page rate against the file's actual
+    length, and a ("file-start", path) beat so the parent can reset
+    per-file timing state on a new extraction."""
     _redirect_native_stderr_to_log()
+    _maybe_inject_test_slowdown(heartbeat_sender)
     _trace(f"enter path={path}")
+    # Probe the page count cheaply so the parent can refine ETA
+    # mid-extraction. pymupdf opens the doc twice (once here, once
+    # in _extract_inner) but the open is sub-ms and lets the user's
+    # ETA reflect "I'm 12/247 pages into a long PDF" instead of
+    # ticking blindly until the file completes.
+    # Probe is best-effort - extraction itself owns the real error
+    # surface; if it can't open, we just skip the heartbeat hint.
+    with _suppress(Exception):
+        import pymupdf as _pymupdf
+
+        _doc = _pymupdf.open(str(path))
+        with _suppress(BrokenPipeError, EOFError, OSError):
+            heartbeat_sender.send(("file-start", str(path)))
+            heartbeat_sender.send(("total", _doc.page_count))
+        _doc.close()
 
     from fnd.extract import pdf as _pdf
 
@@ -273,6 +329,7 @@ def run_in_pool_sync_with_stall_detection[T](
     *args: Any,
     stall_seconds: float = 120.0,
     first_beat_grace_seconds: float | None = None,
+    on_heartbeat: Callable[[Any], None] | None = None,
 ) -> T:
     """Submit ``fn(sender, *args)`` to the pool. The worker must
     ``send`` heartbeats on the supplied
@@ -309,16 +366,33 @@ def run_in_pool_sync_with_stall_detection[T](
                 *args,
                 stall_seconds=stall_seconds,
                 first_beat_grace_seconds=first_beat_grace_seconds,
+                on_heartbeat=on_heartbeat,
             )
         except BrokenProcessPool as e:
             last_exc = e
-            if attempt == 0:
+            # Skip the retry when the user has cancelled - the kill
+            # they just issued is exactly what triggered this
+            # BrokenProcessPool, and respawning would put the same
+            # slow PDF back on the worker (Cancel would never
+            # actually cancel).
+            if attempt == 0 and not _cancel_requested:
                 # Pool was already shutdown_pool'd by the inner handler.
+                continue
+            raise
+        except StallError as e:
+            # A single stalled PDF should not surface as ExtractError
+            # for the whole file; the stall handler already killed the
+            # worker + tore down the pool, so the retry spawns a
+            # fresh worker. A truly poisonous PDF stalls both attempts
+            # and surfaces honestly. Cancel bypasses the retry for
+            # the same reason as BrokenProcessPool above.
+            last_exc = e
+            if attempt == 0 and not _cancel_requested:
                 continue
             raise
         except Exception as e:
             last_exc = e
-            if _is_stale_fd_error(e) and attempt == 0:
+            if _is_stale_fd_error(e) and attempt == 0 and not _cancel_requested:
                 # Tear down pool + manager so the next spawn starts
                 # with a clean FD set. Without this, every subsequent
                 # PDF in the run fails the same way (the original
@@ -335,6 +409,7 @@ def _submit_with_stall_detection[T](
     *args: Any,
     stall_seconds: float,
     first_beat_grace_seconds: float | None,
+    on_heartbeat: Callable[[Any], None] | None = None,
 ) -> T:
     from concurrent.futures.process import BrokenProcessPool
 
@@ -356,8 +431,13 @@ def _submit_with_stall_detection[T](
         while not future.done():
             try:
                 if parent_conn.poll(poll_seconds):
-                    parent_conn.recv()
+                    beat = parent_conn.recv()
                     last_beat = time.monotonic()
+                    if on_heartbeat is not None:
+                        # Bubble per-page beats up to the ETA so a long
+                        # PDF refines remaining time as pages tick.
+                        with _suppress(Exception):
+                            on_heartbeat(beat)
             except (EOFError, OSError):
                 break
 

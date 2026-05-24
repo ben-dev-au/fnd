@@ -24,8 +24,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import datetime as dt
-import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -42,10 +42,19 @@ if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
 
 
-def fmt_eta(seconds: float) -> str:
-    """Format a duration in seconds. Returns ``—`` for unknown
-    durations (negative / NaN / infinite — all happen during the
-    ``started`` event before the first file completes)."""
+def _live_elapsed_seconds(started_at_iso: str) -> float:
+    """Wall-clock seconds since ``started_at_iso`` (ISO-8601 UTC).
+    Returns 0.0 on parse failure so the timing line never goes
+    negative."""
+    try:
+        ts = dt.datetime.fromisoformat(started_at_iso)
+    except ValueError:
+        return 0.0
+    return max(0.0, (dt.datetime.now(tz=dt.UTC) - ts).total_seconds())
+
+
+def fmt_duration(seconds: float) -> str:
+    """Format a duration in seconds as "Ns", "Nm Ms", or "Nh Mm"."""
     import math
 
     if seconds < 0 or math.isnan(seconds) or math.isinf(seconds):
@@ -60,13 +69,40 @@ def fmt_eta(seconds: float) -> str:
     return f"{h}h {m}m"
 
 
-def estimate_eta_seconds(*, files_done: int, files_total: int, elapsed_s: float) -> float:
-    """Running-average ETA. Returns +inf when no data yet."""
-    if files_done <= 0:
-        return float("inf")
-    avg_per_file = elapsed_s / files_done
-    remaining = files_total - files_done
-    return avg_per_file * max(0, remaining)
+# Compat alias - older callers (tests) imported this as ``fmt_eta``.
+fmt_eta = fmt_duration
+
+
+def _stuck_suffix() -> str:
+    """If the current page hasn't progressed in much longer than the
+    session avg, append a yellow "stuck Ns on this page" tag so the
+    user can tell a wedged file from a merely slow one. Threshold is
+    max(30s, 10x avg) - the floor catches genuine wedges on fast docs
+    where avg is sub-second; the multiplier scales with naturally slow
+    docs (60-page decks where each page legitimately takes 8-10s)."""
+    from fnd.tui import live_progress
+
+    since = live_progress.seconds_since_last_beat()
+    if since <= 0:
+        return ""
+    pages, page_secs = live_progress.session_snapshot()
+    avg = (page_secs / pages) if pages > 0 else 0.0
+    threshold = max(30.0, 10.0 * avg) if avg > 0 else 60.0
+    if since < threshold:
+        return ""
+    return f"   [yellow]· stuck {int(since)}s[/]"
+
+
+def fmt_per_page(session_pages: int, session_page_seconds: float) -> str:
+    """Render avg seconds per page from session counters, or '?'
+    when no pages have completed yet (cache-only chain, non-PDFs,
+    pre-first-page)."""
+    if session_pages <= 0 or session_page_seconds <= 0:
+        return "?"
+    avg = session_page_seconds / session_pages
+    if avg < 10:
+        return f"{avg:.1f}s per page"
+    return f"{int(avg)}s per page"
 
 
 class IndexerScreen(ModalScreen[None]):
@@ -82,23 +118,40 @@ class IndexerScreen(ModalScreen[None]):
     CSS = """
     IndexerScreen { align: center middle; background: $surface 75%; }
     #indexer_box {
-        width: auto;
+        width: 75%;
         min-width: 60;
-        max-width: 100;
+        max-width: 140;
         height: auto;
         max-height: 90%;
         border: round $accent;
-        padding: 0 1;
+        padding: 1 2;
         background: $surface;
     }
-    #indexer_status, #indexer_current_file, #indexer_timing,
-    #indexer_indexed_line, #indexer_texture_line {
+    #indexer_history { height: 1; color: $text-muted; margin: 0 0 1 0; }
+    #indexer_history.hidden { display: none; }
+    #indexer_status, #indexer_pages_label, #indexer_current_file,
+    #indexer_timing, #indexer_indexed_line, #indexer_texture_line {
         height: 1;
         padding: 0;
     }
+    #indexer_progress, #indexer_pages_progress {
+        width: 100%;
+        height: 1;
+    }
+    #indexer_progress { margin: 0 0 1 0; }
+    #indexer_pages_progress { margin: 0 0 1 0; }
+    #indexer_pages_label.hidden, #indexer_pages_progress.hidden { display: none; }
+    #indexer_current_file { margin: 0 0 0 0; }
+    #indexer_timing { margin: 1 0 0 0; }
     #indexer_texture_line.hidden { display: none; }
-    #indexer_progress { width: 100%; height: 1; padding: 0 0 1 0; }
-    #indexer_actions { height: auto; padding: 1 0 0 0; }
+    #indexer_actions_box {
+        border: round $primary 50%;
+        padding: 0 1;
+        margin: 1 0 0 0;
+        height: auto;
+    }
+    #indexer_actions_box:focus-within { border: round $accent; }
+    #indexer_actions { height: auto; padding: 0; border: none; background: $surface; }
     """
 
     def __init__(self, collection: str, *, chain_total: int = 1, chain_index: int = 1) -> None:
@@ -106,6 +159,14 @@ class IndexerScreen(ModalScreen[None]):
         self._collection = collection
         self._chain_total = chain_total
         self._chain_index = chain_index
+        # IDs of OptionList options that have been added dynamically.
+        # Tracked here so _sync_action_options doesn't have to walk
+        # OptionList internals (its `_options` attribute is private +
+        # may change across Textual versions).
+        self._added_options: set[str] = set()
+        # Action options that should be REMOVED once the chain
+        # finishes (Background + Cancel are meaningless post-Done).
+        self._removed_options: set[str] = set()
 
     def compose(self) -> ComposeResult:
         from textual.widgets import OptionList
@@ -113,17 +174,32 @@ class IndexerScreen(ModalScreen[None]):
 
         with Vertical(id="indexer_box") as box:
             box.border_title = self._title_text()
+            yield Static("", id="indexer_history", classes="hidden")
             yield Static("Starting…", id="indexer_status")
             yield ProgressBar(total=1, show_eta=False, show_percentage=True, id="indexer_progress")
             yield Static("", id="indexer_current_file")
+            yield Static("", id="indexer_pages_label", classes="hidden")
+            yield ProgressBar(
+                total=1,
+                show_eta=False,
+                show_percentage=True,
+                id="indexer_pages_progress",
+                classes="hidden",
+            )
             yield Static("", id="indexer_timing")
             yield Static("", id="indexer_indexed_line")
             yield Static("", id="indexer_texture_line", classes="hidden")
-            yield OptionList(
-                Option("Run in background", id="background"),
-                Option("Cancel", id="cancel"),
-                id="indexer_actions",
-            )
+            # Background + Cancel are always available; Summary appears
+            # once any collection has finished in this chain; Done
+            # appears only when the whole chain has finished. Both are
+            # added dynamically via _sync_action_options.
+            with Vertical(id="indexer_actions_box") as actions_box:
+                actions_box.border_title = "Actions"
+                yield OptionList(
+                    Option("Run in background", id="background"),
+                    Option("Cancel", id="cancel"),
+                    id="indexer_actions",
+                )
 
     def _title_text(self) -> str:
         if self._chain_total > 1:
@@ -151,9 +227,22 @@ class IndexerScreen(ModalScreen[None]):
         # Snapshot any progress events already buffered so we don't
         # show "Starting…" when the indexer is well underway.
         self._apply_latest_state()
+        # Make sure the option list reflects the current state on a
+        # re-attach (Background → click footer indicator → re-open),
+        # so a finished run shows "Done" / "View summary" immediately
+        # rather than waiting for the 1Hz tick.
+        with contextlib.suppress(Exception):
+            self._sync_action_options(self._fnd_app())
         # Spawn a coroutine that drains the event queue and updates
         # the widgets until the screen is dismissed.
         self.run_worker(self._drain_events(), exclusive=False)
+        # Live tick: events fire on file boundaries only, so a single
+        # slow PDF would otherwise freeze Elapsed and the page-progress
+        # bar in the modal for minutes. The 1Hz ticker re-derives both
+        # from the latest snapshot the async runner publishes onto the
+        # app so the user sees per-page progress and a moving wall
+        # clock even when no file has finished in the last second.
+        self.set_interval(1.0, self._tick_timing)
 
     def _apply_latest_state(self) -> None:
         app = self._fnd_app()
@@ -161,6 +250,147 @@ class IndexerScreen(ModalScreen[None]):
         if state is None:
             return
         self._apply_state_snapshot(state)
+
+    def _tick_timing(self) -> None:
+        """Re-render the Elapsed + per-page lines + pages-bar from the
+        latest snapshot. Bound to 1Hz so the user sees time tick by
+        between file_complete events.
+
+        Pauses once the chain is fully Done so Elapsed doesn't run
+        away after the run has finished - the recorded elapsed_s from
+        the done event is the truthful run duration."""
+        app = self._fnd_app()
+        started_at = app._indexer_started_at
+        if not started_at:
+            return
+        if self._chain_finished(app):
+            ev = app._indexer_last_event
+            if ev is not None and getattr(ev, "kind", "") in ("done", "cancelled"):
+                self._render_timing_from_event(ev)
+            # Clear the per-file Pages bar / label - no file is in
+            # flight post-chain, so the last "40/40" snapshot would
+            # otherwise stay frozen on screen alongside "Done.".
+            with contextlib.suppress(Exception):
+                self.query_one("#indexer_pages_label", Static).add_class("hidden")
+                self.query_one("#indexer_pages_progress", ProgressBar).add_class("hidden")
+            return
+        ev = app._indexer_last_event
+        elapsed_now = _live_elapsed_seconds(started_at)
+        if ev is not None:
+            elapsed_now = max(elapsed_now, getattr(ev, "elapsed_s", 0.0))
+        self._render_pages_progress(app)
+        self._render_timing(elapsed_now)
+        self._sync_action_options(app)
+
+    def _render_pages_progress(self, app: FNDApp) -> None:
+        """Show / update the per-file pages bar + label + Current line.
+
+        Hidden when no per-page snapshot is available (cache hit, non-
+        PDF, or before the first page beat). Shown with progress when
+        a PDF is mid-extraction."""
+        from fnd.tui import live_progress
+
+        ev = app._indexer_last_event
+        current_path = (
+            getattr(ev, "current_file", "")
+            if ev is not None
+            else app._indexer_state.current_file
+            if app._indexer_state is not None
+            else ""
+        )
+        stuck_suffix = _stuck_suffix()
+        with contextlib.suppress(Exception):
+            current = self.query_one("#indexer_current_file", Static)
+            current.update(f"[dim]Current:[/] {_short_name(current_path)}{stuck_suffix}")
+        _path, pages_done, pages_total, _start = live_progress.snapshot()
+        try:
+            label = self.query_one("#indexer_pages_label", Static)
+            bar = self.query_one("#indexer_pages_progress", ProgressBar)
+        except Exception:
+            return
+        if pages_total > 0:
+            label.remove_class("hidden")
+            bar.remove_class("hidden")
+            shown_done = min(pages_done, pages_total)
+            label.update(f"[dim]Pages:[/]   {shown_done} / {pages_total}")
+            bar.update(total=pages_total, progress=shown_done)
+        else:
+            label.add_class("hidden")
+            bar.add_class("hidden")
+            label.update("")
+
+    def _render_timing(self, elapsed_seconds: float) -> None:
+        from fnd.tui import live_progress
+
+        pages, page_secs = live_progress.session_snapshot()
+        per_page = fmt_per_page(pages, page_secs)
+        with contextlib.suppress(Exception):
+            timing = self.query_one("#indexer_timing", Static)
+            timing.update(
+                f"[dim]Elapsed:[/] {fmt_duration(elapsed_seconds)}    "
+                f"[dim]·[/]    [dim]Avg:[/] {per_page}"
+            )
+
+    def _render_timing_from_event(self, ev: Any) -> None:
+        self._render_timing(getattr(ev, "elapsed_s", 0.0))
+
+    def _chain_finished(self, app: FNDApp) -> bool:
+        """True when the chain has reached a terminal state - either
+        every collection finished (done) or the user cancelled
+        (cancelled). Both states should freeze the live timer so the
+        displayed elapsed reflects the truthful run duration, not how
+        long the user left the modal open afterwards."""
+        ev = app._indexer_last_event
+        if ev is None:
+            return False
+        kind = getattr(ev, "kind", "")
+        if kind == "cancelled":
+            return True
+        if kind != "done":
+            return False
+        pending = getattr(app, "_indexer_chain_remaining", None) or []
+        callback_pending = getattr(app, "_indexer_chain_callback_pending", False)
+        return not pending and not callback_pending
+
+    def _sync_action_options(self, app: FNDApp) -> None:
+        """Show / hide action options based on chain state.
+
+        Active run:  Background, Cancel [, Skip current file if stuck,
+                     Summary if any collection done]
+        Chain done:  Summary, Done   (Background + Cancel + Skip removed)"""
+        from textual.widgets import OptionList
+        from textual.widgets.option_list import Option
+
+        try:
+            opts = self.query_one("#indexer_actions", OptionList)
+        except Exception:
+            return
+        history = getattr(app, "_indexer_chain_history", None) or []
+        want_summary = len(history) >= 1
+        want_done = self._chain_finished(app)
+        want_skip = (not want_done) and bool(_stuck_suffix())
+        if want_skip and "skip" not in self._added_options:
+            with contextlib.suppress(Exception):
+                opts.add_option(Option("Skip current file", id="skip"))
+                self._added_options.add("skip")
+        if want_summary and "summary" not in self._added_options:
+            with contextlib.suppress(Exception):
+                opts.add_option(Option("View per-collection summary", id="summary"))
+                self._added_options.add("summary")
+        if want_done and "done" not in self._added_options:
+            with contextlib.suppress(Exception):
+                opts.add_option(Option("Done", id="done"))
+                self._added_options.add("done")
+        # Post-done: Background + Cancel are meaningless. Remove them
+        # so the only remaining choices are Summary + Done. Tracked in
+        # ``_removed_options`` so we don't try the remove a second time.
+        if want_done:
+            for opt_id in ("background", "cancel", "skip"):
+                if opt_id in self._removed_options:
+                    continue
+                with contextlib.suppress(Exception):
+                    opts.remove_option(opt_id)
+                    self._removed_options.add(opt_id)
 
     def _fnd_app(self) -> FNDApp:
         from fnd.tui.app import FNDApp
@@ -194,13 +424,6 @@ class IndexerScreen(ModalScreen[None]):
                     callback_pending = getattr(app, "_indexer_chain_callback_pending", False)
                     if not pending and not callback_pending:
                         break
-                    # More work queued. drive_indexer fires the next
-                    # collection via call_later; the new run_indexer
-                    # emits a "started" event that re-initialises the
-                    # progress bar here. callback_pending covers the
-                    # window where drive_indexer has already popped
-                    # the next name (so pending is empty) but
-                    # call_later has not yet fired the new task.
                     continue
         except asyncio.CancelledError:
             return
@@ -232,30 +455,23 @@ class IndexerScreen(ModalScreen[None]):
             status = self.query_one("#indexer_status", Static)
             bar = self.query_one("#indexer_progress", ProgressBar)
             current = self.query_one("#indexer_current_file", Static)
-            timing = self.query_one("#indexer_timing", Static)
         except Exception:
             return
 
         if ev.kind == "started":
-            # New collection starting — refresh the title in case the
-            # chain just advanced. Resets the progress bar too.
             self._refresh_title()
-            status.update(f"Indexing {ev.files_total} files…")
+            status.update(f"[dim]Files:[/]   0 / {ev.files_total}")
             bar.update(total=max(1, ev.files_total), progress=0)
         elif ev.kind == "file_complete":
-            status.update(f"{ev.files_done} / {ev.files_total} files")
+            status.update(f"[dim]Files:[/]   {ev.files_done} / {ev.files_total}")
             bar.update(progress=ev.files_done)
         elif ev.kind == "cancelled":
             status.update("[yellow]Cancelled.[/] State saved; re-run to resume.")
         elif ev.kind == "done":
-            status.update("[green]Done.[/]")
+            status.update(f"[green]Done.[/]   {ev.files_done} / {ev.files_total} files")
 
         current.update(f"[dim]Current:[/] {_short_name(ev.current_file)}")
-
-        eta = estimate_eta_seconds(
-            files_done=ev.files_done, files_total=ev.files_total, elapsed_s=ev.elapsed_s
-        )
-        timing.update(f"[dim]Elapsed:[/] {fmt_eta(ev.elapsed_s)}    [dim]ETA:[/] {fmt_eta(eta)}")
+        self._render_timing(ev.elapsed_s)
         self._update_status_lines(
             pdfs_total=ev.pdfs_total,
             indexed_newly=ev.indexed_newly_total,
@@ -265,6 +481,7 @@ class IndexerScreen(ModalScreen[None]):
             still_flat=ev.still_flat_total,
             failed=ev.failed_total,
         )
+        self._sync_action_options(self._fnd_app())
 
     def _update_status_lines(
         self,
@@ -291,6 +508,55 @@ class IndexerScreen(ModalScreen[None]):
         else:
             texture_line.add_class("hidden")
             texture_line.update("")
+        self._refresh_history_band()
+
+    def _refresh_history_band(self) -> None:
+        """Render a one-line chip strip summarising finished collections
+        in the current chain. Scales to many collections via "+N more"
+        condensation; the full list lives in the post-chain summary
+        screen accessible via the View per-collection summary action."""
+        try:
+            band = self.query_one("#indexer_history", Static)
+        except Exception:
+            return
+        app = self._fnd_app()
+        history = getattr(app, "_indexer_chain_history", None) or []
+        if not history:
+            band.add_class("hidden")
+            band.update("")
+            return
+        budget = max(40, (self.size.width or 80) - 6)
+        chips = [_format_chain_chip(snap) for snap in history]
+        sep = "   "
+        full = sep.join(chips)
+        if len(full) <= budget:
+            band.remove_class("hidden")
+            band.update(f"[dim]Done:[/]   {full}")
+            return
+        tail = chips[-2:]
+        head: list[str] = []
+        ix = 0
+        remaining = (
+            budget
+            - len(sep.join(tail))
+            - len(sep)
+            - len("(+0 more)")
+            - len(sep)
+            - len("[dim]Done:[/]   ")
+        )
+        while ix < len(chips) - 2:
+            cand = chips[ix]
+            cost = len(cand) + (len(sep) if head else 0)
+            if cost > remaining:
+                break
+            head.append(cand)
+            remaining -= cost
+            ix += 1
+        gap = len(chips) - len(head) - len(tail)
+        parts = [*head, f"(+{gap} more)" if gap > 0 else None, *tail]
+        rendered = sep.join(p for p in parts if p)
+        band.remove_class("hidden")
+        band.update(f"[dim]Done:[/]   {rendered}")
 
     # ---- bindings ----
 
@@ -302,13 +568,58 @@ class IndexerScreen(ModalScreen[None]):
         app = self._fnd_app()
         if app._indexer_cancel is not None:
             app._indexer_cancel.set()
-        # Task will yield "cancelled" on next file boundary; modal
-        # drains the event and shows the status.
+        # Setting the event alone isn't enough: the runner only checks
+        # cancel.is_set() at file boundaries. A 10-minute PDF in
+        # flight means Cancel sits unresponsive for ten minutes. Set
+        # the worker's cancel beacon first so the BrokenProcessPool/
+        # StallError retry bails after one attempt, THEN tear the
+        # pool down so the current extract raises BrokenProcessPool
+        # immediately. The next iteration of the runner's loop sees
+        # cancel.is_set() and exits with the "cancelled" event the
+        # modal drains.
+        with contextlib.suppress(Exception):
+            from fnd.extract._worker import (
+                _get_pool,
+                _kill_pool_workers,
+                request_cancel,
+                shutdown_pool,
+            )
+
+            request_cancel()
+            pool = _get_pool()
+            _kill_pool_workers(pool)
+            shutdown_pool()
+        with contextlib.suppress(Exception):
+            self.query_one("#indexer_status", Static).update(
+                "[yellow]Cancelling…[/] waiting for current file to abort."
+            )
 
     async def action_pause(self) -> None:
         """Pause is conceptually the same as Cancel for now.
         Re-running the reindex resumes via cache + state file."""
         await self.action_cancel()
+
+    async def action_skip(self) -> None:
+        """Skip the current file and continue the chain.
+
+        Same kill-and-bypass-retry mechanism as Cancel, but does NOT
+        set the chain-wide cancel event - the runner sees the worker
+        die, marks this file as failed, and moves to the next file.
+        Visible only when the 'stuck' indicator fires."""
+        with contextlib.suppress(Exception):
+            from fnd.extract._worker import (
+                _get_pool,
+                _kill_pool_workers,
+                request_cancel,
+                shutdown_pool,
+            )
+
+            request_cancel()
+            pool = _get_pool()
+            _kill_pool_workers(pool)
+            shutdown_pool()
+        with contextlib.suppress(Exception):
+            self.query_one("#indexer_status", Static).update("[yellow]Skipping current file…[/]")
 
     def action_show_failed(self) -> None:
         """Open the still-flat / failed PDFs drill-in for the current
@@ -320,13 +631,67 @@ class IndexerScreen(ModalScreen[None]):
         scope = self._collection if self._chain_total <= 1 else None
         self.app.push_screen(StillFlatDrillIn(collection=scope))
 
+    def action_show_summary(self) -> None:
+        """Open the per-collection summary screen. Always available;
+        empty until at least one collection has finished in this
+        chain."""
+        from fnd.tui.settings_screen import ChainSummaryScreen
+
+        app = self._fnd_app()
+        history = getattr(app, "_indexer_chain_history", None) or []
+        self.app.push_screen(ChainSummaryScreen(history=list(history)))
+
+    def action_done(self) -> None:
+        """Close the indexer modal. Identical to Background except it
+        also resets the chain-history snapshot so the next Update-all
+        starts with a clean slate."""
+        app = self._fnd_app()
+        app._indexer_chain_history = []  # type: ignore[attr-defined]
+        self.dismiss(None)
+
     # ---- OptionList action dispatch ----
 
     async def on_option_list_option_selected(self, ev: Any) -> None:
         if ev.option.id == "background":
             await self.action_background()
+        elif ev.option.id == "summary":
+            self.action_show_summary()
+        elif ev.option.id == "done":
+            self.action_done()
         elif ev.option.id == "cancel":
             await self.action_cancel()
+        elif ev.option.id == "skip":
+            await self.action_skip()
+
+
+@dataclass(slots=True, frozen=True)
+class ChainStepSummary:
+    """Frozen per-collection snapshot captured when a chain step
+    completes. Drives both the in-modal history band and the post-chain
+    ChainSummaryScreen so the user never loses sight of what each
+    collection produced just because the chain moved on."""
+
+    collection: str
+    files_total: int
+    pdfs_total: int
+    textured_newly: int
+    textured_already: int
+    still_flat: int
+    failed: int
+    elapsed_s: float
+
+
+def _format_chain_chip(snap: ChainStepSummary) -> str:
+    """One-chip rendering for the modal's Done-history band.
+
+    `<name> Ntex Nfail` when there are failures; just `<name> Ntex`
+    otherwise. Kept short on purpose so a chain of many collections
+    fits before the condense-to-(+N more) fallback kicks in."""
+    tex = snap.textured_newly + snap.textured_already
+    fail = snap.failed
+    if fail:
+        return f"[green]✓[/] {snap.collection} {tex}t [yellow]⚠{fail}[/]"
+    return f"[green]✓[/] {snap.collection} {tex}t"
 
 
 def _short_name(path: str) -> str:
@@ -394,10 +759,9 @@ async def drive_indexer(
         cancel=cancel,
         texturise_override=texturise_override,
     )
+    final_event: Any = None
     try:
         async for ev in gen:
-            # Mirror into the snapshot first so footer/late-attach
-            # modal see fresh data even before the queue consumer wakes.
             snap = _event_to_state(
                 ev, collection=collection, started_at_default=app._indexer_started_at
             )
@@ -406,35 +770,46 @@ async def drive_indexer(
             with _SuppressFullQueueLoss():
                 events.put_nowait(ev)
             if ev.kind in ("done", "cancelled"):
+                final_event = ev
                 break
     finally:
-        # run_indexer is annotated as AsyncIterator but actually returns
-        # an AsyncGenerator; aclose() exists at runtime but the static
-        # type does not advertise it.
         await gen.aclose()  # type: ignore[attr-defined]
 
-    # Update-all-collections chain: when more collections are queued
-    # behind this one, dequeue the next and start it. The modal stays
-    # mounted across the chain so the user sees one continuous flow.
+    if final_event is not None and final_event.kind == "done":
+        history: list[Any] = getattr(app, "_indexer_chain_history", None) or []
+        history.append(
+            ChainStepSummary(
+                collection=collection,
+                files_total=final_event.files_total,
+                pdfs_total=final_event.pdfs_total,
+                textured_newly=final_event.textured_newly_total,
+                textured_already=final_event.textured_already_total,
+                still_flat=final_event.still_flat_total,
+                failed=final_event.failed_total,
+                elapsed_s=final_event.elapsed_s,
+            )
+        )
+        app._indexer_chain_history = history  # type: ignore[attr-defined]
+
     pending: list[str] = getattr(app, "_indexer_chain_remaining", None) or []
     if pending and not cancel.is_set():
         next_collection = pending.pop(0)
         app._indexer_chain_remaining = pending  # type: ignore[attr-defined]
-        # Set the guard BEFORE scheduling. The drain loop checks both
-        # this flag and the remaining list when it sees "done"; without
-        # the guard, a chain step that empties the list (the final
-        # popped name) would let the modal pop before call_later fires.
         app._indexer_chain_callback_pending = True  # type: ignore[attr-defined]
-        # Defer to the next event-loop tick so this task completes
-        # cleanly before the next one starts.
         app.call_later(_start_next_in_chain, app, next_collection)
     else:
-        # Chain is finished or was cancelled. Reset chain bookkeeping
-        # so a subsequent single-collection Update index doesn't
-        # render with a stale "1 of N" title.
         app._indexer_chain_remaining = []  # type: ignore[attr-defined]
         app._indexer_chain_total = 1  # type: ignore[attr-defined]
         app._indexer_chain_callback_pending = False  # type: ignore[attr-defined]
+        history_final: list[Any] = getattr(app, "_indexer_chain_history", None) or []
+        if len(history_final) > 1 and not cancel.is_set():
+
+            def _push_summary() -> None:
+                from fnd.tui.settings_screen import ChainSummaryScreen
+
+                app.push_screen(ChainSummaryScreen(history=list(history_final)))
+
+            app.call_later(_push_summary)
 
 
 def _start_next_in_chain(app: FNDApp, collection: str) -> None:
@@ -443,22 +818,13 @@ def _start_next_in_chain(app: FNDApp, collection: str) -> None:
     pyright can type-check the call site."""
     from fnd.config import load as _load_config
 
-    # Clear the guard now that the deferred step is running. The drain
-    # loop relies on this flag flipping False before the new task's
-    # first "started" event arrives, otherwise the modal could exit
-    # if the new run somehow finished synchronously.
     app._indexer_chain_callback_pending = False  # type: ignore[attr-defined]
-    # Prefer in-memory config (tests / live edits) over disk.
     in_memory_cfg = getattr(app, "_config", None)
     cfg = in_memory_cfg if in_memory_cfg is not None else _load_config()
     if collection not in cfg.collections:
         return
     col_cfg = cfg.collections[collection]
     app._indexer_task = None  # type: ignore[attr-defined] # release
-    # The chain stores its texturise override on the app so successive
-    # call_later steps keep the same mode the user picked at the
-    # confirm step (e.g. "Update everything (index + texturise)" stays
-    # texturising across all four collections, not just the first).
     override = getattr(app, "_indexer_texturise_override", None)
     app.start_indexer(
         collection=collection,
@@ -507,4 +873,3 @@ class _SuppressFullQueueLoss:
 # Reference the type so the import doesn't get tree-shaken away when
 # only used inside `if TYPE_CHECKING:` for the modal.
 _ = AsyncIterator
-_ = time  # ditto for time

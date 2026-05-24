@@ -74,17 +74,35 @@ class DoclingDaemon:
         except (BrokenPipeError, subprocess.TimeoutExpired):
             proc.kill()
 
-    def extract_page(self, pdf_path: Path, page_index: int) -> str:
+    def extract_page(self, pdf_path: Path, page_index: int, *, timeout_s: float = 45.0) -> str:
         """Send one (pdf, page) request; return the Markdown response.
 
         Returns "" on any failure — caller decides how to handle
-        (typically: keep the pymupdf4llm output it already has)."""
+        (typically: keep the pymupdf4llm output it already has).
+
+        The blocking stdout.readline() is wrapped in a select() with a
+        timeout so a docling wedge (image-rich tables hang its
+        TableFormer model) doesn't take down the whole worker via the
+        120s stall detector. On timeout we kill the daemon so the next
+        call gets a fresh one - docling state can be poisoned after a
+        wedge and a soft re-request would just hang again."""
+        import select
+
         assert self._proc.stdin is not None
         assert self._proc.stdout is not None
         request = json.dumps({"pdf": str(pdf_path), "page": page_index})
         try:
             self._proc.stdin.write(request + "\n")
             self._proc.stdin.flush()
+        except (BrokenPipeError, ValueError):
+            return ""
+        ready, _, _ = select.select([self._proc.stdout], [], [], timeout_s)
+        if not ready:
+            # Docling didn't respond in time. Tear it down so the next
+            # page doesn't inherit the wedged state.
+            type(self).shutdown()
+            return ""
+        try:
             line = self._proc.stdout.readline()
         except (BrokenPipeError, ValueError):
             return ""

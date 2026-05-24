@@ -130,7 +130,9 @@ def test_index_continues_past_extract_error(
     captured = capsys.readouterr()
 
     assert written >= 1, "good.md should still index"
-    assert "[fnd skip]" in captured.err
+    # Prefix is now "[fnd skip <ISO-8601 UTC>]" so terminal captures
+    # can be correlated against the indexer_failures.toml records.
+    assert "[fnd skip " in captured.err
     assert "poison.docx" in captured.err
 
 

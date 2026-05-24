@@ -45,7 +45,12 @@ _GRACE = 15.0
 def test_stall_detector_kills_quiet_worker() -> None:
     """A worker that does not heartbeat within ``stall_seconds`` is
     killed and the parent surfaces a StallError. The worker would
-    otherwise tie up the indexer forever."""
+    otherwise tie up the indexer forever.
+
+    StallError is retried once with a fresh worker (see the
+    BrokenProcessPool retry sibling) so a single transient stall does
+    not poison the file. The retry doubles the worst-case timing
+    budget: two grace windows + per-iteration overhead."""
     from fnd.extract._worker import (
         StallError,
         run_in_pool_sync_with_stall_detection,
@@ -59,8 +64,9 @@ def test_stall_detector_kills_quiet_worker() -> None:
             stall_seconds=0.5,
             first_beat_grace_seconds=_GRACE,
         )
-    # Must trigger well before the worker's full sleep.
-    assert time.monotonic() - t0 < _GRACE + 5.0
+    # 2x grace covers the StallError retry; +5s buffer absorbs pool
+    # respawn cost and parent-side bookkeeping between attempts.
+    assert time.monotonic() - t0 < 2 * _GRACE + 5.0
 
 
 def test_chatty_worker_survives_stall_detection() -> None:

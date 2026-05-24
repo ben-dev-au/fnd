@@ -115,6 +115,20 @@ def isolated_ui_state(  # pyright: ignore[reportUnusedFunction]
 
 
 @pytest.fixture(autouse=True)
+def isolated_seen_log(  # pyright: ignore[reportUnusedFunction]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Redirect the non-PDF "have we seen this content?" marker store
+    at a per-test temp path. Without isolation, a marker written by
+    one test (e.g. for the ubiquitous ``# A\\n`` markdown fixture)
+    would make a later test's first-run assertion of ``indexed_newly``
+    fail with ``indexed_already`` instead."""
+    seen_root = tmp_path / "seen-log"
+    monkeypatch.setattr("fnd.seen_log._seen_root", lambda: seen_root)
+    return seen_root
+
+
+@pytest.fixture(autouse=True)
 def isolated_pdf_structure_cache(  # pyright: ignore[reportUnusedFunction]
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Path:

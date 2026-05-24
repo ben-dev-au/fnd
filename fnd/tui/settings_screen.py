@@ -223,18 +223,38 @@ def _render_row(
         text.append(f"{_GLYPH_EXTERNAL} ", style="bold cyan")
         leading_used = 2  # glyph + space
 
+    # Compute the trailing affordance up-front so the label can be
+    # truncated with `…` when label + dots + affordance would exceed
+    # the row width. Without this the action label (`[ Remove… ]`,
+    # `[ Forget… ]`, etc.) clips at the right border, hiding the
+    # primary signal of "what Enter does."
+    pending_segments = _trailing_segments(item, app) if not breadcrumb else []
+    label_to_render = item.label
+    if width is not None and pending_segments:
+        affordance_len = sum(
+            len(seg_text) for seg_text, seg_style in pending_segments if "dim" not in seg_style
+        )
+        used_leading = (_KEY_COL if item.key else 0) + leading_used
+        # Minimum dotted pad + leading/trailing space around it.
+        min_pad = 2
+        gap = 2
+        label_budget = width - used_leading - affordance_len - min_pad - gap
+        if label_budget > 0 and len(label_to_render) > label_budget:
+            keep = max(1, label_budget - 1)
+            label_to_render = label_to_render[:keep] + "…"
+
     if highlight:
-        low = item.label.lower()
+        low = label_to_render.lower()
         h_low = highlight.lower()
         i = low.find(h_low)
         if i >= 0:
-            text.append(item.label[:i], style=label_style)
-            text.append(item.label[i : i + len(highlight)], style="bold")
-            text.append(item.label[i + len(highlight) :], style=label_style)
+            text.append(label_to_render[:i], style=label_style)
+            text.append(label_to_render[i : i + len(highlight)], style="bold")
+            text.append(label_to_render[i + len(highlight) :], style=label_style)
         else:
-            text.append(item.label, style=label_style)
+            text.append(label_to_render, style=label_style)
     else:
-        text.append(item.label, style=label_style)
+        text.append(label_to_render, style=label_style)
 
     if breadcrumb:
         bc_text = " › ".join(breadcrumb)
@@ -247,12 +267,13 @@ def _render_row(
         text.append(bc_text, style="dim italic")
         return text
 
-    # Per-kind trailing segments.
-    segments = _trailing_segments(item, app)
+    # Per-kind trailing segments (already computed above for the
+    # label-budget pass).
+    segments = pending_segments
     if not segments:
         return text
 
-    used = (_KEY_COL if item.key else 0) + leading_used + len(item.label)
+    used = (_KEY_COL if item.key else 0) + leading_used + len(label_to_render)
     if width is not None:
         # The trailing affordance (rightmost segment) is the row's
         # primary signal of "what does Enter do." If the row's total
@@ -394,13 +415,17 @@ def _trailing_segments(item: MenuItem, app: FNDApp | None) -> list[tuple[str, st
 def _render_header(item: MenuItem, width: int | None) -> Text:
     """Group sub-header rendered as ``─ Label ─────────``.
 
-    Accent colour throughout (rule + label). The rule continuation gives
-    sections a clear horizontal anchor without forcing the user to scan
-    for bold-only signals."""
+    Accent colour throughout (rule + label). The rule fills the row to
+    the same right edge content rows reach so the buffer between text
+    and the bordered subsection's right edge stays consistent."""
     label_part = f" {item.label} "
     if width is not None:
-        used = len(label_part) + 1  # leading ─
-        tail = max(2, width - used - 1)
+        # `used` already includes the leading ─; tail should just fill
+        # whatever budget remains. The previous `- 1` over-subtracted
+        # and left a visibly wider buffer on header rows than content
+        # rows inside the bordered subsections.
+        used = len(label_part) + 1
+        tail = max(2, width - used)
     else:
         tail = 30
     text = Text()
@@ -601,8 +626,8 @@ class SettingsList(Widget, can_focus=True):
     SettingsList { height: 1fr; }
     SettingsList > VerticalScroll { padding: 0 0; }
     SettingsList Static.row { height: 1; padding: 0 1; }
-    SettingsList Static.row.-header-1 { padding: 1 0 0 0; height: 2; }
-    SettingsList Static.row.-header-2 { padding: 0 0 0 0; }
+    SettingsList Static.row.-header-1 { padding: 1 1 0 1; height: 2; }
+    SettingsList Static.row.-header-2 { padding: 0 1; }
     SettingsList .subsection {
         border: round $primary 50%;
         padding: 0 1;
@@ -743,13 +768,22 @@ class SettingsList(Widget, can_focus=True):
         width = self.size.width or 80
         rows = list(body.query(Static))
         highlight = self._search_query or None
+        # Budget chars eaten by the wrapping containers so the row's
+        # ellipsis fires before content clips past a border. The outer
+        # box contributes border (2) + padding (2); a bordered
+        # subsection adds border (2) + padding (2) plus a fudge factor
+        # for the bullet column + cursor glyph that ride on the inside
+        # of every row inside a subsection.
+        outer_inset = 4
+        subsection_inset = 6
         for i, (item, row) in enumerate(zip(self._items, rows, strict=False)):
             bc = self._search_breadcrumbs.get(id(item)) or None
+            inset = outer_inset + (subsection_inset if item.subsection else 0)
             row.update(
                 _render_row(
                     item,
                     app,
-                    width=width - 2,
+                    width=width - inset,
                     breadcrumb=bc,
                     highlight=highlight,
                 )
@@ -954,9 +988,9 @@ class SettingsScreen(Screen[None]):
     SettingsScreen > #settings_box {
         height: auto;
         max-height: 90%;
-        width: auto;
+        width: 75%;
         min-width: 60;
-        max-width: 100;
+        max-width: 140;
         border: round $primary 50%;
         padding: 0 1;
     }
@@ -3730,7 +3764,34 @@ def open_settings_section(
 # ── Still-flat drill-in ─────────────────────────────────────────────
 
 
-def _flat_pdfs_with_reasons(*, collection: str | None = None) -> list[tuple[str, str, str]]:
+def _format_recorded_at(iso: str) -> str:
+    """Compact local-time label for an ISO-8601 UTC timestamp.
+
+    today HH:MM        — same calendar day
+    yesterday HH:MM    — previous calendar day
+    Mon HH:MM          — within the last 7 days
+    MMM DD HH:MM       — older than a week"""
+    import datetime as _dt
+
+    try:
+        ts = _dt.datetime.fromisoformat(iso).astimezone()
+    except ValueError:
+        return iso
+    now = _dt.datetime.now().astimezone()
+    days = (now.date() - ts.date()).days
+    hm = ts.strftime("%H:%M")
+    if days == 0:
+        return f"today {hm}"
+    if days == 1:
+        return f"yesterday {hm}"
+    if days < 7:
+        return f"{ts.strftime('%a')} {hm}"
+    return ts.strftime("%b %d %H:%M")
+
+
+def _flat_pdfs_with_reasons(
+    *, collection: str | None = None
+) -> list[tuple[str, str, str, str | None]]:
     """Return a list of ``(collection, path, reason)`` for every PDF
     that is on disk but has no body_struct-bearing chunk in the
     tantivy index. Reasons are sourced from the failure log when
@@ -3791,10 +3852,13 @@ def _flat_pdfs_with_reasons(*, collection: str | None = None) -> list[tuple[str,
             pass
 
     # Failure-log records keyed by (collection, path).
-    failure_by_key: dict[tuple[str, str], str] = {}
+    failure_by_key: dict[tuple[str, str], tuple[str, str]] = {}
     for r in list_failures():
         with contextlib.suppress(OSError):
-            failure_by_key[(r.collection, str(Path(r.path).resolve()))] = r.reason
+            failure_by_key[(r.collection, str(Path(r.path).resolve()))] = (
+                r.reason,
+                r.recorded_at,
+            )
 
     # Reason fallback when no failure record exists.
     from fnd.tui.menu import _is_pdf_structure_installed
@@ -3806,20 +3870,108 @@ def _flat_pdfs_with_reasons(*, collection: str | None = None) -> list[tuple[str,
     except Exception:
         battery_saver = False
 
-    out: list[tuple[str, str, str]] = []
+    out: list[tuple[str, str, str, str | None]] = []
     for name, paths in on_disk.items():
         flat = paths - textured.get(name, set())
         for p in sorted(flat):
-            reason = failure_by_key.get((name, p))
-            if reason is None:
+            record = failure_by_key.get((name, p))
+            if record is None:
                 if not engine_on:
                     reason = "Texturising engine is not installed"
                 elif battery_saver:
                     reason = "Texturise-while-indexing toggle is OFF"
                 else:
                     reason = "Indexed flat (no failure recorded)"
-            out.append((name, p, reason))
+                out.append((name, p, reason, None))
+            else:
+                out.append((name, p, record[0], record[1]))
     return out
+
+
+class ChainSummaryScreen(Screen[None]):
+    """Post-chain summary of every collection's outcome.
+
+    Auto-pushed at end of a multi-collection Update-all chain. Each row
+    shows the collection's final counters and drills into the still-flat
+    drill-in scoped to that collection. Scales to many collections via
+    the VerticalScroll body."""
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Back", show=False),
+        Binding("up,k", "move(-1)", show=False),
+        Binding("down,j", "move(1)", show=False),
+        Binding("enter,r", "drill", "Drill", show=True),
+    ]
+
+    CSS = """
+    ChainSummaryScreen { background: $surface; }
+    ChainSummaryScreen > #settings_box {
+        height: 1fr;
+        border: round $primary 50%;
+        padding: 0 1;
+    }
+    ChainSummaryScreen > #settings_box:focus-within { border: round $accent; }
+    ChainSummaryScreen > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(self, *, history: list[Any]) -> None:
+        super().__init__()
+        self._history = list(history)
+        self._cursor = 0
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings_box") as box:
+            box.border_title = f"Update all - per-collection summary ({len(self._history)})"
+            yield VerticalScroll(id="chain_summary_body")
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        import contextlib as _ctx
+
+        self._refresh()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        with _ctx.suppress(Exception):
+            self.query_one("#footer_hints", Static).update(
+                _hint_bar(app, (("↑↓", "Nav"), ("⏎ / r", "Still-flat drill-in"), ("Esc", "Back")))
+            )
+
+    def _refresh(self) -> None:
+        body = self.query_one("#chain_summary_body", VerticalScroll)
+        for child in list(body.children):
+            child.remove()
+        if not self._history:
+            body.mount(Static("No chain history captured.", id="empty_state"))
+            return
+        for i, snap in enumerate(self._history):
+            body.mount(Static(self._format_row(i, snap), classes="row"))
+
+    def _format_row(self, i: int, snap: Any) -> str:
+        cursor = "▸ " if i == self._cursor else "  "
+        tex = snap.textured_newly + snap.textured_already
+        chips = [f"{tex} textured"]
+        if snap.still_flat > 0:
+            chips.append(f"[yellow]⚠ {snap.still_flat} still flat[/]")
+        if snap.failed > 0:
+            chips.append(f"[yellow]⚠ {snap.failed} failed[/]")
+        chips.append(f"[dim]{snap.files_total} files · {snap.elapsed_s:.0f}s[/]")
+        return f"{cursor}[bold]{snap.collection}[/]   " + "   ".join(chips)
+
+    def action_move(self, delta: int) -> None:
+        if not self._history:
+            return
+        self._cursor = max(0, min(len(self._history) - 1, self._cursor + delta))
+        self._refresh()
+
+    def action_drill(self) -> None:
+        if not self._history:
+            return
+        snap = self._history[self._cursor]
+        self.app.push_screen(StillFlatDrillIn(collection=snap.collection))
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
 
 
 class StillFlatDrillIn(Screen[None]):
@@ -3854,7 +4006,7 @@ class StillFlatDrillIn(Screen[None]):
     def __init__(self, *, collection: str | None = None) -> None:
         super().__init__()
         self._collection_filter = collection
-        self._rows: list[tuple[str, str, str]] = []
+        self._rows: list[tuple[str, str, str, str | None]] = []
         self._cursor = 0
 
     def compose(self) -> ComposeResult:
@@ -3884,13 +4036,24 @@ class StillFlatDrillIn(Screen[None]):
         if not self._rows:
             body.mount(Static("No PDFs are still flat.", id="empty_state"))
             return
-        for i, (col, path, reason) in enumerate(self._rows):
-            body.mount(Static(self._format_row(i, col, path, reason), classes="row"))
+        for i, (col, path, reason, recorded_at) in enumerate(self._rows):
+            body.mount(
+                Static(
+                    self._format_row(i, col, path, reason, recorded_at),
+                    classes="row",
+                )
+            )
 
-    def _format_row(self, i: int, col: str, path: str, reason: str) -> str:
+    def _format_row(self, i: int, col: str, path: str, reason: str, recorded_at: str | None) -> str:
         cursor = "▸ " if i == self._cursor else "  "
         name = Path(path).name
-        return f"{cursor}[{col}] {name}\n      [dim]{reason}[/]"
+        when = ""
+        if recorded_at:
+            # Compact local-time label (e.g. "today 14:18", "Mon 09:02",
+            # "May 23 14:18") so the user can tell fresh records from
+            # week-old ones without parsing ISO-8601 in their head.
+            when = f" · {_format_recorded_at(recorded_at)}"
+        return f"{cursor}[{col}] {name}{when}\n      [dim]{reason}[/]"
 
     def action_move(self, delta: int) -> None:
         if not self._rows:
@@ -3904,13 +4067,13 @@ class StillFlatDrillIn(Screen[None]):
         for i, row in enumerate(rows):
             if i >= len(self._rows):
                 continue
-            col, path, reason = self._rows[i]
-            row.update(self._format_row(i, col, path, reason))
+            col, path, reason, recorded_at = self._rows[i]
+            row.update(self._format_row(i, col, path, reason, recorded_at))
 
     def action_retry(self) -> None:
         if not self._rows:
             return
-        col, _path, _reason = self._rows[self._cursor]
+        col, _path, _reason, _recorded_at = self._rows[self._cursor]
         app: FNDApp = self.app  # type: ignore[assignment]
         # Per-file precision would need either a single-file extract
         # path through extract() or a temp-config filter; route through

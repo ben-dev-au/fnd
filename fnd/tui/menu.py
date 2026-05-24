@@ -1839,20 +1839,16 @@ def _count_pdfs_in_all_collections(cfg: Any) -> int:
 
 
 def _run_update_cache(app: FNDApp) -> None:
-    """Confirm + populate cache entries for all uncached PDFs.
+    """Texturise every still-flat PDF across every collection.
 
-    Doesn't touch the search index — runs the structuring pipeline only.
-    The actual work is handled by a dedicated worker; this stub pushes
-    the confirm screen which then triggers the run. Phase E wires the
-    worker; for now we notify and bail so the menu plumbing works."""
-    import contextlib
-
-    with contextlib.suppress(Exception):
-        app.notify(
-            "Update cache action not yet wired through. "
-            "For now, use Update index from a collection.",
-            timeout=5,
-        )
+    Routes through the existing Update-all chain with
+    texturise_override=True so the cache short-circuits already-
+    textured PDFs and only the still-flat ones cost real work. The
+    search index is touched by the same pass (delete + re-add), but
+    unchanged files cache-hit so the net cost is one texturising pass
+    per still-flat PDF - the same effective behaviour the old
+    dedicated 'texturise-only' worker was designed for."""
+    _push_update_all_confirm(app, texturise_override=True)
 
 
 def _summary_indexing(app: FNDApp) -> str:
