@@ -30,9 +30,9 @@ surrounding code's style and comment density.
 
 ## Adding an app to the "Open with…" catalogue
 
-Third-party app integrations live in `docs/apps/`. To contribute one, add a
-single file describing the `[apps.<id>]` config block — see
-[`docs/apps/README.md`](docs/apps/README.md) for the schema and safety rules.
+Third-party app integrations live in [`docs/apps.md`](docs/apps.md). To
+contribute one, add your `[apps.<id>]` config block to the catalogue; see that
+page for the schema and safety rules.
 
 ## Security
 

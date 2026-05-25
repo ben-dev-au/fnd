@@ -21,7 +21,7 @@ Initial development all but complete and stable, core features implemented, ente
 
 - macOS
 - Python 3.13 (supplied automatically by Homebrew or pipx)
-- [uv](https://docs.astral.sh/uv/) — only for the optional structured-PDF extra
+- [uv](https://docs.astral.sh/uv/), only for the optional structured-PDF extra
 
 ## Install
 
@@ -42,31 +42,31 @@ gh attestation verify "$(brew --cache fnd)" --repo ben-dev-au/fnd
 ```
 
 See [`SECURITY.md`](SECURITY.md) for the threat model, disclosure policy, and the
-reasoning behind the install/verify story (no Apple Developer ID required —
+reasoning behind the install/verify story (no Apple Developer ID required;
 Homebrew installs bypass Gatekeeper via curl).
 
 ## Features
 
-- **Multi-format indexing** — PDF, DOCX, PPTX, Markdown, and plain text.
-- **Named collections** — group sources (per-source roots, include/exclude
+- **Multi-format indexing**: PDF, DOCX, PPTX, Markdown, and plain text.
+- **Named collections**: group sources (per-source roots, include/exclude
   globs, optional symlink-following) and search them individually or together.
-- **Strong ranking** — BM25 with regime-aware fusion (strong-signal / fusion /
+- **Strong ranking**: BM25 with regime-aware fusion (strong-signal / fusion /
   cascade) for stable results across corpora of different sizes.
-- **Expressive query language** — phrases, boolean, proximity, fuzzy, field
+- **Expressive query language**: phrases, boolean, proximity, fuzzy, field
   qualifiers, wildcards, date filters, and markdown-frontmatter predicates
   (see [Search how-to](#search-how-to)).
-- **lazygit-style TUI** — live search as you type, syntax-highlighted preview,
+- **lazygit-style TUI**: live search as you type, syntax-highlighted preview,
   and in-file navigation that jumps to the matching PDF page, PPTX slide, or
   Markdown heading.
-- **"Open with…" launcher** — open a hit in Preview, Skim, Obsidian, VS Code,
+- **"Open with…" launcher**: open a hit in Preview, Skim, Obsidian, VS Code,
   PDF Expert, or your own configured app, with page/line/heading deep-links
   where the app supports them (see [Open with…](#open-with-apps)).
-- **Obsidian integration** — vault auto-detection, frontmatter filters, and
+- **Obsidian integration**: vault auto-detection, frontmatter filters, and
   line-precise jumps via the Advanced URI plugin.
-- **Structured PDF extraction (opt-in)** — headings, lists, tables, and
+- **Structured PDF extraction (opt-in)**: headings, lists, tables, and
   bold/italic, with a shared content-addressed extraction cache and
   auto-resume on interrupted reindexes.
-- **Local and private** — no network, no telemetry. The index lives on your
+- **Local and private**: no network, no telemetry. The index lives on your
   machine; state is hardened to `0o700`.
 
 ## Quick start
@@ -85,7 +85,7 @@ and reindex them with `fnd collection reindex <name>`.
 Run `fnd` with no arguments for the interactive interface. It has three panes:
 the **query bar** at the top, the **results tree** (hits grouped by file) on the
 left, and the **preview pane** on the right showing the matching passage with
-your search terms highlighted. Just start typing — results update as you go,
+your search terms highlighted. Just start typing, and results update as you go,
 and the [query language](#search-how-to) works exactly as it does from the CLI.
 
 ### Moving around with the keyboard
@@ -104,9 +104,9 @@ and the [query language](#search-how-to) works exactly as it does from the CLI.
 | Key            | What it does                                                                                                                                        |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `o`            | Open the hit in its resolved app, jumping to the matching page / slide / line / heading.                                                            |
-| `O`            | **Open with…** — a picker of every app that handles this file type. Use `↑↓` then `Enter`, or press the letter shown next to an app; `Esc` cancels. |
+| `O`            | **Open with…**: a picker of every app that handles this file type. Use `↑↓` then `Enter`, or press the letter shown next to an app; `Esc` cancels. |
 | `Space`        | Quick Look the file.                                                                                                                                |
-| `:`            | Open the **Settings & Commands** menu — every setting and action in one searchable, full-screen list.                                               |
+| `:`            | Open the **Settings & Commands** menu: every setting and action in one searchable, full-screen list.                                               |
 | `?`            | Keybindings cheat sheet (press again to dismiss).                                                                                                   |
 | `Ctrl+F`       | Toggle auto-fuzzy matching (persists to your config).                                                                                               |
 | `h`            | Toggle search-term highlighting in the preview.                                                                                                     |
@@ -148,8 +148,8 @@ Expert, and System Default**; where the app and file type allow it, fnd jumps to
 the matching page, slide, line, or heading. Set a per-file-type default with
 `[app_defaults]`, or a per-source app, in your config.
 
-You can add your own apps with a small `[apps.<id>]` block in your config — see
-the catalogue and schema in [`docs/apps/`](docs/apps/). User templates are passed
+You can add your own apps with a small `[apps.<id>]` block in your config; see
+the catalogue and schema in [`docs/apps.md`](docs/apps.md). User templates are passed
 to apps as argv lists (never a shell) or as percent-encoded URLs handed to
 `open`, so file paths can't inject commands.
 
@@ -158,19 +158,19 @@ to apps as argv lists (never a shell) or as percent-encoded URLs handed to
 A **collection** is a named group of source folders you search together; each
 **source** is a folder plus the include/exclude globs that decide which files in
 it get indexed. The `default` collection points at `~/Documents` out of the box.
-There are three ways to manage them — they're interchangeable, because the UI
+There are three ways to manage them, and they're interchangeable, because the UI
 writes the same config file you can edit by hand.
 
 ### From the TUI
 
 Press `:` to open Settings, move to **Collections**, then:
 
-- **Add a collection** — choose **Add collection** and fill the wizard:
+- **Add a collection**: choose **Add collection** and fill the wizard:
   **Name**, a **Source path** (a folder; `~/…` is fine), the file types to
   **Include** and patterns to **Exclude**, an optional markdown
   **Frontmatter filter**, and a **Follow symlinks** toggle. Press **Ctrl+S** to
   save and index right away (`Esc` cancels).
-- **Add a source to an existing collection** — open the collection, then
+- **Add a source to an existing collection**: open the collection, then
   **Sources → Add source**, and set the path, includes/excludes, an optional
   per-source app, and (for Obsidian) the vault name. **Ctrl+S** saves and
   returns; **Ctrl+A** saves and adds another. Reindex the collection afterward.
@@ -229,7 +229,7 @@ frontmatter_filter = "Status == 'published'"   # markdown sources only; see Sear
 pdf = "skim"
 md  = "obsidian"
 
-# Define your own app (ready-made blocks live in docs/apps/).
+# Define your own app (ready-made blocks live in docs/apps.md).
 [apps.marked]
 display_name = "Marked 2"
 handles      = ["md"]
@@ -269,7 +269,7 @@ After installing, reindex from **Settings → Collections → ‹name› → Rei
 automatically.
 
 Two packages: `pymupdf4llm` (which pulls `pymupdf-layout`, Polyform
-Noncommercial — fnd is non-commercial, acceptable) and `docling-slim[standard]`
+Noncommercial; fnd is non-commercial, acceptable) and `docling-slim[standard]`
 (Apache-2.0). ML weights (~400 MB) download on first use. Uninstall removes the
 packages; indexed structured chunks remain in the index until the next reindex.
 
@@ -282,7 +282,7 @@ reindexes only re-process changed files.
 ### Cache
 
 Extracted chunks are content-addressed at `~/Library/Caches/fnd/extraction/`.
-Shared across collections — the same file in two collections is extracted once.
+Shared across collections: the same file in two collections is extracted once.
 
 In the TUI: **Settings → Indexing → Cache size** shows entries + disk;
 **Cache maintenance…** drills to Prune stale (recoverable) and Clear
@@ -314,7 +314,7 @@ filters. They compose freely.
 | You type                      | What it does                                                                                                                                                           |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `entropy`                     | Single term. Matches anywhere in the document body, title, heading path, or filename. Stemmed, so `entropies` and `entropy` are equivalent.                            |
-| `cross entropy loss`          | Three terms, implicit AND. Every term must appear somewhere in the chunk — but not necessarily near each other or in order.                                            |
+| `cross entropy loss`          | Three terms, implicit AND. Every term must appear somewhere in the chunk, but not necessarily near each other or in order.                                            |
 | `"cross entropy loss"`        | Exact phrase. The three words must appear in order, adjacent. Matches `cross entropy loss` and `cross-entropy loss` (hyphens are treated as separators at index time). |
 | `cross OR entropy`            | Either term. Useful when a concept goes by different names.                                                                                                            |
 | `NOT regression`              | Exclude. Almost always combined: `entropy NOT regression`.                                                                                                             |
@@ -324,15 +324,15 @@ filters. They compose freely.
 
 Quotes are the single biggest precision win:
 
-- `man in the middle` — every doc with the words `man`, `in`, `the`, and
+- `man in the middle`: every doc with the words `man`, `in`, `the`, and
   `middle` _anywhere_ in a chunk. Lots of noise.
-- `"man in the middle"` — only docs where those four words appear together,
+- `"man in the middle"`: only docs where those four words appear together,
   in order. Also matches `man-in-the-middle` (hyphens split into the same
   tokens at index time).
 
 If you find yourself searching for a common phrase, quote it.
 
-### Proximity — "near each other, not necessarily adjacent"
+### Proximity: "near each other, not necessarily adjacent"
 
 When you want the terms close together but don't care about exact order or
 adjacent words between them, use a proximity (slop) search. Two equivalent
@@ -347,7 +347,7 @@ forms:
 | `{500} race condition mitigations` | Within ~one page.                            |
 
 Rough mapping: ~5 tokens = very near, ~20 = one line, ~60 = a few lines,
-~500 = roughly a page. Proximity is bounded by chunk size — if the terms
+~500 = roughly a page. Proximity is bounded by chunk size: if the terms
 straddle a chunk boundary, no proximity query will catch them; that's when
 you fall back to loose AND.
 
@@ -360,7 +360,7 @@ Suffix `~1` or `~2` to allow that many edits per term:
 | `mitochondira~1` | `mitochondria`, `mitochondrial`, etc.              |
 | `kubernates~2`   | `kubernetes`, `kubernates`, `kubernetes` variants. |
 
-Use sparingly on short terms — `cat~2` matches almost everything.
+Use sparingly on short terms: `cat~2` matches almost everything.
 
 ### Field qualifiers
 
@@ -397,7 +397,7 @@ Numeric ranges use `[low TO high]`. Shorthand for one-sided comparisons:
 | ------------------------------------------- | ---------------------------------- |
 | `page:5`                                    | Exact page 5.                      |
 | `page:>20`                                  | Page 21 onward.                    |
-| `page:[10 TO 20]`                           | Pages 10–20 inclusive.             |
+| `page:[10 TO 20]`                           | Pages 10 to 20 inclusive.          |
 | `slide:<5`                                  | First four slides.                 |
 | `mtime:today`                               | Modified today.                    |
 | `mtime:week` / `mtime:month` / `mtime:year` | Within the last 7 / 30 / 365 days. |
@@ -411,7 +411,7 @@ Numeric ranges use `[low TO high]`. Shorthand for one-sided comparisons:
 | You type  | Matches                                                       |
 | --------- | ------------------------------------------------------------- |
 | `crypto*` | `crypto`, `cryptography`, `cryptographic`.                    |
-| `*tion`   | Wildcard prefixes are not supported — anchor at the end only. |
+| `*tion`   | Wildcard prefixes are not supported; anchor at the end only.  |
 
 ### Markdown frontmatter filter
 
@@ -430,7 +430,7 @@ Supported operators: `==` `!=` `<` `<=` `>` `>=` `~~` (glob), `in`, `not in`,
 dates, `true`/`false`/`null`. The filter applies only to markdown files; other
 kinds pass through unfiltered.
 
-### Composing — worked examples
+### Composing: worked examples
 
 ```text
 "buffer overflow"                                  # exact phrase
@@ -456,7 +456,7 @@ mtime:month NOT draft~1                            # recent docs, exclude anythi
 
 ## Contributing
 
-Bug reports and focused PRs are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md)
+Bug reports and focused PRs are welcome; see [`CONTRIBUTING.md`](CONTRIBUTING.md)
 for dev setup and the "Open with…" app-catalogue workflow.
 
 ## Security
