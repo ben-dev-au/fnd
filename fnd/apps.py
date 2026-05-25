@@ -485,11 +485,15 @@ def _handle_obsidian(req: OpenRequest) -> int:
         # the cursor to exactly that line, so we get word-precision
         # instead of section-precision.
         target_line = _resolve_match_line(req.path, req.query, req.line)
+        # ``openmode=tab`` opens the match in a NEW tab instead of navigating
+        # the active one (which silently loses whatever the user had open).
+        # Current Advanced URI param — supersedes the deprecated ``newpane``.
         url = (
             "obsidian://advanced-uri"
             f"?vault={urllib.parse.quote(req.vault, safe=_PCT_SAFE)}"
             f"&filepath={urllib.parse.quote(filepath, safe=_PCT_SAFE)}"
             f"&line={target_line}"
+            "&openmode=tab"
         )
     elif req.vault:
         file_param = req.file_in_vault or str(req.path)
