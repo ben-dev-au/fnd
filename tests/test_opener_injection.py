@@ -46,9 +46,9 @@ def test_skim_url_neutralises_adversarial_filenames(tmp_path: Path, evil_name: s
     # break out of an AppleScript string literal or a shell argv element
     # is percent-encoded.
     for forbidden in ("\n", "\r", "\t", '"', "\\"):
-        assert (
-            forbidden not in url
-        ), f"raw {forbidden!r} leaked into URL for filename {evil_name!r}: {url}"
+        assert forbidden not in url, (
+            f"raw {forbidden!r} leaked into URL for filename {evil_name!r}: {url}"
+        )
 
     # The URL still round-trips back to the resolved absolute path.
     fragment_split = url.split("#", 1)[0]

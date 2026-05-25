@@ -30,12 +30,22 @@ def supported_suffixes() -> frozenset[str]:
     return frozenset(_DISPATCH)
 
 
-def extract(path: Path) -> Iterator[Chunk]:
+def extract(path: Path, **kwargs: object) -> Iterator[Chunk]:
+    """Dispatch extraction to the right per-suffix module. Extra
+    keyword arguments are forwarded only to extractors that accept
+    them (currently the PDF extractor's on_heartbeat); the other
+    extractors silently ignore unknown kwargs so callers can pass
+    on_heartbeat for every file without branching on suffix."""
     suffix = path.suffix.lower()
     mod_name = _DISPATCH.get(suffix)
     if mod_name is None:
         return iter(())
     import importlib
+    import inspect
 
     mod = importlib.import_module(f"fnd.extract.{mod_name}")
-    return mod.extract(path)  # type: ignore[no-any-return]
+    extractor = mod.extract  # type: ignore[attr-defined]
+    if kwargs:
+        accepted = set(inspect.signature(extractor).parameters)
+        kwargs = {k: v for k, v in kwargs.items() if k in accepted}
+    return extractor(path, **kwargs)  # type: ignore[no-any-return]

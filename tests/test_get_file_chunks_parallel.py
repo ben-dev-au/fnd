@@ -70,9 +70,9 @@ def test_default_max_workers_is_serial(built_index: Path) -> None:
 
     searcher._decode_chunk = spy  # type: ignore[method-assign]
     searcher.get_file_chunks(parent_id)
-    assert saw_threads == {
-        threading.get_ident()
-    }, f"default path used auxiliary threads: {saw_threads}"
+    assert saw_threads == {threading.get_ident()}, (
+        f"default path used auxiliary threads: {saw_threads}"
+    )
 
 
 def test_below_threshold_stays_serial_even_with_workers(
@@ -99,9 +99,9 @@ def test_below_threshold_stays_serial_even_with_workers(
 
     searcher._decode_chunk = spy  # type: ignore[method-assign]
     searcher.get_file_chunks(parent_id, max_workers=4)
-    assert saw_threads == {
-        threading.get_ident()
-    }, f"below threshold should stay serial; saw threads {saw_threads}"
+    assert saw_threads == {threading.get_ident()}, (
+        f"below threshold should stay serial; saw threads {saw_threads}"
+    )
 
 
 def test_above_threshold_dispatches_to_thread_pool(
@@ -143,6 +143,6 @@ def test_max_workers_one_stays_serial(built_index: Path) -> None:
 
     searcher._decode_chunk = spy  # type: ignore[method-assign]
     searcher.get_file_chunks(parent_id, max_workers=1)
-    assert saw_threads == {
-        threading.get_ident()
-    }, f"max_workers=1 must stay serial; saw {saw_threads}"
+    assert saw_threads == {threading.get_ident()}, (
+        f"max_workers=1 must stay serial; saw {saw_threads}"
+    )

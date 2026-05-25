@@ -351,8 +351,8 @@ def render(reports: list[ClickReport]) -> str:
     if have_t:
         ts = sorted(r.t_widget_visible for r in have_t if r.t_widget_visible is not None)
         out.append(
-            f"t_widget_visible: p50={ts[len(ts)//2]:.2f}s "
-            f"p95={ts[int(len(ts)*0.95)] if len(ts)>1 else ts[-1]:.2f}s "
+            f"t_widget_visible: p50={ts[len(ts) // 2]:.2f}s "
+            f"p95={ts[int(len(ts) * 0.95)] if len(ts) > 1 else ts[-1]:.2f}s "
             f"max={ts[-1]:.2f}s  ({len(have_t)}/{len(reports)} reached)"
         )
     title_missed = [r for r in reports if r.t_title is None]

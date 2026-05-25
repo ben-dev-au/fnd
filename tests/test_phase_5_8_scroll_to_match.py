@@ -142,9 +142,9 @@ async def test_match_target_is_a_line_widget_not_the_header(
         assert buf is not None, "PDF should mount the flat-buffer preview"
         fv = buf.file_view
         assert fv is not None
-        assert (
-            fv.first_hit_line_in_chunk
-        ), "expected at least one chunk to record a first-match line"
+        assert fv.first_hit_line_in_chunk, (
+            "expected at least one chunk to record a first-match line"
+        )
         focused_seq, hit_line = next(iter(fv.first_hit_line_in_chunk.items()))
         chunk_start, _ = fv.chunk_to_range[focused_seq]
         # The matched line is past the chunk's first line — that's the

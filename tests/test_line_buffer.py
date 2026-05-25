@@ -250,22 +250,22 @@ async def test_widget_focused_chunk_overlay_is_per_render() -> None:
         await pilot.pause()
         # No rebuild: every Strip identity is preserved.
         for li in range(len(buf._strips)):
-            assert (
-                buf._strips[li] is before[li]
-            ), f"focus change must not rebuild Strip at line {li}"
+            assert buf._strips[li] is before[li], (
+                f"focus change must not rebuild Strip at line {li}"
+            )
         # Row-overlay resolution flags the focused chunk's visual rows.
         chunk2_range = fv.chunk_to_range[2]
         for vy in range(len(buf._strips)):
             logical = buf._visual_to_logical[vy]
             overlay = buf._row_overlay_style(vy)
             if chunk2_range[0] <= logical < chunk2_range[1]:
-                assert (
-                    overlay is not None
-                ), f"focused chunk row vy={vy} (logical={logical}) should have overlay"
+                assert overlay is not None, (
+                    f"focused chunk row vy={vy} (logical={logical}) should have overlay"
+                )
             elif logical not in fv.match_lines:
-                assert (
-                    overlay is None
-                ), f"non-focused, non-match row vy={vy} should not have overlay"
+                assert overlay is None, (
+                    f"non-focused, non-match row vy={vy} should not have overlay"
+                )
 
 
 @pytest.mark.asyncio

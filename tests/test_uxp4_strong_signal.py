@@ -103,9 +103,9 @@ def test_strong_signal_does_not_fire_for_ambiguous_query(
     if len(probe) >= 2:
         top_n = normalize_bm25(probe[0].score)
         gap = top_n - normalize_bm25(probe[1].score)
-        assert not (
-            top_n >= STRONG_SIGNAL_MIN_NORM_SCORE and gap >= STRONG_SIGNAL_MIN_NORM_GAP
-        ), "ambiguous query incorrectly classified as strong-signal"
+        assert not (top_n >= STRONG_SIGNAL_MIN_NORM_SCORE and gap >= STRONG_SIGNAL_MIN_NORM_GAP), (
+            "ambiguous query incorrectly classified as strong-signal"
+        )
 
 
 def test_intent_disables_strong_signal_bypass(cfg: Config, unambiguous_index: Path) -> None:

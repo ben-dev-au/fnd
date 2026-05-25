@@ -1,10 +1,10 @@
 """PDF extractor: one chunk per page, with TOC-first heading detection.
 
-Per plan §17 + §21 Spike B:
+Flow:
 
 1. Try ``doc.get_toc()`` first — if the PDF has an embedded outline, that's
    ~100% accurate; map each page to the nearest preceding TOC entry.
-2. Else fall back to ``pymupdf4llm.IdentifyHeaders`` font-size clustering.
+2. Else fall back to local font-size clustering (``_font_clustering_heading``).
 3. Apply sanity gates and bail to ``heading_path = ""`` when:
    - ≤1 distinct rounded font size (likely OCR'd; clustering yields garbage)
    - >30% of spans flagged as headings (false positives dominate)
@@ -12,19 +12,80 @@ Per plan §17 + §21 Spike B:
 
 When heading_path can't be derived, the chunk still ranks via body/title/path
 and the user navigates by page number.
+
+When the optional ``pdf-structure`` extra is installed (pymupdf4llm +
+docling), a parallel structured-extraction path runs and populates
+``body_md`` for Markdown-rendered preview.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import importlib
+import importlib.util
+import json
+import os
 import re
-from collections.abc import Iterator
+import threading
+from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 from typing import Any, cast
 
 import pymupdf  # type: ignore[import-not-found]
 
+from fnd.cache import ExtractionCache, sha256_file
 from fnd.extract.base import Block, Chunk, ExtractError
+
+# Lazy availability of the pdf-structure extra (`pymupdf4llm`). Computed
+# at module load — cheap; just a spec lookup. The actual import happens
+# inside _extract_page_md() to keep import-time cost zero for users
+# who haven't opted in (NF7 invariant).
+#
+# Note: ``find_spec`` only tests importability, not functional
+# readiness. A half-uninstalled pymupdf4llm whose namespace directory
+# survives but whose ``to_markdown`` is gone will still pass this
+# check. ``_extract_page_md`` is defensive — its outer try/except
+# catches the AttributeError that surfaces from such a state and
+# returns "" (the page falls through to flat extraction). The TUI's
+# Status row uses the stricter ``fnd.extras.is_package_installed``
+# (which calls ``importlib.invalidate_caches`` + verifies
+# ``spec.origin`` exists) to report install state to the user.
+_HAS_PYMUPDF4LLM: bool = importlib.util.find_spec("pymupdf4llm") is not None
+
+# Runtime override for the structured-extraction path. The indexer sets
+# this to True for a single Update index run when the user has toggled
+# "Update cache at index time" Off — extract() still consults the cache
+# on hit, but on miss it runs only the flat path (no pymupdf4llm,
+# no docling) and skips the cache write. Used for fast battery-friendly
+# flat-text refreshes. Default False keeps existing behaviour.
+_skip_structure_extraction: bool = False
+
+
+def set_skip_structure_extraction(skip: bool) -> None:
+    """Toggle the run-scoped flag. The indexer reads
+    ``cfg.defaults.cache_at_index_time`` and calls this before
+    iterating files; resets it at end of run."""
+    global _skip_structure_extraction
+    _skip_structure_extraction = skip
+
+
+# Regex for the pymupdf4llm "couldn't decode this region" marker. When a
+# whole table is embedded as a raster image (common in HBR / finance
+# PDFs), pymupdf4llm emits a literal "==> picture [W x H] intentionally
+# omitted <==" instead of the cell values. We use this to detect
+# pages that need a docling fallback for the missing structure.
+_PIC_OMITTED_RE = re.compile(r"==>\s*picture\s*\[(\d+)\s*x\s*(\d+)\]\s*intentionally omitted\s*<==")
+
+# Trigger fallback when the omitted-image region is at least this
+# fraction of the page area. Below ~15% it's typically a logo / figure /
+# headshot rather than a table; not worth paying the docling cost.
+_FALLBACK_AREA_RATIO = 0.15
+
+# Secondary signal: a literal "TABLE N" / "Table N" heading on the same
+# page as a picture-omitted marker means the picture IS a table even if
+# the region itself is below the area threshold (HBR-style narrow tables).
+_TABLE_LABEL_RE = re.compile(r"\b(?:TABLE|Table)\s+\d", re.MULTILINE)
 
 
 def _parent_id(path: Path) -> str:
@@ -222,9 +283,240 @@ def _font_clustering_heading(
     return (heading_text, page_title)
 
 
-def extract(path: Path) -> Iterator[Chunk]:
+@contextlib.contextmanager
+def _mute_fd(fd: int) -> Generator[None]:
+    """Redirect a file descriptor to /dev/null for the block's duration.
+
+    Used to silence libmupdf's stdout banner ("=== Document parser
+    messages === / Using Tesseract for OCR processing.") emitted from
+    C-level code during pymupdf4llm extraction. Not catchable via
+    contextlib.redirect_stdout.
+    """
+    saved = os.dup(fd)
+    null = os.open(os.devnull, os.O_WRONLY)
     try:
-        yield from _extract_inner(path)
+        os.dup2(null, fd)
+        yield
+    finally:
+        os.dup2(saved, fd)
+        os.close(saved)
+        os.close(null)
+
+
+def _try_docling_fallback(pdf_path: str, page_index: int) -> str:
+    """Try to extract one page via the docling daemon. Returns "" on
+    any failure — caller keeps whatever pymupdf4llm produced."""
+    try:
+        from fnd.extract._docling_daemon import DoclingDaemon
+    except Exception:
+        return ""
+    daemon = DoclingDaemon.get()
+    if daemon is None:
+        return ""
+    try:
+        return daemon.extract_page(Path(pdf_path), page_index)
+    except Exception:
+        return ""
+
+
+def _needs_docling_fallback(page: pymupdf.Page, pymupdf_md: str) -> bool:
+    """Cheap heuristic: did pymupdf4llm visibly miss a structured region?
+
+    Triggers in two cases:
+    1. Sum of "picture intentionally omitted" rectangles exceeds
+       `_FALLBACK_AREA_RATIO` of the page area — most likely a big
+       borderless / image-rendered table.
+    2. A picture-omitted marker appears alongside a "TABLE" / "Table"
+       label on the same page — catches small image-rendered tables
+       (the HBR p99 case: a 324x70 pt = ~5% region that's clearly a
+       table per its adjacent "TABLE 5-2" heading).
+    """
+    if not _PIC_OMITTED_RE.search(pymupdf_md):
+        return False
+    page_area = float(page.rect.width) * float(page.rect.height)
+    if page_area > 0:
+        omitted = 0.0
+        for w_s, h_s in _PIC_OMITTED_RE.findall(pymupdf_md):
+            omitted += float(w_s) * float(h_s)
+        if (omitted / page_area) >= _FALLBACK_AREA_RATIO:
+            return True
+    # Label-proximity signal: "TABLE N" or "Table N" near a picture
+    # marker is a strong "this picture is a table" hint.
+    return bool(_TABLE_LABEL_RE.search(pymupdf_md))
+
+
+def _extract_page_md(doc: pymupdf.Document, page_index: int) -> str:
+    """Extract one page's Markdown via pymupdf4llm. Returns "" on failure.
+
+    Only called when `_HAS_PYMUPDF4LLM` is True. Config matches the
+    Phase 0 bake-off winning settings: vector tables on, OCR off,
+    image emission off.
+    """
+    try:
+        pymupdf4llm = importlib.import_module("pymupdf4llm")
+    except ImportError:
+        return ""
+    # Layout mode (auto-enabled when pymupdf-layout is on the path)
+    # accepts our no-OCR flag combo; the standard path's validator
+    # rejects it. Both modes produce equivalent markdown on our corpus;
+    # the only reason to choose one is which validator runs.
+    try:
+        with _mute_fd(1):
+            chunks = pymupdf4llm.to_markdown(
+                doc,
+                pages=[page_index],
+                page_chunks=True,
+                show_progress=False,
+                force_text=False,
+                ignore_images=True,
+                ignore_graphics=False,
+                table_strategy="lines",
+            )
+    except Exception:
+        # pymupdf4llm has stricter input validation than vanilla
+        # pymupdf and can reject pages that the rest of the pipeline
+        # accepts. Fall through to empty md — caller treats this as
+        # "structured mode unavailable for this page" and the chunk
+        # still ships its flat body.
+        return ""
+    if not chunks:
+        return ""
+    first = chunks[0]
+    return str(first.get("text", "")) if isinstance(first, dict) else str(first)
+
+
+def _config_hash() -> str:
+    """Hash of config-shaping flags; any tuning change bumps the key."""
+    config = {
+        "force_text": False,
+        "ignore_images": True,
+        "ignore_graphics": False,
+        "table_strategy": "lines",
+        "fallback_area_ratio": _FALLBACK_AREA_RATIO,
+        "table_label_re": _TABLE_LABEL_RE.pattern,
+    }
+    return hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()[:8]
+
+
+def extractor_signature() -> str:
+    """Stable string identifying this extractor's behaviour.
+
+    Different signature → different cache key, and different throughput
+    cohort for ETA calibration. Captures:
+    - flat vs structured path (gated by pymupdf4llm availability)
+    - whether docling fallback is wired in (gated by `docling` CLI)
+    - config flag hash so a future tuning change forces re-extraction
+    """
+    parts = ["flat"]
+    if _HAS_PYMUPDF4LLM:
+        try:
+            pymupdf4llm = importlib.import_module("pymupdf4llm")
+            ver = getattr(pymupdf4llm, "__version__", "unknown")
+        except ImportError:
+            ver = "unknown"
+        parts = [f"pymupdf4llm-{ver}"]
+        if _has_docling():
+            parts.append("docling")
+    parts.append(f"cfg-{_config_hash()}")
+    return "|".join(parts)
+
+
+def legacy_flat_signature() -> str:
+    """Signature for flat-only extraction under the current cfg.
+
+    Used by ETA calibration to retag un-tagged history entries (which
+    predate signature tracking) so a user who indexed before installing
+    ``pdf-structure`` keeps their fast-machine baseline for flat runs.
+    """
+    return "|".join(["flat", f"cfg-{_config_hash()}"])
+
+
+# Back-compat private alias. Existing call sites in this module use the
+# underscored name; keep them working without churning surrounding code.
+_extractor_signature = extractor_signature
+
+
+def _has_docling() -> bool:
+    """Cached check for docling CLI presence — used by signature only."""
+    import shutil
+
+    return shutil.which("docling") is not None
+
+
+def extract(
+    path: Path,
+    *,
+    on_heartbeat: Callable[[Any], None] | None = None,
+) -> Iterator[Chunk]:
+    """Extract PDF chunks, consulting the on-disk cache first.
+
+    On cache hit: yields chunks directly from the JSON blob, skipping
+    the multi-second pymupdf4llm + docling work entirely.
+
+    On miss: runs the normal extraction, then writes the result back
+    to the cache before yielding (so a Ctrl+C *after* the put is
+    safe — next reindex will hit).
+
+    ``on_heartbeat`` receives per-page ("page", index) tuples plus a
+    ("total", N) opener and ("file-start", path) reset. Used by the
+    indexer runner's live-progress channel so the IndexerScreen ETA
+    refines as a single long PDF processes its pages.
+    """
+    cache = _get_cache()
+    try:
+        content_sha = sha256_file(path)
+    except OSError as e:
+        raise ExtractError(str(path), f"cannot read for hash: {e}") from e
+    key = cache.build_key(content_sha256=content_sha, extractor_signature=_extractor_signature())
+    cached = cache.get(key)
+    if cached is not None:
+        # Cache entries are keyed by content hash, so two different files
+        # with identical bytes share an entry. The chunks were captured
+        # with the original file's parent_id / path / mtime — overlay
+        # the *current* file's identity so downstream indexer code
+        # routes chunks to the right Tantivy parent_id.
+        parent_id_now = _parent_id(path)
+        path_str_now = str(path)
+        try:
+            mtime_now = int(path.stat().st_mtime)
+        except OSError:
+            mtime_now = cached[0].mtime if cached else 0
+        for chunk in cached:
+            chunk.parent_id = parent_id_now
+            chunk.path = path_str_now
+            chunk.mtime = mtime_now
+            yield chunk
+        return
+
+    # Dispatch the heavy extraction to a subprocess. pymupdf-layout
+    # holds the GIL across long pages; running it in-thread (even via
+    # asyncio.to_thread) starves the main asyncio loop and the user
+    # sees a frozen UI. The subprocess pool gives the worker its own
+    # GIL so the caller's event loop stays responsive throughout.
+    #
+    # The worker emits a per-page heartbeat; the parent kills the
+    # worker if no heartbeat arrives for ``stall_seconds``. This is
+    # the safety net for an unattended index hitting a genuinely hung
+    # native call. The threshold is large enough that any legitimately
+    # slow but progressing PDF (image-dense pages, docling fallback)
+    # stays alive.
+    from fnd.extract._worker import (
+        StallError,
+        collect_pdf_chunks_with_heartbeat,
+        run_in_pool_sync_with_stall_detection,
+    )
+
+    try:
+        chunks = run_in_pool_sync_with_stall_detection(
+            collect_pdf_chunks_with_heartbeat,
+            path,
+            _skip_structure_extraction,
+            stall_seconds=120.0,
+            first_beat_grace_seconds=180.0,
+            on_heartbeat=on_heartbeat,
+        )
+    except StallError as e:
+        raise ExtractError(str(path), f"extractor wedged: {e}") from e
     except ExtractError:
         raise
     except Exception as e:
@@ -234,8 +526,46 @@ def extract(path: Path) -> Iterator[Chunk]:
         # an ExtractError so the index build survives.
         raise ExtractError(str(path), f"{type(e).__name__}: {e}") from e
 
+    # Best-effort cache write; if it fails (disk full, perms) we still
+    # yield the freshly-extracted chunks — caller should never lose work
+    # because the cache had a bad day. Skipped when the run-scoped
+    # battery-saver flag is on (no point caching flat extractions —
+    # they're already cheap to recompute and cache hits assume
+    # structured chunks).
+    if not _skip_structure_extraction:
+        with contextlib.suppress(OSError):
+            cache.put(key, chunks)
 
-def _extract_inner(path: Path) -> Iterator[Chunk]:
+    yield from chunks
+
+
+def _get_cache() -> ExtractionCache:
+    """Cached singleton — building the path each call is cheap but
+    creating the directory tree once at first use is cleaner.
+
+    The prefetcher and indexer can both reach this from background
+    threads, so guard the check-and-set with a lock to avoid two
+    instances racing into existence."""
+    global _cache_singleton
+    if _cache_singleton is not None:
+        return _cache_singleton
+    with _cache_lock:
+        if _cache_singleton is None:
+            _cache_singleton = ExtractionCache()
+    return _cache_singleton
+
+
+_cache_singleton: ExtractionCache | None = None
+_cache_lock = threading.Lock()
+
+
+# Invoked from the subprocess pool via fnd.extract._worker.collect_pdf_chunks,
+# which looks the function up dynamically; pyright can't see that call.
+def _extract_inner(  # pyright: ignore[reportUnusedFunction]
+    path: Path,
+    *,
+    on_page: Callable[[int], None] | None = None,
+) -> Iterator[Chunk]:
     parent_id = _parent_id(path)
     mtime = int(path.stat().st_mtime)
 
@@ -261,6 +591,11 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
         meta_labels: list[str] = []
         margin_candidates: list[list[int]] = []
         for page_index in range(doc.page_count):
+            # Heartbeat for the parent's stall detector. Fires before
+            # the heavy structured-extraction call on this page so a
+            # wedge inside a single page is still detectable.
+            if on_page is not None:
+                on_page(page_index)
             page = doc[page_index]
             page_no = page_index + 1
             try:
@@ -302,12 +637,31 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
                 blocks.append(Block(kind="h2", text=page_title))
             blocks.append(Block(kind="p", text=text.strip()))
 
+            # Structured path (opt-in): populate body_md so the preview
+            # dispatcher routes this page to the Markdown widget. Empty
+            # when the pdf-structure extra isn't installed — keeps
+            # behaviour byte-identical to today. Also skipped when the
+            # run-scoped ``_skip_structure_extraction`` flag is set
+            # (battery-saver mode).
+            structure_on = _HAS_PYMUPDF4LLM and not _skip_structure_extraction
+            body_md = _extract_page_md(doc, page_index) if structure_on else ""
+
+            # Phase 3 routing: if pymupdf4llm visibly missed structure
+            # (e.g. a big image-rendered table), try docling as a
+            # fallback. Docling's ML layout model can recover those.
+            # No-op when docling isn't installed.
+            if body_md and _needs_docling_fallback(page, body_md):
+                docling_md = _try_docling_fallback(str(path), page_index)
+                if docling_md:
+                    body_md = docling_md
+
             page_states.append(
                 {
                     "page_no": page_no,
                     "page_index": page_index,
                     "text": text,
                     "blocks": blocks,
+                    "body_md": body_md,
                     "heading_path": heading_path,
                 }
             )
@@ -328,6 +682,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
                 kind="pdf",
                 body=state["text"],
                 body_struct=state["blocks"],
+                body_md=state["body_md"],
                 page=state["page_no"],
                 page_label=labels[state["page_index"]],
                 heading_path=state["heading_path"],

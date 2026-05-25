@@ -44,6 +44,7 @@ from textual.widgets.option_list import Option
 
 from fnd.tui.menu import (
     KIND_ACTION,
+    KIND_DISPLAY,
     KIND_EXTERNAL,
     KIND_HEADER,
     KIND_PICKER,
@@ -85,7 +86,86 @@ _SETTINGS_HINTS: tuple[tuple[str, str], ...] = (
 )
 
 
+# ── Confirm-screen helpers (Phase E) ────────────────────────────────
+
+
+# Severity → (verb colour, CSS modifier class). Used by every confirm
+# screen so colour is consistent end-to-end.
+_CONFIRM_SAFE = ("bold green", "-safe")
+_CONFIRM_RECOVERABLE = ("bold yellow", "-recoverable")
+_CONFIRM_DESTRUCTIVE = ("bold red", "-destructive")
+
+
+def build_confirm_body(
+    *,
+    outcome: str,
+    cost: str,
+    safety: str,
+    irreversible: bool = False,
+    outcome_label: str = "Outcome",
+    cost_label: str = "Cost",
+    safety_label: str = "Safety",
+) -> Text:
+    """Three-row labelled body shared by every confirm screen.
+
+    Default labels (Outcome / Cost / Safety) describe a pay-then-gain
+    action — installing, deleting, paying CPU to rebuild. Some actions
+    don't fit that framing — uninstalling FREES disk rather than
+    costing it. Callers override the labels (e.g. ``cost_label="Disk
+    freed"``) so each screen reads naturally.
+
+    Labels render dim; values render in default text. When
+    ``irreversible`` is set, appends a red "Cannot be undone" line
+    below the rows."""
+    # Pad labels to a consistent column so the values align in the
+    # rendered output regardless of label length.
+    width = max(len(outcome_label), len(cost_label), len(safety_label))
+    text = Text()
+    text.append(outcome_label.ljust(width) + "   ", style="dim")
+    text.append(outcome + "\n")
+    text.append(cost_label.ljust(width) + "   ", style="dim")
+    text.append(cost + "\n")
+    text.append(safety_label.ljust(width) + "   ", style="dim")
+    text.append(safety)
+    if irreversible:
+        text.append("\n\n")
+        text.append("⚠ Cannot be undone.", style="bold red")
+    return text
+
+
+def confirm_yes_option(label: str, severity: str = "safe") -> Option:
+    """Construct the affirming OptionList row with severity-coloured verb.
+
+    ``severity`` is ``"safe"`` / ``"recoverable"`` / ``"destructive"``.
+    Cancel rows stay plain; only Yes carries the colour."""
+    style = {
+        "safe": _CONFIRM_SAFE[0],
+        "recoverable": _CONFIRM_RECOVERABLE[0],
+        "destructive": _CONFIRM_DESTRUCTIVE[0],
+    }.get(severity, _CONFIRM_SAFE[0])
+    return Option(Text(label, style=style), id="yes")
+
+
+def confirm_border_class(severity: str) -> str:
+    """CSS modifier class to add to the screen so the bordered box
+    renders in the right severity colour."""
+    return {
+        "safe": _CONFIRM_SAFE[1],
+        "recoverable": _CONFIRM_RECOVERABLE[1],
+        "destructive": _CONFIRM_DESTRUCTIVE[1],
+    }.get(severity, _CONFIRM_SAFE[1])
+
+
 # ── Row rendering ────────────────────────────────────────────────────
+
+
+# Per-kind glyph constants. All render in default macOS Terminal fonts
+# (Menlo, SF Mono, Monaco) — verified safe.
+_GLYPH_TOGGLE_ON = "✓ on"  # U+2713 + text
+_GLYPH_TOGGLE_OFF = "✗ off"  # U+2717 + text
+_GLYPH_DRILL = "▸"  # U+25B8 small triangle
+_GLYPH_PICKER = "▾"  # U+25BE small caret
+_GLYPH_EXTERNAL = "↗"  # U+2197 upper-right arrow
 
 
 def _render_row(
@@ -95,95 +175,263 @@ def _render_row(
     breadcrumb: tuple[str, ...] | None = None,
     highlight: str | None = None,
 ) -> Text:
-    """Render one menu row as Rich Text.
+    """Render one menu row as Rich Text with per-kind visual language.
 
     Layout (left to right):
-      [key]  label  ……………… trailing_value
-                               (or breadcrumb in dim italic when filtering)
+      [key]  ↗?label  ……………… <trailing segments>
 
-    - Keys (Keybindings rows) render as ``[<key>]`` in $accent bold,
-      bracketed in $text-muted for a subtle frame.
-    - Labels render in $text.
-    - Trailing values right-align in $primary bold (setting values) or
-      $text-muted italic (drill row summaries / search breadcrumbs).
+    Per-kind trailing affordance:
+
+      KIND_TOGGLE     ✓ on (green) / ✗ off (red)
+      KIND_ACTION     [ Run ] / [ Delete… ] (accent)
+      KIND_SUBMENU    summary (dim) + ▸ (accent)
+      KIND_EXTERNAL   drill: summary + ▸ ; external_app: path (dim), label gets leading ↗
+      KIND_PICKER     value (bold) + ▾ (accent)
+      KIND_SCALAR     value (bold)
+      KIND_DISPLAY    value (bold) — and label rendered dim instead of bright
 
     ``app`` may be ``None`` for tests that don't construct a full app —
-    in that case the trailing-value lookup is skipped.
+    in that case the trailing slot is skipped.
 
     ``breadcrumb`` is a tuple of section labels — when provided it is
-    rendered instead of the normal trailing value so the user knows
-    which section each cross-section search result comes from.
+    rendered instead of the normal trailing so the user knows which
+    section each cross-section search result comes from.
 
-    ``highlight`` is the active search query (lowercased ok). When given
-    and the label contains a case-insensitive match, that substring is
-    rendered bold so the user sees why the row was returned.
+    ``highlight`` is the active search query. When given and the label
+    contains a case-insensitive match, that substring is rendered bold.
     """
     if item.kind == KIND_HEADER:
         return _render_header(item, width)
 
     text = Text()
+    label_style = "dim" if item.kind == KIND_DISPLAY else None
+    leading_used = 0
+
     if item.key:
-        # Bracketed key in 12-char column: "[<key>]" + padding.
-        # Rich's `Text` style strings don't resolve Textual theme vars
-        # ($accent etc.), so we use plain `bold` for the key glyph and
-        # let the surrounding CSS apply the accent colour.
+        # Bracketed key in 12-char column: "[<key>]" + padding. Used by
+        # the Keybindings cheat sheet only.
         bracket_open = Text("[", style="dim")
         key_glyph = Text(item.key, style="bold")
         bracket_close = Text("]", style="dim")
         key_field = bracket_open + key_glyph + bracket_close
-        # Pad to 12 columns so labels align across rows.
-        used = len(item.key) + 2  # brackets + key
+        used = len(item.key) + 2
         key_field.append(" " * max(1, _KEY_COL - used))
         text.append_text(key_field)
+
+    # External-app rows get a leading ↗ in $accent before the label.
+    if item.kind == KIND_EXTERNAL and item.external_app:
+        text.append(f"{_GLYPH_EXTERNAL} ", style="bold cyan")
+        leading_used = 2  # glyph + space
+
+    # Compute the trailing affordance up-front so the label can be
+    # truncated with `…` when label + dots + affordance would exceed
+    # the row width. Without this the action label (`[ Remove… ]`,
+    # `[ Forget… ]`, etc.) clips at the right border, hiding the
+    # primary signal of "what Enter does."
+    pending_segments = _trailing_segments(item, app) if not breadcrumb else []
+    label_to_render = item.label
+    if width is not None and pending_segments:
+        affordance_len = sum(
+            len(seg_text) for seg_text, seg_style in pending_segments if "dim" not in seg_style
+        )
+        used_leading = (_KEY_COL if item.key else 0) + leading_used
+        # Minimum dotted pad + leading/trailing space around it.
+        min_pad = 2
+        gap = 2
+        label_budget = width - used_leading - affordance_len - min_pad - gap
+        if label_budget > 0 and len(label_to_render) > label_budget:
+            keep = max(1, label_budget - 1)
+            label_to_render = label_to_render[:keep] + "…"
+
     if highlight:
-        low = item.label.lower()
+        low = label_to_render.lower()
         h_low = highlight.lower()
         i = low.find(h_low)
         if i >= 0:
-            text.append(item.label[:i])
-            text.append(item.label[i : i + len(highlight)], style="bold")
-            text.append(item.label[i + len(highlight) :])
+            text.append(label_to_render[:i], style=label_style)
+            text.append(label_to_render[i : i + len(highlight)], style="bold")
+            text.append(label_to_render[i + len(highlight) :], style=label_style)
         else:
-            text.append(item.label)
+            text.append(label_to_render, style=label_style)
     else:
-        text.append(item.label)
+        text.append(label_to_render, style=label_style)
+
     if breadcrumb:
-        # Cross-section search: show the section path instead of trailing value.
         bc_text = " › ".join(breadcrumb)
         if width is not None:
-            used = (_KEY_COL if item.key else 0) + len(item.label)
+            used = (_KEY_COL if item.key else 0) + leading_used + len(item.label)
             pad = max(2, width - used - len(bc_text) - 2)
             text.append(" " + "·" * pad + " ", style="dim")
         else:
             text.append("   ")
         text.append(bc_text, style="dim italic")
+        return text
+
+    # Per-kind trailing segments (already computed above for the
+    # label-budget pass).
+    segments = pending_segments
+    if not segments:
+        return text
+
+    used = (_KEY_COL if item.key else 0) + leading_used + len(label_to_render)
+    if width is not None:
+        # The trailing affordance (rightmost segment) is the row's
+        # primary signal of "what does Enter do." If the row's total
+        # render would exceed width, the terminal silently truncates
+        # the right edge — losing the glyph the user needs. Truncate
+        # the longest dim/summary segment instead, leaving room for at
+        # least a 2-char dotted pad and the whole affordance.
+        min_pad = 2
+        gap = 2  # leading + trailing space around the dots
+        segments = _truncate_segments_to_fit(segments, budget=width - used - min_pad - gap)
+        plain_len = sum(len(seg_text) for seg_text, _ in segments)
+        pad = max(min_pad, width - used - plain_len - gap)
+        text.append(" " + "·" * pad + " ", style="dim")
     else:
-        trailing = item.trailing_value(app) if app is not None else ""
-        # Setting values (scalar/toggle/picker) carry information the user
-        # is scanning for — render bold. Drill-row content summaries are
-        # navigational hints, not values: render dim so they don't compete
-        # with row labels.
-        is_drill_summary = item.kind == KIND_EXTERNAL and bool(item.value_getter)
-        trailing_style = "dim" if is_drill_summary else "bold"
-        if trailing and width is not None:
-            # Right-align trailing value with dotted-pad. width is the
-            # available column count.
-            used = (_KEY_COL if item.key else 0) + len(item.label)
-            pad = max(2, width - used - len(trailing) - 2)
-            text.append(" " + "·" * pad + " ", style="dim")
-            text.append(trailing, style=trailing_style)
-        elif trailing:
-            text.append("   ")
-            text.append(trailing, style=trailing_style)
+        text.append("   ")
+    for seg_text, seg_style in segments:
+        text.append(seg_text, style=seg_style)
     return text
 
 
-def _render_header(item: MenuItem, _width: int | None) -> Text:
-    """Group sub-header (bold + accent). Single visual style used
-    everywhere a group divider is needed — no full-width rule lines
-    (those were a Phase 2 misstep that made the panel feel cluttered)."""
+def _truncate_segments_to_fit(
+    segments: list[tuple[str, str]], *, budget: int
+) -> list[tuple[str, str]]:
+    """Shrink the first dim/summary segment with ``…`` so the total
+    fits within ``budget``. The trailing affordance segment (and any
+    other non-dim segments) is preserved verbatim — losing the glyph
+    would defeat the per-kind visual language.
+
+    Returns the original list when no truncation is needed."""
+    plain_len = sum(len(seg_text) for seg_text, _ in segments)
+    if plain_len <= budget:
+        return segments
+    # Reserve every non-dim segment in full; truncate the leading
+    # dim segments to consume whatever's left.
+    reserved = sum(len(seg_text) for seg_text, style in segments if "dim" not in style)
+    available_for_dim = budget - reserved
+    if available_for_dim <= 1:
+        # Pathologically narrow row — drop dim segments altogether,
+        # keep only the affordance.
+        return [(t, s) for t, s in segments if "dim" not in s]
+    out: list[tuple[str, str]] = []
+    consumed = 0
+    truncated = False
+    for seg_text, seg_style in segments:
+        if "dim" in seg_style and not truncated:
+            remaining = available_for_dim - consumed
+            if len(seg_text) <= remaining:
+                out.append((seg_text, seg_style))
+                consumed += len(seg_text)
+            else:
+                # Truncate this segment with a single-char ellipsis.
+                keep = max(0, remaining - 1)
+                out.append((seg_text[:keep] + "…", seg_style))
+                truncated = True
+        else:
+            out.append((seg_text, seg_style))
+    return out
+
+
+def _trailing_segments(item: MenuItem, app: FNDApp | None) -> list[tuple[str, str]]:
+    """Per-kind trailing segments as (text, rich_style) pairs.
+
+    Rich Text styles used:
+      ``bold green``  — toggle on, safe affirmation
+      ``bold red``    — toggle off, destructive
+      ``bold cyan``   — accent: action brackets, drill arrow, picker caret, ↗
+      ``bold``        — bright value (scalar / picker value / display value)
+      ``dim``         — drill row summary text, parenthetical context
+    """
+    if app is None:
+        return []
+
+    if item.kind == KIND_TOGGLE and item.toggle_getter is not None:
+        try:
+            on = bool(item.toggle_getter(app))
+        except Exception:
+            on = False
+        return [(_GLYPH_TOGGLE_ON, "bold green") if on else (_GLYPH_TOGGLE_OFF, "bold red")]
+
+    if item.kind == KIND_ACTION:
+        # Keybindings cheat-sheet rows carry a ``key`` glyph in their
+        # leading column — that IS the affordance. A trailing button
+        # would (a) repeat noise across ~30 rows of documentation and
+        # (b) push the leading [key] into the right margin under
+        # narrow widths.
+        if item.key:
+            return []
+        return [(f"[ {item.action_label} ]", "bold cyan")]
+
+    if item.kind == KIND_SUBMENU:
+        summary = ""
+        if item.value_getter is not None:
+            try:
+                summary = item.value_getter(app) or ""
+            except Exception:
+                summary = ""
+        if summary:
+            return [(summary + " ", "dim"), (_GLYPH_DRILL, "bold cyan")]
+        return [(_GLYPH_DRILL, "bold cyan")]
+
+    if item.kind == KIND_EXTERNAL:
+        summary = ""
+        if item.value_getter is not None:
+            try:
+                summary = item.value_getter(app) or ""
+            except Exception:
+                summary = ""
+        if item.external_app:
+            # External app: dim path; no trailing arrow (leading ↗ on label).
+            return [(summary, "dim")] if summary else []
+        # Internal drill — same as KIND_SUBMENU.
+        if summary:
+            return [(summary + " ", "dim"), (_GLYPH_DRILL, "bold cyan")]
+        return [(_GLYPH_DRILL, "bold cyan")]
+
+    if item.kind == KIND_PICKER and item.picker_getter is not None:
+        try:
+            v = item.picker_getter(app)
+        except Exception:
+            v = None
+        if isinstance(v, list):
+            value_str = f"{len(v)} selected" if v else "(none)"
+        else:
+            value_str = str(v) if v not in (None, "") else "(unset)"
+        return [(value_str + " ", "bold"), (_GLYPH_PICKER, "bold cyan")]
+
+    if item.kind in (KIND_SCALAR, KIND_DISPLAY):
+        v = ""
+        if item.value_getter is not None:
+            try:
+                v = item.value_getter(app) or ""
+            except Exception:
+                v = ""
+        return [(v, "bold")] if v else []
+
+    return []
+
+
+def _render_header(item: MenuItem, width: int | None) -> Text:
+    """Group sub-header rendered as ``─ Label ─────────``.
+
+    Accent colour throughout (rule + label). The rule fills the row to
+    the same right edge content rows reach so the buffer between text
+    and the bordered subsection's right edge stays consistent."""
+    label_part = f" {item.label} "
+    if width is not None:
+        # `used` already includes the leading ─; tail should just fill
+        # whatever budget remains. The previous `- 1` over-subtracted
+        # and left a visibly wider buffer on header rows than content
+        # rows inside the bordered subsections.
+        used = len(label_part) + 1
+        tail = max(2, width - used)
+    else:
+        tail = 30
     text = Text()
-    text.append(item.label, style="bold")
+    text.append("─", style="bold cyan")
+    text.append(label_part, style="bold cyan")
+    text.append("─" * tail, style="cyan")
     return text
 
 
@@ -378,8 +626,15 @@ class SettingsList(Widget, can_focus=True):
     SettingsList { height: 1fr; }
     SettingsList > VerticalScroll { padding: 0 0; }
     SettingsList Static.row { height: 1; padding: 0 1; }
-    SettingsList Static.row.-header-1 { padding: 1 0 0 0; height: 2; }
-    SettingsList Static.row.-header-2 { padding: 0 0 0 0; }
+    SettingsList Static.row.-header-1 { padding: 1 1 0 1; height: 2; }
+    SettingsList Static.row.-header-2 { padding: 0 1; }
+    SettingsList .subsection {
+        border: round $primary 50%;
+        padding: 0 1;
+        margin: 1 0 0 0;
+        height: auto;
+    }
+    SettingsList .subsection:focus-within { border: round $accent; }
     /* Context-relevant section (Keybindings cheat sheet only today):
        header gets an accent border-left + bold; body rows get a faint
        tint so the eye lands on the section the user came from. */
@@ -463,7 +718,28 @@ class SettingsList(Widget, can_focus=True):
         # if so, every body row until the next header gets the same
         # ``-hint-section`` class so the whole band paints together.
         in_hint_section = False
+        # Group contiguous items that share a non-None `subsection` into
+        # a bordered Vertical with the subsection name as border_title.
+        # Items with subsection=None mount at the top level (the existing
+        # flat-list behaviour). Suppressed in cross-tree search results
+        # (where ``breadcrumbs`` is populated) since the per-row
+        # breadcrumb already carries the section context and subsection
+        # borders would fragment the result list.
+        rendering_search = bool(self._search_breadcrumbs)
+        current_subsection: str | None = None
+        current_container: Vertical | VerticalScroll = body
         for item in items:
+            target_sub = None if rendering_search else item.subsection
+            if target_sub != current_subsection:
+                # Close previous bordered group, open a new one if needed.
+                if target_sub is None:
+                    current_container = body
+                else:
+                    sub = Vertical(classes="subsection")
+                    sub.border_title = target_sub
+                    body.mount(sub)
+                    current_container = sub
+                current_subsection = target_sub
             cls = "row"
             if item.kind == KIND_HEADER:
                 cls += f" -header-{item.header_level or 1}"
@@ -472,7 +748,7 @@ class SettingsList(Widget, can_focus=True):
                     cls += " -hint-section"
             elif in_hint_section:
                 cls += " -hint-section"
-            body.mount(Static("", classes=cls))
+            current_container.mount(Static("", classes=cls))
         self.call_after_refresh(self._init_cursor)
 
     def _init_cursor(self) -> None:
@@ -492,13 +768,22 @@ class SettingsList(Widget, can_focus=True):
         width = self.size.width or 80
         rows = list(body.query(Static))
         highlight = self._search_query or None
+        # Budget chars eaten by the wrapping containers so the row's
+        # ellipsis fires before content clips past a border. The outer
+        # box contributes border (2) + padding (2); a bordered
+        # subsection adds border (2) + padding (2) plus a fudge factor
+        # for the bullet column + cursor glyph that ride on the inside
+        # of every row inside a subsection.
+        outer_inset = 4
+        subsection_inset = 6
         for i, (item, row) in enumerate(zip(self._items, rows, strict=False)):
             bc = self._search_breadcrumbs.get(id(item)) or None
+            inset = outer_inset + (subsection_inset if item.subsection else 0)
             row.update(
                 _render_row(
                     item,
                     app,
-                    width=width - 2,
+                    width=width - inset,
                     breadcrumb=bc,
                     highlight=highlight,
                 )
@@ -534,6 +819,11 @@ class SettingsList(Widget, can_focus=True):
         every ``Static`` — on a long list (Keybindings has ~80 rows) it
         dominates the cost of a single arrow keystroke. The cursor move
         only changes one CSS class on two rows; do exactly that.
+
+        Also posts the Highlighted message so the parent screen can
+        update its hint bar / detail strip — any external setter of
+        ``cursor_index`` (screen restoration, jump-to-row, tests) goes
+        through this watcher so the cascade always fires.
         """
         try:
             body = self.query_one("#settings_list_body", VerticalScroll)
@@ -544,6 +834,8 @@ class SettingsList(Widget, can_focus=True):
             rows[old].remove_class("-cursor")
         if 0 <= new < len(rows) and new < len(self._items) and self._items[new].kind != KIND_HEADER:
             rows[new].add_class("-cursor")
+        # Notify the parent screen so hint bar + detail strip refresh.
+        self._post_highlight()
 
     def _post_highlight(self) -> None:
         if 0 <= self.cursor_index < len(self._items):
@@ -696,9 +988,9 @@ class SettingsScreen(Screen[None]):
     SettingsScreen > #settings_box {
         height: auto;
         max-height: 90%;
-        width: auto;
+        width: 75%;
         min-width: 60;
-        max-width: 100;
+        max-width: 140;
         border: round $primary 50%;
         padding: 0 1;
     }
@@ -780,8 +1072,22 @@ class SettingsScreen(Screen[None]):
         is the single source of truth: if it returns a different shape,
         the new rows appear; if it returns the same shape, only the
         trailing values needed refreshing.
+
+        Also invalidates the lazy-trailing cache so async values (cache
+        size, pdf-structure disk, etc.) re-compute on resume — the user
+        may have just run an action that changed the underlying numbers.
         """
         import contextlib
+
+        from fnd.tui.lazy_trailing import invalidate
+
+        for key in (
+            "indexing.cache_size",
+            "indexing.pdf_status",
+            "indexing.summary.cache_short",
+            "cache.stale_count",
+        ):
+            invalidate(key)
 
         if self._provider is None:
             with contextlib.suppress(Exception):
@@ -856,7 +1162,12 @@ class SettingsScreen(Screen[None]):
         """Choose the contextual hint cluster for the current state.
 
         Priority: edit-bar open > search input focused > Keybindings
-        sub-screen > reveal-capable cursor row > default.
+        sub-screen > cursor-row-kind-aware default.
+
+        For the default branch, the `⏎` action label reflects what
+        Enter does on the focused row (Toggle / Edit / Choose / Open /
+        Run / Open in editor) — or is omitted entirely for read-only
+        rows. This way the footer never lies about the next action.
         """
         # Edit-bar open: just the save/cancel pair.
         try:
@@ -875,22 +1186,42 @@ class SettingsScreen(Screen[None]):
         if self._breadcrumb[-1:] == ("Keybindings",):
             return (("⏎", "Run"), ("[key]", "Run directly"), ("Esc", "Back"))
 
-        # Default cluster — possibly with Shift+⏎ Reveal appended.
-        cluster: tuple[tuple[str, str], ...] = (
-            ("↑↓", "Nav"),
-            ("⏎", "Open"),
-            ("←", "Back"),
-            ("/", "Filter"),
-        )
+        # Default — per-kind ⏎ label. Reveal append on external-app rows.
+        cursor_item = self._cursor_item()
+        nav = ("↑↓", "Nav")
+        back = ("←", "Back")
+        filt = ("/", "Filter")
+
+        if cursor_item is None:
+            return (nav, ("⏎", "Open"), back, filt)
+
+        kind = cursor_item.kind
+        if kind == KIND_DISPLAY:
+            # Read-only: no ⏎ entry. The dim label + absent affordance
+            # tell the user Enter does nothing.
+            return (nav, back, filt)
+        if kind == KIND_TOGGLE:
+            return (nav, ("⏎", "Toggle"), back, filt)
+        if kind == KIND_SCALAR:
+            return (nav, ("⏎", "Edit"), back, filt)
+        if kind == KIND_PICKER:
+            return (nav, ("⏎", "Choose"), back, filt)
+        if kind == KIND_ACTION:
+            return (nav, ("⏎", "Run"), back, filt)
+        if kind == KIND_EXTERNAL and cursor_item.external_app:
+            return (nav, ("⏎", "Open in editor"), ("Shift+⏎", "Reveal"), back)
+        # KIND_SUBMENU and drill KIND_EXTERNAL: "Open" (push a screen).
+        return (nav, ("⏎", "Open"), back, filt)
+
+    def _cursor_item(self) -> MenuItem | None:
+        """Return the MenuItem the cursor is on, or None if not available."""
         try:
             lst = self.query_one(SettingsList)
-            if 0 <= lst.cursor_index < len(lst._items):
-                item = lst._items[lst.cursor_index]
-                if item.id in ("root.open_config_file", "root.open_keybindings_file"):
-                    cluster = (*cluster, ("Shift+⏎", "Reveal"))
         except Exception:
-            pass
-        return cluster
+            return None
+        if 0 <= lst.cursor_index < len(lst._items):
+            return lst._items[lst.cursor_index]
+        return None
 
     def _refresh_hint_bar(self) -> None:
         """Public-ish entry to recompute the hint bar after focus or
@@ -1024,12 +1355,25 @@ class SettingsScreen(Screen[None]):
 
     def _activate_item(self, item: MenuItem) -> None:
         app: FNDApp = self.app  # type: ignore[assignment]
+        if item.kind == KIND_DISPLAY:
+            # Read-only row — Enter does nothing. Detail strip still
+            # populates from cursor focus.
+            return
         if item.kind == KIND_ACTION:
-            # Documentation-only rows (widget-level bindings — Move
-            # cursor, Activate, etc. in the Keybindings sheet) carry
-            # an empty action_id and have nothing to fire. Treat Enter
-            # as a no-op rather than dismissing the cheat sheet — the
-            # user is reading help, not invoking a global action.
+            # ACTION rows have three dispatch paths in priority order:
+            #   1. ``external`` callable (custom side-effect, e.g. push
+            #      a confirm modal or an IndexerScreen). When present,
+            #      run it and leave the settings stack alone — the
+            #      callable usually pushes its own screen.
+            #   2. ``action_id`` (REGISTRY-bound app action). Close the
+            #      settings stack and dispatch via ``app.action_<id>``.
+            #   3. Documentation-only rows (widget-level bindings — Move
+            #      cursor, Activate, etc. in the Keybindings sheet)
+            #      carry neither; Enter is a no-op so the user can keep
+            #      reading the cheat sheet.
+            if item.external is not None:
+                item.external(app)
+                return
             if not item.action_id:
                 return
             self._close_settings_stack()
@@ -1366,6 +1710,7 @@ class SourceFormScreen(Screen[None]):
         Binding("tab", "cycle_focus(1)", show=False),
         Binding("shift+tab", "cycle_focus(-1)", show=False),
         Binding("ctrl+s", "save_close", show=False),
+        Binding("ctrl+a", "save_add_another", show=False),
         Binding("ctrl+d", "delete_source", "Delete", show=False),
     ]
 
@@ -1586,7 +1931,7 @@ class SourceFormScreen(Screen[None]):
         out: list[ChoiceOption] = [
             ChoiceOption(
                 value="",
-                label="(default — use global resolver)",
+                label="(default: use global resolver)",
                 description="No per-source override; defer to app_defaults + auto-promote.",
             )
         ]
@@ -1865,7 +2210,7 @@ class SourceFormScreen(Screen[None]):
         app: FNDApp = self.app  # type: ignore[assignment]
         cfg = app._config  # type: ignore[attr-defined]
         if cfg is None or self._collection_name not in cfg.collections:
-            self._show_error("Collection vanished — please reopen the menu.")
+            self._show_error("Collection vanished. Please reopen the menu.")
             return
         col: CollectionConfig = cfg.collections[self._collection_name]
         if self._source_index is None:
@@ -1887,6 +2232,25 @@ class SourceFormScreen(Screen[None]):
         if self._snapshot != self._fields or self._source_index is None:
             app._reindex_collection_async(self._collection_name)  # type: ignore[attr-defined]
         self.app.pop_screen()
+
+    def action_save_add_another(self) -> None:
+        """Save the current source, then immediately re-open the form
+        for another new source in the same collection. Only meaningful
+        when adding new (source_index is None); in edit-mode behaves
+        like Ctrl+S."""
+        collection = self._collection_name
+        was_new = self._source_index is None
+        self.action_save_close()
+        if not was_new:
+            return
+
+        # action_save_close pops; push a fresh form once the pop has
+        # settled so the user can continue adding without going back to
+        # the SourcesScreen and re-triggering Add source.
+        def _chain() -> None:
+            self.app.push_screen(SourceFormScreen(collection_name=collection, source_index=None))
+
+        self.app.call_later(_chain)
 
     def action_back(self) -> None:
         self.app.pop_screen()
@@ -2484,19 +2848,21 @@ class DeleteCollectionScreen(Screen[None]):
     ]
 
     CSS = """
-    DeleteCollectionScreen { background: $surface; }
+    DeleteCollectionScreen { background: $surface; align: center middle; }
     DeleteCollectionScreen > #settings_box {
+        width: auto;
+        min-width: 60;
+        max-width: 100;
         height: auto;
+        max-height: 90%;
         border: round $error;
         padding: 0 1;
-        margin: 1 4;
     }
-    DeleteCollectionScreen > #settings_box:focus-within { border: round $error; }
+    DeleteCollectionScreen #confirm_summary { padding: 0 0 1 0; }
     DeleteCollectionScreen #confirm_list { height: auto; }
     DeleteCollectionScreen > #footer_hints {
         dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
     }
-    DeleteCollectionScreen .warning { color: $warning; padding: 0 0 1 0; }
     """
 
     def __init__(self, *, collection_name: str) -> None:
@@ -2507,16 +2873,28 @@ class DeleteCollectionScreen(Screen[None]):
         with Vertical(id="settings_box") as box:
             box.border_title = f"Collections › {self._name} › Delete"
             yield Static(
-                f"Delete collection {self._name!r}?  This removes it from "
-                "config.toml AND drops its chunks from the index.",
-                classes="warning",
+                build_confirm_body(
+                    outcome=(
+                        f"Collection '{self._name}' removed from config; "
+                        "its chunks dropped from the search index."
+                    ),
+                    cost=(
+                        "Cannot be reversed. Re-adding the sources and "
+                        "running Update index would rebuild."
+                    ),
+                    safety=(
+                        "Source files on disk are untouched. Other collections "
+                        "and the PDF Texture Cache are unaffected."
+                    ),
+                    irreversible=True,
+                ),
+                id="confirm_summary",
             )
-            opts = OptionList(
-                Option(Text(f"Yes, delete {self._name}", style="bold"), id="yes"),
+            yield OptionList(
+                confirm_yes_option(f"Yes, delete {self._name}", severity="destructive"),
                 Option("Cancel", id="no"),
                 id="confirm_list",
             )
-            yield opts
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
@@ -2564,6 +2942,450 @@ class DeleteCollectionScreen(Screen[None]):
 
     def action_back(self) -> None:
         self.app.pop_screen()
+
+
+# ── Cache maintenance confirm ───────────────────────────────────────
+
+
+class CacheMaintenanceConfirm(Screen[None]):
+    """Confirm screen for cache prune / clear.
+
+    Mirrors :class:`DeleteCollectionScreen` chrome — same bordered
+    settings_box, same OptionList Yes/Cancel pattern, same key
+    bindings. Arrows navigate between options; Enter selects.
+    Destructive variants use ``$error`` border; reversible variants
+    use ``$warning``.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Cancel", show=False),
+        Binding("up,k", "cursor(-1)", show=False),
+        Binding("down,j", "cursor(1)", show=False),
+        Binding("enter", "activate", show=False),
+    ]
+
+    CSS = """
+    CacheMaintenanceConfirm { background: $surface; align: center middle; }
+    CacheMaintenanceConfirm > #settings_box {
+        width: auto;
+        min-width: 60;
+        max-width: 100;
+        height: auto;
+        max-height: 90%;
+        border: round $warning;
+        padding: 0 1;
+    }
+    CacheMaintenanceConfirm.-destructive > #settings_box { border: round $error; }
+    CacheMaintenanceConfirm #confirm_summary { padding: 0 0 1 0; }
+    CacheMaintenanceConfirm #confirm_irreversible {
+        color: $error; text-style: bold; padding: 0 0 1 0;
+    }
+    CacheMaintenanceConfirm #confirm_list { height: auto; }
+    CacheMaintenanceConfirm > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        summary: Text,
+        run: Callable[[], int],
+        confirm_label: str,
+        result_label: str,
+        irreversible: bool = False,
+    ) -> None:
+        super().__init__()
+        self._title = title
+        self._summary = summary
+        self._run_callback = run
+        self._confirm_label = confirm_label
+        self._result_label = result_label
+        self._irreversible = irreversible
+        if irreversible:
+            self.add_class("-destructive")
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings_box") as box:
+            box.border_title = self._title
+            yield Static(self._summary, id="confirm_summary")
+            if self._irreversible:
+                yield Static("⚠  Cannot be undone.", id="confirm_irreversible")
+            yield OptionList(
+                Option(Text(self._confirm_label, style="bold"), id="yes"),
+                Option("Cancel", id="no"),
+                id="confirm_list",
+            )
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        self.query_one("#confirm_list", OptionList).focus()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(app, (("↑↓", "Nav"), ("⏎", "Confirm"), ("Esc", "Cancel")))
+        )
+
+    def action_cursor(self, direction: int) -> None:
+        lst = self.query_one("#confirm_list", OptionList)
+        if direction > 0:
+            lst.action_cursor_down()
+        else:
+            lst.action_cursor_up()
+
+    def action_activate(self) -> None:
+        self.query_one("#confirm_list", OptionList).action_select()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    @on(OptionList.OptionSelected, "#confirm_list")
+    def _on_select(self, ev: OptionList.OptionSelected) -> None:
+        if ev.option.id == "no":
+            self.app.pop_screen()
+            return
+        try:
+            n = self._run_callback()
+        except Exception as e:
+            self.notify(f"Failed: {e}", severity="error")
+            self.app.pop_screen()
+            return
+        self.notify(f"✓ {n} {self._result_label}.", timeout=5)
+        self.app.pop_screen()
+
+
+# ── Update all collections confirm ──────────────────────────────────
+
+
+class UpdateAllConfirm(Screen[None]):
+    """Confirm + chain Update index across every collection.
+
+    Mirrors the CacheMaintenanceConfirm chrome — bordered box,
+    OptionList Yes/Cancel, hint bar. On Yes, kicks off the first
+    collection's update via the existing per-collection modal path;
+    when that completes, advances to the next. Phase F adds a
+    proper aggregate progress modal — for now we delegate to
+    sequential per-collection runs."""
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Cancel", show=False),
+        Binding("up,k", "cursor(-1)", show=False),
+        Binding("down,j", "cursor(1)", show=False),
+        Binding("enter", "activate", show=False),
+    ]
+
+    CSS = """
+    UpdateAllConfirm { background: $surface; align: center middle; }
+    UpdateAllConfirm > #settings_box {
+        width: auto;
+        min-width: 60;
+        max-width: 100;
+        height: auto;
+        max-height: 90%;
+        border: round $primary 50%;
+        padding: 0 1;
+    }
+    UpdateAllConfirm #confirm_summary { padding: 0 0 1 0; }
+    UpdateAllConfirm #confirm_list { height: auto; }
+    UpdateAllConfirm > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        collection_names: list[str],
+        texturise_override: bool | None = None,
+    ) -> None:
+        super().__init__()
+        self._names = list(collection_names)
+        # None = follow the toggle (the original action), True = always
+        # texturise (the shared "Update everything" action), False =
+        # never texturise (the "Process new files index-only" action).
+        self._texturise_override = texturise_override
+
+    def _mode_label(self) -> str:
+        if self._texturise_override is True:
+            return "Index + texturise (toggle ignored)"
+        if self._texturise_override is False:
+            return "Index only - skip texturising (toggle ignored)"
+        return "Follow Texturise-while-indexing toggle"
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings_box") as box:
+            box.border_title = f"Collections › Update all ({len(self._names)})"
+            text = Text()
+            text.append("Queue     ", style="dim")
+            # List the collections so the user can see exactly what
+            # will run, not just a count.
+            text.append(", ".join(self._names))
+            text.append("\n")
+            text.append("Mode      ", style="dim")
+            text.append(self._mode_label())
+            text.append("\n")
+            text.append("Per file  ", style="dim")
+            text.append(
+                "Unchanged files are skipped. The PDF Texture Cache is consulted, not cleared.\n"
+            )
+            text.append("Order     ", style="dim")
+            text.append("Sequential. Each shows its own progress; queue advances on completion.\n")
+            yield Static(text, id="confirm_summary")
+            confirm = f"Yes, update all {len(self._names)} collections"
+            yield OptionList(
+                Option(Text(confirm, style="bold green"), id="yes"),
+                Option("Cancel", id="no"),
+                id="confirm_list",
+            )
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        self.query_one("#confirm_list", OptionList).focus()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(app, (("↑↓", "Nav"), ("⏎", "Confirm"), ("Esc", "Cancel")))
+        )
+
+    def action_cursor(self, direction: int) -> None:
+        lst = self.query_one("#confirm_list", OptionList)
+        if direction > 0:
+            lst.action_cursor_down()
+        else:
+            lst.action_cursor_up()
+
+    def action_activate(self) -> None:
+        self.query_one("#confirm_list", OptionList).action_select()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    @on(OptionList.OptionSelected, "#confirm_list")
+    def _on_select(self, ev: OptionList.OptionSelected) -> None:
+        if ev.option.id == "no":
+            self.app.pop_screen()
+            return
+        # Pop the confirm, queue every remaining collection on the
+        # app, then trigger the first one. drive_indexer in
+        # fnd/tui/indexer_modal advances the chain as each completes.
+        names = list(self._names)
+        self.app.pop_screen()
+        if not names:
+            return
+        app: FNDApp = self.app  # type: ignore[assignment]
+        # First in the queue runs now; the rest queue up for chaining.
+        first, rest = names[0], names[1:]
+        app._indexer_chain_remaining = rest  # type: ignore[attr-defined]
+        # Total count is preserved so the IndexerScreen title can show
+        # "papers (1 of 5)" even after rest has been depleted.
+        app._indexer_chain_total = len(names)  # type: ignore[attr-defined]
+        # Stash the override so _start_next_in_chain re-applies it to
+        # every subsequent collection (and so a re-trigger of this
+        # confirm with a different mode replaces it).
+        app._indexer_texturise_override = self._texturise_override  # type: ignore[attr-defined]
+        try:
+            app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
+                first, texturise_override=self._texturise_override
+            )
+        except Exception:
+            self.notify(f"Could not start Update index for {first}", severity="error")
+
+
+# ── Structured PDF install/uninstall confirm ────────────────────────
+
+
+def _pdf_cache_size_human() -> str:
+    """Human-readable on-disk size of the PDF structure cache, or
+    "empty" when the directory doesn't exist yet."""
+    from fnd.cache import ExtractionCache, default_cache_dir
+
+    root = default_cache_dir()
+    if not root.exists():
+        return "empty"
+    cache = ExtractionCache()
+    n = cache.total_size_bytes()
+    if n < 1024:
+        return f"{n} B"
+    kb = n / 1024
+    if kb < 1024:
+        return f"{kb:.0f} KB"
+    mb = kb / 1024
+    if mb < 1024:
+        return f"{mb:.0f} MB"
+    return f"{mb / 1024:.1f} GB"
+
+
+class StructuredPdfConfirmScreen(Screen[None]):
+    """Disclosure + Yes/Cancel for the pdf-structure extra.
+
+    Mirrors :class:`CacheMaintenanceConfirm` chrome — bordered
+    settings_box, OptionList Yes/Cancel, hint bar. State at mount
+    decides install vs uninstall copy. Confirming pushes the progress
+    modal wired in step 6b.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Cancel", show=False),
+        Binding("up,k", "cursor(-1)", show=False),
+        Binding("down,j", "cursor(1)", show=False),
+        Binding("enter", "activate", show=False),
+    ]
+
+    CSS = """
+    StructuredPdfConfirmScreen { background: $surface; align: center middle; }
+    StructuredPdfConfirmScreen > #settings_box {
+        width: auto;
+        min-width: 60;
+        max-width: 100;
+        height: auto;
+        max-height: 90%;
+        border: round $primary 50%;
+        padding: 0 1;
+    }
+    StructuredPdfConfirmScreen.-recoverable > #settings_box { border: round $warning; }
+    StructuredPdfConfirmScreen.-destructive > #settings_box { border: round $error; }
+    StructuredPdfConfirmScreen.-safe > #settings_box { border: round $primary 50%; }
+    StructuredPdfConfirmScreen #confirm_summary { padding: 0 0 1 0; }
+    StructuredPdfConfirmScreen #confirm_list { height: auto; }
+    StructuredPdfConfirmScreen > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        from fnd.extras import EXTRAS
+
+        self._extra = EXTRAS.get("pdf-structure")
+        self._installed = self._extra is not None and self._is_installed()
+        # Install is "safe" (additive, reversible). Uninstall is
+        # "recoverable" — packages go but indexed chunks stay, so the
+        # user can recover by reinstalling.
+        self._severity = "recoverable" if self._installed else "safe"
+        self.add_class(confirm_border_class(self._severity))
+
+    def _is_installed(self) -> bool:
+        from fnd.extras import is_extra_installed
+
+        return self._extra is not None and is_extra_installed(self._extra)
+
+    def compose(self) -> ComposeResult:
+        title = (
+            "Indexing › PDF Texturising › Uninstall engine"
+            if self._installed
+            else "Indexing › PDF Texturising › Install engine"
+        )
+        with Vertical(id="settings_box") as box:
+            box.border_title = title
+            yield Static(self._summary_text(), id="confirm_summary")
+            confirm_label = (
+                "Yes, uninstall the texturising engine"
+                if self._installed
+                else "Yes, install the texturising engine"
+            )
+            yield OptionList(
+                confirm_yes_option(confirm_label, severity=self._severity),
+                Option("Cancel", id="no"),
+                id="confirm_list",
+            )
+        yield Static("", id="footer_hints")
+
+    def _summary_text(self) -> Text:
+        from fnd.extras import actual_disk_mb
+
+        if self._extra is None:
+            return Text("Texturising engine is unavailable.", style="bold red")
+        if self._installed:
+            # Uninstall is a give-back action: framing is "what
+            # changes / what you get back / what's preserved." The
+            # PDF Texture Cache stays - it's a separate concept - so
+            # spell that out so the user isn't surprised by leftover
+            # disk usage.
+            cache_size = _pdf_cache_size_human()
+            cache_line = (
+                f"PDF Texture Cache ({cache_size}) stays. "
+                "Forget it separately via Settings → Indexing → "
+                "Forget every saved texturing."
+            )
+            return build_confirm_body(
+                outcome_label="What changes",
+                outcome="New PDFs render as flat text in the preview pane.",
+                cost_label="Disk freed",
+                cost=f"~{actual_disk_mb(self._extra)} MB (packages).",
+                safety_label="Preserved",
+                safety=(
+                    "Already-textured PDFs keep rendering with structure "
+                    "until the next Update index. " + cache_line
+                ),
+            )
+        from fnd.tui.cost_estimate import estimate_per_pdf_seconds, has_calibration_data
+
+        total_mb = sum(p.disk_mb for p in self._extra.packages)
+        secs_per_pdf = estimate_per_pdf_seconds()
+        first_run_note = f"First Update index spends about {secs_per_pdf:.1f} s per PDF " + (
+            "on your machine." if has_calibration_data() else "(rough estimate)."
+        )
+        return build_confirm_body(
+            outcome=("PDFs gain structured preview rendering (headings, lists, tables)."),
+            cost=(f"~{total_mb} MB disk + ML weights on first use. " + first_run_note),
+            safety="Auto-resumes if interrupted. Already-indexed PDFs keep working.",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one("#confirm_list", OptionList).focus()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(app, (("↑↓", "Nav"), ("⏎", "Confirm"), ("Esc", "Cancel")))
+        )
+
+    def action_cursor(self, direction: int) -> None:
+        lst = self.query_one("#confirm_list", OptionList)
+        if direction > 0:
+            lst.action_cursor_down()
+        else:
+            lst.action_cursor_up()
+
+    def action_activate(self) -> None:
+        self.query_one("#confirm_list", OptionList).action_select()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    @on(OptionList.OptionSelected, "#confirm_list")
+    def _on_select(self, ev: OptionList.OptionSelected) -> None:
+        if ev.option.id == "no" or self._extra is None:
+            self.app.pop_screen()
+            return
+        import sys
+
+        from fnd.extras import (
+            _project_pyproject_for_python,  # type: ignore[attr-defined]
+            disable_pdf_structure_default_group,
+            enable_pdf_structure_default_group,
+            install_commands,
+            uninstall_commands,
+        )
+        from fnd.tui.extras_install_progress import start_extras_install
+
+        # When fnd is running inside a uv-managed project venv, toggle
+        # the ``pdf-structure`` group in ``[tool.uv] default-groups``
+        # BEFORE running the sync. Otherwise a subsequent ``uv sync``
+        # would wipe the install (extras / non-default groups are
+        # removed when not flagged active).
+        pyproject = _project_pyproject_for_python(sys.executable)
+
+        if self._installed:
+            if pyproject is not None and self._extra.name == "pdf-structure":
+                disable_pdf_structure_default_group(pyproject)
+            cmds = uninstall_commands(self._extra)
+            label = "Uninstall"
+        else:
+            if pyproject is not None and self._extra.name == "pdf-structure":
+                enable_pdf_structure_default_group(pyproject)
+            cmds = install_commands(self._extra)
+            label = "Install"
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.app.pop_screen()
+        start_extras_install(app, cmds=cmds, action_label=label)
 
 
 # ── Clone-source flow (Phase 5) ─────────────────────────────────────
@@ -2937,3 +3759,426 @@ def open_settings_section(
             ),
         )
     )
+
+
+# ── Still-flat drill-in ─────────────────────────────────────────────
+
+
+def _format_recorded_at(iso: str) -> str:
+    """Compact local-time label for an ISO-8601 UTC timestamp.
+
+    today HH:MM        — same calendar day
+    yesterday HH:MM    — previous calendar day
+    Mon HH:MM          — within the last 7 days
+    MMM DD HH:MM       — older than a week"""
+    import datetime as _dt
+
+    try:
+        ts = _dt.datetime.fromisoformat(iso).astimezone()
+    except ValueError:
+        return iso
+    now = _dt.datetime.now().astimezone()
+    days = (now.date() - ts.date()).days
+    hm = ts.strftime("%H:%M")
+    if days == 0:
+        return f"today {hm}"
+    if days == 1:
+        return f"yesterday {hm}"
+    if days < 7:
+        return f"{ts.strftime('%a')} {hm}"
+    return ts.strftime("%b %d %H:%M")
+
+
+def _flat_pdfs_with_reasons(
+    *, collection: str | None = None
+) -> list[tuple[str, str, str, str | None]]:
+    """Return a list of ``(collection, path, reason)`` for every PDF
+    that is on disk but has no body_struct-bearing chunk in the
+    tantivy index. Reasons are sourced from the failure log when
+    present; otherwise inferred from current state (engine off /
+    battery-saver toggle / unknown)."""
+    import contextlib
+    from pathlib import Path
+
+    import tantivy
+
+    from fnd.config import default_index_dir, load
+    from fnd.schema import F_BODY_STRUCT, F_COLLECTION, F_KIND, F_PATH
+    from fnd.tui.failure_log import list_failures
+
+    cfg = load()
+    target_cols = [collection] if collection is not None else list(cfg.collections)
+    # Build per-collection on-disk PDF inventories using the SAME
+    # filter chain the indexer uses (includes/excludes + frontmatter).
+    # Earlier the function did a naive ``root.rglob('*.pdf')`` which
+    # included every PDF physically under the source root regardless of
+    # the source's ``includes: ['**/*.md']`` restriction or its
+    # ``frontmatter_filter``. A PDF the user explicitly scoped OUT of
+    # a collection would then show up forever in that collection's
+    # Texturising Error Log as "still flat" - the indexer can't index
+    # what isn't in its walk, so the file would never be cleared from
+    # the log no matter how many Updates the user ran.
+    from fnd.walk import walk_sources
+
+    on_disk: dict[str, set[str]] = {}
+    for name in target_cols:
+        col = cfg.collections.get(name)
+        if col is None:
+            continue
+        paths: set[str] = set()
+        for path in walk_sources(sources=list(col.sources)):
+            if path.suffix.lower() != ".pdf":
+                continue
+            with contextlib.suppress(OSError):
+                paths.add(str(path.resolve()))
+        on_disk[name] = paths
+
+    # Per-collection textured-path sets via tantivy.
+    textured: dict[str, set[str]] = {name: set() for name in on_disk}
+    index_dir = default_index_dir()
+    if index_dir.exists():
+        try:
+            index = tantivy.Index.open(str(index_dir))
+            index.reload()
+            searcher = index.searcher()
+            for name in on_disk:
+                col_q = tantivy.Query.term_query(index.schema, F_COLLECTION, name)
+                pdf_q = tantivy.Query.boolean_query(
+                    [
+                        (tantivy.Occur.Must, col_q),
+                        (tantivy.Occur.Must, tantivy.Query.term_query(index.schema, F_KIND, "pdf")),
+                    ]
+                )
+                for _score, addr in searcher.search(pdf_q, limit=200000).hits:
+                    doc = searcher.doc(addr)
+                    if not doc.get_first(F_BODY_STRUCT):  # type: ignore[attr-defined]
+                        continue
+                    p = doc.get_first(F_PATH)  # type: ignore[attr-defined]
+                    if p:
+                        with contextlib.suppress(OSError):
+                            textured[name].add(str(Path(str(p)).resolve()))
+        except Exception:
+            pass
+
+    # Failure-log records keyed by (collection, path).
+    failure_by_key: dict[tuple[str, str], tuple[str, str]] = {}
+    for r in list_failures():
+        with contextlib.suppress(OSError):
+            failure_by_key[(r.collection, str(Path(r.path).resolve()))] = (
+                r.reason,
+                r.recorded_at,
+            )
+
+    # Reason fallback when no failure record exists.
+    from fnd.tui.menu import _is_pdf_structure_installed
+
+    engine_on = _is_pdf_structure_installed()
+    try:
+        full_cfg = load()
+        battery_saver = not bool(full_cfg.defaults.cache_at_index_time)
+    except Exception:
+        battery_saver = False
+
+    # Drop user-dismissed PDFs - those are files the user has
+    # explicitly accepted as "fine flat" and don't want pestered
+    # about every time the log opens.
+    from fnd.cache import sha256_file as _sha256_file
+    from fnd.dismissed_pdfs import is_dismissed as _is_dismissed
+
+    out: list[tuple[str, str, str, str | None]] = []
+    for name, paths in on_disk.items():
+        flat = paths - textured.get(name, set())
+        for p in sorted(flat):
+            with contextlib.suppress(OSError):
+                if _is_dismissed(_sha256_file(Path(p))):
+                    continue
+            record = failure_by_key.get((name, p))
+            if record is None:
+                if not engine_on:
+                    reason = "Texturising engine is not installed"
+                elif battery_saver:
+                    reason = "Texturise-while-indexing toggle is OFF"
+                else:
+                    reason = (
+                        "Extraction yielded no structured content. "
+                        "Likely a scanned PDF or one with no extractable text."
+                    )
+                out.append((name, p, reason, None))
+            else:
+                out.append((name, p, record[0], record[1]))
+    return out
+
+
+class StillFlatDrillIn(Screen[None]):
+    """List of every PDF whose preview is flat, grouped one row per file
+    with its reason and a Retry action.
+
+    Retry re-runs Update for the file's collection with texturising
+    forced on; the cache short-circuits already-textured PDFs so the
+    cost is roughly one texturising pass per still-flat PDF."""
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Back", show=False),
+        Binding("up,k", "move(-1)", show=False),
+        Binding("down,j", "move(1)", show=False),
+        Binding("enter,r", "retry", "Retry", show=True),
+        Binding("shift+enter", "reveal", "Reveal", show=True),
+        Binding("d", "dismiss_pdf", "Dismiss", show=True),
+        Binding("c", "copy_path", "Copy path", show=True),
+    ]
+
+    CSS = """
+    StillFlatDrillIn { background: $surface; }
+    StillFlatDrillIn > #settings_box {
+        height: 1fr;
+        border: round $primary 50%;
+        padding: 0 1;
+    }
+    StillFlatDrillIn > #settings_box:focus-within { border: round $accent; }
+    StillFlatDrillIn #empty_state { padding: 1 1; color: $text-muted; }
+    StillFlatDrillIn .row { height: auto; padding: 1 1 0 1; }
+    StillFlatDrillIn .row.-cursor { background: $accent 20%; }
+    StillFlatDrillIn > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(self, *, collection: str | None = None) -> None:
+        super().__init__()
+        self._collection_filter = collection
+        self._rows: list[tuple[str, str, str, str | None]] = []
+        self._cursor = 0
+
+    def compose(self) -> ComposeResult:
+        title = "Texturising Error Log"
+        if self._collection_filter:
+            title += f" - {self._collection_filter}"
+        with Vertical(id="settings_box") as box:
+            box.border_title = title
+            # ``can_focus=False`` keeps the scroll container out of the
+            # focus chain so the screen-level Up/Down bindings fire
+            # for row navigation - the default focusable VerticalScroll
+            # eats arrows for its own scroll handling and the bindings
+            # never get a chance to run.
+            scroll = VerticalScroll(id="still_flat_body")
+            scroll.can_focus = False
+            yield scroll
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        import contextlib as _ctx
+
+        self._refresh()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        with _ctx.suppress(Exception):
+            self.query_one("#footer_hints", Static).update(
+                _hint_bar(
+                    app,
+                    (
+                        ("↑↓", "Nav"),
+                        ("⏎ / r", "Retry"),
+                        ("⇧⏎", "Reveal"),
+                        ("d", "Dismiss"),
+                        ("c", "Copy path"),
+                        ("Esc", "Back"),
+                    ),
+                )
+            )
+
+    def _refresh(self) -> None:
+        self._rows = _flat_pdfs_with_reasons(collection=self._collection_filter)
+        # Clamp cursor after a row is removed by Retry/Dismiss so the
+        # cursor doesn't index past the end.
+        if self._cursor >= len(self._rows):
+            self._cursor = max(0, len(self._rows) - 1)
+        body = self.query_one("#still_flat_body", VerticalScroll)
+        for child in list(body.children):
+            child.remove()
+        if not self._rows:
+            body.mount(Static("Nothing to fix - every PDF is textured.", id="empty_state"))
+            return
+        for i, (col, path, reason, recorded_at) in enumerate(self._rows):
+            cls = "row -cursor" if i == self._cursor else "row"
+            body.mount(
+                Static(
+                    self._format_row(i, col, path, reason, recorded_at),
+                    classes=cls,
+                )
+            )
+
+    def _format_row(self, i: int, col: str, path: str, reason: str, recorded_at: str | None) -> str:
+        """Multi-line row: filename, then status chip + collection +
+        date + page-if-known on a second line, then the wrapped reason
+        in dim text. Page info is parsed out of the failure log's
+        '[last page beat: N/M]' marker so the user knows where the
+        worker wedged."""
+        import re
+
+        cursor = "▸" if i == self._cursor else " "
+        name = Path(path).name
+
+        # Status chip - "failed" when a failure record exists,
+        # "still flat" otherwise. Failed gets a red ✗; still-flat
+        # gets a yellow ⚠.
+        chip = "[red]✗ failed[/]" if recorded_at is not None else "[yellow]⚠ still flat[/]"
+
+        # Pull "[last page beat: N/M]" out of the reason so we can
+        # render the page hint separately and clean the reason text.
+        page_part = ""
+        clean_reason = reason
+        page_match = re.search(r"\[last page beat:\s*(\d+)/(\d+)\]", reason)
+        if page_match:
+            page_part = f"  ·  page {page_match.group(1)}/{page_match.group(2)}"
+            clean_reason = re.sub(r"\s*\[last page beat:[^\]]+\]\s*", " ", reason).strip()
+
+        # Meta line: status, collection, date (only for actual
+        # failure records; cache-flat files have no recorded run).
+        # Bare ``col`` would be eaten by Rich markup as ``[col]`` so
+        # we render the collection name as a plain dim chip.
+        meta_bits = [chip, f"[dim]{col}[/]"]
+        if recorded_at:
+            meta_bits.append(f"[dim]{_format_recorded_at(recorded_at)}[/]")
+        meta_str = "  ·  ".join(meta_bits) + page_part
+
+        header = f"{cursor} [bold]{name}[/]"
+        meta = f"     {meta_str}"
+        body = f"     [dim]{clean_reason}[/]"
+        return f"{header}\n{meta}\n{body}"
+
+    def action_move(self, delta: int) -> None:
+        if not self._rows:
+            return
+        self._cursor = max(0, min(len(self._rows) - 1, self._cursor + delta))
+        self._refresh_cursor()
+
+    def _refresh_cursor(self) -> None:
+        body = self.query_one("#still_flat_body", VerticalScroll)
+        rows = list(body.query(Static))
+        for i, row in enumerate(rows):
+            if i >= len(self._rows):
+                continue
+            col, path, reason, recorded_at = self._rows[i]
+            row.update(self._format_row(i, col, path, reason, recorded_at))
+            # Move the -cursor class too so the background tint
+            # follows the active row, not just the ▸ character.
+            if i == self._cursor:
+                row.add_class("-cursor")
+            else:
+                row.remove_class("-cursor")
+        # Scroll the active row into view so a long log doesn't
+        # leave the cursor off-screen.
+        if 0 <= self._cursor < len(rows):
+            import contextlib as _ctx
+
+            with _ctx.suppress(Exception):
+                body.scroll_to_widget(rows[self._cursor])
+
+    def action_retry(self) -> None:
+        if not self._rows:
+            return
+        col, path, _reason, _recorded_at = self._rows[self._cursor]
+        app: FNDApp = self.app  # type: ignore[assignment]
+        # Forget THIS file's cache entry before re-running the update,
+        # otherwise the next Update cache-hits the previous flat
+        # extraction and the file stays flat forever. Per-file
+        # precision (instead of forget+run-whole-collection) would need
+        # a single-file extract path; routing through the existing
+        # per-collection Update is fine because other already-textured
+        # PDFs in the collection still short-circuit via cache.
+        import contextlib as _ctx
+
+        with _ctx.suppress(Exception):
+            from fnd.cache import ExtractionCache, sha256_file
+            from fnd.extract.pdf import _extractor_signature
+
+            cache = ExtractionCache()
+            sha = sha256_file(Path(path))
+            key = cache.build_key(content_sha256=sha, extractor_signature=_extractor_signature())
+            entry = cache.entry_path(key)
+            if entry.exists():
+                with _ctx.suppress(OSError):
+                    entry.unlink()
+        try:
+            app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
+                col, texturise_override=True
+            )
+        except Exception as e:
+            self.notify(f"Could not start retry for {col}: {e}", severity="error")
+
+    def action_reveal(self) -> None:
+        """Open the OS file browser with the row's PDF selected.
+
+        macOS: ``open -R <path>`` selects the file in Finder.
+        Linux: best-effort ``xdg-open`` on the parent directory.
+        Windows: ``explorer /select``."""
+        if not self._rows:
+            return
+        _col, path, _reason, _recorded_at = self._rows[self._cursor]
+        import platform
+        import subprocess
+
+        system = platform.system()
+        try:
+            if system == "Darwin":
+                subprocess.Popen(["open", "-R", path])
+            elif system == "Windows":
+                subprocess.Popen(["explorer", "/select,", path])
+            else:
+                subprocess.Popen(["xdg-open", str(Path(path).parent)])
+        except OSError as e:
+            self.notify(f"Could not reveal: {e}", severity="error")
+
+    def action_dismiss_pdf(self) -> None:
+        """Mark the current row's PDF as 'fine flat - stop showing'.
+
+        Stored content-addressed in fnd.dismissed_pdfs so renaming /
+        moving the PDF preserves the dismissal.
+
+        Named ``action_dismiss_pdf`` rather than ``action_dismiss``
+        because Textual's ``Screen.action_dismiss`` is the modal-pop
+        helper and shadowing it tripped pyright's signature check."""
+        if not self._rows:
+            return
+        col, path, _reason, _recorded_at = self._rows[self._cursor]
+        import contextlib as _ctx
+
+        with _ctx.suppress(Exception):
+            from fnd.cache import sha256_file
+            from fnd.dismissed_pdfs import mark_dismissed
+            from fnd.tui.failure_log import clear_failure
+
+            sha = sha256_file(Path(path))
+            mark_dismissed(sha)
+            with _ctx.suppress(Exception):
+                clear_failure(collection=col, path=path)
+        self._refresh()
+        self.notify(f"Dismissed: {Path(path).name}", severity="information")
+
+    def action_copy_path(self) -> None:
+        """Copy the current row's absolute path to the OS clipboard."""
+        if not self._rows:
+            return
+        _col, path, _reason, _recorded_at = self._rows[self._cursor]
+        import platform
+        import subprocess
+
+        system = platform.system()
+        try:
+            if system == "Darwin":
+                proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
+            elif system == "Windows":
+                proc = subprocess.Popen(["clip"], stdin=subprocess.PIPE)
+            else:
+                try:
+                    proc = subprocess.Popen(["wl-copy"], stdin=subprocess.PIPE)
+                except FileNotFoundError:
+                    proc = subprocess.Popen(
+                        ["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE
+                    )
+            proc.communicate(input=path.encode("utf-8"))
+            self.notify(f"Copied: {path}", severity="information")
+        except (OSError, FileNotFoundError) as e:
+            self.notify(f"Could not copy: {e}", severity="error")
+
+    def action_back(self) -> None:
+        self.app.pop_screen()

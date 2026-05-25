@@ -347,9 +347,9 @@ def test_obsidian_handler_without_vault_uses_path_form_not_system_fallback(
     argv = captured[0]
     assert argv[0] == "open"
     # MUST be an obsidian:// URL, NOT a plain ``open <path>``.
-    assert argv[1].startswith(
-        "obsidian://open?path="
-    ), f"obsidian handler with no vault silently swapped apps: {argv}"
+    assert argv[1].startswith("obsidian://open?path="), (
+        f"obsidian handler with no vault silently swapped apps: {argv}"
+    )
     assert "note.md" in argv[1]
     assert "%23Intro" in argv[1]
 

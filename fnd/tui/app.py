@@ -15,6 +15,7 @@ phase 7 adds reranker live-tuning.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import re
 from collections import OrderedDict
@@ -66,6 +67,7 @@ from fnd.render import (
 )
 from fnd.rerank import RankingProfile, profile_from_config
 from fnd.tui.actions import REGISTRY, Keymap, load_keymap
+from fnd.tui.indexer_modal import IndexerScreen, drive_indexer
 from fnd.tui.line_buffer import (
     FileView,
     LineBufferPreview,
@@ -73,7 +75,7 @@ from fnd.tui.line_buffer import (
     build_file_view,
     build_rendered_document,
 )
-from fnd.tui.preview_dispatcher import choose_preview_mode
+from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
 from fnd.tui.preview_scrollbar import MatchAwareScroll
 from fnd.tui.progress import FNDProgressBar, ProgressFacility, ProgressSession
 
@@ -816,20 +818,10 @@ def _build_label(text: str, score: float, max_score: float) -> Any:
     return label
 
 
-# Formats whose extractor produces a ``body_md`` markdown source
-# suitable for the FNDMarkdown structural renderer. Other formats
-# (pdf, txt) stay on the per-line plain renderer that targets
-# specific matched lines for scroll precision.
-_MARKDOWN_RENDERED_KINDS: frozenset[str] = frozenset({"md", "docx", "pptx"})
-
-
-def _uses_markdown_renderer(c: FileChunk) -> bool:
-    """True when this chunk should mount through ``FNDMarkdown``.
-    A chunk needs both a markdown-capable kind AND non-empty
-    ``body_md``; the empty-source fallback (defensive — schema-version
-    refusal should make it unreachable) keeps stale-index loads from
-    crashing the renderer."""
-    return c.kind in _MARKDOWN_RENDERED_KINDS and bool(c.body_md)
+# Per-chunk renderer choice lives in ``preview_dispatcher`` so the
+# file-level ``choose_preview_mode`` decision and the per-chunk mount
+# loop can't drift apart on which kinds are markdown-rendered.
+_uses_markdown_renderer = uses_markdown_renderer
 
 
 def _legacy_blocks_to_md(blocks: list[Any]) -> str:
@@ -1260,6 +1252,52 @@ class FNDApp(App[None]):
         # installed in the shared widget. Lets intra-file navigation skip
         # set_prebuilt_view and just scroll.
         self._installed_flat_key: tuple[str, str] | None = None
+        # Async indexer state — see fnd/tui/indexer_modal.py. None when
+        # no indexer is running; populated for the lifetime of one
+        # `fnd collection reindex` invoked from the TUI / palette.
+        self._indexer_task: asyncio.Task[None] | None = None
+        self._indexer_cancel: asyncio.Event | None = None
+        self._indexer_events: asyncio.Queue[Any] | None = None
+        self._indexer_state: Any = None
+        self._indexer_last_event: Any = None
+        # Update-all-collections chain bookkeeping. The IndexerScreen
+        # title shows "(N of M)" when total > 1; drive_indexer in
+        # indexer_modal.py dequeues from _indexer_chain_remaining at
+        # the end of each collection's run.
+        self._indexer_chain_remaining: list[str] = []
+        self._indexer_chain_total: int = 1
+        # True between drive_indexer scheduling the next chain step via
+        # call_later and the deferred task actually starting. The
+        # IndexerScreen drain reads this so the modal stays mounted
+        # across that gap. Without the guard the drain pops the modal
+        # as soon as _indexer_chain_remaining empties (which happens
+        # synchronously before call_later fires) and the next
+        # collection's events have no consumer.
+        self._indexer_chain_callback_pending: bool = False
+        # Per-run texturise override carried across chain steps. None
+        # means follow the "Texturise PDFs while indexing" toggle; True
+        # forces texturising on (set by the shared "Update everything"
+        # action); False forces it off (set by the "Process new files
+        # index-only" action). Reset to None when the chain finishes.
+        self._indexer_texturise_override: bool | None = None
+        # Per-collection final snapshots captured as each chain step
+        # finishes. Drives the IndexerScreen's history band and the
+        # post-chain summary screen so the user can see what every
+        # finished collection produced - even after the modal moved
+        # on. Cleared by the Done action on IndexerScreen.
+        self._indexer_chain_history: list[Any] = []
+        self._indexer_collection: str = ""
+        self._indexer_started_at: str = ""
+        # Structured-PDF extras install/uninstall — sibling to the
+        # indexer task so the modal can be dismissed (Background) and
+        # reopened against the live task. See
+        # fnd/tui/extras_install_progress.py.
+        self._extras_task: asyncio.Task[None] | None = None
+        self._extras_cancel: asyncio.Event | None = None
+        self._extras_events: asyncio.Queue[Any] | None = None
+        self._extras_last_event: Any = None
+        self._extras_proc: Any = None
+        self._extras_action_label: str = ""
         # Convenience aliases that point into the active container —
         # legacy code paths (_scroll_preview_to_chunk, etc.) read from
         # these instead of poking at the container directly.
@@ -1400,6 +1438,17 @@ class FNDApp(App[None]):
             self._run_query(self._initial_query)
         if not self._initial_query or not self._groups:
             self.query_one("#query_bar", Input).focus()
+        # Auto-resume any interrupted reindex from a previous fnd session.
+        # Runs in background (no modal); user can click the footer
+        # indicator or invoke `action_reindex_default` to view progress.
+        # Wrapped in try/except so a corrupt state file doesn't keep the
+        # TUI from launching.
+        with contextlib.suppress(Exception):
+            self._maybe_resume_indexer()
+        # Surface pre-upgrade cache entries on launch (Slice 6 of the
+        # indexing-and-texture-ui plan). Deferred via call_later so any
+        # in-flight resume modal lands first.
+        self.call_later(self._maybe_show_upgrade_banner)
 
     # ── Ranking profile (§7) ──────────────────────────────────────
 
@@ -3071,10 +3120,19 @@ class FNDApp(App[None]):
                 f"mounted_size={len(container.mounted_indices)} "
                 f"is_complete={container.is_complete}"
             )
-            evicted = self._preview_cache.put(container, protect=self._active_preview)
-            for old in evicted:
+            if container.mounted_indices:
+                evicted = self._preview_cache.put(container, protect=self._active_preview)
+                for old in evicted:
+                    with contextlib.suppress(Exception):
+                        old.remove()
+            else:
+                # Loop bailed on user-mount-in-flight (or every mount raised)
+                # before any chunk landed. Caching the empty container would
+                # block the next prefetch attempt for this (parent_id, sig)
+                # via the already-cached short-circuit; instead, drop it so a
+                # later trigger (cursor move, second query) can retry cleanly.
                 with contextlib.suppress(Exception):
-                    old.remove()
+                    container.remove()
 
     def _user_mount_in_flight(self) -> bool:
         task = self._preview_mount_task
@@ -3987,6 +4045,250 @@ class FNDApp(App[None]):
                 return g, g.hits[0]
         return None
 
+    # ── Async indexer plumbing ────────────────────────────────────
+
+    def start_indexer(
+        self,
+        *,
+        collection: str,
+        config: Any = None,  # CollectionConfig; Any to avoid import cycle
+        index_dir: Path | None = None,
+        rebuild: bool = False,
+        open_modal: bool = True,
+        texturise_override: bool | None = None,
+    ) -> bool:
+        """Spawn the async indexer task for ``collection``. Idempotent —
+        if a task is already running, returns False without starting a
+        second one.
+
+        ``texturise_override`` (None/True/False) is forwarded through
+        ``drive_indexer`` to ``run_indexer``; for chain runs the value
+        is stashed on ``self._indexer_texturise_override`` so subsequent
+        chain steps inherit the same mode.
+
+        Returns True when a new task was spawned.
+        """
+        import datetime as _dt
+
+        from fnd.config import load as _load_config
+
+        if self._indexer_task is not None and not self._indexer_task.done():
+            if open_modal:
+                self.push_screen(IndexerScreen(self._indexer_collection or collection))
+            return False
+        if config is None:
+            cfg = _load_config()
+            config = cfg.collection(collection)
+        if index_dir is None:
+            # Use the app's configured index_dir so a test or CLI
+            # caller that constructed FNDApp(index_dir=...) actually
+            # writes to that directory. ``self._index_dir`` is set
+            # from the constructor (falling back to ``default_index_dir()``
+            # there) and is always non-None.
+            index_dir = self._index_dir
+        self._indexer_collection = collection
+        self._indexer_started_at = _dt.datetime.now(tz=_dt.UTC).isoformat(timespec="seconds")
+        # First step of a chain (or single-collection run) sets the
+        # override; later chain steps re-enter start_indexer via
+        # _start_next_in_chain, which passes the stashed value back.
+        self._indexer_texturise_override = texturise_override
+        self._indexer_cancel = asyncio.Event()
+        # Reuse the existing events queue when a chain run is in
+        # progress so the IndexerScreen's drain (which holds a
+        # reference to the queue from its on_mount) keeps seeing
+        # events from the next collection. Otherwise the modal would
+        # appear to stall after the first collection completes.
+        chain_active = bool(self._indexer_chain_remaining) or (self._indexer_chain_total or 1) > 1
+        if not chain_active or self._indexer_events is None:
+            self._indexer_events = asyncio.Queue()
+        if not chain_active:
+            # Fresh chain start: clear session-wide per-page counters
+            # so this run reports its own avg from scratch.
+            with contextlib.suppress(Exception):
+                from fnd.tui.live_progress import reset_session as _live_reset_session
+
+                _live_reset_session()
+        self._indexer_state = None
+        self._indexer_last_event = None
+        self._indexer_task = asyncio.create_task(
+            drive_indexer(
+                self,
+                collection=collection,
+                config=config,
+                index_dir=index_dir,
+                rebuild=rebuild,
+                cancel=self._indexer_cancel,
+                events=self._indexer_events,
+                texturise_override=texturise_override,
+            )
+        )
+        if open_modal:
+            chain_total = getattr(self, "_indexer_chain_total", 1) or 1
+            chain_pending = getattr(self, "_indexer_chain_remaining", None) or []
+            chain_index = max(1, chain_total - len(chain_pending))
+            self.push_screen(
+                IndexerScreen(
+                    collection,
+                    chain_total=chain_total,
+                    chain_index=chain_index,
+                )
+            )
+        return True
+
+    def action_reindex_default(self) -> None:
+        """Convenience action: reindex the default collection."""
+        try:
+            self._reindex_with_warning_if_needed("default")
+        except Exception as e:
+            self.notify(f"Could not start indexer: {e}", severity="error")
+
+    def _reindex_with_warning_if_needed(
+        self, collection: str, *, texturise_override: bool | None = None
+    ) -> None:
+        """If the pdf-structure extra is installed and the first-reindex
+        warning hasn't been seen, show it; on confirm, start the
+        indexer. Otherwise start the indexer directly."""
+        from fnd.config import load as _load_config
+        from fnd.tui.first_reindex_warning import (
+            FirstReindexWarningScreen,
+            count_pdfs,
+            has_been_seen,
+        )
+
+        # Prefer the in-memory config so tests / live edits don't get
+        # silently overridden by whatever's on disk.
+        cfg = self._config if self._config is not None else _load_config()
+        if collection not in cfg.collections:
+            self.notify(f"Collection '{collection}' not found.", severity="error")
+            return
+        col_cfg = cfg.collections[collection]
+
+        # Only warn when extras are actually installed (otherwise the
+        # cost is the old flat-extraction cost, which is sub-second/PDF).
+        from fnd.extras import EXTRAS, is_extra_installed
+
+        extra = EXTRAS.get("pdf-structure")
+        show_warning = extra is not None and is_extra_installed(extra) and not has_been_seen()
+
+        if show_warning:
+            n_pdfs = count_pdfs(col_cfg)
+            if n_pdfs == 0:
+                # No PDFs in this collection; skip the warning entirely.
+                self.start_indexer(
+                    collection=collection,
+                    config=col_cfg,
+                    texturise_override=texturise_override,
+                )
+                return
+
+            def _after_warning(confirmed: bool | None) -> None:
+                if confirmed:
+                    self.start_indexer(
+                        collection=collection,
+                        config=col_cfg,
+                        texturise_override=texturise_override,
+                    )
+
+            self.push_screen(
+                FirstReindexWarningScreen(collection=collection, n_pdfs=n_pdfs),
+                _after_warning,
+            )
+        else:
+            self.start_indexer(
+                collection=collection,
+                config=col_cfg,
+                texturise_override=texturise_override,
+            )
+
+    def _maybe_show_upgrade_banner(self) -> None:
+        """Push the texturising-upgrade banner when (a) the engine is
+        installed, (b) the on-disk cache holds entries from a previous
+        texturising signature, and (c) the user has not already
+        dismissed this exact (old, current) pair."""
+        import contextlib as _ctx
+
+        try:
+            from fnd.extract.pdf import extractor_signature
+
+            # The combined Indexing & PDF Texture screen's status row
+            # already shows engine state; mirror the same gate so the
+            # banner only fires when texturising can actually be
+            # re-run.
+            from fnd.extras import EXTRAS, is_extra_installed
+            from fnd.tui.upgrade_banner import (
+                UpgradeBannerScreen,
+                count_pre_upgrade_entries,
+                is_dismissed,
+            )
+
+            extra = EXTRAS.get("pdf-structure")
+            if extra is None or not is_extra_installed(extra):
+                return
+            n_entries, old_sig = count_pre_upgrade_entries()
+            if n_entries == 0 or old_sig is None:
+                return
+            current = extractor_signature()
+            if is_dismissed(old_sig, current):
+                return
+
+            def _after(choice: str | None) -> None:
+                if choice == "now":
+                    # Re-run Update across every collection with
+                    # texturising forced on; the cache short-circuits
+                    # already-textured PDFs so the cost is one
+                    # texturising pass per affected PDF.
+                    with _ctx.suppress(Exception):
+                        from fnd.tui.menu import _run_update_all_index_and_texturise
+
+                        _run_update_all_index_and_texturise(self)
+                # "later" and "dismiss" are no-ops here; "dismiss"
+                # already persisted inside the screen.
+
+            self.push_screen(
+                UpgradeBannerScreen(
+                    n_entries=n_entries,
+                    old_sig=old_sig,
+                    current_sig=current,
+                ),
+                _after,
+            )
+        except Exception:
+            # Banner is opt-in surfacing; never block the TUI from
+            # launching because of a counting / parsing glitch.
+            pass
+
+    def _maybe_resume_indexer(self) -> None:
+        """If a state file from a previous run exists, restart the
+        indexer in background mode (no modal). Called from on_mount."""
+        from fnd.config import default_index_dir
+        from fnd.index_runner import load_state, state_file_for
+
+        # Resume the default collection only for now — extending to
+        # named collections requires walking ~/Library/Application
+        # Support/fnd/reindex/ for *.state.toml files.
+        state = load_state(state_file_for("default"))
+        if state is None or state.files_completed >= state.total_files:
+            return
+        # Auto-resume opt-out via config flag (defaults.indexer_auto_resume).
+        try:
+            from fnd.config import load as _load_config
+
+            cfg = _load_config()
+            if not cfg.defaults.indexer_auto_resume:
+                return
+        except Exception:
+            pass
+        try:
+            self.start_indexer(
+                collection="default", index_dir=default_index_dir(), open_modal=False
+            )
+            self.notify(
+                f"Resuming indexing: {state.files_completed}/{state.total_files}",
+                timeout=5,
+            )
+        except Exception:
+            pass
+
     # ── Actions ───────────────────────────────────────────────────
 
     def action_focus_query(self) -> None:
@@ -4497,7 +4799,7 @@ class FNDApp(App[None]):
                             "source_id": source_id,
                         },
                     )
-        title = f"Collections — {n_full_collections}/{len(names)} active"
+        title = f"Collections · {n_full_collections}/{len(names)} active"
         if total_source_count and active_source_count:
             title += f", {active_source_count}/{total_source_count} sources"
         tree.border_title = title
@@ -4791,7 +5093,7 @@ class FNDApp(App[None]):
                 source_id = str(Path(str(s.path)).expanduser().resolve())
                 if source_id in active_sources:
                     active_source_count += 1
-        title = f"Collections — {n_full_collections}/{len(names)} active"
+        title = f"Collections · {n_full_collections}/{len(names)} active"
         if total_source_count and active_source_count:
             title += f", {active_source_count}/{total_source_count} sources"
         tree.border_title = title

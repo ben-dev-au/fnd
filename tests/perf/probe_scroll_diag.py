@@ -99,7 +99,7 @@ async def main() -> int:
                 if not isinstance(data, dict) or data.get("kind") != "section":
                     continue
                 hit = data["hit"]
-                print(f"  section #{i}: chunk_seq={hit.chunk_seq} " f"title={hit.title[:40]!r}")
+                print(f"  section #{i}: chunk_seq={hit.chunk_seq} title={hit.title[:40]!r}")
                 tree.cursor_line = sec.line
                 await asyncio.sleep(0.6)
                 # Snapshot post-click state.

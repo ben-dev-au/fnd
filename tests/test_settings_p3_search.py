@@ -49,7 +49,7 @@ async def test_walk_all_sections_includes_every_leaf(built_index: Path, fixtures
         assert any(item.label == "Quit" for _, item in all_items)
         assert any("Quit fnd" in item.description for _, item in all_items)
         # Root action:
-        assert "Open config file in editor" in labels
+        assert "Config file" in labels
         # No headers leak through.
         assert not any(item.kind == KIND_HEADER for _, item in all_items)
 
@@ -189,9 +189,9 @@ def test_render_row_no_highlight_when_query_misses() -> None:
         if "bold" not in str(span.style).lower():
             continue
         # The label "Result limit" lives at offsets [0, 12) since no key col.
-        assert span.start >= len(
-            "Result limit"
-        ), f"unexpected bold span over label area on no-match render: {span!r}"
+        assert span.start >= len("Result limit"), (
+            f"unexpected bold span over label area on no-match render: {span!r}"
+        )
 
 
 @pytest.mark.asyncio
@@ -237,8 +237,8 @@ def test_filter_haystack_excludes_description() -> None:
             assert isinstance(screen, SettingsScreen)
             filtered, _bc = screen._filter_items("muddies")
             # "muddies" appears only in a description prose, never in label/keywords.
-            assert (
-                filtered == []
-            ), f"description prose leaked into the search index: {[m.label for m in filtered]}"
+            assert filtered == [], (
+                f"description prose leaked into the search index: {[m.label for m in filtered]}"
+            )
 
     asyncio.run(run())

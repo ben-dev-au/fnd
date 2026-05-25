@@ -238,10 +238,18 @@ async def test_theme_is_set_on_mount(built_index: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_chunk_widgets_mounted_per_pdf_page(built_index: Path) -> None:
+async def test_chunk_widgets_mounted_per_pdf_page(
+    built_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Phase 5 model: PDFs mount through the flat-buffer pipeline.
     The widget owns a FileView whose ``chunk_to_range`` covers every
-    page; the focused chunk's first-match line is the scroll target."""
+    page; the focused chunk's first-match line is the scroll target.
+
+    Forces flat preview routing — when the pdf-structure extra is
+    installed in the dev venv, PDFs carry body_md and would otherwise
+    route structural. The Phase 5 flat-pipeline contract is what this
+    test asserts; structural routing has its own coverage."""
+    monkeypatch.setenv("_FND_FORCE_FLAT", "1")
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()

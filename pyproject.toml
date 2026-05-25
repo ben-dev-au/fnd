@@ -17,7 +17,6 @@ authors = [{ name = "Ben Davidson" }]
 dependencies = [
     "tantivy~=0.26",
     "pymupdf~=1.27",
-    "pymupdf4llm~=1.27",
     "python-pptx~=1.0",
     "python-docx~=1.2",
     "markdown-it-py~=4.0",
@@ -30,6 +29,7 @@ dependencies = [
     "platformdirs~=4.9",
     "snowballstemmer~=3.0",
     "tomlkit~=0.14",
+    "tomli-w~=1.2",
 ]
 
 [project.optional-dependencies]
@@ -42,6 +42,15 @@ ocr = ["ocrmypdf~=17.0"]
 markers = [
     "slow: long-running tests excluded from the fast suite",
 ]
+# fnd/tui/lazy_trailing.py schedules work via `app.call_from_thread` on
+# a worker thread. In production this blocks on the cross-thread future
+# and returns the callback's value cleanly; in `app.run_test()` the
+# event loop teardown races the worker so the internal `run_callback`
+# coroutine is occasionally orphaned. Behaviour is correct — the
+# warning is purely a test-env artifact.
+filterwarnings = [
+    "ignore:coroutine 'App.call_from_thread.<locals>.run_callback' was never awaited:RuntimeWarning",
+]
 
 [project.scripts]
 fnd = "fnd.cli:main"
@@ -53,9 +62,43 @@ dev = [
     "pytest>=8",
     "pytest-textual-snapshot>=1.0",
     "pytest-asyncio>=0.24",
+    # Reruns flake-marked tests under pytest.mark.flaky(reruns=N). The
+    # four sidebar-regression tests in test_sidebar_preview_regressions.py
+    # hit a pilot.pause()-blocks-for-full-timeout pathology under macOS
+    # CI's full-suite load; they pass solo every time. Reruns let CI
+    # distinguish that flake from a real regression.
+    "pytest-rerunfailures>=14",
     "hypothesis>=6.110",
     "pre-commit>=3.8",
+    # Used by tools/pdf_bakeoff to normalise ML extractor output before
+    # comparison. Not loaded by fnd itself.
+    "mdformat>=0.7",
+    "pyte>=0.8.2",
+    # pytest-testmon: pre-commit only re-runs tests whose imported
+    # lines changed in the diff. .testmondata is per-developer and
+    # gitignored; CI runs the full suite without --testmon as the
+    # safety net.
+    "pytest-testmon>=2.1",
 ]
+# Structured PDF rendering — opt-in. Lives in a PEP 735 dependency
+# group rather than [project.optional-dependencies] so the user can
+# opt in via [tool.uv] default-groups below, and a subsequent
+# ``uv sync`` (no flags) won't wipe the install. ``fnd extras
+# install pdf-structure`` flips the toggle in default-groups.
+#
+# pymupdf4llm[layout] pulls pymupdf-layout (Artifex, Polyform
+# Noncommercial 1.0 — acceptable because fnd is open-source and
+# non-commercial). docling-slim is installed separately into its own
+# uv tool venv (transitive version conflicts make it unsafe to
+# co-install in fnd's venv).
+pdf-structure = ["pymupdf4llm[layout]~=1.27"]
+
+[tool.uv]
+# Groups installed by ``uv sync`` when no --group flag is passed.
+# ``fnd extras install/uninstall pdf-structure`` edits this list so
+# the install persists across subsequent ``uv sync`` calls. ``dev``
+# stays the default for the development environment.
+default-groups = ["dev", "pdf-structure"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["fnd"]

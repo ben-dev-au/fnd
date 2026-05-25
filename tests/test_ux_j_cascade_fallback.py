@@ -59,7 +59,7 @@ async def test_typo_query_falls_back_to_cascade(cfg: Config, fuzzy_index: Path) 
         app._run_query("glimer")
         await pilot.pause()
         assert app._groups, (
-            "fusion+cascade should surface notes.md via fuzzy~1; " f"got {app._groups!r}"
+            f"fusion+cascade should surface notes.md via fuzzy~1; got {app._groups!r}"
         )
         assert app._groups[0].path.endswith("notes.md")
         # Cascade tags fuzzy hits with pass_index == 1; TUI renders the

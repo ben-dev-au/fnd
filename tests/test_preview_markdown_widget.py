@@ -29,6 +29,24 @@ from fnd.tui.app import (
     FNDMarkdown,
     FNDMarkdownParagraph,
 )
+from tests._pilot_wait import settle, wait_until
+
+
+async def _settle(pilot) -> None:  # type: ignore[no-untyped-def]
+    """Wait for: results tree rebuilt, preview mount finished, at least
+    one FNDMarkdown present. Tolerant of suite-load timing — falls back
+    to a longer drain if the first idle drain doesn't surface widgets."""
+    try:
+        await wait_until(
+            pilot,
+            lambda: bool(pilot.app.query(FNDMarkdown)),
+            timeout=15.0,
+            message="no FNDMarkdown mounted after focus",
+        )
+    except AssertionError:
+        # Some tests (fence, table) mount via different paths; fall
+        # back to a generous settle so they still get drained.
+        await settle(pilot, ticks=12)
 
 
 def _is_highlight_span(span: object) -> bool:
@@ -93,8 +111,7 @@ async def test_preview_md_match_only_highlights_term(cfg: Config, paragraph_inde
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        for _ in range(8):
-            await pilot.pause()
+        await _settle(pilot)
         pane = app.query_one("#preview_pane", VerticalScroll)
         # Exactly one FNDMarkdown widget mounted (one chunk, one paragraph).
         md_widgets = list(pane.query(FNDMarkdown))
@@ -156,8 +173,7 @@ async def test_preview_md_renders_table_with_cell_highlight(cfg: Config, table_i
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        for _ in range(8):
-            await pilot.pause()
+        await _settle(pilot)
         pane = app.query_one("#preview_pane", VerticalScroll)
         tables = list(pane.query(MarkdownTable))
         assert tables, "table chunk should render via MarkdownTable widget"
@@ -165,18 +181,18 @@ async def test_preview_md_renders_table_with_cell_highlight(cfg: Config, table_i
         # Header content carries no highlights (query doesn't match
         # "Item"/"Price").
         for header_content in table._headers:
-            assert all(
-                s.style != "search-highlight" for s in header_content.spans
-            ), header_content.spans
+            assert all(s.style != "search-highlight" for s in header_content.spans), (
+                header_content.spans
+            )
         # Body rows: exactly one cell across all rows has the highlight,
         # and it bounds the matched substring.
         all_cell_contents = [cell for row in table._rows for cell in row]
         highlighted = [
             cell for cell in all_cell_contents if any(_is_highlight_span(s) for s in cell.spans)
         ]
-        assert (
-            len(highlighted) == 1
-        ), f"expected exactly one highlighted cell, got {len(highlighted)}"
+        assert len(highlighted) == 1, (
+            f"expected exactly one highlighted cell, got {len(highlighted)}"
+        )
         cell = highlighted[0]
         spans = [s for s in cell.spans if _is_highlight_span(s)]
         assert len(spans) == 1
@@ -227,8 +243,7 @@ async def test_preview_md_fence_no_highlight_inside_code(cfg: Config, fence_inde
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        for _ in range(8):
-            await pilot.pause()
+        await _settle(pilot)
         pane = app.query_one("#preview_pane", VerticalScroll)
         fences = list(pane.query(MarkdownFence))
         assert fences, "code-only chunk should render via MarkdownFence"
@@ -278,8 +293,7 @@ async def test_preview_md_nested_lists_render(cfg: Config, nested_list_index: Pa
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        for _ in range(8):
-            await pilot.pause()
+        await _settle(pilot)
         pane = app.query_one("#preview_pane", VerticalScroll)
         bullet_lists = list(pane.query(MarkdownBulletList))
         # Outer + inner list = at least two MarkdownBulletList widgets.
@@ -382,10 +396,17 @@ async def test_pptx_preview_routes_through_fnd_markdown(cfg: Config, pptx_corpus
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        for _ in range(8):
-            await pilot.pause()
+        await _settle(pilot)
         pane = app.query_one("#preview_pane", VerticalScroll)
-        assert list(pane.query(FNDMarkdown)), "pptx chunk should mount FNDMarkdown"
+        # _settle finds any FNDMarkdown in the app (including hidden
+        # prefetch containers); under CI load the user-side mount into
+        # the visible pane can lag. Wait specifically on the pane.
+        await wait_until(
+            pilot,
+            lambda: bool(list(pane.query(FNDMarkdown))),
+            timeout=30.0,
+            message="pptx FNDMarkdown not mounted in preview pane",
+        )
         assert list(pane.query(MarkdownTable)), "pptx table should render via MarkdownTable"
 
 
@@ -406,8 +427,7 @@ async def test_docx_preview_routes_through_fnd_markdown(cfg: Config, docx_corpus
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        for _ in range(8):
-            await pilot.pause()
+        await _settle(pilot)
         pane = app.query_one("#preview_pane", VerticalScroll)
         assert list(pane.query(FNDMarkdown)), "docx chunk should mount FNDMarkdown"
         assert list(pane.query(MarkdownTable)), "docx table should render via MarkdownTable"
@@ -429,8 +449,7 @@ async def test_preview_first_match_block_resolves_to_matched_paragraph(
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        for _ in range(8):
-            await pilot.pause()
+        await _settle(pilot)
         pane = app.query_one("#preview_pane", VerticalScroll)
         md = pane.query_one(FNDMarkdown)
         first_match = md.first_match_block  # type: ignore[attr-defined]

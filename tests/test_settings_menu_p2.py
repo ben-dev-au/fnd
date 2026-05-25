@@ -33,10 +33,10 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_root_menu_is_short_list_of_categories(built_index: Path) -> None:
-    """`:` opens a small list of category drill-ins — Preferences,
-    Collections, Keybindings, Open config file, Open keybindings file.
-    No content piled on top of each other."""
-    from fnd.tui.menu import KIND_EXTERNAL
+    """`:` opens a small list of category drill-ins followed by an
+    External-app group (separated by a header) housing the two
+    open-in-editor rows."""
+    from fnd.tui.menu import KIND_EXTERNAL, KIND_HEADER
     from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
     app = FNDApp(index_dir=built_index)
@@ -48,18 +48,22 @@ async def test_root_menu_is_short_list_of_categories(built_index: Path) -> None:
         assert isinstance(screen, SettingsScreen)
         assert screen._breadcrumb == ()
         lst = screen.query_one(SettingsList)
-        # Root has exactly the five expected drill / action rows.
         labels = [it.label for it in lst._items]
         assert labels == [
             "Preferences",
             "Collections",
             "Keybindings",
-            "Open config file in editor",
-            "Open keybindings file in editor",
+            "Indexing & PDF Texture",
+            "External",
+            "Config file",
+            "Keybindings file",
         ]
-        # Every row is "external" (push a sub-screen / run an action).
-        assert all(it.kind == KIND_EXTERNAL for it in lst._items)
-        # Cursor lands on the first row (Preferences).
+        # The External row is a header; everything else is selectable.
+        kinds = [it.kind for it in lst._items]
+        assert kinds[4] == KIND_HEADER
+        assert kinds[:4] == [KIND_EXTERNAL] * 4
+        assert kinds[5:] == [KIND_EXTERNAL, KIND_EXTERNAL]
+        # Cursor skips the header and lands on the first selectable row.
         assert lst._items[lst.cursor_index].label == "Preferences"
 
 
@@ -262,4 +266,4 @@ async def test_root_has_open_config_file_row(built_index: Path) -> None:
         assert isinstance(screen, SettingsScreen)
         lst = screen.query_one(SettingsList)
         labels = [item.label for item in lst._items]
-        assert "Open config file in editor" in labels
+        assert "Config file" in labels

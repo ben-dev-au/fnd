@@ -6,11 +6,12 @@ fsevents incremental updates and the long-running watcher.
 
 from __future__ import annotations
 
+import datetime as _dt
 import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
-from tantivy import Document, Index
+from tantivy import Document, Index, Query, Schema
 
 from fnd.config import CollectionConfig
 from fnd.extract import Chunk, ExtractError, extract
@@ -46,6 +47,12 @@ _WRITER_HEAP = 50_000_000
 
 # Commit every N chunks so partial-progress is queryable mid-index.
 _COMMIT_BATCH = 500
+
+
+def _skip_stamp() -> str:
+    """ISO-8601 UTC second-precision timestamp for the [fnd skip ...]
+    prefix; matches the form used by the async indexer runner."""
+    return _dt.datetime.now(tz=_dt.UTC).isoformat(timespec="seconds")
 
 
 def _ensure_index(index_dir: Path, *, force: bool = False) -> Index:
@@ -175,10 +182,14 @@ def build_index(
         follow_symlinks=follow_symlinks,
     )
     for path in paths:
-        # Idempotent re-index: delete chunks for this file then re-add. Phase
-        # 10 adds mtime gating to skip unchanged files entirely.
+        # Idempotent re-index: delete chunks for THIS collection's
+        # copy of this file then re-add. Scoped by collection so a
+        # file shared across multiple collections (typical: Obsidian
+        # Vault listed under several collection sources) keeps the
+        # sibling collections' chunks intact.
         parent_id = _path_parent_id(path)
-        writer.delete_documents(F_PARENT_ID, parent_id)
+        _delete_q = _scoped_delete_query(index.schema, collection, parent_id)
+        writer.delete_documents_by_query(_delete_q)
         try:
             for chunk in extract(path):
                 writer.add_document(_doc_for_chunk(chunk, collection=collection))
@@ -186,14 +197,8 @@ def build_index(
                 if written % _COMMIT_BATCH == 0:
                     writer.commit()
         except ExtractError as err:
-            # One hostile or corrupt file shouldn't kill indexing of the
-            # rest of the collection — surface and continue. Re-stage the
-            # delete so any chunks already added (and possibly already
-            # committed by the mid-loop batch commit) get cleaned up;
-            # otherwise a parser that crashes after yielding N pages
-            # leaves a partial document indexed.
-            writer.delete_documents(F_PARENT_ID, parent_id)
-            print(f"[fnd skip] {err}", file=sys.stderr)
+            writer.delete_documents_by_query(_delete_q)
+            print(f"[fnd skip {_skip_stamp()}] {err}", file=sys.stderr)
     writer.commit()
     writer.wait_merging_threads()
     return written
@@ -242,7 +247,8 @@ def build_index_from_config(
                 if fm:
                     meta_blob_bytes = encode_meta_blob(fm)
             parent_id = _path_parent_id(path)
-            writer.delete_documents(F_PARENT_ID, parent_id)
+            _delete_q = _scoped_delete_query(index.schema, collection, parent_id)
+            writer.delete_documents_by_query(_delete_q)
             try:
                 for chunk in extract(path):
                     writer.add_document(
@@ -257,11 +263,11 @@ def build_index_from_config(
                     if written % _COMMIT_BATCH == 0:
                         writer.commit()
             except ExtractError as err:
-                # See build_index above — re-stage the delete so an
-                # extractor crash mid-iteration doesn't leave partial
-                # chunks indexed.
-                writer.delete_documents(F_PARENT_ID, parent_id)
-                print(f"[fnd skip] {err}", file=sys.stderr)
+                # See build_index above — re-stage the same scoped
+                # delete so an extractor crash mid-iteration doesn't
+                # leave partial chunks indexed.
+                writer.delete_documents_by_query(_delete_q)
+                print(f"[fnd skip {_skip_stamp()}] {err}", file=sys.stderr)
     writer.commit()
     writer.wait_merging_threads()
     return written
@@ -272,3 +278,25 @@ def _path_parent_id(path: Path) -> str:
     import hashlib
 
     return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
+
+
+def _scoped_delete_query(schema: Schema, collection: str, parent_id: str) -> Query:
+    """Build a boolean Query that matches a single file's chunks
+    within a single collection.
+
+    Required because plain ``delete_documents(F_PARENT_ID, parent_id)``
+    is unscoped: a file present in multiple collections (the same
+    Obsidian Vault listed under several collection sources, say)
+    would lose its chunks from EVERY collection whenever any one
+    collection re-indexed it. The boolean form (parent_id AND
+    collection) keeps each collection's view isolated."""
+    import tantivy as _tantivy
+
+    parent_q = _tantivy.Query.term_query(schema, F_PARENT_ID, parent_id)
+    collection_q = _tantivy.Query.term_query(schema, F_COLLECTION, collection)
+    return _tantivy.Query.boolean_query(
+        [
+            (_tantivy.Occur.Must, parent_q),
+            (_tantivy.Occur.Must, collection_q),
+        ]
+    )

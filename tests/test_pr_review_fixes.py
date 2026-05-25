@@ -207,9 +207,9 @@ def test_keybindings_context_hint_uses_isinstance_not_string_check() -> None:
     from fnd.tui.app import FNDApp
 
     src = inspect.getsource(FNDApp._keybindings_context_hint)
-    assert (
-        "isinstance(current, SourceFormScreen)" in src
-    ), "context hint must use isinstance, not name-string check"
+    assert "isinstance(current, SourceFormScreen)" in src, (
+        "context hint must use isinstance, not name-string check"
+    )
     assert '"SourceFormScreen" in type(' not in src
 
 

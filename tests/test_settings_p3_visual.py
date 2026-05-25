@@ -23,9 +23,9 @@ def test_f3_no_longer_in_keymap() -> None:
     from fnd.tui.actions import load_keymap
 
     keymap = load_keymap()
-    assert (
-        "f3" not in keymap.bindings
-    ), f"F3 should not be bound; keymap.bindings has: {keymap.bindings.get('f3')!r}"
+    assert "f3" not in keymap.bindings, (
+        f"F3 should not be bound; keymap.bindings has: {keymap.bindings.get('f3')!r}"
+    )
 
 
 def test_detail_strip_renders_description_and_metadata() -> None:
@@ -247,9 +247,9 @@ async def test_hint_bar_appends_reveal_when_cursor_on_reveal_capable_row(
         # in the test pilot doesn't always reflect the last .update() call.
         cluster = screen._hint_cluster()
         labels = [label for _, label in cluster]
-        assert (
-            "Reveal" in labels
-        ), f"expected Reveal hint on Open config row; got cluster: {cluster!r}"
+        assert "Reveal" in labels, (
+            f"expected Reveal hint on Open config row; got cluster: {cluster!r}"
+        )
 
 
 @pytest.mark.asyncio
@@ -293,9 +293,9 @@ async def test_hint_bar_search_focused_variant(built_index: Path) -> None:
         await pilot.pause()
         cluster = screen._hint_cluster()
         labels = [label for _, label in cluster]
-        assert (
-            "Clear" in labels or "Results" in labels
-        ), f"expected search-focused cluster; got: {cluster!r}"
+        assert "Clear" in labels or "Results" in labels, (
+            f"expected search-focused cluster; got: {cluster!r}"
+        )
 
 
 @pytest.mark.asyncio
@@ -428,9 +428,9 @@ async def test_preferences_refreshes_trailing_after_picker_pops(
         rendered_after = str(
             list(lst.query_one("#settings_list_body").children)[drill_idx].render()
         )
-        assert (
-            "always_ellipsis" in rendered_after
-        ), f"Trailing did not refresh after picker pop; got: {rendered_after!r}"
+        assert "always_ellipsis" in rendered_after, (
+            f"Trailing did not refresh after picker pop; got: {rendered_after!r}"
+        )
 
 
 @pytest.mark.asyncio
@@ -555,9 +555,9 @@ async def test_picker_toggle_preserves_cursor(fixtures_dir: Path, tmp_index_dir:
         await pilot.press("enter")
         await pilot.pause()
         assert "b" in screen._selected, "expected the picker to register the toggle"
-        assert (
-            lst.highlighted == 1
-        ), f"cursor jumped to {lst.highlighted!r} after toggle; should stay at 1"
+        assert lst.highlighted == 1, (
+            f"cursor jumped to {lst.highlighted!r} after toggle; should stay at 1"
+        )
 
 
 @pytest.mark.asyncio
@@ -597,9 +597,9 @@ async def test_collections_sidebar_toggle_preserves_cursor(
         tree.post_message(Tree.NodeSelected(bravo))
         await pilot.pause()
         assert "bravo" in app._collections, "toggle did not register"
-        assert (
-            tree.cursor_line == cursor_before
-        ), f"cursor moved from {cursor_before} to {tree.cursor_line} after a single toggle"
+        assert tree.cursor_line == cursor_before, (
+            f"cursor moved from {cursor_before} to {tree.cursor_line} after a single toggle"
+        )
         # Label marker should now read ● (active) for bravo.
         label_str = str(bravo.label)
         assert label_str.startswith("●"), f"expected ● marker after toggle; got {label_str!r}"

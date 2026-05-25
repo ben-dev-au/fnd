@@ -11,6 +11,11 @@ build/
 .DS_Store
 .coverage
 htmlcov/
+# pytest-testmon per-developer test-impact cache
+.testmondata
+.testmondata-journal
+.testmondata-shm
+.testmondata-wal
 .vscode/
 .idea/
 tests/fixtures/.cache/
@@ -18,6 +23,8 @@ tests/fixtures/.cache/
 index/
 # Per-user Claude Code config / scheduled-task state
 .claude/
-# Per-user operational notes — release/publish runbooks, account-
-# specific setup steps. Not part of the public repo.
+# Per-user operational notes (release runbooks, account setup) and
+# all developer-only tooling. Lives in a separate private repo at
+# dev/. Not part of the public repo.
 private_dev_docs/
+dev/

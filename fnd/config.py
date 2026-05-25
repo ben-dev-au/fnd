@@ -307,6 +307,17 @@ class Defaults(BaseModel):
     # stems, so values 0-3 are no-ops vs current behavior; 4+ extends
     # the floor.
     fuzzy_min_term_chars: int = 3
+    # Auto-resume an interrupted reindex on app launch. When True (the
+    # default), an existing state file from a previous quit / crash /
+    # Ctrl+C resumes silently in the background. False disables the
+    # behaviour entirely; the user must trigger the reindex manually.
+    indexer_auto_resume: bool = True
+    # Populate the PDF structure cache during Update index runs. True
+    # (default when pdf-structure is installed) writes fresh entries for
+    # any PDF without one. False reads from the cache when entries exist
+    # but doesn't write new ones — fast flat-text refresh, useful on
+    # battery or slow CPUs.
+    cache_at_index_time: bool = True
 
 
 class Config(BaseModel):
@@ -341,8 +352,7 @@ class Config(BaseModel):
                 )
             if app_id not in known_ids:
                 raise ValueError(
-                    f"app_defaults.{kind} = {app_id!r}: unknown app id "
-                    f"(known: {sorted(known_ids)})"
+                    f"app_defaults.{kind} = {app_id!r}: unknown app id (known: {sorted(known_ids)})"
                 )
         # Per-source app references — same id-existence rule applies.
         for coll_name, coll in self.collections.items():
@@ -350,8 +360,7 @@ class Config(BaseModel):
                 where = f"collections.{coll_name}.sources[{idx}]"
                 if src.app is not None and src.app not in known_ids:
                     raise ValueError(
-                        f"{where}.app = {src.app!r}: unknown app id "
-                        f"(known: {sorted(known_ids)})"
+                        f"{where}.app = {src.app!r}: unknown app id (known: {sorted(known_ids)})"
                     )
                 for kind, app_id in src.app_for.items():
                     if kind not in ALLOWED_HANDLES or kind == "*":

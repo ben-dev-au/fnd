@@ -25,6 +25,8 @@ compatible semantics extended to support ``**`` (recursive).
 from __future__ import annotations
 
 import fnmatch
+import os
+import sys
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -33,6 +35,11 @@ if TYPE_CHECKING:
     from fnd.config import SourceConfig
 
 from fnd.extract import supported_suffixes
+
+# macOS "Optimize Mac Storage" marker for an iCloud-offloaded placeholder.
+# stat(2)'s st_flags carries this bit when the file's contents have been
+# evicted from local disk; reading the file would synchronously download it.
+_SF_DATALESS = 0x40000000
 
 
 def _matches_any(globs: list[str], rel_str: str) -> bool:
@@ -67,6 +74,20 @@ def _glob_targets_hidden(globs: list[str]) -> bool:
             if part.startswith("."):
                 return True
     return False
+
+
+def is_dataless(path: Path) -> bool:
+    """True if ``path`` is an iCloud-offloaded placeholder on macOS.
+
+    Reading the file would trigger a synchronous download. Detected via
+    the SF_DATALESS st_flag bit. Returns False off Darwin or on stat error."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        st_flags = os.stat(path).st_flags
+    except OSError:
+        return False
+    return bool(st_flags & _SF_DATALESS)
 
 
 def walk(

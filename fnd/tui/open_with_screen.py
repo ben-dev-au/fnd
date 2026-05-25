@@ -82,7 +82,7 @@ def eligible_apps(
             )
         )
     if default_id:
-        rows.sort(key=lambda r: (0 if r.is_default else 1))
+        rows.sort(key=lambda r: 0 if r.is_default else 1)
     return rows
 
 

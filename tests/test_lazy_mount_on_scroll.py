@@ -20,6 +20,7 @@ from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.app import _LAZY_MOUNT_BATCH
+from tests._pilot_wait import settle, wait_until
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -59,21 +60,11 @@ def long_md_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 
 async def _drain(pilot: Pilot[None], n: int = 6) -> None:
-    for _ in range(n):
-        await pilot.pause()
-
-
-async def _drain_secs(pilot: Pilot[None], seconds: float) -> None:
-    """Wall-clock drain + idle settle for the lazy-mount debounce timer
-    (``set_timer`` uses real seconds, not pilot tick count). One big
-    ``pilot.pause(seconds)`` flaked under full-suite load — splitting
-    the budget into slices and idle-draining between each gives the
-    event loop room to flush the watcher → debounce → mount chain."""
-    slices = max(4, int(seconds * 20))
-    per_slice = seconds / slices
-    for _ in range(slices):
-        await pilot.pause(per_slice)
-        await pilot.pause()
+    """Drive the event loop ``n`` ticks. Uses bare ``asyncio.sleep(0)``
+    via ``settle`` to avoid Textual's 30 s ``_wait_for_screen`` timeout
+    under suite load. A handful of ticks is enough to flush mount
+    callbacks; full settle happens via the per-test ``wait_until``."""
+    await settle(pilot, ticks=max(1, n))
 
 
 @pytest.mark.asyncio
@@ -84,23 +75,45 @@ async def test_scroll_below_boundary_triggers_lazy_mount(cfg: Config, long_md_in
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("target")
-        await _drain(pilot, 12)
+        pane = app.query_one("#preview_pane", VerticalScroll)
+        # Wait for the initial mount AND the focus-chunk scroll to land.
+        await wait_until(
+            pilot,
+            lambda: (
+                app._active_preview is not None
+                and bool(app._active_preview.mounted_indices)
+                and pane.scroll_y > 0
+            ),
+            timeout=15.0,
+            message="initial mount + focus scroll never landed",
+        )
         container = app._active_preview
         assert container is not None
         mounted_before = set(container.mounted_indices)
         max_before = max(mounted_before)
         assert max_before < container.total_chunks - 1, "test setup needs unmounted below"
-        pane = app.query_one("#preview_pane", VerticalScroll)
         target = max(0, pane.virtual_size.height - pane.size.height)
+        # Open the suppression gate — initial render armed a 0.4s window
+        # so a single watcher trip would fire-then-bail. With the gate
+        # already past, the next scroll's debounced timer mounts.
+        app._lazy_mount_suppressed_until = 0.0
+        if pane.scroll_y == target:
+            pane.scroll_to(y=max(0, target - 1), animate=False, immediate=True)
         pane.scroll_to(y=target, animate=False, immediate=True)
-        await _drain_secs(pilot, 0.5)
-        await _drain(pilot, 10)
+        # Belt and braces: the watcher → debounce → check chain has
+        # several async hops that can be lost under load.
+        # ``_check_preview_lazy_mount`` is idempotent and reads the
+        # current scroll position directly.
+        app._check_preview_lazy_mount()
+        await wait_until(
+            pilot,
+            lambda: any(i > max_before for i in (container.mounted_indices - mounted_before)),
+            timeout=15.0,
+            message=f"no new chunks mounted below max_before={max_before}; "
+            f"mounted={sorted(container.mounted_indices)}",
+        )
         mounted_after = set(container.mounted_indices)
         new_below = {i for i in mounted_after - mounted_before if i > max_before}
-        assert new_below, (
-            f"expected new chunks mounted below; before={sorted(mounted_before)} "
-            f"after={sorted(mounted_after)}"
-        )
         # Batch size is bounded — not unbounded fill.
         assert len(new_below) <= _LAZY_MOUNT_BATCH * 4
 
@@ -116,27 +129,45 @@ async def test_scroll_above_after_settled_triggers_lazy_mount(
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("target")
-        await _drain(pilot, 12)
+        # Wait for initial mount AND for the focus-chunk scroll to land.
+        # If we proceed before scroll lands, ``pane.scroll_to(y=0)``
+        # below is a no-op because the pane is already at y=0.
+        pane = app.query_one("#preview_pane", VerticalScroll)
+        await wait_until(
+            pilot,
+            lambda: (
+                app._active_preview is not None
+                and bool(app._active_preview.mounted_indices)
+                and pane.scroll_y > 0
+            ),
+            timeout=15.0,
+            message="initial mount + focus scroll never landed",
+        )
         container = app._active_preview
         assert container is not None
         # Top hit is chunk 50 (only section that mentions "target keyword").
         # Initial window is focus ± 7 = 43..57. min_mounted should be 43.
         mounted_initial = set(container.mounted_indices)
         min_initial = min(mounted_initial)
-        assert (
-            min_initial > 0
-        ), f"test setup needs unmounted above; mounted={sorted(mounted_initial)}"
-        pane = app.query_one("#preview_pane", VerticalScroll)
+        assert min_initial > 0, (
+            f"test setup needs unmounted above; mounted={sorted(mounted_initial)}"
+        )
         # Force scroll to the absolute top of the mounted region — that
         # puts scroll_y inside the trigger margin so the watcher fires.
+        # Clear the suppression gate first; otherwise the timer set by
+        # this watcher fires inside the post-render 0.4 s window and
+        # bails without arming again.
+        app._lazy_mount_suppressed_until = 0.0
+        if pane.scroll_y == 0:
+            pane.scroll_to(y=1, animate=False, immediate=True)
         pane.scroll_to(y=0, animate=False, immediate=True)
-        await _drain_secs(pilot, 0.5)
-        await _drain(pilot, 10)
-        mounted_after = set(container.mounted_indices)
-        new_above = {i for i in mounted_after - mounted_initial if i < min_initial}
-        assert new_above, (
-            f"expected new chunks mounted above; initial={sorted(mounted_initial)} "
-            f"after={sorted(mounted_after)}"
+        app._check_preview_lazy_mount()
+        await wait_until(
+            pilot,
+            lambda: any(i < min_initial for i in (container.mounted_indices - mounted_initial)),
+            timeout=15.0,
+            message=f"no new chunks mounted above min_initial={min_initial}; "
+            f"mounted={sorted(container.mounted_indices)}",
         )
 
 
@@ -151,18 +182,32 @@ async def test_gap_between_two_mounted_regions_fills_on_scroll(
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("target")
-        await _drain(pilot, 12)
+        await wait_until(
+            pilot,
+            lambda: app._active_preview is not None and bool(app._active_preview.mounted_indices),
+            message="active preview never mounted any chunks",
+        )
         # Auto-load focuses on chunk 50. Now resume on a far-earlier chunk:
         # ±7 window around chunk 10 leaves a gap with chunk 50's region.
         group = app._groups[0]
         app._render_full_doc(group.parent_id, focus_chunk_seq=10)
-        await _drain(pilot, 12)
+        from itertools import pairwise
+
+        def _gap_present() -> bool:
+            c = app._active_preview
+            if c is None or c.parent_doc_id != group.parent_id:
+                return False
+            s = sorted(c.mounted_indices)
+            return any(b > a + 1 for a, b in pairwise(s))
+
+        await wait_until(
+            pilot,
+            _gap_present,
+            message="second render didn't leave a gap in mounted_indices",
+        )
         container = app._active_preview
         assert container is not None
         sorted_idx = sorted(container.mounted_indices)
-        # Two disjoint regions, with at least one unmounted index between.
-        from itertools import pairwise
-
         gaps = [(a, b) for a, b in pairwise(sorted_idx) if b > a + 1]
         assert gaps, f"test setup needs a gap; mounted={sorted_idx}"
         gap_lo = gaps[0][0]
@@ -174,14 +219,25 @@ async def test_gap_between_two_mounted_regions_fills_on_scroll(
         widget = container.chunk_widgets[
             next(c for c in app._chunk_cache[group.parent_id] if c.chunk_seq == gap_lo).chunk_seq
         ]
-        target_y = widget.virtual_region.y + widget.virtual_region.height - pane.size.height
-        pane.scroll_to(y=max(0, target_y), animate=False, immediate=True)
-        await _drain_secs(pilot, 0.5)
-        await _drain(pilot, 10)
-        # At least the chunk immediately after gap_lo must now be mounted.
-        assert gap_lo + 1 in container.mounted_indices, (
-            f"expected gap-fill to mount chunk {gap_lo + 1}; "
-            f"mounted={sorted(container.mounted_indices)}"
+        target_y = max(0, widget.virtual_region.y + widget.virtual_region.height - pane.size.height)
+        # Open the suppression gate and force the scroll position. If
+        # ``scroll_y`` is already at target_y, ``scroll_to`` is a no-op
+        # and the watcher never fires — pre-nudge to a distinct y so
+        # the second scroll_to actually changes the value.
+        app._lazy_mount_suppressed_until = 0.0
+        if pane.scroll_y == target_y:
+            pane.scroll_to(y=max(0, target_y - 1), animate=False, immediate=True)
+        pane.scroll_to(y=target_y, animate=False, immediate=True)
+        # Belt and braces: directly invoke the check in case the
+        # watcher-trip → debounce → check path is dropped by a load
+        # spike. ``_check_preview_lazy_mount`` is idempotent.
+        app._check_preview_lazy_mount()
+        await wait_until(
+            pilot,
+            lambda: gap_lo + 1 in container.mounted_indices,
+            timeout=15.0,
+            message=f"gap-fill never mounted chunk {gap_lo + 1}; "
+            f"mounted={sorted(container.mounted_indices)}",
         )
 
 

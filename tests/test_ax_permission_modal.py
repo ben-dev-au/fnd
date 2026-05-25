@@ -135,7 +135,7 @@ def test_preview_handler_emits_ax_notice_when_blocked(
     monkeypatch.setattr(
         apps.subprocess,
         "run",
-        lambda argv, **kw: (captured_run.append(list(argv)) or type("R", (), {"returncode": 0})()),
+        lambda argv, **kw: captured_run.append(list(argv)) or type("R", (), {"returncode": 0})(),
     )
 
     try:

@@ -44,11 +44,18 @@ KIND_SCALAR = "scalar"
 KIND_TOGGLE = "toggle"
 KIND_PICKER = "picker"
 KIND_EXTERNAL = "external"
+KIND_DISPLAY = "display"  # read-only: dim label + bright value, no Enter affordance
 
 # Section ids the `?` shortcut pushes directly as a sub-screen.
 SECTION_KEYBINDINGS = "keybindings"
 SECTION_PREFERENCES = "preferences"
 SECTION_COLLECTIONS = "collections"
+SECTION_INDEXING_PDF_TEXTURE = "indexing-pdf-texture"
+# Legacy aliases retained so any saved jump-state or external link that
+# referenced the pre-combine section ids still routes into the combined
+# screen instead of crashing.
+SECTION_INDEXING = SECTION_INDEXING_PDF_TEXTURE
+SECTION_PDF_TEXTURE = SECTION_INDEXING_PDF_TEXTURE
 
 
 # ── Models ───────────────────────────────────────────────────────────
@@ -88,6 +95,11 @@ class MenuItem:
 
     # ACTION
     action_id: str = ""
+    # Verb shown inside the trailing `[ ... ]` button affordance. Default
+    # "Run". Set to "Delete…" for a destructive confirm, "Open" for a
+    # picker open, etc. The `…` suffix is included literally when the
+    # action shows a confirm.
+    action_label: str = "Run"
 
     # SCALAR
     setting_path: str = ""
@@ -107,9 +119,18 @@ class MenuItem:
 
     # EXTERNAL
     external: Callable[[FNDApp], None] | None = None
+    # When True, the row launches an OS-level app ($EDITOR, Finder, etc.)
+    # rather than pushing an internal Settings screen. Render leading
+    # `↗` glyph; trailing slot carries the path (not a drill arrow).
+    external_app: bool = False
 
     # Metadata used by the cross-tree search view.
     keywords: tuple[str, ...] = field(default_factory=tuple)
+
+    # Renders contiguous items with the same subsection inside one
+    # bordered Vertical with this string as its border_title. None =
+    # outside any bordered group (the default for every existing item).
+    subsection: str | None = None
 
     @property
     def is_header(self) -> bool:
@@ -280,7 +301,7 @@ _KEYS_SETTINGS: tuple[tuple[str, str, str, str], ...] = (
         "Enter",
         "Activate",
         "",
-        "Open the focused row — picker rows show their chooser, scalar rows open the inline edit bar, drill-in rows push a sub-screen.",
+        "Open the focused row. Picker rows show their chooser; scalar rows open the inline edit bar; drill-in rows push a sub-screen.",
     ),
     (
         "→",
@@ -298,7 +319,7 @@ _KEYS_SETTINGS: tuple[tuple[str, str, str, str], ...] = (
         "/",
         "Filter rows",
         "",
-        "Filter rows across the current screen by label, key column, and keywords. Descriptions are excluded — they're advisory, not searchable.",
+        "Filter rows across the current screen by label, key column, and keywords. Descriptions are excluded; they're advisory, not searchable.",
     ),
     (
         "1-9",
@@ -364,7 +385,7 @@ _KEYS_OPEN_WITH: tuple[tuple[str, str, str, str], ...] = (
         "Enter",
         "Open with default",
         "",
-        "Fire the highlighted (★) app — the one the resolver would have used for `o`. ★ shows which app fnd thinks is best for this hit.",
+        "Fire the highlighted (★) app: the one the resolver would have used for `o`. ★ shows which app fnd thinks is best for this hit.",
     ),
     (
         "a-z",
@@ -397,7 +418,7 @@ _KEYS_AX_MODAL: tuple[tuple[str, str, str, str], ...] = (
         "Esc / q",
         "Dismiss",
         "",
-        "Close the modal. AX permission isn't required to use fnd — Preview will just open at page 1 without it.",
+        "Close the modal. AX permission isn't required to use fnd; Preview will just open at page 1 without it.",
     ),
 )
 
@@ -824,7 +845,7 @@ def _choices_apps_for_kind(app: FNDApp, kind: str) -> list[ChoiceOption]:
         ChoiceOption(
             value="",
             label="(auto-resolve)",
-            description="Let the resolver pick — skim → preview-if-AX → system for PDFs; system for others.",
+            description="Let the resolver pick: skim → preview-if-AX → system for PDFs; system for others.",
         )
     ]
     for app_id, app_def in registry.items():
@@ -955,8 +976,22 @@ def _make_open_delete_confirm(name: str) -> Callable[[FNDApp], None]:
 
 def _make_reindex(name: str) -> Callable[[FNDApp], None]:
     def _run(app: FNDApp) -> None:
-        # Use the existing background-worker entry point on the app.
-        app._reindex_collection_async(name)  # type: ignore[attr-defined]
+        # Route through the warning + IndexerScreen modal so the user
+        # sees progress instead of a silent background task.
+        app._reindex_with_warning_if_needed(name)  # type: ignore[attr-defined]
+
+    return _run
+
+
+def _make_texturise_flat(name: str) -> Callable[[FNDApp], None]:
+    """Per-collection action: re-run Update with texturising forced on.
+    The cache short-circuits already-textured PDFs so the net cost is
+    one texturising pass per still-flat PDF in the collection."""
+
+    def _run(app: FNDApp) -> None:
+        app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
+            name, texturise_override=True
+        )
 
     return _run
 
@@ -979,8 +1014,10 @@ def _open_keybindings_file_action(app: FNDApp) -> None:
 
 
 def _provider_collections(app: FNDApp) -> tuple[MenuItem, ...]:
-    """Content of the Collections sub-screen — `Add collection` action
-    followed by one drill-in row per configured collection."""
+    """Content of the Collections sub-screen.
+
+    Two actions at the top — Add collection + Update all collections —
+    then one drill-in row per configured collection."""
     cfg = app._config  # type: ignore[attr-defined]
     names = sorted(cfg.collections.keys()) if cfg else []
     items: list[MenuItem] = [
@@ -988,13 +1025,29 @@ def _provider_collections(app: FNDApp) -> tuple[MenuItem, ...]:
             id="collections.add",
             label="Add collection",
             description=(
-                "Push the new-collection wizard — pick a name, then add "
+                "Open the new-collection wizard: pick a name, then add "
                 "the first source. The collection becomes available as "
                 "`--collection <name>` once at least one source is indexed."
             ),
-            kind=KIND_EXTERNAL,
+            kind=KIND_ACTION,
+            action_label="Add",
             external=_make_add_collection(),
-            keywords=("add", "new"),
+            keywords=("add", "new", "create"),
+        ),
+        MenuItem(
+            id="collections.update_all",
+            label="Update all collections",
+            description=(
+                "Run Update index for every collection in sequence. "
+                "Per-file rules match the per-collection Update index: "
+                "unchanged files are skipped, the PDF Texture Cache "
+                "is consulted (not cleared)."
+            ),
+            kind=KIND_ACTION,
+            action_label="Update",
+            external=_run_update_all_collections,
+            value_getter=_summary_update_all,
+            keywords=("update", "all", "index", "reindex", "everything"),
         ),
     ]
     for name in names:
@@ -1002,7 +1055,7 @@ def _provider_collections(app: FNDApp) -> tuple[MenuItem, ...]:
             MenuItem(
                 id=f"collection.{name}",
                 label=name,
-                description=f"Edit sources, ranking, delete {name}.",
+                description=f"Edit sources, ranking profile, or update / delete the {name} collection.",
                 kind=KIND_EXTERNAL,
                 external=_make_open_collection_screen(name),
                 value_getter=(lambda n: lambda app: _collection_summary(app, n))(name),
@@ -1010,6 +1063,123 @@ def _provider_collections(app: FNDApp) -> tuple[MenuItem, ...]:
             )
         )
     return tuple(items)
+
+
+def _summary_collection_update(app: FNDApp, name: str) -> str:
+    """Trailing context on the per-collection Update row. Counts the
+    sources configured for the collection, plus an ETA based on the
+    calibrated per-PDF cost when pdf-structure is installed."""
+    cfg = app._config  # type: ignore[attr-defined]
+    if cfg is None or name not in cfg.collections:
+        return ""
+    n_sources = len(cfg.collections[name].sources)
+    return f"{n_sources} sources"
+
+
+def _summary_flat_pdfs(app: FNDApp, name: str) -> str:
+    """Lazy trailing: count of PDFs in this collection's sources that
+    are NOT textured in the index (no body_struct on any chunk)."""
+    from fnd.tui.lazy_trailing import get_or_schedule
+
+    def _compute() -> str:
+        return _compute_flat_pdfs_for(name)
+
+    return get_or_schedule(app, f"col.{name}.flat_pdfs", _compute)
+
+
+def _compute_flat_pdfs_for(name: str) -> str:
+    import contextlib
+
+    try:
+        from pathlib import Path
+
+        import tantivy
+
+        from fnd.config import default_index_dir, load
+        from fnd.schema import F_BODY_STRUCT, F_KIND, F_PATH
+
+        cfg = load()
+        col = cfg.collections.get(name)
+        if col is None:
+            return ""
+        on_disk: set[str] = set()
+        for src in col.sources:
+            root = Path(src.path).expanduser()
+            if not root.exists():
+                continue
+            for p in root.rglob("*.pdf"):
+                if p.is_file():
+                    on_disk.add(str(p.resolve()))
+        if not on_disk:
+            return "no PDFs"
+        index_dir = default_index_dir()
+        if not index_dir.exists():
+            return f"{len(on_disk)} flat PDFs"
+        index = tantivy.Index.open(str(index_dir))
+        index.reload()
+        searcher = index.searcher()
+        kind_q = tantivy.Query.term_query(index.schema, F_KIND, "pdf")
+        textured: set[str] = set()
+        for _score, addr in searcher.search(kind_q, limit=200000).hits:
+            doc = searcher.doc(addr)
+            if not doc.get_first(F_BODY_STRUCT):  # type: ignore[attr-defined]
+                continue
+            path = doc.get_first(F_PATH)  # type: ignore[attr-defined]
+            if path:
+                with contextlib.suppress(OSError):
+                    textured.add(str(Path(str(path)).resolve()))
+        flat = len(on_disk - textured)
+        if flat == 0:
+            return "all textured"
+        return f"{flat} flat PDF{'s' if flat != 1 else ''}"
+    except Exception:
+        return ""
+
+
+def _summary_update_all(app: FNDApp) -> str:
+    """Trailing context for the Update all collections action — count
+    of collections + rough total file count if known."""
+    cfg = app._config  # type: ignore[attr-defined]
+    if cfg is None:
+        return ""
+    n_collections = len(cfg.collections)
+    if n_collections == 0:
+        return "no collections"
+    n_sources = sum(len(c.sources) for c in cfg.collections.values())
+    return f"{n_collections} collections · {n_sources} sources"
+
+
+def _run_update_all_collections(app: FNDApp) -> None:
+    """Push the chain confirm dialog with the toggle honoured (the
+    historical action; kept for the Update-all entries that don't
+    explicitly override texturising)."""
+    _push_update_all_confirm(app, texturise_override=None)
+
+
+def _run_update_all_index_and_texturise(app: FNDApp) -> None:
+    """Shared top-of-screen action: always texturises, ignoring toggle."""
+    _push_update_all_confirm(app, texturise_override=True)
+
+
+def _run_update_all_index_only(app: FNDApp) -> None:
+    """Indexing-section action: always skips texturising, ignoring toggle."""
+    _push_update_all_confirm(app, texturise_override=False)
+
+
+def _push_update_all_confirm(app: FNDApp, *, texturise_override: bool | None) -> None:
+    """Shared helper: push the chain confirm dialog wired with the
+    appropriate texturise mode."""
+    import contextlib
+
+    from fnd.tui.settings_screen import UpdateAllConfirm
+
+    cfg = app._config  # type: ignore[attr-defined]
+    if cfg is None or not cfg.collections:
+        with contextlib.suppress(Exception):
+            app.notify("No collections to update.")
+        return
+    names = sorted(cfg.collections.keys())
+    app.push_screen(UpdateAllConfirm(collection_names=names, texturise_override=texturise_override))
 
 
 def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
@@ -1056,16 +1226,43 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
         ),
         MenuItem(
             id=f"col.{name}.reindex",
-            label="Reindex",
-            description="Drop existing chunks and rebuild from the current source set.",
-            kind=KIND_EXTERNAL,
+            label="Update index now",
+            description=(
+                "Re-scan this collection's sources. New / changed files are added; "
+                "deleted files are removed; unchanged files are skipped. Reuses "
+                "the PDF Texture Cache so PDFs that have not changed are not "
+                "texturised again."
+            ),
+            kind=KIND_ACTION,
+            action_label="Update",
             external=_make_reindex(name),
+            value_getter=(lambda n: lambda a: _summary_collection_update(a, n))(name),
+        ),
+        MenuItem(
+            id=f"col.{name}.texturise_flat",
+            label="Texturise flat PDFs",
+            description=(
+                "Re-run Update index for this collection with texturising "
+                "forced on, regardless of the Texturise-while-indexing "
+                "toggle. The PDF Texture Cache skips already-textured "
+                "PDFs, so the effective cost is one texturising pass per "
+                "still-flat PDF."
+            ),
+            kind=KIND_ACTION,
+            action_label="Run",
+            external=_make_texturise_flat(name),
+            value_getter=(lambda n: lambda a: _summary_flat_pdfs(a, n))(name),
+            keywords=("texturise", "flat", "pdf", "retry", "engine"),
         ),
         MenuItem(
             id=f"col.{name}.delete",
-            label="Delete collection…",
-            description="Removes the collection from config and drops its chunks.",
-            kind=KIND_EXTERNAL,
+            label="Delete collection",
+            description=(
+                "Remove this collection from config and drop its chunks from the "
+                "search index. Other collections are unaffected."
+            ),
+            kind=KIND_ACTION,
+            action_label="Delete…",
             external=_make_open_delete_confirm(name),
         ),
     )
@@ -1230,6 +1427,790 @@ def _summary_keybindings_path(_app: FNDApp) -> str:
     return ("…" + p[-50:]) if len(p) > 50 else p
 
 
+# ── Indexing section ────────────────────────────────────────────────
+
+
+def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
+    """Indexing sub-screen — app-wide search-index actions and behaviour.
+
+    The combined screen prepends an "Update everything (index +
+    texturise)" action at the top via ``_provider_indexing_pdf_texture``;
+    this provider supplies the Indexing-section-only items."""
+    return (
+        header("Status", level=2),
+        MenuItem(
+            id="indexing.files_in_index",
+            label="Files in index",
+            description=(
+                "Distinct files (md, pptx, docx, txt, PDFs) that have at "
+                "least one chunk in the search index, totalled across "
+                "every collection. Updates the next time you open this "
+                "screen after an Update index run."
+            ),
+            kind=KIND_DISPLAY,
+            value_getter=_summary_files_in_index,
+            keywords=("files", "index", "count", "indexed", "total"),
+        ),
+        header("Actions", level=2),
+        MenuItem(
+            id="indexing.update_all_index_only",
+            label="Process new files (index only, no texturising)",
+            description=(
+                "Run Update index for every collection in sequence, "
+                "indexing new files (md, pptx, docx, txt, PDFs) but "
+                "SKIPPING texturising for this run regardless of the "
+                "Texturise-while-indexing toggle. Use when you want a "
+                "fast catch-up and plan to texturise later."
+            ),
+            kind=KIND_ACTION,
+            action_label="Run",
+            external=_run_update_all_index_only,
+            value_getter=_summary_update_all,
+            keywords=(
+                "process",
+                "new",
+                "update",
+                "all",
+                "index",
+                "reindex",
+                "everything",
+                "skip",
+                "texturise",
+                "fast",
+            ),
+        ),
+        header("Behaviour", level=2),
+        MenuItem(
+            id="indexing.auto_resume",
+            label="Auto-resume on launch",
+            description=(
+                "✓ On: an interrupted Update index (force-quit, sleep, "
+                "Ctrl+C) resumes silently in the background next time "
+                "you open fnd. Progress shows in the footer, not a modal. "
+                "✗ Off: Update index must be triggered manually."
+            ),
+            kind=KIND_TOGGLE,
+            toggle_getter=_get_indexer_auto_resume,
+            toggle_setter=lambda app, v: _setting_writer("defaults.indexer_auto_resume")(app, v),
+            setting_path="defaults.indexer_auto_resume",
+            keywords=("auto", "resume", "indexer", "interrupted", "launch", "reindex"),
+        ),
+    )
+
+
+def _provider_pdf_texture(_app: FNDApp) -> tuple[MenuItem, ...]:
+    """PDF Texture sub-screen — engine, status / actions, cache, and
+    texturising-while-indexing behaviour.
+
+    Texturising is the act of turning a PDF's pages into structured
+    Markdown (headings, lists, tables) for the preview pane. It does
+    NOT affect search behaviour - PDFs are always searchable; a flat
+    PDF is just a PDF whose preview is plain text rather than
+    formatted."""
+    return (
+        header("Engine", level=2),
+        MenuItem(
+            id="pdf_texture.engine_status",
+            label="Texturising engine",
+            description=(
+                "Whether the texturising engine is installed. When installed, "
+                "the next Update index texturises any PDF that isn't already "
+                "textured. When not installed, every PDF stays flat in the "
+                "preview pane (search still works either way)."
+            ),
+            kind=KIND_DISPLAY,
+            value_getter=_summary_pdf_status,
+            keywords=(
+                "pdf",
+                "texturise",
+                "texture",
+                "engine",
+                "status",
+                "installed",
+                # Legacy terms so existing user muscle memory still finds
+                # this row.
+                "structured",
+                "structure",
+                "pdf-structure",
+                "extra",
+            ),
+        ),
+        MenuItem(
+            id="pdf_texture.install",
+            label=_pdf_install_label(),
+            description=(
+                "Open the disclosure + confirm screen. Installs pymupdf4llm[layout] "
+                "(Polyform NC, ~200 MB) + docling-slim[standard] (Apache-2.0, ~700 MB). "
+                "ML model weights download on first use."
+            ),
+            kind=KIND_ACTION,
+            external=_open_pdf_install_confirm,
+            action_label=_pdf_install_verb(),
+            keywords=(
+                "pdf",
+                "texturise",
+                "texture",
+                "engine",
+                "install",
+                "uninstall",
+                "pymupdf4llm",
+                "docling",
+                # Legacy terms.
+                "structured",
+                "structure",
+                "pdf-structure",
+                "extra",
+            ),
+        ),
+        header("Status / actions", level=2),
+        MenuItem(
+            id="pdf_texture.textured_count",
+            label="PDFs textured",
+            description=(
+                "Distinct PDFs in your collections whose chunks have a "
+                "non-empty body_md (rendered structurally in the preview "
+                "pane). The Y total is every PDF the indexer can see on "
+                "disk under your collection sources; ⚠ Z still flat = "
+                "Y - X. Enter to drill into the list of still-flat PDFs "
+                "with the reason per file and a Retry-per-file action."
+            ),
+            kind=KIND_EXTERNAL,
+            external=_open_still_flat_drill,
+            value_getter=_summary_pdfs_textured,
+            keywords=("pdf", "textured", "flat", "count", "status", "drill"),
+        ),
+        MenuItem(
+            id="pdf_texture.update",
+            label="Texturise PDFs that are still flat",
+            description=(
+                "Texturise every PDF in any collection's sources that isn't "
+                "already textured. Doesn't touch the search index; runs only "
+                "the texturising pipeline. Use to pre-warm before a big "
+                "Update index."
+            ),
+            kind=KIND_ACTION,
+            action_label="Run",
+            external=_run_update_cache,
+            value_getter=_summary_cache_update,
+            keywords=("cache", "texture", "texturise", "flat", "warm", "populate"),
+        ),
+        header("Cache", level=2),
+        MenuItem(
+            id="pdf_texture.cache_size",
+            label="Saved texturings",
+            description=(
+                "Per-file texturing results fnd has saved. Shared across "
+                "collections; the same PDF in two collections is texturised "
+                "once and reused. Removing leftovers or forgetting saved "
+                "texturings only affects the next Update index."
+            ),
+            kind=KIND_DISPLAY,
+            value_getter=_summary_cache_size_row,
+            keywords=("cache", "texture", "saved", "texturings", "size"),
+        ),
+        MenuItem(
+            id="pdf_texture.cache_location",
+            label="Location",
+            description=(
+                "Disk path. Safe to delete from outside fnd; the next Update "
+                "index will re-create the directory as needed."
+            ),
+            kind=KIND_DISPLAY,
+            value_getter=_summary_cache_location_row,
+            keywords=("cache", "texture", "location", "path", "disk"),
+        ),
+        MenuItem(
+            id="pdf_texture.cache_prune",
+            label="Remove leftovers from older texturising",
+            description=(
+                "Remove saved texturings made before the texturising engine "
+                "was upgraded (or before a config change). Current texturings "
+                "stay. PDFs whose leftovers are removed get texturised again "
+                "on the next Update index."
+            ),
+            kind=KIND_ACTION,
+            action_label="Remove…",
+            external=_run_cache_prune,
+            value_getter=_summary_stale_entries,
+            keywords=(
+                "cache",
+                "texture",
+                "leftover",
+                "old",
+                "upgrade",
+                # Legacy terms.
+                "prune",
+                "stale",
+                "extractor",
+                "signature",
+            ),
+        ),
+        MenuItem(
+            id="pdf_texture.cache_clear",
+            label="Forget every saved texturing",
+            description=(
+                "Wipe every saved texturing. PDFs render as flat in the "
+                "preview pane until the next Update index, which re-texturises "
+                "every PDF. See the cost estimate before confirming."
+            ),
+            kind=KIND_ACTION,
+            action_label="Forget…",
+            external=_run_cache_clear,
+            keywords=("cache", "texture", "forget", "clear", "delete", "wipe", "reset"),
+        ),
+        header("Behaviour", level=2),
+        MenuItem(
+            id="pdf_texture.texturise_while_indexing",
+            label="Texturise PDFs while indexing",
+            description=(
+                "✓ On (default when the texturising engine is installed): "
+                "Update index texturises new PDFs as it goes. ✗ Off: Update "
+                "index reuses saved texturings if they exist but skips "
+                "texturising new PDFs. Fast flat-only refresh, useful when "
+                "you're on battery or don't have CPU to spare."
+            ),
+            kind=KIND_TOGGLE,
+            toggle_getter=_get_cache_at_index_time,
+            toggle_setter=lambda app, v: _setting_writer("defaults.cache_at_index_time")(app, v),
+            setting_path="defaults.cache_at_index_time",
+            keywords=("cache", "texture", "texturise", "index", "battery", "fast"),
+        ),
+    )
+
+
+def _provider_indexing_pdf_texture(app: FNDApp) -> tuple[MenuItem, ...]:
+    """Combined screen: shared "Update everything" action at the top
+    (subsection=None), then two bordered subsections grouping the
+    Indexing and PDF Texture items respectively. The contributing
+    providers' items are reused verbatim; only the ``subsection`` field
+    is stamped on them."""
+    import dataclasses as _dc
+
+    shared = (
+        MenuItem(
+            id="indexing.update_all_index_and_texturise",
+            label="Update every collection (index + texturise)",
+            description=(
+                "Run Update index for every collection in sequence, "
+                "indexing new files and ALWAYS texturising new PDFs "
+                "regardless of the Texturise-while-indexing toggle "
+                "below. Use this when you want the index AND the "
+                "preview pane fully populated in one run."
+            ),
+            kind=KIND_ACTION,
+            action_label="Run",
+            external=_run_update_all_index_and_texturise,
+            value_getter=_summary_update_all,
+            keywords=(
+                "update",
+                "all",
+                "everything",
+                "process",
+                "new",
+                "index",
+                "reindex",
+                "texturise",
+                "textured",
+            ),
+        ),
+    )
+    indexing_items = tuple(
+        _dc.replace(item, subsection="Indexing") for item in _provider_indexing(app)
+    )
+    pdf_texture_items = tuple(
+        _dc.replace(item, subsection="PDF Texture") for item in _provider_pdf_texture(app)
+    )
+    return shared + indexing_items + pdf_texture_items
+
+
+def _is_pdf_structure_installed() -> bool:
+    from fnd.extras import EXTRAS, is_extra_installed
+
+    extra = EXTRAS.get("pdf-structure")
+    return extra is not None and is_extra_installed(extra)
+
+
+def _summary_pdf_status(app: FNDApp) -> str:
+    """Trailing for the Status row inside Structured PDF extraction.
+
+    Format: '✓ Installed · ~N MB' or '✗ Not installed · ~N MB to install'.
+    The `actual_disk_mb` walk is slow so we route through the lazy
+    cache; first paint shows ``…`` then the real value lands."""
+    from fnd.tui.lazy_trailing import get_or_schedule
+
+    def _compute() -> str:
+        from fnd.extras import EXTRAS, actual_disk_mb
+
+        extra = EXTRAS.get("pdf-structure")
+        if extra is None:
+            return "(unavailable)"
+        if _is_pdf_structure_installed():
+            return f"✓ Installed · ~{actual_disk_mb(extra)} MB"
+        est = sum(p.disk_mb for p in extra.packages)
+        return f"✗ Not installed · ~{est} MB to install"
+
+    return get_or_schedule(app, "indexing.pdf_status", _compute)
+
+
+def _pdf_install_label() -> str:
+    return (
+        "Uninstall texturising engine"
+        if _is_pdf_structure_installed()
+        else "Install texturising engine"
+    )
+
+
+def _pdf_install_verb() -> str:
+    """Trailing-button verb for the pdf-structure install row.
+
+    Mirrors the label's intent so `[ Install ]` / `[ Uninstall ]`
+    reads naturally next to the row, not a generic `[ Open ]` that
+    contradicts an Uninstall row."""
+    return "Uninstall" if _is_pdf_structure_installed() else "Install"
+
+
+def _open_pdf_install_confirm(app: FNDApp) -> None:
+    """Push the disclosure + Yes/Cancel confirm. On Yes the install (or
+    uninstall) progress modal lands — wired in step 6b."""
+    from fnd.tui.settings_screen import StructuredPdfConfirmScreen
+
+    app.push_screen(StructuredPdfConfirmScreen())
+
+
+def _get_indexer_auto_resume(app: FNDApp) -> bool:
+    cfg = app._config  # type: ignore[attr-defined]
+    return cfg.defaults.indexer_auto_resume if cfg is not None else True
+
+
+def _get_cache_at_index_time(app: FNDApp) -> bool:
+    cfg = app._config  # type: ignore[attr-defined]
+    return cfg.defaults.cache_at_index_time if cfg is not None else True
+
+
+def _summary_cache_update(app: FNDApp) -> str:
+    """Trailing context for the Update cache action — number of PDFs
+    that don't yet have a cache entry, with a rough time estimate.
+    Lazy-loaded since it scans every source dir."""
+    from fnd.tui.lazy_trailing import get_or_schedule
+
+    def _compute() -> str:
+        cfg = app._config  # type: ignore[attr-defined]
+        if cfg is None:
+            return ""
+        try:
+            from fnd.cache import ExtractionCache, default_cache_dir, sha256_file
+            from fnd.extract.pdf import _extractor_signature
+            from fnd.walk import walk_sources
+        except Exception:
+            return ""
+        if not default_cache_dir().exists():
+            n_missing = _count_pdfs_in_all_collections(cfg)
+            return f"{n_missing} missing"
+        cache = ExtractionCache()
+        sig = _extractor_signature()
+        n_missing = 0
+        for coll in cfg.collections.values():
+            for path in walk_sources(sources=list(coll.sources)):
+                if path.suffix.lower() != ".pdf":
+                    continue
+                try:
+                    sha = sha256_file(path)
+                except OSError:
+                    continue
+                key = cache.build_key(content_sha256=sha, extractor_signature=sig)
+                if not cache.entry_path(key).exists():
+                    n_missing += 1
+        if n_missing == 0:
+            return "all cached"
+        return f"{n_missing} missing"
+
+    return get_or_schedule(app, "indexing.cache_update.missing", _compute)
+
+
+def _count_pdfs_in_all_collections(cfg: Any) -> int:
+    from fnd.walk import walk_sources
+
+    n = 0
+    for coll in cfg.collections.values():
+        for path in walk_sources(sources=list(coll.sources)):
+            if path.suffix.lower() == ".pdf":
+                n += 1
+    return n
+
+
+def _run_update_cache(app: FNDApp) -> None:
+    """Texturise every still-flat PDF across every collection.
+
+    The cache stores extraction RESULTS (chunks), not extraction MODE.
+    A PDF cached with empty body_md (older entries, runs before docling
+    was installed, runs where docling timed out) will cache-hit on
+    every subsequent Update and never get re-attempted - the whole
+    point of this action is to force a fresh extraction pass on those
+    files. So: forget the cache entry for each still-flat PDF first,
+    THEN run the Update-all chain with texturise forced on. Cached
+    already-textured PDFs are left alone and short-circuit normally."""
+    _forget_cache_for_flat_pdfs()
+    _push_update_all_confirm(app, texturise_override=True)
+
+
+def _forget_cache_for_flat_pdfs() -> None:
+    """Delete the structured-extraction cache entry for every PDF
+    that is currently flat in the index. Best-effort - any per-file
+    failure (sha read, cache write) is suppressed so a single bad
+    file doesn't take down the whole texturise run."""
+    import contextlib
+
+    try:
+        from fnd.cache import ExtractionCache, sha256_file
+        from fnd.extract.pdf import _extractor_signature
+        from fnd.tui.settings_screen import _flat_pdfs_with_reasons
+    except Exception:
+        return
+    cache = ExtractionCache()
+    sig = _extractor_signature()
+    for _collection, path, _reason, _recorded_at in _flat_pdfs_with_reasons():
+        with contextlib.suppress(OSError):
+            from pathlib import Path
+
+            sha = sha256_file(Path(path))
+            key = cache.build_key(content_sha256=sha, extractor_signature=sig)
+            entry = cache.entry_path(key)
+            if entry.exists():
+                with contextlib.suppress(OSError):
+                    entry.unlink()
+
+
+def _summary_indexing(app: FNDApp) -> str:
+    """Auto-resume chip — still used by tests after the section combine."""
+    return "✓ auto-resume" if _get_indexer_auto_resume(app) else "✗ auto-resume"
+
+
+def _summary_pdf_texture(app: FNDApp) -> str:
+    """Engine + cache chip — still used by tests after the section combine."""
+    from fnd.tui.lazy_trailing import PLACEHOLDER, get_or_schedule
+
+    engine = "✓ engine on" if _is_pdf_structure_installed() else "✗ engine off"
+    cache_part = get_or_schedule(app, "pdf_texture.summary.cache_short", _cache_size_short)
+    if cache_part and cache_part != PLACEHOLDER:
+        return f"{engine} · {cache_part}"
+    return engine
+
+
+def _summary_indexing_pdf_texture(app: FNDApp) -> str:
+    """Trailing summary for the combined Indexing & PDF Texture root row.
+
+    Composes the two prior chip summaries so the root row carries the
+    most actionable status bits from both subsections at a glance."""
+    return f"{_summary_indexing(app)} · {_summary_pdf_texture(app)}"
+
+
+def _summary_cache_size_row(app: FNDApp) -> str:
+    """Trailing for the Cache size row inside Indexing.
+
+    First call returns ``…`` while a worker thread walks the cache
+    directory; the screen re-renders with the real value on completion.
+    """
+    from fnd.tui.lazy_trailing import get_or_schedule
+
+    def _compute() -> str:
+        from fnd.cache import ExtractionCache, default_cache_dir
+
+        root = default_cache_dir()
+        if not root.exists():
+            return "empty"
+        cache = ExtractionCache()
+        return f"{cache.entry_count()} entries · {_human_bytes(cache.total_size_bytes())}"
+
+    return get_or_schedule(app, "indexing.cache_size", _compute)
+
+
+def _summary_cache_location_row(_app: FNDApp) -> str:
+    """Trailing for the Cache location row — abbreviated home-dir path.
+
+    Cheap (string ops only) so no lazy wrapper needed."""
+    from fnd.cache import default_cache_dir
+
+    p = str(default_cache_dir())
+    home = str(Path.home())
+    if p.startswith(home):
+        p = "~" + p[len(home) :]
+    if len(p) > 50:
+        p = "…" + p[-50:]
+    return p
+
+
+def _cache_size_short() -> str:
+    """Compact 'N · S' for the root summary; empty string when no cache."""
+    from fnd.cache import ExtractionCache, default_cache_dir
+
+    root = default_cache_dir()
+    if not root.exists():
+        return ""
+    cache = ExtractionCache()
+    n = cache.entry_count()
+    if n == 0:
+        return ""
+    return f"cache {_human_bytes(cache.total_size_bytes())}"
+
+
+def _summary_files_in_index(app: FNDApp) -> str:
+    """Lazy walker: distinct file count in the tantivy index, plus the
+    collection count from config."""
+    from fnd.tui.lazy_trailing import get_or_schedule
+
+    return get_or_schedule(app, "indexing.files_in_index", _compute_files_in_index)
+
+
+def _compute_files_in_index() -> str:
+    try:
+        import tantivy
+
+        from fnd.config import default_index_dir, load
+        from fnd.schema import F_COLLECTION, F_PARENT_ID
+
+        index_dir = default_index_dir()
+        if not index_dir.exists():
+            return "no index yet"
+        index = tantivy.Index.open(str(index_dir))
+        index.reload()
+        searcher = index.searcher()
+        cfg = load()
+        col_count = len(cfg.collections)
+        parents: set[str] = set()
+        for name in cfg.collections:
+            q = tantivy.Query.term_query(index.schema, F_COLLECTION, name)
+            for _score, addr in searcher.search(q, limit=200000).hits:
+                pid = searcher.doc(addr).get_first(F_PARENT_ID)  # type: ignore[attr-defined]
+                if pid:
+                    parents.add(str(pid))
+        return f"{len(parents):,} across {col_count} collection{'s' if col_count != 1 else ''}"
+    except Exception:
+        return "unavailable"
+
+
+def _summary_pdfs_textured(app: FNDApp) -> str:
+    """Lazy walker: distinct textured PDFs in the index, vs total PDFs
+    visible on disk under every collection's sources."""
+    from fnd.tui.lazy_trailing import get_or_schedule
+
+    return get_or_schedule(app, "pdf_texture.textured_count", _compute_pdfs_textured)
+
+
+def _open_still_flat_drill(app: FNDApp) -> None:
+    from fnd.tui.settings_screen import StillFlatDrillIn
+
+    app.push_screen(StillFlatDrillIn())
+
+
+def _compute_pdfs_textured() -> str:
+    import contextlib
+
+    try:
+        from pathlib import Path
+
+        import tantivy
+
+        from fnd.config import default_index_dir, load
+        from fnd.schema import F_BODY_STRUCT, F_KIND, F_PATH
+
+        cfg = load()
+        # Y: every PDF the indexer would actually pick up under any
+        # collection's source. Uses the same walk_sources call the
+        # indexer uses so includes/excludes/frontmatter filters are
+        # honored - otherwise a vault that's md-only for some
+        # collections would inflate the total with PDFs that can
+        # never be indexed under any of those collections.
+        from fnd.walk import walk_sources
+
+        on_disk: set[str] = set()
+        for col in cfg.collections.values():
+            for path in walk_sources(sources=list(col.sources)):
+                if path.suffix.lower() != ".pdf":
+                    continue
+                with contextlib.suppress(OSError):
+                    on_disk.add(str(path.resolve()))
+        total = len(on_disk)
+        if total == 0:
+            return "no PDFs"
+
+        # X: PDFs in the index whose at-least-one chunk has body_struct
+        # (the structural-preview payload populated by the texturising
+        # pipeline). Falls back to "no index" when the index is missing.
+        index_dir = default_index_dir()
+        if not index_dir.exists():
+            return f"0 of {total} · ⚠ {total} still flat"
+        index = tantivy.Index.open(str(index_dir))
+        index.reload()
+        searcher = index.searcher()
+        kind_q = tantivy.Query.term_query(index.schema, F_KIND, "pdf")
+        hits = searcher.search(kind_q, limit=200000).hits
+        textured_paths: set[str] = set()
+        for _score, addr in hits:
+            doc = searcher.doc(addr)
+            body = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
+            if not body:
+                continue
+            path = doc.get_first(F_PATH)  # type: ignore[attr-defined]
+            if path:
+                with contextlib.suppress(OSError):
+                    textured_paths.add(str(Path(str(path)).resolve()))
+        textured = len(textured_paths & on_disk)
+        flat = total - textured
+        flat_chip = f" · ⚠ {flat} still flat" if flat > 0 else ""
+        return f"{textured:,} of {total:,}{flat_chip}"
+    except Exception:
+        return "unavailable"
+
+
+def _human_bytes(n: int) -> str:
+    if n < 1024:
+        return f"{n} B"
+    kb = n / 1024
+    if kb < 1024:
+        return f"{kb:.0f} KB"
+    mb = kb / 1024
+    if mb < 1024:
+        return f"{mb:.0f} MB"
+    return f"{mb / 1024:.1f} GB"
+
+
+def _summary_stale_entries(app: FNDApp) -> str:
+    """Stale-entry count for the Prune row. Wrapped in lazy-trailing
+    because it walks the cache directory."""
+    from fnd.tui.lazy_trailing import get_or_schedule
+
+    def _compute() -> str:
+        from fnd.cache import default_cache_dir
+        from fnd.extract.pdf import _extractor_signature
+
+        root = default_cache_dir()
+        if not root.exists():
+            return "0 stale"
+        current = _extractor_signature()
+        stale = 0
+        for shard in root.iterdir():
+            if not shard.is_dir():
+                continue
+            for entry in shard.glob("*.json"):
+                _, _, sig = entry.stem.partition("--")
+                if sig != current:
+                    stale += 1
+        return f"{stale} stale"
+
+    return get_or_schedule(app, "cache.stale_count", _compute)
+
+
+def _run_cache_prune(app: FNDApp) -> None:
+    """Count stale entries; confirm before deleting."""
+    import contextlib
+
+    from rich.text import Text
+
+    from fnd.cache import default_cache_dir
+    from fnd.extract.pdf import _extractor_signature
+    from fnd.tui.settings_screen import CacheMaintenanceConfirm
+
+    root = default_cache_dir()
+    if not root.exists():
+        with contextlib.suppress(Exception):
+            app.notify("PDF Texture Cache is empty.")
+        return
+    current = _extractor_signature()
+    leftovers: list[Path] = []
+    current_count = 0
+    for shard in root.iterdir():
+        if not shard.is_dir():
+            continue
+        for entry in shard.glob("*.json"):
+            _, _, sig = entry.stem.partition("--")
+            if sig == current:
+                current_count += 1
+            else:
+                leftovers.append(entry)
+    if not leftovers:
+        with contextlib.suppress(Exception):
+            app.notify(f"No leftovers from older texturising · {current_count} current.")
+        return
+
+    summary = Text()
+    summary.append("Current texturings:  ", style="dim")
+    summary.append(f"{current_count}\n", style="bold")
+    summary.append("Older leftovers:     ", style="dim")
+    summary.append(str(len(leftovers)), style="bold")
+
+    def _do_prune() -> int:
+        removed = 0
+        for p in leftovers:
+            try:
+                p.unlink()
+                removed += 1
+            except OSError:
+                continue
+        return removed
+
+    app.push_screen(
+        CacheMaintenanceConfirm(
+            title="Indexing › PDF Texture Cache › Remove leftovers",
+            summary=summary,
+            run=_do_prune,
+            confirm_label=f"Yes, remove {len(leftovers)} leftover texturings",
+            result_label="leftover texturings removed",
+            irreversible=False,
+        )
+    )
+
+
+def _run_cache_clear(app: FNDApp) -> None:
+    import contextlib
+
+    from rich.text import Text
+
+    from fnd.cache import ExtractionCache, default_cache_dir
+    from fnd.tui.settings_screen import CacheMaintenanceConfirm
+
+    root = default_cache_dir()
+    cache = ExtractionCache()
+    n = cache.entry_count() if root.exists() else 0
+    size = cache.total_size_bytes() if root.exists() else 0
+    if n == 0:
+        with contextlib.suppress(Exception):
+            app.notify("PDF Texture Cache is empty.")
+        return
+
+    from fnd.tui.cost_estimate import estimate_seconds_for, format_duration
+
+    eta_s = estimate_seconds_for(n) if n else 0.0
+    summary = Text()
+    summary.append("Saved texturings: ", style="dim")
+    summary.append(f"{n}\n", style="bold")
+    summary.append("Size:             ", style="dim")
+    summary.append(f"{_human_bytes(size)}\n", style="bold")
+    summary.append("Path:             ", style="dim")
+    summary.append(f"{root}\n\n", style="bold")
+    summary.append(
+        f"Next Update index will texturise every PDF from scratch. "
+        f"Estimated cost: {format_duration(eta_s)}.",
+        style="dim",
+    )
+
+    def _do_clear() -> int:
+        import shutil
+
+        shutil.rmtree(root, ignore_errors=True)
+        return n
+
+    app.push_screen(
+        CacheMaintenanceConfirm(
+            title="Indexing › PDF Texture Cache › Forget every saved texturing",
+            summary=summary,
+            run=_do_clear,
+            confirm_label="Yes, forget every saved texturing",
+            result_label="saved texturings removed",
+            irreversible=True,
+        )
+    )
+
+
 def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
     """Root settings menu — a clean, short list of categories. No
     content piled on top of each other. Each drill-in row pushes its
@@ -1260,22 +2241,58 @@ def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
             value_getter=_summary_keybindings,
         ),
         MenuItem(
+            id=f"root.{SECTION_INDEXING_PDF_TEXTURE}",
+            label="Indexing & PDF Texture",
+            description=(
+                "Run Update across all collections, manage the texturising "
+                "engine and PDF Texture Cache, and tune auto-resume + "
+                "while-indexing behaviour. Per-collection updates live "
+                "under each collection."
+            ),
+            kind=KIND_EXTERNAL,
+            external=_open_section(SECTION_INDEXING_PDF_TEXTURE),
+            value_getter=_summary_indexing_pdf_texture,
+            keywords=(
+                "index",
+                "indexer",
+                "reindex",
+                "process",
+                "new",
+                "auto-resume",
+                "pdf",
+                "texture",
+                "texturise",
+                "textured",
+                "flat",
+                "engine",
+                "cache",
+                # Legacy.
+                "structured",
+                "structure",
+                "pdf-structure",
+                "extraction",
+            ),
+        ),
+        header("External", level=2, anchor_id="external"),
+        MenuItem(
             id="root.open_config_file",
-            label="Open config file in editor",
-            description="Drop into $EDITOR on config.toml; reload on save. Shift+Enter reveals in Finder.",
+            label="Config file",
+            description="Open config.toml in $EDITOR; reload on save. Shift+⏎ reveals in Finder.",
             kind=KIND_EXTERNAL,
             external=_open_config_file_action,
             value_getter=_summary_config_path,
-            keywords=("edit", "config", "toml"),
+            external_app=True,
+            keywords=("edit", "config", "toml", "open", "external"),
         ),
         MenuItem(
             id="root.open_keybindings_file",
-            label="Open keybindings file in editor",
-            description="Drop into $EDITOR on keybindings.toml; Shift+Enter reveals in Finder.",
+            label="Keybindings file",
+            description="Open keybindings.toml in $EDITOR. Shift+⏎ reveals in Finder.",
             kind=KIND_EXTERNAL,
             external=_open_keybindings_file_action,
             value_getter=_summary_keybindings_path,
-            keywords=("edit", "keybindings", "rebind"),
+            external_app=True,
+            keywords=("edit", "keybindings", "rebind", "open", "external"),
         ),
     )
 
@@ -1291,12 +2308,14 @@ _SECTION_PROVIDERS: dict[str, Callable[[FNDApp], tuple[MenuItem, ...]]] = {
     SECTION_PREFERENCES: _provider_preferences,
     SECTION_COLLECTIONS: _provider_collections,
     SECTION_KEYBINDINGS: _provider_keybindings,
+    SECTION_INDEXING_PDF_TEXTURE: _provider_indexing_pdf_texture,
 }
 
 _SECTION_LABELS: dict[str, str] = {
     SECTION_PREFERENCES: "Preferences",
     SECTION_COLLECTIONS: "Collections",
     SECTION_KEYBINDINGS: "Keybindings",
+    SECTION_INDEXING_PDF_TEXTURE: "Indexing & PDF Texture",
 }
 
 

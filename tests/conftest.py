@@ -2,10 +2,90 @@
 
 from __future__ import annotations
 
+import asyncio
+import importlib
+import importlib.util
 from collections.abc import Generator
 from pathlib import Path
 
 import pytest
+from textual.pilot import Pilot, WaitForScreenTimeout
+
+# ── Pilot patches: tolerate internal _wait_for_screen timeouts ─────
+#
+# Under full-suite CPU load, ``Pilot.pause()`` and ``Pilot.press()``
+# call ``_wait_for_screen(timeout=30.0)`` which can raise
+# ``WaitForScreenTimeout`` even when the test would otherwise pass.
+# The widget message queue eventually drains; the 30 s wall-clock
+# bound just lapses first.
+#
+# We wrap both methods so the timeout becomes a soft yield to the
+# event loop. State assertions in tests must then use predicate
+# polling (see ``tests/_pilot_wait.wait_until``) instead of relying
+# on one ``pilot.pause()`` for a deterministic settle.
+_orig_pause = Pilot.pause
+_orig_press = Pilot.press
+
+
+async def _safe_pause(self: Pilot, delay: float | None = None) -> None:  # type: ignore[type-arg]
+    try:
+        await _orig_pause(self, delay)
+    except WaitForScreenTimeout:
+        for _ in range(8):
+            await asyncio.sleep(0)
+
+
+async def _safe_press(self: Pilot, *keys: str) -> None:  # type: ignore[type-arg]
+    try:
+        await _orig_press(self, *keys)
+    except WaitForScreenTimeout:
+        for _ in range(8):
+            await asyncio.sleep(0)
+
+
+Pilot.pause = _safe_pause  # type: ignore[method-assign]
+Pilot.press = _safe_press  # type: ignore[method-assign]
+
+
+# When the pdf-structure extra is installed in the dev venv, PDF chunks
+# carry body_md and the preview dispatcher routes them through the
+# structural Markdown widget. Most existing tests pre-date that and
+# assert the flat-buffer routing PDFs have always taken — they pass
+# in CI (no extra installed) but fail locally when a dev has installed
+# it. Default the whole test suite to flat-PDF routing so the
+# invariant tests stay green; the two structural-PDF tests opt out
+# explicitly via `monkeypatch.delenv("_FND_FORCE_FLAT", raising=False)`.
+def _pdf_structure_actually_works() -> bool:
+    """``find_spec`` returns True even when pymupdf4llm has been
+    half-uninstalled (namespace dir survives, ``to_markdown`` gone).
+    Verify the entrypoint actually exists before claiming the extra
+    is installed.
+
+    Uses ``importlib.import_module`` instead of a static ``import``
+    so static type-checkers (pyright) don't blow up when the package
+    isn't present in the analysis environment."""
+    spec = importlib.util.find_spec("pymupdf4llm")
+    if spec is None:
+        return False
+    try:
+        mod = importlib.import_module("pymupdf4llm")
+    except Exception:
+        return False
+    return hasattr(mod, "to_markdown")
+
+
+_PDF_STRUCTURE_INSTALLED = _pdf_structure_actually_works()
+
+
+@pytest.fixture(autouse=True)
+def _default_pdf_flat_when_extras_present(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if _PDF_STRUCTURE_INSTALLED:
+        # "pdf" forces PDF-only to the flat path; MD/DOCX/PPTX are
+        # unaffected. Tests asserting structural PDF routing override
+        # via `monkeypatch.delenv("_FND_FORCE_FLAT", raising=False)`.
+        monkeypatch.setenv("_FND_FORCE_FLAT", "pdf")
 
 
 @pytest.fixture(scope="session")
@@ -32,6 +112,70 @@ def isolated_ui_state(  # pyright: ignore[reportUnusedFunction]
     p = tmp_path / "ui_state" / "scope.toml"
     monkeypatch.setattr("fnd.state._state_path", lambda: p)
     return p
+
+
+@pytest.fixture(autouse=True)
+def isolated_seen_log(  # pyright: ignore[reportUnusedFunction]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Redirect the non-PDF "have we seen this content?" marker store
+    at a per-test temp path. Without isolation, a marker written by
+    one test (e.g. for the ubiquitous ``# A\\n`` markdown fixture)
+    would make a later test's first-run assertion of ``indexed_newly``
+    fail with ``indexed_already`` instead."""
+    seen_root = tmp_path / "seen-log"
+    monkeypatch.setattr("fnd.seen_log._seen_root", lambda: seen_root)
+    return seen_root
+
+
+@pytest.fixture(autouse=True)
+def isolated_failure_log(  # pyright: ignore[reportUnusedFunction]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Redirect the per-(collection, file) failure log at a per-test
+    temp path. Without isolation, every test that exercises the
+    indexer's error path writes a pytest-tmp record into the user's
+    real ``indexer_failures.toml`` and the user ends up with a log
+    full of ``[t] broken.pdf`` entries from pytest-of-* tmp dirs."""
+    log_path = tmp_path / "failure-log" / "indexer_failures.toml"
+    monkeypatch.setattr("fnd.tui.failure_log._log_path", lambda: log_path)
+    return log_path
+
+
+@pytest.fixture(autouse=True)
+def isolated_dismissed_pdfs(  # pyright: ignore[reportUnusedFunction]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Same isolation for the user-dismissed-PDF marker store - a
+    test that exercises the Dismiss action would otherwise drop a
+    real-looking marker into the user's data dir and silently hide
+    the real file from their Texturising Error Log."""
+    dismissed_root = tmp_path / "dismissed"
+    monkeypatch.setattr("fnd.dismissed_pdfs._dismissed_root", lambda: dismissed_root)
+    return dismissed_root
+
+
+@pytest.fixture(autouse=True)
+def isolated_pdf_structure_cache(  # pyright: ignore[reportUnusedFunction]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point fnd's PDF structure cache at a per-test tmp dir.
+
+    Without this, tests share the user's real cache at
+    ``~/Library/Caches/fnd/pdf-structure/``. State from one test run
+    (or from interactive usage) can leak into the next: cached entries
+    with the same signature but stale content (e.g. body_md='' from a
+    pre-structured-extra run) make later tests see wrong data.
+
+    The PDF extractor caches its ExtractionCache instance in
+    ``_cache_singleton`` — reset it so the patched default_cache_dir
+    actually takes effect."""
+    root = tmp_path / "pdf-structure-cache"
+    monkeypatch.setattr("fnd.cache.default_cache_dir", lambda: root)
+    from fnd.extract import pdf as _pdf
+
+    monkeypatch.setattr(_pdf, "_cache_singleton", None)
+    return root
 
 
 @pytest.fixture(autouse=True)
