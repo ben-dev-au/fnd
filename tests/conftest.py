@@ -103,6 +103,23 @@ def tmp_index_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def isolated_config(  # pyright: ignore[reportUnusedFunction]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Redirect the config-file path at a per-test temp path so tests
+    never read the developer's real ``config.toml``. Without this, a
+    test that builds ``FNDApp`` without an explicit ``config=`` silently
+    inherits whatever collections the developer happens to have, so it
+    passes locally and fails on a clean CI runner (empty config → empty
+    collections panel). The temp path does not exist, so ``load()``
+    returns an empty ``Config``; tests that need collections build and
+    pass their own ``Config``."""
+    p = tmp_path / "config" / "config.toml"
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: p)
+    return p
+
+
+@pytest.fixture(autouse=True)
 def isolated_ui_state(  # pyright: ignore[reportUnusedFunction]
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
