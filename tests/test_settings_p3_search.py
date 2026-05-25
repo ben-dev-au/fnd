@@ -125,11 +125,13 @@ async def test_search_on_keybindings_finds_preference(
 
 
 @pytest.mark.asyncio
-async def test_search_match_for_scalar_opens_edit_bar_inline(
+async def test_search_enter_navigates_only_then_second_enter_acts(
     built_index: Path, fixtures_dir: Path
 ) -> None:
-    """Spec: Cross-section search › Activation rule — scalar matches
-    open the edit bar on the *current* screen."""
+    """Spec (revised): search is navigation-only. Enter in the search box
+    lands focus on the first match and fires NO effect — no edit bar, no
+    toggle, no drill, no side-effect. A second Enter on the now-focused
+    list performs the action (here: opens the scalar's edit bar inline)."""
     from textual.widgets import Input
 
     from fnd.tui.settings_screen import (
@@ -146,17 +148,22 @@ async def test_search_match_for_scalar_opens_edit_bar_inline(
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         search = screen.query_one("#settings_search", Input)
-        search.value = "result limit"
+        search.value = "result limit"  # first match is the Result limit scalar
         await pilot.pause()
-        # Activate the first match (which is Preferences › Result limit).
         lst = screen.query_one(SettingsList)
-        lst.cursor_index = 0
+        bar = screen.query_one(EditBar)
+
+        # First Enter (search focused) → navigate only.
         await pilot.press("enter")
         await pilot.pause()
-        # We should still be on the root screen.
-        assert app.screen is screen
-        # The edit bar should be open with the current value populated.
-        bar = screen.query_one(EditBar)
+        assert app.screen is screen, "must not drill away"
+        assert app.focused is lst, "focus should move to the list"
+        assert lst.cursor_index == 0, "cursor lands on the first match"
+        assert "-hidden" in bar.classes, "edit bar must NOT auto-open on search Enter"
+
+        # Second Enter (list focused) → acts: opens the edit bar inline.
+        await pilot.press("enter")
+        await pilot.pause()
         assert "-hidden" not in bar.classes
 
 
