@@ -2387,8 +2387,14 @@ class FNDApp(App[None]):
         """Stable signature for the current query — match-bearing
         widgets are baked with this query's highlights, so the cache
         must invalidate when it changes. Includes intent because intent
-        biases snippet selection (UX-pass-4 §3)."""
-        return f"{self._current_query}|{self._current_intent or ''}"
+        biases snippet selection (UX-pass-4 §3), and the highlight
+        toggle state because the rendered spans differ on/off: without
+        it, toggling highlights re-uses the opposite-state cached
+        container for the same file + query and the toggle has no
+        visible effect."""
+        return (
+            f"{self._current_query}|{self._current_intent or ''}|hl={int(self._highlights_enabled)}"
+        )
 
     def _show_progress_bar(
         self,
