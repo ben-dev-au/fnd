@@ -690,6 +690,11 @@ class SettingsList(Widget, can_focus=True):
         # The active search query, lowercased — used to bold the matching
         # substring inside each filtered row's label.
         self._search_query: str = ""
+        # When set, the next ``_init_cursor`` lands on this item id instead
+        # of the first selectable row — lets a re-population (e.g. resume
+        # from a popped child screen) keep the cursor on the row the user
+        # drilled from. Consumed (reset to None) once applied.
+        self._pending_cursor_id: str | None = None
 
     def compose(self) -> ComposeResult:
         # VerticalScroll (not plain Vertical) so long lists like the
@@ -704,9 +709,12 @@ class SettingsList(Widget, can_focus=True):
         self,
         items: list[MenuItem],
         breadcrumbs: dict[int, tuple[str, ...]] | None = None,
+        cursor_id: str | None = None,
     ) -> None:
         self._items = list(items)
         self._search_breadcrumbs = dict(breadcrumbs) if breadcrumbs else {}
+        # _init_cursor (deferred below) lands here if the id is present.
+        self._pending_cursor_id = cursor_id
         body = self.query_one("#settings_list_body", VerticalScroll)
         # Remove existing rows synchronously by walking the DOM directly —
         # Textual's `remove_children` is async and would race against the
@@ -752,8 +760,20 @@ class SettingsList(Widget, can_focus=True):
         self.call_after_refresh(self._init_cursor)
 
     def _init_cursor(self) -> None:
-        first = self._first_selectable(0, +1)
-        self.cursor_index = first if first is not None else 0
+        target: int | None = None
+        if self._pending_cursor_id is not None:
+            target = next(
+                (
+                    i
+                    for i, it in enumerate(self._items)
+                    if it.id == self._pending_cursor_id and it.kind != KIND_HEADER
+                ),
+                None,
+            )
+            self._pending_cursor_id = None
+        if target is None:
+            target = self._first_selectable(0, +1)
+        self.cursor_index = target if target is not None else 0
         self._render_all()
         self._post_highlight()
 
@@ -1108,21 +1128,15 @@ class SettingsScreen(Screen[None]):
             return
         # Preserve cursor position by item id: a structural edit (add /
         # remove row) shifts indices, so the closest semantic anchor is
-        # the previously-cursored row's stable id.
+        # the previously-cursored row's stable id. Threaded through
+        # set_items → _init_cursor so the restore is atomic — a separate
+        # deferred restore loses the race against _init_cursor's own
+        # deferred reset-to-first and the cursor jumps back to the top.
         prev_id: str | None = None
         if 0 <= lst.cursor_index < len(lst._items):
             prev_id = lst._items[lst.cursor_index].id
         self._items = new_items
-        lst.set_items(list(new_items))
-        if prev_id is not None:
-
-            def _restore_cursor() -> None:
-                for i, it in enumerate(lst._items):
-                    if it.id == prev_id:
-                        lst.cursor_index = i
-                        break
-
-            self.call_after_refresh(_restore_cursor)
+        lst.set_items(list(new_items), cursor_id=prev_id)
         self._refresh_hint_bar()
 
     def _render_version_status(self) -> None:
@@ -1287,10 +1301,14 @@ class SettingsScreen(Screen[None]):
 
     @on(Input.Submitted, "#settings_search")
     def _on_search_submitted(self, _ev: Input.Submitted) -> None:
-        # Hand focus to the list and activate the first match.
+        # Search is navigation-only: Enter lands focus on the first match
+        # (the cursor is already there from filtering) and stops. It does
+        # NOT fire the row's effect — no silent toggles, no accidental
+        # side-effects (e.g. launching an editor). The user presses Enter
+        # again on the now-focused list to actually act on the row.
         lst = self.query_one(SettingsList)
         lst.focus()
-        lst.action_activate()
+        lst._post_highlight()
 
     def action_list_from_input(self) -> None:
         """Bridge Down from the filter Input into the list. Up at the
