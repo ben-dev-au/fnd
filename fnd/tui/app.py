@@ -886,12 +886,15 @@ def _shorten(text: str, limit: int) -> str:
 
 
 def _elide_middle_keep_suffix(name: str, max_width: int) -> str:
-    """Middle-truncate ``name`` to ``max_width`` chars, always keeping the
-    extension: ``really_long_report_final_v3.pdf`` -> ``really_…nal_v3.pdf``.
+    """Middle-truncate ``name`` to ``max_width`` chars, keeping the extension
+    visible: ``really_long_report_final_v3.pdf`` -> ``really_…nal_v3.pdf``.
 
     A terminal's default right-clip drops the extension — the one part that
     says what kind of file it is — so we elide the stem's middle and keep both
-    ends plus the suffix. Char-counted (like ``_shorten``); wide glyphs aside.
+    ends plus the suffix. When even one stem char won't fit we still show
+    ``…<suffix>``; only when the suffix itself can't fit (``max_width`` shorter
+    than ``…`` + suffix) do we fall back to a plain right-truncation that drops
+    it. Char-counted (like ``_shorten``); wide glyphs aside.
     """
     if len(name) <= max_width:
         return name
@@ -900,8 +903,8 @@ def _elide_middle_keep_suffix(name: str, max_width: int) -> str:
     suffix = Path(name).suffix
     stem = name[: len(name) - len(suffix)] if suffix else name
     stem_budget = max_width - len(suffix) - 1  # 1 cell for the ellipsis
-    if stem_budget < 1:
-        # Suffix + ellipsis won't fit; show leading chars, plain-truncated.
+    if stem_budget < 0:
+        # Even "…" + suffix won't fit; show leading chars, plain-truncated.
         return name[: max_width - 1] + "…"
     head = (stem_budget + 1) // 2
     tail = stem_budget - head

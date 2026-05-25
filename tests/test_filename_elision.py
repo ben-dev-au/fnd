@@ -53,6 +53,13 @@ def test_extension_longer_than_budget_degrades_gracefully() -> None:
     assert len(out) <= 4, out
 
 
+def test_ellipsis_plus_suffix_fits_at_exact_boundary() -> None:
+    # max_width == len(suffix) + 1: exactly room for "…" + the full
+    # extension and no stem — must show "…<ext>", not drop the extension.
+    assert _elide_middle_keep_suffix("longfile.txt", 5) == "….txt"
+    assert _elide_middle_keep_suffix("report.docx", 6) == "….docx"
+
+
 # ── Integration: real app, narrow terminal ───────────────────────────
 
 _LONG_STEM = "this_is_a_really_long_document_name_for_testing_extension_elision"
