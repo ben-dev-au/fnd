@@ -110,13 +110,13 @@ async def test_md_preview_scrolls_when_match_is_in_first_chunk(
     scrolling to first_match_block lands on the matched paragraph."""
     notes = tmp_path / "notes"
     notes.mkdir()
-    body = ["# SFO Wk3 Notes v2", ""]
+    body = ["# Sample Notes v2", ""]
     for i in range(40):
         body.extend([f"Intro paragraph {i}.", ""])
     body.extend(["And then the compromise paragraph appears here.", ""])
     for i in range(20):
         body.extend([f"Trailing paragraph {i}.", ""])
-    (notes / "sfo.md").write_text("\n".join(body), encoding="utf-8")
+    (notes / "sample.md").write_text("\n".join(body), encoding="utf-8")
     build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
 
     app = FNDApp(index_dir=tmp_index_dir, initial_query="compromise")
@@ -231,11 +231,11 @@ async def test_md_scroll_with_varied_constructs(tmp_path: Path, tmp_index_dir: P
     notes = tmp_path / "notes"
     notes.mkdir()
     body = """---
-title: SFO Wk3 Notes v2
-tags: [security, sfo]
+title: Sample Notes v2
+tags: [security, sample]
 ---
 
-# SFO Wk3 Notes v2
+# Sample Notes v2
 
 ## Overview
 
@@ -269,7 +269,7 @@ Some intro text.
 
 Wrap-up paragraph.
 """
-    (notes / "sfo.md").write_text(body, encoding="utf-8")
+    (notes / "sample.md").write_text(body, encoding="utf-8")
     build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
 
     app = FNDApp(index_dir=tmp_index_dir, initial_query="compromise")

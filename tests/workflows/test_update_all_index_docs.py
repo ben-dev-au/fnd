@@ -44,10 +44,9 @@ def _per_collection_doc_counts(index_dir: Path, names: list[str]) -> dict[str, i
 
 @pytest.mark.asyncio
 async def test_chain_commits_final_collection_docs(tmp_path: Path) -> None:
-    """Four-collection chain (wine last) must leave docs for every
-    collection — including the final one — in the index after the
-    chain completes."""
-    names = ["CPL", "DPC", "SFO", "wine"]
+    """Four-collection chain must leave docs for every collection —
+    including the final one — in the index after the chain completes."""
+    names = ["alpha", "beta", "gamma", "delta"]
     # Distinct corpora per collection so parent_id-based delete-then-
     # re-add does not let each chain step wipe the prior step's docs
     # (that interaction is a separate bug from the one we are testing).
