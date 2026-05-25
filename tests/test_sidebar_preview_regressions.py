@@ -12,27 +12,45 @@
 
 from __future__ import annotations
 
+import textwrap
 from pathlib import Path
 
 import pytest
 from textual.widgets import Tree
 
+from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from tests._pilot_wait import safe_pause, safe_press, settle, wait_until
-
-# Four tests below hit a pilot.pause()-blocks-for-full-timeout
-# pathology under macOS CI's full-suite load: each wait_until burns
-# its entire 30 s budget without the predicate ever flipping, even
-# though the same test passes solo in ~1 s. Reruns let CI distinguish
-# that load flake from a real regression.
-_CI_LOAD_FLAKY = pytest.mark.flaky(reruns=2, reruns_delay=1)
 
 
 @pytest.fixture
 def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
     build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="default")
     return tmp_index_dir
+
+
+@pytest.fixture
+def cfg(fixtures_dir: Path, tmp_path: Path) -> Config:
+    """A self-contained config with three collections so the collections
+    panel populates deterministically. These tests assert on the panel /
+    saved-scope state, which is driven by the config — without an explicit
+    one the app would read whatever config happens to be on disk, so it
+    passed on a developer machine with collections configured and timed
+    out on a clean CI runner with an empty config."""
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        textwrap.dedent(f"""
+            [[collections.default.sources]]
+            path = "{fixtures_dir}"
+            [[collections.alpha.sources]]
+            path = "{tmp_path / "alpha"}"
+            [[collections.beta.sources]]
+            path = "{tmp_path / "beta"}"
+        """),
+        encoding="utf-8",
+    )
+    return load(cfg_path)
 
 
 def _first_collection_node(ctree: Tree[dict[str, object]]):
@@ -65,10 +83,11 @@ async def test_preview_loads_after_back_to_back_queries(built_index: Path) -> No
 # ── Bug 2: collapse state persists across sessions ──────────────────
 
 
-@_CI_LOAD_FLAKY
 @pytest.mark.asyncio
-async def test_panel_collapse_writes_to_disk(built_index: Path, isolated_ui_state: Path) -> None:
-    app = FNDApp(index_dir=built_index)
+async def test_panel_collapse_writes_to_disk(
+    built_index: Path, cfg: Config, isolated_ui_state: Path
+) -> None:
+    app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await safe_pause(pilot)
         ctree = app.query_one("#collections_panel_tree", Tree)
@@ -89,18 +108,18 @@ async def test_panel_collapse_writes_to_disk(built_index: Path, isolated_ui_stat
 
 @pytest.mark.asyncio
 async def test_saved_collapse_state_is_restored_at_startup(
-    built_index: Path, isolated_ui_state: Path
+    built_index: Path, cfg: Config, isolated_ui_state: Path
 ) -> None:
     isolated_ui_state.parent.mkdir(parents=True, exist_ok=True)
     isolated_ui_state.write_text(
         "[scope]\ncollections = []\nsources = []\n"
         "[panels]\n"
         'collapsed = ["collections_panel_tree", "filters_panel_tree"]\n'
-        'expanded_collections = ["CPL"]\n'
+        'expanded_collections = ["alpha"]\n'
         'expanded_filter_branches = ["kinds"]\n'
         '[filters]\nkinds = []\ndate = "any"\n'
     )
-    app = FNDApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
         ctree = app.query_one("#collections_panel_tree", Tree)
@@ -108,7 +127,7 @@ async def test_saved_collapse_state_is_restored_at_startup(
         assert "collapsed" in ctree.classes
         assert "collapsed" in ftree.classes
         for n in ctree.root.children:
-            if isinstance(n.data, dict) and n.data.get("name") == "CPL":
+            if isinstance(n.data, dict) and n.data.get("name") == "alpha":
                 assert n.is_expanded
                 break
         for n in ftree.root.children:
@@ -117,16 +136,15 @@ async def test_saved_collapse_state_is_restored_at_startup(
                 break
 
 
-@_CI_LOAD_FLAKY
 @pytest.mark.asyncio
 async def test_enter_on_collection_does_not_undo_collapse(
-    built_index: Path, isolated_ui_state: Path
+    built_index: Path, cfg: Config, isolated_ui_state: Path
 ) -> None:
     """The original symptom of Bug 2: pressing Enter to toggle a
     collection's scope used to also expand it (Tree.auto_expand=True),
     so an intentional Left-collapse was lost the next time the user
     toggled the collection's enable state."""
-    app = FNDApp(index_dir=built_index)
+    app = FNDApp(index_dir=built_index, config=cfg)
     async with app.run_test() as pilot:
         await safe_pause(pilot)
         ctree = app.query_one("#collections_panel_tree", Tree)
@@ -160,12 +178,11 @@ async def test_enter_on_collection_does_not_undo_collapse(
 # ── Bug 3: toggling a collection should not steal focus / rerun ─────
 
 
-@_CI_LOAD_FLAKY
 @pytest.mark.asyncio
 async def test_toggle_with_active_query_clears_results_without_focus_shift(
-    built_index: Path, isolated_ui_state: Path
+    built_index: Path, cfg: Config, isolated_ui_state: Path
 ) -> None:
-    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    app = FNDApp(index_dir=built_index, config=cfg, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
         assert app._groups, "test setup — initial query produced no results"
@@ -188,10 +205,9 @@ async def test_toggle_with_active_query_clears_results_without_focus_shift(
         assert app._focus_context() == "collections"
 
 
-@_CI_LOAD_FLAKY
 @pytest.mark.asyncio
 async def test_collapse_state_survives_collection_cli_flag(
-    built_index: Path, isolated_ui_state: Path
+    built_index: Path, cfg: Config, isolated_ui_state: Path
 ) -> None:
     """Bug C: launching with ``--collection X`` previously reset
     ``_collapsed_panels`` to empty, wiping the user's panel layout the
@@ -199,17 +215,17 @@ async def test_collapse_state_survives_collection_cli_flag(
     not the sidebar's collapsed/expanded layout."""
     isolated_ui_state.parent.mkdir(parents=True, exist_ok=True)
     isolated_ui_state.write_text(
-        '[scope]\ncollections = ["SFO"]\nsources = []\n'
+        '[scope]\ncollections = ["beta"]\nsources = []\n'
         "[panels]\n"
         'collapsed = ["collections_panel_tree", "filters_panel_tree"]\n'
-        'expanded_collections = ["CPL"]\n'
+        'expanded_collections = ["alpha"]\n'
         'expanded_filter_branches = ["kinds"]\n'
         '[filters]\nkinds = []\ndate = "any"\n'
     )
     # Equivalent of ``fnd tui --collection default``: the flag pins
     # search scope to "default" but should NOT discard the saved
     # collapse-to-header state on the two sidebar panels.
-    app = FNDApp(index_dir=built_index, collection="default")
+    app = FNDApp(index_dir=built_index, config=cfg, collection="default")
     async with app.run_test() as pilot:
         await settle(pilot)
         ctree = app.query_one("#collections_panel_tree", Tree)
@@ -226,7 +242,7 @@ async def test_collapse_state_survives_collection_cli_flag(
             lambda: (
                 "collapsed" in ctree.classes
                 and "collapsed" in ftree.classes
-                and "CPL" in app._expanded_collections
+                and "alpha" in app._expanded_collections
                 and "kinds" in app._expanded_filter_branches
             ),
             timeout=30.0,

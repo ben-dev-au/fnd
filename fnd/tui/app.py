@@ -1363,6 +1363,10 @@ class FNDApp(App[None]):
 
         self._preview_load_timer: _Any | None = None
         self._preview_load_target: tuple[str, int] | None = None
+        # The (parent_id, focus_chunk_seq) of the render currently in
+        # flight, so redundant identical dispatches landing in the same
+        # tick coalesce. Cleared when that render finishes settling.
+        self._inflight_preview_target: tuple[str, int] | None = None
         self._progress = ProgressFacility(self)
         # Single-consumer drainer serializes prefetch widget-mounts.
         import asyncio as _asyncio
@@ -1699,6 +1703,11 @@ class FNDApp(App[None]):
     def _run_query(self, query: str) -> None:
         if self._searcher is None:
             return
+        # A new query must always re-render the first result, even when it
+        # lands on the same (parent, seq) as the last one — release the
+        # in-flight coalescing latch so this query's dispatch isn't
+        # mistaken for a redundant same-tick duplicate of the previous.
+        self._inflight_preview_target = None
         from fnd.filter_dsl import FilterError
         from fnd.query_dsl import split_metadata_filter
 
@@ -1989,6 +1998,17 @@ class FNDApp(App[None]):
             return
         self._preview_load_target = None
         parent_id, focus_chunk_seq = target
+        # Coalesce redundant identical loads. A query both parks the
+        # cursor (which fires NodeHighlighted) AND dispatches explicitly
+        # as a fallback for when the cursor index is unchanged, so the
+        # same (parent, seq) load can land several times in one tick.
+        # With the debounce pinned to 0 these don't merge; the 2nd+ then
+        # warm-resume and cancel the 1st's still-building mount, orphaning
+        # the focus chunk's build_done and losing the match scroll. If the
+        # exact same render is already in flight, skip — it will land it.
+        if self._inflight_preview_target == (parent_id, focus_chunk_seq):
+            return
+        self._inflight_preview_target = (parent_id, focus_chunk_seq)
         # Re-anchor prefetch around where the cursor actually settled
         # every time, not only on cache miss. Cursor-following: window
         # follows the user instead of waiting for them to outrun it.
@@ -2459,8 +2479,14 @@ class FNDApp(App[None]):
         """Stable signature for the current query — match-bearing
         widgets are baked with this query's highlights, so the cache
         must invalidate when it changes. Includes intent because intent
-        biases snippet selection (UX-pass-4 §3)."""
-        return f"{self._current_query}|{self._current_intent or ''}"
+        biases snippet selection (UX-pass-4 §3), and the highlight
+        toggle state because the rendered spans differ on/off: without
+        it, toggling highlights re-uses the opposite-state cached
+        container for the same file + query and the toggle has no
+        visible effect."""
+        return (
+            f"{self._current_query}|{self._current_intent or ''}|hl={int(self._highlights_enabled)}"
+        )
 
     def _show_progress_bar(
         self,
@@ -2644,6 +2670,9 @@ class FNDApp(App[None]):
             path=path,
         )
         self.call_after_refresh(self._scroll_preview_to_chunk, focus_chunk_seq)
+        # This render has settled — release the in-flight coalescing
+        # latch so a later genuine re-render of the same target can run.
+        self._inflight_preview_target = None
         self._diag_log(
             f"finalize_via_lock done seq={focus_chunk_seq} path={path} "
             f"wait_ms={wait_ms:.1f} above_waited={len(above_widgets)}"
