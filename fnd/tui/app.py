@@ -885,6 +885,29 @@ def _shorten(text: str, limit: int) -> str:
     return text[: max(0, limit - 1)].rstrip() + "…"
 
 
+def _elide_middle_keep_suffix(name: str, max_width: int) -> str:
+    """Middle-truncate ``name`` to ``max_width`` chars, always keeping the
+    extension: ``really_long_report_final_v3.pdf`` -> ``really_…nal_v3.pdf``.
+
+    A terminal's default right-clip drops the extension — the one part that
+    says what kind of file it is — so we elide the stem's middle and keep both
+    ends plus the suffix. Char-counted (like ``_shorten``); wide glyphs aside.
+    """
+    if len(name) <= max_width:
+        return name
+    if max_width <= 1:
+        return name[: max(0, max_width)]
+    suffix = Path(name).suffix
+    stem = name[: len(name) - len(suffix)] if suffix else name
+    stem_budget = max_width - len(suffix) - 1  # 1 cell for the ellipsis
+    if stem_budget < 1:
+        # Suffix + ellipsis won't fit; show leading chars, plain-truncated.
+        return name[: max_width - 1] + "…"
+    head = (stem_budget + 1) // 2
+    tail = stem_budget - head
+    return stem[:head] + "…" + (stem[-tail:] if tail else "") + suffix
+
+
 def _format_hit_label(h: Hit, *, max_score: float = 0.0) -> Any:
     """Result-tree row label: short locator left, snippet right.
 
@@ -908,8 +931,11 @@ def _format_hit_label(h: Hit, *, max_score: float = 0.0) -> Any:
     return _build_label(f"{body}{pass_marker}", h.score, max_score)
 
 
-def _format_file_label(g: FileGroup, *, max_score: float = 0.0) -> Any:
-    return _build_label(Path(g.path).name, g.top_score, max_score)
+def _format_file_label(g: FileGroup, *, max_score: float = 0.0, name_budget: int = 0) -> Any:
+    name = Path(g.path).name
+    if name_budget > 0:
+        name = _elide_middle_keep_suffix(name, name_budget)
+    return _build_label(name, g.top_score, max_score)
 
 
 def _short_label(action_id: str) -> str:
@@ -1483,25 +1509,31 @@ class FNDApp(App[None]):
             return "Results"
         return f"Results — {n_files} files / {n_sections} sections"
 
-    def _preview_title(self) -> str:
-        """Border title for the preview pane — file basename only.
+    def _preview_title(self, edge_width: int = 0) -> str:
+        """Border title for the preview pane — ``Preview — <file>``.
 
-        Load progress lives on the ProgressBar widget mounted at the
-        top of the pane (UX-pass-4 §4 follow-up); the title stays clean
-        and stable so long filenames don't push state markers off the
-        right edge.
+        ``edge_width`` is the pane's outer border-box width; when given, the
+        filename is middle-elided so its extension survives instead of being
+        clipped off the right edge. A round border reserves 6 cells of the
+        edge (2 corners + 2 pads + 2 filler dashes — measured), so the full
+        title string must fit in ``edge_width - 6``.
         """
         if self._preview_parent_id is None:
             return "Preview"
         for g in self._groups:
             if g.parent_id == self._preview_parent_id:
-                return f"Preview — {Path(g.path).name}"
+                name = Path(g.path).name
+                if edge_width > 0:
+                    prefix = "Preview — "
+                    name = _elide_middle_keep_suffix(name, edge_width - 6 - len(prefix))
+                return f"Preview — {name}"
         return "Preview"
 
     def _refresh_status(self) -> None:
         try:
             self.query_one("#results_pane", Tree).border_title = self._results_title()
-            self.query_one("#preview_pane").border_title = self._preview_title()
+            pane = self.query_one("#preview_pane")
+            pane.border_title = self._preview_title(pane.region.width)
         except Exception:
             pass
         self._refresh_footer_hints()
@@ -1838,9 +1870,12 @@ class FNDApp(App[None]):
         tree = self.query_one("#results_pane", Tree)
         tree.clear()
         max_score = max((g.top_score for g in self._groups), default=0.0)
+        budget = self._file_label_budget(tree)
         for i, g in enumerate(self._groups):
             file_node = tree.root.add(
-                _styled_parent_label(_format_file_label(g, max_score=max_score)),
+                _styled_parent_label(
+                    _format_file_label(g, max_score=max_score, name_budget=budget)
+                ),
                 data={"kind": "file", "group": g},
                 expand=(i == 0),
             )
@@ -1864,6 +1899,40 @@ class FNDApp(App[None]):
                 top_group.parent_id,
                 top_hit.chunk_seq if top_hit else 0,
             )
+
+    @staticmethod
+    def _file_label_budget(tree: Tree[Any]) -> int:
+        """Char budget for a file row's name: the visible content width
+        (border + scrollbar excluded) minus the tree's 2-cell row prefix
+        (toggle/guide, measured) and the 7-cell score column. 0 before layout."""
+        return max(0, tree.scrollable_content_region.width - 2 - 7)
+
+    def _relabel_file_rows(self) -> None:
+        """Re-elide file-row labels in place (no tree rebuild, so the cursor
+        and preview are untouched) — used on resize when the budget changes."""
+        try:
+            tree = self.query_one("#results_pane", Tree)
+        except Exception:
+            return
+        budget = self._file_label_budget(tree)
+        max_score = max((g.top_score for g in self._groups), default=0.0)
+        for node in tree.root.children:
+            data = node.data
+            if isinstance(data, dict) and data.get("kind") == "file":
+                node.set_label(
+                    _styled_parent_label(
+                        _format_file_label(data["group"], max_score=max_score, name_budget=budget)
+                    )
+                )
+
+    def on_resize(self, _event: events.Resize) -> None:
+        """Re-fit elided filenames to the new pane widths. Deferred to after
+        layout so the panes report their settled geometry."""
+        self.call_after_refresh(self._refit_after_resize)
+
+    def _refit_after_resize(self) -> None:
+        self._refresh_status()  # preview title
+        self._relabel_file_rows()  # result rows
 
     # ── Preview ───────────────────────────────────────────────────
 
