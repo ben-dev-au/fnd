@@ -100,7 +100,7 @@ Out of scope (today):
 - Tarball integrity: every GitHub Release ships a SHA-256 of the
   sdist and a SLSA build-provenance attestation (S2). Verify with
   `shasum -a 256 fnd-<ver>.tar.gz` and
-  `gh attestation verify fnd-<ver>.tar.gz --repo <owner>/fnd`.
+  `gh attestation verify fnd-<ver>.tar.gz --repo ben-dev-au/fnd`.
 - For verifying a Homebrew tap install, the formula pins both `url`
   and `sha256`; `brew audit --strict` validates the pin matches the
   downloaded tarball.

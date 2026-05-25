@@ -2,7 +2,7 @@ class Fnd < Formula
   include Language::Python::Virtualenv
 
   desc "Fast, free, keyboard-driven document search for macOS"
-  homepage "https://github.com/<owner>/fnd"
+  homepage "https://github.com/ben-dev-au/fnd"
   url "https://files.pythonhosted.org/packages/source/f/fnd/fnd-0.0.1.tar.gz"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "MIT"

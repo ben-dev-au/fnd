@@ -70,6 +70,13 @@ def _rewrite_default_command(argv: list[str]) -> list[str]:
 
 def main() -> None:
     """Console-script entry point: rewrite argv, then dispatch to Typer."""
+    if sys.platform != "darwin":
+        print(
+            "fnd targets macOS only for now — it relies on macOS file APIs and the "
+            "`open` URL handler. Linux/Windows support isn't available yet.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     app(args=_rewrite_default_command(sys.argv[1:]))
 
 
@@ -242,6 +249,12 @@ def config_show() -> None:
 
     cfg = load()
     typer.echo(cfg.model_dump_json(indent=2))
+
+
+@config_app.command("path")
+def config_path() -> None:
+    """Print the path to the config TOML (whether or not it exists yet)."""
+    typer.echo(str(default_config_path()))
 
 
 @config_app.command("edit")
@@ -479,6 +492,23 @@ def _print_uninstall_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
     )
 
 
+def _require_uv() -> None:
+    """Extras install/uninstall shell out to ``uv``. A Homebrew/pipx
+    end-user install won't necessarily have it on PATH, so fail with an
+    actionable message instead of a raw ``FileNotFoundError`` traceback
+    from subprocess."""
+    import shutil
+
+    if shutil.which("uv") is None:
+        typer.echo(
+            "Structured extras are installed via `uv`, which isn't on your PATH.\n"
+            "Install it with `brew install uv` (or see https://docs.astral.sh/uv/),\n"
+            "then re-run this command.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+
 @extras_app.command("install")
 def extras_install(
     name: str = typer.Argument(..., help="Extra to install (e.g. 'pdf-structure')"),
@@ -501,6 +531,7 @@ def extras_install(
         for c in cmds:
             typer.echo("would run: " + " ".join(c))
         return
+    _require_uv()
     if not yes and not typer.confirm("Continue?", default=False):
         typer.echo("aborted")
         raise typer.Exit(code=1)
@@ -542,6 +573,7 @@ def extras_uninstall(
     if not cmds:
         typer.echo(f"\n{name} is not currently installed — nothing to do.")
         return
+    _require_uv()
     if not yes and not typer.confirm("Continue?", default=False):
         typer.echo("aborted")
         raise typer.Exit(code=1)

@@ -2,11 +2,13 @@
 
 Each extra wraps two install operations:
 
-1. A pip extra group in `pyproject.toml` (`[project.optional-dependencies]`)
-   installed via ``uv sync --extra <group>`` into fnd's project venv.
+1. A package installed into fnd's runtime environment. In a uv-managed
+   project checkout that's a PEP 735 group from ``[dependency-groups]``
+   installed via ``uv sync --group <name>``; for a standalone (pipx /
+   Homebrew) install it's a ``uv pip install`` into fnd's interpreter.
 2. Optional ``uv tool install`` packages that live in their own isolated
    venv on PATH (used when a transitive version conflict would otherwise
-   wedge fnd's project venv).
+   wedge fnd's environment).
 
 The user invokes the extras via ``fnd extras install|uninstall|list|status``.
 The CLI surface lives in :mod:`fnd.cli`; this module holds the data
@@ -67,7 +69,7 @@ PDF_STRUCTURE = Extra(
         Package(
             install_via="pip-extra",
             spec="pdf-structure",
-            display="pymupdf4llm[layout] (Polyform Noncommercial)",
+            display="pymupdf4llm + pymupdf-layout (Polyform Noncommercial)",
             disk_mb=200,
             detect="module:pymupdf4llm",
             # ``uv sync`` (no extras) doesn't reliably clean up
@@ -322,12 +324,12 @@ def _pip_install_specs(pkg: Package) -> list[str]:
     Falls back to the bare module name."""
     if pkg.uninstall_targets:
         # Use the bare names; uv pip install resolves them via the
-        # lockfile / pyproject. For pymupdf4llm we want the [layout]
-        # extra to come with it.
+        # lockfile / pyproject. pymupdf-layout rides in as a base
+        # requirement of pymupdf4llm at ~=1.27 (the old `[layout]`
+        # extra no longer exists), so installing the base package is
+        # enough — requesting the extra would only emit a uv warning.
         primary = pkg.detect.split(":", 1)[1]
-        # If primary is in uninstall_targets, use it with [layout]
-        # extras encoded in spec name when applicable.
-        return [primary + "[layout]"] if primary == "pymupdf4llm" else list(pkg.uninstall_targets)
+        return [primary] if primary == "pymupdf4llm" else list(pkg.uninstall_targets)
     return [pkg.detect.split(":", 1)[1]]
 
 
