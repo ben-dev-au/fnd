@@ -457,6 +457,8 @@ def test_obsidian_handler_uses_advanced_uri_when_plugin_and_line_present(
     assert argv[1].startswith("obsidian://advanced-uri?vault=Vault"), argv[1]
     assert "filepath=note.md" in argv[1]
     assert "line=42" in argv[1]
+    # New tab: opening a match must not hijack whatever's in the active tab.
+    assert "openmode=tab" in argv[1], argv[1]
     # Heading anchor MUST NOT be appended in advanced-uri form — line is
     # the only locator we need.
     assert "%23Findings" not in argv[1]
