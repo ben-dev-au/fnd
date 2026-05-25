@@ -726,7 +726,7 @@ path = "~/Documents"
 # includes = ["**/*.md", "**/*.pdf", "**/*.docx", "**/*.pptx", "**/*.txt"]
 excludes = ["**/.git/**", "**/.DS_Store", "**/__pycache__/**"]
 # follow_symlinks = false
-# frontmatter_filter = "type:note"  # md sources only — DSL described in docs.
+# frontmatter_filter = "type == 'note'"  # md sources only — DSL described in docs.
 
 # Example second collection — uncomment to use:
 # [[collections.notes.sources]]
