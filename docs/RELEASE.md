@@ -15,7 +15,7 @@ long-lived secret in the repo to leak.
 1. Go to <https://pypi.org/manage/account/publishing/>.
 2. Add a **Pending Publisher** with:
    - PyPI project name: `fnd`
-   - Owner: `<your-github-user>`
+   - Owner: `ben-dev-au`
    - Repository name: `fnd`
    - Workflow filename: `release.yml`
    - Environment name: `pypi` (matches the `environment:` field in
@@ -29,19 +29,23 @@ manual gate before each publish.
 
 ### 2. Homebrew tap repo
 
-1. Move the seeded `homebrew-fnd/` directory in this repo to a new
-   top-level GitHub repo `<owner>/homebrew-fnd` (public). The tap is
-   just a regular repo; Homebrew finds formulae under
+The tap is **general-purpose** — one `ben-dev-au/homebrew-tap` repo
+whose `Formula/` directory holds a formula per app (`fnd.rb` today),
+reusable for future tools.
+
+1. Push the seeded `homebrew-tap/` directory in this repo to a new
+   top-level GitHub repo `ben-dev-au/homebrew-tap` (public). The tap
+   is just a regular repo; Homebrew finds formulae under
    `Formula/*.rb`.
 2. In the main `fnd` repo, under Settings → Secrets and variables →
    Actions:
-   - Add a **Variable** `HOMEBREW_TAP_REPO = <owner>/homebrew-fnd`.
+   - Add a **Variable** `HOMEBREW_TAP_REPO = ben-dev-au/homebrew-tap`.
    - Add a **Secret** `HOMEBREW_TAP_PAT` — a fine-scoped Personal
      Access Token with `Contents: Read & Write` and `Pull requests:
-     Read & Write` on `<owner>/homebrew-fnd` only.
+     Read & Write` on `ben-dev-au/homebrew-tap` only.
 3. End-users install via:
    ```sh
-   brew tap <owner>/fnd && brew install fnd
+   brew install ben-dev-au/tap/fnd
    ```
 
 ### 3. (Optional) Apple Developer ID
@@ -73,7 +77,7 @@ download). See `SECURITY.md` for the full rationale.
    - `publish-pypi` uploads to PyPI via OIDC (no token).
    - `release-notes` opens the GitHub Release with sdist, wheel,
      and SBOM attached.
-   - `bump-homebrew-tap` opens a PR against `<owner>/homebrew-fnd`
+   - `bump-homebrew-tap` opens a PR against `ben-dev-au/homebrew-tap`
      with the new `url` and `sha256`.
 4. **Merge the tap PR.** First time only:
    `brew update-python-resources fnd` locally and commit the
@@ -81,11 +85,10 @@ download). See `SECURITY.md` for the full rationale.
    `brew install fnd` can pin every transitive dep.
 5. **Verify end-to-end:**
    ```sh
-   brew untap <owner>/fnd 2>/dev/null || true
-   brew tap <owner>/fnd
-   brew install fnd
+   brew untap ben-dev-au/tap 2>/dev/null || true
+   brew install ben-dev-au/tap/fnd
    fnd version
-   gh attestation verify "$(brew --cache fnd)" --repo <owner>/fnd
+   gh attestation verify "$(brew --cache fnd)" --repo ben-dev-au/fnd
    ```
 
 ## When something goes wrong

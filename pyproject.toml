@@ -6,9 +6,22 @@ build-backend = "hatchling.build"
 name = "fnd"
 version = "0.0.1"
 description = "Fast, free, keyboard-driven document search for macOS"
+readme = "README.md"
 requires-python = ">=3.13"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Ben Davidson" }]
+keywords = ["search", "cli", "tui", "full-text-search", "pdf", "bm25", "tantivy", "macos"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Utilities",
+    "Topic :: Text Processing :: Indexing",
+    "Typing :: Typed",
+]
 # Pins use the compatible-release operator (~=) so `uv sync` cannot
 # silently absorb a surprise major from a security-sensitive parser
 # (pymupdf and the OOXML parsers especially). uv.lock pins exact
@@ -20,20 +33,21 @@ dependencies = [
     "python-pptx~=1.0",
     "python-docx~=1.2",
     "markdown-it-py~=4.0",
-    "watchdog~=6.0",
     "textual~=8.0",
     "rich~=15.0",
     "typer~=0.25",
     "pydantic~=2.13",
-    "pydantic-settings~=2.14",
     "platformdirs~=4.9",
     "snowballstemmer~=3.0",
     "tomlkit~=0.14",
     "tomli-w~=1.2",
 ]
 
-[project.optional-dependencies]
-ocr = ["ocrmypdf~=17.0"]
+[project.urls]
+Homepage = "https://github.com/ben-dev-au/fnd"
+Repository = "https://github.com/ben-dev-au/fnd"
+Issues = "https://github.com/ben-dev-au/fnd/issues"
+Funding = "https://buymeacoffee.com/ben.dev.au"
 
 [tool.pytest.ini_options]
 # `slow` flags long-running tests (perf benches, fuzz harness). The
@@ -70,9 +84,6 @@ dev = [
     "pytest-rerunfailures>=14",
     "hypothesis>=6.110",
     "pre-commit>=3.8",
-    # Used by tools/pdf_bakeoff to normalise ML extractor output before
-    # comparison. Not loaded by fnd itself.
-    "mdformat>=0.7",
     "pyte>=0.8.2",
     # pytest-testmon: pre-commit only re-runs tests whose imported
     # lines changed in the diff. .testmondata is per-developer and
@@ -86,12 +97,13 @@ dev = [
 # ``uv sync`` (no flags) won't wipe the install. ``fnd extras
 # install pdf-structure`` flips the toggle in default-groups.
 #
-# pymupdf4llm[layout] pulls pymupdf-layout (Artifex, Polyform
-# Noncommercial 1.0 — acceptable because fnd is open-source and
-# non-commercial). docling-slim is installed separately into its own
-# uv tool venv (transitive version conflicts make it unsafe to
-# co-install in fnd's venv).
-pdf-structure = ["pymupdf4llm[layout]~=1.27"]
+# pymupdf4llm depends on pymupdf-layout (Artifex, Polyform Noncommercial
+# 1.0 — acceptable because fnd is open-source and non-commercial). The
+# `[layout]` extra is obsolete at ~=1.27 (pymupdf-layout is now a base
+# requirement; the extra no longer exists and uv warns if requested).
+# docling-slim is installed separately into its own uv tool venv
+# (transitive version conflicts make it unsafe to co-install in fnd's venv).
+pdf-structure = ["pymupdf4llm~=1.27"]
 
 [tool.uv]
 # Groups installed by ``uv sync`` when no --group flag is passed.
