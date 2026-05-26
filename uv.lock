@@ -146,7 +146,7 @@ wheels = [
 ]
 
 [[package]]
-name = "fnd"
+name = "fndr"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [

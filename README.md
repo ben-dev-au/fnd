@@ -32,8 +32,10 @@ brew install ben-dev-au/tap/fnd
 …or:
 
 ```sh
-pipx install fnd
+pipx install fndr
 ```
+
+Either way the command is `fnd` (`fndr` also works as an alias).
 
 To independently verify the install:
 

@@ -1142,17 +1142,8 @@ class SettingsScreen(Screen[None]):
     def _render_version_status(self) -> None:
         """Show `fnd vX.Y.Z` at the bottom of the root menu so users
         can spot the version without leaving the TUI."""
-        try:
-            from fnd import __version__
-        except ImportError:
-            __version__ = ""
-        if not __version__:
-            try:
-                from importlib.metadata import version as _ver
+        from fnd import __version__
 
-                __version__ = _ver("fnd")
-            except Exception:
-                __version__ = "dev"
         self.query_one("#settings_status", Static).update(f"fnd v{__version__}")
 
     def _seed_detail_strip(self) -> None:

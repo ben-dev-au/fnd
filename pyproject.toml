@@ -3,7 +3,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "fnd"
+# PyPI distribution name. `fnd` was taken, so the package is `fndr`;
+# the import package and the primary CLI command stay `fnd` (see
+# [tool.hatch.build.targets.wheel] and [project.scripts]).
+name = "fndr"
 version = "0.0.1"
 description = "Fast, free, keyboard-driven document search for macOS"
 readme = "README.md"
@@ -50,6 +53,9 @@ Issues = "https://github.com/ben-dev-au/fnd/issues"
 Funding = "https://buymeacoffee.com/ben.dev.au"
 
 [tool.pytest.ini_options]
+# Scope discovery to the public suite; the gitignored dev/ repo carries
+# its own standalone harnesses that aren't collectable from this root.
+testpaths = ["tests"]
 # `slow` flags long-running tests (perf benches, fuzz harness). The
 # default fast suite excludes them with `-m "not slow"`; CI's nightly
 # job runs the full set.
@@ -68,6 +74,8 @@ filterwarnings = [
 
 [project.scripts]
 fnd = "fnd.cli:main"
+# Alias matching the PyPI name so `pipx install fndr && fndr` works.
+fndr = "fnd.cli:main"
 
 [dependency-groups]
 dev = [
