@@ -15,42 +15,42 @@ navigation, an "Open with…" launcher, and a lazygit-style TUI.
 
 ## Status
 
-Initial development all but complete and stable, core features implemented, entering a refinement period, finding, fixing and refining.
+Core features are complete and stable. Now in a refinement period: finding, fixing, and polishing.
 
 ## Requirements
 
-- macOS
-- Python 3.13 — `uv` fetches it automatically; with pipx, have a 3.13 installed
-- [uv](https://docs.astral.sh/uv/) is also used for the optional structured-PDF extra
+- macOS (Apple Silicon or Intel)
+- Nothing else to set up. Each install option below brings Python 3.13 with it.
 
 ## Install
 
-fnd is published on PyPI. Install it as a self-contained CLI with
-[uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io):
+Pick one of the options below. They install the same tool, so you only need one.
+
+### Option 1: Homebrew
 
 ```sh
-uv tool install fndr      # or: pipx install fndr
+brew install ben-dev-au/tap/fnd
 ```
 
-The command is `fnd` (`fndr` also works). To run it once without installing:
+[Homebrew](https://brew.sh) is the standard macOS package manager. Install it
+once, then run the line above. Apple Silicon installs a prebuilt binary; Intel
+builds from source, which takes a few minutes.
+
+### Option 2: uv or pipx
 
 ```sh
-uvx --from fndr fnd
+uv tool install fndr        # or:  pipx install fndr
 ```
 
-> The PyPI package is `fndr` — the name `fnd` was taken — but the command stays `fnd`.
+To run it once without installing: `uvx --from fndr fnd`.
 
-Every release is published through a PyPI Trusted Publisher (OIDC, no stored
-tokens) and carries a build-provenance attestation. To verify a downloaded
-artifact:
+---
 
-```sh
-pip download --no-deps fndr
-gh attestation verify fndr-*.whl --repo ben-dev-au/fnd
-```
+Either way, launch the app by typing `fnd`.
 
-See [`SECURITY.md`](SECURITY.md) for the threat model, disclosure policy, and the
-reasoning behind the install/verify story (no Apple Developer ID required).
+> On PyPI the package is named `fndr` (`fnd` was taken); the command stays `fnd`.
+
+Releases carry build provenance; see [`SECURITY.md`](SECURITY.md) to verify a download.
 
 ## Features
 
