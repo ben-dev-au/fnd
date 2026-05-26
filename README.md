@@ -20,32 +20,37 @@ Initial development all but complete and stable, core features implemented, ente
 ## Requirements
 
 - macOS
-- Python 3.13 (supplied automatically by Homebrew or pipx)
-- [uv](https://docs.astral.sh/uv/), only for the optional structured-PDF extra
+- Python 3.13 — `uv` fetches it automatically; with pipx, have a 3.13 installed
+- [uv](https://docs.astral.sh/uv/) is also used for the optional structured-PDF extra
 
 ## Install
 
+fnd is published on PyPI. Install it as a self-contained CLI with
+[uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io):
+
 ```sh
-brew install ben-dev-au/tap/fnd
+uv tool install fndr      # or: pipx install fndr
 ```
 
-…or:
+The command is `fnd` (`fndr` also works). To run it once without installing:
 
 ```sh
-pipx install fndr
+uvx --from fndr fnd
 ```
 
-Either way the command is `fnd` (`fndr` also works as an alias).
+> The PyPI package is `fndr` — the name `fnd` was taken — but the command stays `fnd`.
 
-To independently verify the install:
+Every release is published through a PyPI Trusted Publisher (OIDC, no stored
+tokens) and carries a build-provenance attestation. To verify a downloaded
+artifact:
 
 ```sh
-gh attestation verify "$(brew --cache fnd)" --repo ben-dev-au/fnd
+pip download --no-deps fndr
+gh attestation verify fndr-*.whl --repo ben-dev-au/fnd
 ```
 
 See [`SECURITY.md`](SECURITY.md) for the threat model, disclosure policy, and the
-reasoning behind the install/verify story (no Apple Developer ID required;
-Homebrew installs bypass Gatekeeper via curl).
+reasoning behind the install/verify story (no Apple Developer ID required).
 
 ## Features
 
