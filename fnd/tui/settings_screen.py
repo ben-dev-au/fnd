@@ -1114,8 +1114,13 @@ class SettingsScreen(Screen[None]):
         for key in (
             "indexing.cache_size",
             "indexing.pdf_status",
-            "indexing.summary.cache_short",
+            # The cache-size chip's real key (the old "indexing.summary.
+            # cache_short" was renamed but left dead here, so the chip
+            # showed a stale size after cache actions).
+            "pdf_texture.summary.cache_short",
             "cache.stale_count",
+            "cache.retexturise_outdated",
+            "pdf_texture.summary.stale_short",
         ):
             invalidate(key)
 

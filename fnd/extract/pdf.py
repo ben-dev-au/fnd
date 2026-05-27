@@ -87,6 +87,11 @@ _FALLBACK_AREA_RATIO = 0.15
 # the region itself is below the area threshold (HBR-style narrow tables).
 _TABLE_LABEL_RE = re.compile(r"\b(?:TABLE|Table)\s+\d", re.MULTILINE)
 
+# A Markdown table row: one or more `| ... |` lines. Copy of
+# dev/tools/pdf_bakeoff/metrics._TABLE_ROW_RE (fnd must not import the
+# dev tree); keep the two in sync.
+_TABLE_LINE_RE = re.compile(r"^\s*\|.+\|\s*$")
+
 
 def _parent_id(path: Path) -> str:
     return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
@@ -319,6 +324,84 @@ def _try_docling_fallback(pdf_path: str, page_index: int) -> str:
         return ""
 
 
+def _extract_md_tables(md: str) -> list[str]:
+    """Each contiguous Markdown table block in `md`, in document order.
+
+    A block is one or more consecutive `| ... |` rows (mirrors
+    metrics.count_tables' contiguity rule)."""
+    blocks: list[str] = []
+    cur: list[str] = []
+    for line in md.splitlines():
+        if _TABLE_LINE_RE.match(line):
+            cur.append(line)
+        elif cur:
+            blocks.append("\n".join(cur))
+            cur = []
+    if cur:
+        blocks.append("\n".join(cur))
+    return blocks
+
+
+def _splice_docling_tables(pymupdf_md: str, docling_md: str) -> str:
+    """Merge docling's recovered tables into pymupdf4llm's formatted page.
+
+    pymupdf4llm keeps inline formatting (bold/italic/headings) but emits
+    a `==> picture omitted <==` marker where it couldn't decode an
+    image-rendered table; docling recovers the table but drops the
+    formatting. docling only earns its place when pymupdf4llm *missed* a
+    table — so:
+
+    - docling found no table (the marker is a genuine figure/chart):
+      keep pymupdf4llm verbatim. No table to gain, so don't pay the
+      formatting cost of replacing the page.
+    - pymupdf4llm already rendered a table on this page (a vector table):
+      keep pymupdf4llm. The marker is a redundant image of a table it
+      already has; splicing docling's copy would duplicate it. (Rare
+      limitation: a page where pymupdf got table A but missed table B
+      behind the marker keeps only A — measured as not occurring.)
+    - pymupdf4llm has no table and docling found one per marker:
+      replace each marker line (and the ``**`` wrapper pymupdf4llm puts
+      it in) with its table, in reading order. Line-based, so no index
+      shifting and a marker line is swapped cleanly.
+    - no table but counts mismatch (placement ambiguous): full-page
+      replacement, so a recovered table is never dropped.
+    """
+    tables = _extract_md_tables(docling_md)
+    if not tables:
+        return pymupdf_md
+    if _extract_md_tables(pymupdf_md):
+        return pymupdf_md
+    lines = pymupdf_md.splitlines()
+    marker_lines = [i for i, ln in enumerate(lines) if _PIC_OMITTED_RE.search(ln)]
+    if not marker_lines or len(marker_lines) != len(tables):
+        return docling_md
+    for i, table in zip(marker_lines, tables, strict=True):
+        lines[i] = table
+    spliced = "\n".join(lines)
+    return spliced + "\n" if pymupdf_md.endswith("\n") else spliced
+
+
+def _strip_picture_markers(md: str) -> str:
+    """Drop pymupdf4llm's `==> picture [W x H] intentionally omitted <==`
+    placeholders from the user-facing preview. Run only AFTER the docling
+    splice — markers it used to place tables are already replaced, so this
+    removes just the leftovers on dedup / figure / non-routed pages and
+    never disturbs a recovered table."""
+    kept: list[str] = []
+    for line in md.splitlines():
+        if _PIC_OMITTED_RE.search(line):
+            without = _PIC_OMITTED_RE.sub("", line)
+            # Marker-only line (incl. the ``**`` wrapper pymupdf4llm adds):
+            # drop it entirely; otherwise just excise the marker text.
+            if not without.replace("*", "").strip():
+                continue
+            kept.append(without)
+        else:
+            kept.append(line)
+    result = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip("\n")
+    return result + "\n" if md.endswith("\n") and result else result
+
+
 def _needs_docling_fallback(page: pymupdf.Page, pymupdf_md: str) -> bool:
     """Cheap heuristic: did pymupdf4llm visibly miss a structured region?
 
@@ -371,6 +454,10 @@ def _extract_page_md(doc: pymupdf.Document, page_index: int) -> str:
                 ignore_images=True,
                 ignore_graphics=False,
                 table_strategy="lines",
+                # Explicit: pymupdf-layout auto-enables use_ocr, which OCRs
+                # image pages inline and suppresses the picture-omitted
+                # markers the docling fallback routes on.
+                use_ocr=False,
             )
     except Exception:
         # pymupdf4llm has stricter input validation than vanilla
@@ -392,8 +479,11 @@ def _config_hash() -> str:
         "ignore_images": True,
         "ignore_graphics": False,
         "table_strategy": "lines",
+        "use_ocr": False,
         "fallback_area_ratio": _FALLBACK_AREA_RATIO,
         "table_label_re": _TABLE_LABEL_RE.pattern,
+        "docling_merge": "splice-dedup",
+        "strip_picture_markers": True,
     }
     return hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()[:8]
 
@@ -649,11 +739,21 @@ def _extract_inner(  # pyright: ignore[reportUnusedFunction]
             # Phase 3 routing: if pymupdf4llm visibly missed structure
             # (e.g. a big image-rendered table), try docling as a
             # fallback. Docling's ML layout model can recover those.
+            # Splice the recovered table(s) into pymupdf4llm's formatted
+            # page rather than replacing it wholesale (which would drop
+            # bold/italic/headings, and on figure pages gain nothing).
             # No-op when docling isn't installed.
             if body_md and _needs_docling_fallback(page, body_md):
                 docling_md = _try_docling_fallback(str(path), page_index)
                 if docling_md:
-                    body_md = docling_md
+                    body_md = _splice_docling_tables(body_md, docling_md)
+
+            # Strip any leftover picture-omitted placeholders from the
+            # preview — done after routing/splice so the markers that
+            # positioned recovered tables are already gone, and multi-table
+            # pages are unaffected.
+            if body_md:
+                body_md = _strip_picture_markers(body_md)
 
             page_states.append(
                 {
