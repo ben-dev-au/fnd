@@ -1162,7 +1162,11 @@ class SettingsScreen(Screen[None]):
         first = next((it for it in self._items if it.is_selectable), None)
         if first is not None:
             strip = self.query_one(DetailStrip)
-            strip.set(first.description or "", self._row_metadata(first))
+            strip.set(
+                first.description or "",
+                self._row_metadata(first),
+                markup=first.description_markup,
+            )
 
     # ── Footer ──────────────────────────────────────────────────
 
@@ -1349,7 +1353,11 @@ class SettingsScreen(Screen[None]):
         if item is None:
             strip.clear()
         else:
-            strip.set(item.description or "", self._row_metadata(item))
+            strip.set(
+                item.description or "",
+                self._row_metadata(item),
+                markup=item.description_markup,
+            )
         # Hint bar may need a "Shift+⏎ Reveal" append/strip depending on row.
         self._refresh_hint_bar()
 
@@ -2570,7 +2578,7 @@ class AddCollectionWizard(Screen[None]):
             strip.clear()
             return
         meta = item.hint or ""
-        strip.set(item.description or "", meta)
+        strip.set(item.description or "", meta, markup=item.description_markup)
 
     @on(TextArea.Changed, "#frontmatter_sample")
     def _on_sample_changed(self, _ev: TextArea.Changed) -> None:

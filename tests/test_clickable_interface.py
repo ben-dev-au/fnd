@@ -101,3 +101,5 @@ def test_preferences_menu_includes_clickable_interface_toggle() -> None:
     assert row.label == "Clickable Interface"
     assert "[green]" in row.description
     assert "[red]" in row.description
+    # Opts into Rich-markup rendering so those colour tags are applied.
+    assert row.description_markup is True

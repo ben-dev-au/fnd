@@ -80,6 +80,10 @@ class MenuItem:
     id: str
     label: str
     description: str = ""
+    # Render ``description`` as Rich markup (colour). Off by default so
+    # arbitrary text (paths, globs, notes) shows literally; opt in only for
+    # hand-authored descriptions that use ``[colour]…[/]`` tags.
+    description_markup: bool = False
     kind: str = KIND_SUBMENU
 
     # HEADER: 1 = top-level group, 2 = sub-group.
@@ -775,6 +779,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
                 "OFF: [green]+[/] select, right-click Copy, ⌘C & Speak-selection (text-to-speech)\n"
                 "     [red]−[/] interface not clickable — keyboard only"
             ),
+            description_markup=True,
             kind=KIND_TOGGLE,
             toggle_getter=_get_clickable_interface,
             toggle_setter=_set_clickable_interface,

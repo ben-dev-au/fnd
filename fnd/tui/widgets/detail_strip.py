@@ -47,14 +47,19 @@ class DetailStrip(Widget):
         super().__init__()
         self._description: str = ""
         self._metadata: str = ""
+        # Whether the current description is trusted Rich markup. Off by
+        # default so arbitrary text (paths, globs, app notes) renders
+        # literally — only opted-in rows colour their description.
+        self._description_is_markup: bool = False
 
     def compose(self) -> ComposeResult:
         yield Static("", classes="-description", id="detail_description")
         yield Static("", classes="-metadata", id="detail_metadata")
 
-    def set(self, description: str, metadata: str = "") -> None:
+    def set(self, description: str, metadata: str = "", *, markup: bool = False) -> None:
         self._description = description
         self._metadata = metadata
+        self._description_is_markup = markup
         self._refresh_strip()
 
     def clear(self) -> None:
@@ -70,16 +75,22 @@ class DetailStrip(Widget):
 
     def _render_lines(self) -> tuple[Text, Text]:
         """Pure render — tested directly without mounting the widget."""
+        if not self._description:
+            description = Text("")
+        elif self._description_is_markup:
+            description = self._markup(self._description)
+        else:
+            description = Text(self._description)
         return (
-            self._markup(self._description) if self._description else Text(""),
+            description,
             Text(self._metadata, style="dim") if self._metadata else Text(""),
         )
 
     @staticmethod
     def _markup(text: str) -> Text:
-        """Render row descriptions as Rich markup so toggles can colour
-        their effects (e.g. ``[green]+[/]`` / ``[red]-[/]``). Falls back to
-        literal text if the markup is malformed."""
+        """Render an opted-in description as Rich markup so toggles can
+        colour their effects (e.g. ``[green]+[/]`` / ``[red]-[/]``). Falls
+        back to literal text if the markup is malformed."""
         try:
             return Text.from_markup(text)
         except Exception:

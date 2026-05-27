@@ -1131,6 +1131,10 @@ class FNDApp(App[None]):
     }
     /* Class-toggled focus border — :focus-within would re-style every descendant. */
     #preview_pane.-focused { border: round $accent; }
+    /* Reading view: drop the border + padding so a full-width terminal
+       selection copies only the text, not the frame. Listed after
+       ``-focused`` so it wins at equal specificity when both apply. */
+    #preview_pane.-reading { border: none; padding: 0; }
     /* While a partial mount is in flight we hide the scrollbar (its
        virtual size keeps growing as chunks land, so the thumb would
        jitter). Programmatic ``scroll_to_widget`` calls during phase 2b
@@ -1442,13 +1446,17 @@ class FNDApp(App[None]):
     def action_toggle_reading_mode(self) -> None:
         """Hide the sidebar so the preview fills the full terminal width: a
         normal text selection then covers only the preview (clean copy for
-        text-to-speech), and it reads distraction-free. Toggle to restore."""
+        text-to-speech), and it reads distraction-free. Also drops the
+        preview border/padding so the frame isn't copied. Toggle to restore."""
         self._reading_mode = not self._reading_mode
         self.query_one("#results_column", Vertical).display = not self._reading_mode
+        preview = self.query_one("#preview_pane", MatchAwareScroll)
+        preview.set_class(self._reading_mode, "-reading")
         if self._reading_mode:
-            self.query_one("#preview_pane", MatchAwareScroll).focus()
+            preview.focus()
         else:
             self.query_one("#results_pane", ResultsTree).focus()
+        self._refresh_footer_hints()
 
     def on_mount(self) -> None:
         # Tokyo-night theme: muted blue/teal pastel palette per user request.
@@ -1686,6 +1694,10 @@ class FNDApp(App[None]):
         contextual = (
             overlay_hint if overlay_hint is not None else self._FOOTER_CONTEXTUAL.get(ctx, ())
         )
+        # Reading view focuses the preview, so the per-pane table would hide
+        # the toggle key — surface the exit hint while it's active.
+        if self._reading_mode and overlay_hint is None:
+            contextual = (("z", "Reading View"), ("j/k", "Scroll"))
 
         import contextlib
 
