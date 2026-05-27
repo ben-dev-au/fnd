@@ -808,6 +808,25 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             keywords=("highlight",),
         ),
         MenuItem(
+            id="pref.scrollbar_match_highlight",
+            label="Scrollbar match markers (in development)",
+            description=(
+                "Mark match positions on the preview scrollbar. In development: "
+                "accurate for PDF/text and small markdown; large markdown lazy-mounts "
+                "a chunk window, so its markers drift. Applies on next preview load."
+            ),
+            kind=KIND_TOGGLE,
+            toggle_getter=lambda app: (  # type: ignore[arg-type]
+                app._config.defaults.scrollbar_match_highlight  # type: ignore[attr-defined]
+                if app._config  # type: ignore[attr-defined]
+                else False
+            ),
+            toggle_setter=lambda app, v: _setting_writer("defaults.scrollbar_match_highlight")(
+                app, v
+            ),
+            keywords=("scrollbar", "marker", "match", "highlight", "position"),
+        ),
+        MenuItem(
             id="pref.drill_summary_mode",
             label="Drill row summaries",
             description="How drill-in rows render their trailing column.",

@@ -324,6 +324,12 @@ class Defaults(BaseModel):
     # Speak-selection all work like any normal terminal app. ON trades
     # that native selection away for mouse interaction.
     clickable_interface: bool = False
+    # IN DEVELOPMENT — paint match-position markers on the preview
+    # scrollbar track. Accurate on the flat path (PDF/txt) and small,
+    # fully-mounted markdown; large markdown lazy-mounts a chunk window
+    # so its scroll track spans only part of the file and markers drift.
+    # Default off until that's resolved; opt in to preview the feature.
+    scrollbar_match_highlight: bool = False
 
 
 class Config(BaseModel):

@@ -148,12 +148,16 @@ async def test_pdf_preview_uses_line_buffer(pdf_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_flat_buffer_scrollbar_carries_line_precise_markers(
-    pdf_index: Path,
+    pdf_index: Path, cfg: Config
 ) -> None:
     """The widget pushes its match-line positions into its own
     MatchAwareScrollBar on ``set_file_view`` so the line-precise
-    markers paint without any wiring from the host."""
-    app = FNDApp(index_dir=pdf_index, initial_query="blue penguin sandwich")
+    markers paint without any wiring from the host.
+
+    Scrollbar match highlighting is in-development and off by default,
+    so this test opts in via the config toggle."""
+    cfg.defaults.scrollbar_match_highlight = True
+    app = FNDApp(index_dir=pdf_index, config=cfg, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
         tree = app.query_one("#results_pane", Tree)
