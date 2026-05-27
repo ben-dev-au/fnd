@@ -15,6 +15,7 @@ from fnd.tui.preview_scrollbar import (
     MatchAwareScroll,
     MatchAwareScrollBar,
     MatchAwareScrollBarRender,
+    ThinScrollBarRender,
 )
 
 
@@ -133,6 +134,97 @@ def test_renderer_prefers_line_precise_over_chunk_map() -> None:
     assert renderer._marker_cells(size=6) == {0}
 
 
+def _thumb_glyphs(renderer: ThinScrollBarRender, height: int = 8) -> list[str]:
+    from rich.console import Console
+    from rich.segment import Segments
+
+    console = Console(width=1, height=height)
+    segs = next(iter(renderer.__rich_console__(console, console.options)))
+    assert isinstance(segs, Segments)
+    return [s.text for s in segs.segments]
+
+
+def test_thin_renderer_paints_box_vertical_thumb_not_full_block() -> None:
+    """The thin renderer paints thumb cells as the box-drawing vertical
+    (the pane border's glyph), as foreground over a transparent track —
+    never a reverse-video full-cell block."""
+    renderer = ThinScrollBarRender(
+        virtual_size=100,
+        window_size=20,
+        position=40,
+        thickness=1,
+        vertical=True,
+        style="bright_magenta on #555555",
+    )
+    from rich.console import Console
+    from rich.segment import Segments
+
+    console = Console(width=1, height=8)
+    segs = next(iter(renderer.__rich_console__(console, console.options)))
+    assert isinstance(segs, Segments)
+    seglist = list(segs.segments)
+    thumb = [s for s in seglist if s.text == "│"]
+    assert thumb, [s.text for s in seglist]
+    # Thumb cells are foreground glyphs, never reverse-video blocks.
+    assert all(s.style is None or not s.style.reverse for s in seglist)
+    # Thumb cells keep the grab meta so click-drag still works.
+    assert all((s.style and s.style.meta.get("@mouse.down")) == "grab" for s in thumb)
+
+
+def test_thin_thumb_size_is_constant_across_scroll_positions() -> None:
+    """The thumb is a fixed number of cells regardless of scroll position
+    — it must not resize as the user scrolls (only ``top`` moves)."""
+    counts = set()
+    for pos in range(0, 81, 5):  # 0 .. max_scroll for virtual 100, window 20
+        renderer = ThinScrollBarRender(
+            virtual_size=100,
+            window_size=20,
+            position=pos,
+            thickness=1,
+            vertical=True,
+            style="bright_magenta on #555555",
+        )
+        counts.add(_thumb_glyphs(renderer, height=10).count("│"))
+    assert len(counts) == 1, f"thumb resized while scrolling: cell counts {counts}"
+
+
+def test_thin_renderer_leaves_horizontal_bar_to_parent() -> None:
+    """Only vertical bars are thinned; a horizontal bar renders as the
+    stock renderer would (no hairline substitution)."""
+    renderer = ThinScrollBarRender(
+        virtual_size=100,
+        window_size=20,
+        position=40,
+        thickness=1,
+        vertical=False,
+        style="bright_magenta on #555555",
+    )
+    from rich.console import Console
+
+    console = Console(width=8, height=1)
+    # Should render without raising; vertical-only thinning means no ▕.
+    out = list(renderer.__rich_console__(console, console.options))
+    assert out
+
+
+def test_match_aware_inherits_thin_thumb_and_keeps_markers() -> None:
+    """The preview's renderer thins the thumb like every other bar while
+    still painting match markers on the track."""
+    renderer = MatchAwareScrollBarRender(
+        virtual_size=1000,
+        window_size=20,
+        position=0,
+        thickness=1,
+        vertical=True,
+        style="bright_magenta on #555555",
+        match_lines=[700],
+        total_lines=1000,
+    )
+    glyphs = _render_glyphs(renderer)
+    assert "│" in glyphs, glyphs  # thin box-vertical thumb at the top
+    assert "▌" in glyphs, glyphs  # match marker on the track
+
+
 @pytest.fixture
 def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     cfg_path = tmp_path / "config.toml"
@@ -181,9 +273,11 @@ async def test_preview_pane_uses_match_aware_scroll(cfg: Config, md_index: Path)
 
 
 @pytest.mark.asyncio
-async def test_match_map_propagates_to_scrollbar(cfg: Config, md_index: Path) -> None:
-    """After a match-bearing query renders chunks, the scrollbar's
-    ``_match_map`` should reflect which chunks contain matches."""
+async def test_match_positions_propagate_to_scrollbar(cfg: Config, md_index: Path) -> None:
+    """With the in-development toggle on, a match-bearing query populates
+    the scrollbar's line-precise marker data (placed by line position,
+    not chunk ordinal)."""
+    cfg.defaults.scrollbar_match_highlight = True
     app = FNDApp(
         index_dir=md_index,
         config=cfg,
@@ -201,9 +295,38 @@ async def test_match_map_propagates_to_scrollbar(cfg: Config, md_index: Path) ->
         await pilot.pause()
         bar = app.query_one("#preview_pane", MatchAwareScroll).vertical_scrollbar
         assert isinstance(bar, MatchAwareScrollBar)
-        # At least one chunk should be flagged as match-bearing for
-        # ``glimmer`` in the fixture corpus.
-        assert any(bar._match_map), bar._match_map
+        # ``glimmer`` matches in the fixture, so the line-precise feed is
+        # active: at least one marker line within a positive total.
+        assert bar._total_lines > 0, bar._total_lines
+        assert bar._match_lines, bar._match_lines
+        assert all(0 <= ln < bar._total_lines for ln in bar._match_lines)
+        # The legacy chunk-uniform map is no longer used.
+        assert bar._match_map == []
+
+
+@pytest.mark.asyncio
+async def test_markers_off_by_default_paints_nothing(cfg: Config, md_index: Path) -> None:
+    """Scrollbar match highlighting is in-development: with the toggle at
+    its default (off), a matching query feeds no markers to the bar."""
+    app = FNDApp(
+        index_dir=md_index,
+        config=cfg,
+        collection="notes",
+        initial_query="glimmer",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#results_pane", Tree)
+        tree.focus()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        bar = app.query_one("#preview_pane", MatchAwareScroll).vertical_scrollbar
+        assert isinstance(bar, MatchAwareScrollBar)
+        assert bar._match_lines == []
+        assert bar._match_map == []
 
 
 def test_set_match_lines_clears_chunk_map_and_vice_versa() -> None:

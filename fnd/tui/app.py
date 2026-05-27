@@ -31,6 +31,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.content import Span
+from textual.scrollbar import ScrollBar
 from textual.widget import Widget
 from textual.widgets import (
     Input,
@@ -76,8 +77,14 @@ from fnd.tui.line_buffer import (
     build_rendered_document,
 )
 from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
-from fnd.tui.preview_scrollbar import MatchAwareScroll
+from fnd.tui.preview_scrollbar import MatchAwareScroll, ThinScrollBarRender
 from fnd.tui.progress import FNDProgressBar, ProgressFacility, ProgressSession
+
+# App-wide thin scrollbars: every stock Textual ScrollBar (results/sidebar
+# trees, code fences, settings lists) renders the thumb as a hairline glyph
+# hugging the frame instead of a reverse-video full-cell block. The preview's
+# MatchAwareScrollBar applies the same thinning via its own renderer subclass.
+ScrollBar.renderer = ThinScrollBarRender
 
 _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 
@@ -1052,20 +1059,27 @@ class FNDApp(App[None]):
         scrollbar-color-hover: $accent 70%;
         scrollbar-corner-color: transparent;
     }
-    /* Textual's stock MarkdownFence pins scrollbar-size-horizontal /
-       vertical and gives its inner Label a ``padding: 1 2`` block,
-       which leaves a dark backdrop row above the scrollbar that
-       reads as part of the bar — making the bottom of the fence
-       look noticeably thicker than the rest of the app's hairline
-       scrollbars. App-level CSS outranks widget DEFAULT_CSS, so
-       force scrollbar size to 1 AND drop the bottom padding so the
-       bar sits flush against the last code line. */
+    /* Wrap fenced code instead of scrolling it horizontally. Textual's
+       stock MarkdownFence sets ``overflow: scroll hidden`` and lets its
+       inner Label size to the longest line, so long lines spill into a
+       horizontal scrollbar. Hiding overflow-x and pinning the Label to
+       the fence width makes the content reflow to the pane — no
+       horizontal bar to chase. The bottom padding is dropped (the stock
+       ``padding: 1 2`` left a dark backdrop row that read as a thick
+       scrollbar) and the vertical bar stays the app-wide hairline. */
     MarkdownFence {
+        overflow-x: hidden;
         scrollbar-size-vertical: 1;
-        scrollbar-size-horizontal: 1;
+        scrollbar-size-horizontal: 0;
+        padding: 0 0 0 1;
     }
+    /* Inset lives on the fence, not the Label: a Label with side padding +
+       width: 1fr wraps to its border-box width, clipping ~2 cells of code.
+       Padding the fence keeps the 1-col left inset (readability) while the
+       Label wraps cleanly to the inset content width. */
     MarkdownFence > Label {
-        padding: 0 1;
+        padding: 0;
+        width: 1fr;
     }
     /* Pane borders dim by default, brighten when the pane (or any
        descendant) is focused — lazygit's active-section convention.
@@ -2364,7 +2378,7 @@ class FNDApp(App[None]):
             if isinstance(w, Static) and w.id == "placeholder":
                 with contextlib.suppress(Exception):
                     w.remove()
-        buf = LineBufferPreview(wrap=True)
+        buf = LineBufferPreview(wrap=True, show_match_markers=self._scrollbar_markers_enabled)
         buf.add_class("-hidden")
         pane.mount(buf)
         self._shared_flat_buffer = buf
@@ -3716,18 +3730,35 @@ class FNDApp(App[None]):
             self._mount_plain_chunk(container, chunk, before=before_widget)
         container.mounted_indices.add(index)
 
-    def _refresh_match_scrollbar(self, chunks: list[FileChunk]) -> None:
-        """Build a per-chunk match map and forward it to the preview's
-        custom scrollbar so chunk-match positions are visible on the bar."""
-        from fnd.render import text_has_any_match
+    @property
+    def _scrollbar_markers_enabled(self) -> bool:
+        """In-development scrollbar match highlighting — off unless the
+        user opts in via ``[defaults] scrollbar_match_highlight``."""
+        return bool(self._config and self._config.defaults.scrollbar_match_highlight)
 
+    def _refresh_match_scrollbar(self, chunks: list[FileChunk]) -> None:
+        """Forward line-weighted match positions to the preview's custom
+        scrollbar so markers sit where the matches actually render.
+
+        Earlier this fed a bool-per-chunk map placed by chunk ordinal,
+        which ignored chunk size — a match in a short chunk after a long
+        one landed near the top instead of far down. ``structural_match_
+        lines`` weights by each chunk's line count instead. On large
+        markdown the lazy-mounted track spans only part of the file, so
+        this stays behind the in-development toggle."""
         try:
             pane = self.query_one("#preview_pane", MatchAwareScroll)
         except Exception:
             return
-        spec = self._effective_match_spec
-        match_map = [any(text_has_any_match(b.text, spec) for b in c.blocks) for c in chunks]
-        pane.set_match_map(match_map)
+        if not self._scrollbar_markers_enabled:
+            # Clear any markers a prior (enabled) load left, so toggling
+            # the feature off takes effect on the next preview load.
+            pane.set_match_lines([], 0)
+            return
+        from fnd.tui.preview_markers import structural_match_lines
+
+        match_lines, total_lines = structural_match_lines(chunks, self._effective_match_spec)
+        pane.set_match_lines(match_lines, total_lines)
 
     def _mount_chunks_for_file(self, parent_id: str, chunks: list[FileChunk]) -> None:
         """Legacy synchronous mount path retained for tests that exercise

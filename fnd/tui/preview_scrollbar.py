@@ -53,8 +53,75 @@ if TYPE_CHECKING:
 _MARKER_COLOR = "#ffd866"
 _MARKER_GLYPH = "▌"
 
+# The thumb is one box-drawing vertical per cell — the same line weight as
+# the pane's ``round`` border, so the bar reads as part of the frame rather
+# than a fat block. Gappy on Apple Terminal / SF Mono (font-determined, same
+# class as the box-border issue) — a documented "use a modern terminal" case.
+_THUMB_GLYPH = "│"
 
-class MatchAwareScrollBarRender(ScrollBarRender):
+
+class ThinScrollBarRender(ScrollBarRender):
+    """Renderer for a thin, constant-size scrollbar thumb.
+
+    Two departures from the stock renderer, installed app-wide via
+    ``ScrollBar.renderer`` so every Textual scrollbar (results/sidebar trees,
+    code fences, settings lists) matches:
+
+    * The thumb is a single box-drawing vertical (``│``) per cell in the bar
+      colour over a transparent track — the pane border's line weight, not a
+      reverse-video full-cell block.
+    * The thumb is a **constant** integer number of cells. The stock renderer
+      packs sub-cell precision into partial-block end caps, so its cell count
+      flickers ±1 as you scroll (the thumb visibly resizes). Here the count is
+      derived once from the window/content ratio and only the position moves.
+
+    Vertical bars only; horizontal bars fall through to the stock renderer
+    (rare, and line wrapping removes the code-fence ones).
+    """
+
+    def _thin_segments(
+        self, size: int, bar_color: RichColor, back_color: RichColor | None
+    ) -> list[Segment]:
+        # ``back_color`` may be None (transparent track) — don't fabricate a bg.
+        track = RichStyle(bgcolor=back_color)
+        if size <= 0:
+            return []
+        window = self.window_size
+        virtual = self.virtual_size
+        if not (window and virtual and virtual != size):
+            # Whole content visible (or degenerate): blank track, no thumb.
+            return [Segment(" ", track) for _ in range(size)]
+        # Constant thumb height from the window/content ratio (≥1 cell). Depends
+        # only on window/virtual/size — not position — so scrolling never resizes
+        # it; only ``top`` moves.
+        thumb = max(1, min(size, round(window * size / virtual)))
+        max_top = size - thumb
+        denom = virtual - window
+        ratio = (self.position / denom) if denom > 0 else 0.0
+        ratio = 0.0 if ratio < 0 else (1.0 if ratio > 1 else ratio)
+        top = round(max_top * ratio)
+        top = 0 if top < 0 else (max_top if top > max_top else top)
+        thumb_style = RichStyle(color=bar_color, meta={"@mouse.down": "grab"})
+        up = RichStyle(bgcolor=back_color, meta={"@mouse.down": "scroll_up"})
+        down = RichStyle(bgcolor=back_color, meta={"@mouse.down": "scroll_down"})
+        return [
+            Segment(_THUMB_GLYPH, thumb_style)
+            if top <= i < top + thumb
+            else Segment(" ", up if i < top else down)
+            for i in range(size)
+        ]
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        if not self.vertical:
+            yield from super().__rich_console__(console, options)
+            return
+        size = options.height or console.height
+        style = console.get_style(self.style)
+        bar_color = style.color or RichColor.parse("bright_magenta")
+        yield Segments(self._thin_segments(size, bar_color, style.bgcolor), new_lines=True)
+
+
+class MatchAwareScrollBarRender(ThinScrollBarRender):
     """ScrollBarRender that paints accent markers on the track.
 
     Accepts either of two marker sources (mutually exclusive):
@@ -107,51 +174,34 @@ class MatchAwareScrollBarRender(ScrollBarRender):
         return {i for i in range(size) if self.match_map[min(int(i * n / size), n - 1)]}
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        size = (
-            (options.height or console.height)
-            if self.vertical
-            else (options.max_width or console.width)
-        )
-        thickness = (
-            (options.max_width or console.width)
-            if self.vertical
-            else (options.height or console.height)
-        )
-        _style = console.get_style(self.style)
-        bar = self.render_bar(
-            size=size,
-            window_size=self.window_size,
-            virtual_size=self.virtual_size,
-            position=self.position,
-            vertical=self.vertical,
-            thickness=thickness,
-            back_color=_style.bgcolor or RichColor.parse("#555555"),
-            bar_color=_style.color or RichColor.parse("bright_magenta"),
-        )
-
-        marker_cells = self._marker_cells(size) if self.vertical else set()
-        if not marker_cells:
-            yield bar
+        # Build the thin, constant-size bar (vertical only), then overlay
+        # match markers on the surviving track cells.
+        if not self.vertical:
+            yield from super().__rich_console__(console, options)
             return
+        size = options.height or console.height
+        style = console.get_style(self.style)
+        bar_color = style.color or RichColor.parse("bright_magenta")
+        segments = self._thin_segments(size, bar_color, style.bgcolor)
 
-        # Overlay markers on track cells. Thumb cells carry the
-        # ``@mouse.down: grab`` meta — leave those untouched so the
-        # current scroll position still reads as a thumb.
-        segments = list(bar.segments)
-        marker_color = RichColor.parse(_MARKER_COLOR)
-        for i, seg in enumerate(segments):
-            if i not in marker_cells:
-                continue
-            meta: dict[str, Any] = {}
-            if seg.style is not None and seg.style.meta:
-                meta = dict(seg.style.meta)
-            if meta.get("@mouse.down") == "grab":
-                continue
-            bg = seg.style.bgcolor if seg.style is not None else None
-            segments[i] = Segment(
-                _MARKER_GLYPH,
-                RichStyle(color=marker_color, bgcolor=bg, meta=meta),
-            )
+        marker_cells = self._marker_cells(size)
+        if marker_cells:
+            # Thumb cells carry the ``@mouse.down: grab`` meta — leave those
+            # untouched so the current scroll position still reads as a thumb.
+            marker_color = RichColor.parse(_MARKER_COLOR)
+            for i, seg in enumerate(segments):
+                if i not in marker_cells:
+                    continue
+                meta: dict[str, Any] = (
+                    dict(seg.style.meta) if (seg.style is not None and seg.style.meta) else {}
+                )
+                if meta.get("@mouse.down") == "grab":
+                    continue
+                bg = seg.style.bgcolor if seg.style is not None else None
+                segments[i] = Segment(
+                    _MARKER_GLYPH,
+                    RichStyle(color=marker_color, bgcolor=bg, meta=meta),
+                )
         yield Segments(segments, new_lines=True)
 
 
