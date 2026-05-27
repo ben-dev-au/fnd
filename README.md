@@ -108,20 +108,32 @@ and the [query language](#search-how-to) works exactly as it does from the CLI.
 
 ### Opening and acting on a result
 
-| Key            | What it does                                                                                                                                        |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `o`            | Open the hit in its resolved app, jumping to the matching page / slide / line / heading.                                                            |
+| Key            | What it does                                                                                                                                       |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `o`            | Open the hit in its resolved app, jumping to the matching page / slide / line / heading.                                                           |
 | `O`            | **Open with…**: a picker of every app that handles this file type. Use `↑↓` then `Enter`, or press the letter shown next to an app; `Esc` cancels. |
-| `Space`        | Quick Look the file.                                                                                                                                |
+| `Space`        | Quick Look the file.                                                                                                                               |
 | `:`            | Open the **Settings & Commands** menu: every setting and action in one searchable, full-screen list.                                               |
-| `?`            | Keybindings cheat sheet (press again to dismiss).                                                                                                   |
-| `Ctrl+F`       | Toggle auto-fuzzy matching (persists to your config).                                                                                               |
-| `h`            | Toggle search-term highlighting in the preview.                                                                                                     |
-| `q` / `Ctrl+C` | Quit. `Esc` backs out of any overlay or nested screen.                                                                                              |
+| `?`            | Keybindings cheat sheet (press again to dismiss).                                                                                                  |
+| `Ctrl+F`       | Toggle auto-fuzzy matching (persists to your config).                                                                                              |
+| `h`            | Toggle search-term highlighting in the preview.                                                                                                    |
+| `q` / `Ctrl+C` | Quit. `Esc` backs out of any overlay or nested screen.                                                                                             |
 
 Inside the Settings menu (`:`) navigate with `↑↓` (or `j`/`k`), press `Enter` to
 open / edit / toggle the focused row, `/` to filter rows by label, and `Esc` or
 `←` to step back.
+
+### Terminal compatibility
+
+A modern terminal is required for optimal formatting. e.g.:
+
+- iTerm2
+- Ghostty
+- Kitty
+- Wezterm
+- etc
+
+macos Terminal.app compatibility is variable depending on the terminals set font, Menlo is better than some, a modern terminal is strongly suggested however.
 
 ## Command reference
 
@@ -321,7 +333,7 @@ filters. They compose freely.
 | You type                      | What it does                                                                                                                                                           |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `entropy`                     | Single term. Matches anywhere in the document body, title, heading path, or filename. Stemmed, so `entropies` and `entropy` are equivalent.                            |
-| `cross entropy loss`          | Three terms, implicit AND. Every term must appear somewhere in the chunk, but not necessarily near each other or in order.                                            |
+| `cross entropy loss`          | Three terms, implicit AND. Every term must appear somewhere in the chunk, but not necessarily near each other or in order.                                             |
 | `"cross entropy loss"`        | Exact phrase. The three words must appear in order, adjacent. Matches `cross entropy loss` and `cross-entropy loss` (hyphens are treated as separators at index time). |
 | `cross OR entropy`            | Either term. Useful when a concept goes by different names.                                                                                                            |
 | `NOT regression`              | Exclude. Almost always combined: `entropy NOT regression`.                                                                                                             |
@@ -415,10 +427,10 @@ Numeric ranges use `[low TO high]`. Shorthand for one-sided comparisons:
 
 `*` matches zero or more characters at the end of a term:
 
-| You type  | Matches                                                       |
-| --------- | ------------------------------------------------------------- |
-| `crypto*` | `crypto`, `cryptography`, `cryptographic`.                    |
-| `*tion`   | Wildcard prefixes are not supported; anchor at the end only.  |
+| You type  | Matches                                                      |
+| --------- | ------------------------------------------------------------ |
+| `crypto*` | `crypto`, `cryptography`, `cryptographic`.                   |
+| `*tion`   | Wildcard prefixes are not supported; anchor at the end only. |
 
 ### Markdown frontmatter filter
 
