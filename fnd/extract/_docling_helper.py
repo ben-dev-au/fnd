@@ -45,16 +45,20 @@ def _main() -> None:
         # Force CPU: docling's layout model hits float64 ops MPS can't do
         # ("Cannot convert a MPS Tensor to float64"), which aborts the
         # whole page on Apple Silicon. Pass the device as a string so we
-        # don't depend on the AcceleratorDevice enum's import path.
-        try:
-            from docling.datamodel.accelerator_options import (  # type: ignore[import-not-found]
-                AcceleratorOptions,
-            )
-        except ImportError:  # older docling kept it under pipeline_options
-            from docling.datamodel.pipeline_options import (  # type: ignore[import-not-found,no-redef]
-                AcceleratorOptions,
-            )
+        # don't depend on the AcceleratorDevice enum's import path. If
+        # AcceleratorOptions can't be imported at all (docling moved it
+        # again), skip forcing CPU rather than failing to boot — the
+        # PYTORCH_ENABLE_MPS_FALLBACK env above still routes unsupported
+        # ops to CPU.
         with contextlib.suppress(Exception):
+            try:
+                from docling.datamodel.accelerator_options import (  # type: ignore[import-not-found]
+                    AcceleratorOptions,
+                )
+            except ImportError:  # older docling kept it under pipeline_options
+                from docling.datamodel.pipeline_options import (  # type: ignore[import-not-found,no-redef]
+                    AcceleratorOptions,
+                )
             pipe_opts.accelerator_options = AcceleratorOptions(device="cpu")
         converter = DocumentConverter(
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipe_opts)}

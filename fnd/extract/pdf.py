@@ -342,16 +342,6 @@ def _extract_md_tables(md: str) -> list[str]:
     return blocks
 
 
-def _marker_line_span(text: str, m_start: int, m_end: int) -> tuple[int, int]:
-    """Expand a marker match to its full line bounds, so the bold
-    wrapper pymupdf4llm puts the marker in (`**==> picture ... <==**`)
-    is removed cleanly rather than leaving an orphan `**`."""
-    start = text.rfind("\n", 0, m_start) + 1  # 0 if no preceding newline
-    nl = text.find("\n", m_end)
-    end = len(text) if nl == -1 else nl
-    return start, end
-
-
 def _splice_docling_tables(pymupdf_md: str, docling_md: str) -> str:
     """Merge docling's recovered tables into pymupdf4llm's formatted page.
 
@@ -370,7 +360,9 @@ def _splice_docling_tables(pymupdf_md: str, docling_md: str) -> str:
       limitation: a page where pymupdf got table A but missed table B
       behind the marker keeps only A — measured as not occurring.)
     - pymupdf4llm has no table and docling found one per marker:
-      substitute each marker line with its table, in reading order.
+      replace each marker line (and the ``**`` wrapper pymupdf4llm puts
+      it in) with its table, in reading order. Line-based, so no index
+      shifting and a marker line is swapped cleanly.
     - no table but counts mismatch (placement ambiguous): full-page
       replacement, so a recovered table is never dropped.
     """
@@ -379,16 +371,14 @@ def _splice_docling_tables(pymupdf_md: str, docling_md: str) -> str:
         return pymupdf_md
     if _extract_md_tables(pymupdf_md):
         return pymupdf_md
-    markers = list(_PIC_OMITTED_RE.finditer(pymupdf_md))
-    if not markers or len(markers) != len(tables):
+    lines = pymupdf_md.splitlines()
+    marker_lines = [i for i, ln in enumerate(lines) if _PIC_OMITTED_RE.search(ln)]
+    if not marker_lines or len(marker_lines) != len(tables):
         return docling_md
-    out = pymupdf_md
-    # Back-to-front so earlier match offsets stay valid as we splice.
-    # Counts are equal (checked above), so strict zip is safe.
-    for marker, table in zip(reversed(markers), reversed(tables), strict=True):
-        start, end = _marker_line_span(out, marker.start(), marker.end())
-        out = out[:start] + table + out[end:]
-    return out
+    for i, table in zip(marker_lines, tables, strict=True):
+        lines[i] = table
+    spliced = "\n".join(lines)
+    return spliced + "\n" if pymupdf_md.endswith("\n") else spliced
 
 
 def _needs_docling_fallback(page: pymupdf.Page, pymupdf_md: str) -> bool:

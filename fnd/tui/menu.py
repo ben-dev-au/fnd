@@ -1619,11 +1619,13 @@ def _provider_pdf_texture(_app: FNDApp) -> tuple[MenuItem, ...]:
             description=(
                 "Re-run texturising on PDFs that were textured by an older "
                 "version of the engine (a new pymupdf4llm/docling version, or "
-                "a settings change). Improves their preview rendering; the "
-                "search index is unaffected, and already-current PDFs are "
-                "skipped (cache hit), so the cost is one texturising pass per "
-                "outdated PDF. Opt-in and safe to run anytime — existing "
-                "texturings keep working until you do."
+                "a settings change). Runs an Update-index pass with "
+                "texturising forced on; only the preview rendering changes "
+                "(search ranking is unaffected — the searchable text is the "
+                "same). Already-current PDFs are skipped (cache hit), so the "
+                "cost is one texturising pass per outdated PDF. Opt-in and "
+                "safe to run anytime — existing texturings keep working until "
+                "you do."
             ),
             kind=KIND_ACTION,
             action_label="Run",
@@ -1982,7 +1984,9 @@ def _summary_retexturise_outdated(app: FNDApp) -> str:
         n, _ = count_pre_upgrade_entries()
         return f"{n} on an older version" if n else "all on current version"
 
-    return get_or_schedule(app, "cache.stale_count", _compute)
+    # Distinct key from _summary_stale_entries ("cache.stale_count") — a
+    # shared lazy-trailing key would clobber the other row's value.
+    return get_or_schedule(app, "cache.retexturise_outdated", _compute)
 
 
 def _summary_indexing_pdf_texture(app: FNDApp) -> str:

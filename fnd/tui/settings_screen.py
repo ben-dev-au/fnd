@@ -1106,6 +1106,7 @@ class SettingsScreen(Screen[None]):
             "indexing.pdf_status",
             "indexing.summary.cache_short",
             "cache.stale_count",
+            "cache.retexturise_outdated",
             "pdf_texture.summary.stale_short",
         ):
             invalidate(key)
