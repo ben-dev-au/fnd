@@ -858,6 +858,8 @@ async def drive_indexer(
     cancel: asyncio.Event,
     events: asyncio.Queue[ProgressEvent],
     texturise_override: bool | None = None,
+    skip_unchanged: bool = True,
+    force_fresh: bool = False,
 ) -> None:
     """Owns the async indexer for the app's lifetime of this run.
 
@@ -882,6 +884,8 @@ async def drive_indexer(
         rebuild=rebuild,
         cancel=cancel,
         texturise_override=texturise_override,
+        skip_unchanged=skip_unchanged,
+        force_fresh=force_fresh,
     )
     final_event: Any = None
     try:
@@ -950,11 +954,15 @@ def _start_next_in_chain(app: FNDApp, collection: str) -> None:
     col_cfg = cfg.collections[collection]
     app._indexer_task = None  # type: ignore[attr-defined] # release
     override = getattr(app, "_indexer_texturise_override", None)
+    skip_unchanged = getattr(app, "_indexer_skip_unchanged", True)
+    force_fresh = getattr(app, "_indexer_force_fresh", False)
     app.start_indexer(
         collection=collection,
         config=col_cfg,
         open_modal=False,
         texturise_override=override,
+        skip_unchanged=skip_unchanged,
+        force_fresh=force_fresh,
     )
 
 

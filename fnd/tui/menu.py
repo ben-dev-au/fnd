@@ -1232,9 +1232,25 @@ def _run_update_all_index_only(app: FNDApp) -> None:
     _push_update_all_confirm(app, texturise_override=False)
 
 
-def _push_update_all_confirm(app: FNDApp, *, texturise_override: bool | None) -> None:
+def _run_retexturise_outdated(app: FNDApp) -> None:
+    """Re-texturise only PDFs textured by an older engine version.
+
+    Bypasses the incremental skip (so every file is revisited) and turns
+    off durable cache reuse (force_fresh), so an up-to-date PDF still
+    short-circuits on its current-signature cache entry while an older one
+    is genuinely re-extracted under the current engine."""
+    _push_update_all_confirm(app, texturise_override=True, skip_unchanged=False, force_fresh=True)
+
+
+def _push_update_all_confirm(
+    app: FNDApp,
+    *,
+    texturise_override: bool | None,
+    skip_unchanged: bool = True,
+    force_fresh: bool = False,
+) -> None:
     """Shared helper: push the chain confirm dialog wired with the
-    appropriate texturise mode."""
+    appropriate run mode."""
     import contextlib
 
     from fnd.tui.settings_screen import UpdateAllConfirm
@@ -1245,7 +1261,14 @@ def _push_update_all_confirm(app: FNDApp, *, texturise_override: bool | None) ->
             app.notify("No collections to update.")
         return
     names = sorted(cfg.collections.keys())
-    app.push_screen(UpdateAllConfirm(collection_names=names, texturise_override=texturise_override))
+    app.push_screen(
+        UpdateAllConfirm(
+            collection_names=names,
+            texturise_override=texturise_override,
+            skip_unchanged=skip_unchanged,
+            force_fresh=force_fresh,
+        )
+    )
 
 
 def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
@@ -1523,10 +1546,10 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
             label="Process new files (index only, no texturising)",
             description=(
                 "Run Update index for every collection in sequence, "
-                "indexing new files (md, pptx, docx, txt, PDFs) but "
-                "SKIPPING texturising for this run regardless of the "
-                "Texturise-while-indexing toggle. Use when you want a "
-                "fast catch-up and plan to texturise later."
+                "indexing new and changed files (md, pptx, docx, txt, PDFs) "
+                "but SKIPPING texturising for this run regardless of the "
+                "Texturise-while-indexing toggle. Incremental: unchanged "
+                "files are skipped, so this is a fast catch-up; texturise later."
             ),
             kind=KIND_ACTION,
             action_label="Run",
@@ -1649,10 +1672,11 @@ def _provider_pdf_texture(_app: FNDApp) -> tuple[MenuItem, ...]:
             id="pdf_texture.update",
             label="Texturise PDFs that are still flat",
             description=(
-                "Texturise every PDF in any collection's sources that isn't "
-                "already textured. Doesn't touch the search index; runs only "
-                "the texturising pipeline. Use to pre-warm before a big "
-                "Update index."
+                "Run an Update-index pass with texturising forced on, "
+                "re-attempting every PDF that is still flat (no structured "
+                "preview). Already-textured PDFs are reused, not redone; "
+                "unchanged non-PDFs are skipped. Use to fill in previews "
+                "without a full rebuild."
             ),
             kind=KIND_ACTION,
             action_label="Run",
@@ -1664,19 +1688,17 @@ def _provider_pdf_texture(_app: FNDApp) -> tuple[MenuItem, ...]:
             id="pdf_texture.retexturise_outdated",
             label="Re-texturise outdated documents",
             description=(
-                "Re-run texturising on PDFs that were textured by an older "
-                "version of the engine (a new pymupdf4llm/docling version, or "
-                "a settings change). Runs an Update-index pass with "
-                "texturising forced on; only the preview rendering changes "
-                "(search ranking is unaffected — the searchable text is the "
-                "same). Already-current PDFs are skipped (cache hit), so the "
-                "cost is one texturising pass per outdated PDF. Opt-in and "
-                "safe to run anytime — existing texturings keep working until "
-                "you do."
+                "Re-extract only PDFs whose texturising predates the current "
+                "engine version (bumped only for a meaningful extraction "
+                "change). If nothing is outdated this does almost nothing. "
+                "Revisits every file but reuses up-to-date texturising — only "
+                "stale PDFs pay a fresh pass; the searchable text is "
+                "unchanged, only the preview rendering improves. Opt-in and "
+                "safe anytime — existing texturings keep working until you run it."
             ),
             kind=KIND_ACTION,
             action_label="Run",
-            external=_run_update_all_index_and_texturise,
+            external=_run_retexturise_outdated,
             value_getter=_summary_retexturise_outdated,
             keywords=(
                 "retexturise",
@@ -1787,10 +1809,11 @@ def _provider_indexing_pdf_texture(app: FNDApp) -> tuple[MenuItem, ...]:
             label="Update every collection (index + texturise)",
             description=(
                 "Run Update index for every collection in sequence, "
-                "indexing new files and ALWAYS texturising new PDFs "
-                "regardless of the Texturise-while-indexing toggle "
-                "below. Use this when you want the index AND the "
-                "preview pane fully populated in one run."
+                "indexing new/changed files and ALWAYS texturising PDFs it "
+                "processes, regardless of the Texturise-while-indexing toggle "
+                "below. Incremental: unchanged, already-textured files are "
+                "skipped; still-flat PDFs get texturised. Existing texturising "
+                "is reused (never redone) across app updates."
             ),
             kind=KIND_ACTION,
             action_label="Run",
@@ -1894,7 +1917,7 @@ def _summary_cache_update(app: FNDApp) -> str:
             return ""
         try:
             from fnd.cache import ExtractionCache, default_cache_dir, sha256_file
-            from fnd.extract.pdf import _extractor_signature
+            from fnd.extract.pdf import texture_signature
             from fnd.walk import walk_sources
         except Exception:
             return ""
@@ -1902,7 +1925,7 @@ def _summary_cache_update(app: FNDApp) -> str:
             n_missing = _count_pdfs_in_all_collections(cfg)
             return f"{n_missing} missing"
         cache = ExtractionCache()
-        sig = _extractor_signature()
+        sig = texture_signature()
         n_missing = 0
         for coll in cfg.collections.values():
             for path in walk_sources(sources=list(coll.sources)):
@@ -1957,12 +1980,12 @@ def _forget_cache_for_flat_pdfs() -> None:
 
     try:
         from fnd.cache import ExtractionCache, sha256_file
-        from fnd.extract.pdf import _extractor_signature
+        from fnd.extract.pdf import texture_signature
         from fnd.tui.settings_screen import _flat_pdfs_with_reasons
     except Exception:
         return
     cache = ExtractionCache()
-    sig = _extractor_signature()
+    sig = texture_signature()
     for _collection, path, _reason, _recorded_at in _flat_pdfs_with_reasons():
         with contextlib.suppress(OSError):
             from pathlib import Path
@@ -2221,12 +2244,12 @@ def _summary_stale_entries(app: FNDApp) -> str:
 
     def _compute() -> str:
         from fnd.cache import default_cache_dir
-        from fnd.extract.pdf import _extractor_signature
+        from fnd.extract.pdf import texture_signature
 
         root = default_cache_dir()
         if not root.exists():
             return "0 stale"
-        current = _extractor_signature()
+        current = texture_signature()
         stale = 0
         for shard in root.iterdir():
             if not shard.is_dir():
@@ -2247,7 +2270,7 @@ def _run_cache_prune(app: FNDApp) -> None:
     from rich.text import Text
 
     from fnd.cache import default_cache_dir
-    from fnd.extract.pdf import _extractor_signature
+    from fnd.extract.pdf import texture_signature
     from fnd.tui.settings_screen import CacheMaintenanceConfirm
 
     root = default_cache_dir()
@@ -2255,7 +2278,7 @@ def _run_cache_prune(app: FNDApp) -> None:
         with contextlib.suppress(Exception):
             app.notify("PDF Texture Cache is empty.")
         return
-    current = _extractor_signature()
+    current = texture_signature()
     leftovers: list[Path] = []
     current_count = 0
     for shard in root.iterdir():

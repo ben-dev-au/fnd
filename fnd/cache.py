@@ -65,6 +65,14 @@ def sha256_file(path: Path, *, chunk_size: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
+def _safe_mtime(path: Path) -> float:
+    """``path.stat().st_mtime`` or 0.0 if the file vanished underneath us."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 class PdfStructureCache:
     """File-backed cache of structured-PDF chunks.
 
@@ -130,6 +138,75 @@ class PdfStructureCache:
             return None
         self.hits += 1
         return chunks
+
+    def get_any_for_content(self, content_sha256: str) -> list[Chunk] | None:
+        """Return cached chunks for this content under ANY signature.
+
+        Durable reuse: when the current-signature key misses (a
+        TEXTURE_VERSION bump, or a pre-versioning entry), reuse whatever
+        prior texturising exists for the same file bytes rather than
+        redoing the multi-second extraction. Newest entry wins. The caller
+        does NOT re-key the result, so the file stays "outdated" until an
+        explicit Re-texturise pass refreshes it under the current signature.
+        """
+        shard_dir = self.root / content_sha256[:2]
+        candidates = (
+            # Guard stat(): an entry can be deleted (cache prune / manual
+            # cleanup) between glob and stat — missing → sorts oldest, the
+            # subsequent get() then misses cleanly rather than crashing.
+            sorted(shard_dir.glob(f"{content_sha256}--*.json"), key=_safe_mtime, reverse=True)
+            if shard_dir.exists()
+            else []
+        )
+        for entry in candidates:
+            chunks = self.get(entry.stem)  # reuses get()'s decode + hit/miss counters
+            if chunks is not None:
+                return chunks
+        if not candidates:
+            self.misses += 1
+        return None
+
+    def promote_current_engine_entries(
+        self, *, current_sig: str, current_cfg_marker: str
+    ) -> tuple[int, int]:
+        """Re-key entries produced by the CURRENT engine but under the old
+        signature FORMAT to ``current_sig``. An entry counts as current-engine
+        iff its signature contains ``current_cfg_marker`` (e.g. ``cfg-0cc6be52``);
+        only the key format changed, so it is NOT outdated. Entries from older
+        configs are left untouched so they correctly read as outdated.
+
+        Idempotent. Returns ``(migrated, failed)``. The caller should only
+        mark the migration done (write its sentinel) when ``failed == 0`` —
+        otherwise a partial promotion would permanently misclassify the
+        un-promoted current-engine entries as outdated. The signature strings
+        are passed in so this module stays independent of
+        :mod:`fnd.extract.pdf`.
+        """
+        if not self.root.exists():
+            return 0, 0
+        migrated = 0
+        failed = 0
+        # Materialise the listing first: renaming/unlinking entries while
+        # iterating the rglob generator can skip or double-visit files.
+        for entry in list(self.root.rglob("*.json")):
+            stem = entry.stem
+            if "--" not in stem:
+                continue
+            _sha, sig = stem.split("--", 1)
+            if sig == current_sig or current_cfg_marker not in sig:
+                continue
+            target = self.entry_path(f"{_sha}--{current_sig}")
+            if target.exists():
+                with contextlib.suppress(OSError):
+                    entry.unlink()  # dedup: current already present
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.replace(entry, target)
+                migrated += 1
+            except OSError:
+                failed += 1
+        return migrated, failed
 
     def put(self, key: str, chunks: list[Chunk]) -> None:
         """Write `chunks` to the cache atomically.

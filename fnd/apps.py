@@ -296,38 +296,61 @@ def _handle_skim(req: OpenRequest) -> int:
     return open_pdf_via_url(req.path, req.page, search=req.query.strip())
 
 
-# Embedded AppleScript — kept in lockstep with scripts/spike_preview_page_jump.py
-# until that spike is deleted. Edits here MUST be mirrored there during the
-# spike's lifetime so reliability gains transfer.
+# Embedded AppleScript that page-jumps an ALREADY-OPEN Preview document.
+#
+# It does NOT open the file — _handle_preview opens it first via
+# ``open -a Preview`` (LaunchServices). Opening from osascript
+# (``open POSIX file``) is attributed to the parent terminal's TCC identity
+# and gets denied for files carrying ``com.apple.macl`` on Desktop/Documents
+# ("you don't have permission to view it"); LaunchServices opens under
+# Preview's own identity and isn't. So this script only drives the open
+# document — it never touches the filesystem.
+#
+# Correctness invariants (a regression here paged the WRONG document):
+#   1. Confirm by EXACT POSIX path, not substring — `front document` must
+#      equal pdfPath ("report.pdf" must not match "old_report.pdf").
+#   2. `open -a Preview` already opens AND fronts the target, so we just wait
+#      for the front document to BE the target rather than re-fronting a
+#      window by name (which is ambiguous when two open PDFs share a filename,
+#      e.g. the same paper on the Desktop and under Documents).
+#   3. Fail safe: if the target isn't confirmed front within the retry budget,
+#      send NO keystrokes — the pdf still opened on page 1.
 _PREVIEW_PAGE_JUMP_SCRIPT: Final[str] = r"""
 on run argv
     set pdfPath to item 1 of argv
     set pageNum to item 2 of argv
-    tell application "Preview"
-        activate
-        open POSIX file pdfPath
-    end tell
+    tell application "Preview" to activate
+    -- Wait for the target to be frontmost. The open (via LaunchServices) is
+    -- async, so the document may not be front yet on the first pass.
+    set matched to false
     set tries to 0
-    repeat until tries > 30
+    repeat until tries > 50
         try
             tell application "Preview"
-                if (exists front document) and (path of front document contains pdfPath) then exit repeat
+                if (exists front document) and ((path of front document) is pdfPath) then
+                    set matched to true
+                end if
             end tell
         end try
+        if matched then exit repeat
         delay 0.1
         set tries to tries + 1
     end repeat
-    tell application "Preview" to activate
-    delay 0.1
-    tell application "System Events"
-        tell process "Preview"
-            keystroke "g" using {option down, command down}
-            delay 0.15
-            keystroke pageNum
-            delay 0.05
-            key code 36
+    -- Fail-safe: only page when our document is confirmed front. Otherwise
+    -- the PDF still opened (on page 1) — better than paging the wrong one.
+    if matched then
+        tell application "Preview" to activate
+        delay 0.15
+        tell application "System Events"
+            tell process "Preview"
+                keystroke "g" using {option down, command down}
+                delay 0.15
+                keystroke pageNum
+                delay 0.05
+                key code 36
+            end tell
         end tell
-    end tell
+    end if
 end run
 """
 
@@ -341,15 +364,29 @@ _AX_NOTICE: Final[str] = (
 
 
 def _handle_preview(req: OpenRequest) -> int:
-    """Preview PDF opener. With a page locator AND AX granted, runs the
-    embedded keystroke AppleScript. Otherwise opens the PDF on page 1 via
-    ``open -a Preview <path>`` and emits a one-shot Accessibility notice."""
-    if req.page <= 0 or not ax_trusted():
-        if req.page > 0 and not ax_trusted():
-            _emit_notice(_AX_NOTICE)
-        return subprocess.run(["open", "-a", "Preview", str(req.path)], check=False).returncode
+    """Preview PDF opener.
+
+    Always opens via ``open -a Preview`` (LaunchServices), which is robust to
+    macOS file-access controls (TCC / ``com.apple.macl``): telling Preview to
+    ``open POSIX file`` from osascript is attributed to the parent terminal
+    and gets denied for files on Desktop/Documents, whereas LaunchServices
+    opens under Preview's own identity. With a page locator AND Accessibility
+    granted, a second osascript call then page-jumps the now-open document —
+    it never touches the filesystem. Without AX (or no page), the PDF is left
+    on page 1 and a one-shot Accessibility notice is emitted."""
+    # `open` follows symlinks itself, so the raw path is fine for opening.
+    open_rc = subprocess.run(["open", "-a", "Preview", str(req.path)], check=False).returncode
+    if req.page <= 0:
+        return open_rc
+    if not ax_trusted():
+        _emit_notice(_AX_NOTICE)
+        return open_rc
+    # Canonicalise the path for the page-jump: Preview reports a document's
+    # path resolved (``/tmp`` → ``/private/tmp``, symlinks followed), so the
+    # script's exact-path match only lands if we hand it the realpath too.
+    target = str(req.path.resolve())
     return subprocess.run(
-        ["osascript", "-e", _PREVIEW_PAGE_JUMP_SCRIPT, str(req.path), str(req.page)],
+        ["osascript", "-e", _PREVIEW_PAGE_JUMP_SCRIPT, target, str(req.page)],
         check=False,
     ).returncode
 

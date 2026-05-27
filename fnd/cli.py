@@ -675,21 +675,21 @@ def cache_prune(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
     dry_run: bool = typer.Option(False, "--dry-run", help="List candidates; don't delete."),
 ) -> None:
-    """Remove cache entries from older extractor versions.
+    """Remove cache entries from older texture-engine versions.
 
-    Reads each entry's filename to extract its extractor_signature
+    Reads each entry's filename to extract its texture-signature
     suffix, compares against the current signature, and offers to
     remove the stale ones.
     """
     from fnd.cache import default_cache_dir
-    from fnd.extract.pdf import _extractor_signature
+    from fnd.extract.pdf import texture_signature
 
     root = default_cache_dir()
     if not root.exists():
         typer.echo("cache is empty (no directory)")
         return
 
-    current = _extractor_signature()
+    current = texture_signature()
     stale: list[Path] = []
     fresh = 0
     for shard in root.iterdir():
@@ -706,7 +706,7 @@ def cache_prune(
             else:
                 stale.append(entry)
 
-    typer.echo(f"current extractor signature: {current}")
+    typer.echo(f"current texture signature: {current}")
     typer.echo(f"fresh entries (kept):        {fresh}")
     typer.echo(f"stale entries (candidates):  {len(stale)}")
 
@@ -734,19 +734,19 @@ def cache_prune(
 def cache_info(path: Path) -> None:
     """Show whether a file has a cached extraction (and which key it uses)."""
     from fnd.cache import ExtractionCache, sha256_file
-    from fnd.extract.pdf import _extractor_signature
+    from fnd.extract.pdf import texture_signature
 
     if not path.exists():
         typer.echo(f"file not found: {path}", err=True)
         raise typer.Exit(code=2)
 
     cache = ExtractionCache()
-    sig = _extractor_signature()
+    sig = texture_signature()
     sha = sha256_file(path)
     key = cache.build_key(content_sha256=sha, extractor_signature=sig)
     entry = cache.entry_path(key)
     typer.echo(f"path:                 {path}")
     typer.echo(f"sha256:               {sha[:16]}…")
-    typer.echo(f"extractor signature:  {sig}")
+    typer.echo(f"texture signature:    {sig}")
     typer.echo(f"cache entry:          {entry}")
     typer.echo(f"status:               {'HIT' if entry.exists() else 'MISS'}")

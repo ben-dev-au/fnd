@@ -49,12 +49,12 @@ def isolated_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_count_pre_upgrade_entries_counts_only_stale(isolated_cache: Path) -> None:
     """The passive 'Re-texturise outdated' count reflects only cache
-    entries whose extractor signature differs from the current one;
+    entries whose texture signature differs from the current one;
     current-signature entries are not counted."""
-    from fnd.extract.pdf import extractor_signature
+    from fnd.extract.pdf import texture_signature
     from fnd.tui.upgrade_banner import count_pre_upgrade_entries
 
-    current = extractor_signature()
+    current = texture_signature()
     (isolated_cache / "aa").mkdir(parents=True, exist_ok=True)
     (isolated_cache / "bb").mkdir(parents=True, exist_ok=True)
     # one entry on an old signature, one on the current signature
@@ -67,10 +67,10 @@ def test_count_pre_upgrade_entries_counts_only_stale(isolated_cache: Path) -> No
 
 
 def test_count_pre_upgrade_entries_zero_when_all_current(isolated_cache: Path) -> None:
-    from fnd.extract.pdf import extractor_signature
+    from fnd.extract.pdf import texture_signature
     from fnd.tui.upgrade_banner import count_pre_upgrade_entries
 
-    current = extractor_signature()
+    current = texture_signature()
     (isolated_cache / "cc").mkdir(parents=True, exist_ok=True)
     (isolated_cache / "cc" / ("c" * 64 + f"--{current}.json")).write_text("{}")
 
@@ -294,9 +294,9 @@ async def test_prune_no_stale_notifies_only(
     """When all entries are fresh, prune notifies and doesn't push a
     confirm dialog."""
     from fnd.cache import ExtractionCache
-    from fnd.extract.pdf import _extractor_signature
+    from fnd.extract.pdf import texture_signature
 
-    sig = _extractor_signature()
+    sig = texture_signature()
     cache = ExtractionCache(root=isolated_cache)
     cache.put(f"aa--{sig}", [_make_chunk(0)])
 

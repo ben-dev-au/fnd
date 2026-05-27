@@ -220,6 +220,37 @@ def _enumerate_paths(config: CollectionConfig) -> list[tuple[Path, str]]:
     return out
 
 
+def _prior_indexed_state(
+    searcher: Any, schema: Any, collection: str, parent_id: str
+) -> tuple[int | None, bool]:
+    """``(stored_mtime, has_textured)`` for this file's prior-committed
+    chunks in this collection, or ``(None, False)`` if absent.
+
+    All of a file's chunks share an mtime, so the first hit settles it;
+    ``has_textured`` scans a handful of chunks for a non-empty ``body_md``.
+    Used by the incremental skip to decide whether an unchanged file needs
+    any work this run.
+    """
+    from fnd.index import _scoped_delete_query
+    from fnd.schema import F_BODY_MD, F_MTIME
+
+    try:
+        result = searcher.search(_scoped_delete_query(schema, collection, parent_id), limit=16)
+    except Exception:
+        return None, False
+    mtime: int | None = None
+    has_textured = False
+    for _score, addr in result.hits:
+        doc = searcher.doc(addr)
+        if mtime is None:
+            mv = doc.get_first(F_MTIME)  # type: ignore[attr-defined]
+            if mv is not None:
+                mtime = int(mv)
+        if doc.get_first(F_BODY_MD):  # type: ignore[attr-defined]
+            has_textured = True
+    return mtime, has_textured
+
+
 def _process_one_file(
     *,
     path: Path,
@@ -229,6 +260,9 @@ def _process_one_file(
     schema: Any,  # tantivy Schema (needed for delete-by-query)
     cache_before_hits: int,
     cache: ExtractionCache,
+    prior_searcher: Any = None,
+    skip_unchanged: bool = False,
+    texturise_on: bool = True,
 ) -> tuple[int, bool, bool, str]:
     """Synchronous per-file work — extraction + write to Tantivy.
 
@@ -236,11 +270,38 @@ def _process_one_file(
     ``has_textured_chunk`` is True iff any emitted chunk carries a non-empty
     ``body_md`` (PDFs that hit the structured pipeline). Run inside
     ``asyncio.to_thread`` so the caller's event loop stays responsive.
+
+    When ``skip_unchanged`` and ``prior_searcher`` is given, a file already
+    in this collection's committed index with an unchanged mtime is skipped
+    entirely (no delete, no extraction) — returned as a cache hit so it
+    counts as already-indexed. The one exception is a flat PDF we could
+    newly texturise this run (``texturise_on`` and no prior ``body_md``).
     """
     # iCloud-offloaded placeholder: skip rather than triggering a sync
     # download that could blow the worker's stall budget.
     if is_dataless(path):
         return 0, False, False, "iCloud-offloaded - download in Finder before indexing"
+
+    is_pdf = path.suffix.lower() == ".pdf"
+    parent_id = _path_parent_id(path)
+
+    # Incremental skip: an unchanged file already in this collection's
+    # committed index needs no work this run.
+    if skip_unchanged and prior_searcher is not None:
+        prior_mtime, prior_textured = _prior_indexed_state(
+            prior_searcher, schema, collection, parent_id
+        )
+        if prior_mtime is not None:
+            try:
+                cur_mtime = int(path.stat().st_mtime)
+            except OSError:
+                cur_mtime = prior_mtime
+            # Re-process only if changed, or if it's a flat PDF this run
+            # could texturise — the one improvement an incremental pass
+            # should still make.
+            improvable = is_pdf and texturise_on and not prior_textured
+            if cur_mtime == prior_mtime and not improvable:
+                return 0, True, prior_textured, ""
 
     meta_blob_bytes = b""
     if path.suffix.lower() == ".md":
@@ -251,7 +312,6 @@ def _process_one_file(
         if fm:
             meta_blob_bytes = encode_meta_blob(fm)
 
-    is_pdf = path.suffix.lower() == ".pdf"
     # Non-PDFs don't use the structured-extraction cache (their
     # extraction is already cheap), so cache.hits never increments
     # for them and they'd otherwise always count as "newly indexed"
@@ -270,7 +330,6 @@ def _process_one_file(
         except OSError:
             non_pdf_sha = ""
 
-    parent_id = _path_parent_id(path)
     # Delete only THIS collection's chunks for this file. The previous
     # unscoped delete_documents(F_PARENT_ID, ...) was a per-path nuke
     # that wiped sibling collections' chunks too when a file was
@@ -324,6 +383,8 @@ async def run_indexer(
     state_path: Path | None = None,
     cancel: asyncio.Event | None = None,
     texturise_override: bool | None = None,
+    skip_unchanged: bool = True,
+    force_fresh: bool = False,
 ) -> AsyncIterator[ProgressEvent]:
     """Async generator yielding ProgressEvents as the index builds.
 
@@ -338,6 +399,14 @@ async def run_indexer(
       shared "Update everything (index + texturise)" action)
     - ``False`` forces texturising off regardless of the toggle (the
       "Process new files (index only)" action)
+
+    ``skip_unchanged`` (default True) enables the incremental skip: a file
+    already in this collection's committed index with an unchanged mtime is
+    left untouched. The "Re-texturise outdated" action passes False so it
+    can revisit unchanged files. ``force_fresh`` (default False) is the
+    "Re-texturise outdated" opt-out from durable cache reuse — when True,
+    ``extract()`` only reuses a current-signature entry and otherwise
+    re-extracts fresh, upgrading pre-version texturising.
     """
     state_path = state_path or state_file_for(collection)
 
@@ -368,6 +437,11 @@ async def run_indexer(
             skip_structure = not bool(full_cfg.defaults.cache_at_index_time)
     prior_skip = _pdf._skip_structure_extraction
     _pdf.set_skip_structure_extraction(skip_structure)
+    texturise_on = not skip_structure
+
+    # Re-texturise-outdated opt-out from durable reuse (see extract()).
+    prior_force_fresh = _pdf._force_fresh_texture
+    _pdf.set_force_fresh_texture(force_fresh)
 
     # Clear any cancel beacon left over from a previous Cancel click
     # so a fresh run isn't aborted by stale state.
@@ -438,6 +512,15 @@ async def run_indexer(
             writer.delete_documents(F_COLLECTION, collection)
             writer.commit()
 
+        # Prior-committed snapshot for the incremental skip. A point-in-time
+        # searcher reflects only what previous runs committed; files we
+        # process this run are deleted+re-added, never skipped later, so the
+        # start-of-run snapshot is the correct "already indexed?" oracle.
+        prior_searcher = None
+        if skip_unchanged and not rebuild:
+            with contextlib.suppress(Exception):
+                prior_searcher = index.searcher()
+
         written = 0
         for path, source_id in paths:
             if cancel is not None and cancel.is_set():
@@ -481,6 +564,9 @@ async def run_indexer(
                 schema=index.schema,
                 cache_before_hits=hits_before,
                 cache=cache,
+                prior_searcher=prior_searcher,
+                skip_unchanged=skip_unchanged,
+                texturise_on=texturise_on,
             )
             file_elapsed_ms = (time.perf_counter() - t_file) * 1000.0
             was_dataless = err.startswith("iCloud-offloaded") if err else False
@@ -599,6 +685,7 @@ async def run_indexer(
     finally:
         _pdf._cache_singleton = prior_singleton
         _pdf.set_skip_structure_extraction(prior_skip)
+        _pdf.set_force_fresh_texture(prior_force_fresh)
 
     # Clean completion. Wipe the state file so next launch doesn't
     # show a stale "resume?" prompt.

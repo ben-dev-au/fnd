@@ -134,3 +134,58 @@ async def test_update_all_sets_chain_total_for_modal_title(tmp_path: Path) -> No
     assert captured_totals[0] == 2, (
         f"Expected _indexer_chain_total=2 at the first start_indexer call; got {captured_totals}."
     )
+
+
+# ── Index-menu action → run-mode flag routing (non-flaky: no async drive) ──
+
+
+def _capture_confirm(app: FNDApp) -> list[object]:
+    """Replace push_screen with a recorder so a menu handler's pushed
+    UpdateAllConfirm can be inspected without a running event loop."""
+    captured: list[object] = []
+    app.push_screen = lambda screen, *a, **k: captured.append(screen)  # type: ignore[method-assign,assignment]
+    return captured
+
+
+def test_update_all_confirm_stores_run_mode_flags(tmp_path: Path) -> None:
+    from fnd.tui.settings_screen import UpdateAllConfirm
+
+    c = UpdateAllConfirm(collection_names=["x"], skip_unchanged=False, force_fresh=True)
+    assert c._skip_unchanged is False
+    assert c._force_fresh is True
+
+
+def test_process_new_files_is_incremental_index_only(tmp_path: Path) -> None:
+    """'Process new files (index only)' → incremental, no texturising,
+    no forced re-extraction."""
+    from fnd.tui.menu import _run_update_all_index_only
+    from fnd.tui.settings_screen import UpdateAllConfirm
+
+    cfg, index_dir = _make_cfg(tmp_path, ["alpha"])
+    app = FNDApp(index_dir=index_dir, config=cfg)
+    captured = _capture_confirm(app)
+    _run_update_all_index_only(app)
+    assert captured, "no confirm pushed"
+    c = captured[0]
+    assert isinstance(c, UpdateAllConfirm)
+    assert c._texturise_override is False
+    assert c._skip_unchanged is True
+    assert c._force_fresh is False
+
+
+def test_retexturise_outdated_forces_fresh_and_revisits(tmp_path: Path) -> None:
+    """'Re-texturise outdated documents' → re-extract older versions:
+    force_fresh on, incremental skip OFF, texturising forced on."""
+    from fnd.tui.menu import _run_retexturise_outdated
+    from fnd.tui.settings_screen import UpdateAllConfirm
+
+    cfg, index_dir = _make_cfg(tmp_path, ["alpha"])
+    app = FNDApp(index_dir=index_dir, config=cfg)
+    captured = _capture_confirm(app)
+    _run_retexturise_outdated(app)
+    assert captured, "no confirm pushed"
+    c = captured[0]
+    assert isinstance(c, UpdateAllConfirm)
+    assert c._texturise_override is True
+    assert c._skip_unchanged is False
+    assert c._force_fresh is True

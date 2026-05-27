@@ -1340,6 +1340,12 @@ class FNDApp(App[None]):
         # action); False forces it off (set by the "Process new files
         # index-only" action). Reset to None when the chain finishes.
         self._indexer_texturise_override: bool | None = None
+        # Run-mode flags for the indexer chain, stashed so each chain step
+        # inherits them. skip_unchanged=False + force_fresh=True is the
+        # "Re-texturise outdated" action; defaults give incremental indexing
+        # with durable cache reuse.
+        self._indexer_skip_unchanged: bool = True
+        self._indexer_force_fresh: bool = False
         # Per-collection final snapshots captured as each chain step
         # finishes. Drives the IndexerScreen's history band and the
         # post-chain summary screen so the user can see what every
@@ -1486,6 +1492,31 @@ class FNDApp(App[None]):
 
         self._prefetch_sink_queue = _asyncio.Queue()
         self._prefetch_sink_drainer = _asyncio.create_task(self._drain_prefetch_sinks())
+
+        # One-time: promote PDF-texture cache entries produced by the current
+        # engine but under the pre-`tex-vN` key format to the coarse
+        # signature, so current-engine work is recognised as current (not
+        # "outdated"). Genuinely-older entries are left as-is and surface in
+        # Settings for opt-in re-texturising. Sentinel-guarded → runs once.
+        import contextlib as _contextlib
+
+        with _contextlib.suppress(Exception):
+            from fnd.cache import PdfStructureCache
+            from fnd.extract.pdf import _config_hash, texture_signature
+
+            _cache = PdfStructureCache()
+            _sentinel = _cache.root / ".keys-migrated"
+            # Only when a cache actually exists — never create the dir for a
+            # fresh user (a freshly-written entry is already tex-vN anyway).
+            if _cache.root.exists() and not _sentinel.exists():
+                _migrated, _failed = _cache.promote_current_engine_entries(
+                    current_sig=texture_signature(),
+                    current_cfg_marker=f"cfg-{_config_hash()}",
+                )
+                # Mark done only on a clean pass; a partial promotion retries
+                # next launch rather than stranding entries as "outdated".
+                if _failed == 0:
+                    _sentinel.write_text(texture_signature())
 
         # Route fnd.apps notices through an in-app modal for AX issues, and
         # through Textual.notify for everything else. Without this hook, the
@@ -4246,15 +4277,17 @@ class FNDApp(App[None]):
         rebuild: bool = False,
         open_modal: bool = True,
         texturise_override: bool | None = None,
+        skip_unchanged: bool = True,
+        force_fresh: bool = False,
     ) -> bool:
         """Spawn the async indexer task for ``collection``. Idempotent —
         if a task is already running, returns False without starting a
         second one.
 
-        ``texturise_override`` (None/True/False) is forwarded through
-        ``drive_indexer`` to ``run_indexer``; for chain runs the value
-        is stashed on ``self._indexer_texturise_override`` so subsequent
-        chain steps inherit the same mode.
+        ``texturise_override`` (None/True/False), ``skip_unchanged`` and
+        ``force_fresh`` are forwarded through ``drive_indexer`` to
+        ``run_indexer``; for chain runs they are stashed on the app so
+        subsequent chain steps inherit the same mode.
 
         Returns True when a new task was spawned.
         """
@@ -4279,9 +4312,11 @@ class FNDApp(App[None]):
         self._indexer_collection = collection
         self._indexer_started_at = _dt.datetime.now(tz=_dt.UTC).isoformat(timespec="seconds")
         # First step of a chain (or single-collection run) sets the
-        # override; later chain steps re-enter start_indexer via
-        # _start_next_in_chain, which passes the stashed value back.
+        # mode; later chain steps re-enter start_indexer via
+        # _start_next_in_chain, which passes the stashed values back.
         self._indexer_texturise_override = texturise_override
+        self._indexer_skip_unchanged = skip_unchanged
+        self._indexer_force_fresh = force_fresh
         self._indexer_cancel = asyncio.Event()
         # Reuse the existing events queue when a chain run is in
         # progress so the IndexerScreen's drain (which holds a
@@ -4310,6 +4345,8 @@ class FNDApp(App[None]):
                 cancel=self._indexer_cancel,
                 events=self._indexer_events,
                 texturise_override=texturise_override,
+                skip_unchanged=skip_unchanged,
+                force_fresh=force_fresh,
             )
         )
         if open_modal:
@@ -4333,7 +4370,12 @@ class FNDApp(App[None]):
             self.notify(f"Could not start indexer: {e}", severity="error")
 
     def _reindex_with_warning_if_needed(
-        self, collection: str, *, texturise_override: bool | None = None
+        self,
+        collection: str,
+        *,
+        texturise_override: bool | None = None,
+        skip_unchanged: bool = True,
+        force_fresh: bool = False,
     ) -> None:
         """If the pdf-structure extra is installed and the first-reindex
         warning hasn't been seen, show it; on confirm, start the
@@ -4368,6 +4410,8 @@ class FNDApp(App[None]):
                     collection=collection,
                     config=col_cfg,
                     texturise_override=texturise_override,
+                    skip_unchanged=skip_unchanged,
+                    force_fresh=force_fresh,
                 )
                 return
 
@@ -4377,6 +4421,8 @@ class FNDApp(App[None]):
                         collection=collection,
                         config=col_cfg,
                         texturise_override=texturise_override,
+                        skip_unchanged=skip_unchanged,
+                        force_fresh=force_fresh,
                     )
 
             self.push_screen(
@@ -4388,6 +4434,8 @@ class FNDApp(App[None]):
                 collection=collection,
                 config=col_cfg,
                 texturise_override=texturise_override,
+                skip_unchanged=skip_unchanged,
+                force_fresh=force_fresh,
             )
 
     def _maybe_resume_indexer(self) -> None:

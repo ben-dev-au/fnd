@@ -3129,6 +3129,8 @@ class UpdateAllConfirm(Screen[None]):
         *,
         collection_names: list[str],
         texturise_override: bool | None = None,
+        skip_unchanged: bool = True,
+        force_fresh: bool = False,
     ) -> None:
         super().__init__()
         self._names = list(collection_names)
@@ -3136,8 +3138,16 @@ class UpdateAllConfirm(Screen[None]):
         # texturise (the shared "Update everything" action), False =
         # never texturise (the "Process new files index-only" action).
         self._texturise_override = texturise_override
+        # skip_unchanged=False + force_fresh=True is the "Re-texturise
+        # outdated" action: revisit every file and re-extract any textured
+        # by an older engine version. Otherwise indexing is incremental and
+        # reuses existing texturising.
+        self._skip_unchanged = skip_unchanged
+        self._force_fresh = force_fresh
 
     def _mode_label(self) -> str:
+        if self._force_fresh:
+            return "Re-texturise documents on an older engine version"
         if self._texturise_override is True:
             return "Index + texturise (toggle ignored)"
         if self._texturise_override is False:
@@ -3157,9 +3167,15 @@ class UpdateAllConfirm(Screen[None]):
             text.append(self._mode_label())
             text.append("\n")
             text.append("Per file  ", style="dim")
-            text.append(
-                "Unchanged files are skipped. The PDF Texture Cache is consulted, not cleared.\n"
-            )
+            if self._force_fresh:
+                text.append(
+                    "Every file is revisited; up-to-date texturising is reused, "
+                    "only older-engine versions are re-extracted.\n"
+                )
+            else:
+                text.append(
+                    "Unchanged files are skipped. The PDF Texture Cache is consulted, not cleared.\n"
+                )
             text.append("Order     ", style="dim")
             text.append("Sequential. Each shows its own progress; queue advances on completion.\n")
             yield Static(text, id="confirm_summary")
@@ -3210,13 +3226,18 @@ class UpdateAllConfirm(Screen[None]):
         # Total count is preserved so the IndexerScreen title can show
         # "papers (1 of 5)" even after rest has been depleted.
         app._indexer_chain_total = len(names)  # type: ignore[attr-defined]
-        # Stash the override so _start_next_in_chain re-applies it to
+        # Stash the run mode so _start_next_in_chain re-applies it to
         # every subsequent collection (and so a re-trigger of this
         # confirm with a different mode replaces it).
         app._indexer_texturise_override = self._texturise_override  # type: ignore[attr-defined]
+        app._indexer_skip_unchanged = self._skip_unchanged  # type: ignore[attr-defined]
+        app._indexer_force_fresh = self._force_fresh  # type: ignore[attr-defined]
         try:
             app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
-                first, texturise_override=self._texturise_override
+                first,
+                texturise_override=self._texturise_override,
+                skip_unchanged=self._skip_unchanged,
+                force_fresh=self._force_fresh,
             )
         except Exception:
             self.notify(f"Could not start Update index for {first}", severity="error")
@@ -4121,11 +4142,11 @@ class StillFlatDrillIn(Screen[None]):
 
         with _ctx.suppress(Exception):
             from fnd.cache import ExtractionCache, sha256_file
-            from fnd.extract.pdf import _extractor_signature
+            from fnd.extract.pdf import texture_signature
 
             cache = ExtractionCache()
             sha = sha256_file(Path(path))
-            key = cache.build_key(content_sha256=sha, extractor_signature=_extractor_signature())
+            key = cache.build_key(content_sha256=sha, extractor_signature=texture_signature())
             entry = cache.entry_path(key)
             if entry.exists():
                 with _ctx.suppress(OSError):
