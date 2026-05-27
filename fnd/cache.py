@@ -131,6 +131,64 @@ class PdfStructureCache:
         self.hits += 1
         return chunks
 
+    def get_any_for_content(self, content_sha256: str) -> list[Chunk] | None:
+        """Return cached chunks for this content under ANY signature.
+
+        Durable reuse: when the current-signature key misses (a
+        TEXTURE_VERSION bump, or a pre-versioning entry), reuse whatever
+        prior texturising exists for the same file bytes rather than
+        redoing the multi-second extraction. Newest entry wins. The caller
+        does NOT re-key the result, so the file stays "outdated" until an
+        explicit Re-texturise pass refreshes it under the current signature.
+        """
+        shard_dir = self.root / content_sha256[:2]
+        candidates = (
+            sorted(
+                shard_dir.glob(f"{content_sha256}--*.json"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if shard_dir.exists()
+            else []
+        )
+        for entry in candidates:
+            chunks = self.get(entry.stem)  # reuses get()'s decode + hit/miss counters
+            if chunks is not None:
+                return chunks
+        if not candidates:
+            self.misses += 1
+        return None
+
+    def promote_current_engine_entries(self, *, current_sig: str, current_cfg_marker: str) -> int:
+        """Re-key entries produced by the CURRENT engine but under the old
+        signature FORMAT to ``current_sig``. An entry counts as current-engine
+        iff its signature contains ``current_cfg_marker`` (e.g. ``cfg-0cc6be52``);
+        only the key format changed, so it is NOT outdated. Entries from older
+        configs are left untouched so they correctly read as outdated.
+        Idempotent; returns the number promoted. The signature strings are
+        passed in so this module stays independent of :mod:`fnd.extract.pdf`.
+        """
+        if not self.root.exists():
+            return 0
+        migrated = 0
+        for entry in self.root.rglob("*.json"):
+            stem = entry.stem
+            if "--" not in stem:
+                continue
+            _sha, sig = stem.split("--", 1)
+            if sig == current_sig or current_cfg_marker not in sig:
+                continue
+            target = self.entry_path(f"{_sha}--{current_sig}")
+            if target.exists():
+                with contextlib.suppress(OSError):
+                    entry.unlink()  # dedup: current already present
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with contextlib.suppress(OSError):
+                os.replace(entry, target)
+                migrated += 1
+        return migrated
+
     def put(self, key: str, chunks: list[Chunk]) -> None:
         """Write `chunks` to the cache atomically.
 

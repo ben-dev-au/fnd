@@ -4121,11 +4121,11 @@ class StillFlatDrillIn(Screen[None]):
 
         with _ctx.suppress(Exception):
             from fnd.cache import ExtractionCache, sha256_file
-            from fnd.extract.pdf import _extractor_signature
+            from fnd.extract.pdf import texture_signature
 
             cache = ExtractionCache()
             sha = sha256_file(Path(path))
-            key = cache.build_key(content_sha256=sha, extractor_signature=_extractor_signature())
+            key = cache.build_key(content_sha256=sha, extractor_signature=texture_signature())
             entry = cache.entry_path(key)
             if entry.exists():
                 with _ctx.suppress(OSError):

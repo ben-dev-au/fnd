@@ -1894,7 +1894,7 @@ def _summary_cache_update(app: FNDApp) -> str:
             return ""
         try:
             from fnd.cache import ExtractionCache, default_cache_dir, sha256_file
-            from fnd.extract.pdf import _extractor_signature
+            from fnd.extract.pdf import texture_signature
             from fnd.walk import walk_sources
         except Exception:
             return ""
@@ -1902,7 +1902,7 @@ def _summary_cache_update(app: FNDApp) -> str:
             n_missing = _count_pdfs_in_all_collections(cfg)
             return f"{n_missing} missing"
         cache = ExtractionCache()
-        sig = _extractor_signature()
+        sig = texture_signature()
         n_missing = 0
         for coll in cfg.collections.values():
             for path in walk_sources(sources=list(coll.sources)):
@@ -1957,12 +1957,12 @@ def _forget_cache_for_flat_pdfs() -> None:
 
     try:
         from fnd.cache import ExtractionCache, sha256_file
-        from fnd.extract.pdf import _extractor_signature
+        from fnd.extract.pdf import texture_signature
         from fnd.tui.settings_screen import _flat_pdfs_with_reasons
     except Exception:
         return
     cache = ExtractionCache()
-    sig = _extractor_signature()
+    sig = texture_signature()
     for _collection, path, _reason, _recorded_at in _flat_pdfs_with_reasons():
         with contextlib.suppress(OSError):
             from pathlib import Path
@@ -2221,12 +2221,12 @@ def _summary_stale_entries(app: FNDApp) -> str:
 
     def _compute() -> str:
         from fnd.cache import default_cache_dir
-        from fnd.extract.pdf import _extractor_signature
+        from fnd.extract.pdf import texture_signature
 
         root = default_cache_dir()
         if not root.exists():
             return "0 stale"
-        current = _extractor_signature()
+        current = texture_signature()
         stale = 0
         for shard in root.iterdir():
             if not shard.is_dir():
@@ -2247,7 +2247,7 @@ def _run_cache_prune(app: FNDApp) -> None:
     from rich.text import Text
 
     from fnd.cache import default_cache_dir
-    from fnd.extract.pdf import _extractor_signature
+    from fnd.extract.pdf import texture_signature
     from fnd.tui.settings_screen import CacheMaintenanceConfirm
 
     root = default_cache_dir()
@@ -2255,7 +2255,7 @@ def _run_cache_prune(app: FNDApp) -> None:
         with contextlib.suppress(Exception):
             app.notify("PDF Texture Cache is empty.")
         return
-    current = _extractor_signature()
+    current = texture_signature()
     leftovers: list[Path] = []
     current_count = 0
     for shard in root.iterdir():

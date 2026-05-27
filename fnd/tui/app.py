@@ -1487,6 +1487,28 @@ class FNDApp(App[None]):
         self._prefetch_sink_queue = _asyncio.Queue()
         self._prefetch_sink_drainer = _asyncio.create_task(self._drain_prefetch_sinks())
 
+        # One-time: promote PDF-texture cache entries produced by the current
+        # engine but under the pre-`tex-vN` key format to the coarse
+        # signature, so current-engine work is recognised as current (not
+        # "outdated"). Genuinely-older entries are left as-is and surface in
+        # Settings for opt-in re-texturising. Sentinel-guarded → runs once.
+        import contextlib as _contextlib
+
+        with _contextlib.suppress(Exception):
+            from fnd.cache import PdfStructureCache
+            from fnd.extract.pdf import _config_hash, texture_signature
+
+            _cache = PdfStructureCache()
+            _sentinel = _cache.root / ".keys-migrated"
+            # Only when a cache actually exists — never create the dir for a
+            # fresh user (a freshly-written entry is already tex-vN anyway).
+            if _cache.root.exists() and not _sentinel.exists():
+                _cache.promote_current_engine_entries(
+                    current_sig=texture_signature(),
+                    current_cfg_marker=f"cfg-{_config_hash()}",
+                )
+                _sentinel.write_text(texture_signature())
+
         # Route fnd.apps notices through an in-app modal for AX issues, and
         # through Textual.notify for everything else. Without this hook, the
         # Preview handler's stderr fallback gets buried under the curses

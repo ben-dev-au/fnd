@@ -30,7 +30,7 @@ import re
 import threading
 from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pymupdf  # type: ignore[import-not-found]
 
@@ -68,6 +68,37 @@ def set_skip_structure_extraction(skip: bool) -> None:
     iterating files; resets it at end of run."""
     global _skip_structure_extraction
     _skip_structure_extraction = skip
+
+
+# Coarse texture-engine version. The structure-cache key is keyed on this,
+# NOT on a per-flag config hash, so a routine app update no longer orphans
+# every cached texturising. Bump ONLY for a change that meaningfully alters
+# texturised output corpus-wide (a major pymupdf4llm/docling upgrade, a real
+# extraction-logic change). Minor refactors, flag documentation, and
+# patch-level dependency bumps must NOT bump it. "Re-texturise outdated
+# documents" keys off this version: entries below it read as outdated.
+TEXTURE_VERSION: Final[int] = 1
+
+
+def texture_signature() -> str:
+    """Cache-key signature: coarse and manually-versioned. See
+    :data:`TEXTURE_VERSION`. Distinct from :func:`extractor_signature`,
+    which stays fine-grained for ETA-calibration cohorts."""
+    return f"tex-v{TEXTURE_VERSION}"
+
+
+# Run-scoped "re-texturise outdated" flag. When True, extract() reuses ONLY a
+# current-signature cache entry and otherwise re-extracts fresh — so a
+# Re-texturise-outdated pass actually upgrades pre-version texturising. When
+# False (default), extract() reuses any prior entry for the same content,
+# making texturising durable across a TEXTURE_VERSION bump.
+_force_fresh_texture: bool = False
+
+
+def set_force_fresh_texture(value: bool) -> None:
+    """Toggle the run-scoped re-texturise flag; reset at end of run."""
+    global _force_fresh_texture
+    _force_fresh_texture = value
 
 
 # Regex for the pymupdf4llm "couldn't decode this region" marker. When a
@@ -557,8 +588,15 @@ def extract(
         content_sha = sha256_file(path)
     except OSError as e:
         raise ExtractError(str(path), f"cannot read for hash: {e}") from e
-    key = cache.build_key(content_sha256=content_sha, extractor_signature=_extractor_signature())
+    key = cache.build_key(content_sha256=content_sha, extractor_signature=texture_signature())
     cached = cache.get(key)
+    if cached is None and not _force_fresh_texture:
+        # Durable reuse: a TEXTURE_VERSION bump or a pre-versioning entry
+        # left the current key empty, but this file's texturising still
+        # exists under an older key. Reuse it instead of redoing the work.
+        # (Re-texturise-outdated mode sets _force_fresh_texture, skipping
+        # this so it genuinely re-extracts under the current signature.)
+        cached = cache.get_any_for_content(content_sha)
     if cached is not None:
         # Cache entries are keyed by content hash, so two different files
         # with identical bytes share an entry. The chunks were captured

@@ -332,3 +332,85 @@ def test_load_state_tolerates_pre_upgrade_file(tmp_path: Path) -> None:
     assert restored.pdfs_total == 0
     assert restored.indexed_newly == 0
     assert restored.failed == 0
+
+
+@pytest.mark.asyncio
+async def test_warm_run_skips_unchanged_files(tmp_path: Path, papers_dir: Path) -> None:
+    """Incremental: a second run over the SAME index_dir with no file
+    changes skips every file — counted as indexed_already with ZERO cache
+    activity (the extractor is never invoked, proving a true skip rather
+    than a re-extract-with-cache-hit)."""
+    cfg = CollectionConfig(sources=[SourceConfig(path=papers_dir)])
+    idx = tmp_path / "idx"
+    async for _ in run_indexer(
+        config=cfg, collection="t", index_dir=idx, state_path=tmp_path / "s1.toml"
+    ):
+        pass
+    final: ProgressEvent | None = None
+    async for ev in run_indexer(
+        config=cfg, collection="t", index_dir=idx, state_path=tmp_path / "s2.toml"
+    ):
+        if ev.kind == "done":
+            final = ev
+    assert final is not None
+    assert final.indexed_already_total >= 1
+    assert final.indexed_newly_total == 0
+    # Skip path never touches the extractor/cache.
+    assert final.cache_hits_total == 0
+    assert final.cache_misses_total == 0
+
+
+@pytest.mark.asyncio
+async def test_changed_mtime_reprocesses(tmp_path: Path, papers_dir: Path) -> None:
+    """A file whose mtime changed must NOT be skipped — it is re-extracted
+    (here the content is unchanged, so it cache-hits, proving the extractor
+    actually ran rather than the file being skipped)."""
+    import os
+    import shutil
+    import time
+
+    work = tmp_path / "corpus"
+    work.mkdir()
+    dst = work / "test.pdf"
+    shutil.copy(papers_dir / "test.pdf", dst)
+    cfg = CollectionConfig(sources=[SourceConfig(path=work)])
+    idx = tmp_path / "idx"
+    async for _ in run_indexer(
+        config=cfg, collection="t", index_dir=idx, state_path=tmp_path / "s1.toml"
+    ):
+        pass
+    future = time.time() + 10
+    os.utime(dst, (future, future))  # bump mtime, same bytes
+    final: ProgressEvent | None = None
+    async for ev in run_indexer(
+        config=cfg, collection="t", index_dir=idx, state_path=tmp_path / "s2.toml"
+    ):
+        if ev.kind == "done":
+            final = ev
+    assert final is not None
+    # Re-extracted (not skipped): the content cache was consulted.
+    assert final.cache_hits_total + final.cache_misses_total >= 1
+
+
+@pytest.mark.asyncio
+async def test_no_skip_when_skip_unchanged_false(tmp_path: Path, papers_dir: Path) -> None:
+    """Re-texturise-outdated / still-flat paths pass skip_unchanged=False so
+    unchanged files are reprocessed (the extractor runs)."""
+    cfg = CollectionConfig(sources=[SourceConfig(path=papers_dir)])
+    idx = tmp_path / "idx"
+    async for _ in run_indexer(
+        config=cfg, collection="t", index_dir=idx, state_path=tmp_path / "s1.toml"
+    ):
+        pass
+    final: ProgressEvent | None = None
+    async for ev in run_indexer(
+        config=cfg,
+        collection="t",
+        index_dir=idx,
+        state_path=tmp_path / "s2.toml",
+        skip_unchanged=False,
+    ):
+        if ev.kind == "done":
+            final = ev
+    assert final is not None
+    assert final.cache_hits_total + final.cache_misses_total >= 1

@@ -16,16 +16,20 @@ from __future__ import annotations
 def count_pre_upgrade_entries() -> tuple[int, str | None]:
     """Walk the on-disk PDF Texture Cache. Return ``(count, sample)``
     where ``count`` is the number of cache entries whose signature is
-    different from the current ``extractor_signature()`` and ``sample``
+    different from the current ``texture_signature()`` and ``sample``
     is one of those legacy signatures (None when count==0)."""
     try:
         from fnd.cache import default_cache_dir
-        from fnd.extract.pdf import extractor_signature
+        from fnd.extract.pdf import texture_signature
 
         root = default_cache_dir()
         if not root.exists():
             return 0, None
-        current = extractor_signature()
+        # Coarse texture signature, not the fine-grained extractor signature:
+        # a minor app update (a flag tweak, a patch-level pymupdf4llm bump)
+        # must NOT flag the whole corpus as outdated. Only a TEXTURE_VERSION
+        # bump (a meaningful engine change) does.
+        current = texture_signature()
         sample: str | None = None
         n = 0
         for shard in root.iterdir():

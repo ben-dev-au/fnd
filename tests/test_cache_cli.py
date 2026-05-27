@@ -105,7 +105,7 @@ def test_cache_info_for_existing_file(tmp_path: Path) -> None:
     code, out = _run("cache", "info", str(f))
     assert code == 0
     assert "sha256:" in out
-    assert "extractor signature:" in out
+    assert "texture signature:" in out
     assert "MISS" in out  # nothing in the per-test isolated cache
 
 
