@@ -87,6 +87,11 @@ _FALLBACK_AREA_RATIO = 0.15
 # the region itself is below the area threshold (HBR-style narrow tables).
 _TABLE_LABEL_RE = re.compile(r"\b(?:TABLE|Table)\s+\d", re.MULTILINE)
 
+# A Markdown table row: one or more `| ... |` lines. Copy of
+# dev/tools/pdf_bakeoff/metrics._TABLE_ROW_RE (fnd must not import the
+# dev tree); keep the two in sync.
+_TABLE_LINE_RE = re.compile(r"^\s*\|.+\|\s*$")
+
 
 def _parent_id(path: Path) -> str:
     return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
@@ -319,6 +324,67 @@ def _try_docling_fallback(pdf_path: str, page_index: int) -> str:
         return ""
 
 
+def _extract_md_tables(md: str) -> list[str]:
+    """Each contiguous Markdown table block in `md`, in document order.
+
+    A block is one or more consecutive `| ... |` rows (mirrors
+    metrics.count_tables' contiguity rule)."""
+    blocks: list[str] = []
+    cur: list[str] = []
+    for line in md.splitlines():
+        if _TABLE_LINE_RE.match(line):
+            cur.append(line)
+        elif cur:
+            blocks.append("\n".join(cur))
+            cur = []
+    if cur:
+        blocks.append("\n".join(cur))
+    return blocks
+
+
+def _marker_line_span(text: str, m_start: int, m_end: int) -> tuple[int, int]:
+    """Expand a marker match to its full line bounds, so the bold
+    wrapper pymupdf4llm puts the marker in (`**==> picture ... <==**`)
+    is removed cleanly rather than leaving an orphan `**`."""
+    start = text.rfind("\n", 0, m_start) + 1  # 0 if no preceding newline
+    nl = text.find("\n", m_end)
+    end = len(text) if nl == -1 else nl
+    return start, end
+
+
+def _splice_docling_tables(pymupdf_md: str, docling_md: str) -> str:
+    """Merge docling's recovered tables into pymupdf4llm's formatted page.
+
+    pymupdf4llm keeps inline formatting (bold/italic/headings) but emits
+    a `==> picture omitted <==` marker where it couldn't decode an
+    image-rendered table; docling recovers the table but drops the
+    formatting. Splice: keep the formatted page, drop the table(s) in at
+    the marker site(s). Three cases:
+
+    - docling found no table (the marker is a genuine figure/chart):
+      keep pymupdf4llm verbatim. No table to gain, so don't pay the
+      formatting cost of replacing the page.
+    - one docling table per marker: substitute each marker line with the
+      corresponding table, in reading order.
+    - tables present but their count doesn't match the markers (placement
+      ambiguous): fall back to full-page replacement so a recovered table
+      is never dropped.
+    """
+    tables = _extract_md_tables(docling_md)
+    if not tables:
+        return pymupdf_md
+    markers = list(_PIC_OMITTED_RE.finditer(pymupdf_md))
+    if not markers or len(markers) != len(tables):
+        return docling_md
+    out = pymupdf_md
+    # Back-to-front so earlier match offsets stay valid as we splice.
+    # Counts are equal (checked above), so strict zip is safe.
+    for marker, table in zip(reversed(markers), reversed(tables), strict=True):
+        start, end = _marker_line_span(out, marker.start(), marker.end())
+        out = out[:start] + table + out[end:]
+    return out
+
+
 def _needs_docling_fallback(page: pymupdf.Page, pymupdf_md: str) -> bool:
     """Cheap heuristic: did pymupdf4llm visibly miss a structured region?
 
@@ -399,6 +465,7 @@ def _config_hash() -> str:
         "use_ocr": False,
         "fallback_area_ratio": _FALLBACK_AREA_RATIO,
         "table_label_re": _TABLE_LABEL_RE.pattern,
+        "docling_merge": "splice",
     }
     return hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()[:8]
 
@@ -654,11 +721,14 @@ def _extract_inner(  # pyright: ignore[reportUnusedFunction]
             # Phase 3 routing: if pymupdf4llm visibly missed structure
             # (e.g. a big image-rendered table), try docling as a
             # fallback. Docling's ML layout model can recover those.
+            # Splice the recovered table(s) into pymupdf4llm's formatted
+            # page rather than replacing it wholesale (which would drop
+            # bold/italic/headings, and on figure pages gain nothing).
             # No-op when docling isn't installed.
             if body_md and _needs_docling_fallback(page, body_md):
                 docling_md = _try_docling_fallback(str(path), page_index)
                 if docling_md:
-                    body_md = docling_md
+                    body_md = _splice_docling_tables(body_md, docling_md)
 
             page_states.append(
                 {
