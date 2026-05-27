@@ -61,6 +61,23 @@ def test_splice_keeps_pymupdf_when_docling_finds_no_table() -> None:
     assert out == pymupdf_md
 
 
+def test_splice_keeps_pymupdf_when_it_already_has_a_table() -> None:
+    """pymupdf4llm already rendered a vector table on the page but also
+    emitted a redundant picture marker (the same table as an image).
+    docling recovers no MISSED table here — splicing its copy would
+    duplicate. Keep pymupdf4llm (table + formatting), no duplicate."""
+    pymupdf_md = (
+        "## **Acids**\n\n"
+        "| Acid | M |\n|---|---|\n| Tartaric | 150 |\n\n"
+        "**==> picture [337 x 260] intentionally omitted <==**\n"
+    )
+    docling_md = "| Acid | M |\n|---|---|\n| Tartaric | 150.09 |\n"
+    out = pdf._splice_docling_tables(pymupdf_md, docling_md)
+    assert out == pymupdf_md
+    # exactly one table block survives (no duplicate):
+    assert len(pdf._extract_md_tables(out)) == 1
+
+
 def test_splice_full_replace_on_count_mismatch_with_tables() -> None:
     """Tables recovered but count doesn't match the markers (placement
     ambiguous) → full replacement so a recovered table is never dropped."""

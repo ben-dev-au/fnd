@@ -358,20 +358,26 @@ def _splice_docling_tables(pymupdf_md: str, docling_md: str) -> str:
     pymupdf4llm keeps inline formatting (bold/italic/headings) but emits
     a `==> picture omitted <==` marker where it couldn't decode an
     image-rendered table; docling recovers the table but drops the
-    formatting. Splice: keep the formatted page, drop the table(s) in at
-    the marker site(s). Three cases:
+    formatting. docling only earns its place when pymupdf4llm *missed* a
+    table — so:
 
     - docling found no table (the marker is a genuine figure/chart):
       keep pymupdf4llm verbatim. No table to gain, so don't pay the
       formatting cost of replacing the page.
-    - one docling table per marker: substitute each marker line with the
-      corresponding table, in reading order.
-    - tables present but their count doesn't match the markers (placement
-      ambiguous): fall back to full-page replacement so a recovered table
-      is never dropped.
+    - pymupdf4llm already rendered a table on this page (a vector table):
+      keep pymupdf4llm. The marker is a redundant image of a table it
+      already has; splicing docling's copy would duplicate it. (Rare
+      limitation: a page where pymupdf got table A but missed table B
+      behind the marker keeps only A — measured as not occurring.)
+    - pymupdf4llm has no table and docling found one per marker:
+      substitute each marker line with its table, in reading order.
+    - no table but counts mismatch (placement ambiguous): full-page
+      replacement, so a recovered table is never dropped.
     """
     tables = _extract_md_tables(docling_md)
     if not tables:
+        return pymupdf_md
+    if _extract_md_tables(pymupdf_md):
         return pymupdf_md
     markers = list(_PIC_OMITTED_RE.finditer(pymupdf_md))
     if not markers or len(markers) != len(tables):
@@ -465,7 +471,7 @@ def _config_hash() -> str:
         "use_ocr": False,
         "fallback_area_ratio": _FALLBACK_AREA_RATIO,
         "table_label_re": _TABLE_LABEL_RE.pattern,
-        "docling_merge": "splice",
+        "docling_merge": "splice-dedup",
     }
     return hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()[:8]
 
