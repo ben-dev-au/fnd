@@ -17,7 +17,8 @@ from fnd import apps
 def test_preview_script_uses_exact_path_match() -> None:
     s = apps._PREVIEW_PAGE_JUMP_SCRIPT
     assert "contains pdfPath" not in s  # the substring-match bug
-    assert "(path of d) is pdfPath" in s  # exact match
+    assert "(path of front document) is pdfPath" in s  # exact match
+    assert "open POSIX file" not in s  # opening is LaunchServices' job, not osascript's
 
 
 def test_preview_script_gates_keystrokes_on_front_document() -> None:
@@ -31,14 +32,17 @@ def test_preview_script_gates_keystrokes_on_front_document() -> None:
     assert s.index("if matched then") < s.index('keystroke "g"')
 
 
-def test_handle_preview_passes_resolved_path_and_page(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The handler launches the page-jump with the hit's path canonicalised
-    (Preview reports resolved paths, so the script's exact match needs the
-    realpath) and the target page as separate argv items."""
-    captured: dict[str, list[str]] = {}
+def test_handle_preview_opens_via_launchservices_then_pagejumps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The file is opened via `open -a Preview` (LaunchServices, TCC-robust);
+    only THEN does a separate osascript page-jump run, with the path
+    canonicalised (Preview reports resolved paths) and the page as argv.
+    osascript must never be the opener."""
+    calls: list[list[str]] = []
 
     def fake_run(cmd: list[str], check: bool = False) -> object:
-        captured["cmd"] = cmd
+        calls.append(list(cmd))
 
         class _Result:
             returncode = 0
@@ -49,8 +53,13 @@ def test_handle_preview_passes_resolved_path_and_page(monkeypatch: pytest.Monkey
     monkeypatch.setattr(apps, "ax_trusted", lambda: True)
     raw = Path("/tmp/a report.pdf")
     apps._handle_preview(apps.OpenRequest(path=raw, kind="pdf", page=5))
-    assert str(raw.resolve()) in captured["cmd"]  # canonical path, spaces preserved
-    assert "5" in captured["cmd"]
+    # First: open via LaunchServices with the raw path (spaces preserved).
+    assert calls[0][:3] == ["open", "-a", "Preview"]
+    assert calls[0][3] == str(raw)
+    # Then: osascript page-jump with the RESOLVED path + page.
+    assert calls[1][0] == "osascript"
+    assert str(raw.resolve()) in calls[1]
+    assert "5" in calls[1]
 
 
 def test_handle_preview_falls_back_without_ax(monkeypatch: pytest.MonkeyPatch) -> None:

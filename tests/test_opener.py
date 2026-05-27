@@ -93,10 +93,12 @@ def test_open_smart_auto_promotes_preview_when_no_skim_and_ax_granted(
     f.touch()
     opener.open_smart(path=f, kind="pdf", page=5)
     assert captured, "expected at least one subprocess.run call"
-    argv = captured[0]
-    assert argv[0] == "osascript", f"expected osascript dispatch, got {argv}"
-    assert str(f) in argv
-    assert "5" in argv
+    # Opens via LaunchServices first, then page-jumps via osascript.
+    assert captured[0][:3] == ["open", "-a", "Preview"]
+    jump = captured[-1]
+    assert jump[0] == "osascript", f"expected osascript page-jump, got {jump}"
+    assert str(f.resolve()) in jump
+    assert "5" in jump
 
 
 def test_open_smart_falls_through_to_system_when_no_skim_no_ax(

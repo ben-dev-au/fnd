@@ -177,10 +177,10 @@ async def test_modal_letter_shortcut_fires_specific_app(
         await pilot.press("p")
         await pilot.pause()
 
-    assert len(captured) == 1
-    argv = captured[0]
-    # Preview handler with AX granted → osascript dispatch.
-    assert argv[0] == "osascript"
+    # Preview handler: open via LaunchServices, then osascript page-jump.
+    assert len(captured) == 2
+    assert captured[0][:3] == ["open", "-a", "Preview"]
+    assert captured[1][0] == "osascript"
 
 
 @pytest.mark.asyncio
