@@ -381,6 +381,27 @@ def _splice_docling_tables(pymupdf_md: str, docling_md: str) -> str:
     return spliced + "\n" if pymupdf_md.endswith("\n") else spliced
 
 
+def _strip_picture_markers(md: str) -> str:
+    """Drop pymupdf4llm's `==> picture [W x H] intentionally omitted <==`
+    placeholders from the user-facing preview. Run only AFTER the docling
+    splice — markers it used to place tables are already replaced, so this
+    removes just the leftovers on dedup / figure / non-routed pages and
+    never disturbs a recovered table."""
+    kept: list[str] = []
+    for line in md.splitlines():
+        if _PIC_OMITTED_RE.search(line):
+            without = _PIC_OMITTED_RE.sub("", line)
+            # Marker-only line (incl. the ``**`` wrapper pymupdf4llm adds):
+            # drop it entirely; otherwise just excise the marker text.
+            if not without.replace("*", "").strip():
+                continue
+            kept.append(without)
+        else:
+            kept.append(line)
+    result = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip("\n")
+    return result + "\n" if md.endswith("\n") and result else result
+
+
 def _needs_docling_fallback(page: pymupdf.Page, pymupdf_md: str) -> bool:
     """Cheap heuristic: did pymupdf4llm visibly miss a structured region?
 
@@ -462,6 +483,7 @@ def _config_hash() -> str:
         "fallback_area_ratio": _FALLBACK_AREA_RATIO,
         "table_label_re": _TABLE_LABEL_RE.pattern,
         "docling_merge": "splice-dedup",
+        "strip_picture_markers": True,
     }
     return hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()[:8]
 
@@ -725,6 +747,13 @@ def _extract_inner(  # pyright: ignore[reportUnusedFunction]
                 docling_md = _try_docling_fallback(str(path), page_index)
                 if docling_md:
                     body_md = _splice_docling_tables(body_md, docling_md)
+
+            # Strip any leftover picture-omitted placeholders from the
+            # preview — done after routing/splice so the markers that
+            # positioned recovered tables are already gone, and multi-table
+            # pages are unaffected.
+            if body_md:
+                body_md = _strip_picture_markers(body_md)
 
             page_states.append(
                 {

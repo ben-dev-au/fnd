@@ -87,6 +87,49 @@ def test_splice_full_replace_on_count_mismatch_with_tables() -> None:
     assert out == docling_md
 
 
+def test_strip_removes_marker_only_line_and_collapses_blanks() -> None:
+    md = (
+        "# Heading\n\nProse with **bold**.\n\n"
+        "**==> picture [324 x 70] intentionally omitted <==**\n\n"
+        "More prose.\n"
+    )
+    out = pdf._strip_picture_markers(md)
+    assert "intentionally omitted" not in out
+    assert "# Heading" in out
+    assert "**bold**" in out
+    assert "More prose." in out
+    assert "\n\n\n" not in out  # blank gap from the removed line collapsed
+
+
+def test_strip_keeps_tables_and_is_noop_without_markers() -> None:
+    with_table = (
+        "## **Acids**\n\n| Acid | M |\n|---|---|\n| Tartaric | 150 |\n\n"
+        "==> picture [400 x 200] intentionally omitted <==\n"
+    )
+    out = pdf._strip_picture_markers(with_table)
+    assert "| Tartaric | 150 |" in out
+    assert "intentionally omitted" not in out
+
+    plain = "# Title\n\nbody text\n"
+    assert pdf._strip_picture_markers(plain) == plain
+
+
+def test_strip_after_multi_table_splice_keeps_all_tables() -> None:
+    """The constraint: stripping markers must not compromise multi-table
+    coverage. Splice (2 markers → 2 tables) then strip → both tables
+    survive, no markers leak."""
+    pymupdf_md = (
+        "==> picture [200 x 100] intentionally omitted <==\n\n"
+        "mid\n\n"
+        "==> picture [200 x 100] intentionally omitted <==\n"
+    )
+    docling_md = "| t1 |\n|---|\n\n| t2 |\n|---|\n"
+    out = pdf._strip_picture_markers(pdf._splice_docling_tables(pymupdf_md, docling_md))
+    assert "| t1 |" in out
+    assert "| t2 |" in out
+    assert "intentionally omitted" not in out
+
+
 def test_splice_multiple_markers_in_reading_order() -> None:
     pymupdf_md = (
         "**==> picture [200 x 100] intentionally omitted <==**\n\n"
