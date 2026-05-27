@@ -1071,7 +1071,12 @@ class FNDApp(App[None]):
         overflow-x: hidden;
         scrollbar-size-vertical: 1;
         scrollbar-size-horizontal: 0;
+        padding: 0 0 0 1;
     }
+    /* Inset lives on the fence, not the Label: a Label with side padding +
+       width: 1fr wraps to its border-box width, clipping ~2 cells of code.
+       Padding the fence keeps the 1-col left inset (readability) while the
+       Label wraps cleanly to the inset content width. */
     MarkdownFence > Label {
         padding: 0;
         width: 1fr;

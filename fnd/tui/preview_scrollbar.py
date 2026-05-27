@@ -80,8 +80,9 @@ class ThinScrollBarRender(ScrollBarRender):
     """
 
     def _thin_segments(
-        self, size: int, bar_color: RichColor, back_color: RichColor
+        self, size: int, bar_color: RichColor, back_color: RichColor | None
     ) -> list[Segment]:
+        # ``back_color`` may be None (transparent track) — don't fabricate a bg.
         track = RichStyle(bgcolor=back_color)
         if size <= 0:
             return []
@@ -117,8 +118,7 @@ class ThinScrollBarRender(ScrollBarRender):
         size = options.height or console.height
         style = console.get_style(self.style)
         bar_color = style.color or RichColor.parse("bright_magenta")
-        back_color = style.bgcolor or RichColor.parse("#555555")
-        yield Segments(self._thin_segments(size, bar_color, back_color), new_lines=True)
+        yield Segments(self._thin_segments(size, bar_color, style.bgcolor), new_lines=True)
 
 
 class MatchAwareScrollBarRender(ThinScrollBarRender):
@@ -182,8 +182,7 @@ class MatchAwareScrollBarRender(ThinScrollBarRender):
         size = options.height or console.height
         style = console.get_style(self.style)
         bar_color = style.color or RichColor.parse("bright_magenta")
-        back_color = style.bgcolor or RichColor.parse("#555555")
-        segments = self._thin_segments(size, bar_color, back_color)
+        segments = self._thin_segments(size, bar_color, style.bgcolor)
 
         marker_cells = self._marker_cells(size)
         if marker_cells:

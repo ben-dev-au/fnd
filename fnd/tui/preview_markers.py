@@ -55,7 +55,10 @@ def structural_match_lines(chunks: list[FileChunk], spec: MatchSpec) -> tuple[li
     match_lines: list[int] = []
     cursor = 0
     for c in chunks:
-        lines = _chunk_source(c).split("\n")
+        # splitlines() (not split("\n")) so a trailing newline doesn't add a
+        # phantom line and an empty source counts as 0 lines, not 1 — both keep
+        # the total / fractions closer to the rendered row count.
+        lines = _chunk_source(c).splitlines()
         local = next(
             (i for i, ln in enumerate(lines) if text_has_any_match(ln, spec)),
             None,

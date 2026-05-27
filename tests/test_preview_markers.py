@@ -69,6 +69,17 @@ def test_multiple_matched_chunks_sorted_and_deduped() -> None:
     assert lines == [0, 4]
 
 
+def test_trailing_newline_does_not_inflate_line_count() -> None:
+    """body_md commonly ends with a newline; counting it as an extra empty
+    line would skew the total and every downstream fraction. splitlines()
+    drops it (this would be total==3 with split('\\n'))."""
+    spec = MatchSpec.from_query("glimmer")
+    chunks = [_chunk(0, "alpha\nglimmer\n")]
+    lines, total = structural_match_lines(chunks, spec)
+    assert total == 2
+    assert lines == [1]
+
+
 def test_empty_query_clears_markers_but_keeps_track_length() -> None:
     spec = MatchSpec.from_query("")
     chunks = [_chunk(0, "a\nb\nc")]
