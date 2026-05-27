@@ -296,9 +296,17 @@ def _handle_skim(req: OpenRequest) -> int:
     return open_pdf_via_url(req.path, req.page, search=req.query.strip())
 
 
-# Embedded AppleScript — kept in lockstep with scripts/spike_preview_page_jump.py
-# until that spike is deleted. Edits here MUST be mirrored there during the
-# spike's lifetime so reliability gains transfer.
+# Embedded AppleScript for the Preview page-jump.
+#
+# Correctness invariants (a regression here opened the WRONG pdf / jumped a
+# page in a different document):
+#   1. Match the just-opened document by EXACT POSIX path, not substring —
+#      "report.pdf" must not match an already-open "old_report.pdf".
+#   2. Bring THAT document's window frontmost before sending keystrokes, so
+#      "go to page" lands in it and not whatever Preview window was in front.
+#   3. Fail safe: if we cannot confirm the right document is frontmost within
+#      the retry budget, send NO keystrokes — the pdf still opened on page 1,
+#      which beats paging the wrong document.
 _PREVIEW_PAGE_JUMP_SCRIPT: Final[str] = r"""
 on run argv
     set pdfPath to item 1 of argv
@@ -307,27 +315,40 @@ on run argv
         activate
         open POSIX file pdfPath
     end tell
+    set matched to false
     set tries to 0
     repeat until tries > 30
         try
             tell application "Preview"
-                if (exists front document) and (path of front document contains pdfPath) then exit repeat
+                repeat with d in documents
+                    if (path of d) is pdfPath then
+                        set theName to name of d
+                        try
+                            set index of (first window whose name is theName) to 1
+                        end try
+                        set matched to true
+                        exit repeat
+                    end if
+                end repeat
             end tell
         end try
+        if matched then exit repeat
         delay 0.1
         set tries to tries + 1
     end repeat
-    tell application "Preview" to activate
-    delay 0.1
-    tell application "System Events"
-        tell process "Preview"
-            keystroke "g" using {option down, command down}
-            delay 0.15
-            keystroke pageNum
-            delay 0.05
-            key code 36
+    if matched then
+        tell application "Preview" to activate
+        delay 0.15
+        tell application "System Events"
+            tell process "Preview"
+                keystroke "g" using {option down, command down}
+                delay 0.15
+                keystroke pageNum
+                delay 0.05
+                key code 36
+            end tell
         end tell
-    end tell
+    end if
 end run
 """
 
@@ -347,9 +368,14 @@ def _handle_preview(req: OpenRequest) -> int:
     if req.page <= 0 or not ax_trusted():
         if req.page > 0 and not ax_trusted():
             _emit_notice(_AX_NOTICE)
+        # `open` follows symlinks itself, so the raw path is fine here.
         return subprocess.run(["open", "-a", "Preview", str(req.path)], check=False).returncode
+    # Canonicalise the path for the page-jump: Preview reports a document's
+    # path resolved (``/tmp`` → ``/private/tmp``, symlinks followed), so the
+    # script's exact-path match only lands if we hand it the realpath too.
+    target = str(Path(str(req.path)).resolve())
     return subprocess.run(
-        ["osascript", "-e", _PREVIEW_PAGE_JUMP_SCRIPT, str(req.path), str(req.page)],
+        ["osascript", "-e", _PREVIEW_PAGE_JUMP_SCRIPT, target, str(req.page)],
         check=False,
     ).returncode
 
