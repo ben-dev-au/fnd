@@ -47,6 +47,38 @@ def isolated_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
+def test_count_pre_upgrade_entries_counts_only_stale(isolated_cache: Path) -> None:
+    """The passive 'Re-texturise outdated' count reflects only cache
+    entries whose extractor signature differs from the current one;
+    current-signature entries are not counted."""
+    from fnd.extract.pdf import extractor_signature
+    from fnd.tui.upgrade_banner import count_pre_upgrade_entries
+
+    current = extractor_signature()
+    (isolated_cache / "aa").mkdir(parents=True, exist_ok=True)
+    (isolated_cache / "bb").mkdir(parents=True, exist_ok=True)
+    # one entry on an old signature, one on the current signature
+    (isolated_cache / "aa" / ("a" * 64 + "--old_engine_v0.json")).write_text("{}")
+    (isolated_cache / "bb" / ("b" * 64 + f"--{current}.json")).write_text("{}")
+
+    n, sample = count_pre_upgrade_entries()
+    assert n == 1
+    assert sample == "old_engine_v0"
+
+
+def test_count_pre_upgrade_entries_zero_when_all_current(isolated_cache: Path) -> None:
+    from fnd.extract.pdf import extractor_signature
+    from fnd.tui.upgrade_banner import count_pre_upgrade_entries
+
+    current = extractor_signature()
+    (isolated_cache / "cc").mkdir(parents=True, exist_ok=True)
+    (isolated_cache / "cc" / ("c" * 64 + f"--{current}.json")).write_text("{}")
+
+    n, sample = count_pre_upgrade_entries()
+    assert n == 0
+    assert sample is None
+
+
 def _make_chunk(seq: int = 0) -> Chunk:
     return Chunk(
         parent_id="abc",
