@@ -92,3 +92,21 @@ def test_repeated_writes_preserve_comments(tmp_path: Path) -> None:
     after = cfg_path.read_text(encoding="utf-8")
     assert "# my custom limit" in after
     assert "result_limit = 400" in after
+
+
+def test_clickable_interface_defaults_off() -> None:
+    from fnd.config import Config
+
+    assert Config().defaults.clickable_interface is False
+
+
+def test_clickable_interface_round_trips(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text("", encoding="utf-8")
+    cfg = write_setting(
+        config_path=cfg_path,
+        dotted_path="defaults.clickable_interface",
+        value=True,
+    )
+    assert cfg.defaults.clickable_interface is True
+    assert load(cfg_path).defaults.clickable_interface is True
