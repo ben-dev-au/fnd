@@ -56,7 +56,6 @@ def test_pretty_key_substitutions_are_applied() -> None:
     assert "?" in keys, keys  # 'question_mark' → '?'
     assert ":" in keys, keys  # 'colon' → ':'
     assert "Ctrl+F" in keys, keys  # 'ctrl+f' → 'Ctrl+F'
-    assert "Space" in keys, keys  # 'space' → 'Space'
 
 
 def test_static_sections_present() -> None:

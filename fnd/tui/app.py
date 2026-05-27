@@ -6,7 +6,7 @@ Layout (per §5 wireframe):
   ├─ Query input ────────────────────────────┤
   ├─ Results tree (left)  │  Preview pane ──┤
   └──────────────────────────────────────────┘
-   /  search   Tab  focus   ⏎  open   Space  peek   o  default-app   q  quit
+   /  search   Tab  focus   ⏎  open   z  reading-view   o  default-app   q  quit
 
 Phase 5 ships the structural layout + opener wired to Enter; phase 6 adds
 the full action map (filter chips, command palette, customisable keymap),
@@ -1649,7 +1649,7 @@ class FNDApp(App[None]):
         ),
         "results": (
             ("o", "Open"),
-            ("Spc", "Peek"),
+            ("z", "Reading View"),
             ("Tab", "Search"),
         ),
         "preview": (
@@ -4163,7 +4163,7 @@ class FNDApp(App[None]):
         self._suppress_lazy_mount_briefly()
         pane.scroll_to_widget(widget, top=True, animate=False)
 
-    # ── Open / peek dispatch ──────────────────────────────────────
+    # ── Open dispatch ─────────────────────────────────────────────
 
     # Note: we deliberately do NOT bind Tree.NodeSelected to opener.open_smart.
     # Per user feedback, clicking / Enter should populate the preview only;
@@ -4569,16 +4569,6 @@ class FNDApp(App[None]):
                     continue
                 return src
         return None
-
-    def action_peek_focused(self) -> None:
-        tree = self.query_one("#results_pane", Tree)
-        if tree.cursor_node is None:
-            return
-        target = self._target_for_node(tree.cursor_node)
-        if target is None:
-            return
-        _, hit = target
-        opener.peek(Path(hit.path))
 
     def _focused_tree(self) -> Tree[Any] | None:
         """Whichever app-level tree currently owns focus, or None.

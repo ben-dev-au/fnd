@@ -16,6 +16,7 @@ def test_reading_mode_action_registered() -> None:
 
     action = next(a for a in REGISTRY if a.id == "toggle_reading_mode")
     assert action.default_key == "z"
+    assert action.footer_label == "Reading View"
 
 
 @pytest.mark.asyncio
