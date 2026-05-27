@@ -80,6 +80,10 @@ class MenuItem:
     id: str
     label: str
     description: str = ""
+    # Render ``description`` as Rich markup (colour). Off by default so
+    # arbitrary text (paths, globs, notes) shows literally; opt in only for
+    # hand-authored descriptions that use ``[colour]…[/]`` tags.
+    description_markup: bool = False
     kind: str = KIND_SUBMENU
 
     # HEADER: 1 = top-level group, 2 = sub-group.
@@ -621,6 +625,21 @@ def _set_highlights(app: FNDApp, value: bool) -> None:
         app.action_toggle_highlights()
 
 
+def _get_clickable_interface(app: FNDApp) -> bool:
+    return (
+        bool(app._config.defaults.clickable_interface)  # type: ignore[attr-defined]
+        if app._config  # type: ignore[attr-defined]
+        else False
+    )
+
+
+def _set_clickable_interface(app: FNDApp, value: bool) -> None:
+    """Persist the setting and apply it live so the mode flips without a
+    restart."""
+    _setting_writer("defaults.clickable_interface")(app, value)
+    app._apply_mouse_capture(value)  # type: ignore[attr-defined]
+
+
 def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
     """Content of the Preferences sub-screen — scalars / toggles / pickers
     grouped by area."""
@@ -749,6 +768,34 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             coerce=int,
             value_getter=_get_int_default("fuzzy_min_term_chars", 3),
             keywords=("fuzzy", "min", "length", "chars", "floor"),
+        ),
+        header("Interface", level=2),
+        MenuItem(
+            id="pref.clickable_interface",
+            label="Clickable Interface",
+            description=(
+                "ON:  [green]+[/] mouse click-to-focus/select, wheel scroll, scrollbar drag\n"
+                "     [red]−[/] text selection, right-click Copy, ⌘C, macOS Speak-selection\n"
+                "OFF: [green]+[/] select, right-click Copy, ⌘C & Speak-selection (text-to-speech)\n"
+                "     [red]−[/] interface not clickable — keyboard only"
+            ),
+            description_markup=True,
+            kind=KIND_TOGGLE,
+            toggle_getter=_get_clickable_interface,
+            toggle_setter=_set_clickable_interface,
+            keywords=(
+                "mouse",
+                "click",
+                "clickable",
+                "selection",
+                "select",
+                "copy",
+                "tts",
+                "speech",
+                "speak",
+                "interface",
+                "keyboard",
+            ),
         ),
         header("Display", level=2),
         MenuItem(

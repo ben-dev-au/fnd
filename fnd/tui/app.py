@@ -6,7 +6,7 @@ Layout (per §5 wireframe):
   ├─ Query input ────────────────────────────┤
   ├─ Results tree (left)  │  Preview pane ──┤
   └──────────────────────────────────────────┘
-   /  search   Tab  focus   ⏎  open   Space  peek   o  default-app   q  quit
+   /  search   Tab  focus   ⏎  open   z  reading-view   o  default-app   q  quit
 
 Phase 5 ships the structural layout + opener wired to Enter; phase 6 adds
 the full action map (filter chips, command palette, customisable keymap),
@@ -1145,6 +1145,13 @@ class FNDApp(App[None]):
     }
     /* Class-toggled focus border — :focus-within would re-style every descendant. */
     #preview_pane.-focused { border: round $accent; }
+    /* Reading view: drop the border + padding so a full-width terminal
+       selection copies only the text, not the frame. Listed after
+       ``-focused`` so it wins at equal specificity when both apply.
+       Zero the pane's own scrollbar too: for flat-buffer previews the
+       inner LineBufferPreview already shows the match-marker bar, so the
+       pane's bar is a bare duplicate. */
+    #preview_pane.-reading { border: none; padding: 0; scrollbar-size-vertical: 0; }
     /* While a partial mount is in flight we hide the scrollbar (its
        virtual size keeps growing as chunks land, so the thumb would
        jitter). Programmatic ``scroll_to_widget`` calls during phase 2b
@@ -1271,6 +1278,16 @@ class FNDApp(App[None]):
         # collection's ``ranking_profile`` field; default profile (all-zero)
         # is the BM25 identity, so the no-config case is unchanged.
         self._config = config
+        # Interface mode: when False (default) the terminal owns text
+        # selection (drag-select, right-click Copy, ⌘C, Speak-selection);
+        # when True Textual captures the mouse for click/scroll. Applied on
+        # mount and live-toggled from settings.
+        self._clickable_interface: bool = bool(
+            config and getattr(config.defaults, "clickable_interface", False)
+        )
+        # Reading mode: hide the sidebar so the preview fills the width for
+        # clean text selection / distraction-free reading. Session-only.
+        self._reading_mode: bool = False
         self._ranking_profile: RankingProfile = self._resolve_profile()
         # Cache of (parent_id) → list[FileChunk] so we don't re-fetch the
         # full document on every cursor move within the same file. Keyed by
@@ -1425,9 +1442,46 @@ class FNDApp(App[None]):
         yield FNDProgressBar()
         yield Static("", id="footer_hints")
 
+    def _apply_mouse_capture(self, on: bool) -> None:
+        """Enable/disable terminal mouse reporting at runtime.
+
+        OFF (default) hands selection back to the terminal — drag-select,
+        right-click Copy, ⌘C and macOS Speak-selection all work as in any
+        normal terminal app. ON captures the mouse for click/scroll and
+        disables that native selection. Guarded for headless/test drivers
+        that lack the private hooks."""
+        self._clickable_interface = on
+        driver = getattr(self, "_driver", None)
+        hook = getattr(
+            driver,
+            "_enable_mouse_support" if on else "_disable_mouse_support",
+            None,
+        )
+        if callable(hook):
+            hook()
+
+    def action_toggle_reading_mode(self) -> None:
+        """Hide the sidebar so the preview fills the full terminal width: a
+        normal text selection then covers only the preview (clean copy for
+        text-to-speech), and it reads distraction-free. Also drops the
+        preview border/padding so the frame isn't copied. Toggle to restore."""
+        self._reading_mode = not self._reading_mode
+        self.query_one("#results_column", Vertical).display = not self._reading_mode
+        preview = self.query_one("#preview_pane", MatchAwareScroll)
+        preview.set_class(self._reading_mode, "-reading")
+        if self._reading_mode:
+            preview.focus()
+        else:
+            self.query_one("#results_pane", ResultsTree).focus()
+        self._refresh_footer_hints()
+
     def on_mount(self) -> None:
         # Tokyo-night theme: muted blue/teal pastel palette per user request.
         self.theme = "tokyo-night"
+        # Apply the configured interface mode. Launch keeps mouse=True so the
+        # driver can re-enable capture later (see cli.run); disable it here
+        # for the keyboard-first, text-selectable default.
+        self._apply_mouse_capture(self._clickable_interface)
         import asyncio as _asyncio
 
         self._prefetch_sink_queue = _asyncio.Queue()
@@ -1620,7 +1674,7 @@ class FNDApp(App[None]):
         ),
         "results": (
             ("o", "Open"),
-            ("Spc", "Peek"),
+            ("z", "Reading View"),
             ("Tab", "Search"),
         ),
         "preview": (
@@ -1657,6 +1711,10 @@ class FNDApp(App[None]):
         contextual = (
             overlay_hint if overlay_hint is not None else self._FOOTER_CONTEXTUAL.get(ctx, ())
         )
+        # Reading view focuses the preview, so the per-pane table would hide
+        # the toggle key — surface the exit hint while it's active.
+        if self._reading_mode and overlay_hint is None:
+            contextual = (("z", "Reading View"), ("j/k", "Scroll"))
 
         import contextlib
 
@@ -4151,7 +4209,7 @@ class FNDApp(App[None]):
         self._suppress_lazy_mount_briefly()
         pane.scroll_to_widget(widget, top=True, animate=False)
 
-    # ── Open / peek dispatch ──────────────────────────────────────
+    # ── Open dispatch ─────────────────────────────────────────────
 
     # Note: we deliberately do NOT bind Tree.NodeSelected to opener.open_smart.
     # Per user feedback, clicking / Enter should populate the preview only;
@@ -4500,16 +4558,6 @@ class FNDApp(App[None]):
                     continue
                 return src
         return None
-
-    def action_peek_focused(self) -> None:
-        tree = self.query_one("#results_pane", Tree)
-        if tree.cursor_node is None:
-            return
-        target = self._target_for_node(tree.cursor_node)
-        if target is None:
-            return
-        _, hit = target
-        opener.peek(Path(hit.path))
 
     def _focused_tree(self) -> Tree[Any] | None:
         """Whichever app-level tree currently owns focus, or None.
@@ -5232,6 +5280,7 @@ class FNDApp(App[None]):
 
         1. If an in-app overlay (explain trace, :multi panel) is up,
            close it. Focus is left wherever it was.
+        1.5. If reading view is active, exit it (restore the sidebar).
         2. Otherwise, branch on the current focus context:
 
            - ``query`` / ``preview`` / ``filters`` / ``collections``
@@ -5251,6 +5300,12 @@ class FNDApp(App[None]):
                 w.remove()
                 dismissed = True
         if dismissed:
+            return
+
+        # Step 1.5 — in reading view, Esc returns to the normal app
+        # (restore the sidebar) rather than cascading focus.
+        if self._reading_mode:
+            self.action_toggle_reading_mode()
             return
 
         # Step 2 — cascade focus toward the results pane.

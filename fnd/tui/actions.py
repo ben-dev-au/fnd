@@ -126,14 +126,6 @@ REGISTRY: tuple[Action, ...] = (
         show_in_footer=False,
     ),
     Action(
-        id="peek_focused",
-        description="Quick Look the focused file (no deep-link).",
-        default_key="space",
-        command="peek",
-        footer_label="Peek",
-        contexts=("results", "preview"),
-    ),
-    Action(
         id="show_help",
         description="Open the Keybindings cheat sheet, scoped to the screen "
         "you're on. Press ? again to dismiss.",
@@ -188,6 +180,16 @@ REGISTRY: tuple[Action, ...] = (
         default_key="h",
         command="highlights",
         footer_label="Highlights",
+        show_in_footer=False,
+    ),
+    Action(
+        id="toggle_reading_mode",
+        description="Hide the sidebar so the preview fills the full width. A "
+        "text selection then covers only the preview (clean copy for "
+        "text-to-speech), and it reads distraction-free. Toggle to restore.",
+        default_key="z",
+        command="reading",
+        footer_label="Reading View",
         show_in_footer=False,
     ),
     Action(

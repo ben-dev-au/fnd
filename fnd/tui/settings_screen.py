@@ -695,6 +695,10 @@ class SettingsList(Widget, can_focus=True):
         # from a popped child screen) keep the cursor on the row the user
         # drilled from. Consumed (reset to None) once applied.
         self._pending_cursor_id: str | None = None
+        # Width the rows were last rendered at. Rows are width-dependent
+        # (ellipsis / wrap), so only a width change needs a full rebuild;
+        # height-only or duplicate resizes are skipped. -1 = never rendered.
+        self._last_render_width: int = -1
 
     def compose(self) -> ComposeResult:
         # VerticalScroll (not plain Vertical) so long lists like the
@@ -813,7 +817,13 @@ class SettingsList(Widget, can_focus=True):
             else:
                 row.remove_class("-cursor")
 
-    def on_resize(self, _ev: events.Resize) -> None:
+    def on_resize(self, ev: events.Resize) -> None:
+        # Only a width change affects row rendering; skip height-only or
+        # duplicate resizes so they don't trigger a stray full rebuild
+        # (e.g. a late layout resize landing mid cursor-navigation).
+        if ev.size.width == self._last_render_width:
+            return
+        self._last_render_width = ev.size.width
         self._render_all()
 
     def refresh_values(self) -> None:
@@ -1157,7 +1167,11 @@ class SettingsScreen(Screen[None]):
         first = next((it for it in self._items if it.is_selectable), None)
         if first is not None:
             strip = self.query_one(DetailStrip)
-            strip.set(first.description or "", self._row_metadata(first))
+            strip.set(
+                first.description or "",
+                self._row_metadata(first),
+                markup=first.description_markup,
+            )
 
     # ── Footer ──────────────────────────────────────────────────
 
@@ -1344,7 +1358,11 @@ class SettingsScreen(Screen[None]):
         if item is None:
             strip.clear()
         else:
-            strip.set(item.description or "", self._row_metadata(item))
+            strip.set(
+                item.description or "",
+                self._row_metadata(item),
+                markup=item.description_markup,
+            )
         # Hint bar may need a "Shift+⏎ Reveal" append/strip depending on row.
         self._refresh_hint_bar()
 
@@ -2565,7 +2583,7 @@ class AddCollectionWizard(Screen[None]):
             strip.clear()
             return
         meta = item.hint or ""
-        strip.set(item.description or "", meta)
+        strip.set(item.description or "", meta, markup=item.description_markup)
 
     @on(TextArea.Changed, "#frontmatter_sample")
     def _on_sample_changed(self, _ev: TextArea.Changed) -> None:

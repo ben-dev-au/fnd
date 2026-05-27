@@ -7,16 +7,11 @@
 * PPTX / DOCX / MD / TXT: ``open <file>`` (LaunchServices default app) — these
   formats have no reliable page-jump protocol on macOS; the TUI surfaces the
   slide/heading in its footer so the user can scroll to it manually.
-
-For Quick Look peek (``qlmanage -p``), use :func:`peek`. Quick Look has no
-documented page-jump argument; peek shows the file's first page only and is
-intended as a "is this the right document" gut check.
 """
 
 from __future__ import annotations
 
 import shlex
-import shutil
 import subprocess
 import urllib.parse
 from pathlib import Path
@@ -69,16 +64,6 @@ def open_default(path: Path) -> int:
 def reveal_in_finder(path: Path) -> int:
     """``open -R <path>`` — reveal in Finder, no app launch."""
     return subprocess.run(["open", "-R", str(path)], check=False).returncode
-
-
-def peek(path: Path) -> int:
-    """Quick Look preview as a side window. Quick Look cannot deep-link to a
-    page; this is for quick "is this the right doc" checks. Returns the
-    ``qlmanage`` exit code."""
-    if shutil.which("qlmanage") is None:
-        return 127
-    # `-p` prints to stdout while showing the preview window.
-    return subprocess.run(["qlmanage", "-p", str(path)], check=False).returncode
 
 
 def open_smart(
