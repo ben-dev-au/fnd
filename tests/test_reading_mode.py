@@ -33,11 +33,29 @@ async def test_reading_mode_toggles_sidebar_visibility() -> None:
         await pilot.pause()
         assert app._reading_mode is True
         assert column.display is False
-        # Border/padding dropped (via class) so selection copies no frame.
+        # Border/padding dropped (via class) so selection copies no frame,
+        # and the pane's own scrollbar is zeroed (the inner buffer keeps the
+        # match-marker bar) so reading view shows no duplicate scrollbar.
         assert preview.has_class("-reading") is True
+        assert preview.styles.scrollbar_size_vertical == 0
 
         app.action_toggle_reading_mode()
         await pilot.pause()
         assert app._reading_mode is False
         assert column.display is True
         assert preview.has_class("-reading") is False
+        assert preview.styles.scrollbar_size_vertical == 1
+
+
+@pytest.mark.asyncio
+async def test_escape_exits_reading_mode() -> None:
+    app = FNDApp(config=Config())
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.action_toggle_reading_mode()
+        await pilot.pause()
+        assert app._reading_mode is True
+
+        app.action_escape_back()
+        await pilot.pause()
+        assert app._reading_mode is False
+        assert app.query_one("#results_column").display is True

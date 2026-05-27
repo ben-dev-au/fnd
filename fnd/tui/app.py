@@ -1133,8 +1133,11 @@ class FNDApp(App[None]):
     #preview_pane.-focused { border: round $accent; }
     /* Reading view: drop the border + padding so a full-width terminal
        selection copies only the text, not the frame. Listed after
-       ``-focused`` so it wins at equal specificity when both apply. */
-    #preview_pane.-reading { border: none; padding: 0; }
+       ``-focused`` so it wins at equal specificity when both apply.
+       Zero the pane's own scrollbar too: for flat-buffer previews the
+       inner LineBufferPreview already shows the match-marker bar, so the
+       pane's bar is a bare duplicate. */
+    #preview_pane.-reading { border: none; padding: 0; scrollbar-size-vertical: 0; }
     /* While a partial mount is in flight we hide the scrollbar (its
        virtual size keeps growing as chunks land, so the thumb would
        jitter). Programmatic ``scroll_to_widget`` calls during phase 2b
@@ -5303,6 +5306,7 @@ class FNDApp(App[None]):
 
         1. If an in-app overlay (explain trace, :multi panel) is up,
            close it. Focus is left wherever it was.
+        1.5. If reading view is active, exit it (restore the sidebar).
         2. Otherwise, branch on the current focus context:
 
            - ``query`` / ``preview`` / ``filters`` / ``collections``
@@ -5322,6 +5326,12 @@ class FNDApp(App[None]):
                 w.remove()
                 dismissed = True
         if dismissed:
+            return
+
+        # Step 1.5 — in reading view, Esc returns to the normal app
+        # (restore the sidebar) rather than cascading focus.
+        if self._reading_mode:
+            self.action_toggle_reading_mode()
             return
 
         # Step 2 — cascade focus toward the results pane.
