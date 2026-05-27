@@ -72,15 +72,17 @@ def test_promote_only_current_engine_entries(tmp_path: Path) -> None:
     old = "ef567890"  # genuinely older engine
     cache.put(f"{cur}--pymupdf4llm-1.27|docling|cfg-CURHASH", [_chunk()])
     cache.put(f"{old}--pymupdf4llm-1.20|cfg-OLDHASH", [_chunk()])
-    n = cache.promote_current_engine_entries(current_sig="tex-v1", current_cfg_marker="cfg-CURHASH")
-    assert n == 1
+    migrated, failed = cache.promote_current_engine_entries(
+        current_sig="tex-v1", current_cfg_marker="cfg-CURHASH"
+    )
+    assert migrated == 1
+    assert failed == 0
     assert cache.get(f"{cur}--tex-v1") is not None
     assert (tmp_path / old[:2] / f"{old}--pymupdf4llm-1.20|cfg-OLDHASH.json").exists()
     # Idempotent.
-    assert (
-        cache.promote_current_engine_entries(current_sig="tex-v1", current_cfg_marker="cfg-CURHASH")
-        == 0
-    )
+    assert cache.promote_current_engine_entries(
+        current_sig="tex-v1", current_cfg_marker="cfg-CURHASH"
+    ) == (0, 0)
 
 
 def test_signature_bump_reuses_prior_texture(

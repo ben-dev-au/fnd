@@ -675,9 +675,9 @@ def cache_prune(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
     dry_run: bool = typer.Option(False, "--dry-run", help="List candidates; don't delete."),
 ) -> None:
-    """Remove cache entries from older extractor versions.
+    """Remove cache entries from older texture-engine versions.
 
-    Reads each entry's filename to extract its extractor_signature
+    Reads each entry's filename to extract its texture-signature
     suffix, compares against the current signature, and offers to
     remove the stale ones.
     """
@@ -747,6 +747,6 @@ def cache_info(path: Path) -> None:
     entry = cache.entry_path(key)
     typer.echo(f"path:                 {path}")
     typer.echo(f"sha256:               {sha[:16]}…")
-    typer.echo(f"texture signature:  {sig}")
+    typer.echo(f"texture signature:    {sig}")
     typer.echo(f"cache entry:          {entry}")
     typer.echo(f"status:               {'HIT' if entry.exists() else 'MISS'}")

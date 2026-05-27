@@ -65,6 +65,14 @@ def sha256_file(path: Path, *, chunk_size: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
+def _safe_mtime(path: Path) -> float:
+    """``path.stat().st_mtime`` or 0.0 if the file vanished underneath us."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 class PdfStructureCache:
     """File-backed cache of structured-PDF chunks.
 
@@ -143,11 +151,10 @@ class PdfStructureCache:
         """
         shard_dir = self.root / content_sha256[:2]
         candidates = (
-            sorted(
-                shard_dir.glob(f"{content_sha256}--*.json"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
+            # Guard stat(): an entry can be deleted (cache prune / manual
+            # cleanup) between glob and stat — missing → sorts oldest, the
+            # subsequent get() then misses cleanly rather than crashing.
+            sorted(shard_dir.glob(f"{content_sha256}--*.json"), key=_safe_mtime, reverse=True)
             if shard_dir.exists()
             else []
         )
@@ -159,19 +166,29 @@ class PdfStructureCache:
             self.misses += 1
         return None
 
-    def promote_current_engine_entries(self, *, current_sig: str, current_cfg_marker: str) -> int:
+    def promote_current_engine_entries(
+        self, *, current_sig: str, current_cfg_marker: str
+    ) -> tuple[int, int]:
         """Re-key entries produced by the CURRENT engine but under the old
         signature FORMAT to ``current_sig``. An entry counts as current-engine
         iff its signature contains ``current_cfg_marker`` (e.g. ``cfg-0cc6be52``);
         only the key format changed, so it is NOT outdated. Entries from older
         configs are left untouched so they correctly read as outdated.
-        Idempotent; returns the number promoted. The signature strings are
-        passed in so this module stays independent of :mod:`fnd.extract.pdf`.
+
+        Idempotent. Returns ``(migrated, failed)``. The caller should only
+        mark the migration done (write its sentinel) when ``failed == 0`` —
+        otherwise a partial promotion would permanently misclassify the
+        un-promoted current-engine entries as outdated. The signature strings
+        are passed in so this module stays independent of
+        :mod:`fnd.extract.pdf`.
         """
         if not self.root.exists():
-            return 0
+            return 0, 0
         migrated = 0
-        for entry in self.root.rglob("*.json"):
+        failed = 0
+        # Materialise the listing first: renaming/unlinking entries while
+        # iterating the rglob generator can skip or double-visit files.
+        for entry in list(self.root.rglob("*.json")):
             stem = entry.stem
             if "--" not in stem:
                 continue
@@ -184,10 +201,12 @@ class PdfStructureCache:
                     entry.unlink()  # dedup: current already present
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
-            with contextlib.suppress(OSError):
+            try:
                 os.replace(entry, target)
                 migrated += 1
-        return migrated
+            except OSError:
+                failed += 1
+        return migrated, failed
 
     def put(self, key: str, chunks: list[Chunk]) -> None:
         """Write `chunks` to the cache atomically.

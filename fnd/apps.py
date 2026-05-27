@@ -315,6 +315,12 @@ on run argv
         activate
         open POSIX file pdfPath
     end tell
+    -- Retry until the TARGET document is actually frontmost — not merely
+    -- present. `open` may not have created/fronted its window yet, and a
+    -- window matched by name can be the wrong one when two open PDFs share a
+    -- filename, so each pass re-fronts the exact-path match and then confirms
+    -- `front document` IS the target. `matched` therefore means "our document
+    -- is front", which is exactly the precondition for paging it.
     set matched to false
     set tries to 0
     repeat until tries > 30
@@ -322,20 +328,23 @@ on run argv
             tell application "Preview"
                 repeat with d in documents
                     if (path of d) is pdfPath then
-                        set theName to name of d
                         try
-                            set index of (first window whose name is theName) to 1
+                            set index of (first window whose name is (name of d)) to 1
                         end try
-                        set matched to true
                         exit repeat
                     end if
                 end repeat
+                if (exists front document) and ((path of front document) is pdfPath) then
+                    set matched to true
+                end if
             end tell
         end try
         if matched then exit repeat
         delay 0.1
         set tries to tries + 1
     end repeat
+    -- Fail-safe: only page when our document is confirmed front. Otherwise
+    -- the PDF still opened (on page 1) — better than paging the wrong one.
     if matched then
         tell application "Preview" to activate
         delay 0.15
@@ -373,7 +382,7 @@ def _handle_preview(req: OpenRequest) -> int:
     # Canonicalise the path for the page-jump: Preview reports a document's
     # path resolved (``/tmp`` → ``/private/tmp``, symlinks followed), so the
     # script's exact-path match only lands if we hand it the realpath too.
-    target = str(Path(str(req.path)).resolve())
+    target = str(req.path.resolve())
     return subprocess.run(
         ["osascript", "-e", _PREVIEW_PAGE_JUMP_SCRIPT, target, str(req.page)],
         check=False,

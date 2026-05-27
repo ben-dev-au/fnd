@@ -1509,11 +1509,14 @@ class FNDApp(App[None]):
             # Only when a cache actually exists — never create the dir for a
             # fresh user (a freshly-written entry is already tex-vN anyway).
             if _cache.root.exists() and not _sentinel.exists():
-                _cache.promote_current_engine_entries(
+                _migrated, _failed = _cache.promote_current_engine_entries(
                     current_sig=texture_signature(),
                     current_cfg_marker=f"cfg-{_config_hash()}",
                 )
-                _sentinel.write_text(texture_signature())
+                # Mark done only on a clean pass; a partial promotion retries
+                # next launch rather than stranding entries as "outdated".
+                if _failed == 0:
+                    _sentinel.write_text(texture_signature())
 
         # Route fnd.apps notices through an in-app modal for AX issues, and
         # through Textual.notify for everything else. Without this hook, the

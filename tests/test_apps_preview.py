@@ -20,11 +20,14 @@ def test_preview_script_uses_exact_path_match() -> None:
     assert "(path of d) is pdfPath" in s  # exact match
 
 
-def test_preview_script_failsafe_guards_keystrokes() -> None:
-    """Page-jump keystrokes must be gated on a confirmed match, and come
-    after the guard — never page a document we couldn't confirm is front."""
+def test_preview_script_gates_keystrokes_on_front_document() -> None:
+    """`matched` must be set from confirming the front document IS our target
+    (defends against window-name collisions + open/window timing), and the
+    keystrokes must be gated by it — never page a doc we can't confirm front."""
     s = apps._PREVIEW_PAGE_JUMP_SCRIPT
-    assert "if matched then" in s
+    assert "path of front document" in s
+    # The front-document confirmation drives `matched`, which gates keystrokes.
+    assert s.index("path of front document") < s.index('keystroke "g"')
     assert s.index("if matched then") < s.index('keystroke "g"')
 
 
