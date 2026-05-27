@@ -141,7 +141,9 @@ def tui(
 
     warm_pool()
 
-    FNDApp(collection=collection, initial_query=initial_query, config=cfg).run()
+    # mouse=True keeps the driver able to re-enable capture at runtime; the
+    # app disables it on mount unless defaults.clickable_interface is set.
+    FNDApp(collection=collection, initial_query=initial_query, config=cfg).run(mouse=True)
 
 
 @app.command()
