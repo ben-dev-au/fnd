@@ -4,6 +4,8 @@ driver's mouse-reporting hooks (guarded for headless/test drivers)."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from fnd.config import Config, Defaults
@@ -54,3 +56,48 @@ async def test_mount_applies_configured_mode() -> None:
     app = FNDApp(config=Config(defaults=Defaults(clickable_interface=True)))
     async with app.run_test(size=(80, 24)):
         assert app._clickable_interface is True
+
+
+def test_toggle_getter_reads_config() -> None:
+    from fnd.tui.menu import _get_clickable_interface
+
+    app = FNDApp(config=Config())
+    assert _get_clickable_interface(app) is False
+    app._config = Config(defaults=Defaults(clickable_interface=True))
+    assert _get_clickable_interface(app) is True
+
+
+def test_toggle_setter_persists_and_applies_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from fnd.config import load
+    from fnd.tui.menu import _set_clickable_interface
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text("", encoding="utf-8")
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+
+    applied: list[bool] = []
+    app = SimpleNamespace(
+        _config=load(cfg_path),
+        _apply_mouse_capture=lambda v: applied.append(v),
+        _resolve_profile=lambda: None,
+        _refresh_status=lambda: None,
+    )
+    _set_clickable_interface(app, True)  # type: ignore[arg-type]
+
+    assert applied == [True]
+    assert load(cfg_path).defaults.clickable_interface is True
+
+
+def test_preferences_menu_includes_clickable_interface_toggle() -> None:
+    from fnd.tui.menu import KIND_TOGGLE, _provider_preferences
+
+    items = _provider_preferences(FNDApp(config=Config()))
+    row = next(i for i in items if i.id == "pref.clickable_interface")
+    assert row.kind == KIND_TOGGLE
+    assert row.label == "Clickable Interface"
+    assert "[green]" in row.description
+    assert "[red]" in row.description
