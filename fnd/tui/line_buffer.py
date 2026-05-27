@@ -270,9 +270,14 @@ class LineBufferPreview(ScrollView, can_focus=True):
     }
     """
 
-    def __init__(self, *, id: str | None = None, wrap: bool = False) -> None:
+    def __init__(
+        self, *, id: str | None = None, wrap: bool = False, show_match_markers: bool = True
+    ) -> None:
         super().__init__(id=id)
         self._fv: FileView | None = None
+        # In-development scrollbar match highlighting. False suppresses the
+        # marker feed (the bar still scrolls; it just paints no markers).
+        self._show_match_markers: bool = show_match_markers
         # Visual-row Strips actually painted by ``render_line``. With
         # wrap disabled this is parallel to ``fv.lines``; with wrap
         # enabled one logical line can produce several visual rows.
@@ -381,10 +386,23 @@ class LineBufferPreview(ScrollView, can_focus=True):
             self.refresh()
         self._apply_pending_scroll()
 
+    def _markers_enabled(self) -> bool:
+        """Live read of the in-development toggle. Prefers the host app's
+        ``_scrollbar_markers_enabled`` (so an in-menu toggle applies to the
+        reused shared buffer); falls back to the constructor value for test
+        harnesses whose App isn't the FNDApp."""
+        app_flag = getattr(self.app, "_scrollbar_markers_enabled", None)
+        return self._show_match_markers if app_flag is None else bool(app_flag)
+
     def _refresh_match_scrollbar(self) -> None:
         bar = self.vertical_scrollbar
-        if isinstance(bar, MatchAwareScrollBar):
-            bar.set_match_lines(self.match_lines, self.visual_line_count)
+        if not isinstance(bar, MatchAwareScrollBar):
+            return
+        if not self._markers_enabled():
+            # Clear stale markers so a live toggle-off takes effect.
+            bar.set_match_lines([], self.visual_line_count)
+            return
+        bar.set_match_lines(self.match_lines, self.visual_line_count)
 
     def clear(self) -> None:
         """Empty the buffer."""

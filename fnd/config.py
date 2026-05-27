@@ -318,6 +318,12 @@ class Defaults(BaseModel):
     # but doesn't write new ones — fast flat-text refresh, useful on
     # battery or slow CPUs.
     cache_at_index_time: bool = True
+    # IN DEVELOPMENT — paint match-position markers on the preview
+    # scrollbar track. Accurate on the flat path (PDF/txt) and small,
+    # fully-mounted markdown; large markdown lazy-mounts a chunk window
+    # so its scroll track spans only part of the file and markers drift.
+    # Default off until that's resolved; opt in to preview the feature.
+    scrollbar_match_highlight: bool = False
 
 
 class Config(BaseModel):
