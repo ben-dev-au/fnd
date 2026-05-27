@@ -1492,10 +1492,10 @@ class FNDApp(App[None]):
         # TUI from launching.
         with contextlib.suppress(Exception):
             self._maybe_resume_indexer()
-        # Surface pre-upgrade cache entries on launch (Slice 6 of the
-        # indexing-and-texture-ui plan). Deferred via call_later so any
-        # in-flight resume modal lands first.
-        self.call_later(self._maybe_show_upgrade_banner)
+        # Pre-upgrade cache entries (PDFs textured on an older extractor
+        # version) are surfaced passively in Settings → Indexing & PDF
+        # Texture, not via a startup popup — re-texturising is a
+        # preview-quality refresh the user opts into, never urgent.
 
     # ── Ranking profile (§7) ──────────────────────────────────────
 
@@ -4331,63 +4331,6 @@ class FNDApp(App[None]):
                 config=col_cfg,
                 texturise_override=texturise_override,
             )
-
-    def _maybe_show_upgrade_banner(self) -> None:
-        """Push the texturising-upgrade banner when (a) the engine is
-        installed, (b) the on-disk cache holds entries from a previous
-        texturising signature, and (c) the user has not already
-        dismissed this exact (old, current) pair."""
-        import contextlib as _ctx
-
-        try:
-            from fnd.extract.pdf import extractor_signature
-
-            # The combined Indexing & PDF Texture screen's status row
-            # already shows engine state; mirror the same gate so the
-            # banner only fires when texturising can actually be
-            # re-run.
-            from fnd.extras import EXTRAS, is_extra_installed
-            from fnd.tui.upgrade_banner import (
-                UpgradeBannerScreen,
-                count_pre_upgrade_entries,
-                is_dismissed,
-            )
-
-            extra = EXTRAS.get("pdf-structure")
-            if extra is None or not is_extra_installed(extra):
-                return
-            n_entries, old_sig = count_pre_upgrade_entries()
-            if n_entries == 0 or old_sig is None:
-                return
-            current = extractor_signature()
-            if is_dismissed(old_sig, current):
-                return
-
-            def _after(choice: str | None) -> None:
-                if choice == "now":
-                    # Re-run Update across every collection with
-                    # texturising forced on; the cache short-circuits
-                    # already-textured PDFs so the cost is one
-                    # texturising pass per affected PDF.
-                    with _ctx.suppress(Exception):
-                        from fnd.tui.menu import _run_update_all_index_and_texturise
-
-                        _run_update_all_index_and_texturise(self)
-                # "later" and "dismiss" are no-ops here; "dismiss"
-                # already persisted inside the screen.
-
-            self.push_screen(
-                UpgradeBannerScreen(
-                    n_entries=n_entries,
-                    old_sig=old_sig,
-                    current_sig=current,
-                ),
-                _after,
-            )
-        except Exception:
-            # Banner is opt-in surfacing; never block the TUI from
-            # launching because of a counting / parsing glitch.
-            pass
 
     def _maybe_resume_indexer(self) -> None:
         """If a state file from a previous run exists, restart the

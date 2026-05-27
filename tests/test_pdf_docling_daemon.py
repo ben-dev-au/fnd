@@ -208,3 +208,40 @@ def test_needs_docling_fallback_skips_when_no_picture_marker() -> None:
 
     md = "## TABLE 5-2\n\n| col | val |\n|---|---|\n| a | 1 |"
     assert pdf._needs_docling_fallback(cast(pymupdf.Page, FakePage()), md) is False
+
+
+def test_docling_helper_forces_cpu_and_mps_fallback() -> None:
+    """docling's layout model hits float64 ops MPS can't run ("Cannot
+    convert a MPS Tensor to float64"), aborting the page on Apple
+    Silicon. The helper runs in the docling-slim venv (not importable
+    here), so guard the fix by source inspection: it must force CPU and
+    enable the MPS→CPU fallback."""
+    from fnd.extract import _docling_helper
+
+    src = Path(_docling_helper.__file__).read_text(encoding="utf-8")
+    assert "PYTORCH_ENABLE_MPS_FALLBACK" in src
+    assert 'device="cpu"' in src
+
+
+def test_extract_page_md_pins_use_ocr_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    """pymupdf-layout defaults use_ocr=True, which OCRs image pages
+    inline and suppresses the picture-omitted markers the docling
+    fallback routes on. Extraction must pin use_ocr=False so routing
+    can fire."""
+    pymupdf4llm = pytest.importorskip("pymupdf4llm")
+    from fnd.extract import pdf
+
+    captured: dict[str, object] = {}
+
+    def fake_to_markdown(_doc: object, **kwargs: object) -> list[dict[str, str]]:
+        captured.update(kwargs)
+        return [{"text": "# ok"}]
+
+    monkeypatch.setattr(pymupdf4llm, "to_markdown", fake_to_markdown)
+    doc = pymupdf.open()
+    doc.new_page()
+    try:
+        assert pdf._extract_page_md(doc, 0) == "# ok"
+    finally:
+        doc.close()
+    assert captured.get("use_ocr") is False

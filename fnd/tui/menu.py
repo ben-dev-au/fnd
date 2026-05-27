@@ -1613,6 +1613,35 @@ def _provider_pdf_texture(_app: FNDApp) -> tuple[MenuItem, ...]:
             value_getter=_summary_cache_update,
             keywords=("cache", "texture", "texturise", "flat", "warm", "populate"),
         ),
+        MenuItem(
+            id="pdf_texture.retexturise_outdated",
+            label="Re-texturise outdated documents",
+            description=(
+                "Re-run texturising on PDFs that were textured by an older "
+                "version of the engine (a new pymupdf4llm/docling version, or "
+                "a settings change). Runs an Update-index pass with "
+                "texturising forced on; only the preview rendering changes "
+                "(search ranking is unaffected — the searchable text is the "
+                "same). Already-current PDFs are skipped (cache hit), so the "
+                "cost is one texturising pass per outdated PDF. Opt-in and "
+                "safe to run anytime — existing texturings keep working until "
+                "you do."
+            ),
+            kind=KIND_ACTION,
+            action_label="Run",
+            external=_run_update_all_index_and_texturise,
+            value_getter=_summary_retexturise_outdated,
+            keywords=(
+                "retexturise",
+                "re-texturise",
+                "outdated",
+                "older",
+                "upgrade",
+                "version",
+                "refresh",
+                "stale",
+            ),
+        ),
         header("Cache", level=2),
         MenuItem(
             id="pdf_texture.cache_size",
@@ -1909,10 +1938,55 @@ def _summary_pdf_texture(app: FNDApp) -> str:
     from fnd.tui.lazy_trailing import PLACEHOLDER, get_or_schedule
 
     engine = "✓ engine on" if _is_pdf_structure_installed() else "✗ engine off"
+    parts = [engine]
     cache_part = get_or_schedule(app, "pdf_texture.summary.cache_short", _cache_size_short)
     if cache_part and cache_part != PLACEHOLDER:
-        return f"{engine} · {cache_part}"
-    return engine
+        parts.append(cache_part)
+    stale_part = get_or_schedule(app, "pdf_texture.summary.stale_short", _stale_count_short)
+    if stale_part and stale_part != PLACEHOLDER:
+        parts.append(stale_part)
+    return " · ".join(parts)
+
+
+def _structured_engine_active() -> bool:
+    """Whether the current extractor actually produces structured output
+    (pymupdf4llm importable). Distinct from _is_pdf_structure_installed(),
+    which tracks the in-app install marker — re-texturisability depends on
+    the live capability that extractor_signature() encodes, so re-texturise
+    counts gate on this. A 'flat' signature means re-texturising would only
+    re-produce flat output, so there's nothing to offer."""
+    from fnd.extract.pdf import extractor_signature
+
+    return not extractor_signature().startswith("flat")
+
+
+def _stale_count_short() -> str:
+    """Compact '⟳ N older' chip when some PDFs were textured on an older
+    engine version; empty otherwise (or when extraction is flat)."""
+    if not _structured_engine_active():
+        return ""
+    from fnd.tui.upgrade_banner import count_pre_upgrade_entries
+
+    n, _ = count_pre_upgrade_entries()
+    return f"⟳ {n} older" if n else ""
+
+
+def _summary_retexturise_outdated(app: FNDApp) -> str:
+    """Trailing for the 'Re-texturise outdated documents' row: how many
+    PDFs were textured on an older extractor version."""
+    from fnd.tui.lazy_trailing import get_or_schedule
+
+    def _compute() -> str:
+        if not _structured_engine_active():
+            return "structured extraction unavailable"
+        from fnd.tui.upgrade_banner import count_pre_upgrade_entries
+
+        n, _ = count_pre_upgrade_entries()
+        return f"{n} on an older version" if n else "all on current version"
+
+    # Distinct key from _summary_stale_entries ("cache.stale_count") — a
+    # shared lazy-trailing key would clobber the other row's value.
+    return get_or_schedule(app, "cache.retexturise_outdated", _compute)
 
 
 def _summary_indexing_pdf_texture(app: FNDApp) -> str:
