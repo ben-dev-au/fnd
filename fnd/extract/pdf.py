@@ -371,6 +371,10 @@ def _extract_page_md(doc: pymupdf.Document, page_index: int) -> str:
                 ignore_images=True,
                 ignore_graphics=False,
                 table_strategy="lines",
+                # Explicit: pymupdf-layout auto-enables use_ocr, which OCRs
+                # image pages inline and suppresses the picture-omitted
+                # markers the docling fallback routes on.
+                use_ocr=False,
             )
     except Exception:
         # pymupdf4llm has stricter input validation than vanilla
@@ -392,6 +396,7 @@ def _config_hash() -> str:
         "ignore_images": True,
         "ignore_graphics": False,
         "table_strategy": "lines",
+        "use_ocr": False,
         "fallback_area_ratio": _FALLBACK_AREA_RATIO,
         "table_label_re": _TABLE_LABEL_RE.pattern,
     }
