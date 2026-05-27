@@ -71,9 +71,19 @@ class DetailStrip(Widget):
     def _render_lines(self) -> tuple[Text, Text]:
         """Pure render — tested directly without mounting the widget."""
         return (
-            Text(self._description) if self._description else Text(""),
+            self._markup(self._description) if self._description else Text(""),
             Text(self._metadata, style="dim") if self._metadata else Text(""),
         )
+
+    @staticmethod
+    def _markup(text: str) -> Text:
+        """Render row descriptions as Rich markup so toggles can colour
+        their effects (e.g. ``[green]+[/]`` / ``[red]-[/]``). Falls back to
+        literal text if the markup is malformed."""
+        try:
+            return Text.from_markup(text)
+        except Exception:
+            return Text(text)
 
     def on_mount(self) -> None:
         self._refresh_strip()
