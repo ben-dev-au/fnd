@@ -695,6 +695,10 @@ class SettingsList(Widget, can_focus=True):
         # from a popped child screen) keep the cursor on the row the user
         # drilled from. Consumed (reset to None) once applied.
         self._pending_cursor_id: str | None = None
+        # Width the rows were last rendered at. Rows are width-dependent
+        # (ellipsis / wrap), so only a width change needs a full rebuild;
+        # height-only or duplicate resizes are skipped. -1 = never rendered.
+        self._last_render_width: int = -1
 
     def compose(self) -> ComposeResult:
         # VerticalScroll (not plain Vertical) so long lists like the
@@ -813,7 +817,13 @@ class SettingsList(Widget, can_focus=True):
             else:
                 row.remove_class("-cursor")
 
-    def on_resize(self, _ev: events.Resize) -> None:
+    def on_resize(self, ev: events.Resize) -> None:
+        # Only a width change affects row rendering; skip height-only or
+        # duplicate resizes so they don't trigger a stray full rebuild
+        # (e.g. a late layout resize landing mid cursor-navigation).
+        if ev.size.width == self._last_render_width:
+            return
+        self._last_render_width = ev.size.width
         self._render_all()
 
     def refresh_values(self) -> None:

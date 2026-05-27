@@ -191,6 +191,16 @@ REGISTRY: tuple[Action, ...] = (
         show_in_footer=False,
     ),
     Action(
+        id="toggle_reading_mode",
+        description="Hide the sidebar so the preview fills the full width. A "
+        "text selection then covers only the preview (clean copy for "
+        "text-to-speech), and it reads distraction-free. Toggle to restore.",
+        default_key="z",
+        command="reading",
+        footer_label="Read",
+        show_in_footer=False,
+    ),
+    Action(
         id="toggle_fuzzy",
         description="Toggle auto-fuzzy matching. Persists to config; "
         "per-term ~N still works when auto-fuzzy is off.",

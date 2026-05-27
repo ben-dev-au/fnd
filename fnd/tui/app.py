@@ -1264,6 +1264,9 @@ class FNDApp(App[None]):
         self._clickable_interface: bool = bool(
             config and getattr(config.defaults, "clickable_interface", False)
         )
+        # Reading mode: hide the sidebar so the preview fills the width for
+        # clean text selection / distraction-free reading. Session-only.
+        self._reading_mode: bool = False
         self._ranking_profile: RankingProfile = self._resolve_profile()
         # Cache of (parent_id) → list[FileChunk] so we don't re-fetch the
         # full document on every cursor move within the same file. Keyed by
@@ -1435,6 +1438,17 @@ class FNDApp(App[None]):
         )
         if callable(hook):
             hook()
+
+    def action_toggle_reading_mode(self) -> None:
+        """Hide the sidebar so the preview fills the full terminal width: a
+        normal text selection then covers only the preview (clean copy for
+        text-to-speech), and it reads distraction-free. Toggle to restore."""
+        self._reading_mode = not self._reading_mode
+        self.query_one("#results_column", Vertical).display = not self._reading_mode
+        if self._reading_mode:
+            self.query_one("#preview_pane", MatchAwareScroll).focus()
+        else:
+            self.query_one("#results_pane", ResultsTree).focus()
 
     def on_mount(self) -> None:
         # Tokyo-night theme: muted blue/teal pastel palette per user request.
