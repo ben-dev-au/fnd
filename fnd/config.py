@@ -52,6 +52,106 @@ def default_config_path() -> Path:
 
 # ── Schema ──────────────────────────────────────────────────────────────────
 
+# Directory basenames pruned at walk descent. Matched by ``name`` only —
+# any directory anywhere in the tree with one of these names is skipped
+# entirely (no scandir into it). Comprehensive because the typical user
+# is a developer with many code trees on disk and indexing build/cache
+# output is never useful. Per-source ``excludes`` still apply on top;
+# users can disable this list with ``defaults.skip_junk_dirs = false``
+# or extend it via ``defaults.extra_junk_dirs``.
+DEFAULT_JUNK_DIRS: frozenset[str] = frozenset(
+    {
+        # Version control
+        ".git",
+        ".hg",
+        ".svn",
+        ".bzr",
+        "_darcs",
+        "CVS",
+        # Node / JavaScript / TypeScript
+        "node_modules",
+        "bower_components",
+        "jspm_packages",
+        ".next",
+        ".nuxt",
+        ".svelte-kit",
+        ".astro",
+        ".docusaurus",
+        ".vitepress",
+        ".vinxi",
+        ".turbo",
+        ".parcel-cache",
+        ".rollup.cache",
+        ".swc",
+        ".yarn",
+        ".pnpm-store",
+        ".npm",
+        ".angular",
+        ".firebase",
+        ".expo",
+        ".expo-shared",
+        ".vercel",
+        ".netlify",
+        # Python
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".pyre",
+        ".pytype",
+        ".tox",
+        ".nox",
+        ".eggs",
+        ".hypothesis",
+        "venv",
+        ".venv",
+        "env",
+        ".virtualenv",
+        "virtualenv",
+        ".ipynb_checkpoints",
+        # Ruby
+        ".bundle",
+        # Java / Kotlin / Gradle / Maven
+        ".gradle",
+        ".m2",
+        # Swift / iOS / macOS dev
+        "Pods",
+        "DerivedData",
+        "Carthage",
+        ".swiftpm",
+        "xcuserdata",
+        # C / C++ / CMake
+        "CMakeFiles",
+        # Editors / IDEs
+        ".idea",
+        ".vs",
+        ".vscode-test",
+        ".fleet",
+        ".history",
+        # Infrastructure / DevOps
+        ".terraform",
+        ".terragrunt-cache",
+        ".pulumi",
+        ".serverless",
+        # Tooling caches
+        ".husky",
+        ".changeset",
+        ".sass-cache",
+        ".cache",
+        # Mobile
+        ".dart_tool",
+        ".metro-cache",
+        # macOS Finder / system clutter
+        ".Spotlight-V100",
+        ".fseventsd",
+        ".Trashes",
+        ".DocumentRevisions-V100",
+        ".TemporaryItems",
+        ".AppleDouble",
+    }
+)
+
+
 # Indexer-supported file types in display order. Used by the Add Source /
 # Add Collection wizards to render the Includes multi-select. Keep this in
 # sync with the kinds the extractor pipeline handles.
@@ -324,6 +424,15 @@ class Defaults(BaseModel):
     # so its scroll track spans only part of the file and markers drift.
     # Default off until that's resolved; opt in to preview the feature.
     scrollbar_match_highlight: bool = False
+    # Prune well-known dev/cache directories (node_modules, __pycache__,
+    # .venv, Pods, …) at walk descent. The default set is
+    # :data:`DEFAULT_JUNK_DIRS`. Disable to restore the legacy walk where
+    # those directories are only filtered via per-source ``excludes``.
+    skip_junk_dirs: bool = True
+    # Additional directory basenames to prune at walk descent on top of
+    # :data:`DEFAULT_JUNK_DIRS`. Matched by basename only — e.g.
+    # ``["build", "dist"]`` skips any ``build/`` or ``dist/`` subtree.
+    extra_junk_dirs: list[str] = Field(default_factory=list)
 
 
 class Config(BaseModel):
@@ -410,7 +519,20 @@ class Config(BaseModel):
 # just yields no results from Tantivy. Keeping the DSL permissive
 # means a typo'd `c:` token doesn't silently get dropped from the
 # query.
-_COLLECTION_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$")
+_COLLECTION_NAME_MAX = 64
+# Characters that would break a downstream consumer of the name. ``/`` and
+# ``\`` corrupt the per-collection state file path; quotes collide with
+# TOML / shell / DSL quoting; backtick is a shell metacharacter; ``,`` is
+# the ``c:<a>,<b>`` DSL list separator (a name containing ``,`` would be
+# ambiguous in the bare form); control characters and DEL are never
+# useful. Spaces are deliberately allowed — users want collection names
+# like "Soft Eng Textbooks", and the DSL parser supports the quoted form
+# ``c:"name with spaces"`` to reference them.
+_COLLECTION_NAME_FORBIDDEN: frozenset[str] = (
+    frozenset({"/", "\\", '"', "'", "`", ","})
+    | frozenset(chr(c) for c in range(0x20))
+    | frozenset({chr(0x7F)})
+)
 
 
 class InvalidCollectionNameError(ValueError):
@@ -418,15 +540,44 @@ class InvalidCollectionNameError(ValueError):
 
 
 def validate_collection_name(name: str) -> str:
-    """Return ``name`` if it matches the canonical regex, else raise.
+    """Return ``name`` if it's safe for every downstream use, else raise.
 
-    The pattern is intentionally narrow (64 chars max, alphanumeric +
-    underscore + hyphen, must not start with hyphen). Names round-trip
-    safely through TOML, command-line argv, and the ``c:<name>`` DSL
-    shorthand."""
-    if not _COLLECTION_NAME_RE.fullmatch(name):
+    Rules (each enforced with its own error message so the wizard / CLI
+    can surface a specific reason rather than a regex dump):
+
+    - 1 to ``_COLLECTION_NAME_MAX`` (64) characters
+    - first character is an ASCII letter, digit, or underscore — keeps
+      the name away from shell-flag (``-``) and hidden-file (``.``)
+      collisions, and avoids leading whitespace
+    - no trailing whitespace or dot — those are filesystem footguns on
+      macOS/Windows
+    - no path separators, quote characters, backticks, or control chars
+
+    Names round-trip through TOML (tomlkit auto-quotes non-bare keys),
+    the CLI ``-c "name"`` flag, the ``c:"name"`` DSL shorthand, and the
+    per-collection state file path.
+    """
+    if not name:
+        raise InvalidCollectionNameError("collection name must not be empty")
+    if len(name) > _COLLECTION_NAME_MAX:
         raise InvalidCollectionNameError(
-            f"invalid collection name {name!r}: must match {_COLLECTION_NAME_RE.pattern}"
+            f"collection name {name!r} exceeds {_COLLECTION_NAME_MAX} characters"
+        )
+    first = name[0]
+    if not (first.isascii() and (first.isalnum() or first == "_")):
+        raise InvalidCollectionNameError(
+            f"collection name {name!r} must start with an ASCII letter, digit, or underscore "
+            "(not a space, dot, hyphen, or symbol)"
+        )
+    if name[-1] in " .":
+        raise InvalidCollectionNameError(
+            f"collection name {name!r} must not end with whitespace or a dot"
+        )
+    bad = _COLLECTION_NAME_FORBIDDEN & set(name)
+    if bad:
+        shown = ", ".join(sorted(repr(c) for c in bad))
+        raise InvalidCollectionNameError(
+            f"collection name {name!r} contains forbidden character(s): {shown}"
         )
     return name
 

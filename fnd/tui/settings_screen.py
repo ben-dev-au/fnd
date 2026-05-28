@@ -2653,9 +2653,11 @@ class AddCollectionWizard(Screen[None]):
         from fnd.config import (
             EXCLUDES_PRESETS,
             CollectionConfig,
+            InvalidCollectionNameError,
             SourceConfig,
             default_config_path,
             load,
+            validate_collection_name,
             write_collection,
         )
 
@@ -2665,6 +2667,15 @@ class AddCollectionWizard(Screen[None]):
         path = str(self._fields["path"]).strip().strip("'\"")
         if not name:
             self._show_error("Name is required.")
+            return
+        # Validate up-front so the user sees a focused error instead of a
+        # crash from deep inside write_collection if they typed something
+        # the persistence layer would reject (path separators, quotes,
+        # control chars, …). Spaces ARE allowed — see validate_collection_name.
+        try:
+            validate_collection_name(name)
+        except InvalidCollectionNameError as e:
+            self._show_error(str(e))
             return
         if not path:
             self._show_error("Source path is required.")
@@ -2706,11 +2717,15 @@ class AddCollectionWizard(Screen[None]):
         new_collection = CollectionConfig(sources=[source])
         config_path = default_config_path()
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        write_collection(
-            config_path=config_path,
-            name=name,
-            collection=new_collection,
-        )
+        try:
+            write_collection(
+                config_path=config_path,
+                name=name,
+                collection=new_collection,
+            )
+        except InvalidCollectionNameError as e:
+            self._show_error(str(e))
+            return
         app._config = load()  # type: ignore[attr-defined]
         app._refresh_collections_panel()  # type: ignore[attr-defined]
         app._reindex_collection_async(name)  # type: ignore[attr-defined]

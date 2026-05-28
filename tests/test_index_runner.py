@@ -86,8 +86,73 @@ def test_clear_state_idempotent(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_indexer_enumerating_yields_before_blocking_walk(
+    tmp_path: Path,
+) -> None:
+    """The ``enumerating`` event must arrive before the synchronous
+    enumeration runs, so the IndexerScreen modal mounts and the event
+    loop stays responsive. We sentinel ``_enumerate_paths`` so any
+    invocation before the first event is observable, and gate it on a
+    delay so the event loop has a clear opportunity to schedule another
+    coroutine while the thread hops."""
+    import time as _time
+
+    from fnd import index_runner as ir
+
+    real_enumerate = ir._enumerate_paths
+    call_log: list[float] = []
+
+    def slow_enumerate(cfg):  # type: ignore[no-untyped-def]
+        call_log.append(_time.perf_counter())
+        _time.sleep(0.15)  # blocks the worker thread, NOT the loop
+        return real_enumerate(cfg)
+
+    cfg = CollectionConfig(sources=[SourceConfig(path=tmp_path / "empty")])
+    (tmp_path / "empty").mkdir()
+
+    other_ticks: list[float] = []
+    stop = asyncio.Event()
+
+    async def ticker() -> None:
+        while not stop.is_set():
+            other_ticks.append(_time.perf_counter())
+            await asyncio.sleep(0.01)
+
+    tick_task = asyncio.create_task(ticker())
+    first_event_at: float | None = None
+    try:
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(ir, "_enumerate_paths", slow_enumerate)
+            async for ev in run_indexer(
+                config=cfg,
+                collection="test",
+                index_dir=tmp_path / "idx",
+                state_path=tmp_path / "state.toml",
+            ):
+                if first_event_at is None:
+                    first_event_at = _time.perf_counter()
+                    assert ev.kind == "enumerating"
+                if ev.kind == "done":
+                    break
+    finally:
+        stop.set()
+        await tick_task
+
+    assert first_event_at is not None
+    # The ticker had to fire while _enumerate_paths was sleeping; if the
+    # walk had run on the loop, all ticks would have bunched after it.
+    ticks_during_walk = [t for t in other_ticks if first_event_at < t < first_event_at + 0.15]
+    assert ticks_during_walk, "event loop was blocked during the walk hop"
+
+
+@pytest.mark.asyncio
 async def test_run_indexer_emits_expected_events(tmp_path: Path, papers_dir: Path) -> None:
-    """F16: runner emits started → file_processing → file_complete → done."""
+    """F16: runner emits enumerating → started → file_processing → file_complete → done.
+
+    ``enumerating`` is yielded synchronously before the walk hops to a
+    worker thread, so the modal can mount and the UI stays responsive
+    while sources are scanned.
+    """
     state_path = tmp_path / "state.toml"
     cfg = CollectionConfig(sources=[SourceConfig(path=papers_dir)])
 
@@ -101,7 +166,8 @@ async def test_run_indexer_emits_expected_events(tmp_path: Path, papers_dir: Pat
         events.append(ev)
 
     kinds = [e.kind for e in events]
-    assert kinds[0] == "started"
+    assert kinds[0] == "enumerating"
+    assert kinds[1] == "started"
     assert kinds[-1] == "done"
     assert "file_processing" in kinds
     assert "file_complete" in kinds

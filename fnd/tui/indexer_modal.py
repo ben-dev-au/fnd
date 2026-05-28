@@ -542,6 +542,13 @@ class IndexerScreen(ModalScreen[None]):
         except Exception:
             return
 
+        if ev.kind == "enumerating":
+            self._refresh_title()
+            status.update("[dim]Scanning sources…[/]")
+            bar.update(total=100, progress=0)
+            current.update("")
+            self._render_timing(ev.elapsed_s)
+            return
         if ev.kind == "started":
             self._refresh_title()
             status.update(f"[dim]Files:[/]   0 / {ev.files_total}")
@@ -822,7 +829,7 @@ def _short_name(path: str) -> str:
     if not path:
         return "?"
     name = Path(path).name
-    return name if len(name) <= 48 else name[:45] + "…"
+    return name if len(name) <= 68 else name[:65] + "…"
 
 
 def _format_indexed_line(newly: int, already: int, failed: int) -> str:

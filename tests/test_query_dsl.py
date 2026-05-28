@@ -28,6 +28,26 @@ def test_c_shorthand_inside_compound() -> None:
     assert out == 'collection:"papers" AND quark'
 
 
+def test_c_shorthand_double_quoted_name_with_spaces() -> None:
+    out = query_dsl.preprocess('c:"Soft Eng Textbooks" tdd')
+    assert out == 'collection:"Soft Eng Textbooks" tdd'
+
+
+def test_c_shorthand_single_quoted_name_with_spaces() -> None:
+    out = query_dsl.preprocess("c:'Soft Eng Textbooks' tdd")
+    assert out == 'collection:"Soft Eng Textbooks" tdd'
+
+
+def test_c_shorthand_mixed_quoted_and_bare_list() -> None:
+    out = query_dsl.preprocess('c:papers,"Soft Eng",notes tdd')
+    assert out == '(collection:"papers" OR collection:"Soft Eng" OR collection:"notes") tdd'
+
+
+def test_c_shorthand_quoted_list_only() -> None:
+    out = query_dsl.preprocess('c:"a b","c d" tdd')
+    assert out == '(collection:"a b" OR collection:"c d") tdd'
+
+
 # ── Date tokens ──────────────────────────────────────────────────────────
 
 

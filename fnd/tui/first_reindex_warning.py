@@ -57,9 +57,16 @@ def reset_seen() -> None:
 
 
 def count_pdfs(config: CollectionConfig) -> int:
+    from fnd.config import load as _load_config
+    from fnd.walk import resolve_skip_dirs
+
+    try:
+        skip = resolve_skip_dirs(_load_config().defaults)
+    except Exception:
+        skip = resolve_skip_dirs(None)
     n = 0
     for source in config.sources:
-        for path in walk_sources(sources=[source]):
+        for path in walk_sources(sources=[source], skip_dirs=skip):
             if path.suffix.lower() == ".pdf":
                 n += 1
     return n
