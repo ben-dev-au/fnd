@@ -3,31 +3,45 @@
 Textual normally clears ``ISIG`` in termios so ``^C`` arrives as a byte
 on stdin, handled via a regular key binding. That binding can only fire
 when the event loop is responsive — if a coroutine ever blocks the loop
-(slow filesystem walk, hung syscall) the user's ``^C`` does nothing and
-the only escape is killing the terminal emulator.
+(slow filesystem walk, hung syscall, downstream silent crash) the user's
+``^C`` does nothing and the only escape is killing the terminal emulator.
 
 Setting ``TEXTUAL_ALLOW_SIGNALS=1`` tells Textual to leave ``ISIG``
 enabled. The tty driver then converts ``^C`` to a real ``SIGINT``, which
 the kernel delivers to the Python process even while asyncio is wedged.
 We install a Python signal handler that asks the app to exit cleanly on
-the first press, then hard-exits on a second press within a short window
-so a user who really cannot wait can always get out.
+the first press, then unconditionally hard-exits on any subsequent press
+so a wedged loop can never trap the user.
+
+Implementation notes:
+
+- Signal handlers run on the **main thread** (the same thread as the
+  asyncio loop). Textual's ``call_from_thread`` rejects calls from the
+  loop's own thread with ``RuntimeError``. A direct ``app.exit()`` call
+  sets the exit flag but doesn't actually unwind the loop — the loop
+  has to process its own message queue first, and ``post_message``
+  inside a signal-handler frame doesn't reliably do so. The working
+  primitive is ``loop.call_soon_threadsafe(app.exit)``: thread-safe by
+  design, fires the wakeup pipe, and the loop processes the callback
+  on its next iteration.
+- The hard-exit threshold is a count, not a time window. Any second
+  ``^C`` triggers ``os._exit(130)`` regardless of how slowly the user
+  paces presses. A natural double-tap was previously misclassified as
+  "still the first press" if the user paused more than a second.
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
-import math
 import os
 import signal
-import time
 from collections.abc import Generator, Iterator
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from textual.app import App
 
-_HARD_EXIT_WINDOW_S = 1.0
 _HARD_EXIT_CODE = 130  # 128 + SIGINT(2), the conventional value
 _ENV_VAR = "TEXTUAL_ALLOW_SIGNALS"
 
@@ -46,10 +60,12 @@ def install(app: App[Any]) -> Iterator[None]:
     Sets ``TEXTUAL_ALLOW_SIGNALS`` so Textual leaves ``ISIG`` on, then
     installs a SIGINT handler that:
 
-    - First press: schedule ``app.exit()`` on the event loop and arm a
-      ~1 s window.
-    - Second press inside the window: ``os._exit(130)`` so a wedged loop
-      can't trap the user.
+    - First press: call ``app.exit()`` directly (same thread as the loop;
+      ``call_from_thread`` would refuse). The loop unwinds on its next
+      iteration so the terminal restores cleanly.
+    - Any subsequent press: ``os._exit(130)``. No timing window — every
+      ^C after the first hard-exits, so a wedged loop can never trap the
+      user even if they pace presses slowly.
 
     Previous environment + handler are restored on exit so a test or a
     repeated launch in the same Python process behaves like a no-op when
@@ -58,17 +74,24 @@ def install(app: App[Any]) -> Iterator[None]:
     prev_env = os.environ.get(_ENV_VAR)
     os.environ[_ENV_VAR] = "1"
 
-    # ``-inf`` sentinel makes the first press unambiguously "outside the
-    # window" without needing a separate "first?" flag.
-    state: dict[str, float] = {"last_press": -math.inf}
+    state: dict[str, bool] = {"armed": False}
 
     def _handler(_signum: int, _frame: Any) -> None:
-        now = time.monotonic()
-        if now - state["last_press"] <= _HARD_EXIT_WINDOW_S:
+        if state["armed"]:
             _hard_exit()
-        state["last_press"] = now
-        with contextlib.suppress(Exception):
-            app.call_from_thread(app.exit)
+        state["armed"] = True
+        # Same thread as the loop, so call_from_thread errors. Direct
+        # app.exit() sets the flag but doesn't reliably wake the loop.
+        # call_soon_threadsafe is the one path that fires the wakeup
+        # pipe and gets the callback processed promptly.
+        try:
+            loop = asyncio.get_event_loop()
+            loop.call_soon_threadsafe(app.exit)
+        except RuntimeError:
+            # No running loop (app never started, or already exited).
+            # Best-effort direct call so subsequent ^C still hard-exits.
+            with contextlib.suppress(Exception):
+                app.exit()
 
     prev_handler = signal.signal(signal.SIGINT, _handler)
     try:

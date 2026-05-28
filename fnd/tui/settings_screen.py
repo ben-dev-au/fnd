@@ -2260,10 +2260,15 @@ class SourceFormScreen(Screen[None]):
             return
         app._config = load()  # type: ignore[attr-defined]
         app._refresh_collections_panel()  # type: ignore[attr-defined]
-        # Trigger a reindex if the source set materially changed.
-        if self._snapshot != self._fields or self._source_index is None:
-            app._reindex_collection_async(self._collection_name)  # type: ignore[attr-defined]
+        # Trigger a reindex if the source set materially changed. Pop
+        # FIRST so the IndexerScreen lands on top of the menu, not on
+        # top of this wizard.
+        needs_reindex = self._snapshot != self._fields or self._source_index is None
         self.app.pop_screen()
+        if needs_reindex:
+            app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
+                self._collection_name, rebuild=True
+            )
 
     def action_save_add_another(self) -> None:
         """Save the current source, then immediately re-open the form
@@ -2728,12 +2733,17 @@ class AddCollectionWizard(Screen[None]):
             return
         app._config = load()  # type: ignore[attr-defined]
         app._refresh_collections_panel()  # type: ignore[attr-defined]
-        app._reindex_collection_async(name)  # type: ignore[attr-defined]
-        # Pop wizard, then push the new collection's per-collection sub-screen.
+        # Pop wizard FIRST so the IndexerScreen lands on top of the
+        # per-collection menu, not on top of this wizard. Switching the
+        # reindex from the headless _reindex_collection_async worker to
+        # the unified _reindex_with_warning_if_needed path gives the
+        # user the same modal + Cancel + progress they get from
+        # 'Update index now'.
         self.app.pop_screen()
         from fnd.tui.menu import _make_open_collection_screen
 
         _make_open_collection_screen(name)(app)
+        app._reindex_with_warning_if_needed(name, rebuild=True)  # type: ignore[attr-defined]
 
     def action_cycle_focus(self, direction: int) -> None:
         widgets = [
@@ -2874,10 +2884,11 @@ class RenameCollectionScreen(Screen[None]):
         delete_collection(config_path=default_config_path(), name=self._old_name)
         app._config = load()  # type: ignore[attr-defined]
         app._refresh_collections_panel()  # type: ignore[attr-defined]
-        app._reindex_collection_async(new_name)  # type: ignore[attr-defined]
-        # Pop twice — past Rename and the now-stale per-collection screen.
+        # Pop twice — past Rename and the now-stale per-collection
+        # screen — before pushing the IndexerScreen.
         self.app.pop_screen()
         self.app.pop_screen()
+        app._reindex_with_warning_if_needed(new_name, rebuild=True)  # type: ignore[attr-defined]
 
     def action_back(self) -> None:
         self.app.pop_screen()
@@ -3564,16 +3575,18 @@ class DeleteSourceScreen(Screen[None]):
             return
         app._config = load()  # type: ignore[attr-defined]
         app._refresh_collections_panel()  # type: ignore[attr-defined]
-        # Source set changed → trigger reindex (fire-and-forget; same
-        # pattern as the clone flow).
+        # Pop DeleteSourceScreen AND the now-stale SourceFormScreen
+        # below it — land back on the Sources screen — then trigger
+        # the reindex so the IndexerScreen mounts on the right
+        # parent.
+        self.app.pop_screen()
+        self.app.pop_screen()
         import contextlib
 
         with contextlib.suppress(Exception):
-            app._reindex_collection_async(self._collection_name)  # type: ignore[attr-defined]
-        # Pop DeleteSourceScreen AND the now-stale SourceFormScreen
-        # below it — land back on the Sources screen.
-        self.app.pop_screen()
-        self.app.pop_screen()
+            app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
+                self._collection_name, rebuild=True
+            )
 
 
 class CloneSourcePickCollectionScreen(Screen[None]):
@@ -3774,16 +3787,16 @@ class CloneSourcePickSourceScreen(Screen[None]):
             title="Clone source",
             timeout=4,
         )
-        # Trigger reindex of the target since its source set just grew.
-        # Fire-and-forget; failure surfaces via the existing
-        # prompt-and-run UI, never block the pop.
+        # Pop both: step-2 picker, then step-1 picker — then trigger
+        # the reindex so the IndexerScreen mounts on the right parent.
+        self.app.pop_screen()
+        self.app.pop_screen()
         import contextlib
 
         with contextlib.suppress(Exception):
-            app._reindex_collection_async(self._target)  # type: ignore[attr-defined]
-        # Pop both: step-2 picker, then step-1 picker.
-        self.app.pop_screen()
-        self.app.pop_screen()
+            app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
+                self._target, rebuild=True
+            )
 
 
 # ── Public entry points used by the main app ────────────────────────

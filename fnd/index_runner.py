@@ -547,9 +547,31 @@ async def run_indexer(
             local_prior_searcher,
         )
 
-    paths, sizes, pdfs_total, bytes_total, index, writer, prior_searcher = await asyncio.to_thread(
-        _prepare
-    )
+    try:
+        (
+            paths,
+            sizes,
+            pdfs_total,
+            bytes_total,
+            index,
+            writer,
+            prior_searcher,
+        ) = await asyncio.to_thread(_prepare)
+    except Exception as e:
+        # Without this backstop a LockBusy (concurrent indexer on the
+        # same index_dir) or any other _prepare failure would kill the
+        # drive_indexer task silently and leave the IndexerScreen frozen
+        # at "Scanning sources…" forever. Emit a file_error so the
+        # modal shows the reason, then a terminal cancelled so it
+        # transitions out of the enumerating state and the user can
+        # close it.
+        yield _emit(
+            "file_error",
+            current_file="(setup)",
+            error=f"Could not start indexer: {e}",
+        )
+        yield _emit("cancelled")
+        return
     state.total_files = len(paths)
     state.pdfs_total = pdfs_total
     save_state(state_path, state)

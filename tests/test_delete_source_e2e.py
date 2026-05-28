@@ -92,11 +92,13 @@ async def test_delete_modal_confirm_removes_source_and_lands_above(
     )
 
     app = FNDApp(index_dir=built_index)
-    # Suppress the async reindex side-effect so the test stays hermetic.
+    # Suppress the reindex side-effect so the test stays hermetic.
+    # Wizards now route through _reindex_with_warning_if_needed so the
+    # user sees the IndexerScreen; stub it to a no-op for this test.
     monkeypatch.setattr(
         FNDApp,
-        "_reindex_collection_async",
-        lambda self, name: None,
+        "_reindex_with_warning_if_needed",
+        lambda self, name, **kwargs: None,
     )
 
     async with app.run_test() as pilot:
