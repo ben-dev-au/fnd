@@ -1278,15 +1278,10 @@ class FNDApp(App[None]):
         # collection's ``ranking_profile`` field; default profile (all-zero)
         # is the BM25 identity, so the no-config case is unchanged.
         self._config = config
-        # Interface mode: when False (default) the terminal owns text
-        # selection (drag-select, right-click Copy, ⌘C, Speak-selection);
-        # when True Textual captures the mouse for click/scroll. Applied on
-        # mount and live-toggled from settings.
-        self._clickable_interface: bool = bool(
-            config and getattr(config.defaults, "clickable_interface", False)
-        )
         # Reading mode: hide the sidebar so the preview fills the width for
-        # clean text selection / distraction-free reading. Session-only.
+        # clean text selection / distraction-free reading. Session-only;
+        # owns mouse capture (off while reading so the terminal handles
+        # drag-select, right-click Copy, ⌘C, macOS Speak-selection).
         self._reading_mode: bool = False
         self._ranking_profile: RankingProfile = self._resolve_profile()
         # Cache of (parent_id) → list[FileChunk] so we don't re-fetch the
@@ -1449,14 +1444,12 @@ class FNDApp(App[None]):
         yield Static("", id="footer_hints")
 
     def _apply_mouse_capture(self, on: bool) -> None:
-        """Enable/disable terminal mouse reporting at runtime.
-
-        OFF (default) hands selection back to the terminal — drag-select,
-        right-click Copy, ⌘C and macOS Speak-selection all work as in any
-        normal terminal app. ON captures the mouse for click/scroll and
-        disables that native selection. Guarded for headless/test drivers
-        that lack the private hooks."""
-        self._clickable_interface = on
+        """Toggle terminal mouse reporting at runtime. Called only on Reading
+        View entry/exit: OFF hands selection back to the terminal so
+        drag-select, right-click Copy, ⌘C and macOS Speak-selection work like
+        any normal terminal app; ON restores the default clickable interface
+        (click-to-focus, hover wheel-scroll, scrollbar drag). Guarded for
+        headless/test drivers that lack the private hooks."""
         driver = getattr(self, "_driver", None)
         hook = getattr(
             driver,
@@ -1467,14 +1460,19 @@ class FNDApp(App[None]):
             hook()
 
     def action_toggle_reading_mode(self) -> None:
-        """Hide the sidebar so the preview fills the full terminal width: a
-        normal text selection then covers only the preview (clean copy for
-        text-to-speech), and it reads distraction-free. Also drops the
-        preview border/padding so the frame isn't copied. Toggle to restore."""
+        """Hide the sidebar so the preview fills the full terminal width and
+        release mouse capture: a normal terminal text selection then covers
+        only the preview (clean copy for text-to-speech, ⌘C, right-click
+        Copy), and it reads distraction-free. Also drops the preview
+        border/padding so the frame isn't copied. Toggle to restore."""
         self._reading_mode = not self._reading_mode
         self.query_one("#results_column", Vertical).display = not self._reading_mode
         preview = self.query_one("#preview_pane", MatchAwareScroll)
         preview.set_class(self._reading_mode, "-reading")
+        # Hand the terminal back its mouse so native selection / TTS work
+        # inside reading view; restore capture (and thus hover-scroll /
+        # click-to-focus) on exit.
+        self._apply_mouse_capture(not self._reading_mode)
         if self._reading_mode:
             preview.focus()
         else:
@@ -1484,10 +1482,6 @@ class FNDApp(App[None]):
     def on_mount(self) -> None:
         # Tokyo-night theme: muted blue/teal pastel palette per user request.
         self.theme = "tokyo-night"
-        # Apply the configured interface mode. Launch keeps mouse=True so the
-        # driver can re-enable capture later (see cli.run); disable it here
-        # for the keyboard-first, text-selectable default.
-        self._apply_mouse_capture(self._clickable_interface)
         import asyncio as _asyncio
 
         self._prefetch_sink_queue = _asyncio.Queue()

@@ -141,8 +141,9 @@ def tui(
 
     warm_pool()
 
-    # mouse=True keeps the driver able to re-enable capture at runtime; the
-    # app disables it on mount unless defaults.clickable_interface is set.
+    # mouse=True is Textual's default clickable interface (click-to-focus,
+    # hover wheel-scroll); Reading View (`z`) flips it off for native
+    # selection/copy/TTS and back on when exited.
     FNDApp(collection=collection, initial_query=initial_query, config=cfg).run(mouse=True)
 
 
