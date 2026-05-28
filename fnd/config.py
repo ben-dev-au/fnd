@@ -318,12 +318,6 @@ class Defaults(BaseModel):
     # but doesn't write new ones — fast flat-text refresh, useful on
     # battery or slow CPUs.
     cache_at_index_time: bool = True
-    # Capture the mouse for a clickable interface (click-to-focus, wheel
-    # scroll, scrollbar drag). OFF by default so the terminal owns text
-    # selection — drag-select, right-click Copy, ⌘C and macOS
-    # Speak-selection all work like any normal terminal app. ON trades
-    # that native selection away for mouse interaction.
-    clickable_interface: bool = False
     # IN DEVELOPMENT — paint match-position markers on the preview
     # scrollbar track. Accurate on the flat path (PDF/txt) and small,
     # fully-mounted markdown; large markdown lazy-mounts a chunk window
