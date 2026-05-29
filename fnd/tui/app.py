@@ -1399,6 +1399,10 @@ class FNDApp(App[None]):
         # arms an anchor; mount/finalize events reconcile against it (idempotent
         # → the formerly racing scroll sites collapse to one target).
         self._preview_scroll = PreviewScrollController(select_strategy=self._select_scroll_strategy)
+        # Set around the controller's own structural scroll so the resulting
+        # scroll-watcher trip isn't mistaken for a user scroll and doesn't
+        # self-release the anchor.
+        self._preview_scroll_reconciling: bool = False
         # The parent_id whose chunks are currently mounted in the preview
         # pane (so we don't re-mount when cursor moves within the same file).
         self._preview_parent_id: str | None = None
@@ -3618,7 +3622,7 @@ class FNDApp(App[None]):
             # user reports.
             self._refresh_status()
 
-    def _schedule_preview_lazy_mount_check(self) -> None:
+    def _schedule_preview_lazy_mount_check(self, *, user_initiated: bool = False) -> None:
         """Debounced entry point. Every scroll change re-arms a short
         timer; only the *last* scroll in a burst actually runs the
         check. Coalesces programmatic anchor scrolls (which fire one or
@@ -3627,6 +3631,17 @@ class FNDApp(App[None]):
         navigation's own scroll-to-widget and lazy-mount's compensate."""
         import contextlib
 
+        # A genuine user scroll (pane focused, and not one of the controller's
+        # own reconcile scrolls) hands scroll control back to the user: release
+        # the anchor so lazy-mount-on-scroll resumes. Programmatic scrolls from
+        # navigation / container swaps trip this watcher too, but with the
+        # results tree focused, so they don't release.
+        if (
+            user_initiated
+            and self._preview_scroll.is_armed
+            and not self._preview_scroll_reconciling
+        ):
+            self._preview_scroll.release()
         if self._lazy_mount_check_timer is not None:
             with contextlib.suppress(Exception):
                 self._lazy_mount_check_timer.stop()  # type: ignore[attr-defined]
@@ -3655,10 +3670,13 @@ class FNDApp(App[None]):
         behind when the user jumps between matches get filled
         progressively, not just the chunks past the absolute max/min
         mounted index."""
-        import time
-
         self._lazy_mount_check_timer = None
-        if time.monotonic() < self._lazy_mount_suppressed_until:
+        # While the scroll controller is armed (a navigation is still
+        # settling) it owns the preview position; user-scroll-driven lazy
+        # mount stays suppressed until the user takes control or the document
+        # finishes mounting (both call release()). State-based, so it can't
+        # expire mid-settle the way the old time gate did.
+        if self._preview_scroll.is_armed:
             return
         container = self._active_preview
         if container is None:
@@ -4160,6 +4178,12 @@ class FNDApp(App[None]):
 
     def active_flat_buffer(self) -> LineBufferPreview | None:
         return self._active_flat_buffer
+
+    def begin_reconcile_scroll(self) -> None:
+        self._preview_scroll_reconciling = True
+
+    def end_reconcile_scroll(self) -> None:
+        self._preview_scroll_reconciling = False
 
     def _select_scroll_strategy(self) -> ScrollStrategy | None:
         """Pick the active preview's scroll strategy: the flat line-buffer when

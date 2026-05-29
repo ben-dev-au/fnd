@@ -103,7 +103,10 @@ class _FakeHost:
     def effective_match_spec(self) -> MatchSpec:
         return MatchSpec()
 
-    def suppress_lazy_mount_briefly(self, duration: float = 0.4) -> None:
+    def begin_reconcile_scroll(self) -> None:
+        return None
+
+    def end_reconcile_scroll(self) -> None:
         return None
 
     def call_after_refresh(self, callback: object, *args: object, **kwargs: object) -> object:

@@ -78,7 +78,8 @@ class StructuralHost(Protocol):
 
     def preview_pane(self) -> VerticalScroll: ...
     def effective_match_spec(self) -> MatchSpec: ...
-    def suppress_lazy_mount_briefly(self, duration: float = 0.4) -> None: ...
+    def begin_reconcile_scroll(self) -> None: ...
+    def end_reconcile_scroll(self) -> None: ...
     def call_after_refresh(
         self, callback: Callable[..., Any], *args: Any, **kwargs: Any
     ) -> object: ...
@@ -185,28 +186,33 @@ class StructuralScrollStrategy:
                 f"target={type(target).__name__} path={path}"
             )
         pane = self._host.preview_pane()
-        # Brief gate so the resulting watcher trip doesn't fire a lazy
-        # mount that competes with this scroll's anchor.
-        self._host.suppress_lazy_mount_briefly()
         # Drop the match ~a quarter down the viewport so the lines above it
         # give context, instead of pinning it to the top line — but only when
         # we actually landed on a match (not a bare chunk-top navigation).
         margin = int(pane.size.height * margin_from) if (first_match_seen or fallback_fired) else 0
-        # A match inside a table renders as a single full-height DataTable
-        # (one Rich render, no per-cell widgets and no internal scroll), so
-        # scroll_to_widget would only reach the table's top. Scroll the pane
-        # to the matched cell's region instead so a match in a lower row is
-        # actually revealed.
-        if not self._scroll_pane_to_table_cell(pane, target, margin):
-            # Map the target widget's screen region into the pane's scrollable
-            # content space and scroll there in one shot. (Reading scroll_offset
-            # back after scroll_to_widget to apply the margin races a cold
-            # render — scroll_to_widget hasn't committed the offset yet, so the
-            # nudge lands on a stale, wrong position.)
-            region = target.region.translate(
-                pane.scroll_offset - pane.scrollable_content_region.offset
-            )
-            self._scroll_pane_to_match_region(pane, region, margin)
+        # Flag this as the controller's own scroll so the resulting scroll-
+        # watcher trip isn't mistaken for a user scroll and doesn't self-release
+        # the anchor.
+        self._host.begin_reconcile_scroll()
+        try:
+            # A match inside a table renders as a single full-height DataTable
+            # (one Rich render, no per-cell widgets and no internal scroll), so
+            # scroll_to_widget would only reach the table's top. Scroll the pane
+            # to the matched cell's region instead so a match in a lower row is
+            # actually revealed.
+            if not self._scroll_pane_to_table_cell(pane, target, margin):
+                # Map the target widget's screen region into the pane's
+                # scrollable content space and scroll there in one shot.
+                # (Reading scroll_offset back after scroll_to_widget to apply
+                # the margin races a cold render — scroll_to_widget hasn't
+                # committed the offset yet, so the nudge lands on a stale,
+                # wrong position.)
+                region = target.region.translate(
+                    pane.scroll_offset - pane.scrollable_content_region.offset
+                )
+                self._scroll_pane_to_match_region(pane, region, margin)
+        finally:
+            self._host.end_reconcile_scroll()
         self._host.diag_log(
             f"do_scroll seq={focus_chunk_seq} target={type(target).__name__} "
             f"path={path} first_match={first_match_seen} fallback={fallback_fired} "

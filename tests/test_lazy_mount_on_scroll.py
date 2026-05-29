@@ -93,10 +93,10 @@ async def test_scroll_below_boundary_triggers_lazy_mount(cfg: Config, long_md_in
         max_before = max(mounted_before)
         assert max_before < container.total_chunks - 1, "test setup needs unmounted below"
         target = max(0, pane.virtual_size.height - pane.size.height)
-        # Open the suppression gate — initial render armed a 0.4s window
-        # so a single watcher trip would fire-then-bail. With the gate
-        # already past, the next scroll's debounced timer mounts.
-        app._lazy_mount_suppressed_until = 0.0
+        # The navigation anchor stays armed (lazy-mount suppressed) until the
+        # user takes scroll control. release() models that hand-off so the
+        # next scroll's lazy-mount fires.
+        app._preview_scroll.release()
         if pane.scroll_y == target:
             pane.scroll_to(y=max(0, target - 1), animate=False, immediate=True)
         pane.scroll_to(y=target, animate=False, immediate=True)
@@ -154,10 +154,9 @@ async def test_scroll_above_after_settled_triggers_lazy_mount(
         )
         # Force scroll to the absolute top of the mounted region — that
         # puts scroll_y inside the trigger margin so the watcher fires.
-        # Clear the suppression gate first; otherwise the timer set by
-        # this watcher fires inside the post-render 0.4 s window and
-        # bails without arming again.
-        app._lazy_mount_suppressed_until = 0.0
+        # Release the navigation anchor first (the user taking scroll control)
+        # so the armed gate no longer suppresses lazy-mount.
+        app._preview_scroll.release()
         if pane.scroll_y == 0:
             pane.scroll_to(y=1, animate=False, immediate=True)
         pane.scroll_to(y=0, animate=False, immediate=True)
@@ -220,11 +219,12 @@ async def test_gap_between_two_mounted_regions_fills_on_scroll(
             next(c for c in app._chunk_cache[group.parent_id] if c.chunk_seq == gap_lo).chunk_seq
         ]
         target_y = max(0, widget.virtual_region.y + widget.virtual_region.height - pane.size.height)
-        # Open the suppression gate and force the scroll position. If
-        # ``scroll_y`` is already at target_y, ``scroll_to`` is a no-op
-        # and the watcher never fires — pre-nudge to a distinct y so
-        # the second scroll_to actually changes the value.
-        app._lazy_mount_suppressed_until = 0.0
+        # Release the navigation anchor (user taking scroll control) so the
+        # armed gate stops suppressing lazy-mount, then force the scroll
+        # position. If ``scroll_y`` is already at target_y, ``scroll_to`` is a
+        # no-op and the watcher never fires — pre-nudge to a distinct y so the
+        # second scroll_to actually changes the value.
+        app._preview_scroll.release()
         if pane.scroll_y == target_y:
             pane.scroll_to(y=max(0, target_y - 1), animate=False, immediate=True)
         pane.scroll_to(y=target_y, animate=False, immediate=True)

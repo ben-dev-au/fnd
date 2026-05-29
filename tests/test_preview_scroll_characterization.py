@@ -232,33 +232,21 @@ def _coldnav_file(label: str) -> str:
     return "\n".join(lines)
 
 
-@pytest.mark.xfail(reason="cold-nav under-shoot; fixed by scroll controller", strict=False)
 @pytest.mark.asyncio
 async def test_cold_nav_to_prefetched_non_first_file_lands_on_screen(
     tmp_path: Path, tmp_index_dir: Path
 ) -> None:
     """Cold file-node navigation to a prefetched non-first structural file
-    must land the (correctly-resolved) prose match on-screen.
+    lands the (correctly-resolved) prose match on-screen, ~25% down.
 
-    The bug: cold navigation to a prefetched container UNDER-SHOOTS the
-    scroll. ``first_match_block`` resolves to the right prose paragraph (the
-    query term is unique to it and absent from every heading), but the pane
-    lands the chunk top near the viewport edge instead of dropping the match
-    ~25% down, leaving an early-middle match just below the fold. ``scroll_y
-    > 0`` is NOT sufficient — the under-shoot scrolls, just not far enough.
-
-    NOTE — authoritative gate is the real-corpus tmux run. This synthetic
-    exercises the cold-nav-to-prefetched path faithfully and asserts the
-    correct post-fix outcome (the prose match inside the pane viewport), but
-    the under-shoot reproduces here only intermittently: with all above-chunks
-    mounted within the background-fill radius, the scroll commits against a
-    layout whose exact realized heights race the mount, so a synthetic with
-    uniform content heights frequently HEALS to the correct position. The
-    real DPC Wk4 note's specific content heights keep it deterministically
-    broken; that tmux scenario is the binding cold-nav regression check (the
-    later scroll-controller task flips this ``xfail`` to a hard assertion).
-    Marked ``strict=False`` so the net stays green whether this run under-
-    shoots (xfail) or heals (xpass).
+    Regression guard for the cold-nav under-shoot the scroll controller fixes:
+    before the armed gate, navigating to a prefetched container could leave the
+    match just below the fold (the chunk top parked near the viewport edge
+    instead of the match dropped ~25% down) — a mid-settle lazy-mount yanked
+    position after the scroll committed. The armed gate suppresses lazy-mount
+    for the whole settle, so the match stays put. ``scroll_y > 0`` is NOT
+    sufficient — the under-shoot scrolls, just not far enough; we assert the
+    matched prose widget sits inside the pane viewport.
 
     Prefetch must be ON: the autouse conftest fixture pins
     ``preview_prefetch_count=0``; an explicit ``Defaults`` value overrides it.
