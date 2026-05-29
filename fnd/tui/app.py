@@ -627,25 +627,30 @@ def _find_first_match_coord_in_table(
 ) -> tuple[int, int] | None:
     """Return (row, col) of the first cell that contains a query match.
 
-    The match is recomputed from each cell's plain text with the same
-    ``_build_match_spans`` the highlight overlay uses, so the coordinate
-    always points at a cell that is actually highlighted. (Checking the
-    Content's ``spans`` instead is wrong: that set also carries the
-    markdown styling spans — inline code, emphasis, links — so the first
-    *styled* cell wins over the first *matched* one, parking the scroll
-    near the table top while the real match sits rows below.)
+    A cell matches iff one of its words matches ``spec`` — the same
+    ``word_matches`` gate the highlight overlay applies — so the
+    coordinate always points at a cell that is actually highlighted.
+    (Checking the Content's ``spans`` instead is wrong: that set also
+    carries the markdown styling spans — inline code, emphasis, links —
+    so the first *styled* cell wins over the first *matched* one, parking
+    the scroll near the table top while the real match sits rows below.)
+    ``text_has_any_match`` short-circuits on the first matching word and
+    skips the per-char alignment / Span allocation that building the full
+    highlight spans here would waste on every cell of a large table.
 
     Header hits map to row 0 col c as a best-effort approximation since
     the DataTable cursor doesn't address headers directly.
     """
+    from fnd.render import text_has_any_match
+
     if spec.is_empty:
         return None
     for col, h in enumerate(headers):
-        if _build_match_spans(getattr(h, "plain", "") or "", spec):
+        if text_has_any_match(getattr(h, "plain", "") or "", spec):
             return (0, col)
     for r_idx, row in enumerate(rows):
         for c_idx, cell in enumerate(row):
-            if _build_match_spans(getattr(cell, "plain", "") or "", spec):
+            if text_has_any_match(getattr(cell, "plain", "") or "", spec):
                 return (r_idx, c_idx)
     return None
 
@@ -4205,7 +4210,8 @@ class FNDApp(App[None]):
         pane's content space and scroll there. ``target`` may be the DataTable
         itself or the ``FNDMarkdownTableDT`` wrapper (the match scroll resolves
         to the wrapper when the first_match_block is a phantom, never-mounted
-        TD cell). Returns False (caller falls back to scroll_to_widget) for
+        TD cell). Returns False — the caller then scrolls to the target
+        widget's own region via ``_scroll_pane_to_match_region`` — for
         non-table targets or any lookup failure."""
         from textual.widgets import DataTable
 
