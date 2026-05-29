@@ -30,10 +30,16 @@ class ScrollAnchor:
     focus_chunk_seq: int
     intent: str = "first_match"  # or "chunk_top"
     context_fraction: float = 0.25
+    # Smoothly animate the scroll instead of jumping. Set for between-match
+    # navigation within the same file (restores the pre-lazy-load glide);
+    # left False for a fresh file, where the reveal is an instant cut.
+    animate: bool = False
 
 
 class ScrollStrategy(Protocol):
-    def reconcile(self, anchor: ScrollAnchor) -> None: ...
+    def reconcile(
+        self, anchor: ScrollAnchor, on_settled: Callable[[], None] | None = None
+    ) -> None: ...
 
 
 class PreviewScrollController:
@@ -65,12 +71,22 @@ class PreviewScrollController:
     def release(self) -> None:
         self._armed = False
 
-    def reconcile(self) -> None:
+    def reconcile(self, on_settled: Callable[[], None] | None = None) -> None:
+        # ``on_settled`` fires once the scroll has committed (or immediately
+        # when there is nothing to scroll). Cold/warm reveal paths pass the
+        # container un-hide here so it is revealed AFTER the scroll lands —
+        # never before — which is what keeps the match from flashing at the
+        # file top then jumping. It must fire on every path, or a released /
+        # strategy-less reconcile would strand the container hidden.
         if not self._armed or self._anchor is None:
+            if on_settled is not None:
+                on_settled()
             return
         strategy = self._select_strategy()
         if strategy is not None:
-            strategy.reconcile(self._anchor)
+            strategy.reconcile(self._anchor, on_settled)
+        elif on_settled is not None:
+            on_settled()
 
 
 class StructuralHost(Protocol):
@@ -80,6 +96,7 @@ class StructuralHost(Protocol):
     def effective_match_spec(self) -> MatchSpec: ...
     def begin_reconcile_scroll(self) -> None: ...
     def end_reconcile_scroll(self) -> None: ...
+    def swap_reveal_target(self, target: Widget, margin: int) -> bool: ...
     def call_after_refresh(
         self, callback: Callable[..., Any], *args: Any, **kwargs: Any
     ) -> object: ...
@@ -104,12 +121,14 @@ class StructuralScrollStrategy:
     def __init__(self, host: StructuralHost) -> None:
         self._host = host
 
-    def reconcile(self, anchor: ScrollAnchor) -> None:
+    def reconcile(self, anchor: ScrollAnchor, on_settled: Callable[[], None] | None = None) -> None:
         from fnd.tui.app import FNDMarkdown
 
         seq = anchor.focus_chunk_seq
         header = self._host.chunk_widgets.get(seq)
         if header is None:
+            if on_settled is not None:
+                on_settled()
             return
         # Move the focused-section accent band to the target chunk (FNDMarkdown
         # manages its own focus highlight internally, so skip the band there).
@@ -118,7 +137,7 @@ class StructuralScrollStrategy:
         if not isinstance(header, FNDMarkdown):
             header.add_class("chunk-section-focused")
         self._host.call_after_refresh(
-            self._do_scroll_to_chunk, seq, 30, None, anchor.context_fraction
+            self._do_scroll_to_chunk, seq, 30, on_settled, anchor.context_fraction, anchor.animate
         )
 
     def _do_scroll_to_chunk(
@@ -127,6 +146,7 @@ class StructuralScrollStrategy:
         retries: int = 30,
         on_done: Callable[[], None] | None = None,
         margin_from: float = 0.25,
+        animate: bool = False,
     ) -> None:
         from fnd.tui.app import FNDMarkdown
 
@@ -148,7 +168,12 @@ class StructuralScrollStrategy:
             inner = chunk_md.first_match_block  # pyright: ignore[reportAttributeAccessIssue]
             if inner is None and retries > 0:
                 self._host.call_after_refresh(
-                    self._do_scroll_to_chunk, focus_chunk_seq, retries - 1, on_done, margin_from
+                    self._do_scroll_to_chunk,
+                    focus_chunk_seq,
+                    retries - 1,
+                    on_done,
+                    margin_from,
+                    animate,
                 )
                 return
             if inner is not None:
@@ -177,7 +202,12 @@ class StructuralScrollStrategy:
                 path = f"fallback({type(target).__name__})"
         if target.region.height == 0 and retries > 0:
             self._host.call_after_refresh(
-                self._do_scroll_to_chunk, focus_chunk_seq, retries - 1, on_done, margin_from
+                self._do_scroll_to_chunk,
+                focus_chunk_seq,
+                retries - 1,
+                on_done,
+                margin_from,
+                animate,
             )
             return
         if target.region.height == 0:
@@ -195,12 +225,19 @@ class StructuralScrollStrategy:
         # the anchor.
         self._host.begin_reconcile_scroll()
         try:
+            # If an outgoing preview is being held on screen, hand the resolved
+            # target to the host so it can hide the old one, position this one,
+            # and reveal it in a single tick (no blank between previews). When
+            # there is no outgoing container this is a no-op and we scroll the
+            # already-visible pane normally.
+            if self._host.swap_reveal_target(target, margin):
+                pass
             # A match inside a table renders as a single full-height DataTable
             # (one Rich render, no per-cell widgets and no internal scroll), so
             # scroll_to_widget would only reach the table's top. Scroll the pane
             # to the matched cell's region instead so a match in a lower row is
             # actually revealed.
-            if not self._scroll_pane_to_table_cell(pane, target, margin):
+            elif not self._scroll_pane_to_table_cell(pane, target, margin, animate=animate):
                 # Map the target widget's screen region into the pane's
                 # scrollable content space and scroll there in one shot.
                 # (Reading scroll_offset back after scroll_to_widget to apply
@@ -210,7 +247,7 @@ class StructuralScrollStrategy:
                 region = target.region.translate(
                     pane.scroll_offset - pane.scrollable_content_region.offset
                 )
-                self._scroll_pane_to_match_region(pane, region, margin)
+                self._scroll_pane_to_match_region(pane, region, margin, animate=animate)
         finally:
             self._host.end_reconcile_scroll()
         self._host.diag_log(
@@ -222,19 +259,23 @@ class StructuralScrollStrategy:
             on_done()
 
     def _scroll_pane_to_match_region(
-        self, pane: VerticalScroll, region: Region, margin: int
+        self, pane: VerticalScroll, region: Region, margin: int, *, animate: bool = False
     ) -> None:
         """Scroll ``pane`` so ``region`` (already in the pane's scrollable-
         content space) sits ``margin`` rows down from the top, giving the match
         some context above it. One ``scroll_to_region`` call — no reading the
-        offset back, so nothing races a cold render's deferred layout."""
+        offset back, so nothing races a cold render's deferred layout.
+        ``animate`` glides the scroll (between-match nav within a file) instead
+        of jumping (a fresh file's reveal, which lands instantly)."""
         if margin:
             region = Region(
                 region.x, max(0, region.y - margin), region.width, region.height + margin
             )
-        pane.scroll_to_region(region, top=True, animate=False, immediate=True)
+        pane.scroll_to_region(region, top=True, animate=animate, immediate=not animate)
 
-    def _scroll_pane_to_table_cell(self, pane: VerticalScroll, target: Widget, margin: int) -> bool:
+    def _scroll_pane_to_table_cell(
+        self, pane: VerticalScroll, target: Widget, margin: int, *, animate: bool = False
+    ) -> bool:
         """If ``target`` is (or wraps) a match-bearing DataTable, scroll
         ``pane`` to the matched cell and return True. The W3 table renders
         every row in one full-height DataTable with no internal scroll, so the
@@ -271,7 +312,7 @@ class StructuralScrollStrategy:
             )
         except Exception:
             return False
-        self._scroll_pane_to_match_region(pane, cell_in_pane, margin)
+        self._scroll_pane_to_match_region(pane, cell_in_pane, margin, animate=animate)
         return True
 
     def _fallback_match_target(self, chunk: FNDMarkdown) -> Widget:
@@ -382,12 +423,18 @@ class FlatScrollStrategy:
     def __init__(self, host: FlatHost) -> None:
         self._host = host
 
-    def reconcile(self, anchor: ScrollAnchor) -> None:
+    def reconcile(self, anchor: ScrollAnchor, on_settled: Callable[[], None] | None = None) -> None:
         buf = self._host.active_flat_buffer()
         if buf is None:
+            if on_settled is not None:
+                on_settled()
             return
         buf.scroll_to_chunk(
             anchor.focus_chunk_seq,
             prefer_first_match=True,
             context_fraction=anchor.context_fraction,
         )
+        # The flat buffer scrolls synchronously, so the view has already
+        # landed — reveal immediately.
+        if on_settled is not None:
+            on_settled()

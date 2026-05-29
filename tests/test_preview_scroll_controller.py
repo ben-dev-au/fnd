@@ -16,9 +16,13 @@ from fnd.tui.preview_scroll import (
 class FakeStrategy:
     def __init__(self) -> None:
         self.calls: list[ScrollAnchor] = []
+        self.settled: int = 0
 
-    def reconcile(self, anchor: ScrollAnchor) -> None:
+    def reconcile(self, anchor: ScrollAnchor, on_settled: object = None) -> None:
         self.calls.append(anchor)
+        if callable(on_settled):
+            on_settled()
+            self.settled += 1
 
 
 def test_arm_then_reconcile_calls_strategy() -> None:
@@ -52,6 +56,34 @@ def test_reconcile_idempotent_same_target() -> None:
     assert strat.calls == [a, a, a]  # always the same target — order-independent
 
 
+def test_reconcile_threads_on_settled_to_strategy() -> None:
+    strat = FakeStrategy()
+    c = PreviewScrollController(select_strategy=lambda: strat)
+    c.arm(ScrollAnchor(parent_id="p", focus_chunk_seq=2))
+    fired: list[bool] = []
+    c.reconcile(on_settled=lambda: fired.append(True))
+    assert strat.settled == 1
+    assert fired == [True]
+
+
+def test_reconcile_fires_on_settled_even_when_released() -> None:
+    # Reveal callbacks ride on on_settled — a released (or strategy-less)
+    # reconcile must still fire it, or the container is stranded hidden.
+    c = PreviewScrollController(select_strategy=lambda: None)
+    c.release()
+    fired: list[bool] = []
+    c.reconcile(on_settled=lambda: fired.append(True))
+    assert fired == [True]
+
+
+def test_reconcile_fires_on_settled_when_armed_but_no_strategy() -> None:
+    c = PreviewScrollController(select_strategy=lambda: None)
+    c.arm(ScrollAnchor(parent_id="p", focus_chunk_seq=0))
+    fired: list[bool] = []
+    c.reconcile(on_settled=lambda: fired.append(True))
+    assert fired == [True]
+
+
 _UNSET = object()
 
 
@@ -61,8 +93,15 @@ class _FakeWidget:
 
     def __init__(self, region: Region, *, first_match_block: object = _UNSET) -> None:
         self.region = region
+        self.classes: set[str] = set()
         if first_match_block is not _UNSET:
             self.first_match_block = first_match_block
+
+    def add_class(self, name: str) -> None:
+        self.classes.add(name)
+
+    def remove_class(self, name: str) -> None:
+        self.classes.discard(name)
 
 
 class _FakePane:
@@ -96,6 +135,7 @@ class _FakeHost:
         self._chunk_widgets = chunk_widgets
         self._match_targets = match_targets
         self.diag_msgs: list[str] = []
+        self.deferred: list[tuple[object, tuple[object, ...]]] = []
 
     def preview_pane(self) -> _FakePane:
         return self._pane
@@ -109,7 +149,11 @@ class _FakeHost:
     def end_reconcile_scroll(self) -> None:
         return None
 
+    def swap_reveal_target(self, target: object, margin: int) -> bool:
+        return False
+
     def call_after_refresh(self, callback: object, *args: object, **kwargs: object) -> object:
+        self.deferred.append((callback, args))
         return None
 
     def diag_log(self, msg: str) -> None:
@@ -137,6 +181,38 @@ def test_structural_strategy_drops_match_a_quarter_down_the_viewport() -> None:
 
     # margin = int(40 * 0.25) = 10: region.y shifts up by the margin, height grows.
     assert pane.captured == Region(0, 90, 80, 12)
+
+
+def test_structural_reconcile_threads_on_settled_into_deferred_scroll() -> None:
+    # With a header present, the reveal callback must ride through to
+    # _do_scroll_to_chunk's on_done (the 3rd positional arg), so the
+    # container is revealed only after the scroll commits.
+    target = _FakeWidget(Region(0, 50, 80, 10))
+    pane = _FakePane()
+    host = _FakeHost(pane, chunk_widgets={3: target}, match_targets={3: target})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+
+    def reveal() -> None: ...
+
+    strat.reconcile(ScrollAnchor(parent_id="p", focus_chunk_seq=3), reveal)
+
+    assert len(host.deferred) == 1
+    callback, args = host.deferred[0]
+    assert callback == strat._do_scroll_to_chunk
+    assert args[0] == 3  # focus seq
+    assert args[2] is reveal  # on_done == on_settled
+
+
+def test_structural_reconcile_fires_on_settled_when_header_absent() -> None:
+    pane = _FakePane()
+    host = _FakeHost(pane, chunk_widgets={}, match_targets={})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+    fired: list[bool] = []
+
+    strat.reconcile(ScrollAnchor(parent_id="p", focus_chunk_seq=9), lambda: fired.append(True))
+
+    assert fired == [True]
+    assert host.deferred == []  # no scroll scheduled
 
 
 def test_structural_strategy_missing_header_invokes_on_done_without_scrolling() -> None:
@@ -183,3 +259,20 @@ def test_flat_strategy_is_noop_without_active_buffer() -> None:
     strat = FlatScrollStrategy(cast(FlatHost, _FakeFlatHost(None)))
     # No active flat buffer → no-op, no error.
     strat.reconcile(ScrollAnchor(parent_id="p", focus_chunk_seq=7))
+
+
+def test_flat_reconcile_fires_on_settled_after_scroll() -> None:
+    # The flat buffer scrolls synchronously, so the reveal fires immediately.
+    buf = _FakeFlatBuffer()
+    strat = FlatScrollStrategy(cast(FlatHost, _FakeFlatHost(buf)))
+    fired: list[bool] = []
+    strat.reconcile(ScrollAnchor(parent_id="p", focus_chunk_seq=7), lambda: fired.append(True))
+    assert buf.calls == [(7, True, 0.25)]
+    assert fired == [True]
+
+
+def test_flat_reconcile_fires_on_settled_without_buffer() -> None:
+    strat = FlatScrollStrategy(cast(FlatHost, _FakeFlatHost(None)))
+    fired: list[bool] = []
+    strat.reconcile(ScrollAnchor(parent_id="p", focus_chunk_seq=7), lambda: fired.append(True))
+    assert fired == [True]

@@ -192,7 +192,11 @@ class PreviewContainer(Container):
     DEFAULT_CSS = """
     PreviewContainer { width: 100%; height: auto; }
     PreviewContainer.-hidden { display: none; }
-    PreviewContainer.-pre-reveal { visibility: hidden; }
+    /* opacity:0 (not visibility:hidden) so the pane can be scrolled to the
+       match WHILE the container is invisible — scroll_to_region is a no-op
+       under visibility:hidden, which forced a reveal-at-top-then-scroll jump.
+       The reveal lands only after the scroll commits (see _finalize_via_lock). */
+    PreviewContainer.-pre-reveal { opacity: 0%; }
     """
 
     def __init__(
@@ -1318,6 +1322,11 @@ class FNDApp(App[None]):
         # The currently-active PreviewContainer (the one with `-active`
         # class). None until the first file is rendered.
         self._active_preview: PreviewContainer | None = None
+        # The previously-visible container, kept on screen during a cold/swap
+        # mount so the pane never blanks: the incoming container builds
+        # invisibly (opacity:0) and only when its scroll lands do we hide this
+        # one and reveal the new one in a single tick. Cleared by that swap.
+        self._outgoing_preview: PreviewContainer | None = None
         # Per-file flat-buffer value cache (Stage 1c). One shared
         # LineBufferPreview is mounted on first need and re-installed
         # via set_prebuilt_view for every (parent_id, query_sig)
@@ -2189,7 +2198,14 @@ class FNDApp(App[None]):
         # Arm the scroll controller for this navigation. Every mount/finalize
         # event below reconciles against this one anchor instead of issuing its
         # own scroll, so call order can no longer change where the preview lands.
-        self._preview_scroll.arm(ScrollAnchor(parent_id, focus_chunk_seq))
+        # Same-file navigation (between matches) glides smoothly to the new
+        # match — the document is already on screen, so a jump reads as lumpy.
+        # A fresh file lands instantly (it's revealed via an atomic swap, not a
+        # scroll). Consistent rule: scroll within a doc, cut between docs.
+        same_file = (
+            self._active_preview is not None and self._active_preview.parent_doc_id == parent_id
+        )
+        self._preview_scroll.arm(ScrollAnchor(parent_id, focus_chunk_seq, animate=same_file))
 
         chunks = self._chunk_cache.get(parent_id)
         if chunks is not None:
@@ -2414,7 +2430,7 @@ class FNDApp(App[None]):
                         )
                     )
                 return
-            self._activate_preview_container(cached, pre_reveal=True)
+            self._activate_preview_container(cached, pre_reveal=True, keep_outgoing=True)
             self._refresh_match_scrollbar(chunks)
             self._show_progress_bar(total=1, progress=0, phase="rendering…")
             self.call_after_refresh(self._finalize_pre_reveal, cached, focus_chunk_seq)
@@ -2707,14 +2723,33 @@ class FNDApp(App[None]):
         container: PreviewContainer,
         *,
         pre_reveal: bool = False,
+        keep_outgoing: bool = False,
     ) -> None:
         """Make ``container`` the only visible preview. With
         ``pre_reveal=True`` the container is laid out but invisible
-        (visibility: hidden) until ``_finalize_pre_reveal`` lands the
-        scroll — no flash to file-top before the jump-to-match."""
+        (opacity:0) until the scroll lands — no flash to file-top before
+        the jump-to-match. With ``keep_outgoing=True`` the previously-active
+        container stays visible (so the pane never blanks) until the atomic
+        reveal swaps to ``container`` (see :meth:`_swap_reveal_target`)."""
         from fnd.tui import _perf
 
         self._clear_pane_placeholder()
+        # Hold the outgoing preview on screen while the incoming one builds
+        # invisibly; the reveal swap hides it and shows the new one in one tick.
+        # Only keep a genuinely-visible prior container (not one left invisible
+        # by a superseded mount) — otherwise the pane would blank anyway.
+        prior = self._active_preview
+        outgoing = (
+            prior
+            if keep_outgoing
+            and pre_reveal
+            and prior is not None
+            and prior is not container
+            and not prior.has_class("-pre-reveal")
+            and not prior.has_class("-hidden")
+            else None
+        )
+        self._outgoing_preview = outgoing
         for child in self.query(PreviewContainer):
             if child is container:
                 child.remove_class("-hidden")
@@ -2722,6 +2757,10 @@ class FNDApp(App[None]):
                     child.add_class("-pre-reveal")
                 else:
                     child.remove_class("-pre-reveal")
+            elif child is outgoing:
+                # Keep visible until the swap; don't disturb its scroll.
+                child.remove_class("-hidden")
+                child.remove_class("-pre-reveal")
             else:
                 child.add_class("-hidden")
                 child.remove_class("-pre-reveal")
@@ -2743,6 +2782,41 @@ class FNDApp(App[None]):
         # so the pane title swaps to the activated file immediately.
         self._refresh_status()
 
+    def swap_reveal_target(self, target: Widget, margin: int) -> bool:
+        """Atomic preview swap: hide the outgoing container, position the
+        incoming one so ``target`` sits ``margin`` rows down, and reveal it —
+        all in one tick. Returns True when a swap happened, False when there is
+        no outgoing container (the caller then scrolls + reveals normally).
+
+        The outgoing container stayed on screen through the whole build, so the
+        first frame the user sees after this is the new preview already at its
+        match — no blank, no scroll-into-place. ``target``'s offset is taken
+        relative to the incoming container's top, which is scroll-independent
+        and so survives the outgoing container leaving the layout."""
+        outgoing = self._outgoing_preview
+        new = self._active_preview
+        if outgoing is None or new is None or outgoing is new:
+            return False
+        offset = target.region.y - new.region.y
+        target_y = max(0, offset - margin)
+        pane = self.query_one("#preview_pane", VerticalScroll)
+        outgoing.add_class("-hidden")
+        pane.scroll_to(y=target_y, animate=False, immediate=True)
+        new.remove_class("-pre-reveal")
+        self._outgoing_preview = None
+        return True
+
+    def _reveal_preview(self, container: PreviewContainer) -> None:
+        """Reveal ``container`` and drop any still-held outgoing preview.
+        Fallback for paths where :meth:`swap_reveal_target` did not run (no
+        match resolved, or no outgoing) — a no-op for the class already lifted
+        by the swap."""
+        outgoing = self._outgoing_preview
+        if outgoing is not None and outgoing is not container:
+            outgoing.add_class("-hidden")
+        self._outgoing_preview = None
+        container.remove_class("-pre-reveal")
+
     def _finalize_pre_reveal(self, container: PreviewContainer, focus_chunk_seq: int) -> None:
         """Lift ``-pre-reveal`` once focused chunk's compose is ready, then scroll."""
         import time
@@ -2760,6 +2834,7 @@ class FNDApp(App[None]):
         focus_chunk_seq: int,
         t0: float,
         *,
+        expected_above_seqs: list[int] | None = None,
         path: str = "cold_via_lock",
     ) -> None:
         """Wait for *every* chunk above the focus in the mounted window
@@ -2776,9 +2851,7 @@ class FNDApp(App[None]):
         from fnd.tui import _perf
 
         header = container.chunk_widgets.get(focus_chunk_seq)
-        # Step 1: wait for focus chunk's build. By the time it resolves,
-        # the parent mount task has run phase 1b synchronously, so the
-        # full visible window is in chunk_widgets.
+        # Step 1: wait for the focus chunk's build.
         try:
             async with asyncio.timeout(8.0):
                 if isinstance(header, FNDMarkdown):
@@ -2787,11 +2860,23 @@ class FNDApp(App[None]):
             self._diag_log(
                 f"finalize_via_lock focus build_done timeout seq={focus_chunk_seq} path={path}"
             )
-        # Step 2: now wait for every above-the-focus FNDMarkdown to
-        # finish building. Their heights drive the focus chunk's
-        # virtual_y; without this wait the scroll lands while siblings
-        # are still height=0, and the user sees the correct match for
-        # one frame before layout shifts under them.
+        # Step 2: wait for the above-window chunks to be MOUNTED, then built.
+        # We cannot just read chunk_widgets now: when the focus chunk was
+        # prefetched its build_done is already set, so Step 1 returns before
+        # Phase 1b has mounted the window — chunk_widgets would hold only the
+        # focus chunk (above_waited=0), the scroll would land against a
+        # focus-at-top layout, and the view would settle-scroll once the real
+        # above content mounts. Yield until every expected above seq exists.
+        expected = [s for s in (expected_above_seqs or []) if s < focus_chunk_seq]
+        try:
+            async with asyncio.timeout(8.0):
+                while not all(s in container.chunk_widgets for s in expected):
+                    await asyncio.sleep(0)
+        except TimeoutError:
+            self._diag_log(
+                f"finalize_via_lock above mount timeout seq={focus_chunk_seq} "
+                f"expected={len(expected)} path={path}"
+            )
         above_widgets: list[FNDMarkdown] = [
             w
             for seq, w in container.chunk_widgets.items()
@@ -2822,7 +2907,6 @@ class FNDApp(App[None]):
             if isinstance(header, FNDMarkdown) and header.region.height > 0:
                 break
         wait_ms = (time.perf_counter() - t0) * 1000
-        container.remove_class("-pre-reveal")
         self._hide_progress_bar()
         _perf.mark(
             "click_to_display_end",
@@ -2830,7 +2914,14 @@ class FNDApp(App[None]):
             focus_seq=focus_chunk_seq,
             path=path,
         )
-        self.call_after_refresh(self._preview_scroll.reconcile)
+
+        def _reveal_when_landed() -> None:
+            self._reveal_preview(container)
+
+        # Scroll while the container is still invisible (opacity:0), then
+        # reveal only once the scroll has committed — so the match never
+        # flashes at the file top before jumping into place.
+        self.call_after_refresh(self._preview_scroll.reconcile, _reveal_when_landed)
         # This render has settled — release the in-flight coalescing
         # latch so a later genuine re-render of the same target can run.
         self._inflight_preview_target = None
@@ -2865,7 +2956,6 @@ class FNDApp(App[None]):
             return
 
         wait_ms = (time.perf_counter() - t0) * 1000
-        container.remove_class("-pre-reveal")
         self._hide_progress_bar()
         _perf.mark(
             "click_to_display_end",
@@ -2874,15 +2964,17 @@ class FNDApp(App[None]):
             path="warm_pre_reveal",
         )
 
-        def _scroll_now() -> None:
-            self._preview_scroll.reconcile()
+        def _reveal_when_landed() -> None:
+            self._reveal_preview(container)
             self._diag_log(
                 f"finalize_pre_reveal done seq={focus_chunk_seq} "
                 f"wait_ms={wait_ms:.1f} elapsed_ms={(time.perf_counter() - t0) * 1000:.1f} "
                 f"compose_done={compose_done}"
             )
 
-        self.call_after_refresh(_scroll_now)
+        # Scroll while invisible (opacity:0), reveal once it lands — see
+        # _finalize_via_lock for why the order matters.
+        self.call_after_refresh(self._preview_scroll.reconcile, _reveal_when_landed)
 
     def _cancel_preview_mount_task(self) -> None:
         """Cancel any in-flight mount task. The cancelled task's
@@ -3478,7 +3570,9 @@ class FNDApp(App[None]):
         else:
             await pane.remove_children("#placeholder")
         await self._cancel_prefetch_task_on(container)
-        self._activate_preview_container(container, pre_reveal=needs_pre_reveal)
+        self._activate_preview_container(
+            container, pre_reveal=needs_pre_reveal, keep_outgoing=needs_pre_reveal
+        )
         cold_mount = needs_pre_reveal
         self._refresh_match_scrollbar(chunks)
 
@@ -3516,11 +3610,19 @@ class FNDApp(App[None]):
 
                 # Reference held on the container so GC doesn't collect
                 # the task mid-await (RUF006). Cleared once it completes.
+                # The above-window chunks Phase 1b will mount. finalize must
+                # wait for THESE to exist + build, not just whatever is in
+                # chunk_widgets when it first looks — a prefetched focus chunk
+                # has build_done already set, so finalize would otherwise run
+                # before Phase 1b mounts the window and scroll to a stale
+                # (focus-at-top) position, then settle-scroll once they land.
+                expected_above_seqs = [chunks[i].chunk_seq for i in range(win_start, focus_idx)]
                 _finalize_task = asyncio.create_task(
                     self._finalize_via_lock(
                         container,
                         focus_chunk_seq,
                         _time.perf_counter(),
+                        expected_above_seqs=expected_above_seqs,
                         path="cold_via_lock" if cold_mount else "warm_via_lock",
                     )
                 )
