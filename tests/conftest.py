@@ -196,6 +196,29 @@ def isolated_pdf_structure_cache(  # pyright: ignore[reportUnusedFunction]
 
 
 @pytest.fixture(autouse=True)
+def isolated_indexer_resume_state(  # pyright: ignore[reportUnusedFunction]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point the indexer resume-state lookup at a per-test temp dir.
+
+    ``FNDApp.on_mount`` calls ``_maybe_resume_indexer``, which reads
+    ``state_file_for("default")`` from the real user-data dir. A
+    resumable state left there (an interrupted real index, or another
+    test that drove the indexer against the real default dir) makes the
+    app auto-resume a "default" indexer the moment it launches — so any
+    test that drives the indexer sees a spurious extra "default" run
+    before its own collections. Redirect the lookup so tests never read
+    (or write) real resume state."""
+    reindex_root = tmp_path / "reindex"
+
+    def _state_file(collection: str) -> Path:
+        return reindex_root / f"{collection}.state.toml"
+
+    monkeypatch.setattr("fnd.index_runner.state_file_for", _state_file)
+    return reindex_root
+
+
+@pytest.fixture(autouse=True)
 def _quiet_preview_load_paths() -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
     """Pin debounce + prefetch to 0 so cold-load assertions don't race
     the background worker. Pydantic v2 caches validators at class

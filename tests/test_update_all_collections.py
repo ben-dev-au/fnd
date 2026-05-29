@@ -39,12 +39,6 @@ def _make_cfg(tmp_path: Path, names: list[str]) -> tuple[Config, Path]:
     return cfg, index_dir
 
 
-@pytest.mark.skip(
-    reason="Flaky under full-suite load even with safe_pause / wait_until. "
-    "The same chain behaviour is verified end-to-end on the real corpus by "
-    "dev/tools/workflow_audit_tmux.py::real_update_all_chain. Skip here so "
-    "the load-sensitive in-process driver doesn't block commits."
-)
 @pytest.mark.asyncio
 async def test_update_all_visits_every_collection(tmp_path: Path) -> None:
     """UpdateAllConfirm > Yes must iterate through EVERY queued
@@ -89,11 +83,6 @@ async def test_update_all_visits_every_collection(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.skip(
-    reason="Same load-flake family as test_update_all_visits_every_collection. "
-    "Chain bookkeeping is verified end-to-end on the real corpus by "
-    "dev/tools/workflow_audit_tmux.py::real_update_all_chain."
-)
 @pytest.mark.asyncio
 async def test_update_all_sets_chain_total_for_modal_title(tmp_path: Path) -> None:
     """The IndexerScreen reads ``_indexer_chain_total`` to render the

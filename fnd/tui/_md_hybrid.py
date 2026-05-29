@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from markdown_it import MarkdownIt
 from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
+from textual.app import ComposeResult
 from textual.containers import Container
 from textual.widget import Widget
 from textual.widgets import DataTable, Static
@@ -291,7 +292,7 @@ class FNDChunkHybrid(Container):
         self._wrap_width = wrap_width
         self._first_match_widget: Widget | None = None
 
-    def compose(self):
+    def compose(self) -> ComposeResult:
         widgets, first_idx = build_hybrid_chunk_widgets(self._body_md, self._spec, self._wrap_width)
         yield from widgets
         if first_idx is not None and 0 <= first_idx < len(widgets):
