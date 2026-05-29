@@ -11,7 +11,7 @@ from textual.widgets import Tree
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.line_buffer import LineBufferPreview
-from tests._pilot_wait import safe_pause, wait_until
+from tests._pilot_wait import safe_pause, settle, wait_until
 
 
 @pytest.fixture
@@ -38,12 +38,6 @@ async def test_flat_preview_scrolls_to_match_on_initial_query(built_index: Path)
         assert buf.scroll_y > 0
 
 
-@pytest.mark.skip(
-    reason="Flaky on HEAD: passes 2/3 in isolation, fails more often under "
-    "full-suite load. The wait_until predicate races a swap-then-anchor "
-    "sequence inside the flat buffer that depends on a render tick not "
-    "always observable from the test side. Tracked for proper deflake."
-)
 @pytest.mark.asyncio
 async def test_flat_preview_scrolls_after_second_query(built_index: Path) -> None:
     app = FNDApp(index_dir=built_index, initial_query="introduction")
@@ -222,6 +216,87 @@ async def test_md_preview_scrolls_when_first_match_is_in_a_table(
             message=f"preview never scrolled; scroll_y={pane.scroll_y}",
         )
         assert pane.scroll_y > 0, f"scroll_y={pane.scroll_y}"
+
+
+@pytest.mark.asyncio
+async def test_md_preview_scrolls_to_matched_row_inside_tall_table(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Regression: a match in a LOWER row of a tall table must scroll the
+    matched row into view — not stop at the top of the table.
+
+    The W3 table renders every row in one full-height DataTable (a single
+    Rich render, no per-cell widgets, no internal scroll), so scrolling to
+    the table widget only reaches its top and leaves a lower-row match
+    off-screen. ``scroll_y > 0`` is NOT a sufficient assertion here: the
+    top-of-table bug satisfies it.
+
+    Two distinct defects are guarded:
+
+    1. The matched coordinate must be the cell that actually contains the
+       query term — not the first cell carrying *any* Content span. Early
+       rows here use inline ``code`` / **bold** styling (as a real
+       flashcards table does); the buggy coord logic picked the first
+       styled cell (near the top) instead of the matched row below.
+    2. The pane must scroll so that matched cell lands on-screen.
+
+    We assert both: the cell at the recorded coordinate contains the query
+    term, and its on-screen position is inside the preview viewport."""
+    from textual.widgets import DataTable
+
+    from fnd.tui.app import FNDMarkdownTableDT
+
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    lines = ["# Notes", "", "Intro.", "", "| Term | Definition |", "| --- | --- |"]
+    # Early rows carry markdown styling (inline code, bold) so their cell
+    # Content gains styling spans — the trap the old coord logic fell into.
+    for i in range(40):
+        lines.append(f"| Term{i} | Use `func{i}()` and **bold{i}** in definition {i}. |")
+    lines.append("| Determinism | A Deterministic system always gives the same output. |")
+    for i in range(40, 50):
+        lines.append(f"| Term{i} | Trailing `code{i}` definition {i}. |")
+    (notes / "tall_table.md").write_text("\n".join(lines), encoding="utf-8")
+    build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
+
+    def matched_dt() -> DataTable[object] | None:
+        for wrapper in app.query(FNDMarkdownTableDT):
+            for dt in wrapper.query(DataTable):
+                if getattr(dt, "_fnd_match_coord", None) is not None and dt.region.height > 0:
+                    return dt
+        return None
+
+    app = FNDApp(index_dir=tmp_index_dir, initial_query="Deterministic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one("#preview_pane", VerticalScroll)
+        await wait_until(
+            pilot,
+            lambda: matched_dt() is not None and pane.scroll_y > 0,
+            timeout=15.0,
+            message="table preview never scrolled / no DataTable match coord",
+        )
+        await settle(pilot)
+        dt = matched_dt()
+        assert dt is not None, "matched DataTable never laid out"
+        coord = dt._fnd_match_coord  # type: ignore[attr-defined]
+
+        # Defect 1: the coordinate points at the cell that contains the match.
+        cell_value = dt.get_cell_at(coord)
+        cell_text = getattr(cell_value, "plain", str(cell_value))
+        assert "Deterministic" in cell_text, (
+            f"match coord {coord} points at {cell_text!r}, not the cell "
+            f"containing the query term — coord resolved to a merely-styled cell"
+        )
+
+        # Defect 2: that cell is scrolled on-screen.
+        cell_region = dt._get_cell_region(coord)  # type: ignore[attr-defined]
+        csy = dt.region.y + cell_region.y - int(dt.scroll_offset.y)
+        top, bottom = pane.region.y, pane.region.y + pane.region.height
+        assert top <= csy < bottom, (
+            f"matched table cell at screen y={csy} is outside the preview "
+            f"viewport [{top}, {bottom}) — scrolled to the top of the table, "
+            f"not to the matched row (pane.scroll_y={pane.scroll_y})"
+        )
 
 
 @pytest.mark.asyncio

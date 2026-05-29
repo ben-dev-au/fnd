@@ -31,6 +31,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.content import Span
+from textual.geometry import Region
 from textual.scrollbar import ScrollBar
 from textual.widget import Widget
 from textual.widgets import (
@@ -118,6 +119,9 @@ _PREFETCH_MOUNT_RADIUS = 0
 # without forcing the initial mount to cover everything.
 _LAZY_MOUNT_TRIGGER_MARGIN = 30
 _LAZY_MOUNT_BATCH = 3
+# Scroll-to-match leaves this fraction of the viewport above the match so
+# the user sees context before it, rather than pinning it to the top line.
+_MATCH_CONTEXT_FRACTION = 0.25
 
 
 class ResultsTree(Tree[dict[str, Any]]):
@@ -524,12 +528,13 @@ class FNDMarkdownTableDT(MarkdownTable):
             dt.add_columns(*header_texts)
         for row in row_texts:
             dt.add_row(*row, height=None)
-        match_coord = _find_first_match_coord_in_table(headers, rows)
+        md = self._markdown
+        spec = getattr(md, "match_spec", None) or MatchSpec()
+        match_coord = _find_first_match_coord_in_table(headers, rows, spec)
         if match_coord is not None:
             dt._fnd_match_coord = Coordinate(*match_coord)  # type: ignore[attr-defined]
             # Register self as parent's first_match_block — TH/TD
             # widgets are bypassed so _record_first_match never fires.
-            md = self._markdown
             if isinstance(md, FNDMarkdown) and md._first_match_block is None:
                 md._first_match_block = self
         yield dt
@@ -618,22 +623,34 @@ def _compute_table_col_widths(
 
 
 def _find_first_match_coord_in_table(
-    headers: list[Any], rows: list[list[Any]]
+    headers: list[Any], rows: list[list[Any]], spec: MatchSpec
 ) -> tuple[int, int] | None:
-    """Return (row, col) of the first cell whose Content carries any
-    highlight span. Header row counts as row -1 (DataTable headers
-    have their own coord space); we map header hits to row 0 col c
-    as a best-effort approximation since DataTable cursor doesn't
-    address headers directly.
+    """Return (row, col) of the first cell that contains a query match.
+
+    A cell matches iff one of its words matches ``spec`` — the same
+    ``word_matches`` gate the highlight overlay applies — so the
+    coordinate always points at a cell that is actually highlighted.
+    (Checking the Content's ``spans`` instead is wrong: that set also
+    carries the markdown styling spans — inline code, emphasis, links —
+    so the first *styled* cell wins over the first *matched* one, parking
+    the scroll near the table top while the real match sits rows below.)
+    ``text_has_any_match`` short-circuits on the first matching word and
+    skips the per-char alignment / Span allocation that building the full
+    highlight spans here would waste on every cell of a large table.
+
+    Header hits map to row 0 col c as a best-effort approximation since
+    the DataTable cursor doesn't address headers directly.
     """
+    from fnd.render import text_has_any_match
+
+    if spec.is_empty:
+        return None
     for col, h in enumerate(headers):
-        spans = getattr(h, "spans", None) or getattr(h, "_spans", None)
-        if spans:
+        if text_has_any_match(getattr(h, "plain", "") or "", spec):
             return (0, col)
     for r_idx, row in enumerate(rows):
         for c_idx, cell in enumerate(row):
-            spans = getattr(cell, "spans", None) or getattr(cell, "_spans", None)
-            if spans:
+            if text_has_any_match(getattr(cell, "plain", "") or "", spec):
                 return (r_idx, c_idx)
     return None
 
@@ -2432,6 +2449,18 @@ class FNDApp(App[None]):
         while len(self._flat_buffer_cache) > _PREVIEW_CACHE_MAX_FILES:
             self._flat_buffer_cache.popitem(last=False)
 
+        # A post-query auto-park can arrive pointing at a chunk that BM25
+        # matched but carries no highlightable span (e.g. a tree-rebuild
+        # cursor echo lands on chunk 0). Scrolling there parks the view at
+        # the chunk's top with nothing highlighted, and a second racing
+        # dispatch then clobbers the correct match scroll — last writer
+        # wins, non-deterministically. Resolve to the file's first matching
+        # chunk so every dispatch for this (file, query) lands on the same
+        # match regardless of arrival order. Genuine match chunks (real
+        # section navigation) and the no-match browse case are left as-is.
+        if doc.fv.first_hit_line_in_chunk and focus_chunk_seq not in doc.fv.first_hit_line_in_chunk:
+            focus_chunk_seq = min(doc.fv.first_hit_line_in_chunk)
+
         buf = self._ensure_shared_flat_buffer()
         if self._installed_flat_key == cache_key:
             # Same doc already in the widget; intra-file navigation = scroll only.
@@ -3513,14 +3542,16 @@ class FNDApp(App[None]):
                 for w in hidden_widgets:
                     w.display = True
                 hidden_widgets.clear()
-                if not skip_internal_scrolls:
-                    focused_widget = container.chunk_widgets.get(focus_chunk_seq)
-                    if focused_widget is not None:
-                        with contextlib.suppress(Exception):
-                            self._suppress_lazy_mount_briefly()
-                            pane.scroll_to_widget(
-                                focused_widget, top=True, animate=False, immediate=True
-                            )
+                if not skip_internal_scrolls and focus_chunk_seq in container.chunk_widgets:
+                    # Revealing the above-window chunks shifted the layout, so
+                    # the focus chunk must be re-anchored. Scroll to the MATCH
+                    # (first_match_block), not the chunk's top edge — anchoring
+                    # to the top pushes a match deep inside the chunk off-screen
+                    # the moment the background fill completes (the cold-load
+                    # "wrong position until expanded" symptom).
+                    with contextlib.suppress(Exception):
+                        self._suppress_lazy_mount_briefly()
+                        self._scroll_preview_to_chunk(focus_chunk_seq)
         finally:
             # Always reveal any widgets we hid; a cancelled task that
             # left them hidden would leak a half-displayed container
@@ -4127,7 +4158,29 @@ class FNDApp(App[None]):
         # Brief gate so the resulting watcher trip doesn't fire a lazy
         # mount that competes with this scroll's anchor.
         self._suppress_lazy_mount_briefly()
-        pane.scroll_to_widget(target, top=True, animate=False)
+        # Drop the match ~a quarter down the viewport so the lines above it
+        # give context, instead of pinning it to the top line — but only when
+        # we actually landed on a match (not a bare chunk-top navigation).
+        margin = (
+            int(pane.size.height * _MATCH_CONTEXT_FRACTION)
+            if (first_match_seen or fallback_fired)
+            else 0
+        )
+        # A match inside a table renders as a single full-height DataTable
+        # (one Rich render, no per-cell widgets and no internal scroll), so
+        # scroll_to_widget would only reach the table's top. Scroll the pane
+        # to the matched cell's region instead so a match in a lower row is
+        # actually revealed.
+        if not self._scroll_pane_to_table_cell(pane, target, margin):
+            # Map the target widget's screen region into the pane's scrollable
+            # content space and scroll there in one shot. (Reading scroll_offset
+            # back after scroll_to_widget to apply the margin races a cold
+            # render — scroll_to_widget hasn't committed the offset yet, so the
+            # nudge lands on a stale, wrong position.)
+            region = target.region.translate(
+                pane.scroll_offset - pane.scrollable_content_region.offset
+            )
+            self._scroll_pane_to_match_region(pane, region, margin)
         self._diag_log(
             f"do_scroll seq={focus_chunk_seq} target={type(target).__name__} "
             f"path={path} first_match={first_match_seen} fallback={fallback_fired} "
@@ -4135,6 +4188,57 @@ class FNDApp(App[None]):
         )
         if on_done is not None:
             on_done()
+
+    def _scroll_pane_to_match_region(
+        self, pane: VerticalScroll, region: Region, margin: int
+    ) -> None:
+        """Scroll ``pane`` so ``region`` (already in the pane's scrollable-
+        content space) sits ``margin`` rows down from the top, giving the match
+        some context above it. One ``scroll_to_region`` call — no reading the
+        offset back, so nothing races a cold render's deferred layout."""
+        if margin:
+            region = Region(
+                region.x, max(0, region.y - margin), region.width, region.height + margin
+            )
+        pane.scroll_to_region(region, top=True, animate=False, immediate=True)
+
+    def _scroll_pane_to_table_cell(self, pane: VerticalScroll, target: Widget, margin: int) -> bool:
+        """If ``target`` is (or wraps) a match-bearing DataTable, scroll
+        ``pane`` to the matched cell and return True. The W3 table renders
+        every row in one full-height DataTable with no internal scroll, so the
+        matched cell is not a scrollable widget — translate its region into the
+        pane's content space and scroll there. ``target`` may be the DataTable
+        itself or the ``FNDMarkdownTableDT`` wrapper (the match scroll resolves
+        to the wrapper when the first_match_block is a phantom, never-mounted
+        TD cell). Returns False — the caller then scrolls to the target
+        widget's own region via ``_scroll_pane_to_match_region`` — for
+        non-table targets or any lookup failure."""
+        from textual.widgets import DataTable
+
+        if isinstance(target, DataTable):
+            table = target
+        elif isinstance(target, FNDMarkdownTableDT):
+            table = next((c for c in target.query(DataTable)), None)
+        else:
+            return False
+        if table is None:
+            return False
+        coord = getattr(table, "_fnd_match_coord", None)
+        if coord is None:
+            return False
+        try:
+            cell = table._get_cell_region(coord)  # pyright: ignore[reportAttributeAccessIssue]
+            # cell is relative to the table's content; map → screen (the table
+            # has no internal scroll, but honour its offset defensively) → the
+            # pane's scrollable-content space, which scroll_to_region expects.
+            screen = cell.translate(table.region.offset - table.scroll_offset)
+            cell_in_pane = screen.translate(
+                pane.scroll_offset - pane.scrollable_content_region.offset
+            )
+        except Exception:
+            return False
+        self._scroll_pane_to_match_region(pane, cell_in_pane, margin)
+        return True
 
     def _fallback_match_target(self, chunk: FNDMarkdown) -> Widget:
         """Scan ``chunk``'s descendants for the first widget whose plain text

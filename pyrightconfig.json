@@ -2,6 +2,8 @@
   "include": ["fnd", "tests"],
   "exclude": ["**/__pycache__", ".venv", "dist", "build"],
   "pythonVersion": "3.13",
+  "venvPath": ".",
+  "venv": ".venv",
   "typeCheckingMode": "strict",
   "reportMissingImports": "error",
   "reportMissingTypeStubs": "none",
