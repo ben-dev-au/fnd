@@ -77,7 +77,12 @@ from fnd.tui.line_buffer import (
     build_rendered_document,
 )
 from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
-from fnd.tui.preview_scroll import StructuralScrollStrategy
+from fnd.tui.preview_scroll import (
+    PreviewScrollController,
+    ScrollAnchor,
+    ScrollStrategy,
+    StructuralScrollStrategy,
+)
 from fnd.tui.preview_scrollbar import MatchAwareScroll, ThinScrollBarRender
 from fnd.tui.progress import FNDProgressBar, ProgressFacility, ProgressSession
 
@@ -1388,6 +1393,10 @@ class FNDApp(App[None]):
         # Owns the structural preview scroll-to-match logic, reading the
         # chunk/match maps and pane back off this app via the host accessors.
         self._preview_scroll_structural = StructuralScrollStrategy(host=self)
+        # Single source of truth for where the preview should sit: navigation
+        # arms an anchor; mount/finalize events reconcile against it (idempotent
+        # → the formerly racing scroll sites collapse to one target).
+        self._preview_scroll = PreviewScrollController(select_strategy=self._select_scroll_strategy)
         # The parent_id whose chunks are currently mounted in the preview
         # pane (so we don't re-mount when cursor moves within the same file).
         self._preview_parent_id: str | None = None
@@ -2171,6 +2180,11 @@ class FNDApp(App[None]):
         if self._searcher is None:
             return
 
+        # Arm the scroll controller for this navigation. Every mount/finalize
+        # event below reconciles against this one anchor instead of issuing its
+        # own scroll, so call order can no longer change where the preview lands.
+        self._preview_scroll.arm(ScrollAnchor(parent_id, focus_chunk_seq))
+
         chunks = self._chunk_cache.get(parent_id)
         if chunks is not None:
             # We have decoded data — go to the mount path. If the
@@ -2299,7 +2313,7 @@ class FNDApp(App[None]):
                     parent_id=parent_id,
                     path="already_active_scroll_only",
                 )
-                self._scroll_preview_to_chunk(focus_chunk_seq)
+                self._preview_scroll.reconcile()
                 return
             # Same-file resume: scroll-between-matches expects no bar.
             # Cancel any in-flight lazy-mount on this container — its
@@ -2377,7 +2391,7 @@ class FNDApp(App[None]):
                 # handles any residual region.height==0 race. The prior
                 # two-tick wrapping was wasting a refresh tick (~50-200ms
                 # depending on DOM size) for every cache-hit click.
-                self.call_after_refresh(self._scroll_preview_to_chunk, focus_chunk_seq)
+                self.call_after_refresh(self._preview_scroll.reconcile)
                 if not cached.is_complete:
                     # Resume the partial mount in the background; the
                     # scroll above is canonical so suppress the task's
@@ -2798,7 +2812,7 @@ class FNDApp(App[None]):
             focus_seq=focus_chunk_seq,
             path=path,
         )
-        self.call_after_refresh(self._scroll_preview_to_chunk, focus_chunk_seq)
+        self.call_after_refresh(self._preview_scroll.reconcile)
         # This render has settled — release the in-flight coalescing
         # latch so a later genuine re-render of the same target can run.
         self._inflight_preview_target = None
@@ -2843,7 +2857,7 @@ class FNDApp(App[None]):
         )
 
         def _scroll_now() -> None:
-            self._scroll_preview_to_chunk(focus_chunk_seq)
+            self._preview_scroll.reconcile()
             self._diag_log(
                 f"finalize_pre_reveal done seq={focus_chunk_seq} "
                 f"wait_ms={wait_ms:.1f} elapsed_ms={(time.perf_counter() - t0) * 1000:.1f} "
@@ -3554,7 +3568,7 @@ class FNDApp(App[None]):
                     # "wrong position until expanded" symptom).
                     with contextlib.suppress(Exception):
                         self._suppress_lazy_mount_briefly()
-                        self._scroll_preview_to_chunk(focus_chunk_seq)
+                        self._preview_scroll.reconcile()
         finally:
             # Always reveal any widgets we hid; a cancelled task that
             # left them hidden would leak a half-displayed container
@@ -4129,6 +4143,11 @@ class FNDApp(App[None]):
     @property
     def match_targets(self) -> dict[int, Widget]:
         return self._match_targets
+
+    def _select_scroll_strategy(self) -> ScrollStrategy | None:
+        """Pick the active preview's scroll strategy for the controller.
+        Structural for now; the flat-buffer strategy is added later."""
+        return self._preview_scroll_structural
 
     def _do_scroll_to_widget(self, widget: Widget, retries: int = 8) -> None:
         # Retry while the widget's region is unknown — scroll_to_widget

@@ -128,7 +128,7 @@ def test_structural_strategy_drops_match_a_quarter_down_the_viewport() -> None:
     host = _FakeHost(pane, chunk_widgets={5: target}, match_targets={5: target})
     strat = StructuralScrollStrategy(cast(StructuralHost, host))
 
-    strat.reconcile(ScrollAnchor(parent_id="p", focus_chunk_seq=5))
+    strat._do_scroll_to_chunk(5, margin_from=0.25)
 
     # margin = int(40 * 0.25) = 10: region.y shifts up by the margin, height grows.
     assert pane.captured == Region(0, 90, 80, 12)

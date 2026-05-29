@@ -103,7 +103,21 @@ class StructuralScrollStrategy:
         self._host = host
 
     def reconcile(self, anchor: ScrollAnchor) -> None:
-        self._do_scroll_to_chunk(anchor.focus_chunk_seq, margin_from=anchor.context_fraction)
+        from fnd.tui.app import FNDMarkdown
+
+        seq = anchor.focus_chunk_seq
+        header = self._host.chunk_widgets.get(seq)
+        if header is None:
+            return
+        # Move the focused-section accent band to the target chunk (FNDMarkdown
+        # manages its own focus highlight internally, so skip the band there).
+        for w in self._host.chunk_widgets.values():
+            w.remove_class("chunk-section-focused")
+        if not isinstance(header, FNDMarkdown):
+            header.add_class("chunk-section-focused")
+        self._host.call_after_refresh(
+            self._do_scroll_to_chunk, seq, 30, None, anchor.context_fraction
+        )
 
     def _do_scroll_to_chunk(
         self,
