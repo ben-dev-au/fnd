@@ -78,6 +78,7 @@ from fnd.tui.line_buffer import (
 )
 from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
 from fnd.tui.preview_scroll import (
+    FlatScrollStrategy,
     PreviewScrollController,
     ScrollAnchor,
     ScrollStrategy,
@@ -1393,6 +1394,7 @@ class FNDApp(App[None]):
         # Owns the structural preview scroll-to-match logic, reading the
         # chunk/match maps and pane back off this app via the host accessors.
         self._preview_scroll_structural = StructuralScrollStrategy(host=self)
+        self._preview_scroll_flat = FlatScrollStrategy(host=self)
         # Single source of truth for where the preview should sit: navigation
         # arms an anchor; mount/finalize events reconcile against it (idempotent
         # → the formerly racing scroll sites collapse to one target).
@@ -2479,13 +2481,23 @@ class FNDApp(App[None]):
             focus_chunk_seq = min(doc.fv.first_hit_line_in_chunk)
 
         buf = self._ensure_shared_flat_buffer()
-        if self._installed_flat_key == cache_key:
-            # Same doc already in the widget; intra-file navigation = scroll only.
-            buf.scroll_to_chunk(focus_chunk_seq, prefer_first_match=True)
-        else:
-            self._install_flat_doc(buf, doc, focus_chunk_seq, parent_id=parent_id)
+        if self._installed_flat_key != cache_key:
+            # New doc: install + synchronous no-flash scroll to the match.
+            self._install_flat_doc(
+                buf,
+                doc,
+                focus_chunk_seq,
+                parent_id=parent_id,
+                context_fraction=_MATCH_CONTEXT_FRACTION,
+            )
             self._installed_flat_key = cache_key
         self._activate_flat_buffer(buf)
+        # Route the flat match scroll through the controller: arm with the
+        # resolved focus chunk and reconcile (idempotent — re-applies the
+        # install's scroll; for intra-file nav it IS the scroll). The 25%
+        # context margin matches the structural path.
+        self._preview_scroll.arm(ScrollAnchor(parent_id, focus_chunk_seq))
+        self._preview_scroll.reconcile()
         self._diag_log(
             f"dispatch_flat parent={parent_id[:8]} cache_hit={'yes' if cache_hit else 'no'} "
             f"prebuilt={'yes' if prebuilt is not None else 'no'} strips={len(doc.strips)} "
@@ -2520,6 +2532,7 @@ class FNDApp(App[None]):
         focus_chunk_seq: int,
         *,
         parent_id: str,
+        context_fraction: float = 0.0,
     ) -> None:
         """Install ``doc`` into ``buf`` scrolled to the focused chunk's match."""
         focus_line = self._focus_line_for_chunk(doc.fv, focus_chunk_seq)
@@ -2531,6 +2544,7 @@ class FNDApp(App[None]):
             wrap_width=doc.wrap_width,
             base_width=doc.base_width,
             initial_focus_line=focus_line,
+            context_fraction=context_fraction,
         )
         buf.parent_doc_id = parent_id  # type: ignore[attr-defined]
 
@@ -4144,9 +4158,14 @@ class FNDApp(App[None]):
     def match_targets(self) -> dict[int, Widget]:
         return self._match_targets
 
+    def active_flat_buffer(self) -> LineBufferPreview | None:
+        return self._active_flat_buffer
+
     def _select_scroll_strategy(self) -> ScrollStrategy | None:
-        """Pick the active preview's scroll strategy for the controller.
-        Structural for now; the flat-buffer strategy is added later."""
+        """Pick the active preview's scroll strategy: the flat line-buffer when
+        one is showing (PDF/TXT), else the structural per-chunk strategy."""
+        if self._active_flat_buffer is not None:
+            return self._preview_scroll_flat
         return self._preview_scroll_structural
 
     def _do_scroll_to_widget(self, widget: Widget, retries: int = 8) -> None:

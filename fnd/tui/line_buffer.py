@@ -308,6 +308,10 @@ class LineBufferPreview(ScrollView, can_focus=True):
         # Deferred scroll target — re-applied once the buffer has a real viewport.
         self._pending_scroll_line: int | None = None
         self._pending_scroll_center: bool = False
+        # Fraction of the viewport to drop a match below the top (context above
+        # it); 0.0 = exact top. Carried with the pending scroll so a re-wrap /
+        # resize re-applies the same margin.
+        self._pending_scroll_context_fraction: float = 0.0
 
     # ── Public API ──────────────────────────────────────────────
 
@@ -317,6 +321,7 @@ class LineBufferPreview(ScrollView, can_focus=True):
         *,
         initial_focus_line: int | None = None,
         center: bool = False,
+        context_fraction: float = 0.0,
     ) -> None:
         """Install ``fv`` and scroll to ``initial_focus_line`` synchronously
         (or the top if ``None``) so the first paint is at the right offset."""
@@ -324,8 +329,11 @@ class LineBufferPreview(ScrollView, can_focus=True):
         self._focused_chunk = None
         self._pending_scroll_line = None
         self._pending_scroll_center = False
+        self._pending_scroll_context_fraction = 0.0
         self._rebuild_strips()
-        self._apply_initial_scroll(initial_focus_line, center=center)
+        self._apply_initial_scroll(
+            initial_focus_line, center=center, context_fraction=context_fraction
+        )
         self._refresh_match_scrollbar()
         self.refresh()
         if self._wrap and self.size.width == 0:
@@ -342,6 +350,7 @@ class LineBufferPreview(ScrollView, can_focus=True):
         base_width: int,
         initial_focus_line: int | None = None,
         center: bool = False,
+        context_fraction: float = 0.0,
     ) -> None:
         """Install a worker-prerendered view, scrolled to
         ``initial_focus_line`` from the first paint."""
@@ -349,19 +358,33 @@ class LineBufferPreview(ScrollView, can_focus=True):
         self._focused_chunk = None
         self._pending_scroll_line = None
         self._pending_scroll_center = False
+        self._pending_scroll_context_fraction = 0.0
         self._strips = strips
         self._visual_to_logical = visual_to_logical
         self._logical_to_visual_start = logical_to_visual_start
         self._base_width = base_width
         self._wrap_width = wrap_width
         self.virtual_size = Size(base_width, len(strips))
-        self._apply_initial_scroll(initial_focus_line, center=center)
+        self._apply_initial_scroll(
+            initial_focus_line, center=center, context_fraction=context_fraction
+        )
         self._refresh_match_scrollbar()
         self.refresh()
         if self._wrap:
             self.call_after_refresh(self._rebuild_after_layout)
 
-    def _apply_initial_scroll(self, line_index: int | None, *, center: bool) -> None:
+    def _scroll_target_y(self, visual_y: int, *, center: bool, context_fraction: float) -> int:
+        """Visual-row scroll target: centred, dropped ``context_fraction`` down
+        the viewport (so a match keeps context above it), or exact (top)."""
+        if center:
+            return max(0, visual_y - self.size.height // 2)
+        if context_fraction > 0:
+            return max(0, visual_y - int(self.size.height * context_fraction))
+        return visual_y
+
+    def _apply_initial_scroll(
+        self, line_index: int | None, *, center: bool, context_fraction: float = 0.0
+    ) -> None:
         """Set scroll_offset synchronously from logical_to_visual_start so the
         first paint lands at ``line_index``. Queues a pending scroll so a
         post-layout re-wrap can re-apply it if visual_y shifts."""
@@ -370,12 +393,13 @@ class LineBufferPreview(ScrollView, can_focus=True):
             return
         clamped = max(0, min(line_index, max(0, self._fv.line_count - 1) if self._fv else 0))
         visual_y = self._logical_to_visual_y(clamped)
-        target_y = max(0, visual_y - self.size.height // 2) if center else visual_y
+        target_y = self._scroll_target_y(visual_y, center=center, context_fraction=context_fraction)
         self.scroll_to(0, target_y, animate=False, immediate=True)
         # Re-apply after layout in case the actual viewport width
         # forces a re-wrap that shifts visual_y.
         self._pending_scroll_line = clamped
         self._pending_scroll_center = center
+        self._pending_scroll_context_fraction = context_fraction
 
     def _rebuild_after_layout(self) -> None:
         if self._fv is None:
@@ -420,8 +444,11 @@ class LineBufferPreview(ScrollView, can_focus=True):
             self._rebuild_strips()
             self.refresh()
 
-    def scroll_to_line(self, line_index: int, *, center: bool = False) -> None:
-        """Scroll the viewport so ``line_index`` is at the top (or centred).
+    def scroll_to_line(
+        self, line_index: int, *, center: bool = False, context_fraction: float = 0.0
+    ) -> None:
+        """Scroll the viewport so ``line_index`` is at the top (or centred, or
+        ``context_fraction`` down the viewport when matching).
 
         Safe before layout: the target is remembered and re-applied once
         the buffer has a real viewport.
@@ -431,6 +458,7 @@ class LineBufferPreview(ScrollView, can_focus=True):
         line_index = max(0, min(line_index, self._fv.line_count - 1))
         self._pending_scroll_line = line_index
         self._pending_scroll_center = center
+        self._pending_scroll_context_fraction = context_fraction
         self._apply_pending_scroll()
 
     def _apply_pending_scroll(self, retries: int = 8) -> None:
@@ -450,12 +478,15 @@ class LineBufferPreview(ScrollView, can_focus=True):
             self._refresh_match_scrollbar()
             self.refresh()
         visual_y = self._logical_to_visual_y(line_index)
-        target = (
-            max(0, visual_y - self.size.height // 2) if self._pending_scroll_center else visual_y
+        target = self._scroll_target_y(
+            visual_y,
+            center=self._pending_scroll_center,
+            context_fraction=self._pending_scroll_context_fraction,
         )
         self.scroll_to(y=target, animate=False, immediate=True)
         self._pending_scroll_line = None
         self._pending_scroll_center = False
+        self._pending_scroll_context_fraction = 0.0
 
     def scroll_to_chunk(
         self,
@@ -463,6 +494,7 @@ class LineBufferPreview(ScrollView, can_focus=True):
         *,
         prefer_first_match: bool = True,
         center: bool = False,
+        context_fraction: float = 0.0,
     ) -> None:
         """Scroll to a chunk by id. By default jumps to the chunk's
         first matched line if one exists; otherwise the chunk's first
@@ -477,7 +509,7 @@ class LineBufferPreview(ScrollView, can_focus=True):
             if rng is not None:
                 target = rng[0]
         if target is not None:
-            self.scroll_to_line(target, center=center)
+            self.scroll_to_line(target, center=center, context_fraction=context_fraction)
 
     def set_focused_chunk(self, chunk_id: int | None) -> None:
         """Move the focused-chunk accent band; no Strip rebuild."""

@@ -21,6 +21,7 @@ from fnd.matching import MatchSpec
 
 if TYPE_CHECKING:
     from fnd.tui.app import FNDMarkdown
+    from fnd.tui.line_buffer import LineBufferPreview
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,3 +356,32 @@ class StructuralScrollStrategy:
                 ):
                     return cell if cell.region.height > 0 else child
         return first_table or chunk
+
+
+class FlatHost(Protocol):
+    """The slice of FNDApp the flat scroll strategy needs."""
+
+    def active_flat_buffer(self) -> LineBufferPreview | None: ...
+
+
+class FlatScrollStrategy:
+    """Scroll the flat (PDF/TXT) line-buffer preview to a match.
+
+    The ``LineBufferPreview`` owns the visual line math; this strategy only
+    hands it the target chunk and the context margin. The dispatch re-arms the
+    anchor with the resolved focus chunk, so the buffer's own first-match /
+    chunk-top fallback handles the rest.
+    """
+
+    def __init__(self, host: FlatHost) -> None:
+        self._host = host
+
+    def reconcile(self, anchor: ScrollAnchor) -> None:
+        buf = self._host.active_flat_buffer()
+        if buf is None:
+            return
+        buf.scroll_to_chunk(
+            anchor.focus_chunk_seq,
+            prefer_first_match=True,
+            context_fraction=anchor.context_fraction,
+        )

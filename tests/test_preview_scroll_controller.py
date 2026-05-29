@@ -4,6 +4,8 @@ from textual.geometry import Offset, Region, Size
 
 from fnd.matching import MatchSpec
 from fnd.tui.preview_scroll import (
+    FlatHost,
+    FlatScrollStrategy,
     PreviewScrollController,
     ScrollAnchor,
     StructuralHost,
@@ -144,3 +146,37 @@ def test_structural_strategy_missing_header_invokes_on_done_without_scrolling() 
 
     assert fired == [True]
     assert pane.captured is None
+
+
+class _FakeFlatBuffer:
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, bool, float]] = []
+
+    def scroll_to_chunk(
+        self, chunk_id: int, *, prefer_first_match: bool = True, context_fraction: float = 0.0
+    ) -> None:
+        self.calls.append((chunk_id, prefer_first_match, context_fraction))
+
+
+class _FakeFlatHost:
+    def __init__(self, buf: _FakeFlatBuffer | None) -> None:
+        self._buf = buf
+
+    def active_flat_buffer(self) -> _FakeFlatBuffer | None:
+        return self._buf
+
+
+def test_flat_strategy_scrolls_active_buffer_to_anchor_chunk() -> None:
+    buf = _FakeFlatBuffer()
+    strat = FlatScrollStrategy(cast(FlatHost, _FakeFlatHost(buf)))
+
+    strat.reconcile(ScrollAnchor(parent_id="p", focus_chunk_seq=7, context_fraction=0.25))
+
+    # Passes the anchor's chunk + its 25% context margin through to the widget.
+    assert buf.calls == [(7, True, 0.25)]
+
+
+def test_flat_strategy_is_noop_without_active_buffer() -> None:
+    strat = FlatScrollStrategy(cast(FlatHost, _FakeFlatHost(None)))
+    # No active flat buffer → no-op, no error.
+    strat.reconcile(ScrollAnchor(parent_id="p", focus_chunk_seq=7))
