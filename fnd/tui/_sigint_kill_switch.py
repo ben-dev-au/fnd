@@ -60,9 +60,13 @@ def install(app: App[Any]) -> Iterator[None]:
     Sets ``TEXTUAL_ALLOW_SIGNALS`` so Textual leaves ``ISIG`` on, then
     installs a SIGINT handler that:
 
-    - First press: call ``app.exit()`` directly (same thread as the loop;
-      ``call_from_thread`` would refuse). The loop unwinds on its next
-      iteration so the terminal restores cleanly.
+    - First press: schedule ``app.exit`` via
+      ``loop.call_soon_threadsafe`` — the only call that reliably fires
+      the asyncio wakeup pipe from inside a signal-handler frame on the
+      loop's own thread (a direct ``app.exit()`` sets the flag but the
+      loop doesn't necessarily notice; ``call_from_thread`` raises). If
+      no loop is running yet (or it has already torn down), fall back
+      to a direct ``app.exit()`` so the next press still hard-exits.
     - Any subsequent press: ``os._exit(130)``. No timing window — every
       ^C after the first hard-exits, so a wedged loop can never trap the
       user even if they pace presses slowly.
@@ -85,7 +89,7 @@ def install(app: App[Any]) -> Iterator[None]:
         # call_soon_threadsafe is the one path that fires the wakeup
         # pipe and gets the callback processed promptly.
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             loop.call_soon_threadsafe(app.exit)
         except RuntimeError:
             # No running loop (app never started, or already exited).

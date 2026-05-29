@@ -65,7 +65,7 @@ def test_first_sigint_schedules_app_exit_on_the_loop() -> None:
     """
     app = _stub_app()
     fake_loop = MagicMock()
-    with patch("asyncio.get_event_loop", return_value=fake_loop):
+    with patch("asyncio.get_running_loop", return_value=fake_loop):
         with kill_switch(app):
             handler = signal.getsignal(signal.SIGINT)
             assert callable(handler)
@@ -78,7 +78,7 @@ def test_second_sigint_unconditionally_hard_exits() -> None:
     Previous time-window logic missed real-world press cadence."""
     app = _stub_app()
     fake_loop = MagicMock()
-    with patch("asyncio.get_event_loop", return_value=fake_loop):
+    with patch("asyncio.get_running_loop", return_value=fake_loop):
         with patch("fnd.tui._sigint_kill_switch._hard_exit") as hard_exit:
             with kill_switch(app):
                 handler = signal.getsignal(signal.SIGINT)
@@ -94,7 +94,7 @@ def test_handler_falls_back_to_direct_exit_when_no_loop() -> None:
     or already torn down), the handler must still do something so the
     process can exit on the next press."""
     app = _stub_app()
-    with patch("asyncio.get_event_loop", side_effect=RuntimeError("no loop")):
+    with patch("asyncio.get_running_loop", side_effect=RuntimeError("no loop")):
         with kill_switch(app):
             handler = signal.getsignal(signal.SIGINT)
             assert callable(handler)
@@ -126,7 +126,7 @@ def test_call_soon_threadsafe_arg_is_app_exit_not_a_lambda() -> None:
     introduced the same-thread RuntimeError that silently failed."""
     app = _stub_app()
     fake_loop = MagicMock()
-    with patch("asyncio.get_event_loop", return_value=fake_loop):
+    with patch("asyncio.get_running_loop", return_value=fake_loop):
         with kill_switch(app):
             handler = signal.getsignal(signal.SIGINT)
             assert callable(handler)

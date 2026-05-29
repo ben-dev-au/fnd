@@ -198,7 +198,6 @@ def _scandir_walk(
         for entry in entries:
             name = entry.name
             try:
-                entry_path = Path(entry.path)
                 is_symlink = entry.is_symlink()
                 is_dir = entry.is_dir(follow_symlinks=follow_symlinks)
                 is_file = entry.is_file(follow_symlinks=follow_symlinks)
@@ -216,16 +215,22 @@ def _scandir_walk(
                 # target hidden files for a different reason.
                 if name.startswith(".") and not inc_targets_hidden:
                     continue
-                stack.append(entry_path)
+                stack.append(Path(entry.path))
                 continue
 
             if not is_file:
                 continue
             if not follow_symlinks and is_symlink:
                 continue
-            if entry_path.suffix.lower() not in suffixes:
+            # Suffix check uses the basename string so we skip Path()
+            # allocation for files that can't be indexed anyway — a
+            # measurable win on trees with many out-of-scope files
+            # (icons, lockfiles, …) sitting next to in-scope ones.
+            dot = name.rfind(".")
+            if dot < 0 or name[dot:].lower() not in suffixes:
                 continue
 
+            entry_path = Path(entry.path)
             try:
                 rel = entry_path.relative_to(root)
             except ValueError:

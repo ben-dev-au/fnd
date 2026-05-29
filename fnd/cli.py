@@ -148,8 +148,9 @@ def tui(
     # ``kill_switch`` sets ``TEXTUAL_ALLOW_SIGNALS=1`` so the tty driver
     # turns ^C into a real SIGINT (rather than a stdin byte handled by
     # an asyncio-bound key binding). The installed handler exits the
-    # app cleanly on the first press and hard-exits on a second press
-    # within ~1s, so a wedged event loop can never trap the user.
+    # app cleanly on the first press and unconditionally hard-exits on
+    # any subsequent press, so a wedged event loop can never trap the
+    # user regardless of how slowly they pace presses.
     from fnd.tui._sigint_kill_switch import kill_switch
 
     fnd_app = FNDApp(collection=collection, initial_query=initial_query, config=cfg)
