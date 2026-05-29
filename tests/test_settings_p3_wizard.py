@@ -187,6 +187,15 @@ async def test_save_writes_collection_and_reindexes(
     real_dir.mkdir()
     (real_dir / "a.md").write_text("# hello")
 
+    # Wizard now routes the auto-reindex through _reindex_with_warning_if_needed,
+    # which would push IndexerScreen on top. Stub it so we can assert on the
+    # per-collection screen the wizard lands on.
+    monkeypatch.setattr(
+        FNDApp,
+        "_reindex_with_warning_if_needed",
+        lambda self, name, **kwargs: None,
+    )
+
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()

@@ -60,16 +60,36 @@ def _iso_to_ts(iso: str) -> int:
 
 
 def _expand_collection_shorthand(q: str) -> str:
-    """Translate ``c:papers`` and ``c:papers,notes`` into Tantivy form."""
+    """Translate ``c:papers``, ``c:papers,notes``, ``c:"Soft Eng"``,
+    and mixed ``c:papers,"Soft Eng",notes`` into Tantivy form.
+
+    Names may be bare (alnum + ``_`` + ``-``) or quoted with ``"`` /
+    ``'`` to carry spaces and other punctuation. Multi-name lists are
+    joined with ``OR`` and wrapped in a single ``collection:`` clause
+    group so they compose with the rest of the query."""
+
+    # One name in the list: a quoted run or a bare token. Spelled as a
+    # regex fragment so it can be inlined into the surrounding pattern.
+    name_token = r"""(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_\-]+))"""  # noqa: S105 — regex, not a password
+    pattern = re.compile(
+        rf"\bc:({name_token}(?:\s*,\s*{name_token})*)",
+    )
+    name_re = re.compile(name_token)
 
     def repl(match: re.Match[str]) -> str:
-        names = [n.strip() for n in match.group(1).split(",") if n.strip()]
+        names: list[str] = []
+        for m in name_re.finditer(match.group(1)):
+            n = m.group(1) or m.group(2) or m.group(3)
+            if n:
+                names.append(n)
+        if not names:
+            return match.group(0)
         if len(names) == 1:
             return f'collection:"{names[0]}"'
         joined = " OR ".join(f'collection:"{n}"' for n in names)
         return f"({joined})"
 
-    return re.sub(r"\bc:([A-Za-z0-9_,\-]+)", repl, q)
+    return pattern.sub(repl, q)
 
 
 def _expand_date_token(q: str) -> str:

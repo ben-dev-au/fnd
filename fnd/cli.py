@@ -144,7 +144,18 @@ def tui(
     # mouse=True is Textual's default clickable interface (click-to-focus,
     # hover wheel-scroll); Reading View (`z`) flips it off for native
     # selection/copy/TTS and back on when exited.
-    FNDApp(collection=collection, initial_query=initial_query, config=cfg).run(mouse=True)
+    #
+    # ``kill_switch`` sets ``TEXTUAL_ALLOW_SIGNALS=1`` so the tty driver
+    # turns ^C into a real SIGINT (rather than a stdin byte handled by
+    # an asyncio-bound key binding). The installed handler exits the
+    # app cleanly on the first press and unconditionally hard-exits on
+    # any subsequent press, so a wedged event loop can never trap the
+    # user regardless of how slowly they pace presses.
+    from fnd.tui._sigint_kill_switch import kill_switch
+
+    fnd_app = FNDApp(collection=collection, initial_query=initial_query, config=cfg)
+    with kill_switch(fnd_app):
+        fnd_app.run(mouse=True)
 
 
 @app.command()

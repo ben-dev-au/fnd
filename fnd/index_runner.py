@@ -52,6 +52,7 @@ from fnd.schema import F_COLLECTION
 from fnd.walk import is_dataless, walk_sources
 
 EventKind = Literal[
+    "enumerating",
     "started",
     "file_processing",
     "file_complete",
@@ -211,11 +212,23 @@ def _enumerate_paths(config: CollectionConfig) -> list[tuple[Path, str]]:
     """Eagerly walk all sources to count files for ETA + total bar.
 
     Returns ``(path, source_id)`` pairs in deterministic walk order.
+    Honours ``defaults.skip_junk_dirs`` + ``extra_junk_dirs`` so dev
+    trees (``node_modules``, ``.venv``, …) are pruned at descent.
     """
+    from fnd.config import load as _load_config
+    from fnd.walk import resolve_skip_dirs
+
+    try:
+        skip = resolve_skip_dirs(_load_config().defaults)
+    except Exception:
+        skip = resolve_skip_dirs(None)
     out: list[tuple[Path, str]] = []
     for source in config.sources:
-        source_id = str(Path(source.path).expanduser().resolve())
-        for path in walk_sources(sources=[source]):
+        try:
+            source_id = str(Path(source.path).expanduser().resolve())
+        except OSError:
+            source_id = str(Path(source.path).expanduser())
+        for path in walk_sources(sources=[source], skip_dirs=skip):
             out.append((path, source_id))
     return out
 
@@ -452,20 +465,13 @@ async def run_indexer(
 
     started_at = dt.datetime.now(tz=dt.UTC).isoformat(timespec="seconds")
     t_start = time.perf_counter()
-    paths = _enumerate_paths(config)
-    pdfs_total = sum(1 for p, _src in paths if p.suffix.lower() == ".pdf")
-    # Per-file byte sizes for the size-weighted ETA. A non-existent /
-    # unreadable file contributes 0 and is counted as 0-byte done at
-    # completion - same outcome as the file-count fallback for that
-    # entry without distorting the rate for the rest.
+    # Mutable closure cells for _emit so an early ``enumerating`` event
+    # carries zeros while the walk is still pending.
+    paths: list[tuple[Path, str]] = []
     sizes: dict[str, int] = {}
-    for p, _src in paths:
-        try:
-            sizes[str(p)] = p.stat().st_size
-        except OSError:
-            sizes[str(p)] = 0
-    bytes_total = sum(sizes.values())
-    bytes_done_state = [0]  # mutable closure-cell so _emit reads latest
+    pdfs_total = 0
+    bytes_total = 0
+    bytes_done_state = [0]
     # Cache-miss-only counters: bytes processed via real extraction
     # and the seconds we spent doing it. Drives the ETA rate so a
     # cache-heavy chain doesn't collapse ETA to 0 just because the
@@ -476,10 +482,9 @@ async def run_indexer(
     state = IndexState(
         collection=collection,
         started_at=started_at,
-        total_files=len(paths),
-        pdfs_total=pdfs_total,
+        total_files=0,
+        pdfs_total=0,
     )
-    save_state(state_path, state)
 
     def _emit(kind: EventKind, **extra: Any) -> ProgressEvent:
         return ProgressEvent(
@@ -503,24 +508,76 @@ async def run_indexer(
             **extra,
         )
 
-    yield _emit("started")
+    # Surface an immediate "enumerating" event so the modal mounts and
+    # shows "Scanning sources…" while the synchronous filesystem walk
+    # runs on a worker thread. Without this hop the event loop stays
+    # blocked in scandir / stat / tantivy IO and the UI looks frozen.
+    yield _emit("enumerating")
 
-    try:
-        index = _ensure_index(index_dir, force=rebuild)
-        writer = index.writer(heap_size=_WRITER_HEAP)
+    def _prepare() -> tuple[list[tuple[Path, str]], dict[str, int], int, int, Any, Any, Any]:
+        local_paths = _enumerate_paths(config)
+        local_sizes: dict[str, int] = {}
+        for p, _src in local_paths:
+            try:
+                local_sizes[str(p)] = p.stat().st_size
+            except OSError:
+                local_sizes[str(p)] = 0
+        local_pdfs_total = sum(1 for p, _src in local_paths if p.suffix.lower() == ".pdf")
+        local_bytes_total = sum(local_sizes.values())
+        local_index = _ensure_index(index_dir, force=rebuild)
+        local_writer = local_index.writer(heap_size=_WRITER_HEAP)
         if rebuild:
-            writer.delete_documents(F_COLLECTION, collection)
-            writer.commit()
-
+            local_writer.delete_documents(F_COLLECTION, collection)
+            local_writer.commit()
         # Prior-committed snapshot for the incremental skip. A point-in-time
         # searcher reflects only what previous runs committed; files we
         # process this run are deleted+re-added, never skipped later, so the
         # start-of-run snapshot is the correct "already indexed?" oracle.
-        prior_searcher = None
+        local_prior_searcher = None
         if skip_unchanged and not rebuild:
             with contextlib.suppress(Exception):
-                prior_searcher = index.searcher()
+                local_prior_searcher = local_index.searcher()
+        return (
+            local_paths,
+            local_sizes,
+            local_pdfs_total,
+            local_bytes_total,
+            local_index,
+            local_writer,
+            local_prior_searcher,
+        )
 
+    try:
+        (
+            paths,
+            sizes,
+            pdfs_total,
+            bytes_total,
+            index,
+            writer,
+            prior_searcher,
+        ) = await asyncio.to_thread(_prepare)
+    except Exception as e:
+        # Without this backstop a LockBusy (concurrent indexer on the
+        # same index_dir) or any other _prepare failure would kill the
+        # drive_indexer task silently and leave the IndexerScreen frozen
+        # at "Scanning sources…" forever. Emit a file_error so the
+        # modal shows the reason, then a terminal cancelled so it
+        # transitions out of the enumerating state and the user can
+        # close it.
+        yield _emit(
+            "file_error",
+            current_file="(setup)",
+            error=f"Could not start indexer: {e}",
+        )
+        yield _emit("cancelled")
+        return
+    state.total_files = len(paths)
+    state.pdfs_total = pdfs_total
+    save_state(state_path, state)
+    yield _emit("started")
+
+    try:
         written = 0
         for path, source_id in paths:
             if cancel is not None and cancel.is_set():

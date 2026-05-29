@@ -4370,10 +4370,15 @@ class FNDApp(App[None]):
         texturise_override: bool | None = None,
         skip_unchanged: bool = True,
         force_fresh: bool = False,
+        rebuild: bool = False,
     ) -> None:
         """If the pdf-structure extra is installed and the first-reindex
         warning hasn't been seen, show it; on confirm, start the
-        indexer. Otherwise start the indexer directly."""
+        indexer. Otherwise start the indexer directly.
+
+        ``rebuild=True`` is for callers that need a fresh build after a
+        config change (collection rename, source delete, etc.) — it
+        drops the collection's existing chunks before re-indexing."""
         from fnd.config import load as _load_config
         from fnd.tui.first_reindex_warning import (
             FirstReindexWarningScreen,
@@ -4403,6 +4408,7 @@ class FNDApp(App[None]):
                 self.start_indexer(
                     collection=collection,
                     config=col_cfg,
+                    rebuild=rebuild,
                     texturise_override=texturise_override,
                     skip_unchanged=skip_unchanged,
                     force_fresh=force_fresh,
@@ -4414,6 +4420,7 @@ class FNDApp(App[None]):
                     self.start_indexer(
                         collection=collection,
                         config=col_cfg,
+                        rebuild=rebuild,
                         texturise_override=texturise_override,
                         skip_unchanged=skip_unchanged,
                         force_fresh=force_fresh,
@@ -4427,6 +4434,7 @@ class FNDApp(App[None]):
             self.start_indexer(
                 collection=collection,
                 config=col_cfg,
+                rebuild=rebuild,
                 texturise_override=texturise_override,
                 skip_unchanged=skip_unchanged,
                 force_fresh=force_fresh,
