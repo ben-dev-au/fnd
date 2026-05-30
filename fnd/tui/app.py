@@ -2198,14 +2198,20 @@ class FNDApp(App[None]):
         # Arm the scroll controller for this navigation. Every mount/finalize
         # event below reconciles against this one anchor instead of issuing its
         # own scroll, so call order can no longer change where the preview lands.
-        # Same-file navigation (between matches) glides smoothly to the new
-        # match — the document is already on screen, so a jump reads as lumpy.
-        # A fresh file lands instantly (it's revealed via an atomic swap, not a
-        # scroll). Consistent rule: scroll within a doc, cut between docs.
-        same_file = (
-            self._active_preview is not None and self._active_preview.parent_doc_id == parent_id
+        # Glide smoothly only when the target match is ALREADY mounted (the
+        # content between is on screen, so the scroll is over real rows). A
+        # fresh file — or a same-file match outside the mounted window — is
+        # revealed via an atomic swap (cut) instead: animating over an unmounted
+        # gap would be lumpy, and prepending an out-of-window window above the
+        # current match slides the view (reflow). Consistent rule: glide when
+        # the content is there, cut when it must be built.
+        active = self._active_preview
+        target_mounted = (
+            active is not None
+            and active.parent_doc_id == parent_id
+            and (active.is_complete or focus_chunk_seq in active.chunk_widgets)
         )
-        self._preview_scroll.arm(ScrollAnchor(parent_id, focus_chunk_seq, animate=same_file))
+        self._preview_scroll.arm(ScrollAnchor(parent_id, focus_chunk_seq, animate=target_mounted))
 
         chunks = self._chunk_cache.get(parent_id)
         if chunks is not None:
@@ -2337,18 +2343,30 @@ class FNDApp(App[None]):
                 )
                 self._preview_scroll.reconcile()
                 return
-            # Same-file resume: scroll-between-matches expects no bar.
-            # Cancel any in-flight lazy-mount on this container — its
-            # scroll-compensate would compete with the resume's anchor.
+            # Same-file, target match OUTSIDE the mounted window. Resuming the
+            # SAME container would mount the new window in document order —
+            # which, for an upward jump, prepends above the current match and
+            # slides the visible content (the "flash wrong content, then land"
+            # reflow). Instead build a FRESH container at the new focus and
+            # atomic-swap to it, exactly like a between-file nav: the fresh
+            # container builds invisibly (mounted below the current one, so no
+            # shift), then the swap hides the old and reveals the new at the
+            # match in one tick. The old container is dropped from the cache by
+            # the fresh one's put() and swept on the next navigation.
             self._cancel_preview_mount_task()
             self._cancel_lazy_mount_task()
             self._hide_progress_bar()
+            fresh = PreviewContainer(
+                parent_doc_id=parent_id,
+                query_signature=query_sig,
+                total_chunks=len(chunks),
+            )
             self._preview_mount_task = asyncio.create_task(
                 self._mount_chunks_async(
                     parent_id,
                     focus_chunk_seq,
                     chunks,
-                    container,
+                    fresh,
                     silent=True,
                 )
             )

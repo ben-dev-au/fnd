@@ -171,12 +171,17 @@ async def test_scroll_above_after_settled_triggers_lazy_mount(
 
 
 @pytest.mark.asyncio
-async def test_gap_between_two_mounted_regions_fills_on_scroll(
+async def test_far_in_file_nav_lands_in_fresh_contiguous_region(
     cfg: Config, long_md_index: Path
 ) -> None:
-    """When the user navigates between two far-apart matches in the
-    same file, the mounted region has a gap. Scrolling down within the
-    earlier region (toward the gap) progressively fills it."""
+    """Navigating to a far-apart match in the same file lands on the new
+    match in a FRESH, contiguous mounted region — not a second window
+    prepended above the current one. The old same-container resume left a
+    gap between two regions and, on an upward jump, slid the visible content
+    (the reflow). A fresh container is built below the outgoing one and
+    swapped in, so the view never shifts and the result is one contiguous
+    window. Scrolling past it still lazy-mounts (the scroll-boundary tests
+    above cover that)."""
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -186,58 +191,29 @@ async def test_gap_between_two_mounted_regions_fills_on_scroll(
             lambda: app._active_preview is not None and bool(app._active_preview.mounted_indices),
             message="active preview never mounted any chunks",
         )
-        # Auto-load focuses on chunk 50. Now resume on a far-earlier chunk:
-        # ±7 window around chunk 10 leaves a gap with chunk 50's region.
+        # Auto-load focuses on section 50. Jump far UP to section 10 — the
+        # case that used to prepend a window above the view and reflow.
         group = app._groups[0]
         app._render_full_doc(group.parent_id, focus_chunk_seq=10)
-        from itertools import pairwise
-
-        def _gap_present() -> bool:
-            c = app._active_preview
-            if c is None or c.parent_doc_id != group.parent_id:
-                return False
-            s = sorted(c.mounted_indices)
-            return any(b > a + 1 for a, b in pairwise(s))
-
         await wait_until(
             pilot,
-            _gap_present,
-            message="second render didn't leave a gap in mounted_indices",
+            lambda: (
+                app._active_preview is not None
+                and app._active_preview.parent_doc_id == group.parent_id
+                and 10 in app._active_preview.chunk_widgets
+            ),
+            timeout=15.0,
+            message="far in-file nav never landed on the new focus chunk",
         )
         container = app._active_preview
         assert container is not None
-        sorted_idx = sorted(container.mounted_indices)
-        gaps = [(a, b) for a, b in pairwise(sorted_idx) if b > a + 1]
-        assert gaps, f"test setup needs a gap; mounted={sorted_idx}"
-        gap_lo = gaps[0][0]
-        from textual.containers import VerticalScroll
+        from itertools import pairwise
 
-        pane = app.query_one("#preview_pane", VerticalScroll)
-        # Scroll to the very bottom of the lower region (chunk gap_lo's
-        # widget) — that's where the gap-fill trigger should fire.
-        widget = container.chunk_widgets[
-            next(c for c in app._chunk_cache[group.parent_id] if c.chunk_seq == gap_lo).chunk_seq
-        ]
-        target_y = max(0, widget.virtual_region.y + widget.virtual_region.height - pane.size.height)
-        # Release the navigation anchor (user taking scroll control) so the
-        # armed gate stops suppressing lazy-mount, then force the scroll
-        # position. If ``scroll_y`` is already at target_y, ``scroll_to`` is a
-        # no-op and the watcher never fires — pre-nudge to a distinct y so the
-        # second scroll_to actually changes the value.
-        app._preview_scroll.release()
-        if pane.scroll_y == target_y:
-            pane.scroll_to(y=max(0, target_y - 1), animate=False, immediate=True)
-        pane.scroll_to(y=target_y, animate=False, immediate=True)
-        # Belt and braces: directly invoke the check in case the
-        # watcher-trip → debounce → check path is dropped by a load
-        # spike. ``_check_preview_lazy_mount`` is idempotent.
-        app._check_preview_lazy_mount()
-        await wait_until(
-            pilot,
-            lambda: gap_lo + 1 in container.mounted_indices,
-            timeout=15.0,
-            message=f"gap-fill never mounted chunk {gap_lo + 1}; "
-            f"mounted={sorted(container.mounted_indices)}",
+        sorted_idx = sorted(container.mounted_indices)
+        # Fresh container ⇒ one contiguous window around the new focus, with
+        # no gap to a stale far region (the gap was the reflow's source).
+        assert all(b == a + 1 for a, b in pairwise(sorted_idx)), (
+            f"expected a contiguous region after a far jump; mounted={sorted_idx}"
         )
 
 
