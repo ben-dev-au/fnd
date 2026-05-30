@@ -19,7 +19,6 @@ import asyncio
 import contextlib
 import re
 from collections import OrderedDict
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -4247,39 +4246,6 @@ class FNDApp(App[None]):
             "Dumped preview widget tree → /tmp/fnd-preview-diag.log",
             timeout=2,
         )
-
-    def _scroll_preview_to_chunk(
-        self,
-        focus_chunk_seq: int,
-        *,
-        on_done: Callable[[], None] | None = None,
-    ) -> None:
-        if self._active_flat_buffer is not None:
-            self._active_flat_buffer.scroll_to_chunk(focus_chunk_seq, prefer_first_match=True)
-            if on_done is not None:
-                on_done()
-            return
-        header = self._chunk_widgets.get(focus_chunk_seq)
-        if header is None:
-            if on_done is not None:
-                on_done()
-            return
-        for w in self._chunk_widgets.values():
-            w.remove_class("chunk-section-focused")
-        # Apply focused band to chunks that don't already manage their
-        # own focus highlight (FNDMarkdown handles that internally).
-        if not isinstance(header, FNDMarkdown):
-            header.add_class("chunk-section-focused")
-        self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq, 30, on_done)
-
-    def _do_scroll_to_chunk(
-        self,
-        focus_chunk_seq: int,
-        retries: int = 30,
-        on_done: Callable[[], None] | None = None,
-    ) -> None:
-        """Shim → StructuralScrollStrategy (removed in the dead-code cleanup task)."""
-        self._preview_scroll_structural._do_scroll_to_chunk(focus_chunk_seq, retries, on_done)
 
     # ── StructuralHost accessors ──────────────────────────────────
     # The structural scroll strategy reads the pane, chunk/match maps,
