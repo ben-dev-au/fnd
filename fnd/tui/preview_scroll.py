@@ -36,10 +36,26 @@ class ScrollAnchor:
     animate: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class ViewportLocation:
+    """A restorable reading position in the preview — the read-counterpart of
+    a scroll target. ``locate()`` produces one; ``scroll_to_location()``
+    consumes it (Memento). Structural previews use ``chunk_seq`` + ``offset``
+    (rows into the chunk); flat previews use ``line`` (a logical, wrap-stable
+    line index). ``kind`` says which fields are meaningful."""
+
+    kind: str  # "structural" | "flat"
+    chunk_seq: int = 0
+    offset: int = 0
+    line: int = 0
+
+
 class ScrollStrategy(Protocol):
     def reconcile(
         self, anchor: ScrollAnchor, on_settled: Callable[[], None] | None = None
     ) -> None: ...
+    def locate(self) -> ViewportLocation | None: ...
+    def scroll_to_location(self, location: ViewportLocation) -> None: ...
 
 
 class PreviewScrollController:
@@ -87,6 +103,22 @@ class PreviewScrollController:
             strategy.reconcile(self._anchor, on_settled)
         elif on_settled is not None:
             on_settled()
+
+    def locate(self) -> ViewportLocation | None:
+        """Read the viewport's current top position — the counterpart to
+        scrolling to one. Survives a width reflow (e.g. toggling Reading View
+        re-wraps the content). Delegates to the active strategy; pass the
+        result straight back to :meth:`scroll_to_location`."""
+        strategy = self._select_strategy()
+        return strategy.locate() if strategy is not None else None
+
+    def scroll_to_location(self, location: ViewportLocation | None) -> None:
+        """Scroll to a position previously read by :meth:`locate`."""
+        if location is None:
+            return
+        strategy = self._select_strategy()
+        if strategy is not None:
+            strategy.scroll_to_location(location)
 
 
 class StructuralHost(Protocol):
@@ -404,6 +436,52 @@ class StructuralScrollStrategy:
                     return cell if cell.region.height > 0 else child
         return first_table or chunk
 
+    def locate(self) -> ViewportLocation | None:
+        """The chunk at the viewport top + how far into it the top sits.
+        Survives a width reflow at chunk granularity: re-wrapping changes a
+        chunk's height, but the chunk's content position is found again."""
+        pane = self._host.preview_pane()
+        top = pane.scrollable_content_region.y
+        for seq, w in self._host.chunk_widgets.items():
+            r = w.region
+            if r.height > 0 and r.y <= top < r.y + r.height:
+                return ViewportLocation("structural", chunk_seq=seq, offset=top - r.y)
+        return None
+
+    def scroll_to_location(self, location: ViewportLocation) -> None:
+        if location.kind != "structural":
+            return
+        self._restore_structural(location.chunk_seq, location.offset, retries=12, last_vy=None)
+
+    def _restore_structural(self, seq: int, delta: int, retries: int, last_vy: int | None) -> None:
+        # A width reflow re-wraps the chunks above over several refreshes,
+        # which keeps sliding the target chunk's content position. Track that
+        # content position (``virtual_region.y`` — scroll-independent) and
+        # re-apply until it stops moving; watching ``scroll_y`` instead settles
+        # early (the offset repeats while the layout is still flowing) and
+        # lands a chunk off. Scroll numerically to the chunk's content top plus
+        # the captured in-chunk offset.
+        w = self._host.chunk_widgets.get(seq)
+        if w is None:
+            return
+        pane = self._host.preview_pane()
+        vy = w.virtual_region.y
+        # Flag as the controller's own scroll so the watcher trip isn't read
+        # as a user scroll (which would self-release the anchor).
+        self._host.begin_reconcile_scroll()
+        try:
+            pane.scroll_to(y=max(0, vy + delta), animate=False, immediate=True)
+        finally:
+            self._host.end_reconcile_scroll()
+        # The width reflow re-wraps the chunks above asynchronously over many
+        # refreshes, so the chunk's content position keeps moving after we
+        # first scroll. Re-apply on every refresh for the whole budget (do NOT
+        # early-stop: the position is stale-stable for a stretch, then jumps
+        # once the re-wrap lands), re-reading it each time so the final applies
+        # land on the settled layout.
+        if retries > 0:
+            self._host.call_after_refresh(self._restore_structural, seq, delta, retries - 1, vy)
+
 
 class FlatHost(Protocol):
     """The slice of FNDApp the flat scroll strategy needs."""
@@ -438,3 +516,22 @@ class FlatScrollStrategy:
         # landed — reveal immediately.
         if on_settled is not None:
             on_settled()
+
+    def locate(self) -> ViewportLocation | None:
+        """The logical line at the viewport top — exact across a width reflow
+        (the line buffer re-wraps but logical lines stay addressable)."""
+        buf = self._host.active_flat_buffer()
+        if buf is None:
+            return None
+        line = buf.top_logical_line()
+        return None if line is None else ViewportLocation("flat", line=line)
+
+    def scroll_to_location(self, location: ViewportLocation) -> None:
+        if location.kind != "flat":
+            return
+        buf = self._host.active_flat_buffer()
+        if buf is None:
+            return
+        # Exact (no context margin) — restore the *reading* position, not a
+        # match drop. scroll_to_line re-wraps for the new width first.
+        buf.scroll_to_line(location.line, context_fraction=0.0)

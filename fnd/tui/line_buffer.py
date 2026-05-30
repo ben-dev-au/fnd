@@ -488,6 +488,16 @@ class LineBufferPreview(ScrollView, can_focus=True):
         self._pending_scroll_center = False
         self._pending_scroll_context_fraction = 0.0
 
+    def top_logical_line(self) -> int | None:
+        """The logical (pre-wrap) line index at the current viewport top, or
+        ``None`` if nothing is laid out yet. Preserves the reading position
+        across a width reflow (e.g. toggling Reading View): capture this, let
+        the width change re-wrap, then ``scroll_to_line`` it back exactly."""
+        if not self._visual_to_logical:
+            return None
+        y = max(0, min(int(self.scroll_offset.y), len(self._visual_to_logical) - 1))
+        return self._visual_to_logical[y]
+
     def scroll_to_chunk(
         self,
         chunk_id: int,

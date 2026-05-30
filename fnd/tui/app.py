@@ -1509,6 +1509,12 @@ class FNDApp(App[None]):
         only the preview (clean copy for text-to-speech, ⌘C, right-click
         Copy), and it reads distraction-free. Also drops the preview
         border/padding so the frame isn't copied. Toggle to restore."""
+        # Hiding the sidebar widens the preview, which re-wraps the content and
+        # shifts the scroll position. Read the current reading position and
+        # scroll back to it once the reflow lands — the same regardless of how
+        # the position was reached (match nav or user scroll), so a reader who
+        # scrolled away keeps their place rather than snapping back to the match.
+        location = self._preview_scroll.locate()
         self._reading_mode = not self._reading_mode
         self.query_one("#results_column", Vertical).display = not self._reading_mode
         preview = self.query_one("#preview_pane", MatchAwareScroll)
@@ -1521,6 +1527,8 @@ class FNDApp(App[None]):
             preview.focus()
         else:
             self.query_one("#results_pane", ResultsTree).focus()
+        if location is not None:
+            self.call_after_refresh(self._preview_scroll.scroll_to_location, location)
         self._refresh_footer_hints()
 
     def on_mount(self) -> None:

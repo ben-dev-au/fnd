@@ -10,6 +10,7 @@ from fnd.tui.preview_scroll import (
     ScrollAnchor,
     StructuralHost,
     StructuralScrollStrategy,
+    ViewportLocation,
 )
 
 
@@ -17,12 +18,19 @@ class FakeStrategy:
     def __init__(self) -> None:
         self.calls: list[ScrollAnchor] = []
         self.settled: int = 0
+        self.restored: list[ViewportLocation] = []
 
     def reconcile(self, anchor: ScrollAnchor, on_settled: object = None) -> None:
         self.calls.append(anchor)
         if callable(on_settled):
             on_settled()
             self.settled += 1
+
+    def locate(self) -> ViewportLocation | None:
+        return ViewportLocation("flat", line=7)
+
+    def scroll_to_location(self, location: ViewportLocation) -> None:
+        self.restored.append(location)
 
 
 def test_arm_then_reconcile_calls_strategy() -> None:
@@ -88,11 +96,19 @@ _UNSET = object()
 
 
 class _FakeWidget:
-    """Duck-typed chunk/match widget: the structural scroll only reads
-    ``.region`` (and an optional ``.first_match_block``)."""
+    """Duck-typed chunk/match widget: the structural scroll reads ``.region``,
+    ``.virtual_region`` (content-space position for the viewport-anchor
+    restore), and an optional ``.first_match_block``."""
 
-    def __init__(self, region: Region, *, first_match_block: object = _UNSET) -> None:
+    def __init__(
+        self,
+        region: Region,
+        *,
+        first_match_block: object = _UNSET,
+        virtual_region: Region | None = None,
+    ) -> None:
         self.region = region
+        self.virtual_region = virtual_region if virtual_region is not None else region
         self.classes: set[str] = set()
         if first_match_block is not _UNSET:
             self.first_match_block = first_match_block
@@ -112,6 +128,7 @@ class _FakePane:
         self.scroll_offset = Offset(0, 0)
         self.scrollable_content_region = Region(0, 0, 80, height)
         self.captured: Region | None = None
+        self.scrolled_to_y: int | None = None
 
     def scroll_to_region(
         self,
@@ -122,6 +139,9 @@ class _FakePane:
         immediate: bool = False,
     ) -> None:
         self.captured = region
+
+    def scroll_to(self, *, y: int, animate: bool = True, immediate: bool = False) -> None:
+        self.scrolled_to_y = y
 
 
 class _FakeHost:
@@ -228,13 +248,23 @@ def test_structural_strategy_missing_header_invokes_on_done_without_scrolling() 
 
 
 class _FakeFlatBuffer:
-    def __init__(self) -> None:
+    def __init__(self, top_line: int | None = 42) -> None:
         self.calls: list[tuple[int, bool, float]] = []
+        self.top_line = top_line
+        self.scrolled_to: list[tuple[int, float]] = []
 
     def scroll_to_chunk(
         self, chunk_id: int, *, prefer_first_match: bool = True, context_fraction: float = 0.0
     ) -> None:
         self.calls.append((chunk_id, prefer_first_match, context_fraction))
+
+    def top_logical_line(self) -> int | None:
+        return self.top_line
+
+    def scroll_to_line(
+        self, line_index: int, *, center: bool = False, context_fraction: float = 0.0
+    ) -> None:
+        self.scrolled_to.append((line_index, context_fraction))
 
 
 class _FakeFlatHost:
@@ -276,3 +306,82 @@ def test_flat_reconcile_fires_on_settled_without_buffer() -> None:
     fired: list[bool] = []
     strat.reconcile(ScrollAnchor(parent_id="p", focus_chunk_seq=7), lambda: fired.append(True))
     assert fired == [True]
+
+
+# ── Viewport anchor capture/restore (Reading View position preservation) ──
+
+
+def test_controller_locate_and_scroll_to_location_delegate_to_strategy() -> None:
+    strat = FakeStrategy()
+    c = PreviewScrollController(select_strategy=lambda: strat)
+    loc = ViewportLocation("flat", line=7)
+    assert c.locate() == loc
+    c.scroll_to_location(loc)
+    assert strat.restored == [loc]
+
+
+def test_controller_scroll_to_location_none_is_noop() -> None:
+    strat = FakeStrategy()
+    c = PreviewScrollController(select_strategy=lambda: strat)
+    c.scroll_to_location(None)
+    assert strat.restored == []
+
+
+def test_controller_locate_without_strategy_returns_none() -> None:
+    c = PreviewScrollController(select_strategy=lambda: None)
+    assert c.locate() is None
+
+
+def test_structural_locate_returns_top_chunk_and_in_chunk_offset() -> None:
+    # The fake pane's viewport top is at scrollable_content_region.y (0). A
+    # chunk starting 3 rows above that spans the top → located with offset 3.
+    top_chunk = _FakeWidget(Region(0, -3, 80, 10))
+    pane = _FakePane(height=40)
+    host = _FakeHost(pane, chunk_widgets={2: top_chunk}, match_targets={})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+
+    assert strat.locate() == ViewportLocation("structural", chunk_seq=2, offset=3)
+
+
+def test_structural_scroll_to_location_scrolls_to_chunk_plus_offset() -> None:
+    # virtual_region.y (content-space top) = 200; restore scrolls to top + the
+    # captured 6-row in-chunk offset.
+    w = _FakeWidget(Region(0, 100, 80, 40), virtual_region=Region(0, 200, 80, 40))
+    pane = _FakePane(height=40)
+    host = _FakeHost(pane, chunk_widgets={5: w}, match_targets={})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+
+    strat.scroll_to_location(ViewportLocation("structural", chunk_seq=5, offset=6))
+
+    assert pane.scrolled_to_y == 206
+
+
+def test_structural_scroll_to_location_ignores_flat_location() -> None:
+    pane = _FakePane()
+    host = _FakeHost(pane, chunk_widgets={}, match_targets={})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+
+    strat.scroll_to_location(ViewportLocation("flat", line=3))  # wrong kind
+
+    assert pane.scrolled_to_y is None
+
+
+def test_flat_locate_returns_top_logical_line() -> None:
+    buf = _FakeFlatBuffer(top_line=42)
+    strat = FlatScrollStrategy(cast(FlatHost, _FakeFlatHost(buf)))
+    assert strat.locate() == ViewportLocation("flat", line=42)
+
+
+def test_flat_locate_none_without_buffer() -> None:
+    strat = FlatScrollStrategy(cast(FlatHost, _FakeFlatHost(None)))
+    assert strat.locate() is None
+
+
+def test_flat_scroll_to_location_scrolls_to_logical_line_without_margin() -> None:
+    buf = _FakeFlatBuffer()
+    strat = FlatScrollStrategy(cast(FlatHost, _FakeFlatHost(buf)))
+
+    strat.scroll_to_location(ViewportLocation("flat", line=42))
+
+    # Exact restore: the logical line, no context margin.
+    assert buf.scrolled_to == [(42, 0.0)]

@@ -343,3 +343,117 @@ async def test_cold_nav_to_prefetched_non_first_file_lands_on_screen(
             f"viewport [{top}, {bottom}) — cold-render scroll under-shot, leaving "
             f"the match below the fold (pane.scroll_y={pane.scroll_y})"
         )
+
+
+def _reading_doc(tmp_path: Path, tmp_index_dir: Path) -> Path:
+    """A multi-section markdown doc, scrollable in the preview. The unique
+    term ``quartzfin-anchor`` sits near the end so the auto-load scrolls
+    well past the top."""
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    lines = ["# Title", "Introductory paragraph with enough words to wrap a little.", ""]
+    for i in range(60):
+        lines += [
+            f"## Section {i}",
+            f"Body text for section {i} long enough to wrap at narrow widths and reflow wider.",
+            "",
+        ]
+    lines += ["## Anchor section", "Here is quartzfin-anchor inside the anchor section prose."]
+    (notes / "doc.md").write_text("\n".join(lines), encoding="utf-8")
+    build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
+    return tmp_index_dir
+
+
+def _top_chunk_seq(app: FNDApp) -> int | None:
+    """The structural chunk whose region spans the preview viewport top."""
+    c = app._active_preview
+    if c is None:
+        return None
+    pane = app.query_one("#preview_pane")
+    top = pane.scrollable_content_region.y
+    for seq, w in c.chunk_widgets.items():
+        r = w.region
+        if r.height > 0 and r.y <= top < r.y + r.height:
+            return seq
+    return None
+
+
+@pytest.mark.asyncio
+async def test_reading_view_preserves_match_position(tmp_path: Path, tmp_index_dir: Path) -> None:
+    """Toggling Reading View (full-width reflow) keeps the match on screen when
+    parked on it. The structural reflow re-wraps asynchronously, so the exact
+    top row can drift a chunk; the guarantee is that the match chunk stays in
+    the viewport (the flat path is exact — see the scrolled-position test)."""
+    index = _reading_doc(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin-anchor")
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one("#preview_pane")
+        await wait_until(
+            pilot,
+            lambda: (
+                app._active_preview is not None
+                and pane.scroll_y > 0
+                and _top_chunk_seq(app) is not None
+            ),
+            timeout=15.0,
+            message="structural preview never scrolled to match",
+        )
+        assert app._preview_scroll.is_armed
+        anchor = app._preview_scroll.anchor
+        assert anchor is not None
+        match_seq = anchor.focus_chunk_seq
+
+        app.action_toggle_reading_mode()
+        await settle(pilot, ticks=12)
+
+        assert app._reading_mode is True
+        c = app._active_preview
+        assert c is not None
+        w = c.chunk_widgets.get(match_seq)
+        assert w is not None
+        assert w.region.height > 0, "match chunk not laid out after toggle"
+        vtop = pane.scrollable_content_region.y
+        vbot = vtop + pane.scrollable_content_region.height
+        # The match chunk must overlap the viewport (it may start above the top
+        # when the match sits a quarter of the way down a tall chunk).
+        overlaps_viewport = w.region.y < vbot and w.region.y + w.region.height > vtop
+        assert overlaps_viewport, (
+            f"match chunk {match_seq} (region={w.region}) left the viewport "
+            f"[{vtop}, {vbot}) after the Reading View toggle"
+        )
+
+
+@pytest.mark.asyncio
+async def test_reading_view_preserves_scrolled_position(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """When the user has scrolled away from the match, Reading View preserves
+    THEIR position — not the match."""
+    index = _reading_doc(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin-anchor")
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one("#preview_pane")
+        await wait_until(
+            pilot,
+            lambda: (
+                app._active_preview is not None
+                and pane.scroll_y > 0
+                and _top_chunk_seq(app) is not None
+            ),
+            timeout=15.0,
+            message="structural preview never scrolled to match",
+        )
+        # User scrolls up to a different spot (releases the match anchor).
+        app._preview_scroll.release()
+        pane.scroll_to(y=max(0, pane.scroll_y // 2), animate=False, immediate=True)
+        await settle(pilot, ticks=4)
+        before = _top_chunk_seq(app)
+        assert before is not None
+
+        app.action_toggle_reading_mode()
+        await settle(pilot, ticks=12)
+
+        after = _top_chunk_seq(app)
+        assert after == before, (
+            f"scrolled position not preserved across Reading View toggle: {before} -> {after}"
+        )
