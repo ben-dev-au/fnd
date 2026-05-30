@@ -19,7 +19,6 @@ import asyncio
 import contextlib
 import re
 from collections import OrderedDict
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -31,7 +30,6 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.content import Span
-from textual.geometry import Region
 from textual.scrollbar import ScrollBar
 from textual.widget import Widget
 from textual.widgets import (
@@ -78,6 +76,13 @@ from fnd.tui.line_buffer import (
     build_rendered_document,
 )
 from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
+from fnd.tui.preview_scroll import (
+    FlatScrollStrategy,
+    PreviewScrollController,
+    ScrollAnchor,
+    ScrollStrategy,
+    StructuralScrollStrategy,
+)
 from fnd.tui.preview_scrollbar import MatchAwareScroll, ThinScrollBarRender
 from fnd.tui.progress import FNDProgressBar, ProgressFacility, ProgressSession
 
@@ -186,7 +191,11 @@ class PreviewContainer(Container):
     DEFAULT_CSS = """
     PreviewContainer { width: 100%; height: auto; }
     PreviewContainer.-hidden { display: none; }
-    PreviewContainer.-pre-reveal { visibility: hidden; }
+    /* opacity:0 (not visibility:hidden) so the pane can be scrolled to the
+       match WHILE the container is invisible — scroll_to_region is a no-op
+       under visibility:hidden, which forced a reveal-at-top-then-scroll jump.
+       The reveal lands only after the scroll commits (see _finalize_via_lock). */
+    PreviewContainer.-pre-reveal { opacity: 0%; }
     """
 
     def __init__(
@@ -1312,6 +1321,11 @@ class FNDApp(App[None]):
         # The currently-active PreviewContainer (the one with `-active`
         # class). None until the first file is rendered.
         self._active_preview: PreviewContainer | None = None
+        # The previously-visible container, kept on screen during a cold/swap
+        # mount so the pane never blanks: the incoming container builds
+        # invisibly (opacity:0) and only when its scroll lands do we hide this
+        # one and reveal the new one in a single tick. Cleared by that swap.
+        self._outgoing_preview: PreviewContainer | None = None
         # Per-file flat-buffer value cache (Stage 1c). One shared
         # LineBufferPreview is mounted on first need and re-installed
         # via set_prebuilt_view for every (parent_id, query_sig)
@@ -1385,6 +1399,18 @@ class FNDApp(App[None]):
         # ``Widget`` so both can be stored without complaint.
         self._chunk_widgets: dict[int, Widget] = {}
         self._match_targets: dict[int, Widget] = {}
+        # Owns the structural preview scroll-to-match logic, reading the
+        # chunk/match maps and pane back off this app via the host accessors.
+        self._preview_scroll_structural = StructuralScrollStrategy(host=self)
+        self._preview_scroll_flat = FlatScrollStrategy(host=self)
+        # Single source of truth for where the preview should sit: navigation
+        # arms an anchor; mount/finalize events reconcile against it (idempotent
+        # → the formerly racing scroll sites collapse to one target).
+        self._preview_scroll = PreviewScrollController(select_strategy=self._select_scroll_strategy)
+        # Set around the controller's own structural scroll so the resulting
+        # scroll-watcher trip isn't mistaken for a user scroll and doesn't
+        # self-release the anchor.
+        self._preview_scroll_reconciling: bool = False
         # The parent_id whose chunks are currently mounted in the preview
         # pane (so we don't re-mount when cursor moves within the same file).
         self._preview_parent_id: str | None = None
@@ -1399,7 +1425,6 @@ class FNDApp(App[None]):
         # finalize reveal) push this forward so the watcher doesn't
         # interpret their own scroll changes as user intent and fire a
         # competing mount that yanks the focused chunk off-screen.
-        self._lazy_mount_suppressed_until: float = 0.0
         # Debounce timer so rapid scroll bursts collapse to a single
         # check at the tail end — protects programmatic intermediate
         # scrolls AND smooths user wheel/key scroll bursts.
@@ -1482,6 +1507,12 @@ class FNDApp(App[None]):
         only the preview (clean copy for text-to-speech, ⌘C, right-click
         Copy), and it reads distraction-free. Also drops the preview
         border/padding so the frame isn't copied. Toggle to restore."""
+        # Hiding the sidebar widens the preview, which re-wraps the content and
+        # shifts the scroll position. Read the current reading position and
+        # scroll back to it once the reflow lands — the same regardless of how
+        # the position was reached (match nav or user scroll), so a reader who
+        # scrolled away keeps their place rather than snapping back to the match.
+        location = self._preview_scroll.locate()
         self._reading_mode = not self._reading_mode
         self.query_one("#results_column", Vertical).display = not self._reading_mode
         preview = self.query_one("#preview_pane", MatchAwareScroll)
@@ -1494,6 +1525,8 @@ class FNDApp(App[None]):
             preview.focus()
         else:
             self.query_one("#results_pane", ResultsTree).focus()
+        if location is not None:
+            self.call_after_refresh(self._preview_scroll.scroll_to_location, location)
         self._refresh_footer_hints()
 
     def on_mount(self) -> None:
@@ -2168,6 +2201,24 @@ class FNDApp(App[None]):
         if self._searcher is None:
             return
 
+        # Arm the scroll controller for this navigation. Every mount/finalize
+        # event below reconciles against this one anchor instead of issuing its
+        # own scroll, so call order can no longer change where the preview lands.
+        # Glide smoothly only when the target match is ALREADY mounted (the
+        # content between is on screen, so the scroll is over real rows). A
+        # fresh file — or a same-file match outside the mounted window — is
+        # revealed via an atomic swap (cut) instead: animating over an unmounted
+        # gap would be lumpy, and prepending an out-of-window window above the
+        # current match slides the view (reflow). Consistent rule: glide when
+        # the content is there, cut when it must be built.
+        active = self._active_preview
+        target_mounted = (
+            active is not None
+            and active.parent_doc_id == parent_id
+            and (active.is_complete or focus_chunk_seq in active.chunk_widgets)
+        )
+        self._preview_scroll.arm(ScrollAnchor(parent_id, focus_chunk_seq, animate=target_mounted))
+
         chunks = self._chunk_cache.get(parent_id)
         if chunks is not None:
             # We have decoded data — go to the mount path. If the
@@ -2296,21 +2347,32 @@ class FNDApp(App[None]):
                     parent_id=parent_id,
                     path="already_active_scroll_only",
                 )
-                self._scroll_preview_to_chunk(focus_chunk_seq)
+                self._preview_scroll.reconcile()
                 return
-            # Same-file resume: scroll-between-matches expects no bar.
-            # Cancel any in-flight lazy-mount on this container — its
-            # scroll-compensate would compete with the resume's anchor.
+            # Same-file, target match OUTSIDE the mounted window. Resuming the
+            # SAME container would mount the new window in document order —
+            # which, for an upward jump, prepends above the current match and
+            # slides the visible content (the "flash wrong content, then land"
+            # reflow). Instead build a FRESH container at the new focus and
+            # atomic-swap to it, exactly like a between-file nav: the fresh
+            # container builds invisibly (mounted below the current one, so no
+            # shift), then the swap hides the old and reveals the new at the
+            # match in one tick. The old container is dropped from the cache by
+            # the fresh one's put() and swept on the next navigation.
             self._cancel_preview_mount_task()
             self._cancel_lazy_mount_task()
             self._hide_progress_bar()
+            fresh = PreviewContainer(
+                parent_doc_id=parent_id,
+                query_signature=query_sig,
+                total_chunks=len(chunks),
+            )
             self._preview_mount_task = asyncio.create_task(
                 self._mount_chunks_async(
                     parent_id,
                     focus_chunk_seq,
                     chunks,
-                    container,
-                    silent=True,
+                    fresh,
                 )
             )
             return
@@ -2374,7 +2436,7 @@ class FNDApp(App[None]):
                 # handles any residual region.height==0 race. The prior
                 # two-tick wrapping was wasting a refresh tick (~50-200ms
                 # depending on DOM size) for every cache-hit click.
-                self.call_after_refresh(self._scroll_preview_to_chunk, focus_chunk_seq)
+                self.call_after_refresh(self._preview_scroll.reconcile)
                 if not cached.is_complete:
                     # Resume the partial mount in the background; the
                     # scroll above is canonical so suppress the task's
@@ -2391,7 +2453,7 @@ class FNDApp(App[None]):
                         )
                     )
                 return
-            self._activate_preview_container(cached, pre_reveal=True)
+            self._activate_preview_container(cached, pre_reveal=True, keep_outgoing=True)
             self._refresh_match_scrollbar(chunks)
             self._show_progress_bar(total=1, progress=0, phase="rendering…")
             self.call_after_refresh(self._finalize_pre_reveal, cached, focus_chunk_seq)
@@ -2462,13 +2524,23 @@ class FNDApp(App[None]):
             focus_chunk_seq = min(doc.fv.first_hit_line_in_chunk)
 
         buf = self._ensure_shared_flat_buffer()
-        if self._installed_flat_key == cache_key:
-            # Same doc already in the widget; intra-file navigation = scroll only.
-            buf.scroll_to_chunk(focus_chunk_seq, prefer_first_match=True)
-        else:
-            self._install_flat_doc(buf, doc, focus_chunk_seq, parent_id=parent_id)
+        if self._installed_flat_key != cache_key:
+            # New doc: install + synchronous no-flash scroll to the match.
+            self._install_flat_doc(
+                buf,
+                doc,
+                focus_chunk_seq,
+                parent_id=parent_id,
+                context_fraction=_MATCH_CONTEXT_FRACTION,
+            )
             self._installed_flat_key = cache_key
         self._activate_flat_buffer(buf)
+        # Route the flat match scroll through the controller: arm with the
+        # resolved focus chunk and reconcile (idempotent — re-applies the
+        # install's scroll; for intra-file nav it IS the scroll). The 25%
+        # context margin matches the structural path.
+        self._preview_scroll.arm(ScrollAnchor(parent_id, focus_chunk_seq))
+        self._preview_scroll.reconcile()
         self._diag_log(
             f"dispatch_flat parent={parent_id[:8]} cache_hit={'yes' if cache_hit else 'no'} "
             f"prebuilt={'yes' if prebuilt is not None else 'no'} strips={len(doc.strips)} "
@@ -2503,6 +2575,7 @@ class FNDApp(App[None]):
         focus_chunk_seq: int,
         *,
         parent_id: str,
+        context_fraction: float = 0.0,
     ) -> None:
         """Install ``doc`` into ``buf`` scrolled to the focused chunk's match."""
         focus_line = self._focus_line_for_chunk(doc.fv, focus_chunk_seq)
@@ -2514,6 +2587,7 @@ class FNDApp(App[None]):
             wrap_width=doc.wrap_width,
             base_width=doc.base_width,
             initial_focus_line=focus_line,
+            context_fraction=context_fraction,
         )
         buf.parent_doc_id = parent_id  # type: ignore[attr-defined]
 
@@ -2672,14 +2746,33 @@ class FNDApp(App[None]):
         container: PreviewContainer,
         *,
         pre_reveal: bool = False,
+        keep_outgoing: bool = False,
     ) -> None:
         """Make ``container`` the only visible preview. With
         ``pre_reveal=True`` the container is laid out but invisible
-        (visibility: hidden) until ``_finalize_pre_reveal`` lands the
-        scroll — no flash to file-top before the jump-to-match."""
+        (opacity:0) until the scroll lands — no flash to file-top before
+        the jump-to-match. With ``keep_outgoing=True`` the previously-active
+        container stays visible (so the pane never blanks) until the atomic
+        reveal swaps to ``container`` (see :meth:`_swap_reveal_target`)."""
         from fnd.tui import _perf
 
         self._clear_pane_placeholder()
+        # Hold the outgoing preview on screen while the incoming one builds
+        # invisibly; the reveal swap hides it and shows the new one in one tick.
+        # Only keep a genuinely-visible prior container (not one left invisible
+        # by a superseded mount) — otherwise the pane would blank anyway.
+        prior = self._active_preview
+        outgoing = (
+            prior
+            if keep_outgoing
+            and pre_reveal
+            and prior is not None
+            and prior is not container
+            and not prior.has_class("-pre-reveal")
+            and not prior.has_class("-hidden")
+            else None
+        )
+        self._outgoing_preview = outgoing
         for child in self.query(PreviewContainer):
             if child is container:
                 child.remove_class("-hidden")
@@ -2687,6 +2780,10 @@ class FNDApp(App[None]):
                     child.add_class("-pre-reveal")
                 else:
                     child.remove_class("-pre-reveal")
+            elif child is outgoing:
+                # Keep visible until the swap; don't disturb its scroll.
+                child.remove_class("-hidden")
+                child.remove_class("-pre-reveal")
             else:
                 child.add_class("-hidden")
                 child.remove_class("-pre-reveal")
@@ -2708,6 +2805,51 @@ class FNDApp(App[None]):
         # so the pane title swaps to the activated file immediately.
         self._refresh_status()
 
+    def swap_reveal_target(self, target: Widget, margin: int) -> bool:
+        """Atomic preview swap: hide the outgoing container, position the
+        incoming one so ``target`` sits ``margin`` rows down, and reveal it —
+        all in one tick. Returns True when a swap happened, False when there is
+        no outgoing container (the caller then scrolls + reveals normally).
+
+        The outgoing container stayed on screen through the whole build, so the
+        first frame the user sees after this is the new preview already at its
+        match — no blank, no scroll-into-place. ``target``'s offset is taken
+        relative to the incoming container's top, which is scroll-independent
+        and so survives the outgoing container leaving the layout."""
+        outgoing = self._outgoing_preview
+        new = self._active_preview
+        if outgoing is None or new is None or outgoing is new:
+            return False
+        offset = target.region.y - new.region.y
+        target_y = max(0, offset - margin)
+        pane = self.query_one("#preview_pane", VerticalScroll)
+        outgoing.add_class("-hidden")
+        pane.scroll_to(y=target_y, animate=False, immediate=True)
+        new.remove_class("-pre-reveal")
+        self._outgoing_preview = None
+        return True
+
+    def _reveal_preview(self, container: PreviewContainer) -> None:
+        """Reveal ``container`` and drop any still-held outgoing preview.
+        Fallback for paths where :meth:`swap_reveal_target` did not run (no
+        match resolved, or no outgoing) — a no-op for the class already lifted
+        by the swap.
+
+        Guard: a finalize/reveal callback is queued via ``call_after_refresh``
+        and runs a tick later. If a newer navigation superseded this mount in
+        the meantime, ``container`` is no longer ``_active_preview`` — revealing
+        it would surface the wrong file and clobber the new nav's outgoing
+        reference. Detached finalize tasks aren't cancelled, so this staleness
+        check (not task cancellation) is the single point that makes a
+        superseded reveal a no-op."""
+        if container is not self._active_preview:
+            return
+        outgoing = self._outgoing_preview
+        if outgoing is not None and outgoing is not container:
+            outgoing.add_class("-hidden")
+        self._outgoing_preview = None
+        container.remove_class("-pre-reveal")
+
     def _finalize_pre_reveal(self, container: PreviewContainer, focus_chunk_seq: int) -> None:
         """Lift ``-pre-reveal`` once focused chunk's compose is ready, then scroll."""
         import time
@@ -2725,6 +2867,7 @@ class FNDApp(App[None]):
         focus_chunk_seq: int,
         t0: float,
         *,
+        expected_above_seqs: list[int] | None = None,
         path: str = "cold_via_lock",
     ) -> None:
         """Wait for *every* chunk above the focus in the mounted window
@@ -2741,9 +2884,7 @@ class FNDApp(App[None]):
         from fnd.tui import _perf
 
         header = container.chunk_widgets.get(focus_chunk_seq)
-        # Step 1: wait for focus chunk's build. By the time it resolves,
-        # the parent mount task has run phase 1b synchronously, so the
-        # full visible window is in chunk_widgets.
+        # Step 1: wait for the focus chunk's build.
         try:
             async with asyncio.timeout(8.0):
                 if isinstance(header, FNDMarkdown):
@@ -2752,11 +2893,23 @@ class FNDApp(App[None]):
             self._diag_log(
                 f"finalize_via_lock focus build_done timeout seq={focus_chunk_seq} path={path}"
             )
-        # Step 2: now wait for every above-the-focus FNDMarkdown to
-        # finish building. Their heights drive the focus chunk's
-        # virtual_y; without this wait the scroll lands while siblings
-        # are still height=0, and the user sees the correct match for
-        # one frame before layout shifts under them.
+        # Step 2: wait for the above-window chunks to be MOUNTED, then built.
+        # We cannot just read chunk_widgets now: when the focus chunk was
+        # prefetched its build_done is already set, so Step 1 returns before
+        # Phase 1b has mounted the window — chunk_widgets would hold only the
+        # focus chunk (above_waited=0), the scroll would land against a
+        # focus-at-top layout, and the view would settle-scroll once the real
+        # above content mounts. Yield until every expected above seq exists.
+        expected = [s for s in (expected_above_seqs or []) if s < focus_chunk_seq]
+        try:
+            async with asyncio.timeout(8.0):
+                while not all(s in container.chunk_widgets for s in expected):
+                    await asyncio.sleep(0)
+        except TimeoutError:
+            self._diag_log(
+                f"finalize_via_lock above mount timeout seq={focus_chunk_seq} "
+                f"expected={len(expected)} path={path}"
+            )
         above_widgets: list[FNDMarkdown] = [
             w
             for seq, w in container.chunk_widgets.items()
@@ -2787,7 +2940,6 @@ class FNDApp(App[None]):
             if isinstance(header, FNDMarkdown) and header.region.height > 0:
                 break
         wait_ms = (time.perf_counter() - t0) * 1000
-        container.remove_class("-pre-reveal")
         self._hide_progress_bar()
         _perf.mark(
             "click_to_display_end",
@@ -2795,7 +2947,14 @@ class FNDApp(App[None]):
             focus_seq=focus_chunk_seq,
             path=path,
         )
-        self.call_after_refresh(self._scroll_preview_to_chunk, focus_chunk_seq)
+
+        def _reveal_when_landed() -> None:
+            self._reveal_preview(container)
+
+        # Scroll while the container is still invisible (opacity:0), then
+        # reveal only once the scroll has committed — so the match never
+        # flashes at the file top before jumping into place.
+        self.call_after_refresh(self._preview_scroll.reconcile, _reveal_when_landed)
         # This render has settled — release the in-flight coalescing
         # latch so a later genuine re-render of the same target can run.
         self._inflight_preview_target = None
@@ -2830,7 +2989,6 @@ class FNDApp(App[None]):
             return
 
         wait_ms = (time.perf_counter() - t0) * 1000
-        container.remove_class("-pre-reveal")
         self._hide_progress_bar()
         _perf.mark(
             "click_to_display_end",
@@ -2839,15 +2997,17 @@ class FNDApp(App[None]):
             path="warm_pre_reveal",
         )
 
-        def _scroll_now() -> None:
-            self._scroll_preview_to_chunk(focus_chunk_seq)
+        def _reveal_when_landed() -> None:
+            self._reveal_preview(container)
             self._diag_log(
                 f"finalize_pre_reveal done seq={focus_chunk_seq} "
                 f"wait_ms={wait_ms:.1f} elapsed_ms={(time.perf_counter() - t0) * 1000:.1f} "
                 f"compose_done={compose_done}"
             )
 
-        self.call_after_refresh(_scroll_now)
+        # Scroll while invisible (opacity:0), reveal once it lands — see
+        # _finalize_via_lock for why the order matters.
+        self.call_after_refresh(self._preview_scroll.reconcile, _reveal_when_landed)
 
     def _cancel_preview_mount_task(self) -> None:
         """Cancel any in-flight mount task. The cancelled task's
@@ -3404,7 +3564,6 @@ class FNDApp(App[None]):
         container: PreviewContainer,
         *,
         skip_internal_scrolls: bool = False,
-        silent: bool = False,
     ) -> None:
         """Visible-first mount + hidden-prepend background fill.
 
@@ -3443,7 +3602,9 @@ class FNDApp(App[None]):
         else:
             await pane.remove_children("#placeholder")
         await self._cancel_prefetch_task_on(container)
-        self._activate_preview_container(container, pre_reveal=needs_pre_reveal)
+        self._activate_preview_container(
+            container, pre_reveal=needs_pre_reveal, keep_outgoing=needs_pre_reveal
+        )
         cold_mount = needs_pre_reveal
         self._refresh_match_scrollbar(chunks)
 
@@ -3481,11 +3642,19 @@ class FNDApp(App[None]):
 
                 # Reference held on the container so GC doesn't collect
                 # the task mid-await (RUF006). Cleared once it completes.
+                # The above-window chunks Phase 1b will mount. finalize must
+                # wait for THESE to exist + build, not just whatever is in
+                # chunk_widgets when it first looks — a prefetched focus chunk
+                # has build_done already set, so finalize would otherwise run
+                # before Phase 1b mounts the window and scroll to a stale
+                # (focus-at-top) position, then settle-scroll once they land.
+                expected_above_seqs = [chunks[i].chunk_seq for i in range(win_start, focus_idx)]
                 _finalize_task = asyncio.create_task(
                     self._finalize_via_lock(
                         container,
                         focus_chunk_seq,
                         _time.perf_counter(),
+                        expected_above_seqs=expected_above_seqs,
                         path="cold_via_lock" if cold_mount else "warm_via_lock",
                     )
                 )
@@ -3550,8 +3719,7 @@ class FNDApp(App[None]):
                     # the moment the background fill completes (the cold-load
                     # "wrong position until expanded" symptom).
                     with contextlib.suppress(Exception):
-                        self._suppress_lazy_mount_briefly()
-                        self._scroll_preview_to_chunk(focus_chunk_seq)
+                        self._preview_scroll.reconcile()
         finally:
             # Always reveal any widgets we hid; a cancelled task that
             # left them hidden would leak a half-displayed container
@@ -3587,7 +3755,7 @@ class FNDApp(App[None]):
             # user reports.
             self._refresh_status()
 
-    def _schedule_preview_lazy_mount_check(self) -> None:
+    def _schedule_preview_lazy_mount_check(self, *, user_initiated: bool = False) -> None:
         """Debounced entry point. Every scroll change re-arms a short
         timer; only the *last* scroll in a burst actually runs the
         check. Coalesces programmatic anchor scrolls (which fire one or
@@ -3596,25 +3764,23 @@ class FNDApp(App[None]):
         navigation's own scroll-to-widget and lazy-mount's compensate."""
         import contextlib
 
+        # A genuine user scroll (pane focused, and not one of the controller's
+        # own reconcile scrolls) hands scroll control back to the user: release
+        # the anchor so lazy-mount-on-scroll resumes. Programmatic scrolls from
+        # navigation / container swaps trip this watcher too, but with the
+        # results tree focused, so they don't release.
+        if (
+            user_initiated
+            and self._preview_scroll.is_armed
+            and not self._preview_scroll_reconciling
+        ):
+            self._preview_scroll.release()
         if self._lazy_mount_check_timer is not None:
             with contextlib.suppress(Exception):
                 self._lazy_mount_check_timer.stop()  # type: ignore[attr-defined]
         self._lazy_mount_check_timer = self.set_timer(
             0.12, self._check_preview_lazy_mount, name="lazy-mount-debounce"
         )
-
-    def _suppress_lazy_mount_briefly(self, duration: float = 0.4) -> None:
-        """Push the gate forward so the next ``_check_preview_lazy_mount``
-        runs no-op until ``duration`` seconds have passed. Used by every
-        programmatic scroll site (navigation anchor, finalize reveal,
-        cold-mount scroll) so their own watcher trips don't trigger a
-        lazy mount that would yank scroll position away from the
-        focused chunk."""
-        import time
-
-        deadline = time.monotonic() + duration
-        if deadline > self._lazy_mount_suppressed_until:
-            self._lazy_mount_suppressed_until = deadline
 
     def _check_preview_lazy_mount(self) -> None:
         """Scroll watcher entry point (after debounce). Mounts the next
@@ -3624,10 +3790,13 @@ class FNDApp(App[None]):
         behind when the user jumps between matches get filled
         progressively, not just the chunks past the absolute max/min
         mounted index."""
-        import time
-
         self._lazy_mount_check_timer = None
-        if time.monotonic() < self._lazy_mount_suppressed_until:
+        # While the scroll controller is armed (a navigation is still
+        # settling) it owns the preview position; user-scroll-driven lazy
+        # mount stays suppressed until the user takes control or the document
+        # finishes mounting (both call release()). State-based, so it can't
+        # expire mid-settle the way the old time gate did.
+        if self._preview_scroll.is_armed:
             return
         container = self._active_preview
         if container is None:
@@ -4071,272 +4240,41 @@ class FNDApp(App[None]):
             timeout=2,
         )
 
-    def _scroll_preview_to_chunk(
-        self,
-        focus_chunk_seq: int,
-        *,
-        on_done: Callable[[], None] | None = None,
-    ) -> None:
+    # ── StructuralHost accessors ──────────────────────────────────
+    # The structural scroll strategy reads the pane, chunk/match maps,
+    # match spec and lazy-mount gate back off the app through these.
+    def preview_pane(self) -> VerticalScroll:
+        return self.query_one("#preview_pane", VerticalScroll)
+
+    def effective_match_spec(self) -> MatchSpec:
+        return self._effective_match_spec
+
+    def diag_log(self, msg: str) -> None:
+        self._diag_log(msg)
+
+    @property
+    def chunk_widgets(self) -> dict[int, Widget]:
+        return self._chunk_widgets
+
+    @property
+    def match_targets(self) -> dict[int, Widget]:
+        return self._match_targets
+
+    def active_flat_buffer(self) -> LineBufferPreview | None:
+        return self._active_flat_buffer
+
+    def begin_reconcile_scroll(self) -> None:
+        self._preview_scroll_reconciling = True
+
+    def end_reconcile_scroll(self) -> None:
+        self._preview_scroll_reconciling = False
+
+    def _select_scroll_strategy(self) -> ScrollStrategy | None:
+        """Pick the active preview's scroll strategy: the flat line-buffer when
+        one is showing (PDF/TXT), else the structural per-chunk strategy."""
         if self._active_flat_buffer is not None:
-            self._active_flat_buffer.scroll_to_chunk(focus_chunk_seq, prefer_first_match=True)
-            if on_done is not None:
-                on_done()
-            return
-        header = self._chunk_widgets.get(focus_chunk_seq)
-        if header is None:
-            if on_done is not None:
-                on_done()
-            return
-        for w in self._chunk_widgets.values():
-            w.remove_class("chunk-section-focused")
-        # Apply focused band to chunks that don't already manage their
-        # own focus highlight (FNDMarkdown handles that internally).
-        if not isinstance(header, FNDMarkdown):
-            header.add_class("chunk-section-focused")
-        self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq, 30, on_done)
-
-    def _do_scroll_to_chunk(
-        self,
-        focus_chunk_seq: int,
-        retries: int = 30,
-        on_done: Callable[[], None] | None = None,
-    ) -> None:
-        # Resolve target at fire time: FNDMarkdown.first_match_block
-        # is populated async by build_from_token, so capturing earlier
-        # races the build and lands on chunk top.
-        header = self._chunk_widgets.get(focus_chunk_seq)
-        if header is None:
-            self._diag_log(f"do_scroll seq={focus_chunk_seq} miss=no-header")
-            if on_done is not None:
-                on_done()
-            return
-        target: Widget = self._match_targets.get(focus_chunk_seq) or header
-        path = "match_targets" if focus_chunk_seq in self._match_targets else "header"
-        fallback_fired = False
-        first_match_seen = False
-        chunk_md = target if hasattr(target, "first_match_block") else None
-        if chunk_md is not None:
-            inner = chunk_md.first_match_block  # pyright: ignore[reportAttributeAccessIssue]
-            if inner is None and retries > 0:
-                self.call_after_refresh(
-                    self._do_scroll_to_chunk, focus_chunk_seq, retries - 1, on_done
-                )
-                return
-            if inner is not None:
-                first_match_seen = True
-                target = (
-                    self._scroll_proxy_for(inner, chunk=chunk_md)
-                    if isinstance(chunk_md, FNDMarkdown)
-                    else inner
-                )
-                path = f"first_match_block({type(inner).__name__})"
-            else:
-                # first_match_block never resolved; descend into the chunk
-                # for any widget whose text carries the query.
-                fallback_fired = True
-                target = (
-                    self._fallback_match_target(chunk_md)
-                    if isinstance(chunk_md, FNDMarkdown)
-                    else chunk_md
-                )
-                landed_on_chunk = target is chunk_md
-                self._diag_log(
-                    f"do_scroll seq={focus_chunk_seq} fallback=descendant-scan "
-                    f"result={'chunk-top' if landed_on_chunk else type(target).__name__} "
-                    f"retries_left={retries}"
-                )
-                path = f"fallback({type(target).__name__})"
-        if target.region.height == 0 and retries > 0:
-            self.call_after_refresh(self._do_scroll_to_chunk, focus_chunk_seq, retries - 1, on_done)
-            return
-        if target.region.height == 0:
-            self._diag_log(
-                f"do_scroll seq={focus_chunk_seq} miss=zero-region "
-                f"target={type(target).__name__} path={path}"
-            )
-        pane = self.query_one("#preview_pane", VerticalScroll)
-        # Brief gate so the resulting watcher trip doesn't fire a lazy
-        # mount that competes with this scroll's anchor.
-        self._suppress_lazy_mount_briefly()
-        # Drop the match ~a quarter down the viewport so the lines above it
-        # give context, instead of pinning it to the top line — but only when
-        # we actually landed on a match (not a bare chunk-top navigation).
-        margin = (
-            int(pane.size.height * _MATCH_CONTEXT_FRACTION)
-            if (first_match_seen or fallback_fired)
-            else 0
-        )
-        # A match inside a table renders as a single full-height DataTable
-        # (one Rich render, no per-cell widgets and no internal scroll), so
-        # scroll_to_widget would only reach the table's top. Scroll the pane
-        # to the matched cell's region instead so a match in a lower row is
-        # actually revealed.
-        if not self._scroll_pane_to_table_cell(pane, target, margin):
-            # Map the target widget's screen region into the pane's scrollable
-            # content space and scroll there in one shot. (Reading scroll_offset
-            # back after scroll_to_widget to apply the margin races a cold
-            # render — scroll_to_widget hasn't committed the offset yet, so the
-            # nudge lands on a stale, wrong position.)
-            region = target.region.translate(
-                pane.scroll_offset - pane.scrollable_content_region.offset
-            )
-            self._scroll_pane_to_match_region(pane, region, margin)
-        self._diag_log(
-            f"do_scroll seq={focus_chunk_seq} target={type(target).__name__} "
-            f"path={path} first_match={first_match_seen} fallback={fallback_fired} "
-            f"retries_used={30 - retries}"
-        )
-        if on_done is not None:
-            on_done()
-
-    def _scroll_pane_to_match_region(
-        self, pane: VerticalScroll, region: Region, margin: int
-    ) -> None:
-        """Scroll ``pane`` so ``region`` (already in the pane's scrollable-
-        content space) sits ``margin`` rows down from the top, giving the match
-        some context above it. One ``scroll_to_region`` call — no reading the
-        offset back, so nothing races a cold render's deferred layout."""
-        if margin:
-            region = Region(
-                region.x, max(0, region.y - margin), region.width, region.height + margin
-            )
-        pane.scroll_to_region(region, top=True, animate=False, immediate=True)
-
-    def _scroll_pane_to_table_cell(self, pane: VerticalScroll, target: Widget, margin: int) -> bool:
-        """If ``target`` is (or wraps) a match-bearing DataTable, scroll
-        ``pane`` to the matched cell and return True. The W3 table renders
-        every row in one full-height DataTable with no internal scroll, so the
-        matched cell is not a scrollable widget — translate its region into the
-        pane's content space and scroll there. ``target`` may be the DataTable
-        itself or the ``FNDMarkdownTableDT`` wrapper (the match scroll resolves
-        to the wrapper when the first_match_block is a phantom, never-mounted
-        TD cell). Returns False — the caller then scrolls to the target
-        widget's own region via ``_scroll_pane_to_match_region`` — for
-        non-table targets or any lookup failure."""
-        from textual.widgets import DataTable
-
-        if isinstance(target, DataTable):
-            table = target
-        elif isinstance(target, FNDMarkdownTableDT):
-            table = next((c for c in target.query(DataTable)), None)
-        else:
-            return False
-        if table is None:
-            return False
-        coord = getattr(table, "_fnd_match_coord", None)
-        if coord is None:
-            return False
-        try:
-            cell = table._get_cell_region(coord)  # pyright: ignore[reportAttributeAccessIssue]
-            # cell is relative to the table's content; map → screen (the table
-            # has no internal scroll, but honour its offset defensively) → the
-            # pane's scrollable-content space, which scroll_to_region expects.
-            screen = cell.translate(table.region.offset - table.scroll_offset)
-            cell_in_pane = screen.translate(
-                pane.scroll_offset - pane.scrollable_content_region.offset
-            )
-        except Exception:
-            return False
-        self._scroll_pane_to_match_region(pane, cell_in_pane, margin)
-        return True
-
-    def _fallback_match_target(self, chunk: FNDMarkdown) -> Widget:
-        """Scan ``chunk``'s descendants for the first widget whose plain text
-        contains a match. Used when no highlight-aware subclass claimed
-        ``first_match_block`` (e.g. matches inside a MarkdownFence)."""
-        spec = self._effective_match_spec
-        if spec.is_empty:
-            return chunk
-        from fnd.render import text_has_any_match
-
-        for w in chunk.query("*"):
-            if w is chunk:
-                continue
-            try:
-                plain = w._content.plain  # type: ignore[attr-defined]
-            except Exception:
-                plain = None
-            if plain is None:
-                # MarkdownFence renders rich.syntax.Syntax — its text lives
-                # on .code attribute set by build_from_token.
-                plain = getattr(w, "code", None)
-            if plain and text_has_any_match(plain, spec) and w.region.height > 0:
-                return w
-        return chunk
-
-    def _scroll_proxy_for(self, inner: Widget, *, chunk: FNDMarkdown) -> Widget:
-        """Resolve a scroll target for an ``FNDMarkdown.first_match_block``.
-
-        Most blocks (Paragraph / H#, ListItem, BlockQuote) have valid
-        regions — use them directly. Table cells (TH/TD) carry the
-        highlight bookkeeping but never get laid out: the parent
-        ``MarkdownTable`` composes a ``MarkdownTableContent`` whose
-        ``MarkdownTableCellContents`` children render in a grid. For
-        that case, find the cell widget that holds the matched
-        ``Content`` and scroll to it directly. Bounded by the number
-        of cells in the chunk's tables — no full descendant walk.
-        """
-        # W3 path: the inner is the FNDMarkdownTableDT itself (which
-        # registered itself as first_match_block). Scroll the DataTable
-        # to the matched cell so the user lands on the actual match.
-        if isinstance(inner, FNDMarkdownTableDT):
-            from textual.widgets import DataTable
-
-            for child in inner.children:
-                if isinstance(child, DataTable):
-                    coord = getattr(child, "_fnd_match_coord", None)
-                    if coord is not None:
-                        with contextlib.suppress(Exception):
-                            child.move_cursor(row=coord.row, column=coord.column, scroll=True)
-                    return child
-            return inner
-        if inner.region.height > 0:
-            return inner
-        from textual.widgets._markdown import MarkdownTable, MarkdownTableContent
-
-        target_content = getattr(inner, "_content", None)
-        if target_content is None:
-            return chunk
-        target_plain = getattr(target_content, "plain", None)
-        # Remember the first MarkdownTable in document order as the
-        # fallback: if cell-level lookup misses (Textual internals
-        # vary), at least scrolling to the table itself is closer than
-        # the chunk top.
-        first_table: Widget | None = None
-        for child in chunk.children:
-            if not isinstance(child, MarkdownTable):
-                continue
-            if first_table is None and child.region.height > 0:
-                first_table = child
-            tcontent: MarkdownTableContent | None = None
-            for grand in child.children:
-                if isinstance(grand, MarkdownTableContent):
-                    tcontent = grand
-                    break
-            if tcontent is None:
-                continue
-            for cell in tcontent.children:
-                cell_content = getattr(cell, "content", None)
-                if cell_content is target_content:
-                    return cell if cell.region.height > 0 else child
-                if (
-                    target_plain
-                    and cell_content is not None
-                    and getattr(cell_content, "plain", None) == target_plain
-                ):
-                    return cell if cell.region.height > 0 else child
-        return first_table or chunk
-
-    def _do_scroll_to_widget(self, widget: Widget, retries: int = 8) -> None:
-        # Retry while the widget's region is unknown — scroll_to_widget
-        # returns False without scrolling when virtual_region.size is
-        # empty, which is the normal state immediately after mount.
-        if widget.region.height == 0 and retries > 0:
-            self.call_after_refresh(self._do_scroll_to_widget, widget, retries - 1)
-            return
-        pane = self.query_one("#preview_pane", VerticalScroll)
-        self._suppress_lazy_mount_briefly()
-        pane.scroll_to_widget(widget, top=True, animate=False)
+            return self._preview_scroll_flat
+        return self._preview_scroll_structural
 
     # ── Open dispatch ─────────────────────────────────────────────
 

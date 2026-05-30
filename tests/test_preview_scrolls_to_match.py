@@ -384,3 +384,41 @@ async def test_flat_preview_no_jump_on_install(tmp_path: Path, tmp_index_dir: Pa
         assert active.scroll_y > 0, (
             f"buffer revealed at scroll_y=0; virtual_size={active.virtual_size}"
         )
+
+
+@pytest.mark.asyncio
+async def test_flat_match_lands_a_quarter_down_not_at_top(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Flat (PDF/TXT) match drops ~25% down the viewport — context above it,
+    consistent with the structural preview — not pinned to the top row.
+    ``scroll_y > 0`` alone can't catch a regression to top-anchoring; assert
+    the match's on-screen row equals the context margin."""
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    lines = [f"filler line {i}" for i in range(200)]
+    lines.append("This is a quartzfin mention deep in the file.")
+    lines += [f"trailing line {i}" for i in range(50)]
+    (notes / "long.txt").write_text("\n".join(lines), encoding="utf-8")
+    build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
+
+    app = FNDApp(index_dir=tmp_index_dir, initial_query="quartzfin")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: app._active_flat_buffer is not None and app._active_flat_buffer.scroll_y > 0,
+            timeout=15.0,
+            message="flat buffer never scrolled",
+        )
+        await settle(pilot)
+        buf = app._active_flat_buffer
+        assert buf is not None
+        assert buf._fv is not None
+        match_logical = min(buf._fv.first_hit_line_in_chunk.values())
+        match_visual = buf._logical_to_visual_y(match_logical)
+        on_screen_row = match_visual - int(buf.scroll_offset.y)
+        margin = int(buf.size.height * 0.25)
+        assert on_screen_row == margin, (
+            f"flat match at on-screen row {on_screen_row}, expected {margin} (~25% down); "
+            f"scroll_y={buf.scroll_offset.y} match_visual={match_visual}"
+        )

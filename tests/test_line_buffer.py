@@ -191,6 +191,29 @@ async def test_widget_scroll_to_line_moves_viewport() -> None:
 
 
 @pytest.mark.asyncio
+async def test_widget_scroll_to_line_context_fraction_drops_match_down() -> None:
+    """context_fraction>0 lands the line that fraction down the viewport
+    (context above it) instead of at the top."""
+    from textual.app import App, ComposeResult
+
+    class _Host(App[None]):
+        def compose(self) -> ComposeResult:
+            yield LineBufferPreview(id="buf")
+
+    app = _Host()
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.pause()
+        buf = app.query_one(LineBufferPreview)
+        fv = build_file_view([_chunk(0, "\n".join(f"line {i}" for i in range(200)))])
+        buf.set_file_view(fv)
+        await pilot.pause()
+        buf.scroll_to_line(50, context_fraction=0.25)
+        await pilot.pause()
+        # 50 - int(20 * 0.25) = 50 - 5 = 45.
+        assert int(buf.scroll_offset.y) == 45
+
+
+@pytest.mark.asyncio
 async def test_widget_scroll_to_chunk_prefers_first_match_line() -> None:
     """Clicking a section in the sidebar should land the user on the
     matched line within the chunk, not the chunk's first line — this

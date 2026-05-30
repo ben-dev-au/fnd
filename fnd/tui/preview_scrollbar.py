@@ -316,7 +316,10 @@ class MatchAwareScroll(VerticalScroll):
         try:
             handler = getattr(self.app, "_schedule_preview_lazy_mount_check", None)
             if handler is not None:
-                handler()
+                # Pass focus so the app can tell a user scroll (pane focused,
+                # e.g. Reading View) from a programmatic one (navigation /
+                # container swap, while the results tree holds focus).
+                handler(user_initiated=self.has_focus)
         except Exception:
             pass
 
