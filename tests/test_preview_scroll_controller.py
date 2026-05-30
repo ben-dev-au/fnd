@@ -385,3 +385,99 @@ def test_flat_scroll_to_location_scrolls_to_logical_line_without_margin() -> Non
 
     # Exact restore: the logical line, no context margin.
     assert buf.scrolled_to == [(42, 0.0)]
+
+
+# ── on_settled / error-resilience contract (PR #22 review) ──
+
+
+class _RaisingStrategy:
+    """Strategy whose reconcile raises WITHOUT first calling on_settled."""
+
+    def reconcile(self, anchor: ScrollAnchor, on_settled: object = None) -> None:
+        raise RuntimeError("strategy boom")
+
+    def locate(self) -> ViewportLocation | None:
+        raise RuntimeError("locate boom")
+
+    def scroll_to_location(self, location: ViewportLocation) -> None:
+        raise RuntimeError("scroll boom")
+
+
+def test_reconcile_fires_on_settled_when_strategy_raises_then_reraises() -> None:
+    # The reveal/swap rides on_settled — it must fire even if the strategy
+    # raises before settling, and the (unexpected) error is still surfaced.
+    c = PreviewScrollController(select_strategy=lambda: _RaisingStrategy())
+    c.arm(ScrollAnchor(parent_id="p", focus_chunk_seq=1))
+    fired: list[bool] = []
+    raised = False
+    try:
+        c.reconcile(on_settled=lambda: fired.append(True))
+    except RuntimeError:
+        raised = True
+    assert raised
+    assert fired == [True]
+
+
+def test_locate_returns_none_when_strategy_raises() -> None:
+    # Best-effort: a failing locate must not break the caller (reading toggle).
+    c = PreviewScrollController(select_strategy=lambda: _RaisingStrategy())
+    assert c.locate() is None
+
+
+def test_scroll_to_location_swallows_strategy_error() -> None:
+    c = PreviewScrollController(select_strategy=lambda: _RaisingStrategy())
+    c.scroll_to_location(ViewportLocation("flat", line=3))  # must not raise
+
+
+def test_structural_do_scroll_fires_on_done_even_if_scroll_raises() -> None:
+    # An exception in the scroll body must not drop on_done — otherwise the
+    # pre-reveal container would stay hidden (blank, stuck) on a cold mount.
+    class _BoomPane(_FakePane):
+        def scroll_to_region(
+            self,
+            region: Region,
+            *,
+            top: bool = False,
+            animate: bool = True,
+            immediate: bool = False,
+        ) -> None:
+            raise RuntimeError("scroll boom")
+
+    target = _FakeWidget(Region(0, 50, 80, 10))
+    pane = _BoomPane(height=40)
+    host = _FakeHost(pane, chunk_widgets={3: target}, match_targets={3: target})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+    fired: list[bool] = []
+    strat._do_scroll_to_chunk(3, retries=0, on_done=lambda: fired.append(True))
+    assert fired == [True]
+
+
+class _CallsThenRaisesStrategy:
+    """Strategy that calls on_settled itself, THEN raises — the flat-path
+    shape where the synchronous on_settled() is the last thing before any
+    error can escape. The controller's error path must not call it a second
+    time (fire-once contract)."""
+
+    def reconcile(self, anchor: ScrollAnchor, on_settled: object = None) -> None:
+        if callable(on_settled):
+            on_settled()
+        raise RuntimeError("boom after settle")
+
+    def locate(self) -> ViewportLocation | None:
+        return None
+
+    def scroll_to_location(self, location: ViewportLocation) -> None:
+        return None
+
+
+def test_reconcile_does_not_double_fire_on_settled_when_strategy_calls_then_raises() -> None:
+    c = PreviewScrollController(select_strategy=lambda: _CallsThenRaisesStrategy())
+    c.arm(ScrollAnchor(parent_id="p", focus_chunk_seq=1))
+    calls: list[bool] = []
+    raised = False
+    try:
+        c.reconcile(on_settled=lambda: calls.append(True))
+    except RuntimeError:
+        raised = True
+    assert raised  # error still surfaced
+    assert calls == [True]  # fired EXACTLY once, not twice

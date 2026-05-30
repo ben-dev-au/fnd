@@ -1,10 +1,10 @@
 """Characterization net for preview scroll-to-match.
 
-Pins the CURRENT observable scroll behaviour before the scroll logic is
-centralised. Each test asserts the visible outcome (match on-screen /
-scroll position), mirroring ``tests/test_preview_scrolls_to_match.py``.
-The cold file-node navigation case captures a known off-screen bug and is
-``xfail``ed until the scroll controller lands.
+Pins the observable scroll behaviour of the centralised scroll controller.
+Each test asserts the visible outcome (match on-screen / scroll position),
+mirroring ``tests/test_preview_scrolls_to_match.py``. The cold file-node
+navigation case captured a known off-screen bug; the controller fixes it, so
+it is now a hard-asserting regression test (no longer xfailed).
 """
 
 from __future__ import annotations

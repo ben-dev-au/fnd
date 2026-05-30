@@ -2373,7 +2373,6 @@ class FNDApp(App[None]):
                     focus_chunk_seq,
                     chunks,
                     fresh,
-                    silent=True,
                 )
             )
             return
@@ -2834,7 +2833,17 @@ class FNDApp(App[None]):
         """Reveal ``container`` and drop any still-held outgoing preview.
         Fallback for paths where :meth:`swap_reveal_target` did not run (no
         match resolved, or no outgoing) — a no-op for the class already lifted
-        by the swap."""
+        by the swap.
+
+        Guard: a finalize/reveal callback is queued via ``call_after_refresh``
+        and runs a tick later. If a newer navigation superseded this mount in
+        the meantime, ``container`` is no longer ``_active_preview`` — revealing
+        it would surface the wrong file and clobber the new nav's outgoing
+        reference. Detached finalize tasks aren't cancelled, so this staleness
+        check (not task cancellation) is the single point that makes a
+        superseded reveal a no-op."""
+        if container is not self._active_preview:
+            return
         outgoing = self._outgoing_preview
         if outgoing is not None and outgoing is not container:
             outgoing.add_class("-hidden")
@@ -3555,7 +3564,6 @@ class FNDApp(App[None]):
         container: PreviewContainer,
         *,
         skip_internal_scrolls: bool = False,
-        silent: bool = False,
     ) -> None:
         """Visible-first mount + hidden-prepend background fill.
 

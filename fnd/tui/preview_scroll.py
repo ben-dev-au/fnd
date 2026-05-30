@@ -58,6 +58,26 @@ class ScrollStrategy(Protocol):
     def scroll_to_location(self, location: ViewportLocation) -> None: ...
 
 
+class _Once:
+    """One-shot wrapper: calls the wrapped callback at most once. Used so a
+    fire-once callback (e.g. the preview reveal) can be invoked defensively on
+    an error path without risking a double call when the happy path already
+    fired it. ``None`` wraps to a no-op."""
+
+    __slots__ = ("_cb", "_fired")
+
+    def __init__(self, cb: Callable[[], None] | None) -> None:
+        self._cb = cb
+        self._fired = False
+
+    def __call__(self) -> None:
+        if self._fired:
+            return
+        self._fired = True
+        if self._cb is not None:
+            self._cb()
+
+
 class PreviewScrollController:
     """Owns the active anchor and whether it is authoritative (armed).
 
@@ -88,36 +108,55 @@ class PreviewScrollController:
         self._armed = False
 
     def reconcile(self, on_settled: Callable[[], None] | None = None) -> None:
-        # ``on_settled`` fires once the scroll has committed (or immediately
-        # when there is nothing to scroll). Cold/warm reveal paths pass the
-        # container un-hide here so it is revealed AFTER the scroll lands —
-        # never before — which is what keeps the match from flashing at the
-        # file top then jumping. It must fire on every path, or a released /
-        # strategy-less reconcile would strand the container hidden.
+        # ``on_settled`` fires EXACTLY ONCE once the scroll has committed (or
+        # immediately when there is nothing to scroll). Cold/warm reveal paths
+        # pass the container un-hide here so it is revealed AFTER the scroll
+        # lands — never before — which keeps the match from flashing at the file
+        # top then jumping. The contract is fire-once: a dropped call strands
+        # the container hidden; a double call would re-run a reveal the callback
+        # assumes happens once. We hand the strategy a one-shot latch, so even
+        # if the strategy calls it AND then raises, the error-path call below is
+        # a no-op. The latch guarantees the floor (fires on error) and the
+        # ceiling (never twice).
+        fire = _Once(on_settled)
         if not self._armed or self._anchor is None:
-            if on_settled is not None:
-                on_settled()
+            fire()
             return
         strategy = self._select_strategy()
-        if strategy is not None:
-            strategy.reconcile(self._anchor, on_settled)
-        elif on_settled is not None:
-            on_settled()
+        if strategy is None:
+            fire()
+            return
+        try:
+            strategy.reconcile(self._anchor, fire)
+        except Exception:
+            fire()
+            raise
 
     def locate(self) -> ViewportLocation | None:
         """Read the viewport's current top position — the counterpart to
         scrolling to one. Survives a width reflow (e.g. toggling Reading View
         re-wraps the content). Delegates to the active strategy; pass the
-        result straight back to :meth:`scroll_to_location`."""
+        result straight back to :meth:`scroll_to_location`. Best-effort: a
+        failure returns None (position simply isn't restored) rather than
+        breaking the surrounding UI action (e.g. the reading-mode toggle)."""
         strategy = self._select_strategy()
-        return strategy.locate() if strategy is not None else None
+        if strategy is None:
+            return None
+        try:
+            return strategy.locate()
+        except Exception:
+            return None
 
     def scroll_to_location(self, location: ViewportLocation | None) -> None:
-        """Scroll to a position previously read by :meth:`locate`."""
+        """Scroll to a position previously read by :meth:`locate`. Best-effort:
+        a failure is swallowed (position just isn't restored) so it can't
+        propagate into a UI event handler."""
         if location is None:
             return
         strategy = self._select_strategy()
-        if strategy is not None:
+        if strategy is None:
+            return
+        with contextlib.suppress(Exception):
             strategy.scroll_to_location(location)
 
 
@@ -247,48 +286,56 @@ class StructuralScrollStrategy:
                 f"do_scroll seq={focus_chunk_seq} miss=zero-region "
                 f"target={type(target).__name__} path={path}"
             )
-        pane = self._host.preview_pane()
-        # Drop the match ~a quarter down the viewport so the lines above it
-        # give context, instead of pinning it to the top line — but only when
-        # we actually landed on a match (not a bare chunk-top navigation).
-        margin = int(pane.size.height * margin_from) if (first_match_seen or fallback_fired) else 0
-        # Flag this as the controller's own scroll so the resulting scroll-
-        # watcher trip isn't mistaken for a user scroll and doesn't self-release
-        # the anchor.
-        self._host.begin_reconcile_scroll()
         try:
-            # If an outgoing preview is being held on screen, hand the resolved
-            # target to the host so it can hide the old one, position this one,
-            # and reveal it in a single tick (no blank between previews). When
-            # there is no outgoing container this is a no-op and we scroll the
-            # already-visible pane normally.
-            if self._host.swap_reveal_target(target, margin):
-                pass
-            # A match inside a table renders as a single full-height DataTable
-            # (one Rich render, no per-cell widgets and no internal scroll), so
-            # scroll_to_widget would only reach the table's top. Scroll the pane
-            # to the matched cell's region instead so a match in a lower row is
-            # actually revealed.
-            elif not self._scroll_pane_to_table_cell(pane, target, margin, animate=animate):
-                # Map the target widget's screen region into the pane's
-                # scrollable content space and scroll there in one shot.
-                # (Reading scroll_offset back after scroll_to_widget to apply
-                # the margin races a cold render — scroll_to_widget hasn't
-                # committed the offset yet, so the nudge lands on a stale,
-                # wrong position.)
-                region = target.region.translate(
-                    pane.scroll_offset - pane.scrollable_content_region.offset
-                )
-                self._scroll_pane_to_match_region(pane, region, margin, animate=animate)
+            pane = self._host.preview_pane()
+            # Drop the match ~a quarter down the viewport so the lines above it
+            # give context, instead of pinning it to the top line — but only when
+            # we actually landed on a match (not a bare chunk-top navigation).
+            margin = (
+                int(pane.size.height * margin_from) if (first_match_seen or fallback_fired) else 0
+            )
+            # Flag this as the controller's own scroll so the resulting scroll-
+            # watcher trip isn't mistaken for a user scroll and doesn't self-release
+            # the anchor.
+            self._host.begin_reconcile_scroll()
+            try:
+                # If an outgoing preview is being held on screen, hand the resolved
+                # target to the host so it can hide the old one, position this one,
+                # and reveal it in a single tick (no blank between previews). When
+                # there is no outgoing container this is a no-op and we scroll the
+                # already-visible pane normally.
+                if self._host.swap_reveal_target(target, margin):
+                    pass
+                # A match inside a table renders as a single full-height DataTable
+                # (one Rich render, no per-cell widgets and no internal scroll), so
+                # scroll_to_widget would only reach the table's top. Scroll the pane
+                # to the matched cell's region instead so a match in a lower row is
+                # actually revealed.
+                elif not self._scroll_pane_to_table_cell(pane, target, margin, animate=animate):
+                    # Map the target widget's screen region into the pane's
+                    # scrollable content space and scroll there in one shot.
+                    # (Reading scroll_offset back after scroll_to_widget to apply
+                    # the margin races a cold render — scroll_to_widget hasn't
+                    # committed the offset yet, so the nudge lands on a stale,
+                    # wrong position.)
+                    region = target.region.translate(
+                        pane.scroll_offset - pane.scrollable_content_region.offset
+                    )
+                    self._scroll_pane_to_match_region(pane, region, margin, animate=animate)
+            finally:
+                self._host.end_reconcile_scroll()
+            self._host.diag_log(
+                f"do_scroll seq={focus_chunk_seq} target={type(target).__name__} "
+                f"path={path} first_match={first_match_seen} fallback={fallback_fired} "
+                f"retries_used={30 - retries}"
+            )
+        except Exception as _scroll_err:
+            self._host.diag_log(
+                f"do_scroll seq={focus_chunk_seq} error={type(_scroll_err).__name__}: {_scroll_err}"
+            )
         finally:
-            self._host.end_reconcile_scroll()
-        self._host.diag_log(
-            f"do_scroll seq={focus_chunk_seq} target={type(target).__name__} "
-            f"path={path} first_match={first_match_seen} fallback={fallback_fired} "
-            f"retries_used={30 - retries}"
-        )
-        if on_done is not None:
-            on_done()
+            if on_done is not None:
+                on_done()
 
     def _scroll_pane_to_match_region(
         self, pane: VerticalScroll, region: Region, margin: int, *, animate: bool = False
