@@ -1425,7 +1425,6 @@ class FNDApp(App[None]):
         # finalize reveal) push this forward so the watcher doesn't
         # interpret their own scroll changes as user intent and fire a
         # competing mount that yanks the focused chunk off-screen.
-        self._lazy_mount_suppressed_until: float = 0.0
         # Debounce timer so rapid scroll bursts collapse to a single
         # check at the tail end — protects programmatic intermediate
         # scrolls AND smooths user wheel/key scroll bursts.
@@ -3712,7 +3711,6 @@ class FNDApp(App[None]):
                     # the moment the background fill completes (the cold-load
                     # "wrong position until expanded" symptom).
                     with contextlib.suppress(Exception):
-                        self._suppress_lazy_mount_briefly()
                         self._preview_scroll.reconcile()
         finally:
             # Always reveal any widgets we hid; a cancelled task that
@@ -3775,19 +3773,6 @@ class FNDApp(App[None]):
         self._lazy_mount_check_timer = self.set_timer(
             0.12, self._check_preview_lazy_mount, name="lazy-mount-debounce"
         )
-
-    def _suppress_lazy_mount_briefly(self, duration: float = 0.4) -> None:
-        """Push the gate forward so the next ``_check_preview_lazy_mount``
-        runs no-op until ``duration`` seconds have passed. Used by every
-        programmatic scroll site (navigation anchor, finalize reveal,
-        cold-mount scroll) so their own watcher trips don't trigger a
-        lazy mount that would yank scroll position away from the
-        focused chunk."""
-        import time
-
-        deadline = time.monotonic() + duration
-        if deadline > self._lazy_mount_suppressed_until:
-            self._lazy_mount_suppressed_until = deadline
 
     def _check_preview_lazy_mount(self) -> None:
         """Scroll watcher entry point (after debounce). Mounts the next
@@ -4256,9 +4241,6 @@ class FNDApp(App[None]):
     def effective_match_spec(self) -> MatchSpec:
         return self._effective_match_spec
 
-    def suppress_lazy_mount_briefly(self, duration: float = 0.4) -> None:
-        self._suppress_lazy_mount_briefly(duration)
-
     def diag_log(self, msg: str) -> None:
         self._diag_log(msg)
 
@@ -4285,17 +4267,6 @@ class FNDApp(App[None]):
         if self._active_flat_buffer is not None:
             return self._preview_scroll_flat
         return self._preview_scroll_structural
-
-    def _do_scroll_to_widget(self, widget: Widget, retries: int = 8) -> None:
-        # Retry while the widget's region is unknown — scroll_to_widget
-        # returns False without scrolling when virtual_region.size is
-        # empty, which is the normal state immediately after mount.
-        if widget.region.height == 0 and retries > 0:
-            self.call_after_refresh(self._do_scroll_to_widget, widget, retries - 1)
-            return
-        pane = self.query_one("#preview_pane", VerticalScroll)
-        self._suppress_lazy_mount_briefly()
-        pane.scroll_to_widget(widget, top=True, animate=False)
 
     # ── Open dispatch ─────────────────────────────────────────────
 
