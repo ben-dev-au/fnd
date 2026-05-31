@@ -503,7 +503,6 @@ class FNDMarkdownTableDT(MarkdownTable):
         if os.environ.get("_FND_NO_W3") == "1":
             yield from super().compose()
             return
-        from textual.containers import VerticalScroll
         from textual.coordinate import Coordinate
         from textual.widgets import DataTable
 
@@ -513,20 +512,18 @@ class FNDMarkdownTableDT(MarkdownTable):
         header_texts = [_content_to_text(h) for h in headers]
         row_texts = [[_content_to_text(c) for c in row] for row in rows if row]
         dt: DataTable[Any] = DataTable(cursor_type="none", zebra_stripes=True)
+        # Stored so on_resize can recompute column widths when the pane
+        # widens (e.g. toggling Reading View) without re-parsing the table.
+        self._header_texts = header_texts
+        self._row_texts = row_texts
+        self._dt = dt
         # Compute per-column widths from the pane's content size so wide
         # cells wrap rather than overflow. Without this, DataTable's
         # auto_width measures each column at its longest single line —
         # paragraph cells produce ~700-cell columns that get truncated
         # to the pane's 91 cells, with no wrap.
-        try:
-            pane = self.app.query_one("#preview_pane", VerticalScroll)
-            # -1 for scrollbar, -2 for DataTable's outer border.
-            avail = max(0, pane.content_size.width - 3)
-        except Exception:
-            avail = 0
-        if avail <= 0:
-            # Fallback: app width minus the results-pane column budget.
-            avail = max(40, self.app.size.width - 52)
+        avail = self._available_table_width()
+        self._last_avail = avail
         col_widths = _compute_table_col_widths(
             header_texts, row_texts, available_width=avail, cell_padding=dt.cell_padding
         )
@@ -547,6 +544,49 @@ class FNDMarkdownTableDT(MarkdownTable):
             if isinstance(md, FNDMarkdown) and md._first_match_block is None:
                 md._first_match_block = self
         yield dt
+
+    def _available_table_width(self) -> int:
+        """Width budget for the table's columns at the current pane size.
+
+        The block is ``width: 1fr`` so its own ``content_size`` tracks the
+        pane once mounted; before mount it isn't sized, so fall back to the
+        pane query and finally the app width minus the sidebar budget. ``-3``
+        is the scrollbar (1) + DataTable outer border (2)."""
+        own = self.content_size.width
+        if own > 3:
+            return own - 3
+        try:
+            pane = self.app.query_one("#preview_pane", VerticalScroll)
+            avail = max(0, pane.content_size.width - 3)
+        except Exception:
+            avail = 0
+        if avail <= 0:
+            avail = max(40, self.app.size.width - 52)
+        return avail
+
+    def on_resize(self) -> None:
+        """Recompute column widths when the block's width changes — e.g.
+        toggling Reading View hides the sidebar and widens the pane. The
+        DataTable's columns are sized once at ``compose``; without this they
+        stay at the old width and the table reads compressed in the wider
+        pane (cells wrapping that no longer need to)."""
+        dt = getattr(self, "_dt", None)
+        if dt is None or not dt.columns:
+            return
+        avail = self._available_table_width()
+        if avail <= 0 or avail == getattr(self, "_last_avail", None):
+            return
+        self._last_avail = avail
+        col_widths = _compute_table_col_widths(
+            self._header_texts, self._row_texts, available_width=avail, cell_padding=dt.cell_padding
+        )
+        if not col_widths or len(col_widths) != len(dt.columns):
+            return
+        for column, w in zip(dt.columns.values(), col_widths, strict=True):
+            column.auto_width = False
+            column.width = w
+        dt._require_update_dimensions()
+        dt.refresh()
 
 
 def _content_to_text(c: Any) -> Text:
