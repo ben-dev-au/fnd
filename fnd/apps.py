@@ -45,6 +45,10 @@ class OpenRequest:
     path: Path
     kind: str
     page: int = 0
+    # Printed page label (e.g. "307") when the PDF carries one. macOS
+    # Preview's "Go to Page" navigates by this label, not the physical
+    # index, so the Preview handler prefers it; Skim's URL uses ``page``.
+    page_label: str = ""
     slide: int = 0
     heading_path: str = ""
     line: int = 0
@@ -373,7 +377,13 @@ def _handle_preview(req: OpenRequest) -> int:
     opens under Preview's own identity. With a page locator AND Accessibility
     granted, a second osascript call then page-jumps the now-open document —
     it never touches the filesystem. Without AX (or no page), the PDF is left
-    on page 1 and a one-shot Accessibility notice is emitted."""
+    on page 1 and a one-shot Accessibility notice is emitted.
+
+    Preview's "Go to Page" field navigates by the PDF's *printed page label*,
+    not the physical page index. A book with front matter labels physical
+    page N as "N − k", so keystroking the physical index lands k pages late.
+    Send ``page_label`` when the PDF has one; fall back to the physical page
+    for label-less PDFs (where the two coincide)."""
     # `open` follows symlinks itself, so the raw path is fine for opening.
     open_rc = subprocess.run(["open", "-a", "Preview", str(req.path)], check=False).returncode
     if req.page <= 0:
@@ -385,8 +395,9 @@ def _handle_preview(req: OpenRequest) -> int:
     # path resolved (``/tmp`` → ``/private/tmp``, symlinks followed), so the
     # script's exact-path match only lands if we hand it the realpath too.
     target = str(req.path.resolve())
+    goto = req.page_label.strip() or str(req.page)
     return subprocess.run(
-        ["osascript", "-e", _PREVIEW_PAGE_JUMP_SCRIPT, target, str(req.page)],
+        ["osascript", "-e", _PREVIEW_PAGE_JUMP_SCRIPT, target, goto],
         check=False,
     ).returncode
 
