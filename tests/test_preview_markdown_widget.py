@@ -228,11 +228,13 @@ def fence_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_preview_md_fence_no_highlight_inside_code(cfg: Config, fence_index: Path) -> None:
-    """Query terms inside a fenced code block must NOT receive the
-    highlight overlay — code stays on Textual's stock MarkdownFence
-    rendering (rich.syntax.Syntax) so syntax colours remain readable.
+async def test_preview_md_fence_highlights_inside_code(cfg: Config, fence_index: Path) -> None:
+    """Query terms inside a fenced code block DO receive the highlight
+    overlay (``FNDMarkdownFence``), on top of the syntax colouring — so a
+    match in code is as findable as one in prose.
     """
+    from fnd.render import HIGHLIGHT_STYLE
+
     app = FNDApp(
         index_dir=fence_index,
         config=cfg,
@@ -246,12 +248,20 @@ async def test_preview_md_fence_no_highlight_inside_code(cfg: Config, fence_inde
         await _settle(pilot)
         pane = app.query_one("#preview_pane", VerticalScroll)
         fences = list(pane.query(MarkdownFence))
-        assert fences, "code-only chunk should render via MarkdownFence"
-        # MarkdownFence isn't subclassed by us → its content carries no
-        # search-highlight spans regardless of what the query is.
+        assert fences, "code-only chunk should render via a fence widget"
+        # The fence that contains the query term carries a highlight span
+        # over exactly that term, while the lexer syntax spans survive.
+        matched = []
         for fence in fences:
-            spans = list(fence._content.spans)
-            assert all(s.style != "search-highlight" for s in spans), spans
+            content = fence._highlighted_code
+            hl = [s for s in content.spans if s.style == HIGHLIGHT_STYLE]
+            matched.extend(content.plain[s.start : s.end].lower() for s in hl)
+            if hl:
+                # Lexer syntax spans survive under the match overlay.
+                assert any(s.style != HIGHLIGHT_STYLE for s in content.spans), (
+                    "expected lexer syntax spans to remain under the highlight"
+                )
+        assert "templates" in matched, f"expected in-code 'templates' highlighted; got {matched}"
 
 
 # ── Nested lists render structurally ─────────────────────────────────
