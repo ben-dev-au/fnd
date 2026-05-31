@@ -585,7 +585,10 @@ class FNDMarkdownTableDT(MarkdownTable):
         for column, w in zip(dt.columns.values(), col_widths, strict=True):
             column.auto_width = False
             column.width = w
-        dt._require_update_dimensions()
+        # ``_require_update_dimensions`` is a reactive flag: assigning True
+        # schedules DataTable's own recompute of the virtual size from the
+        # new column widths on the next refresh.
+        dt._require_update_dimensions = True
         dt.refresh()
 
 
