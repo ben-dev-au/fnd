@@ -12,6 +12,9 @@ from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.preview_scrollbar import (
+    _MARKER_GLYPH,
+    _THUMB_GLYPH,
+    _THUMB_GLYPH_HORIZONTAL,
     MatchAwareScroll,
     MatchAwareScrollBar,
     MatchAwareScrollBarRender,
@@ -188,23 +191,70 @@ def test_thin_thumb_size_is_constant_across_scroll_positions() -> None:
     assert len(counts) == 1, f"thumb resized while scrolling: cell counts {counts}"
 
 
-def test_thin_renderer_leaves_horizontal_bar_to_parent() -> None:
-    """Only vertical bars are thinned; a horizontal bar renders as the
-    stock renderer would (no hairline substitution)."""
+def _horizontal_glyphs(renderer: ThinScrollBarRender, width: int = 20) -> str:
+    from rich.console import Console
+    from rich.segment import Segments
+
+    console = Console(width=width, height=1)
+    segs = next(iter(renderer.__rich_console__(console, console.options)))
+    assert isinstance(segs, Segments)
+    return "".join(s.text for s in segs.segments)
+
+
+_STOCK_BLOCKS = set("█▉▊▋▌▍▎▏")
+
+
+def test_thin_renderer_horizontal_uses_box_glyph_not_stock_block() -> None:
+    """Horizontal bars (wide tables, unwrapped code fences) must read the same
+    thin weight as the vertical bar — the centralised renderer covers both
+    orientations rather than falling through to stock partial-block glyphs."""
     renderer = ThinScrollBarRender(
-        virtual_size=100,
-        window_size=20,
+        virtual_size=200,
+        window_size=50,
         position=40,
         thickness=1,
         vertical=False,
         style="bright_magenta on #555555",
     )
-    from rich.console import Console
+    glyphs = _horizontal_glyphs(renderer)
+    assert _THUMB_GLYPH_HORIZONTAL in glyphs
+    assert not (set(glyphs) & _STOCK_BLOCKS), sorted(set(glyphs))
 
-    console = Console(width=8, height=1)
-    # Should render without raising; vertical-only thinning means no ▕.
-    out = list(renderer.__rich_console__(console, console.options))
-    assert out
+
+def test_thin_renderer_box_glyph_both_orientations() -> None:
+    """A single centralised renderer thins both orientations: ``│`` vertical,
+    ``─`` horizontal, never a stock block in either."""
+    for vertical, glyph in ((True, _THUMB_GLYPH), (False, _THUMB_GLYPH_HORIZONTAL)):
+        renderer = ThinScrollBarRender(
+            virtual_size=200,
+            window_size=50,
+            position=40,
+            thickness=1,
+            vertical=vertical,
+            style="bright_magenta on #555555",
+        )
+        glyphs = (
+            "".join(_thumb_glyphs(renderer, height=20))
+            if vertical
+            else _horizontal_glyphs(renderer)
+        )
+        assert glyph in glyphs, (vertical, glyphs)
+        assert not (set(glyphs) & _STOCK_BLOCKS), (vertical, sorted(set(glyphs)))
+
+
+def test_match_aware_horizontal_has_no_markers() -> None:
+    """Markers map document lines onto a vertical track; a horizontal axis has
+    no line mapping, so the horizontal bar carries no marker glyph."""
+    renderer = MatchAwareScrollBarRender(
+        virtual_size=200,
+        window_size=50,
+        position=40,
+        thickness=1,
+        vertical=False,
+        style="bright_magenta on #555555",
+        match_map=[True, True, True],
+    )
+    assert _MARKER_GLYPH not in _horizontal_glyphs(renderer)
 
 
 def test_match_aware_inherits_thin_thumb_and_keeps_markers() -> None:
