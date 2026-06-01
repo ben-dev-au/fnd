@@ -232,7 +232,7 @@ def _build_fence_widget(md_text: str, spec: MatchSpec) -> tuple[Static, bool]:
             code, lexer, background_color="default", word_wrap=False, line_numbers=False
         ).highlight(code)
         # highlight() appends a trailing newline; drop it so plain == code
-        # and match offsets line up.
+        # and match offsets line up. right_crop mutates in place (returns None).
         if text.plain.endswith("\n") and not code.endswith("\n"):
             text.right_crop(1)
     except Exception:

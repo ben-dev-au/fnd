@@ -233,8 +233,6 @@ async def test_preview_md_fence_highlights_inside_code(cfg: Config, fence_index:
     overlay (``FNDMarkdownFence``), on top of the syntax colouring — so a
     match in code is as findable as one in prose.
     """
-    from fnd.render import HIGHLIGHT_STYLE
-
     app = FNDApp(
         index_dir=fence_index,
         config=cfg,
@@ -254,11 +252,11 @@ async def test_preview_md_fence_highlights_inside_code(cfg: Config, fence_index:
         matched = []
         for fence in fences:
             content = fence._highlighted_code
-            hl = [s for s in content.spans if s.style == HIGHLIGHT_STYLE]
+            hl = [s for s in content.spans if _is_highlight_span(s)]
             matched.extend(content.plain[s.start : s.end].lower() for s in hl)
             if hl:
                 # Lexer syntax spans survive under the match overlay.
-                assert any(s.style != HIGHLIGHT_STYLE for s in content.spans), (
+                assert any(not _is_highlight_span(s) for s in content.spans), (
                     "expected lexer syntax spans to remain under the highlight"
                 )
         assert "templates" in matched, f"expected in-code 'templates' highlighted; got {matched}"

@@ -21,7 +21,7 @@ from fnd.render import HIGHLIGHT_STYLE
 from fnd.tui.app import FNDMarkdown, FNDMarkdownFence
 
 
-class _Host(App):
+class _Host(App[None]):
     def __init__(self, md: FNDMarkdown) -> None:
         self.md = md
         super().__init__()
@@ -35,7 +35,7 @@ def _highlighted_words(content: object) -> list[str]:
     return [
         plain[s.start : s.end]
         for s in (getattr(content, "spans", ()) or ())
-        if s.style == HIGHLIGHT_STYLE
+        if str(s.style) == HIGHLIGHT_STYLE
     ]
 
 
@@ -56,9 +56,9 @@ async def test_fence_highlights_only_the_matching_fence() -> None:
 
         # Matching fence: 'needle' highlighted, lexer syntax spans retained.
         assert _highlighted_words(first) == ["needle"]
-        assert any(
-            s.style != HIGHLIGHT_STYLE for s in (first.spans or ())
-        ), "expected lexer syntax spans to survive under the overlay"
+        assert any(str(s.style) != HIGHLIGHT_STYLE for s in (first.spans or ())), (
+            "expected lexer syntax spans to survive under the overlay"
+        )
 
         # Non-matching fence: no highlight bleed.
         assert _highlighted_words(second) == []
