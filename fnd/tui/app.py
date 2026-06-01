@@ -4547,7 +4547,7 @@ class FNDApp(App[None]):
             path=Path(hit.path),
             kind=hit.kind,
             page=hit.page,
-            page_label=getattr(hit, "page_label", ""),
+            page_label=str(getattr(hit, "page_label", "") or ""),
             slide=getattr(hit, "slide", 0),
             heading_path=getattr(hit, "heading_path", ""),
             line=getattr(hit, "line", 0),

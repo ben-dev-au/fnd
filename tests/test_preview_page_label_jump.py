@@ -21,7 +21,7 @@ def _run_preview(req: apps.OpenRequest) -> list[str]:
     and return the argv of the page-jump osascript call."""
     calls: list[list[str]] = []
 
-    def fake_run(argv, *a, **k):
+    def fake_run(argv: list[str], *a: object, **k: object) -> mock.Mock:
         calls.append(list(argv))
         return mock.Mock(returncode=0)
 
@@ -37,9 +37,7 @@ def _run_preview(req: apps.OpenRequest) -> list[str]:
 
 
 def test_preview_jumps_by_page_label_when_present() -> None:
-    req = apps.OpenRequest(
-        path=Path("/tmp/book.pdf"), kind="pdf", page=327, page_label="307"
-    )
+    req = apps.OpenRequest(path=Path("/tmp/book.pdf"), kind="pdf", page=327, page_label="307")
     argv = _run_preview(req)
     # Last positional arg to the AppleScript is the page token.
     assert argv[-1] == "307", f"expected label 307, got {argv[-1]!r}"
@@ -50,3 +48,11 @@ def test_preview_falls_back_to_physical_page_without_label() -> None:
     req = apps.OpenRequest(path=Path("/tmp/plain.pdf"), kind="pdf", page=12)
     argv = _run_preview(req)
     assert argv[-1] == "12"
+
+
+def test_preview_tolerates_none_page_label() -> None:
+    # A None page_label (untyped hit field) must not crash on .strip();
+    # it falls back to the physical page like an empty label.
+    req = apps.OpenRequest(path=Path("/tmp/plain.pdf"), kind="pdf", page=8, page_label=None)  # type: ignore[arg-type]
+    argv = _run_preview(req)
+    assert argv[-1] == "8"

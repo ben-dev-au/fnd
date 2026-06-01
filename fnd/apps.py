@@ -395,7 +395,7 @@ def _handle_preview(req: OpenRequest) -> int:
     # path resolved (``/tmp`` → ``/private/tmp``, symlinks followed), so the
     # script's exact-path match only lands if we hand it the realpath too.
     target = str(req.path.resolve())
-    goto = req.page_label.strip() or str(req.page)
+    goto = (req.page_label or "").strip() or str(req.page)
     return subprocess.run(
         ["osascript", "-e", _PREVIEW_PAGE_JUMP_SCRIPT, target, goto],
         check=False,
