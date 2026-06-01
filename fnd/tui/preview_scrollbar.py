@@ -110,8 +110,12 @@ class ThinScrollBarRender(ScrollBarRender):
         top = round(max_top * ratio)
         top = 0 if top < 0 else (max_top if top > max_top else top)
         thumb_style = RichStyle(color=bar_color, meta={"@mouse.down": "grab"})
-        up = RichStyle(bgcolor=back_color, meta={"@mouse.down": "scroll_up"})
-        down = RichStyle(bgcolor=back_color, meta={"@mouse.down": "scroll_down"})
+        # Track clicks page towards the click; the axis decides the action so a
+        # horizontal bar pages left/right rather than firing vertical scrolls.
+        before = "scroll_up" if vertical else "scroll_left"
+        after = "scroll_down" if vertical else "scroll_right"
+        up = RichStyle(bgcolor=back_color, meta={"@mouse.down": before})
+        down = RichStyle(bgcolor=back_color, meta={"@mouse.down": after})
         return [
             Segment(glyph, thumb_style)
             if top <= i < top + thumb
@@ -120,7 +124,9 @@ class ThinScrollBarRender(ScrollBarRender):
         ]
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        size = (options.height if self.vertical else options.max_width) or console.height
+        size = (options.height if self.vertical else options.max_width) or (
+            console.height if self.vertical else console.width
+        )
         style = console.get_style(self.style)
         bar_color = style.color or RichColor.parse("bright_magenta")
         segments = self._thin_segments(size, bar_color, style.bgcolor, vertical=self.vertical)
