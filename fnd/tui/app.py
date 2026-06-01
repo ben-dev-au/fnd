@@ -564,7 +564,7 @@ class FNDMarkdownTableDT(MarkdownTable):
             avail = max(40, self.app.size.width - 52)
         return avail
 
-    def on_resize(self) -> None:
+    def on_resize(self, _event: events.Resize) -> None:
         """Recompute column widths when the block's width changes — e.g.
         toggling Reading View hides the sidebar and widens the pane. The
         DataTable's columns are sized once at ``compose``; without this they

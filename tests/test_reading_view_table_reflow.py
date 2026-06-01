@@ -1,23 +1,70 @@
-"""Bug B: a wide table in the structural preview must widen to use the extra
+"""Bug B: a wide table in the structural preview widens to use the extra
 space when Reading View hides the sidebar.
 
 The live preview renders markdown tables via ``FNDMarkdownTableDT`` → a
-``DataTable`` whose column widths are computed once at compose from the
-(narrow) pane width. Toggling Reading View widens the pane; ``on_resize``
-now recomputes the column widths so the table reflows wider instead of
-staying compressed.
+``DataTable`` whose column widths are computed from the pane width and
+recomputed by ``on_resize`` when the pane widens. The reflow's core is the
+pure ``_compute_table_col_widths`` function — unit-tested here headlessly.
+The full-app integration is gated behind ``FND_LIVE_PREVIEW_TESTS`` because
+the DataTable preview path does not mount under ``app.run_test`` (the
+headless harness renders tables via the flat ``LineBufferPreview`` path).
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
+from rich.text import Text
 from textual.widgets import DataTable
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from fnd.tui.app import _compute_table_col_widths
 from tests._pilot_wait import wait_until
+
+
+def _wide_table() -> tuple[list[Text], list[list[Text]]]:
+    headers = [
+        Text("Pattern"),
+        Text("Intent description column"),
+        Text("Consequences description column"),
+        Text("Notes"),
+    ]
+    rows = [
+        [
+            Text(f"Strategy{i}"),
+            Text("Encapsulates interchangeable algorithms behind one interface"),
+            Text("Lets the algorithm vary independently from clients that use it"),
+            Text(f"anchor row {i}"),
+        ]
+        for i in range(12)
+    ]
+    return headers, rows
+
+
+def test_wider_available_width_widens_columns() -> None:
+    """The reflow's core: the same table given more width returns wider
+    columns (cells that wrapped in the narrow pane no longer need to)."""
+    headers, rows = _wide_table()
+    narrow = _compute_table_col_widths(headers, rows, available_width=48)
+    wide = _compute_table_col_widths(headers, rows, available_width=120)
+    assert narrow
+    assert wide
+    assert len(narrow) == len(wide) == len(headers)
+    assert sum(wide) > sum(narrow)
+    # widening never shrinks a column.
+    assert all(w >= n for w, n in zip(wide, narrow, strict=True))
+
+
+def test_widths_fit_within_available() -> None:
+    """When content overflows, columns (+ per-cell padding) stay within the
+    available width so the table never paints past the pane."""
+    headers, rows = _wide_table()
+    avail, pad = 60, 1
+    widths = _compute_table_col_widths(headers, rows, available_width=avail, cell_padding=pad)
+    assert sum(widths) + 2 * pad * len(widths) <= avail
 
 
 def _table_doc(tmp_path: Path, tmp_index_dir: Path) -> Path:
@@ -45,16 +92,17 @@ def _col_total(app: FNDApp) -> int | None:
     if not tables:
         return None
     cols = list(tables[0].columns.values())
-    if not cols or any(c.width is None for c in cols):
+    if not cols:
         return None
     return sum(c.width for c in cols)
 
 
-@pytest.mark.skip(
-    reason="Under app.run_test the markdown table preview renders via the flat "
-    "LineBufferPreview path, not the W3 DataTable this fix targets — so the "
-    "DataTable never mounts headlessly. Needs live (tmux/real app) verification. "
-    "The on_resize column-width recompute is the fix under test."
+@pytest.mark.skipif(
+    not os.environ.get("FND_LIVE_PREVIEW_TESTS"),
+    reason="DataTable preview path does not mount under app.run_test (the headless "
+    "harness renders markdown tables via the flat LineBufferPreview path). Set "
+    "FND_LIVE_PREVIEW_TESTS=1 to exercise the full reflow against a live-wired W3 "
+    "preview; the pure width recompute is covered headlessly above.",
 )
 @pytest.mark.asyncio
 async def test_reading_view_widens_table(tmp_path: Path, tmp_index_dir: Path) -> None:
