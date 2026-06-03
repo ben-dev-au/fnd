@@ -36,6 +36,11 @@ import pymupdf  # type: ignore[import-not-found]
 
 from fnd.cache import ExtractionCache, sha256_file
 from fnd.extract.base import Block, Chunk, ExtractError
+from fnd.extract.recovery import (
+    ExtractionContext,
+    PageRecoveryPipeline,
+    ProductionLayoutTier,
+)
 
 # Lazy availability of the pdf-structure extra (`pymupdf4llm`). Computed
 # at module load — cheap; just a spec lookup. The actual import happens
@@ -503,6 +508,20 @@ def _extract_page_md(doc: pymupdf.Document, page_index: int) -> str:
     return str(first.get("text", "")) if isinstance(first, dict) else str(first)
 
 
+_recovery_pipeline_singleton: PageRecoveryPipeline | None = None
+
+
+def _recovery_pipeline() -> PageRecoveryPipeline:
+    """The composed page-recovery pipeline (built once). Stateless tiers,
+    so a module-level singleton avoids per-page allocation."""
+    global _recovery_pipeline_singleton
+    if _recovery_pipeline_singleton is None:
+        _recovery_pipeline_singleton = PageRecoveryPipeline(
+            [ProductionLayoutTier(_extract_page_md)]
+        )
+    return _recovery_pipeline_singleton
+
+
 def _config_hash() -> str:
     """Hash of config-shaping flags; any tuning change bumps the key."""
     config = {
@@ -772,7 +791,17 @@ def _extract_inner(  # pyright: ignore[reportUnusedFunction]
             # run-scoped ``_skip_structure_extraction`` flag is set
             # (battery-saver mode).
             structure_on = _HAS_PYMUPDF4LLM and not _skip_structure_extraction
-            body_md = _extract_page_md(doc, page_index) if structure_on else ""
+            if structure_on:
+                ctx = ExtractionContext(
+                    doc=doc,
+                    page=page,
+                    page_index=page_index,
+                    path=str(path),
+                    flat=text,
+                )
+                body_md = _recovery_pipeline().recover(ctx).markdown
+            else:
+                body_md = ""
 
             # Phase 3 routing: if pymupdf4llm visibly missed structure
             # (e.g. a big image-rendered table), try docling as a
