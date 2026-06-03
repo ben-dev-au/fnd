@@ -9,6 +9,7 @@ from typing import Any
 
 from fnd.extract.recovery.evaluators import CoverageEvaluator
 from fnd.extract.recovery.models import (
+    FLAG_DOCLING_INVOKED,
     FLAG_TEXTURE_RECOVERED,
     ExtractionContext,
     PageExtraction,
@@ -18,6 +19,12 @@ from fnd.extract.recovery.models import (
 # specifics: (doc, page_index) -> page Markdown. ``doc`` is a
 # pymupdf.Document, typed Any here to keep the package import-light.
 ExtractPageMd = Callable[[Any, int], str]
+
+# A captioned table on a scanned page: "Table 5.1:" / "Table 5:". The
+# colon keeps the match specific (0 false positives across the measured
+# 417-page corpus); recovered scanned tables flatten to prose, so this
+# flat-text caption is the only reliable detector (no picture markers).
+TABLE_CAPTION_RE = re.compile(r"\bTable\s+\d+(?:\.\d+)?\s*:")
 
 
 class ProductionLayoutTier:
@@ -91,3 +98,67 @@ class InvisibleTextTier:
                 flags=current.flags | {FLAG_TEXTURE_RECOVERED},
             )
         return dataclasses.replace(current, coverage=old_cov)
+
+
+# Injected docling primitives, kept in pdf.py: (path, page_index) -> page
+# Markdown, and Markdown -> list of contiguous `| ... |` table blocks.
+DoclingExtract = Callable[[str, int], str]
+ExtractTables = Callable[[str], list[str]]
+
+
+def _insert_tables_at_captions(prose: str, tables: list[str], caption_re: re.Pattern[str]) -> str:
+    """Drop each recovered grid in just after its caption line, keeping
+    the surrounding prose. Tables with no matching caption (or once the
+    captions run out) are appended, so a recovered grid is never lost."""
+    lines = prose.splitlines()
+    remaining = list(tables)
+    out: list[str] = []
+    for line in lines:
+        out.append(line)
+        if remaining and caption_re.search(line):
+            out.append("")
+            out.append(remaining.pop(0))
+    result = "\n".join(out)
+    if remaining:
+        result = result.rstrip("\n") + "\n\n" + "\n\n".join(remaining)
+    return result + "\n" if prose.endswith("\n") else result
+
+
+class DoclingTableTier:
+    """Recover the grid of a captioned table on a scanned page.
+
+    The invisible-text lever recovers a table's text but flattens it to
+    prose (the grid is gone and it emits no picture marker, so the
+    born-digital splice can't fire). When a recovered page carries a
+    table caption, route it through docling — whose layout model rebuilds
+    the grid — and splice the grid in at the caption, preserving the
+    recovered prose. Only acts on texture-recovered pages; born-digital
+    pages keep the existing marker-based inline splice."""
+
+    def __init__(
+        self,
+        docling_extract: DoclingExtract,
+        extract_tables: ExtractTables,
+        *,
+        caption_re: re.Pattern[str] = TABLE_CAPTION_RE,
+    ) -> None:
+        self._docling_extract = docling_extract
+        self._extract_tables = extract_tables
+        self._caption_re = caption_re
+
+    def refine(self, ctx: ExtractionContext, current: PageExtraction) -> PageExtraction:
+        if FLAG_TEXTURE_RECOVERED not in current.flags:
+            return current
+        if not self._caption_re.search(ctx.flat):
+            return current
+        docling_md = self._docling_extract(ctx.path, ctx.page_index)
+        tables = self._extract_tables(docling_md) if docling_md else []
+        if not tables:
+            return current  # genuine figure, or docling recovered no grid
+        spliced = _insert_tables_at_captions(current.markdown, tables, self._caption_re)
+        return dataclasses.replace(
+            current,
+            markdown=spliced,
+            tier="docling-table",
+            flags=current.flags | {FLAG_DOCLING_INVOKED},
+        )

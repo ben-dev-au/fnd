@@ -37,7 +37,9 @@ import pymupdf  # type: ignore[import-not-found]
 from fnd.cache import ExtractionCache, sha256_file
 from fnd.extract.base import Block, Chunk, ExtractError
 from fnd.extract.recovery import (
+    TABLE_CAPTION_RE,
     CoverageEvaluator,
+    DoclingTableTier,
     ExtractionContext,
     InvisibleTextTier,
     PageRecoveryPipeline,
@@ -584,6 +586,7 @@ def _recovery_pipeline() -> PageRecoveryPipeline:
             [
                 ProductionLayoutTier(_extract_page_md),
                 InvisibleTextTier(_extract_invisible_md, CoverageEvaluator()),
+                DoclingTableTier(_try_docling_fallback, _extract_md_tables),
             ]
         )
     return _recovery_pipeline_singleton
@@ -606,6 +609,7 @@ def _config_hash() -> str:
         "invisible_text_fallback": "ignore_alpha",
         "cov_gate": 0.70,
         "min_flat_tokens": 20,
+        "scanned_table_caption_re": TABLE_CAPTION_RE.pattern,
     }
     return hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()[:8]
 

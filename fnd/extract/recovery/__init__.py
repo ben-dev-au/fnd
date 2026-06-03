@@ -19,6 +19,8 @@ from fnd.extract.recovery.models import (
 )
 from fnd.extract.recovery.pipeline import ExtractionTier, PageRecoveryPipeline
 from fnd.extract.recovery.tiers import (
+    TABLE_CAPTION_RE,
+    DoclingTableTier,
     InvisibleTextTier,
     ProductionLayoutTier,
 )
@@ -28,7 +30,9 @@ __all__ = [
     "FLAG_FIGURE_INCOMPLETE",
     "FLAG_LOW_QUALITY",
     "FLAG_TEXTURE_RECOVERED",
+    "TABLE_CAPTION_RE",
     "CoverageEvaluator",
+    "DoclingTableTier",
     "ExtractionContext",
     "ExtractionTier",
     "InvisibleTextTier",
