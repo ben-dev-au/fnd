@@ -28,10 +28,10 @@ import sys
 import tempfile
 import time
 import tomllib
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Final, Literal, cast
 
 import tomli_w
 from platformdirs import user_data_dir
@@ -206,6 +206,45 @@ def clear_state(state_path: Path) -> None:
     """Remove the state file (called on clean completion / discard)."""
     with contextlib.suppress(OSError):
         state_path.unlink()
+
+
+# A saved state older than this is treated as abandoned, not resumable: a
+# day-plus-old "in-flight" index is almost always a stale file (a past crash
+# the user already re-ran by hand, or leaked test state) rather than a run
+# worth silently restarting heavy work for.
+RESUME_MAX_AGE_HOURS: Final[float] = 24.0
+
+
+def is_state_resumable(
+    state: IndexState | None,
+    *,
+    known_collections: Collection[str],
+    now: dt.datetime,
+    max_age_hours: float = RESUME_MAX_AGE_HOURS,
+) -> bool:
+    """Whether a saved index state should be auto-resumed on launch.
+
+    Guards against silently restarting heavy indexing off state that isn't
+    really the user's own just-interrupted run: requires unfinished work, a
+    collection that still exists in the current config, and a recent
+    timestamp. Foreign/leaked state (e.g. a test writing to the real data
+    dir) and long-abandoned crashes are rejected.
+    """
+    if state is None or state.total_files <= 0:
+        return False
+    if state.files_completed >= state.total_files:
+        return False
+    if state.collection not in known_collections:
+        return False
+    stamp = state.last_update or state.started_at
+    try:
+        ts = dt.datetime.fromisoformat(stamp)
+    except ValueError:
+        return False
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=dt.UTC)
+    age_hours = (now - ts).total_seconds() / 3600.0
+    return 0 <= age_hours <= max_age_hours
 
 
 def _enumerate_paths(config: CollectionConfig) -> list[tuple[Path, str]]:
@@ -819,6 +858,7 @@ __all__ = [
     "IndexState",
     "ProgressEvent",
     "clear_state",
+    "is_state_resumable",
     "load_state",
     "run_indexer",
     "run_sync",

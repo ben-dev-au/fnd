@@ -4623,26 +4623,32 @@ class FNDApp(App[None]):
             )
 
     def _maybe_resume_indexer(self) -> None:
-        """If a state file from a previous run exists, restart the
-        indexer in background mode (no modal). Called from on_mount."""
-        from fnd.config import default_index_dir
-        from fnd.index_runner import load_state, state_file_for
+        """Auto-resume an interrupted background index on launch — only when
+        the user has opted in (defaults.indexer_auto_resume, off by default)
+        AND the saved state is genuinely resumable. Indexing is heavy, so it
+        must never start unbidden; see index_runner.is_state_resumable for the
+        recent-and-real-collection guard that rejects leaked/stale state."""
+        import datetime as _dt
 
-        # Resume the default collection only for now — extending to
-        # named collections requires walking ~/Library/Application
-        # Support/fnd/reindex/ for *.state.toml files.
-        state = load_state(state_file_for("default"))
-        if state is None or state.files_completed >= state.total_files:
-            return
-        # Auto-resume opt-out via config flag (defaults.indexer_auto_resume).
+        from fnd.config import default_index_dir
+        from fnd.index_runner import is_state_resumable, load_state, state_file_for
+
         try:
             from fnd.config import load as _load_config
 
             cfg = _load_config()
-            if not cfg.defaults.indexer_auto_resume:
-                return
         except Exception:
-            pass
+            return
+        if not cfg.defaults.indexer_auto_resume:
+            return
+        # Resume the default collection only for now — extending to named
+        # collections requires walking the reindex dir for *.state.toml.
+        state = load_state(state_file_for("default"))
+        if not is_state_resumable(
+            state, known_collections=set(cfg.collections), now=_dt.datetime.now(tz=_dt.UTC)
+        ):
+            return
+        assert state is not None  # narrowed by is_state_resumable
         try:
             self.start_indexer(
                 collection="default", index_dir=default_index_dir(), open_modal=False

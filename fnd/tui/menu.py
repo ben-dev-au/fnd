@@ -1562,10 +1562,13 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
             id="indexing.auto_resume",
             label="Auto-resume on launch",
             description=(
-                "✓ On: an interrupted Update index (force-quit, sleep, "
-                "Ctrl+C) resumes silently in the background next time "
-                "you open fnd. Progress shows in the footer, not a modal. "
-                "✗ Off: Update index must be triggered manually."
+                "✗ Off (default): indexing only ever runs when you trigger "
+                "it, so a laptop never burns battery on work it didn't ask "
+                "for. A manual Update index still resumes where a quit left "
+                "off, skipping files already indexed. "
+                "✓ On: an interrupted Update index (force-quit, sleep, Ctrl+C) "
+                "resumes silently in the background next launch — progress "
+                "shows in the footer, not a modal."
             ),
             kind=KIND_TOGGLE,
             toggle_getter=_get_indexer_auto_resume,
@@ -1897,7 +1900,7 @@ def _open_pdf_install_confirm(app: FNDApp) -> None:
 
 def _get_indexer_auto_resume(app: FNDApp) -> bool:
     cfg = app._config  # type: ignore[attr-defined]
-    return cfg.defaults.indexer_auto_resume if cfg is not None else True
+    return cfg.defaults.indexer_auto_resume if cfg is not None else False
 
 
 def _get_cache_at_index_time(app: FNDApp) -> bool:
