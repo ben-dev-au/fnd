@@ -86,7 +86,10 @@ def set_skip_structure_extraction(skip: bool) -> None:
 # extraction-logic change). Minor refactors, flag documentation, and
 # patch-level dependency bumps must NOT bump it. "Re-texturise outdated
 # documents" keys off this version: entries below it read as outdated.
-TEXTURE_VERSION: Final[int] = 1
+# v2: invisible-text scanned-page recovery (Bug E) — the layered recovery
+# pipeline meaningfully changes texturised output corpus-wide, so prior
+# textures read as outdated and re-texturise under the new engine.
+TEXTURE_VERSION: Final[int] = 2
 
 
 def texture_signature() -> str:
