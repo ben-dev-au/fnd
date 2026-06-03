@@ -3884,13 +3884,13 @@ def _format_recorded_at(iso: str) -> str:
 def _flat_pdfs_with_reasons(
     *, collection: str | None = None
 ) -> list[tuple[str, str, str, str | None]]:
-    """Return a list of ``(collection, path, reason)`` for every PDF
-    that is on disk but has no body_md-bearing chunk in the tantivy
-    index (i.e. not texturised — body_struct is present on every indexed
-    PDF and can't distinguish flat from textured). Reasons are sourced
-    from the failure log when
-    present; otherwise inferred from current state (engine off /
-    battery-saver toggle / unknown)."""
+    """Return a list of ``(collection, path, reason, recorded_at)`` for
+    every PDF that is on disk but has no body_md-bearing chunk in the
+    tantivy index (i.e. not texturised — body_struct is present on every
+    indexed PDF and can't distinguish flat from textured). ``recorded_at``
+    is the failure-log timestamp, or None when inferred. Reasons are
+    sourced from the failure log when present; otherwise inferred from
+    current state (engine off / battery-saver toggle / unknown)."""
     import contextlib
     from pathlib import Path
 

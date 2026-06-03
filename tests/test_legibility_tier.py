@@ -49,6 +49,19 @@ def test_legr_none_when_no_prose() -> None:
     assert _ev().prose_legr("```\ncode only\n```")[0] is None
 
 
+def test_legr_abstains_when_system_dict_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No injected dict + an absent system word list (Windows / minimal
+    container) must abstain (None), not score every page 0.0 — otherwise
+    the tier would reprocess all legible prose."""
+    from fnd.extract.recovery import evaluators
+
+    monkeypatch.setattr(evaluators, "_load_system_dict", set)
+    ev = LegibilityEvaluator()  # lazy load → hits the patched (empty) loader
+    legr, tokens = ev.prose_legr("the pattern provides good clean prose")
+    assert legr is None
+    assert tokens == 6  # prose still counted, just unjudged
+
+
 def test_legr_suffix_stemming() -> None:
     ev = LegibilityEvaluator(dictionary={"object", "pattern"})
     legr, _ = ev.prose_legr("objects patterns")  # both recovered by the 's' suffix

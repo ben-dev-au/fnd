@@ -66,11 +66,17 @@ class LegibilityEvaluator:
     def __init__(self, dictionary: set[str] | None = None) -> None:
         self._dictionary = dictionary
         self._loaded = dictionary is not None
+        # True only when the lazy system-dict load was attempted and the
+        # word list was absent (Windows / minimal containers). An explicit
+        # empty dict is NOT "unavailable" — it deliberately isolates the
+        # CamelCase rule, so we still score against it.
+        self._dict_unavailable = False
 
     def _dict(self) -> set[str]:
         if not self._loaded:
             self._dictionary = _load_system_dict()
             self._loaded = True
+            self._dict_unavailable = not self._dictionary
         return self._dictionary or set()
 
     def _known(self, token: str) -> bool:
@@ -91,6 +97,11 @@ class LegibilityEvaluator:
         tokens = [t for t in _PROSE_TOKEN_RE.findall(prose) if len(t) >= 2]
         if not tokens:
             return None, 0
+        self._dict()  # trigger lazy load so _dict_unavailable is set
+        if self._dict_unavailable:
+            # No word list to judge against — abstain rather than scoring
+            # every page 0.0 (which would make the tier reprocess all prose).
+            return None, len(tokens)
         legible = sum(1 for t in tokens if self._known(t) or _is_camel(t))
         return legible / len(tokens), len(tokens)
 

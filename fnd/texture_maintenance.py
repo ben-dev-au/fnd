@@ -27,8 +27,15 @@ def live_content_shas(config: Config) -> set[str]:
     from fnd.walk import walk_sources
 
     shas: set[str] = set()
+    # Dedup across collections: overlapping sources would otherwise re-walk
+    # and re-hash (O(corpus) SHA256) the same file once per collection.
+    seen: set[str] = set()
     for col in config.collections.values():
         for path in walk_sources(sources=list(col.sources)):
+            key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
             if path.suffix.lower() != ".pdf":
                 continue
             with contextlib.suppress(OSError):

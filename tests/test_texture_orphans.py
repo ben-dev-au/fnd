@@ -42,6 +42,22 @@ def test_count_orphans_empty_cache(tmp_path: Path) -> None:
     assert PdfStructureCache(root=tmp_path / "nope").count_orphans({"x"}) == 0
 
 
+def test_orphan_gc_ignores_non_pattern_json(tmp_path: Path) -> None:
+    """A stray ``.json`` without the ``sha--sig`` delimiter (a future
+    sidecar/metadata file) must never be counted or deleted as an orphan."""
+    cache = PdfStructureCache(root=tmp_path)
+    cache.put("live1--tex-v2", _ch())
+    shard = tmp_path / "li"  # mirror the 2-char shard the key hashes into
+    shard.mkdir(parents=True, exist_ok=True)
+    stray = shard / "metadata.json"
+    stray.write_text("{}")
+
+    live = {"live1"}
+    assert cache.count_orphans(live) == 0  # stray not flagged
+    assert cache.prune_orphans(live) == 0
+    assert stray.exists()  # and never deleted
+
+
 def test_live_content_shas_hashes_pdfs_under_sources(tmp_path: Path) -> None:
     pytest.importorskip("pymupdf4llm")
     from fnd.cache import sha256_file

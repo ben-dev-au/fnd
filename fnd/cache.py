@@ -193,7 +193,9 @@ class PdfStructureCache:
             1
             for _root, _dirs, files in os.walk(self.root)
             for f in files
-            if f.endswith(".json") and f.split("--", 1)[0] not in live_content_shas
+            if f.endswith(".json")
+            and "--" in f
+            and f.split("--", 1)[0] not in live_content_shas
         )
 
     def prune_orphans(self, live_content_shas: set[str]) -> int:
@@ -207,7 +209,7 @@ class PdfStructureCache:
         removed = 0
         for root_dir, _dirs, files in os.walk(self.root):
             for f in files:
-                if not f.endswith(".json"):
+                if not f.endswith(".json") or "--" not in f:
                     continue
                 sha = f.split("--", 1)[0]
                 if sha not in live_content_shas:

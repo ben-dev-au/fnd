@@ -84,8 +84,8 @@ def set_skip_structure_extraction(skip: bool) -> None:
 # every cached texturising. Bump ONLY for a change that meaningfully alters
 # texturised output corpus-wide (a major pymupdf4llm/docling upgrade, a real
 # extraction-logic change). Minor refactors, flag documentation, and
-# patch-level dependency bumps must NOT bump it. "Re-texturise outdated
-# documents" keys off this version: entries below it read as outdated.
+# patch-level dependency bumps must NOT bump it. Rebuild keys off this
+# version: entries below it read as outdated and re-texturise.
 # v2: invisible-text scanned-page recovery (Bug E) — the layered recovery
 # pipeline meaningfully changes texturised output corpus-wide, so prior
 # textures read as outdated and re-texturise under the new engine.
