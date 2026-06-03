@@ -93,9 +93,9 @@ async def test_scroll_below_boundary_triggers_lazy_mount(cfg: Config, long_md_in
         max_before = max(mounted_before)
         assert max_before < container.total_chunks - 1, "test setup needs unmounted below"
         target = max(0, pane.virtual_size.height - pane.size.height)
-        # The navigation anchor stays armed (lazy-mount suppressed) until the
-        # user takes scroll control. release() models that hand-off so the
-        # next scroll's lazy-mount fires.
+        # release() models a focused user scroll taking control — one of the two
+        # ways the gate opens (the other is the nav settling, covered by
+        # test_lazy_mount_fires_after_settle_without_explicit_release).
         app._preview_scroll.release()
         if pane.scroll_y == target:
             pane.scroll_to(y=max(0, target - 1), animate=False, immediate=True)
@@ -116,6 +116,56 @@ async def test_scroll_below_boundary_triggers_lazy_mount(cfg: Config, long_md_in
         new_below = {i for i in mounted_after - mounted_before if i > max_before}
         # Batch size is bounded — not unbounded fill.
         assert len(new_below) <= _LAZY_MOUNT_BATCH * 4
+
+
+@pytest.mark.asyncio
+async def test_lazy_mount_fires_after_settle_without_explicit_release(
+    cfg: Config, long_md_index: Path
+) -> None:
+    """Regression: an unfocused scroll (mouse-wheel hover) must still lazy-mount.
+
+    The dead-end bug gated lazy-mount on the anchor being armed; the anchor
+    stays armed across navs and only a *focused* user scroll called release(),
+    so wheel-scrolling the unfocused pane never extended the window. Now the
+    gate is is_settling — it clears when the nav's scroll commits — so this
+    test does NOT call release() and lazy-mount must still fire.
+    """
+    app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._run_query("target")
+        pane = app.query_one("#preview_pane", VerticalScroll)
+        await wait_until(
+            pilot,
+            lambda: (
+                app._active_preview is not None
+                and bool(app._active_preview.mounted_indices)
+                and pane.scroll_y > 0
+            ),
+            timeout=15.0,
+            message="initial mount + focus scroll never landed",
+        )
+        # The nav has landed: the gate must already be open, with NO release().
+        assert not app._preview_scroll.is_settling, (
+            "nav settled but is_settling still True — lazy-mount would dead-end"
+        )
+        container = app._active_preview
+        assert container is not None
+        mounted_before = set(container.mounted_indices)
+        max_before = max(mounted_before)
+        assert max_before < container.total_chunks - 1, "test setup needs unmounted below"
+        target = max(0, pane.virtual_size.height - pane.size.height)
+        if pane.scroll_y == target:
+            pane.scroll_to(y=max(0, target - 1), animate=False, immediate=True)
+        pane.scroll_to(y=target, animate=False, immediate=True)
+        app._check_preview_lazy_mount()
+        await wait_until(
+            pilot,
+            lambda: any(i > max_before for i in (container.mounted_indices - mounted_before)),
+            timeout=15.0,
+            message=f"no new chunks mounted below max_before={max_before} without release(); "
+            f"mounted={sorted(container.mounted_indices)}",
+        )
 
 
 @pytest.mark.asyncio
@@ -154,8 +204,8 @@ async def test_scroll_above_after_settled_triggers_lazy_mount(
         )
         # Force scroll to the absolute top of the mounted region — that
         # puts scroll_y inside the trigger margin so the watcher fires.
-        # Release the navigation anchor first (the user taking scroll control)
-        # so the armed gate no longer suppresses lazy-mount.
+        # release() models a focused user scroll taking control (one of the two
+        # ways the is_settling gate opens).
         app._preview_scroll.release()
         if pane.scroll_y == 0:
             pane.scroll_to(y=1, animate=False, immediate=True)
