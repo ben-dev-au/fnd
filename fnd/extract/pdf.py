@@ -99,16 +99,18 @@ def texture_signature() -> str:
     return f"tex-v{TEXTURE_VERSION}"
 
 
-# Run-scoped "re-texturise outdated" flag. When True, extract() reuses ONLY a
-# current-signature cache entry and otherwise re-extracts fresh — so a
-# Re-texturise-outdated pass actually upgrades pre-version texturising. When
-# False (default), extract() reuses any prior entry for the same content,
-# making texturising durable across a TEXTURE_VERSION bump.
+# Run-scoped "Rebuild" flag. When True, extract() bypasses the texture
+# cache entirely — it re-extracts every PDF fresh and overwrites the cache
+# entry — so a Rebuild genuinely re-texturises all PDFs under the current
+# engine, not just the ones missing a current-signature entry. When False
+# (default), extract() reuses a current-signature entry and falls back to
+# any prior entry for the same content, making texturising durable across
+# a TEXTURE_VERSION bump.
 _force_fresh_texture: bool = False
 
 
 def set_force_fresh_texture(value: bool) -> None:
-    """Toggle the run-scoped re-texturise flag; reset at end of run."""
+    """Toggle the run-scoped Rebuild flag; reset at end of run."""
     global _force_fresh_texture
     _force_fresh_texture = value
 
@@ -687,13 +689,14 @@ def extract(
     except OSError as e:
         raise ExtractError(str(path), f"cannot read for hash: {e}") from e
     key = cache.build_key(content_sha256=content_sha, extractor_signature=texture_signature())
-    cached = cache.get(key)
+    # Rebuild (force_fresh) bypasses the cache entirely so every PDF is
+    # re-extracted fresh and its entry overwritten — even one already at the
+    # current signature. Otherwise reuse the current-signature entry, then
+    # fall back to any prior entry for the same content (durable reuse: a
+    # TEXTURE_VERSION bump leaves the current key empty but the older
+    # texturising still serves, so a routine reindex doesn't redo the work).
+    cached = None if _force_fresh_texture else cache.get(key)
     if cached is None and not _force_fresh_texture:
-        # Durable reuse: a TEXTURE_VERSION bump or a pre-versioning entry
-        # left the current key empty, but this file's texturising still
-        # exists under an older key. Reuse it instead of redoing the work.
-        # (Re-texturise-outdated mode sets _force_fresh_texture, skipping
-        # this so it genuinely re-extracts under the current signature.)
         cached = cache.get_any_for_content(content_sha)
     if cached is not None:
         # Cache entries are keyed by content hash, so two different files

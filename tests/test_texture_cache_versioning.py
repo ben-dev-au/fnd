@@ -121,3 +121,24 @@ def test_force_fresh_ignores_prior_signature(
     assert cache.hits == hits_before  # did not reuse the old entry
     # And it wrote a fresh entry under the (bumped) current signature.
     assert cache.get_any_for_content(pdfmod.sha256_file(FIXTURE)) is not None
+
+
+def test_force_fresh_reextracts_even_current_signature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rebuild (force_fresh) must re-extract even a PDF already textured at
+    the CURRENT signature — bypassing the cache entirely. Regression for a
+    Rebuild that served the current-signature cache and so silently ran a
+    plain incremental update instead of re-texturising."""
+    if not pdfmod._HAS_PYMUPDF4LLM:
+        pytest.skip("pymupdf4llm not installed")
+    cache = PdfStructureCache(root=tmp_path)
+    monkeypatch.setattr(pdfmod, "_cache_singleton", cache)
+    list(pdfmod.extract(FIXTURE))  # populate at the current signature
+    # No TEXTURE_VERSION bump: the current-signature entry exists and would
+    # normally be served as a hit.
+    monkeypatch.setattr(pdfmod, "_force_fresh_texture", True)
+    hits_before = cache.hits
+    chunks = list(pdfmod.extract(FIXTURE))
+    assert chunks
+    assert cache.hits == hits_before  # current-signature entry NOT served
