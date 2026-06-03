@@ -1136,7 +1136,7 @@ def _compute_flat_pdfs_for(name: str) -> str:
         import tantivy
 
         from fnd.config import default_index_dir, load
-        from fnd.schema import F_BODY_STRUCT, F_KIND, F_PATH
+        from fnd.schema import F_BODY_MD, F_KIND, F_PATH
 
         cfg = load()
         col = cfg.collections.get(name)
@@ -1162,7 +1162,7 @@ def _compute_flat_pdfs_for(name: str) -> str:
         textured: set[str] = set()
         for _score, addr in searcher.search(kind_q, limit=200000).hits:
             doc = searcher.doc(addr)
-            if not doc.get_first(F_BODY_STRUCT):  # type: ignore[attr-defined]
+            if not doc.get_first(F_BODY_MD):  # type: ignore[attr-defined]
                 continue
             path = doc.get_first(F_PATH)  # type: ignore[attr-defined]
             if path:
@@ -2163,7 +2163,7 @@ def _compute_pdfs_textured() -> str:
         import tantivy
 
         from fnd.config import default_index_dir, load
-        from fnd.schema import F_BODY_STRUCT, F_KIND, F_PATH
+        from fnd.schema import F_BODY_MD, F_KIND, F_PATH
 
         cfg = load()
         # Y: every PDF the indexer would actually pick up under any
@@ -2185,9 +2185,11 @@ def _compute_pdfs_textured() -> str:
         if total == 0:
             return "no PDFs"
 
-        # X: PDFs in the index whose at-least-one chunk has body_struct
-        # (the structural-preview payload populated by the texturising
-        # pipeline). Falls back to "no index" when the index is missing.
+        # X: PDFs in the index with at least one chunk carrying body_md —
+        # the Markdown texturing payload that drives the structural
+        # preview. body_struct (flat Blocks) is present on EVERY indexed
+        # PDF, so it can't distinguish textured from flat; body_md is the
+        # honest signal. Falls back to "no index" when the index is missing.
         index_dir = default_index_dir()
         if not index_dir.exists():
             return f"0 of {total} · ⚠ {total} still flat"
@@ -2199,7 +2201,7 @@ def _compute_pdfs_textured() -> str:
         textured_paths: set[str] = set()
         for _score, addr in hits:
             doc = searcher.doc(addr)
-            body = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
+            body = doc.get_first(F_BODY_MD)  # type: ignore[attr-defined]
             if not body:
                 continue
             path = doc.get_first(F_PATH)  # type: ignore[attr-defined]

@@ -3885,8 +3885,10 @@ def _flat_pdfs_with_reasons(
     *, collection: str | None = None
 ) -> list[tuple[str, str, str, str | None]]:
     """Return a list of ``(collection, path, reason)`` for every PDF
-    that is on disk but has no body_struct-bearing chunk in the
-    tantivy index. Reasons are sourced from the failure log when
+    that is on disk but has no body_md-bearing chunk in the tantivy
+    index (i.e. not texturised — body_struct is present on every indexed
+    PDF and can't distinguish flat from textured). Reasons are sourced
+    from the failure log when
     present; otherwise inferred from current state (engine off /
     battery-saver toggle / unknown)."""
     import contextlib
@@ -3895,7 +3897,7 @@ def _flat_pdfs_with_reasons(
     import tantivy
 
     from fnd.config import default_index_dir, load
-    from fnd.schema import F_BODY_STRUCT, F_COLLECTION, F_KIND, F_PATH
+    from fnd.schema import F_BODY_MD, F_COLLECTION, F_KIND, F_PATH
     from fnd.tui.failure_log import list_failures
 
     cfg = load()
@@ -3907,7 +3909,7 @@ def _flat_pdfs_with_reasons(
     # the source's ``includes: ['**/*.md']`` restriction or its
     # ``frontmatter_filter``. A PDF the user explicitly scoped OUT of
     # a collection would then show up forever in that collection's
-    # Texturising Error Log as "still flat" - the indexer can't index
+    # Flat PDFs list as "still flat" - the indexer can't index
     # what isn't in its walk, so the file would never be cleared from
     # the log no matter how many Updates the user ran.
     from fnd.walk import walk_sources
@@ -3943,7 +3945,10 @@ def _flat_pdfs_with_reasons(
                 )
                 for _score, addr in searcher.search(pdf_q, limit=200000).hits:
                     doc = searcher.doc(addr)
-                    if not doc.get_first(F_BODY_STRUCT):  # type: ignore[attr-defined]
+                    # body_md is the texturing payload; body_struct (flat
+                    # Blocks) is on every indexed PDF and can't tell flat
+                    # from textured.
+                    if not doc.get_first(F_BODY_MD):  # type: ignore[attr-defined]
                         continue
                     p = doc.get_first(F_PATH)  # type: ignore[attr-defined]
                     if p:
@@ -4042,7 +4047,7 @@ class StillFlatDrillIn(Screen[None]):
         self._cursor = 0
 
     def compose(self) -> ComposeResult:
-        title = "Texturising Error Log"
+        title = "Flat PDFs — review & retry"
         if self._collection_filter:
             title += f" - {self._collection_filter}"
         with Vertical(id="settings_box") as box:

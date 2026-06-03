@@ -3,7 +3,7 @@
 Some PDFs are genuinely unstructured (scans, pure-image presentations)
 and the user knows they will never texturise no matter how often the
 pipeline retries. Recording their content hash here removes them from
-the Texturising Error Log so the log stays a real to-do list of files
+the Flat PDFs list so the log stays a real to-do list of files
 the user wants to fix, not a backlog of accepted-as-flat files.
 
 Content-addressed (sha256 of the file bytes) so renaming or moving the
