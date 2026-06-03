@@ -53,11 +53,13 @@ if TYPE_CHECKING:
 _MARKER_COLOR = "#ffd866"
 _MARKER_GLYPH = "▌"
 
-# The thumb is one box-drawing vertical per cell — the same line weight as
-# the pane's ``round`` border, so the bar reads as part of the frame rather
-# than a fat block. Gappy on Apple Terminal / SF Mono (font-determined, same
-# class as the box-border issue) — a documented "use a modern terminal" case.
+# The thumb is one box-drawing line per cell — the same weight as the pane's
+# ``round`` border, so the bar reads as part of the frame rather than a fat
+# block. Vertical bars use ``│``, horizontal bars the matching ``─``. Gappy on
+# Apple Terminal / SF Mono (font-determined, same class as the box-border
+# issue) — a documented "use a modern terminal" case.
 _THUMB_GLYPH = "│"
+_THUMB_GLYPH_HORIZONTAL = "─"
 
 
 class ThinScrollBarRender(ScrollBarRender):
@@ -67,21 +69,27 @@ class ThinScrollBarRender(ScrollBarRender):
     ``ScrollBar.renderer`` so every Textual scrollbar (results/sidebar trees,
     code fences, settings lists) matches:
 
-    * The thumb is a single box-drawing vertical (``│``) per cell in the bar
-      colour over a transparent track — the pane border's line weight, not a
-      reverse-video full-cell block.
+    * The thumb is a single box-drawing line (``│`` vertical, ``─`` horizontal)
+      per cell in the bar colour over a transparent track — the pane border's
+      line weight, not a reverse-video full-cell block.
     * The thumb is a **constant** integer number of cells. The stock renderer
       packs sub-cell precision into partial-block end caps, so its cell count
       flickers ±1 as you scroll (the thumb visibly resizes). Here the count is
       derived once from the window/content ratio and only the position moves.
 
-    Vertical bars only; horizontal bars fall through to the stock renderer
-    (rare, and line wrapping removes the code-fence ones).
+    Covers both orientations so every Textual scrollbar — including the
+    horizontal bars on wide tables and unwrapped code fences — reads the same.
     """
 
     def _thin_segments(
-        self, size: int, bar_color: RichColor, back_color: RichColor | None
+        self,
+        size: int,
+        bar_color: RichColor,
+        back_color: RichColor | None,
+        *,
+        vertical: bool = True,
     ) -> list[Segment]:
+        glyph = _THUMB_GLYPH if vertical else _THUMB_GLYPH_HORIZONTAL
         # ``back_color`` may be None (transparent track) — don't fabricate a bg.
         track = RichStyle(bgcolor=back_color)
         if size <= 0:
@@ -102,23 +110,29 @@ class ThinScrollBarRender(ScrollBarRender):
         top = round(max_top * ratio)
         top = 0 if top < 0 else (max_top if top > max_top else top)
         thumb_style = RichStyle(color=bar_color, meta={"@mouse.down": "grab"})
-        up = RichStyle(bgcolor=back_color, meta={"@mouse.down": "scroll_up"})
-        down = RichStyle(bgcolor=back_color, meta={"@mouse.down": "scroll_down"})
+        # Track clicks page towards the click; the axis decides the action so a
+        # horizontal bar pages left/right rather than firing vertical scrolls.
+        before = "scroll_up" if vertical else "scroll_left"
+        after = "scroll_down" if vertical else "scroll_right"
+        up = RichStyle(bgcolor=back_color, meta={"@mouse.down": before})
+        down = RichStyle(bgcolor=back_color, meta={"@mouse.down": after})
         return [
-            Segment(_THUMB_GLYPH, thumb_style)
+            Segment(glyph, thumb_style)
             if top <= i < top + thumb
             else Segment(" ", up if i < top else down)
             for i in range(size)
         ]
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        if not self.vertical:
-            yield from super().__rich_console__(console, options)
-            return
-        size = options.height or console.height
+        size = (options.height if self.vertical else options.max_width) or (
+            console.height if self.vertical else console.width
+        )
         style = console.get_style(self.style)
         bar_color = style.color or RichColor.parse("bright_magenta")
-        yield Segments(self._thin_segments(size, bar_color, style.bgcolor), new_lines=True)
+        segments = self._thin_segments(size, bar_color, style.bgcolor, vertical=self.vertical)
+        # ``new_lines`` stacks each vertical cell on its own row; the horizontal
+        # bar is a single row, so no per-cell newline.
+        yield Segments(segments, new_lines=self.vertical)
 
 
 class MatchAwareScrollBarRender(ThinScrollBarRender):
@@ -174,8 +188,9 @@ class MatchAwareScrollBarRender(ThinScrollBarRender):
         return {i for i in range(size) if self.match_map[min(int(i * n / size), n - 1)]}
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        # Build the thin, constant-size bar (vertical only), then overlay
-        # match markers on the surviving track cells.
+        # Markers map document lines onto a vertical track; a horizontal axis
+        # has no such mapping, so the horizontal bar is the plain thin bar from
+        # the base renderer. Vertical bars additionally overlay match markers.
         if not self.vertical:
             yield from super().__rich_console__(console, options)
             return
