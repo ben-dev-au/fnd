@@ -26,11 +26,15 @@ from fnd.extract.recovery.tiers import _insert_tables_at_captions
 
 
 def _ctx(flat: str, path: str = "x.pdf", page_index: int = 4) -> ExtractionContext:
-    return ExtractionContext(doc=object(), page=object(), page_index=page_index, path=path, flat=flat)
+    return ExtractionContext(
+        doc=object(), page=object(), page_index=page_index, path=path, flat=flat
+    )
 
 
 def _recovered(markdown: str) -> PageExtraction:
-    return PageExtraction(markdown=markdown, tier="invisible-text", flags=frozenset({FLAG_TEXTURE_RECOVERED}))
+    return PageExtraction(
+        markdown=markdown, tier="invisible-text", flags=frozenset({FLAG_TEXTURE_RECOVERED})
+    )
 
 
 # ── caption regex ────────────────────────────────────────────────────────────
@@ -39,7 +43,9 @@ def test_caption_regex_matches_numbered_captions(text: str) -> None:
     assert TABLE_CAPTION_RE.search(text)
 
 
-@pytest.mark.parametrize("text", ["Table 5 patterns", "Tables: many", "a stable surface", "Table: x"])
+@pytest.mark.parametrize(
+    "text", ["Table 5 patterns", "Tables: many", "a stable surface", "Table: x"]
+)
 def test_caption_regex_rejects_non_captions(text: str) -> None:
     assert TABLE_CAPTION_RE.search(text) is None
 

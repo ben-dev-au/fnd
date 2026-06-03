@@ -24,7 +24,19 @@ def test_cache_forget_content_removes_all_signatures(tmp_path: Path) -> None:
 
     cache = PdfStructureCache(root=tmp_path)
     sha = "abc123"
-    ch = [Chunk(parent_id="p", path="/x", mtime=1, kind="pdf", body="b", body_struct=[Block(kind="p", text="b")], body_md="m", page=1, chunk_seq=0)]
+    ch = [
+        Chunk(
+            parent_id="p",
+            path="/x",
+            mtime=1,
+            kind="pdf",
+            body="b",
+            body_struct=[Block(kind="p", text="b")],
+            body_md="m",
+            page=1,
+            chunk_seq=0,
+        )
+    ]
     cache.put(f"{sha}--tex-v1", ch)
     cache.put(f"{sha}--tex-v2", ch)
     cache.put("other--tex-v2", ch)

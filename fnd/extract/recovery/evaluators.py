@@ -15,7 +15,21 @@ _ALPHA_TOKEN_RE = re.compile(r"[A-Za-z]{3,}")
 # inflected forms a bare dictionary misses (which would false-flag clean
 # prose as garbled).
 _SYSTEM_DICT = Path("/usr/share/dict/words")
-_LEGR_SUFFIXES = ("s", "es", "ed", "ing", "ly", "er", "ers", "tion", "tions", "ment", "ments", "d", "y")
+_LEGR_SUFFIXES = (
+    "s",
+    "es",
+    "ed",
+    "ing",
+    "ly",
+    "er",
+    "ers",
+    "tion",
+    "tions",
+    "ment",
+    "ments",
+    "d",
+    "y",
+)
 _PROSE_TOKEN_RE = re.compile(r"[A-Za-z]+")
 _FENCE_RE = re.compile(r"```.*?```", re.S)
 _CAMEL_RE = re.compile(r"[a-z][A-Z]")

@@ -23,7 +23,10 @@ def _make_cfg(tmp_path: Path) -> tuple[Config, Path]:
     root = tmp_path / "corpus"
     root.mkdir()
     (root / "alpha.md").write_text("# alpha\n\nbody\n")
-    cfg = Config(defaults=Defaults(), collections={"papers": CollectionConfig(sources=[SourceConfig(path=root)])})
+    cfg = Config(
+        defaults=Defaults(),
+        collections={"papers": CollectionConfig(sources=[SourceConfig(path=root)])},
+    )
     index_dir = tmp_path / "index"
     build_index(roots=[root], index_dir=index_dir, collection="papers")
     return cfg, index_dir
@@ -39,6 +42,7 @@ async def test_collection_rebuild_action_passes_rebuild_flags(tmp_path: Path) ->
 
     async with app.run_test() as pilot:
         await pilot.pause()
+
         # Capture what the real action chain hands the indexer; don't
         # actually spawn a run.
         def _fake_start(**kwargs: Any) -> bool:

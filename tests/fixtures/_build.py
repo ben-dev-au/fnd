@@ -168,7 +168,9 @@ def _write_headings_pdf(path: Path) -> None:
     try:
         for size in HEADING_DIVIDER_SIZES:
             page = doc.new_page(width=612, height=792)
-            page.insert_text((72, 72), "Section Divider", fontsize=size, fontname="helv", render_mode=3)
+            page.insert_text(
+                (72, 72), "Section Divider", fontsize=size, fontname="helv", render_mode=3
+            )
             page.insert_text(
                 (72, 160),
                 "filler body text paragraph alpha beta gamma delta",
@@ -177,9 +179,13 @@ def _write_headings_pdf(path: Path) -> None:
                 render_mode=3,
             )
         page = doc.new_page(width=612, height=792)
-        page.insert_text((72, 72), "Implementation Notes", fontsize=16, fontname="helv", render_mode=3)
+        page.insert_text(
+            (72, 72), "Implementation Notes", fontsize=16, fontname="helv", render_mode=3
+        )
         y = 160
-        for line in (HEADING_TARGET_BODY[i : i + 70] for i in range(0, len(HEADING_TARGET_BODY), 70)):
+        for line in (
+            HEADING_TARGET_BODY[i : i + 70] for i in range(0, len(HEADING_TARGET_BODY), 70)
+        ):
             page.insert_text((72, y), line, fontsize=11, fontname="helv", render_mode=3)
             y += 16
         # A visible running footer — real scanned pages carry a small

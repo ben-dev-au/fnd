@@ -19,7 +19,19 @@ FIXTURE_PDF = Path(__file__).parent / "fixtures" / "papers" / "test.pdf"
 
 
 def _ch() -> list[Chunk]:
-    return [Chunk(parent_id="p", path="/x", mtime=1, kind="pdf", body="b", body_struct=[Block(kind="p", text="b")], body_md="m", page=1, chunk_seq=0)]
+    return [
+        Chunk(
+            parent_id="p",
+            path="/x",
+            mtime=1,
+            kind="pdf",
+            body="b",
+            body_struct=[Block(kind="p", text="b")],
+            body_md="m",
+            page=1,
+            chunk_seq=0,
+        )
+    ]
 
 
 def test_count_and_prune_orphans(tmp_path: Path) -> None:
@@ -66,7 +78,10 @@ def test_live_content_shas_hashes_pdfs_under_sources(tmp_path: Path) -> None:
     corpus.mkdir()
     shutil.copy(FIXTURE_PDF, corpus / "a.pdf")
     (corpus / "note.md").write_text("# not a pdf\n")
-    cfg = Config(defaults=Defaults(), collections={"c": CollectionConfig(sources=[SourceConfig(path=corpus)])})
+    cfg = Config(
+        defaults=Defaults(),
+        collections={"c": CollectionConfig(sources=[SourceConfig(path=corpus)])},
+    )
 
     shas = live_content_shas(cfg)
     assert shas == {sha256_file(corpus / "a.pdf")}  # only the PDF, by content
@@ -81,7 +96,10 @@ def test_prune_orphans_clears_entries_for_removed_file(tmp_path: Path) -> None:
     corpus.mkdir()
     pdf_path = corpus / "a.pdf"
     shutil.copy(FIXTURE_PDF, pdf_path)
-    cfg = Config(defaults=Defaults(), collections={"c": CollectionConfig(sources=[SourceConfig(path=corpus)])})
+    cfg = Config(
+        defaults=Defaults(),
+        collections={"c": CollectionConfig(sources=[SourceConfig(path=corpus)])},
+    )
 
     cache = PdfStructureCache(root=tmp_path / "cache")
     cache.put(f"{sha256_file(pdf_path)}--tex-v2", _ch())

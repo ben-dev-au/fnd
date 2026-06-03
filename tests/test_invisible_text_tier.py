@@ -156,7 +156,7 @@ def test_recovered_coverage_beats_production() -> None:
     doc = pymupdf.open(str(FIXTURE))
     try:
         for i in range(doc.page_count):
-            flat = doc[i].get_text("text") or ""
+            flat = str(doc[i].get_text("text") or "")
             old_cov = ev.coverage(pdf._extract_page_md(doc, i), flat)
             new_cov = ev.coverage(pdf._extract_invisible_md(doc, i), flat)
             assert old_cov < 0.70, f"page {i} production cov should trip the gate"

@@ -25,7 +25,9 @@ def _cfg(tmp_path: Path) -> tuple[Config, Path]:
     root = tmp_path / "c"
     root.mkdir()
     (root / "a.md").write_text("# a\n")
-    cfg = Config(defaults=Defaults(), collections={"A": CollectionConfig(sources=[SourceConfig(path=root)])})
+    cfg = Config(
+        defaults=Defaults(), collections={"A": CollectionConfig(sources=[SourceConfig(path=root)])}
+    )
     return cfg, tmp_path / "idx"
 
 

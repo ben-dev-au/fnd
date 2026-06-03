@@ -27,7 +27,10 @@ def _direct_page_md() -> dict[int, str]:
 
     doc = pymupdf.open(str(FIXTURE))
     try:
-        return {i: pdf._strip_picture_markers(pdf._extract_page_md(doc, i)) for i in range(doc.page_count)}
+        return {
+            i: pdf._strip_picture_markers(pdf._extract_page_md(doc, i))
+            for i in range(doc.page_count)
+        }
     finally:
         doc.close()
 

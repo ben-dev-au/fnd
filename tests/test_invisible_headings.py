@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -35,7 +36,7 @@ def _invisible_to_md(doc: pymupdf.Document, page_index: int, hdr_info: object | 
     try:
         pymupdf4llm.use_layout(False)
         with _mute_fd(1), _mute_fd(2):
-            chunks = pymupdf4llm.to_markdown(
+            chunks: Any = pymupdf4llm.to_markdown(
                 doc,
                 pages=[page_index],
                 page_chunks=True,

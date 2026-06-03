@@ -11,7 +11,9 @@ from fnd.extract.recovery import (
 
 
 def _ctx(page_index: int = 0, flat: str = "") -> ExtractionContext:
-    return ExtractionContext(doc=object(), page=object(), page_index=page_index, path="x.pdf", flat=flat)
+    return ExtractionContext(
+        doc=object(), page=object(), page_index=page_index, path="x.pdf", flat=flat
+    )
 
 
 def test_production_tier_wraps_injected_extractor() -> None:

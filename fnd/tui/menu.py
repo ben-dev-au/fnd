@@ -1764,7 +1764,16 @@ def _provider_pdf_texture(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_ACTION,
             action_label="Remove…",
             external=_run_prune_orphans,
-            keywords=("orphan", "orphaned", "dead", "stale", "removed", "prune", "cache", "texture"),
+            keywords=(
+                "orphan",
+                "orphaned",
+                "dead",
+                "stale",
+                "removed",
+                "prune",
+                "cache",
+                "texture",
+            ),
         ),
         header("Behaviour", level=2),
         MenuItem(

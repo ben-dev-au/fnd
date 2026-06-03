@@ -19,7 +19,22 @@ from fnd.extract.recovery import (
 )
 
 # Small deterministic dictionary so tests don't depend on the system list.
-_DICT = {"the", "pattern", "provides", "interface", "for", "creating", "objects", "and", "good", "text", "clean", "prose", "reads", "well"}
+_DICT = {
+    "the",
+    "pattern",
+    "provides",
+    "interface",
+    "for",
+    "creating",
+    "objects",
+    "and",
+    "good",
+    "text",
+    "clean",
+    "prose",
+    "reads",
+    "well",
+}
 
 
 def _ev() -> LegibilityEvaluator:
@@ -75,7 +90,9 @@ _GARBLED = " ".join(["zzqq"] * 35)
 _CLEAN = "the pattern provides interface for creating objects and good clean text reads well " * 3
 
 
-def _tier(ev: LegibilityEvaluator, ocr: str, docling: str, log: dict | None = None) -> LegibilityReprocessTier:
+def _tier(
+    ev: LegibilityEvaluator, ocr: str, docling: str, log: dict[str, int] | None = None
+) -> LegibilityReprocessTier:
     def native_ocr(_page: object) -> str:
         if log is not None:
             log["ocr"] = log.get("ocr", 0) + 1
