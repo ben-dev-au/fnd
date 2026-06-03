@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import cast
 
 from textual.geometry import Offset, Region, Size
@@ -41,6 +42,62 @@ def test_arm_then_reconcile_calls_strategy() -> None:
     assert c.is_armed
     c.reconcile()
     assert strat.calls == [a]
+
+
+def test_is_settling_true_after_arm_until_reconcile_commits() -> None:
+    # A freshly-armed anchor is "settling": a nav is in flight, so lazy-mount
+    # must stay suppressed. Once a reconcile commits (on_settled fires), the
+    # nav has landed and lazy-mount is free to run.
+    strat = FakeStrategy()
+    c = PreviewScrollController(select_strategy=lambda: strat)
+    c.arm(ScrollAnchor(parent_id="p", focus_chunk_seq=1))
+    assert c.is_settling
+    c.reconcile()  # FakeStrategy calls on_settled synchronously
+    assert not c.is_settling
+
+
+def test_is_settling_stays_true_until_deferred_on_settled_fires() -> None:
+    # Cold/warm reveals defer on_settled (call_after_refresh). The anchor must
+    # remain "settling" across that gap, then clear when the reveal lands.
+    held: list[Callable[[], None]] = []
+
+    class _DeferStrategy:
+        def reconcile(
+            self, anchor: ScrollAnchor, on_settled: Callable[[], None] | None = None
+        ) -> None:
+            if on_settled is not None:
+                held.append(on_settled)
+
+        def locate(self) -> ViewportLocation | None:
+            return None
+
+        def scroll_to_location(self, location: ViewportLocation) -> None:
+            return None
+
+    c = PreviewScrollController(select_strategy=lambda: _DeferStrategy())
+    c.arm(ScrollAnchor(parent_id="p", focus_chunk_seq=1))
+    c.reconcile(on_settled=lambda: None)
+    assert c.is_settling  # scroll not committed yet
+    held[0]()  # the deferred reveal/scroll lands
+    assert not c.is_settling
+
+
+def test_arm_resets_settled_for_next_nav() -> None:
+    strat = FakeStrategy()
+    c = PreviewScrollController(select_strategy=lambda: strat)
+    c.arm(ScrollAnchor(parent_id="p", focus_chunk_seq=1))
+    c.reconcile()
+    assert not c.is_settling
+    c.arm(ScrollAnchor(parent_id="p", focus_chunk_seq=9))  # a new navigation
+    assert c.is_settling
+
+
+def test_release_clears_is_settling() -> None:
+    c = PreviewScrollController(select_strategy=lambda: FakeStrategy())
+    c.arm(ScrollAnchor(parent_id="p", focus_chunk_seq=1))
+    assert c.is_settling
+    c.release()
+    assert not c.is_settling
 
 
 def test_reconcile_is_noop_when_released() -> None:

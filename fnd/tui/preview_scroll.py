@@ -91,10 +91,23 @@ class PreviewScrollController:
         self._select_strategy = select_strategy
         self._anchor: ScrollAnchor | None = None
         self._armed = False
+        # True once the armed anchor's scroll has committed. arm() clears it;
+        # a committed reconcile() sets it. ``is_settling`` (armed & not settled)
+        # is the window during which scroll-driven lazy mount must stay out of
+        # the controller's way — see is_settling.
+        self._settled = False
 
     @property
     def is_armed(self) -> bool:
         return self._armed
+
+    @property
+    def is_settling(self) -> bool:
+        """A navigation is still landing: armed but its scroll hasn't committed.
+        Lazy-mount suppresses itself while this holds so it doesn't fight the
+        controller mid-settle; once the reveal lands it clears and user scrolls
+        (keyboard OR unfocused wheel) extend the mounted window again."""
+        return self._armed and not self._settled
 
     @property
     def anchor(self) -> ScrollAnchor | None:
@@ -103,6 +116,7 @@ class PreviewScrollController:
     def arm(self, anchor: ScrollAnchor) -> None:
         self._anchor = anchor
         self._armed = True
+        self._settled = False
 
     def release(self) -> None:
         self._armed = False
@@ -118,7 +132,14 @@ class PreviewScrollController:
         # if the strategy calls it AND then raises, the error-path call below is
         # a no-op. The latch guarantees the floor (fires on error) and the
         # ceiling (never twice).
-        fire = _Once(on_settled)
+        base = _Once(on_settled)
+
+        def fire() -> None:
+            # The scroll has committed: the nav has landed. Mark settled so the
+            # lazy-mount gate (is_settling) opens, then run the caller's reveal.
+            self._settled = True
+            base()
+
         if not self._armed or self._anchor is None:
             fire()
             return

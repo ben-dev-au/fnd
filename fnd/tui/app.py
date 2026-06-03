@@ -3878,12 +3878,13 @@ class FNDApp(App[None]):
         progressively, not just the chunks past the absolute max/min
         mounted index."""
         self._lazy_mount_check_timer = None
-        # While the scroll controller is armed (a navigation is still
-        # settling) it owns the preview position; user-scroll-driven lazy
-        # mount stays suppressed until the user takes control or the document
-        # finishes mounting (both call release()). State-based, so it can't
-        # expire mid-settle the way the old time gate did.
-        if self._preview_scroll.is_armed:
+        # Suppress lazy-mount only while a navigation is still settling (the
+        # controller owns the position until its scroll commits). Once the
+        # reveal lands the gate opens, so user scrolls by ANY means — keyboard
+        # OR an unfocused mouse-wheel — extend the window. Gating on is_armed
+        # instead dead-ended wheel-scroll: the anchor stays armed across navs
+        # and only release() (a focused user scroll) cleared it.
+        if self._preview_scroll.is_settling:
             return
         container = self._active_preview
         if container is None:
