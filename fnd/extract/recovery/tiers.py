@@ -7,9 +7,10 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from fnd.extract.recovery.evaluators import CoverageEvaluator
+from fnd.extract.recovery.evaluators import CoverageEvaluator, LegibilityEvaluator
 from fnd.extract.recovery.models import (
     FLAG_DOCLING_INVOKED,
+    FLAG_LOW_QUALITY,
     FLAG_TEXTURE_RECOVERED,
     ExtractionContext,
     PageExtraction,
@@ -162,3 +163,70 @@ class DoclingTableTier:
             tier="docling-table",
             flags=current.flags | {FLAG_DOCLING_INVOKED},
         )
+
+
+# Injected reprocessors for the (deferred) legibility tier: native OCR of
+# a page, and full-page docling extraction.
+NativeOcr = Callable[[Any], str]
+
+
+class LegibilityReprocessTier:
+    """Reprocess a page whose recovered prose reads as garbled OCR.
+
+    DEFERRED — built and unit-tested but not composed into the pipeline:
+    the measured corpus has uniformly legible baked OCR, so no real page
+    exercises it. Kept ready for a poorer-scan corpus. When prose
+    legibility falls below the gate (with enough prose to judge), it tries
+    native pymupdf OCR, then full-page docling, keeping the first variant
+    that lifts legibility by a margin; otherwise it flags the page
+    low-quality and leaves the text untouched."""
+
+    def __init__(
+        self,
+        legibility: LegibilityEvaluator,
+        native_ocr: NativeOcr,
+        docling_extract: DoclingExtract,
+        *,
+        legr_gate: float = 0.80,
+        min_tokens: int = 30,
+        min_gain: float = 0.03,
+    ) -> None:
+        self._legibility = legibility
+        self._native_ocr = native_ocr
+        self._docling_extract = docling_extract
+        self._legr_gate = legr_gate
+        self._min_tokens = min_tokens
+        self._min_gain = min_gain
+
+    def refine(self, ctx: ExtractionContext, current: PageExtraction) -> PageExtraction:
+        legr, tokens = self._legibility.prose_legr(current.markdown)
+        if legr is None or tokens < self._min_tokens or legr >= self._legr_gate:
+            return current
+
+        ocr_md = self._native_ocr(ctx.page)
+        if self._gain(ocr_md, legr):
+            ocr_legr, _ = self._legibility.prose_legr(ocr_md)
+            return dataclasses.replace(
+                current, markdown=ocr_md, tier="legibility-ocr", legibility=ocr_legr
+            )
+
+        docling_md = self._docling_extract(ctx.path, ctx.page_index)
+        if self._gain(docling_md, legr):
+            doc_legr, _ = self._legibility.prose_legr(docling_md)
+            return dataclasses.replace(
+                current,
+                markdown=docling_md,
+                tier="legibility-docling",
+                legibility=doc_legr,
+                flags=current.flags | {FLAG_DOCLING_INVOKED},
+            )
+
+        return dataclasses.replace(
+            current, legibility=legr, flags=current.flags | {FLAG_LOW_QUALITY}
+        )
+
+    def _gain(self, candidate: str, baseline: float) -> bool:
+        if not candidate:
+            return False
+        legr, _ = self._legibility.prose_legr(candidate)
+        return legr is not None and legr - baseline >= self._min_gain
