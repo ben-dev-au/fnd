@@ -11,6 +11,7 @@ Requirements covered:
 from __future__ import annotations
 
 import asyncio
+import datetime
 import tomllib
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from fnd.index_runner import (
     IndexState,
     ProgressEvent,
     clear_state,
+    is_state_resumable,
     load_state,
     run_indexer,
     save_state,
@@ -480,3 +482,62 @@ async def test_no_skip_when_skip_unchanged_false(tmp_path: Path, papers_dir: Pat
             final = ev
     assert final is not None
     assert final.cache_hits_total + final.cache_misses_total >= 1
+
+
+# ── is_state_resumable: guard against unbidden / stale auto-resume ──
+
+
+def _state(
+    *,
+    collection: str = "default",
+    total: int = 3,
+    done: int = 1,
+    last_update: str,
+) -> IndexState:
+    return IndexState(
+        collection=collection,
+        started_at=last_update,
+        total_files=total,
+        files_completed=done,
+        last_update=last_update,
+    )
+
+
+def _now() -> datetime.datetime:
+    return datetime.datetime(2026, 6, 4, 12, 0, tzinfo=datetime.UTC)
+
+
+def test_resumable_recent_unfinished_known_collection() -> None:
+    st = _state(last_update="2026-06-04T11:30:00+00:00")  # 30 min ago
+    assert is_state_resumable(st, known_collections={"default"}, now=_now()) is True
+
+
+def test_not_resumable_when_none() -> None:
+    assert is_state_resumable(None, known_collections={"default"}, now=_now()) is False
+
+
+def test_not_resumable_when_complete() -> None:
+    st = _state(total=3, done=3, last_update="2026-06-04T11:30:00+00:00")
+    assert is_state_resumable(st, known_collections={"default"}, now=_now()) is False
+
+
+def test_not_resumable_unknown_collection() -> None:
+    st = _state(last_update="2026-06-04T11:30:00+00:00")
+    assert is_state_resumable(st, known_collections={"other"}, now=_now()) is False
+
+
+def test_not_resumable_when_stale() -> None:
+    # Six days old — abandoned, not a just-interrupted run.
+    st = _state(last_update="2026-05-29T13:40:00+00:00")
+    assert is_state_resumable(st, known_collections={"default"}, now=_now()) is False
+
+
+def test_not_resumable_naive_timestamp_within_window() -> None:
+    # A timestamp without tzinfo is read as UTC, not rejected.
+    st = _state(last_update="2026-06-04T11:30:00")
+    assert is_state_resumable(st, known_collections={"default"}, now=_now()) is True
+
+
+def test_not_resumable_garbage_timestamp() -> None:
+    st = _state(last_update="not-a-date")
+    assert is_state_resumable(st, known_collections={"default"}, now=_now()) is False

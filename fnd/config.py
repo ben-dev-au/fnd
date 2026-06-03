@@ -407,11 +407,15 @@ class Defaults(BaseModel):
     # stems, so values 0-3 are no-ops vs current behavior; 4+ extends
     # the floor.
     fuzzy_min_term_chars: int = 3
-    # Auto-resume an interrupted reindex on app launch. When True (the
-    # default), an existing state file from a previous quit / crash /
-    # Ctrl+C resumes silently in the background. False disables the
-    # behaviour entirely; the user must trigger the reindex manually.
-    indexer_auto_resume: bool = True
+    # Auto-resume an interrupted reindex on app launch. Default False:
+    # indexing is heavy (PDF texturising) and must never start unless the
+    # user asked for it — a laptop shouldn't drain its battery on work it
+    # didn't trigger. When True, an interrupted run resumes silently in the
+    # background; even then it only resumes recent state for a collection
+    # that still exists (see index_runner.is_state_resumable). Either way a
+    # manual Update index picks up where a quit left off, skipping files
+    # already indexed with an unchanged mtime.
+    indexer_auto_resume: bool = False
     # Populate the PDF structure cache during Update index runs. True
     # (default when pdf-structure is installed) writes fresh entries for
     # any PDF without one. False reads from the cache when entries exist
