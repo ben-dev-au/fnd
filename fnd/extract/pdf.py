@@ -689,13 +689,16 @@ def extract(
     except OSError as e:
         raise ExtractError(str(path), f"cannot read for hash: {e}") from e
     key = cache.build_key(content_sha256=content_sha, extractor_signature=texture_signature())
-    # Rebuild (force_fresh) bypasses the cache entirely so every PDF is
-    # re-extracted fresh and its entry overwritten — even one already at the
-    # current signature. Otherwise reuse the current-signature entry, then
+    # Rebuild (force_fresh) literally deletes this content's saved
+    # texturing first, so the entry is genuinely gone (not overwritten) and
+    # the re-extraction below leaves a single fresh entry — no stale
+    # variants linger. Otherwise reuse the current-signature entry, then
     # fall back to any prior entry for the same content (durable reuse: a
     # TEXTURE_VERSION bump leaves the current key empty but the older
     # texturising still serves, so a routine reindex doesn't redo the work).
-    cached = None if _force_fresh_texture else cache.get(key)
+    if _force_fresh_texture:
+        cache.forget_content(content_sha)
+    cached = cache.get(key)
     if cached is None and not _force_fresh_texture:
         cached = cache.get_any_for_content(content_sha)
     if cached is not None:
