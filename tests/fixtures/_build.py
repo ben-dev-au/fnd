@@ -149,6 +149,49 @@ def _write_invisible_pdf(path: Path) -> None:
         doc.close()
 
 
+# ── Per-page heading fixture (doc-wide cutoff repro) ─────────────────────────
+# pymupdf4llm builds one IdentifyHeaders over the whole document; with
+# enough distinct large divider fonts the max_levels=6 cutoff lifts the
+# body limit above genuine mid-size subheads, so they classify as body.
+# Six invisible divider pages exhaust the cutoff; the target page's 16pt
+# subhead is dropped doc-wide but recovered by per-page hdr_info.
+HEADING_DIVIDER_SIZES = [30, 28, 26, 24, 22, 20]
+HEADING_TARGET_BODY = (
+    "Implementation notes describing the dispatcher routine which resolves "
+    "handlers dynamically through registered factories binding concrete "
+    "strategies lazily without explicit coupling between modules."
+)
+
+
+def _write_headings_pdf(path: Path) -> None:
+    doc = pymupdf.open()
+    try:
+        for size in HEADING_DIVIDER_SIZES:
+            page = doc.new_page(width=612, height=792)
+            page.insert_text((72, 72), "Section Divider", fontsize=size, fontname="helv", render_mode=3)
+            page.insert_text(
+                (72, 160),
+                "filler body text paragraph alpha beta gamma delta",
+                fontsize=11,
+                fontname="helv",
+                render_mode=3,
+            )
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((72, 72), "Implementation Notes", fontsize=16, fontname="helv", render_mode=3)
+        y = 160
+        for line in (HEADING_TARGET_BODY[i : i + 70] for i in range(0, len(HEADING_TARGET_BODY), 70)):
+            page.insert_text((72, y), line, fontsize=11, fontname="helv", render_mode=3)
+            y += 16
+        # A visible running footer — real scanned pages carry a small
+        # visible page label, so the layout path emits something (the gate
+        # requires production Markdown to be present before it fires).
+        page.insert_text((72, 760), "page seven", fontsize=9, fontname="helv")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(path), garbage=4, clean=True, deflate=True)
+    finally:
+        doc.close()
+
+
 def _write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -224,6 +267,7 @@ def _write_docx(path: Path, paragraphs: list[tuple[str, str]]) -> None:
 def build() -> None:
     _write_pdf(FIXTURES / "papers" / "test.pdf", PDF_PAGES)
     _write_invisible_pdf(FIXTURES / "scanned" / "invisible.pdf")
+    _write_headings_pdf(FIXTURES / "scanned" / "headings.pdf")
     _write_text(FIXTURES / "notes" / "index.md", MD_CONTENT)
     _write_text(FIXTURES / "plain" / "short.txt", TXT_CONTENT)
     _write_pptx(FIXTURES / "slides" / "deck.pptx", PPTX_SLIDES)

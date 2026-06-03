@@ -510,6 +510,23 @@ def _extract_page_md(doc: pymupdf.Document, page_index: int) -> str:
     return str(first.get("text", "")) if isinstance(first, dict) else str(first)
 
 
+def _per_page_hdr_info(doc: pymupdf.Document, page_index: int) -> object | None:
+    """An IdentifyHeaders scoped to one page, or None to let pymupdf4llm
+    fall back to its document-wide scan. Scoping makes the body limit the
+    page's own modal font size, so mid-size subheads aren't swamped by a
+    book's chapter-divider fonts."""
+    try:
+        from pymupdf4llm.helpers.pymupdf_rag import IdentifyHeaders
+    except Exception:
+        return None
+    try:
+        # IdentifyHeaders' signature types ``doc`` as str but its body
+        # accepts a Document (the production path passes one too).
+        return IdentifyHeaders(doc, pages=[page_index])  # type: ignore[arg-type]
+    except Exception:
+        return None
+
+
 def _extract_invisible_md(doc: pymupdf.Document, page_index: int) -> str:
     """Re-extract one page through the ignore_alpha lever in non-layout
     mode, recovering invisible OCR text the layout parser discards.
@@ -526,6 +543,12 @@ def _extract_invisible_md(doc: pymupdf.Document, page_index: int) -> str:
     prior = bool(getattr(pymupdf4llm, "_use_layout", True))
     try:
         pymupdf4llm.use_layout(False)
+        # Per-page header detection: the default scans the whole document,
+        # and a scanned book's many distinct divider fonts exhaust the
+        # 6-level cutoff, lifting the body limit above genuine mid-size
+        # subheads so they classify as body. Scoping IdentifyHeaders to
+        # this page sets body_limit = max(12, page modal), recovering them.
+        hdr_info = _per_page_hdr_info(doc, page_index)
         with _mute_fd(1), _mute_fd(2):
             chunks = pymupdf4llm.to_markdown(
                 doc,
@@ -537,6 +560,7 @@ def _extract_invisible_md(doc: pymupdf.Document, page_index: int) -> str:
                 ignore_images=True,
                 ignore_graphics=False,
                 table_strategy="lines",
+                hdr_info=hdr_info,
             )
     except Exception:
         return ""
