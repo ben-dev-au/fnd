@@ -116,9 +116,12 @@ async def test_indexing_screen_has_cache_rows(
         assert "pdf_texture.cache_size" in ids
         assert "pdf_texture.cache_location" in ids
         assert "pdf_texture.update" in ids
-        assert "pdf_texture.cache_prune" in ids
         assert "pdf_texture.cache_clear" in ids
         assert "pdf_texture.texturise_while_indexing" in ids
+        # Consolidation: the standalone prune action was removed; a single
+        # "Free texture cache space" (cache_clear) and Rebuild cover it.
+        assert "pdf_texture.cache_prune" not in ids
+        assert "pdf_texture.rebuild_all" in ids
         # Old drill row is gone.
         assert "indexing.cache_maintenance" not in ids
 
@@ -170,7 +173,7 @@ async def test_cache_size_row_shows_count_and_size(
 async def test_cache_actions_inline_under_indexing(
     built_index: Path, cfg: Config, isolated_cache: Path
 ) -> None:
-    """No drill needed — Update cache / Prune / Clear live on the
+    """No drill needed — Update cache / Rebuild / Free-cache live on the
     Indexing screen itself."""
     from fnd.tui.menu import SECTION_PDF_TEXTURE
     from fnd.tui.settings_screen import SettingsList, open_settings_section
@@ -182,9 +185,9 @@ async def test_cache_actions_inline_under_indexing(
         await pilot.pause()
         lst = app.screen.query_one(SettingsList)
         ids = [it.id for it in lst._items]
-        # All three actions visible on the Indexing screen.
+        # Actions visible on the Indexing screen.
         assert "pdf_texture.update" in ids
-        assert "pdf_texture.cache_prune" in ids
+        assert "pdf_texture.rebuild_all" in ids
         assert "pdf_texture.cache_clear" in ids
 
 
@@ -282,56 +285,6 @@ async def test_clear_esc_cancels(built_index: Path, cfg: Config, isolated_cache:
         await pilot.press("escape")
         await pilot.pause()
         assert cache.entry_count() == 1
-
-
-# 6 — Prune notifies cleanly when no stale entries
-
-
-@pytest.mark.asyncio
-async def test_prune_no_stale_notifies_only(
-    built_index: Path, cfg: Config, isolated_cache: Path
-) -> None:
-    """When all entries are fresh, prune notifies and doesn't push a
-    confirm dialog."""
-    from fnd.cache import ExtractionCache
-    from fnd.extract.pdf import texture_signature
-
-    sig = texture_signature()
-    cache = ExtractionCache(root=isolated_cache)
-    cache.put(f"aa--{sig}", [_make_chunk(0)])
-
-    from fnd.tui.menu import _run_cache_prune
-    from fnd.tui.settings_screen import CacheMaintenanceConfirm
-
-    app = FNDApp(index_dir=built_index, config=cfg)
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        _run_cache_prune(app)
-        await pilot.pause()
-        # Confirm dialog should NOT be on top — no stale to prune.
-        assert not isinstance(app.screen, CacheMaintenanceConfirm)
-
-
-@pytest.mark.asyncio
-async def test_prune_with_stale_opens_confirm(
-    built_index: Path, cfg: Config, isolated_cache: Path
-) -> None:
-    """Stale-signature entries → confirm dialog appears."""
-    cache = ExtractionCache(root=isolated_cache)
-    cache.put("aa--stale_sig_xx", [_make_chunk(0)])
-    cache.put("bb--stale_sig_xx", [_make_chunk(1)])
-
-    from fnd.tui.menu import _run_cache_prune
-    from fnd.tui.settings_screen import CacheMaintenanceConfirm
-
-    app = FNDApp(index_dir=built_index, config=cfg)
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        _run_cache_prune(app)
-        await pilot.pause()
-        assert isinstance(app.screen, CacheMaintenanceConfirm)
-        # Prune is recoverable — not destructive.
-        assert not app.screen.has_class("-destructive")
 
 
 # 7 — Root summary reflects cache state

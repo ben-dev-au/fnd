@@ -1447,6 +1447,9 @@ class FNDApp(App[None]):
         # with durable cache reuse.
         self._indexer_skip_unchanged: bool = True
         self._indexer_force_fresh: bool = False
+        # rebuild=True drops each collection's chunks before re-indexing —
+        # the "Rebuild" actions pair it with force_fresh for a true redo.
+        self._indexer_rebuild: bool = False
         # Per-collection final snapshots captured as each chain step
         # finishes. Drives the IndexerScreen's history band and the
         # post-chain summary screen so the user can see what every
@@ -4428,6 +4431,7 @@ class FNDApp(App[None]):
         self._indexer_texturise_override = texturise_override
         self._indexer_skip_unchanged = skip_unchanged
         self._indexer_force_fresh = force_fresh
+        self._indexer_rebuild = rebuild
         self._indexer_cancel = asyncio.Event()
         # Reuse the existing events queue when a chain run is in
         # progress so the IndexerScreen's drain (which holds a

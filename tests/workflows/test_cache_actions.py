@@ -34,24 +34,6 @@ def _chunk(i: int) -> Chunk:
 
 
 @pytest.mark.asyncio
-async def test_prune_when_cache_empty_notifies_no_op(
-    app_factory: Callable[[Config], FNDApp], cfg_one: Config
-) -> None:
-    """Prune on an empty cache surfaces a notification, doesn't push
-    a confirm screen, and leaves the app untouched."""
-    from fnd.tui.menu import _run_cache_prune
-
-    app = app_factory(cfg_one)
-    initial_screen = type(None)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        initial_screen = type(app.screen)
-        _run_cache_prune(app)
-        await pilot.pause()
-        assert type(app.screen) is initial_screen
-
-
-@pytest.mark.asyncio
 async def test_clear_when_cache_empty_notifies_no_op(
     app_factory: Callable[[Config], FNDApp], cfg_one: Config
 ) -> None:

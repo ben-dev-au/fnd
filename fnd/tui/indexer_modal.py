@@ -963,10 +963,12 @@ def _start_next_in_chain(app: FNDApp, collection: str) -> None:
     override = getattr(app, "_indexer_texturise_override", None)
     skip_unchanged = getattr(app, "_indexer_skip_unchanged", True)
     force_fresh = getattr(app, "_indexer_force_fresh", False)
+    rebuild = getattr(app, "_indexer_rebuild", False)
     app.start_indexer(
         collection=collection,
         config=col_cfg,
         open_modal=False,
+        rebuild=rebuild,
         texturise_override=override,
         skip_unchanged=skip_unchanged,
         force_fresh=force_fresh,

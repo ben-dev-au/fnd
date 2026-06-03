@@ -662,7 +662,12 @@ def cache_status() -> None:
 def cache_clear(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
 ) -> None:
-    """Forget every saved texturing. Next Update index will texturise every PDF."""
+    """Clear the PDF texture cache, freeing its disk space.
+
+    Previews you've already built keep working (the texturing is stored in
+    the index, not the cache). The cache just speeds up future re-indexing;
+    Rebuild re-creates entries as needed.
+    """
     import shutil
 
     from fnd.cache import default_cache_dir
@@ -673,8 +678,8 @@ def cache_clear(
         return
 
     if not yes:
-        typer.echo(f"About to remove {root} and every saved texturing.")
-        typer.echo("Next Update index will texturise every PDF from scratch.")
+        typer.echo(f"About to clear the texture cache at {root}.")
+        typer.echo("Frees disk space; previews you've already built keep working.")
         if not typer.confirm("Continue?", default=False):
             typer.echo("aborted")
             raise typer.Exit(code=1)

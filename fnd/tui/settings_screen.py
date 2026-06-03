@@ -225,8 +225,8 @@ def _render_row(
 
     # Compute the trailing affordance up-front so the label can be
     # truncated with `…` when label + dots + affordance would exceed
-    # the row width. Without this the action label (`[ Remove… ]`,
-    # `[ Forget… ]`, etc.) clips at the right border, hiding the
+    # the row width. Without this the action label (`[ Clear… ]`,
+    # `[ Rebuild ]`, etc.) clips at the right border, hiding the
     # primary signal of "what Enter does."
     pending_segments = _trailing_segments(item, app) if not breadcrumb else []
     label_to_render = item.label
@@ -3157,6 +3157,7 @@ class UpdateAllConfirm(Screen[None]):
         texturise_override: bool | None = None,
         skip_unchanged: bool = True,
         force_fresh: bool = False,
+        rebuild: bool = False,
     ) -> None:
         super().__init__()
         self._names = list(collection_names)
@@ -3164,14 +3165,17 @@ class UpdateAllConfirm(Screen[None]):
         # texturise (the shared "Update everything" action), False =
         # never texturise (the "Process new files index-only" action).
         self._texturise_override = texturise_override
-        # skip_unchanged=False + force_fresh=True is the "Re-texturise
-        # outdated" action: revisit every file and re-extract any textured
-        # by an older engine version. Otherwise indexing is incremental and
-        # reuses existing texturising.
+        # rebuild=True + force_fresh=True + skip_unchanged=False is the
+        # "Rebuild all collections" action: drop each collection's chunks
+        # and re-extract every file fresh. Otherwise indexing is
+        # incremental and reuses existing texturising.
         self._skip_unchanged = skip_unchanged
         self._force_fresh = force_fresh
+        self._rebuild = rebuild
 
     def _mode_label(self) -> str:
+        if self._rebuild:
+            return "Rebuild — drop chunks and re-texturise every PDF from scratch"
         if self._force_fresh:
             return "Re-texturise documents on an older engine version"
         if self._texturise_override is True:
@@ -3193,7 +3197,12 @@ class UpdateAllConfirm(Screen[None]):
             text.append(self._mode_label())
             text.append("\n")
             text.append("Per file  ", style="dim")
-            if self._force_fresh:
+            if self._rebuild:
+                text.append(
+                    "Every PDF is re-texturised from scratch (cache bypassed). "
+                    "Costly — use to rebuild all previews under the current engine.\n"
+                )
+            elif self._force_fresh:
                 text.append(
                     "Every file is revisited; up-to-date texturising is reused, "
                     "only older-engine versions are re-extracted.\n"
@@ -3258,12 +3267,14 @@ class UpdateAllConfirm(Screen[None]):
         app._indexer_texturise_override = self._texturise_override  # type: ignore[attr-defined]
         app._indexer_skip_unchanged = self._skip_unchanged  # type: ignore[attr-defined]
         app._indexer_force_fresh = self._force_fresh  # type: ignore[attr-defined]
+        app._indexer_rebuild = self._rebuild  # type: ignore[attr-defined]
         try:
             app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
                 first,
                 texturise_override=self._texturise_override,
                 skip_unchanged=self._skip_unchanged,
                 force_fresh=self._force_fresh,
+                rebuild=self._rebuild,
             )
         except Exception:
             self.notify(f"Could not start Update index for {first}", severity="error")
@@ -3382,8 +3393,8 @@ class StructuredPdfConfirmScreen(Screen[None]):
             cache_size = _pdf_cache_size_human()
             cache_line = (
                 f"PDF Texture Cache ({cache_size}) stays. "
-                "Forget it separately via Settings → Indexing → "
-                "Forget every saved texturing."
+                "Clear it separately via Settings → Indexing → "
+                "Clear texture cache."
             )
             return build_confirm_body(
                 outcome_label="What changes",
