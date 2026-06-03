@@ -274,6 +274,7 @@ class OpenWithScreen(ModalScreen[str | None]):
             path=path,
             kind=str(getattr(hit, "kind", "")),
             page=int(getattr(hit, "page", 0) or 0),
+            page_label=str(getattr(hit, "page_label", "") or ""),
             slide=int(getattr(hit, "slide", 0) or 0),
             heading_path=str(getattr(hit, "heading_path", "") or ""),
             line=int(getattr(hit, "line", 0) or 0),
