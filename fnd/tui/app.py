@@ -41,6 +41,7 @@ from textual.widgets import (
 from textual.widgets._markdown import (
     MarkdownBlock,
     MarkdownBlockQuote,
+    MarkdownFence,
     MarkdownH1,
     MarkdownH2,
     MarkdownH3,
@@ -321,10 +322,9 @@ class PreviewCache:
 # text should carry search-term highlights and overlay
 # ``Content.add_spans`` after the base build runs — match-only spans
 # layered on top of whatever style the base block produced. Code
-# fences (``MarkdownFence``) are intentionally NOT subclassed: the
-# stock widget uses ``rich.syntax.Syntax`` for the fence body, and
-# splatting yellow highlights inside code makes it harder to read,
-# not easier.
+# fences (``MarkdownFence``) carry the overlay too (``FNDMarkdownFence``):
+# the match highlight reads over the lexer's syntax colours so a query
+# term inside a code block is as findable as one in prose.
 #
 # The match logic shells out to the same ``_terms_from_query`` /
 # ``_term_stems`` / Snowball stemmer used everywhere else in the app
@@ -464,6 +464,37 @@ class FNDMarkdownTH(_HighlightingBlockMixin, MarkdownTH):
 
 class FNDMarkdownTD(_HighlightingBlockMixin, MarkdownTD):
     pass
+
+
+class FNDMarkdownFence(MarkdownFence):
+    """Code fence that overlays search-term highlights on the syntax
+    colouring. Stock ``MarkdownFence`` builds a syntax-highlighted
+    ``Content`` in ``__init__`` and renders it via a single Label, with
+    no hook for match spans — so query terms inside a code block went
+    unhighlighted. We add the match overlay on top of the lexer colours
+    (the highlight reads over them) right after the base build, and
+    re-apply it when a theme change rebuilds the syntax colouring."""
+
+    def __init__(self, markdown: Markdown, token: Any, code: str) -> None:
+        super().__init__(markdown, token, code)
+        self._apply_fence_highlights()
+
+    def notify_style_update(self) -> None:
+        # The base rebuilds ``_highlighted_code`` from scratch on a theme
+        # change, dropping our overlay — re-apply it afterwards.
+        super().notify_style_update()
+        self._apply_fence_highlights()
+
+    def _apply_fence_highlights(self) -> None:
+        spec = getattr(self._markdown, "match_spec", None)
+        if spec is None or spec.is_empty:
+            return
+        spans = _build_match_spans(self._highlighted_code.plain, spec)
+        if not spans:
+            return
+        self._highlighted_code = self._highlighted_code.add_spans(spans)
+        self.set_content(self._highlighted_code)
+        _record_first_match(self, spans)
 
 
 class FNDMarkdownTableDT(MarkdownTable):
@@ -670,10 +701,9 @@ class FNDMarkdown(Markdown):
     Subclasses ``textual.widgets.Markdown`` and registers
     highlight-aware block subclasses for the kinds whose inline text
     should carry the highlight overlay (headings, paragraphs,
-    blockquotes, list items, table cells). Fenced code blocks
-    (``MarkdownFence``) intentionally remain on the base class — the
-    stock widget renders them via ``rich.syntax.Syntax`` and we don't
-    want to muddy that with extra styling.
+    blockquotes, list items, table cells, fenced code). Fenced code
+    blocks use ``FNDMarkdownFence``, which overlays match spans on the
+    syntax-highlighted Content so in-code matches are visible too.
 
     The user's query stems are passed in at construction time and
     stashed on the instance so each block subclass can read them
@@ -723,6 +753,8 @@ class FNDMarkdown(Markdown):
         "th_open": FNDMarkdownTH,
         "td_open": FNDMarkdownTD,
         "table_open": FNDMarkdownTableDT,
+        "fence": FNDMarkdownFence,
+        "code_block": FNDMarkdownFence,
     }
 
     def __init__(
@@ -4136,9 +4168,9 @@ class FNDApp(App[None]):
         Textual builds out the per-block widget tree (headings,
         paragraphs, tables, fenced code, lists, blockquotes) and our
         highlight-aware subclasses overlay match-only spans on the
-        rendered Content. Code fences keep the stock ``MarkdownFence``
-        rendering (syntax-highlighted via Rich), so query terms inside
-        a code block don't muddy the syntax colours.
+        rendered Content. Code fences (``FNDMarkdownFence``) keep the
+        Rich syntax highlighting and add the match overlay on top, so
+        query terms inside a code block are highlighted too.
 
         ``_chunk_widgets`` maps the chunk seq to the FNDMarkdown
         widget itself (used for chunk-boundary scrolling); ``_match_

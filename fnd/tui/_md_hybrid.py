@@ -201,11 +201,15 @@ def _build_table_widget(md_text: str, spec: MatchSpec) -> tuple[DataTable[Text],
 
 
 def _build_fence_widget(md_text: str, spec: MatchSpec) -> tuple[Static, bool]:
-    """Render a fence via rich.syntax.Syntax directly (skip the
-    rich.markdown wrapper). One Static widget per fence — syntax
-    highlighted, fits in the parent ScrollView, but no horizontal
-    scroll / focus (those are MarkdownFence's value-add and would
-    require the upstream widget, which needs a Markdown parent).
+    """Render a fence as syntax-highlighted ``Text`` with match spans
+    overlaid on top. One Static widget per fence — fits in the parent
+    ScrollView, but no horizontal scroll / focus (those are
+    MarkdownFence's value-add and would require the upstream widget,
+    which needs a Markdown parent).
+
+    Lexer styles come from ``Syntax.highlight`` as a Rich ``Text``;
+    match spans are baked on afterwards so the highlight reads over the
+    syntax colouring (rendering the bare ``Syntax`` would drop them).
     """
     from rich.syntax import Syntax
 
@@ -224,17 +228,17 @@ def _build_fence_widget(md_text: str, spec: MatchSpec) -> tuple[Static, bool]:
     if not lexer:
         lexer = "text"
     try:
-        renderable = Syntax(
+        text = Syntax(
             code, lexer, background_color="default", word_wrap=False, line_numbers=False
-        )
+        ).highlight(code)
+        # highlight() appends a trailing newline; drop it so plain == code
+        # and match offsets line up. right_crop mutates in place (returns None).
+        if text.plain.endswith("\n") and not code.endswith("\n"):
+            text.right_crop(1)
     except Exception:
-        renderable = Text(code)
-    # Match detection on the raw code text (Syntax handles colouring).
-    has_match = False
-    if not spec.is_empty:
-        probe = Text(code)
-        has_match = _bake_match_spans_into_text(probe, spec)
-    return Static(renderable, classes="chunk-fence-run"), has_match
+        text = Text(code)
+    has_match = _bake_match_spans_into_text(text, spec)
+    return Static(text, classes="chunk-fence-run"), has_match
 
 
 def build_hybrid_chunk_widgets(
