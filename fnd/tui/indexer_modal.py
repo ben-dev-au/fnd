@@ -867,6 +867,7 @@ async def drive_indexer(
     texturise_override: bool | None = None,
     skip_unchanged: bool = True,
     force_fresh: bool = False,
+    run_seq: int = 0,
 ) -> None:
     """Owns the async indexer for the app's lifetime of this run.
 
@@ -928,6 +929,13 @@ async def drive_indexer(
         )
         app._indexer_chain_history = history  # type: ignore[attr-defined]
 
+    # A superseded run — a newer explicit run bumped the generation while
+    # this one was winding down (e.g. cancel-then-Rebuild-all) — must not
+    # touch the shared chain state, or its late teardown would clobber the
+    # queue the newer run just set up. The newer run owns the chain now.
+    if getattr(app, "_indexer_run_seq", run_seq) != run_seq:
+        return
+
     pending: list[str] = getattr(app, "_indexer_chain_remaining", None) or []
     if pending and not cancel.is_set():
         next_collection = pending.pop(0)
@@ -972,6 +980,7 @@ def _start_next_in_chain(app: FNDApp, collection: str) -> None:
         texturise_override=override,
         skip_unchanged=skip_unchanged,
         force_fresh=force_fresh,
+        _bump_seq=False,  # chain continuation inherits the run generation
     )
 
 

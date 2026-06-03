@@ -1421,6 +1421,15 @@ class FNDApp(App[None]):
         self._indexer_events: asyncio.Queue[Any] | None = None
         self._indexer_state: Any = None
         self._indexer_last_event: Any = None
+        # Run generation. Each new explicit run/chain bumps it; a chain
+        # continuation inherits it. A run's teardown only touches the
+        # shared chain state when it's still the current generation, so a
+        # cancelled run winding down LATE can't clobber the chain a newer
+        # run just set up. Also gates the serialise-on-restart path.
+        self._indexer_run_seq: int = 0
+        # Holds the "await the in-flight run, then start mine" coroutine so
+        # it isn't garbage-collected before it runs.
+        self._indexer_deferred_task: asyncio.Task[None] | None = None
         # Update-all-collections chain bookkeeping. The IndexerScreen
         # title shows "(N of M)" when total > 1; drive_indexer in
         # indexer_modal.py dequeues from _indexer_chain_remaining at
@@ -4393,26 +4402,76 @@ class FNDApp(App[None]):
         texturise_override: bool | None = None,
         skip_unchanged: bool = True,
         force_fresh: bool = False,
+        _bump_seq: bool = True,
     ) -> bool:
-        """Spawn the async indexer task for ``collection``. Idempotent —
-        if a task is already running, returns False without starting a
-        second one.
+        """Spawn the async indexer task for ``collection``.
 
         ``texturise_override`` (None/True/False), ``skip_unchanged`` and
         ``force_fresh`` are forwarded through ``drive_indexer`` to
         ``run_indexer``; for chain runs they are stashed on the app so
         subsequent chain steps inherit the same mode.
 
-        Returns True when a new task was spawned.
+        A new explicit request (``_bump_seq=True``) bumps the run
+        generation. If a run is already in flight, it is cancelled and
+        this one is started only once the old has fully torn down — so the
+        old teardown can never race the new setup (and can't clobber this
+        request's chain queue). Chain continuations pass ``_bump_seq=False``
+        to inherit the current generation.
+
+        Returns True when a new task was spawned, False when deferred.
         """
         import datetime as _dt
 
         from fnd.config import load as _load_config
 
         if self._indexer_task is not None and not self._indexer_task.done():
-            if open_modal:
-                self.push_screen(IndexerScreen(self._indexer_collection or collection))
+            cancelling = self._indexer_cancel is not None and self._indexer_cancel.is_set()
+            if not (_bump_seq and cancelling):
+                # Either a chain continuation racing a busy task (defensive)
+                # or an actively-running run the user re-opened to watch:
+                # don't start a second, don't disturb its generation. Show
+                # the running modal so "view progress" still works.
+                if open_modal and _bump_seq:
+                    self.push_screen(IndexerScreen(self._indexer_collection or collection))
+                return False
+            # In flight but already cancelling (cancel-then-start-again):
+            # serialise — bump the generation so the dying run's teardown
+            # knows it's superseded and won't clobber this request's chain,
+            # then start fresh once it has fully torn down.
+            self._indexer_run_seq += 1
+            my_seq = self._indexer_run_seq
+            with contextlib.suppress(Exception):
+                from fnd.extract._worker import request_cancel
+
+                request_cancel()
+            with contextlib.suppress(Exception):
+                self.notify("Finishing the cancelled run before starting…", timeout=3)
+            old_task = self._indexer_task
+
+            async def _await_then_start() -> None:
+                with contextlib.suppress(Exception):
+                    await old_task
+                # Only proceed if no newer request superseded this one.
+                if self._indexer_run_seq != my_seq:
+                    return
+                self.start_indexer(
+                    collection=collection,
+                    config=config,
+                    index_dir=index_dir,
+                    rebuild=rebuild,
+                    open_modal=open_modal,
+                    texturise_override=texturise_override,
+                    skip_unchanged=skip_unchanged,
+                    force_fresh=force_fresh,
+                    _bump_seq=False,
+                )
+
+            self._indexer_deferred_task = asyncio.create_task(_await_then_start())
             return False
+
+        if _bump_seq:
+            self._indexer_run_seq += 1
+        my_seq = self._indexer_run_seq
         if config is None:
             cfg = _load_config()
             config = cfg.collection(collection)
@@ -4462,6 +4521,7 @@ class FNDApp(App[None]):
                 texturise_override=texturise_override,
                 skip_unchanged=skip_unchanged,
                 force_fresh=force_fresh,
+                run_seq=my_seq,
             )
         )
         if open_modal:
