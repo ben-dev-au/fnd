@@ -37,7 +37,9 @@ import pymupdf  # type: ignore[import-not-found]
 from fnd.cache import ExtractionCache, sha256_file
 from fnd.extract.base import Block, Chunk, ExtractError
 from fnd.extract.recovery import (
+    CoverageEvaluator,
     ExtractionContext,
+    InvisibleTextTier,
     PageRecoveryPipeline,
     ProductionLayoutTier,
 )
@@ -508,6 +510,44 @@ def _extract_page_md(doc: pymupdf.Document, page_index: int) -> str:
     return str(first.get("text", "")) if isinstance(first, dict) else str(first)
 
 
+def _extract_invisible_md(doc: pymupdf.Document, page_index: int) -> str:
+    """Re-extract one page through the ignore_alpha lever in non-layout
+    mode, recovering invisible OCR text the layout parser discards.
+
+    Toggles the process-global ``use_layout`` False for the call and
+    restores its prior value in ``finally`` — a worker process handles
+    one file's pages sequentially, so the toggle never races. Mutes both
+    stdout and stderr (the non-layout path is chattier than production).
+    """
+    try:
+        pymupdf4llm = importlib.import_module("pymupdf4llm")
+    except ImportError:
+        return ""
+    prior = bool(getattr(pymupdf4llm, "_use_layout", True))
+    try:
+        pymupdf4llm.use_layout(False)
+        with _mute_fd(1), _mute_fd(2):
+            chunks = pymupdf4llm.to_markdown(
+                doc,
+                pages=[page_index],
+                page_chunks=True,
+                show_progress=False,
+                ignore_alpha=True,
+                force_text=True,
+                ignore_images=True,
+                ignore_graphics=False,
+                table_strategy="lines",
+            )
+    except Exception:
+        return ""
+    finally:
+        pymupdf4llm.use_layout(prior)
+    if not chunks:
+        return ""
+    first = chunks[0]
+    return str(first.get("text", "")) if isinstance(first, dict) else str(first)
+
+
 _recovery_pipeline_singleton: PageRecoveryPipeline | None = None
 
 
@@ -517,7 +557,10 @@ def _recovery_pipeline() -> PageRecoveryPipeline:
     global _recovery_pipeline_singleton
     if _recovery_pipeline_singleton is None:
         _recovery_pipeline_singleton = PageRecoveryPipeline(
-            [ProductionLayoutTier(_extract_page_md)]
+            [
+                ProductionLayoutTier(_extract_page_md),
+                InvisibleTextTier(_extract_invisible_md, CoverageEvaluator()),
+            ]
         )
     return _recovery_pipeline_singleton
 
@@ -534,6 +577,11 @@ def _config_hash() -> str:
         "table_label_re": _TABLE_LABEL_RE.pattern,
         "docling_merge": "splice-dedup",
         "strip_picture_markers": True,
+        # Bug-E invisible-text recovery: bumping these re-textures scanned
+        # books so the dropped OCR layer is recovered on next reindex.
+        "invisible_text_fallback": "ignore_alpha",
+        "cov_gate": 0.70,
+        "min_flat_tokens": 20,
     }
     return hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()[:8]
 

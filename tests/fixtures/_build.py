@@ -98,6 +98,57 @@ def _write_pdf(path: Path, pages: dict[int, str]) -> None:
         doc.close()
 
 
+# ── Invisible-text fixture (scanned-OCR mimic) ───────────────────────────────
+# Each page has a visible heading plus a body drawn in render-mode 3
+# (invisible) — exactly how scanned books store their OCR layer behind a
+# page image. pymupdf4llm's layout parser drops the invisible body
+# (coverage collapses), so this fixture exercises the InvisibleTextTier
+# recovery path deterministically without the real scanned corpus.
+INVISIBLE_PROSE = (
+    "The quicksort algorithm partitions recursively around a chosen pivot "
+    "element producing sorted subsequences through comparison and exchange "
+    "operations until the entire collection achieves total ordering."
+)
+# >20 distinct alpha tokens so the coverage gate's token floor is met.
+INVISIBLE_CODE = [
+    "class RingBuffer:",
+    "    def __init__(self, capacity):",
+    "        self.capacity = capacity",
+    "        self.storage = list()",
+    "    def enqueue(self, element):",
+    "        self.storage.append(element)",
+    "    def dequeue(self):",
+    "        return self.storage.pop(first)",
+    "    def is_empty(self):",
+    "        return self.length() == zero",
+    "    def length(self):",
+    "        return len(self.storage)",
+]
+
+
+def _write_invisible_pdf(path: Path) -> None:
+    doc = pymupdf.open()
+    try:
+        # Page 1: invisible prose behind a visible heading.
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((72, 72), "Visible Heading Only", fontsize=14, fontname="helv")
+        y = 120
+        for line in (INVISIBLE_PROSE[i : i + 70] for i in range(0, len(INVISIBLE_PROSE), 70)):
+            page.insert_text((72, y), line, fontsize=11, fontname="helv", render_mode=3)
+            y += 16
+        # Page 2: invisible monospace code (recovers as a ``` fence).
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((72, 72), "Listing One", fontsize=13, fontname="helv")
+        y = 110
+        for line in INVISIBLE_CODE:
+            page.insert_text((72, y), line, fontsize=10, fontname="cour", render_mode=3)
+            y += 15
+        path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(path), garbage=4, clean=True, deflate=True)
+    finally:
+        doc.close()
+
+
 def _write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -172,6 +223,7 @@ def _write_docx(path: Path, paragraphs: list[tuple[str, str]]) -> None:
 
 def build() -> None:
     _write_pdf(FIXTURES / "papers" / "test.pdf", PDF_PAGES)
+    _write_invisible_pdf(FIXTURES / "scanned" / "invisible.pdf")
     _write_text(FIXTURES / "notes" / "index.md", MD_CONTENT)
     _write_text(FIXTURES / "plain" / "short.txt", TXT_CONTENT)
     _write_pptx(FIXTURES / "slides" / "deck.pptx", PPTX_SLIDES)

@@ -8,6 +8,7 @@ invisible-text scanned pages that the layout parser drops. See
 
 from __future__ import annotations
 
+from fnd.extract.recovery.evaluators import CoverageEvaluator, alpha_tokens
 from fnd.extract.recovery.models import (
     FLAG_DOCLING_INVOKED,
     FLAG_FIGURE_INCOMPLETE,
@@ -17,16 +18,22 @@ from fnd.extract.recovery.models import (
     PageExtraction,
 )
 from fnd.extract.recovery.pipeline import ExtractionTier, PageRecoveryPipeline
-from fnd.extract.recovery.tiers import ProductionLayoutTier
+from fnd.extract.recovery.tiers import (
+    InvisibleTextTier,
+    ProductionLayoutTier,
+)
 
 __all__ = [
     "FLAG_DOCLING_INVOKED",
     "FLAG_FIGURE_INCOMPLETE",
     "FLAG_LOW_QUALITY",
     "FLAG_TEXTURE_RECOVERED",
+    "CoverageEvaluator",
     "ExtractionContext",
     "ExtractionTier",
+    "InvisibleTextTier",
     "PageExtraction",
     "PageRecoveryPipeline",
     "ProductionLayoutTier",
+    "alpha_tokens",
 ]
