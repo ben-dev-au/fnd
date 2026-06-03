@@ -2022,19 +2022,22 @@ def _structured_engine_active() -> bool:
 
 
 def _stale_count_short() -> str:
-    """Compact '⟳ N older' chip when some PDFs were textured on an older
-    engine version; empty otherwise (or when extraction is flat)."""
+    """Compact '⟳ N old-engine' chip counting SAVED TEXTURINGS (cache
+    entries) on an older engine version — a reason to rebuild. Counts
+    cache entries, not PDFs, so it stays honest about its source."""
     if not _structured_engine_active():
         return ""
     from fnd.tui.upgrade_banner import count_pre_upgrade_entries
 
     n, _ = count_pre_upgrade_entries()
-    return f"⟳ {n} older" if n else ""
+    return f"⟳ {n} old-engine" if n else ""
 
 
 def _summary_rebuild_all(app: FNDApp) -> str:
-    """Trailing for the 'Rebuild all collections' row: nudge with how many
-    PDFs were textured on an older engine version (a reason to rebuild)."""
+    """Trailing for the 'Rebuild all collections' row. Nudges with the
+    number of SAVED TEXTURINGS (cache entries) on an older engine version
+    — counts cache entries, not PDFs (an orphaned entry counts too), so it
+    states its source honestly rather than implying a PDF tally."""
     from fnd.tui.lazy_trailing import get_or_schedule
 
     def _compute() -> str:
@@ -2043,7 +2046,7 @@ def _summary_rebuild_all(app: FNDApp) -> str:
         from fnd.tui.upgrade_banner import count_pre_upgrade_entries
 
         n, _ = count_pre_upgrade_entries()
-        return f"⟳ {n} on an older engine" if n else "all on current engine"
+        return f"⟳ {n} saved on an older engine" if n else "all on current engine"
 
     return get_or_schedule(app, "cache.rebuild_all", _compute)
 
