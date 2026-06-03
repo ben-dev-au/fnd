@@ -162,19 +162,21 @@ def test_process_new_files_is_incremental_index_only(tmp_path: Path) -> None:
     assert c._force_fresh is False
 
 
-def test_retexturise_outdated_forces_fresh_and_revisits(tmp_path: Path) -> None:
-    """'Re-texturise outdated documents' → re-extract older versions:
-    force_fresh on, incremental skip OFF, texturising forced on."""
-    from fnd.tui.menu import _run_retexturise_outdated
+def test_rebuild_all_collections_forces_fresh_and_rebuilds(tmp_path: Path) -> None:
+    """'Rebuild all collections' → drop chunks + re-extract everything
+    fresh: rebuild on, force_fresh on, incremental skip OFF, texturising
+    forced on."""
+    from fnd.tui.menu import _run_rebuild_all_collections
     from fnd.tui.settings_screen import UpdateAllConfirm
 
     cfg, index_dir = _make_cfg(tmp_path, ["alpha"])
     app = FNDApp(index_dir=index_dir, config=cfg)
     captured = _capture_confirm(app)
-    _run_retexturise_outdated(app)
+    _run_rebuild_all_collections(app)
     assert captured, "no confirm pushed"
     c = captured[0]
     assert isinstance(c, UpdateAllConfirm)
     assert c._texturise_override is True
     assert c._skip_unchanged is False
     assert c._force_fresh is True
+    assert c._rebuild is True

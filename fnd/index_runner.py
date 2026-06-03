@@ -276,6 +276,7 @@ def _process_one_file(
     prior_searcher: Any = None,
     skip_unchanged: bool = False,
     texturise_on: bool = True,
+    wipe: bool = False,
 ) -> tuple[int, bool, bool, str]:
     """Synchronous per-file work — extraction + write to Tantivy.
 
@@ -335,11 +336,18 @@ def _process_one_file(
     non_pdf_was_seen = False
     if not is_pdf:
         from fnd.cache import sha256_file
+        from fnd.seen_log import forget as seen_forget
         from fnd.seen_log import has_seen
 
         try:
             non_pdf_sha = sha256_file(path)
-            non_pdf_was_seen = has_seen(non_pdf_sha)
+            if wipe:
+                # Literal Rebuild: drop the seen-marker so this genuinely
+                # re-indexed file reports as newly indexed, not "already".
+                seen_forget(non_pdf_sha)
+                non_pdf_was_seen = False
+            else:
+                non_pdf_was_seen = has_seen(non_pdf_sha)
         except OSError:
             non_pdf_sha = ""
 
@@ -624,6 +632,7 @@ async def run_indexer(
                 prior_searcher=prior_searcher,
                 skip_unchanged=skip_unchanged,
                 texturise_on=texturise_on,
+                wipe=force_fresh,
             )
             file_elapsed_ms = (time.perf_counter() - t_file) * 1000.0
             was_dataless = err.startswith("iCloud-offloaded") if err else False

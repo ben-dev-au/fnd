@@ -52,4 +52,12 @@ def mark_seen(sha: str) -> None:
         path.touch()
 
 
-__all__ = ["has_seen", "mark_seen"]
+def forget(sha: str) -> None:
+    """Drop the seen-marker for ``sha`` so the next index pass reports the
+    file as newly indexed. Used by a literal Rebuild, which genuinely
+    re-does the work and must report it honestly. Idempotent."""
+    with contextlib.suppress(OSError):
+        _marker_path(sha).unlink()
+
+
+__all__ = ["forget", "has_seen", "mark_seen"]

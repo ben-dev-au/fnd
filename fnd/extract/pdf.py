@@ -36,6 +36,15 @@ import pymupdf  # type: ignore[import-not-found]
 
 from fnd.cache import ExtractionCache, sha256_file
 from fnd.extract.base import Block, Chunk, ExtractError
+from fnd.extract.recovery import (
+    TABLE_CAPTION_RE,
+    CoverageEvaluator,
+    DoclingTableTier,
+    ExtractionContext,
+    InvisibleTextTier,
+    PageRecoveryPipeline,
+    ProductionLayoutTier,
+)
 
 # Lazy availability of the pdf-structure extra (`pymupdf4llm`). Computed
 # at module load — cheap; just a spec lookup. The actual import happens
@@ -75,9 +84,12 @@ def set_skip_structure_extraction(skip: bool) -> None:
 # every cached texturising. Bump ONLY for a change that meaningfully alters
 # texturised output corpus-wide (a major pymupdf4llm/docling upgrade, a real
 # extraction-logic change). Minor refactors, flag documentation, and
-# patch-level dependency bumps must NOT bump it. "Re-texturise outdated
-# documents" keys off this version: entries below it read as outdated.
-TEXTURE_VERSION: Final[int] = 1
+# patch-level dependency bumps must NOT bump it. Rebuild keys off this
+# version: entries below it read as outdated and re-texturise.
+# v2: invisible-text scanned-page recovery (Bug E) — the layered recovery
+# pipeline meaningfully changes texturised output corpus-wide, so prior
+# textures read as outdated and re-texturise under the new engine.
+TEXTURE_VERSION: Final[int] = 2
 
 
 def texture_signature() -> str:
@@ -87,16 +99,18 @@ def texture_signature() -> str:
     return f"tex-v{TEXTURE_VERSION}"
 
 
-# Run-scoped "re-texturise outdated" flag. When True, extract() reuses ONLY a
-# current-signature cache entry and otherwise re-extracts fresh — so a
-# Re-texturise-outdated pass actually upgrades pre-version texturising. When
-# False (default), extract() reuses any prior entry for the same content,
-# making texturising durable across a TEXTURE_VERSION bump.
+# Run-scoped "Rebuild" flag. When True, extract() bypasses the texture
+# cache entirely — it re-extracts every PDF fresh and overwrites the cache
+# entry — so a Rebuild genuinely re-texturises all PDFs under the current
+# engine, not just the ones missing a current-signature entry. When False
+# (default), extract() reuses a current-signature entry and falls back to
+# any prior entry for the same content, making texturising durable across
+# a TEXTURE_VERSION bump.
 _force_fresh_texture: bool = False
 
 
 def set_force_fresh_texture(value: bool) -> None:
-    """Toggle the run-scoped re-texturise flag; reset at end of run."""
+    """Toggle the run-scoped Rebuild flag; reset at end of run."""
     global _force_fresh_texture
     _force_fresh_texture = value
 
@@ -503,6 +517,86 @@ def _extract_page_md(doc: pymupdf.Document, page_index: int) -> str:
     return str(first.get("text", "")) if isinstance(first, dict) else str(first)
 
 
+def _per_page_hdr_info(doc: pymupdf.Document, page_index: int) -> object | None:
+    """An IdentifyHeaders scoped to one page, or None to let pymupdf4llm
+    fall back to its document-wide scan. Scoping makes the body limit the
+    page's own modal font size, so mid-size subheads aren't swamped by a
+    book's chapter-divider fonts."""
+    try:
+        from pymupdf4llm.helpers.pymupdf_rag import IdentifyHeaders
+    except Exception:
+        return None
+    try:
+        # IdentifyHeaders' signature types ``doc`` as str but its body
+        # accepts a Document (the production path passes one too).
+        return IdentifyHeaders(doc, pages=[page_index])  # type: ignore[arg-type]
+    except Exception:
+        return None
+
+
+def _extract_invisible_md(doc: pymupdf.Document, page_index: int) -> str:
+    """Re-extract one page through the ignore_alpha lever in non-layout
+    mode, recovering invisible OCR text the layout parser discards.
+
+    Toggles the process-global ``use_layout`` False for the call and
+    restores its prior value in ``finally`` — a worker process handles
+    one file's pages sequentially, so the toggle never races. Mutes both
+    stdout and stderr (the non-layout path is chattier than production).
+    """
+    try:
+        pymupdf4llm = importlib.import_module("pymupdf4llm")
+    except ImportError:
+        return ""
+    prior = bool(getattr(pymupdf4llm, "_use_layout", True))
+    try:
+        pymupdf4llm.use_layout(False)
+        # Per-page header detection: the default scans the whole document,
+        # and a scanned book's many distinct divider fonts exhaust the
+        # 6-level cutoff, lifting the body limit above genuine mid-size
+        # subheads so they classify as body. Scoping IdentifyHeaders to
+        # this page sets body_limit = max(12, page modal), recovering them.
+        hdr_info = _per_page_hdr_info(doc, page_index)
+        with _mute_fd(1), _mute_fd(2):
+            chunks = pymupdf4llm.to_markdown(
+                doc,
+                pages=[page_index],
+                page_chunks=True,
+                show_progress=False,
+                ignore_alpha=True,
+                force_text=True,
+                ignore_images=True,
+                ignore_graphics=False,
+                table_strategy="lines",
+                hdr_info=hdr_info,
+            )
+    except Exception:
+        return ""
+    finally:
+        pymupdf4llm.use_layout(prior)
+    if not chunks:
+        return ""
+    first = chunks[0]
+    return str(first.get("text", "")) if isinstance(first, dict) else str(first)
+
+
+_recovery_pipeline_singleton: PageRecoveryPipeline | None = None
+
+
+def _recovery_pipeline() -> PageRecoveryPipeline:
+    """The composed page-recovery pipeline (built once). Stateless tiers,
+    so a module-level singleton avoids per-page allocation."""
+    global _recovery_pipeline_singleton
+    if _recovery_pipeline_singleton is None:
+        _recovery_pipeline_singleton = PageRecoveryPipeline(
+            [
+                ProductionLayoutTier(_extract_page_md),
+                InvisibleTextTier(_extract_invisible_md, CoverageEvaluator()),
+                DoclingTableTier(_try_docling_fallback, _extract_md_tables),
+            ]
+        )
+    return _recovery_pipeline_singleton
+
+
 def _config_hash() -> str:
     """Hash of config-shaping flags; any tuning change bumps the key."""
     config = {
@@ -515,6 +609,12 @@ def _config_hash() -> str:
         "table_label_re": _TABLE_LABEL_RE.pattern,
         "docling_merge": "splice-dedup",
         "strip_picture_markers": True,
+        # Bug-E invisible-text recovery: bumping these re-textures scanned
+        # books so the dropped OCR layer is recovered on next reindex.
+        "invisible_text_fallback": "ignore_alpha",
+        "cov_gate": 0.70,
+        "min_flat_tokens": 20,
+        "scanned_table_caption_re": TABLE_CAPTION_RE.pattern,
     }
     return hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()[:8]
 
@@ -589,13 +689,17 @@ def extract(
     except OSError as e:
         raise ExtractError(str(path), f"cannot read for hash: {e}") from e
     key = cache.build_key(content_sha256=content_sha, extractor_signature=texture_signature())
+    # Rebuild (force_fresh) literally deletes this content's saved
+    # texturing first, so the entry is genuinely gone (not overwritten) and
+    # the re-extraction below leaves a single fresh entry — no stale
+    # variants linger. Otherwise reuse the current-signature entry, then
+    # fall back to any prior entry for the same content (durable reuse: a
+    # TEXTURE_VERSION bump leaves the current key empty but the older
+    # texturising still serves, so a routine reindex doesn't redo the work).
+    if _force_fresh_texture:
+        cache.forget_content(content_sha)
     cached = cache.get(key)
     if cached is None and not _force_fresh_texture:
-        # Durable reuse: a TEXTURE_VERSION bump or a pre-versioning entry
-        # left the current key empty, but this file's texturising still
-        # exists under an older key. Reuse it instead of redoing the work.
-        # (Re-texturise-outdated mode sets _force_fresh_texture, skipping
-        # this so it genuinely re-extracts under the current signature.)
         cached = cache.get_any_for_content(content_sha)
     if cached is not None:
         # Cache entries are keyed by content hash, so two different files
@@ -772,7 +876,17 @@ def _extract_inner(  # pyright: ignore[reportUnusedFunction]
             # run-scoped ``_skip_structure_extraction`` flag is set
             # (battery-saver mode).
             structure_on = _HAS_PYMUPDF4LLM and not _skip_structure_extraction
-            body_md = _extract_page_md(doc, page_index) if structure_on else ""
+            if structure_on:
+                ctx = ExtractionContext(
+                    doc=doc,
+                    page=page,
+                    page_index=page_index,
+                    path=str(path),
+                    flat=text,
+                )
+                body_md = _recovery_pipeline().recover(ctx).markdown
+            else:
+                body_md = ""
 
             # Phase 3 routing: if pymupdf4llm visibly missed structure
             # (e.g. a big image-rendered table), try docling as a
