@@ -183,6 +183,39 @@ class PdfStructureCache:
                 continue
         return removed
 
+    def count_orphans(self, live_content_shas: set[str]) -> int:
+        """How many entries reference content NOT in ``live_content_shas``
+        (files no longer on disk). Read-only counterpart of
+        :meth:`prune_orphans`."""
+        if not self.root.exists():
+            return 0
+        return sum(
+            1
+            for _root, _dirs, files in os.walk(self.root)
+            for f in files
+            if f.endswith(".json") and f.split("--", 1)[0] not in live_content_shas
+        )
+
+    def prune_orphans(self, live_content_shas: set[str]) -> int:
+        """Delete entries whose content hash is NOT in ``live_content_shas``
+        — texturings for files no longer present under any collection's
+        sources (removed, renamed to different bytes, or de-configured).
+        Content-addressed, so the caller passes the shas of files that
+        still exist. Returns the number of entries removed."""
+        if not self.root.exists():
+            return 0
+        removed = 0
+        for root_dir, _dirs, files in os.walk(self.root):
+            for f in files:
+                if not f.endswith(".json"):
+                    continue
+                sha = f.split("--", 1)[0]
+                if sha not in live_content_shas:
+                    with contextlib.suppress(OSError):
+                        (Path(root_dir) / f).unlink()
+                        removed += 1
+        return removed
+
     def promote_current_engine_entries(
         self, *, current_sig: str, current_cfg_marker: str
     ) -> tuple[int, int]:

@@ -687,6 +687,40 @@ def cache_clear(
     typer.echo(f"removed {root}")
 
 
+@cache_app.command("prune-orphans")
+def cache_prune_orphans(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+) -> None:
+    """Remove texturings for files no longer on disk (orphans).
+
+    The cache is content-addressed and shared across collections, so a
+    file that was removed, renamed, or de-configured leaves a dead entry
+    a per-collection Rebuild can't reach. This prunes every entry whose
+    content isn't reachable under any current collection source.
+    """
+    from fnd.cache import ExtractionCache, default_cache_dir
+    from fnd.config import load
+    from fnd.texture_maintenance import live_content_shas
+
+    if not default_cache_dir().exists():
+        typer.echo("PDF Texture Cache is empty (no directory)")
+        return
+    cache = ExtractionCache()
+    typer.echo("Scanning sources to find live content (hashes every PDF)…")
+    live = live_content_shas(load())
+    n = cache.count_orphans(live)
+    if n == 0:
+        typer.echo("No orphaned texturings.")
+        return
+    if not yes:
+        typer.echo(f"About to remove {n} orphaned texturing(s) — files no longer on disk.")
+        if not typer.confirm("Continue?", default=False):
+            typer.echo("aborted")
+            raise typer.Exit(code=1)
+    removed = cache.prune_orphans(live)
+    typer.echo(f"removed {removed} orphaned texturing(s)")
+
+
 @cache_app.command("prune")
 def cache_prune(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),

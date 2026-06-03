@@ -1749,8 +1749,22 @@ def _provider_pdf_texture(_app: FNDApp) -> tuple[MenuItem, ...]:
                 "reclaim",
                 # Legacy term so muscle memory still finds this row.
                 "leftover",
-                "prune",
             ),
+        ),
+        MenuItem(
+            id="pdf_texture.prune_orphans",
+            label="Remove orphaned texturings",
+            description=(
+                "Delete saved texturings for files no longer on disk — removed, "
+                "renamed, or de-configured. The cache is shared across "
+                "collections and content-addressed, so a per-collection Rebuild "
+                "can't reach these; this frees their space without disturbing "
+                "live texturings. Scans every source to find what's still live."
+            ),
+            kind=KIND_ACTION,
+            action_label="Remove…",
+            external=_run_prune_orphans,
+            keywords=("orphan", "orphaned", "dead", "stale", "removed", "prune", "cache", "texture"),
         ),
         header("Behaviour", level=2),
         MenuItem(
@@ -2210,6 +2224,46 @@ def _human_bytes(n: int) -> str:
     if mb < 1024:
         return f"{mb:.0f} MB"
     return f"{mb / 1024:.1f} GB"
+
+
+def _run_prune_orphans(app: FNDApp) -> None:
+    """Remove texturings for files no longer on disk. Hashing the corpus
+    to find what's live is slow, so run it off the UI thread and notify
+    the result. Orphans are entries for files that no longer exist, so
+    removal is safe — re-indexing re-creates them only if a file returns."""
+    import contextlib
+    import threading
+
+    from fnd.cache import ExtractionCache, default_cache_dir
+
+    cfg = app._config  # type: ignore[attr-defined]
+    if cfg is None or not cfg.collections:
+        with contextlib.suppress(Exception):
+            app.notify("No collections to scan.")
+        return
+    if not default_cache_dir().exists():
+        with contextlib.suppress(Exception):
+            app.notify("PDF Texture Cache is empty.")
+        return
+    with contextlib.suppress(Exception):
+        app.notify("Scanning sources for orphaned texturings…")
+
+    def _work() -> None:
+        from fnd.texture_maintenance import live_content_shas
+
+        try:
+            removed = ExtractionCache().prune_orphans(live_content_shas(cfg))
+            msg = (
+                f"Removed {removed} orphaned texturing(s)."
+                if removed
+                else "No orphaned texturings — cache is clean."
+            )
+        except Exception as e:
+            msg = f"Orphan prune failed: {e}"
+        with contextlib.suppress(Exception):
+            app.call_from_thread(app.notify, msg)
+
+    threading.Thread(target=_work, daemon=True).start()
 
 
 def _run_cache_clear(app: FNDApp) -> None:
