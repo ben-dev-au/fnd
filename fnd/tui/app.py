@@ -3042,21 +3042,16 @@ class FNDApp(App[None]):
                     f"finalize_via_lock above build_done timeout "
                     f"seq={focus_chunk_seq} above_count={len(above_widgets)} path={path}"
                 )
-        # Yield + refresh so Textual's compositor recomputes each
-        # built widget's region — build_done fires when Markdown.update
-        # returns, but the compositor's coordinate pass runs on the
-        # next refresh cycle. Scrolling before that means the focus
-        # chunk's region.y is still stale (often 0), the user sees
-        # the correct match for one paint then jumps as layout settles.
-        # On heavy md (large tables, fences) a single refresh tick
-        # isn't enough — keep yielding until the focus chunk's
-        # region.height is non-zero (capped so we don't hang).
-        for _ in range(20):
-            await asyncio.sleep(0)
-            container.refresh(layout=True)
-            await asyncio.sleep(0)
-            if isinstance(header, FNDMarkdown) and header.region.height > 0:
-                break
+        # Wait for the screen to FULLY settle before scrolling. build_done only
+        # says the markdown rendered; the compositor's arrange (which fixes every
+        # chunk's region AND the pane's scroll extent) runs over several more
+        # refreshes. The old region.height>0 poll only checked the focus chunk
+        # and raced the chunks above it still flowing — so a deep match scrolled
+        # against a half-settled layout and clamped off-screen. _await_preview_settled
+        # is Textual's own message-drain signal (what Pilot waits on): it returns
+        # only once every widget has processed its pending layout, so the geometry
+        # the scroll reads is final.
+        await self._await_preview_settled()
         wait_ms = (time.perf_counter() - t0) * 1000
         self._hide_progress_bar()
         _perf.mark(
@@ -3069,10 +3064,10 @@ class FNDApp(App[None]):
         def _reveal_when_landed() -> None:
             self._reveal_preview(container)
 
-        # Scroll while the container is still invisible (opacity:0), then
-        # reveal only once the scroll has committed — so the match never
-        # flashes at the file top before jumping into place.
-        self.call_after_refresh(self._preview_scroll.reconcile, _reveal_when_landed)
+        # Scroll while the container is still invisible (opacity:0), then reveal
+        # once it lands — so the match never flashes at the file top first. The
+        # layout is settled, so this is a single deterministic scroll.
+        self._preview_scroll.reconcile(_reveal_when_landed)
         # This render has settled — release the in-flight coalescing
         # latch so a later genuine re-render of the same target can run.
         self._inflight_preview_target = None
@@ -3123,9 +3118,65 @@ class FNDApp(App[None]):
                 f"compose_done={compose_done}"
             )
 
-        # Scroll while invisible (opacity:0), reveal once it lands — see
-        # _finalize_via_lock for why the order matters.
-        self.call_after_refresh(self._preview_scroll.reconcile, _reveal_when_landed)
+        # Wait for the screen to fully settle, THEN scroll once + reveal — same
+        # deterministic settle the cold path uses (see _finalize_via_lock). The
+        # warm reveal is sync, so run the await in a task.
+        import asyncio as _asyncio
+
+        async def _settled_reconcile() -> None:
+            await self._await_preview_settled()
+            self._preview_scroll.reconcile(_reveal_when_landed)
+
+        # Held on the container so GC can't collect the task mid-await (RUF006).
+        container._finalize_task = _asyncio.create_task(_settled_reconcile())  # type: ignore[attr-defined]
+
+    async def _await_preview_settled(self, max_rounds: int = 10) -> None:
+        """Deterministically wait until the screen has processed all pending
+        layout messages, so the preview geometry is final before we scroll.
+
+        Drain = Textual's own settle mechanism (what ``Pilot.pause`` /
+        ``_wait_for_screen`` use): schedule a callback on every widget via
+        ``call_later`` and wait for them all to fire — i.e. every widget has
+        processed the messages queued now. One drain settles the current wave;
+        the reflow it triggers posts a follow-up wave, so loop until the screen
+        reports no pending layout/repaint/recompose (its ``_on_idle`` condition),
+        bounded by ``max_rounds``. Replaces stability-polling heuristics, which
+        can't tell a settled layout from a mid-reflow plateau."""
+        import asyncio
+
+        for _ in range(max_rounds):
+            try:
+                screen = self.screen
+            except Exception:
+                return
+            children = [self, *screen.walk_children(with_self=True)]
+            count = 0
+            done = asyncio.Event()
+
+            def _dec(_done: asyncio.Event = done) -> None:
+                nonlocal count
+                count -= 1
+                if count == 0:
+                    _done.set()
+
+            for child in children:
+                if child.call_later(_dec):
+                    count += 1
+            if count:
+                try:
+                    async with asyncio.timeout(5.0):
+                        await done.wait()
+                except TimeoutError:
+                    return
+            # Stop once the screen has no pending layout work — the geometry is
+            # now final. (These are the flags Screen._on_idle itself checks.)
+            if not (
+                getattr(screen, "_layout_required", False)
+                or getattr(screen, "_repaint_required", False)
+                or getattr(screen, "_recompose_required", False)
+                or getattr(screen, "_dirty_widgets", None)
+            ):
+                return
 
     def _cancel_preview_mount_task(self) -> None:
         """Cancel any in-flight mount task. The cancelled task's
@@ -4051,20 +4102,21 @@ class FNDApp(App[None]):
                 await asyncio.sleep(0)
             return
 
-        # Mount chunks [start_idx, start_idx-1, …, start_idx-batch+1]
-        # in reverse so each new widget lands BEFORE the anchor in
-        # document order. ``hidden`` MUST be revealed even on cancel,
-        # otherwise a switch-away mid-batch leaves widgets with
-        # ``display=False`` cached on the container; the next visit
-        # paints those rows as blank space → the "Workshop section
-        # only shows the heading" symptom. No scroll compensate —
-        # anchor preservation via virtual_region delta proved
-        # unreliable on consecutive above-batches (returns 0 even
-        # after refresh+sleep), so newly-prepended chunks just
-        # appear at the top of the visible area, which is the right
-        # UX when the user just scrolled up to the wall.
+        # Mount chunks [start_idx, start_idx-1, …, start_idx-batch+1] in reverse
+        # so each new widget lands BEFORE the anchor in document order, build
+        # them hidden, then reveal AND scroll-compensate so the user's view stays
+        # put. The anchor is the first already-mounted chunk just below the
+        # prepend region; revealing the chunks above it shifts it DOWN by their
+        # combined height, so we scroll the pane by that delta — turning the old
+        # "wall, jump, scroll-down-to-retrigger" into a continuous upward scroll.
+        # Measuring the delta reliably needs a SETTLED layout: the earlier code
+        # read the delta as 0 pre-settle and gave up on compensation, leaving the
+        # wall. ``_await_preview_settled`` (Textual's message-drain) makes it
+        # reliable. ``hidden`` MUST be revealed even on cancel, else display=False
+        # widgets cache as blank rows ("section only shows the heading").
         end = max(start_idx - _LAZY_MOUNT_BATCH, -1)
         hidden: list[Widget] = []
+        anchor_seq = chunks[start_idx + 1].chunk_seq if start_idx + 1 < len(chunks) else None
         try:
             for i in range(start_idx, end, -1):
                 if self._active_preview is not container:
@@ -4088,9 +4140,30 @@ class FNDApp(App[None]):
                         async with w.lock:
                             pass
 
+            # Capture the anchor's content position + pane scroll just before the
+            # reveal grows the content above it.
+            pane = self.query_one("#preview_pane", VerticalScroll)
+            anchor_w = container.chunk_widgets.get(anchor_seq) if anchor_seq is not None else None
+            before_y = anchor_w.virtual_region.y if anchor_w is not None else None
+            before_scroll = pane.scroll_y
+
             for w in hidden:
                 w.display = True
             hidden.clear()
+
+            # Re-anchor: scroll by however far the anchor moved down, so the
+            # prepended chunks extend the scrollable region UPWARD without moving
+            # the user's view — continuous scroll instead of a wall.
+            if anchor_w is not None and before_y is not None:
+                await self._await_preview_settled()
+                if self._active_preview is container:
+                    delta = anchor_w.virtual_region.y - before_y
+                    if delta > 0:
+                        self.begin_reconcile_scroll()
+                        try:
+                            pane.scroll_to(y=before_scroll + delta, animate=False, immediate=True)
+                        finally:
+                            self.end_reconcile_scroll()
         finally:
             # Cancellation or unexpected return: anything still in
             # ``hidden`` would otherwise stay invisible on the cached
