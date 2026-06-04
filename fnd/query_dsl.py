@@ -134,25 +134,35 @@ def _expand_numeric_compare(q: str) -> str:
     return pat.sub(repl, q)
 
 
-def _expand_proximity_aliases(q: str) -> str:
-    """Translate ``{N} a b c`` and ``a NEAR/N b`` into ``"... "~N``."""
+# A proximity run token: a quoted phrase, or a bare word that is neither a
+# boolean operator nor a field qualifier (``word:``) and carries no paren.
+_RUN_TOKEN: Final = r'(?:"[^"]*"|(?:(?!(?:AND|OR|NOT)\b)(?![^\s()]*:)[^\s()]+))'  # noqa: S105 — regex, not a password
+_BRACE_PROX: Final = re.compile(rf"\{{(\d+)\}}\s*((?:{_RUN_TOKEN})(?:\s+{_RUN_TOKEN})*)?")
 
-    # `{N} a b c` form — the {N} prefix applies to the rest of the parenthesised
-    # group or to the next quoted phrase / next bare-word run until a recognised
-    # operator. Keep the rule simple: the prefix consumes through end-of-line
-    # (or a closing paren), since chaining with other clauses is rare in
-    # practice and users can wrap explicitly.
+# A residual brace group that is a proximity attempt (no ``TO`` — that would be
+# a Tantivy exclusive range, which we leave alone).
+_PROX_RESIDUAL: Final = re.compile(r"\{(?![^}]*\bTO\b)[^}]*\}")
+_QUOTED_SPAN: Final = re.compile(r"\"[^\"]*\"|'[^']*'")
+
+
+def _expand_proximity_aliases(q: str) -> str:
+    """Translate ``{N} a b c`` and ``a NEAR/N b`` into ``"... "~N``.
+
+    ``{N}`` binds to the immediately-following run of plain words / quoted
+    phrases and stops at the first boolean operator, field qualifier, or
+    parenthesis — the remainder is preserved verbatim. A ``{N}`` with no usable
+    run is left in place for :func:`check_proximity` to flag.
+    """
+
     def brace_repl(match: re.Match[str]) -> str:
         slop = int(match.group(1))
-        rest = match.group(2).strip()
-        # If `rest` already contains operators, leave it alone — too risky.
-        if re.search(r"\b(AND|OR|NOT)\b|[()]", rest):
-            return match.group(0)
-        # Strip surrounding quotes if user already quoted.
-        rest = rest.strip('"').strip()
-        return f'"{rest}"~{slop}'
+        run = (match.group(2) or "").strip()
+        if not run:
+            return match.group(0)  # nothing to bind to — leave for validation
+        inner = " ".join(run.replace('"', " ").split())
+        return f'"{inner}"~{slop}'
 
-    q = re.sub(r"\{(\d+)\}\s+([^()]+?)$", brace_repl, q)
+    q = _BRACE_PROX.sub(brace_repl, q)
 
     # `a NEAR/N b` form — strict: two single-word terms with NEAR/<N> between.
     q = re.sub(
@@ -161,6 +171,24 @@ def _expand_proximity_aliases(q: str) -> str:
         q,
     )
     return q
+
+
+def check_proximity(expanded: str) -> None:
+    """Raise :class:`QuerySyntaxError` if a proximity brace survived expansion.
+
+    Runs on the *expanded* query: a well-formed ``{N} a b`` is already
+    ``"a b"~N`` (no brace left), so anything matching here — ``{60}`` alone,
+    ``{abc}``, ``{}``, ``{-5}`` — is a malformed proximity the user can fix.
+    Braces inside quotes (literal text) and ``{lo TO hi}`` ranges are ignored.
+    """
+    from fnd.query_errors import QuerySyntaxError
+
+    outside_quotes = _QUOTED_SPAN.sub(" ", expanded)
+    if _PROX_RESIDUAL.search(outside_quotes):
+        raise QuerySyntaxError(
+            "malformed proximity",
+            hint="proximity is {N} word word — a number in braces then two or more plain words",
+        )
 
 
 def preprocess(query: str) -> str:
@@ -177,16 +205,19 @@ def split_metadata_filter(query: str) -> tuple[str, str | None]:
     """Extract a single top-level ``[…]`` clause from ``query``.
 
     Returns ``(lexical_query, metadata_filter_or_None)``. ``[…]`` blocks
-    appearing inside a quoted phrase are left intact. An empty ``[]`` is
-    treated as no filter (rather than an empty filter expression). Two or
-    more bracketed blocks raise ``ValueError`` — users compose alternatives
-    with ``AND``/``OR`` inside the single block.
+    appearing inside a quoted phrase are left intact, and a ``field:[lo TO hi]``
+    range (the ``[`` follows a ``:``) is a numeric range — left in the lexical
+    query, not treated as a filter. A filter may contain nested ``in [ … ]``
+    lists. An empty ``[]`` is treated as no filter. Two or more top-level filter
+    blocks raise ``ValueError`` — compose alternatives with ``AND``/``OR``
+    inside the single block.
 
     Whitespace around the extracted clause is collapsed so the resulting
     lexical query reads naturally.
     """
     in_quote: str | None = None
     bracket_start: int | None = None
+    depth = 0  # nesting inside the active filter ([... in [...] ...])
     found_range: tuple[int, int] | None = None
     i = 0
     while i < len(query):
@@ -201,20 +232,28 @@ def split_metadata_filter(query: str) -> tuple[str, str | None]:
             i += 1
             continue
         if ch == "[":
-            if bracket_start is not None:
-                raise ValueError("unclosed [ before another [")
-            bracket_start = i
+            if bracket_start is None and i > 0 and query[i - 1] == ":":
+                # field:[lo TO hi] — a numeric range, not a metadata filter.
+                i += 1
+                continue
+            if bracket_start is None:
+                bracket_start = i
+                depth = 1
+            else:
+                depth += 1  # nested list inside the filter
             i += 1
             continue
         if ch == "]":
             if bracket_start is None:
-                # Stray ']' is part of the lexical query — leave it.
+                # Stray ']' (or a range's close) is part of the lexical query.
                 i += 1
                 continue
-            if found_range is not None:
-                raise ValueError("only one inline [metadata filter] clause per query")
-            found_range = (bracket_start, i)
-            bracket_start = None
+            depth -= 1
+            if depth == 0:
+                if found_range is not None:
+                    raise ValueError("only one inline [metadata filter] clause per query")
+                found_range = (bracket_start, i)
+                bracket_start = None
             i += 1
             continue
         i += 1

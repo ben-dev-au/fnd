@@ -17,10 +17,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from tantivy import Index
+from tantivy import Index, Query
 
-from fnd.extract._limits import LIMIT_QUERY_BOOLEAN_TOKENS, LIMIT_QUERY_BYTES
 from fnd.extract.base import Block
+from fnd.query_errors import QuerySyntaxError
+from fnd.query_errors import QueryTooLargeError as QueryTooLargeError  # re-export (back-compat)
+from fnd.query_plan import enforce_query_bounds
 from fnd.schema import (
     DEFAULT_FIELD_BOOSTS,
     F_BODY_MD,
@@ -218,29 +220,16 @@ def _passes_meta_filter(hit: Hit, predicate: object) -> bool:
     return bool(predicate(fm))  # type: ignore[operator]
 
 
-class QueryTooLargeError(ValueError):
-    """Raised when a query exceeds the size / complexity limits in
-    :mod:`fnd.extract._limits`. Today only a defensive bound — the
-    local user is the only query author — but pinned now so any future
-    URL-handler / Spotlight / ``--query-from-file`` path inherits it
-    automatically."""
-
-
-def enforce_query_bounds(query: str) -> None:
-    """Refuse pathological queries before handing them to Tantivy."""
-    if len(query.encode("utf-8")) > LIMIT_QUERY_BYTES:
-        raise QueryTooLargeError(f"query exceeds {LIMIT_QUERY_BYTES}-byte limit")
-    # Cheap upper bound on boolean depth: count AND/OR/NOT tokens.
-    # Tantivy's parser tree explodes when these multiply; the cap is
-    # conservative but well above any realistic human query. The query
-    # is padded with single spaces so a leading `NOT foo` or trailing
-    # `foo AND` (the boundary cases) gets counted.
-    padded = f" {query} "
-    boolean_tokens = sum(padded.count(op) for op in (" AND ", " OR ", " NOT "))
-    if boolean_tokens > LIMIT_QUERY_BOOLEAN_TOKENS:
-        raise QueryTooLargeError(
-            f"query has {boolean_tokens} boolean operators; limit is {LIMIT_QUERY_BOOLEAN_TOKENS}"
-        )
+def _parse_query(index: Index, query: str, **kwargs: object) -> Query:
+    """Parse via Tantivy, converting its raw ``ValueError`` syntax errors into a
+    typed :class:`QuerySyntaxError` so callers never crash on a malformed query."""
+    try:
+        return index.parse_query(query, **kwargs)  # type: ignore[arg-type]
+    except ValueError as e:
+        raise QuerySyntaxError(
+            "invalid query syntax",
+            hint="check quotes, brackets and parentheses are balanced",
+        ) from e
 
 
 class Searcher:
@@ -286,11 +275,12 @@ class Searcher:
         # Must-clause: chunk's visible content (F_BODY) must match. Also
         # carries collection / source filters. Heading-only ancestor
         # matches no longer create hits.
-        body_required = self._index.parse_query(full_query, **body_parse_kwargs)  # type: ignore[arg-type]
+        body_required = _parse_query(self._index, full_query, **body_parse_kwargs)
         # Should-clause: secondary fields contribute boost to the score
         # but don't gate visibility. Parsed against the bare user query
         # so collection/source aren't double-counted.
-        boost_secondary = self._index.parse_query(
+        boost_secondary = _parse_query(
+            self._index,
             user_query,
             default_field_names=[F_HEADING_PATH, F_TITLE, F_PATH_TOKENS],
             field_boosts={

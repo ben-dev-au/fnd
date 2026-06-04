@@ -370,6 +370,13 @@ Rough mapping: ~5 tokens = very near, ~20 = one line, ~60 = a few lines,
 straddle a chunk boundary, no proximity query will catch them; that's when
 you fall back to loose AND.
 
+`{N}` binds to the run of plain words right after it and stops at the first
+field qualifier, operator, or parenthesis — so `{10} buffer overflow kind:pdf`
+applies the proximity to `buffer overflow` and keeps `kind:pdf` as a normal
+filter. Order is flexible (reversed terms still match, within the slop budget);
+use a quoted phrase like `"cross entropy"` when you need strict order. `NEAR/N`
+takes exactly two single words.
+
 ### Fuzzy matching for typos and variants
 
 Suffix `~1` or `~2` to allow that many edits per term:
