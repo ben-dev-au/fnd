@@ -107,14 +107,51 @@ def test_brace_proximity_with_quotes() -> None:
     assert query_dsl.preprocess('{3} "foo bar"') == '"foo bar"~3'
 
 
-def test_brace_proximity_does_not_eat_operators() -> None:
-    out = query_dsl.preprocess("{5} foo bar AND quark")
-    # Conservative: rest contains AND, leave alone.
-    assert out == "{5} foo bar AND quark"
+def test_brace_proximity_no_space() -> None:
+    # Missing space after the brace is a typo we recover from.
+    assert query_dsl.preprocess("{5}foo bar") == '"foo bar"~5'
+
+
+def test_brace_proximity_stops_at_operator() -> None:
+    # {N} binds to the leading word run; the operator clause stays outside.
+    assert query_dsl.preprocess("{5} foo bar AND quark") == '"foo bar"~5 AND quark'
+
+
+def test_brace_proximity_stops_at_field_qualifier() -> None:
+    out = query_dsl.preprocess("{10} buffer overflow exploit kind:pdf")
+    assert out == '"buffer overflow exploit"~10 kind:pdf'
+
+
+def test_brace_proximity_stops_at_paren() -> None:
+    assert query_dsl.preprocess("{5} foo (bar baz)") == '"foo"~5 (bar baz)'
 
 
 def test_near_alias() -> None:
     assert query_dsl.preprocess("foo NEAR/5 bar") == '"foo bar"~5'
+
+
+# ── Proximity validation (residual braces are user errors) ────────────────
+
+
+@pytest.mark.parametrize("bad", ["{60}", "{abc} foo", "{} foo", "{-5} foo bar", "{60} kind:pdf"])
+def test_check_proximity_rejects_malformed(bad: str) -> None:
+    from fnd.query_errors import QuerySyntaxError
+
+    with pytest.raises(QuerySyntaxError):
+        query_dsl.check_proximity(query_dsl.preprocess(bad))
+
+
+@pytest.mark.parametrize(
+    "ok",
+    [
+        '"foo bar"~5',  # expanded proximity — no residual brace
+        "page:[10 TO 50]",
+        "page:{10 TO 50}",  # Tantivy exclusive range — not a proximity attempt
+        "plain words only",
+    ],
+)
+def test_check_proximity_accepts_valid(ok: str) -> None:
+    query_dsl.check_proximity(query_dsl.preprocess(ok))  # must not raise
 
 
 # ── Native syntax round-trips unchanged ──────────────────────────────────

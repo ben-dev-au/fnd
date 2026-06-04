@@ -189,24 +189,33 @@ def search(
     from fnd.layered import search_layered
     from fnd.migrate import prompt_and_rebuild_or_exit
     from fnd.query import Hit, Searcher
+    from fnd.query_errors import QuerySyntaxError, QueryTooLargeError
+    from fnd.query_plan import QueryPlan
 
     cfg = load()
     prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg)
 
     searcher = Searcher(index_dir=default_index_dir())
     try:
+        # One validated plan: bounds, inline [filter] split, proximity. An inline
+        # [...] in the positional query takes precedence over --meta.
+        plan = QueryPlan.from_user_text(query)
+        lexical = plan.lexical
+        metadata_filter = plan.metadata_filter or meta
         if explain is None:
-            hits = searcher.search(query, limit=limit, collection=collection, metadata_filter=meta)
+            hits = searcher.search(
+                lexical, limit=limit, collection=collection, metadata_filter=metadata_filter
+            )
             for hit in hits:
                 _print_hit(hit)
             return
         groups, trace = search_layered(
             searcher,
-            query=query,
+            query=lexical,
             limit=limit,
             sections_per_file=5,
             collection=collection,
-            metadata_filter=meta,
+            metadata_filter=metadata_filter,
             auto_fuzzy_enabled=cfg.defaults.fuzzy_enabled,
             min_term_chars=cfg.defaults.fuzzy_min_term_chars,
             with_trace=True,
@@ -232,6 +241,12 @@ def search(
         typer.echo(json.dumps(payload, indent=2))
     except FilterError as e:
         typer.echo(f"invalid filter: {e.message} (col {e.column})", err=True)
+        raise typer.Exit(code=1) from e
+    except QuerySyntaxError as e:
+        typer.echo(e.message if not e.hint else f"{e.message} — {e.hint}", err=True)
+        raise typer.Exit(code=1) from e
+    except QueryTooLargeError as e:
+        typer.echo(str(e), err=True)
         raise typer.Exit(code=1) from e
 
 

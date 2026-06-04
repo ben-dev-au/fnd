@@ -189,11 +189,13 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
     if not q:
         return []
     subs: list[SubQuery] = []
-    # When the user already supplied quotes they've encoded the phrase intent
-    # into the lex pass — Tantivy parses ``"a b c"`` as a PhraseQuery directly.
-    # Re-wrapping into ``""a b c""`` would double-quote and crash the parser.
-    user_wrote_phrase = '"' in q
-    if len(q.split()) >= 2 and not user_wrote_phrase:
+    # Skip the auto-phrase pass when the query already encodes phrase intent in
+    # the lex pass: a user-supplied quote (Tantivy parses ``"a b c"`` as a
+    # PhraseQuery directly) or proximity (``{N} …`` / ``a NEAR/N b`` expand to
+    # ``"a b"~N`` downstream). Re-wrapping either would double-quote — ``""a b""``
+    # or ``""a b"~N`` — and crash the parser.
+    carries_phrase_intent = '"' in q or "{" in q or "NEAR/" in q
+    if len(q.split()) >= 2 and not carries_phrase_intent:
         subs.append(SubQuery(query=f'"{q}"', weight=_DEFAULT_WEIGHTS["phrase"], source="phrase"))
     subs.append(SubQuery(query=q, weight=_DEFAULT_WEIGHTS["lex"], source="lex"))
     if synonyms is not None and synonyms.groups:

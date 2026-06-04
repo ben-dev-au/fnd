@@ -1144,6 +1144,7 @@ class FNDApp(App[None]):
     CSS = """
     Screen { background: $surface; }
     #query_bar { height: 1; padding: 0 1; border: none; }
+    #query_notice { height: auto; padding: 0 1; color: $warning; display: none; }
     #footer_hints { dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted; }
     /* Lazygit-thin scrollbars: 1 cell wide, fully transparent track so
        only the thumb glyph shows against the screen background. The
@@ -1543,6 +1544,8 @@ class FNDApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search…", id="query_bar", value=self._initial_query)
+        # Calm, practical one-liner for malformed queries — collapsed until set.
+        yield Static("", id="query_notice")
         with Horizontal():
             # Left column: results on top, then Collections, then Filters.
             with Vertical(id="results_column"):
@@ -1943,18 +1946,21 @@ class FNDApp(App[None]):
         # mistaken for a redundant same-tick duplicate of the previous.
         self._inflight_preview_target = None
         from fnd.filter_dsl import FilterError
-        from fnd.query_dsl import split_metadata_filter
+        from fnd.query_errors import QueryError
+        from fnd.query_plan import QueryPlan
 
-        # Extract a single inline [metadata filter] from the user query.
-        # Bracket parse errors (unclosed, multiple) surface as a notify;
-        # the search doesn't run.
+        # One validated plan: bounds, inline [filter] split, proximity. Malformed
+        # queries surface a calm inline notice and the search doesn't run.
         try:
-            lexical, metadata_filter = split_metadata_filter(query)
-        except ValueError as e:
-            self.notify(str(e), severity="error", title="Filter syntax")
+            plan = QueryPlan.from_user_text(query)
+        except QueryError as e:
+            self._show_query_notice(e)
             self._groups = []
             self._refresh_results_tree()
             return
+        self._clear_query_notice()
+        lexical = plan.lexical
+        metadata_filter = plan.metadata_filter
 
         self._current_query = query  # save the original (with [...]) for history
         # Build a comprehensive MatchSpec covering literal stems +
@@ -2003,15 +2009,12 @@ class FNDApp(App[None]):
                 metadata_filter=metadata_filter,
                 active_sources=list(self._active_sources) or None,
             )
-        except FilterError as e:
-            self.notify(
-                f"col {e.column}: {e.message}",
-                severity="error",
-                title="Filter syntax",
-            )
+        except (QueryError, FilterError) as e:
+            self._show_query_notice(e)
             self._groups = []
             self._refresh_results_tree()
             return
+        self._clear_query_notice()
         # New query → invalidate BOTH caches:
         # * _chunk_cache (decoded chunk data; rebuilt by next decode)
         # * _preview_cache (mounted widgets; their highlights were baked
@@ -2050,6 +2053,34 @@ class FNDApp(App[None]):
         # main thread to itself for the first ~half-second. Without the
         # delay, 10 parallel prefetch mount tasks starve the auto-load.
         self.set_timer(0.5, self._prefetch_top_results, name="prefetch-defer")
+
+    def _show_query_notice(self, err: Exception) -> None:
+        """Render a calm, practical line below the query bar for a malformed
+        query — message plus an actionable hint where we have one."""
+        from fnd.filter_dsl import FilterError
+        from fnd.query_errors import QuerySyntaxError
+
+        if isinstance(err, FilterError):
+            text = f"filter: {err.message} (col {err.column})"
+        elif isinstance(err, QuerySyntaxError):
+            text = err.message if not err.hint else f"{err.message} — {err.hint}"
+        else:
+            text = str(err)
+        try:
+            notice = self.query_one("#query_notice", Static)
+        except Exception:
+            return
+        notice.update(text)
+        notice.display = True
+
+    def _clear_query_notice(self) -> None:
+        try:
+            notice = self.query_one("#query_notice", Static)
+        except Exception:
+            return
+        if notice.display:
+            notice.update("")
+            notice.display = False
 
     def _search_layered(
         self,

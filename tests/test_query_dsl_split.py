@@ -63,3 +63,35 @@ def test_whitespace_around_extracted_clause_collapsed() -> None:
 def test_unclosed_bracket_raises() -> None:
     with pytest.raises(ValueError, match=r"unclosed|unterminated"):
         split_metadata_filter("foo [a == 1")
+
+
+# ── Field ranges are not metadata filters ────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "q",
+    [
+        "page:[10 TO 20]",
+        "foo page:[10 TO 20]",
+        "mtime:[2024-01-01 TO 2024-06-30]",
+    ],
+)
+def test_field_range_left_in_lexical(q: str) -> None:
+    lex, meta = split_metadata_filter(q)
+    assert lex == q
+    assert meta is None
+
+
+def test_field_range_and_metadata_filter_coexist() -> None:
+    lex, meta = split_metadata_filter('page:[1 TO 9] [Course == "X"]')
+    assert lex == "page:[1 TO 9]"
+    assert meta == 'Course == "X"'
+
+
+# ── Nested brackets inside a filter (in [...] lists) ─────────────────────
+
+
+def test_nested_in_list_filter() -> None:
+    lex, meta = split_metadata_filter('[Notes_Type in ["Lecture", "Tutorial"]]')
+    assert lex == ""
+    assert meta == 'Notes_Type in ["Lecture", "Tutorial"]'

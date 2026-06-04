@@ -155,6 +155,15 @@ def test_auto_subqueries_user_supplied_quotes_skip_auto_phrase() -> None:
     assert subs[0].query == '"man in the middle"'
 
 
+@pytest.mark.parametrize("q", ["{60} buffer overflow exploit", "alpha NEAR/5 beta"])
+def test_auto_subqueries_proximity_skips_auto_phrase(q: str) -> None:
+    """Proximity already encodes phrase intent in the lex pass (it expands to
+    ``"a b"~N``). Auto-wrapping would yield ``""a b"~N`` and crash the parser."""
+    subs = auto_subqueries(q, synonyms=None)
+    assert [s.source for s in subs] == ["lex"]
+    assert subs[0].query == q
+
+
 def test_auto_subqueries_appends_synonym_pass_when_applicable() -> None:
     """When a query term is in a synonym group, a third sub-query (weight
     0.6) carries the expanded form."""
