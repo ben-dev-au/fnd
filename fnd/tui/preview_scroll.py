@@ -52,7 +52,12 @@ class ViewportLocation:
 
 class ScrollStrategy(Protocol):
     def reconcile(
-        self, anchor: ScrollAnchor, on_settled: Callable[[], None] | None = None
+        self,
+        anchor: ScrollAnchor,
+        on_settled: Callable[[], None] | None = None,
+        *,
+        generation: int = 0,
+        current_generation: Callable[[], int] | None = None,
     ) -> None: ...
     def locate(self) -> ViewportLocation | None: ...
     def scroll_to_location(self, location: ViewportLocation) -> None: ...
@@ -96,6 +101,13 @@ class PreviewScrollController:
         # is the window during which scroll-driven lazy mount must stay out of
         # the controller's way — see is_settling.
         self._settled = False
+        # Monotonic navigation epoch. The single anchor stopped the many-inline-
+        # scroll-sites race, but the strategy's retry chain reschedules itself
+        # across refreshes, so rapid navigation spawns OVERLAPPING chains (each
+        # pinned to a captured chunk seq) that all commit a scroll — last writer
+        # wins. arm() bumps this; the active chain captures it and bails (no
+        # scroll, no reschedule, no settled-flip) the moment it's superseded.
+        self._generation = 0
 
     @property
     def is_armed(self) -> bool:
@@ -113,7 +125,12 @@ class PreviewScrollController:
     def anchor(self) -> ScrollAnchor | None:
         return self._anchor
 
+    @property
+    def generation(self) -> int:
+        return self._generation
+
     def arm(self, anchor: ScrollAnchor) -> None:
+        self._generation += 1  # newest navigation wins; older chains self-cancel
         self._anchor = anchor
         self._armed = True
         self._settled = False
@@ -133,11 +150,16 @@ class PreviewScrollController:
         # a no-op. The latch guarantees the floor (fires on error) and the
         # ceiling (never twice).
         base = _Once(on_settled)
+        gen = self._generation  # this commit belongs to the current navigation
 
         def fire() -> None:
-            # The scroll has committed: the nav has landed. Mark settled so the
-            # lazy-mount gate (is_settling) opens, then run the caller's reveal.
-            self._settled = True
+            # The scroll has committed. Honour the one-shot reveal either way (a
+            # dropped call strands the container hidden) — but only flip
+            # ``_settled`` (opening the lazy-mount gate) when this is STILL the
+            # current navigation. A superseded chain landing late must not open
+            # the gate for the newer nav still in flight.
+            if gen == self._generation:
+                self._settled = True
             base()
 
         if not self._armed or self._anchor is None:
@@ -148,7 +170,9 @@ class PreviewScrollController:
             fire()
             return
         try:
-            strategy.reconcile(self._anchor, fire)
+            strategy.reconcile(
+                self._anchor, fire, generation=gen, current_generation=lambda: self._generation
+            )
         except Exception:
             fire()
             raise
@@ -213,7 +237,14 @@ class StructuralScrollStrategy:
     def __init__(self, host: StructuralHost) -> None:
         self._host = host
 
-    def reconcile(self, anchor: ScrollAnchor, on_settled: Callable[[], None] | None = None) -> None:
+    def reconcile(
+        self,
+        anchor: ScrollAnchor,
+        on_settled: Callable[[], None] | None = None,
+        *,
+        generation: int = 0,
+        current_generation: Callable[[], int] | None = None,
+    ) -> None:
         from fnd.tui.app import FNDMarkdown
 
         seq = anchor.focus_chunk_seq
@@ -229,8 +260,21 @@ class StructuralScrollStrategy:
         if not isinstance(header, FNDMarkdown):
             header.add_class("chunk-section-focused")
         self._host.call_after_refresh(
-            self._do_scroll_to_chunk, seq, 30, on_settled, anchor.context_fraction, anchor.animate
+            self._do_scroll_to_chunk,
+            seq,
+            30,
+            on_settled,
+            anchor.context_fraction,
+            anchor.animate,
+            generation,
+            current_generation,
         )
+
+    def _superseded(self, generation: int, current_generation: Callable[[], int] | None) -> bool:
+        """This scroll chain was started for ``generation`` but a newer
+        navigation has since bumped the controller's generation — so it must not
+        scroll or reschedule (last-writer-wins avoidance)."""
+        return current_generation is not None and generation != current_generation()
 
     def _do_scroll_to_chunk(
         self,
@@ -239,9 +283,18 @@ class StructuralScrollStrategy:
         on_done: Callable[[], None] | None = None,
         margin_from: float = 0.25,
         animate: bool = False,
+        generation: int = 0,
+        current_generation: Callable[[], int] | None = None,
     ) -> None:
         from fnd.tui.app import FNDMarkdown
 
+        # Generation guard (entry): a superseded retry chain dies on its next
+        # tick — no scroll, no reschedule — but still fires on_done so the
+        # one-shot reveal floor holds (the reveal itself is identity-guarded).
+        if self._superseded(generation, current_generation):
+            if on_done is not None:
+                on_done()
+            return
         # Resolve target at fire time: FNDMarkdown.first_match_block
         # is populated async by build_from_token, so capturing earlier
         # races the build and lands on chunk top.
@@ -266,6 +319,8 @@ class StructuralScrollStrategy:
                     on_done,
                     margin_from,
                     animate,
+                    generation,
+                    current_generation,
                 )
                 return
             if inner is not None:
@@ -300,6 +355,8 @@ class StructuralScrollStrategy:
                 on_done,
                 margin_from,
                 animate,
+                generation,
+                current_generation,
             )
             return
         if target.region.height == 0:
@@ -307,6 +364,15 @@ class StructuralScrollStrategy:
                 f"do_scroll seq={focus_chunk_seq} miss=zero-region "
                 f"target={type(target).__name__} path={path}"
             )
+        # Generation guard (immediately before the commit): the resolution above
+        # spanned refreshes, during which a newer navigation may have superseded
+        # this chain. Re-check freshness right before the side effect — the
+        # cooperative-cancellation rule. A superseded chain bails without
+        # scrolling (on_done still fires the reveal floor; identity-guarded).
+        if self._superseded(generation, current_generation):
+            if on_done is not None:
+                on_done()
+            return
         try:
             pane = self._host.preview_pane()
             # Drop the match ~a quarter down the viewport so the lines above it
@@ -569,7 +635,20 @@ class FlatScrollStrategy:
     def __init__(self, host: FlatHost) -> None:
         self._host = host
 
-    def reconcile(self, anchor: ScrollAnchor, on_settled: Callable[[], None] | None = None) -> None:
+    def reconcile(
+        self,
+        anchor: ScrollAnchor,
+        on_settled: Callable[[], None] | None = None,
+        *,
+        generation: int = 0,
+        current_generation: Callable[[], int] | None = None,
+    ) -> None:
+        # Flat scroll is synchronous within one reconcile (no retry chain), so a
+        # single entry guard is enough: a superseded call doesn't move the buffer.
+        if current_generation is not None and generation != current_generation():
+            if on_settled is not None:
+                on_settled()
+            return
         buf = self._host.active_flat_buffer()
         if buf is None:
             if on_settled is not None:
