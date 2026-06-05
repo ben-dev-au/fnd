@@ -3127,7 +3127,14 @@ class FNDApp(App[None]):
             await self._await_preview_settled()
             self._preview_scroll.reconcile(_reveal_when_landed)
 
-        # Held on the container so GC can't collect the task mid-await (RUF006).
+        # Cancel a prior settle-await on this container before replacing it — a
+        # rapid re-nav would otherwise leave it running, burning a full DOM-drain
+        # and a redundant (generation-guarded) reconcile. Safe to cancel: this
+        # task does no cleanup, so CancelledError just unwinds the await. Held on
+        # the container so GC can't collect the new one mid-await (RUF006).
+        _prior = getattr(container, "_finalize_task", None)
+        if _prior is not None and not _prior.done():
+            _prior.cancel()
         container._finalize_task = _asyncio.create_task(_settled_reconcile())  # type: ignore[attr-defined]
 
     async def _await_preview_settled(self, max_rounds: int = 10) -> None:
@@ -3149,7 +3156,16 @@ class FNDApp(App[None]):
                 screen = self.screen
             except Exception:
                 return
-            children = [self, *screen.walk_children(with_self=True)]
+            # Drain only what bears on the preview's geometry: the app + screen
+            # (which run the arrange) and the preview pane's own subtree — NOT the
+            # whole screen (results tree, sidebars), which is irrelevant here and
+            # makes the per-round callback count scale with the unrelated DOM.
+            try:
+                pane = self.query_one("#preview_pane", VerticalScroll)
+                children = [self, screen, *pane.walk_children(with_self=True)]
+            except Exception:
+                # No pane yet — fall back to the screen-wide drain.
+                children = [self, *screen.walk_children(with_self=True)]
             count = 0
             done = asyncio.Event()
 
