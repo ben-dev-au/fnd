@@ -1946,7 +1946,7 @@ class FNDApp(App[None]):
         # (~0.1 ms) when nothing changed; ignore a vanished index dir.
         import contextlib as _contextlib
 
-        with _contextlib.suppress(FileNotFoundError, RuntimeError):
+        with _contextlib.suppress(FileNotFoundError, RuntimeError, ValueError):
             self._searcher.reload()
         # A new query must always re-render the first result, even when it
         # lands on the same (parent, seq) as the last one — release the
@@ -6009,7 +6009,7 @@ class FNDApp(App[None]):
         """
         try:
             self._searcher = Searcher(index_dir=self._index_dir)
-        except (FileNotFoundError, RuntimeError):
+        except (FileNotFoundError, RuntimeError, ValueError):
             self._searcher = None
         if self._current_query:
             self._run_query(self._current_query)

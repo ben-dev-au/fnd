@@ -30,10 +30,11 @@ def _write_md(p: Path, body: str) -> None:
 @pytest.fixture
 def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     cfg_path = tmp_path / "config.toml"
+    notes_dir = (tmp_path / "notes").as_posix()
     cfg_path.write_text(
-        textwrap.dedent("""
+        textwrap.dedent(f"""
             [[collections.notes.sources]]
-            path = "/tmp/notes"
+            path = "{notes_dir}"
         """),
         encoding="utf-8",
     )
@@ -61,6 +62,62 @@ def test_searcher_reload_picks_up_new_commit(tmp_path: Path, tmp_index_dir: Path
     # reload() re-points at the committed generation.
     searcher.reload()
     assert searcher.search("bravo", limit=10, collection="notes")
+
+
+def test_get_file_chunks_survives_concurrent_reload(tmp_path: Path, tmp_index_dir: Path) -> None:
+    """Regression: a reload() that swaps self._searcher (to a new
+    generation) mid-decode must not corrupt an in-flight
+    get_file_chunks(). Tantivy DocAddresses are generation-specific, so
+    decoding G1 addresses against a swapped-in G2 searcher would yield
+    garbage or panic; get_file_chunks pins one generation for the whole
+    search→decode sequence to prevent that.
+    """
+    import threading
+
+    docs = tmp_path / "notes"
+    # >= _PARALLEL_DECODE_THRESHOLD (50) sections so the ThreadPool decode
+    # path runs — that's where the cross-thread swap is dangerous.
+    body = "# Doc\n" + "".join(
+        f"\n## Section {i}\nzero seconds marker body for section {i}.\n" for i in range(80)
+    )
+    _write_md(docs / "big.md", body)
+    build_index(roots=[docs], index_dir=tmp_index_dir, collection="notes")
+
+    searcher = Searcher(index_dir=tmp_index_dir)
+    hits = searcher.search("marker", limit=5, collection="notes")
+    assert hits, "baseline search should find the doc"
+    parent_id = hits[0].parent_id
+
+    stop = threading.Event()
+    errors: list[BaseException] = []
+
+    def churn_generations() -> None:
+        # Commit fresh generations and reload the shared searcher, racing
+        # the foreground decode loop.
+        try:
+            for n in range(6):
+                if stop.is_set():
+                    return
+                _write_md(docs / f"extra_{n}.md", f"# Extra {n}\nzero seconds extra {n}.\n")
+                build_index(roots=[docs], index_dir=tmp_index_dir, collection="notes")
+                searcher.reload()
+        except BaseException as e:
+            errors.append(e)
+
+    churn = threading.Thread(target=churn_generations, daemon=True)
+    churn.start()
+    try:
+        while churn.is_alive():
+            chunks = searcher.get_file_chunks(parent_id, max_workers=8)
+            assert chunks, "decode returned no chunks"
+            # A cross-generation leak would surface as a mismatched
+            # parent_id or undecodable body.
+            assert all(c.parent_id == parent_id for c in chunks), "cross-generation doc leaked in"
+            assert all(c.body_md or c.blocks for c in chunks), "chunk body failed to decode"
+    finally:
+        stop.set()
+        churn.join(timeout=10)
+    assert not errors, f"generation churn thread raised: {errors!r}"
 
 
 @pytest.mark.asyncio
