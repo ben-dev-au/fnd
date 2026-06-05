@@ -240,6 +240,18 @@ class Searcher:
         self._index.reload()
         self._searcher = self._index.searcher()
 
+    def reload(self) -> None:
+        """Re-point at the latest committed index generation.
+
+        The captured ``self._searcher`` reads from the generation it was
+        opened against; after a reindex commits new chunks the old
+        snapshot still returns the previous generation. ``reload()`` is
+        near-free (~0.1 ms) when nothing changed, so it is safe to call
+        on the query hot path to keep results current without a restart.
+        """
+        self._index.reload()
+        self._searcher = self._index.searcher()
+
     def _raw_hits(
         self,
         query: str,
@@ -295,13 +307,18 @@ class Searcher:
                 (tantivy.Occur.Should, boost_secondary),
             ]
         )
-        result = self._searcher.search(parsed, limit=limit)
+        # Pin one generation for the whole search→doc sequence. A
+        # concurrent reload() may swap self._searcher mid-op; the
+        # DocAddresses below are generation-specific, so reading them
+        # against a newer searcher yields garbage (or a Rust panic).
+        searcher = self._searcher
+        result = searcher.search(parsed, limit=limit)
 
         from fnd.struct import decode as decode_body_struct
 
         out: list[Hit] = []
         for score, address in result.hits:
-            doc = self._searcher.doc(address)
+            doc = searcher.doc(address)
             body_struct_bytes = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
             body_text = ""
             if body_struct_bytes is not None:
@@ -423,15 +440,18 @@ class Searcher:
                 break
         return out
 
-    def _decode_chunk(self, address: object) -> FileChunk:
+    def _decode_chunk(self, searcher: object, address: object) -> FileChunk:
         """Decode a single chunk's stored fields at ``address`` into a
         :class:`FileChunk`. Independent per-address — safe to call from
-        a worker thread because ``self._searcher.doc()`` releases the
-        GIL inside tantivy and ``self._searcher`` is an immutable view
-        over the index segments."""
+        a worker thread because ``Searcher.doc()`` releases the GIL
+        inside tantivy. ``searcher`` is the generation-pinned view the
+        caller searched against; passing it explicitly (rather than
+        reading ``self._searcher``) keeps the address and the searcher on
+        the same generation even if ``reload()`` swaps ``self._searcher``
+        concurrently."""
         from fnd.struct import decode as decode_body_struct
 
-        doc = self._searcher.doc(address)  # type: ignore[arg-type]
+        doc = searcher.doc(address)  # type: ignore[attr-defined]
         body_struct_bytes = doc.get_first(F_BODY_STRUCT)  # type: ignore[attr-defined]
         blocks = decode_body_struct(body_struct_bytes) if body_struct_bytes else []
         body_md_bytes = doc.get_first(F_BODY_MD)  # type: ignore[attr-defined]
@@ -475,16 +495,21 @@ class Searcher:
         )
         # 5000 chunks/file is a generous ceiling; phase 12 will revisit for
         # books / very long PDFs.
-        result = self._searcher.search(parsed, limit=5000)
+        # Pin one generation for the whole search→decode sequence: the
+        # decode threads below dereference these DocAddresses, and a
+        # concurrent reload() must not swap the searcher under them.
+        searcher = self._searcher
+        result = searcher.search(parsed, limit=5000)
         addresses = [address for _score, address in result.hits]
         workers = max_workers or 1
         if workers > 1 and len(addresses) >= _PARALLEL_DECODE_THRESHOLD:
             from concurrent.futures import ThreadPoolExecutor
+            from functools import partial
 
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                chunks = list(pool.map(self._decode_chunk, addresses))
+                chunks = list(pool.map(partial(self._decode_chunk, searcher), addresses))
         else:
-            chunks = [self._decode_chunk(a) for a in addresses]
+            chunks = [self._decode_chunk(searcher, a) for a in addresses]
         chunks.sort(key=lambda c: c.chunk_seq)
         return chunks
 

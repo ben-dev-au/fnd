@@ -64,9 +64,9 @@ def test_default_max_workers_is_serial(built_index: Path) -> None:
     saw_threads: set[int] = set()
     real_decode = searcher._decode_chunk
 
-    def spy(address: object) -> object:
+    def spy(searcher_arg: object, address: object) -> object:
         saw_threads.add(threading.get_ident())
-        return real_decode(address)
+        return real_decode(searcher_arg, address)
 
     searcher._decode_chunk = spy  # type: ignore[method-assign]
     searcher.get_file_chunks(parent_id)
@@ -93,9 +93,9 @@ def test_below_threshold_stays_serial_even_with_workers(
     saw_threads: set[int] = set()
     real_decode = searcher._decode_chunk
 
-    def spy(address: object) -> object:
+    def spy(searcher_arg: object, address: object) -> object:
         saw_threads.add(threading.get_ident())
-        return real_decode(address)
+        return real_decode(searcher_arg, address)
 
     searcher._decode_chunk = spy  # type: ignore[method-assign]
     searcher.get_file_chunks(parent_id, max_workers=4)
@@ -117,9 +117,9 @@ def test_above_threshold_dispatches_to_thread_pool(
     saw_threads: set[int] = set()
     real_decode = searcher._decode_chunk
 
-    def spy(address: object) -> object:
+    def spy(searcher_arg: object, address: object) -> object:
         saw_threads.add(threading.get_ident())
-        return real_decode(address)
+        return real_decode(searcher_arg, address)
 
     searcher._decode_chunk = spy  # type: ignore[method-assign]
     main_thread = threading.get_ident()
@@ -137,9 +137,9 @@ def test_max_workers_one_stays_serial(built_index: Path) -> None:
     saw_threads: set[int] = set()
     real_decode = searcher._decode_chunk
 
-    def spy(address: object) -> object:
+    def spy(searcher_arg: object, address: object) -> object:
         saw_threads.add(threading.get_ident())
-        return real_decode(address)
+        return real_decode(searcher_arg, address)
 
     searcher._decode_chunk = spy  # type: ignore[method-assign]
     searcher.get_file_chunks(parent_id, max_workers=1)
