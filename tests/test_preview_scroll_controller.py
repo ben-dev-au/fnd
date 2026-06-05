@@ -21,7 +21,7 @@ class FakeStrategy:
         self.settled: int = 0
         self.restored: list[ViewportLocation] = []
 
-    def reconcile(self, anchor: ScrollAnchor, on_settled: object = None) -> None:
+    def reconcile(self, anchor: ScrollAnchor, on_settled: object = None, **_kw: object) -> None:
         self.calls.append(anchor)
         if callable(on_settled):
             on_settled()
@@ -63,7 +63,10 @@ def test_is_settling_stays_true_until_deferred_on_settled_fires() -> None:
 
     class _DeferStrategy:
         def reconcile(
-            self, anchor: ScrollAnchor, on_settled: Callable[[], None] | None = None
+            self,
+            anchor: ScrollAnchor,
+            on_settled: Callable[[], None] | None = None,
+            **_kw: object,
         ) -> None:
             if on_settled is not None:
                 held.append(on_settled)
@@ -450,7 +453,7 @@ def test_flat_scroll_to_location_scrolls_to_logical_line_without_margin() -> Non
 class _RaisingStrategy:
     """Strategy whose reconcile raises WITHOUT first calling on_settled."""
 
-    def reconcile(self, anchor: ScrollAnchor, on_settled: object = None) -> None:
+    def reconcile(self, anchor: ScrollAnchor, on_settled: object = None, **_kw: object) -> None:
         raise RuntimeError("strategy boom")
 
     def locate(self) -> ViewportLocation | None:
@@ -515,7 +518,7 @@ class _CallsThenRaisesStrategy:
     error can escape. The controller's error path must not call it a second
     time (fire-once contract)."""
 
-    def reconcile(self, anchor: ScrollAnchor, on_settled: object = None) -> None:
+    def reconcile(self, anchor: ScrollAnchor, on_settled: object = None, **_kw: object) -> None:
         if callable(on_settled):
             on_settled()
         raise RuntimeError("boom after settle")
