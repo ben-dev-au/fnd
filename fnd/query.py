@@ -240,6 +240,18 @@ class Searcher:
         self._index.reload()
         self._searcher = self._index.searcher()
 
+    def reload(self) -> None:
+        """Re-point at the latest committed index generation.
+
+        The captured ``self._searcher`` reads from the generation it was
+        opened against; after a reindex commits new chunks the old
+        snapshot still returns the previous generation. ``reload()`` is
+        near-free (~0.1 ms) when nothing changed, so it is safe to call
+        on the query hot path to keep results current without a restart.
+        """
+        self._index.reload()
+        self._searcher = self._index.searcher()
+
     def _raw_hits(
         self,
         query: str,

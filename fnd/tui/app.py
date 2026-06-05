@@ -1940,6 +1940,14 @@ class FNDApp(App[None]):
     def _run_query(self, query: str) -> None:
         if self._searcher is None:
             return
+        # Re-point the searcher at the latest committed generation so a
+        # reindex (in-app or external `fnd reindex`) that landed while the
+        # app is open shows up on this query — no restart. Near-free
+        # (~0.1 ms) when nothing changed; ignore a vanished index dir.
+        import contextlib as _contextlib
+
+        with _contextlib.suppress(FileNotFoundError, RuntimeError):
+            self._searcher.reload()
         # A new query must always re-render the first result, even when it
         # lands on the same (parent, seq) as the last one — release the
         # in-flight coalescing latch so this query's dispatch isn't

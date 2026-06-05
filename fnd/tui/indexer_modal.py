@@ -954,6 +954,11 @@ async def drive_indexer(
         # attention count reflects the chain's just-resolved files
         # without waiting for the 5s TTL.
         invalidate_todo_count_cache()
+        # Refresh the live searcher off the just-committed generation and
+        # re-run the active query so newly-indexed files show up without
+        # the user retyping. _run_query also reloads per-query as a
+        # backstop, but this updates already-displayed results in place.
+        app.call_later(app._on_reindex_complete)
 
 
 def _start_next_in_chain(app: FNDApp, collection: str) -> None:
