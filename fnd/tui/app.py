@@ -2468,7 +2468,13 @@ class FNDApp(App[None]):
         ranges: list[tuple[int, Widget, float, float]] = []
         for i in sorted(container.mounted_indices):
             if i >= len(chunks):
-                continue  # stale index vs a re-decoded chunk list — skip
+                # Unreachable today: mounted_indices is built from THIS
+                # _chunk_cache list, each file decodes once per query, and a
+                # query change clears the chunk AND preview caches together — so
+                # a cached container always matches its chunks. Cheap crash-guard
+                # only, in case that coupling is ever broken; there is no live
+                # stale state here to normalise.
+                continue
             seq = chunks[i].chunk_seq
             w = container.chunk_widgets.get(seq)
             if w is None:
