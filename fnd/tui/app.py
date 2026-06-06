@@ -2467,6 +2467,8 @@ class FNDApp(App[None]):
         vbot = vtop + float(pane.size.height)
         ranges: list[tuple[int, Widget, float, float]] = []
         for i in sorted(container.mounted_indices):
+            if i >= len(chunks):
+                continue  # stale index vs a re-decoded chunk list — skip
             seq = chunks[i].chunk_seq
             w = container.chunk_widgets.get(seq)
             if w is None:
@@ -3361,7 +3363,11 @@ class FNDApp(App[None]):
         if not watch:
             await self._await_preview_settled()
             return
-        targets = [self, self.screen, *watch]  # App + Screen + widgets all have call_later
+        try:
+            screen = self.screen
+        except Exception:
+            return  # no screen (teardown / transition) — nothing to settle
+        targets = [self, screen, *watch]  # App + Screen + widgets all have call_later
 
         def _sig() -> tuple[int, ...]:
             out: list[int] = []
@@ -4175,8 +4181,21 @@ class FNDApp(App[None]):
                 # the viewport. Upward jumps instead rebuild on demand (~140ms,
                 # correct, flicker-free) — movement during a deliberate jump is
                 # expected; movement while the user sits still is not.
-                i = max(container.mounted_indices) + 1
-                while i < len(chunks) and self._active_preview is container:
+                # Empty-guard (degenerate mount); and bail the moment the user
+                # takes scroll control (a user scroll clears is_armed) so upward
+                # lazy-mount isn't walled behind this background below-fill —
+                # once we stop, _preview_mount_task completes and lazy-mount
+                # handles both directions on demand.
+                i = (
+                    (max(container.mounted_indices) + 1)
+                    if container.mounted_indices
+                    else len(chunks)
+                )
+                while (
+                    i < len(chunks)
+                    and self._active_preview is container
+                    and self._preview_scroll.is_armed
+                ):
                     if i not in container.mounted_indices:
                         with contextlib.suppress(Exception):
                             self._mount_chunk_into(container, chunks[i], i, chunks)
