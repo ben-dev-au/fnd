@@ -5304,17 +5304,25 @@ class FNDApp(App[None]):
             return
         if not node.is_expanded:
             node.expand()
-            # Just-expanded nodes don't have line indices yet for their
-            # children; defer the cursor move until the next render tick
-            # so move_cursor lands on the right line.
-            tree_ref = tree
-            node_ref = node
-            self.call_after_refresh(
-                lambda: tree_ref.move_cursor(node_ref.children[0]) if node_ref.children else None
-            )
+        self._move_cursor_to_first_child(tree, node)
+
+    @staticmethod
+    def _move_cursor_to_first_child(tree: Tree[Any], node: TreeNode[Any]) -> None:
+        """Drop the cursor onto ``node``'s first child, robust against a
+        stale line cache.
+
+        ``expand()`` only invalidates the cache; until the tree rebuilds,
+        the freshly-revealed children still carry a stale ``_line`` of -1.
+        Going through ``move_cursor(child)`` then sets ``cursor_line`` to -1,
+        which the skip-expanded-parents validator clamps to 0 and walks into
+        a jump to the first file — visible when the rebuild is delayed (e.g.
+        the preview pane is mid full-mount). ``move_cursor_to_line`` forces
+        the rebuild (it reads ``_tree_lines``) and the first child always
+        sits one row below its parent, so the move is correct synchronously.
+        """
+        if not node.children:
             return
-        first_child = node.children[0]
-        tree.move_cursor(first_child)
+        tree.move_cursor_to_line(node.line + 1)
 
     @property
     def _effective_match_spec(self) -> MatchSpec:
