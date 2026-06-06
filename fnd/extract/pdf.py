@@ -41,7 +41,10 @@ from fnd.extract.recovery import (
     CoverageEvaluator,
     DoclingTableTier,
     ExtractionContext,
+    FlatFallbackTier,
     InvisibleTextTier,
+    LigatureRepairer,
+    LigatureRepairTier,
     PageRecoveryPipeline,
     ProductionLayoutTier,
 )
@@ -89,7 +92,14 @@ def set_skip_structure_extraction(skip: bool) -> None:
 # v2: invisible-text scanned-page recovery (Bug E) — the layered recovery
 # pipeline meaningfully changes texturised output corpus-wide, so prior
 # textures read as outdated and re-texturise under the new engine.
-TEXTURE_VERSION: Final[int] = 2
+# v3: two recovery tiers added. Ligature repair — the layout engine emits
+# U+FFFD for ff/fi/fl glyphs in ToUnicode-less fonts; the repair tier
+# rewrites them from the flat layer. Flat-fallback — the layout parser drops
+# whole prose blocks on graphically-complex born-digital pages
+# (infographic/multi-column reports); the fallback tier backfills them from
+# the flat layer. Both change texturised output corpus-wide, so affected
+# pages re-texturise.
+TEXTURE_VERSION: Final[int] = 3
 
 
 def texture_signature() -> str:
@@ -579,6 +589,14 @@ def _extract_invisible_md(doc: pymupdf.Document, page_index: int) -> str:
     return str(first.get("text", "")) if isinstance(first, dict) else str(first)
 
 
+def _flat_text_blocks(page: pymupdf.Page) -> list[str]:
+    """Flat text blocks in reading order — the gap-fill source for the
+    flat-fallback tier. ``sort=True`` orders top-to-bottom, left-to-right;
+    image blocks (type 1) are dropped, leaving the page's text runs."""
+    blocks = cast(list[tuple[Any, ...]], page.get_text("blocks", sort=True))
+    return [str(b[4]) for b in blocks if len(b) > 6 and b[6] == 0 and str(b[4]).strip()]
+
+
 _recovery_pipeline_singleton: PageRecoveryPipeline | None = None
 
 
@@ -587,11 +605,14 @@ def _recovery_pipeline() -> PageRecoveryPipeline:
     so a module-level singleton avoids per-page allocation."""
     global _recovery_pipeline_singleton
     if _recovery_pipeline_singleton is None:
+        coverage = CoverageEvaluator()
         _recovery_pipeline_singleton = PageRecoveryPipeline(
             [
                 ProductionLayoutTier(_extract_page_md),
-                InvisibleTextTier(_extract_invisible_md, CoverageEvaluator()),
+                LigatureRepairTier(LigatureRepairer()),
+                InvisibleTextTier(_extract_invisible_md, coverage),
                 DoclingTableTier(_try_docling_fallback, _extract_md_tables),
+                FlatFallbackTier(coverage, _flat_text_blocks),
             ]
         )
     return _recovery_pipeline_singleton
@@ -615,6 +636,11 @@ def _config_hash() -> str:
         "cov_gate": 0.70,
         "min_flat_tokens": 20,
         "scanned_table_caption_re": TABLE_CAPTION_RE.pattern,
+        # Flat-fallback: backfill prose the layout parser drops on
+        # graphically-complex born-digital pages. Bumps the key so these
+        # pages re-texture with the recovered body on next reindex.
+        "flat_fallback_floor": 0.90,
+        "flat_block_present_ratio": 0.5,
     }
     return hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()[:8]
 

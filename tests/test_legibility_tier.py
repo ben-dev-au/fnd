@@ -152,6 +152,8 @@ def test_legibility_tier_not_in_live_pipeline() -> None:
     assert not any(isinstance(t, LegibilityReprocessTier) for t in tiers)
     assert [type(t).__name__ for t in tiers] == [
         "ProductionLayoutTier",
+        "LigatureRepairTier",
         "InvisibleTextTier",
         "DoclingTableTier",
+        "FlatFallbackTier",
     ]
