@@ -664,6 +664,20 @@ def _has_docling() -> bool:
     return shutil.which("docling") is not None
 
 
+def _fold_own_heading(chunk: Chunk) -> Chunk:
+    """Fold the page's own (leaf) heading into ``body`` so it's searchable.
+
+    Parity with md/docx/pptx, which bake a chunk's own heading into body.
+    A TOC-derived heading often isn't rendered verbatim in the page text;
+    prepend it unless already present. Applied at yield time — so it also
+    fixes chunks served from the texture cache, where ``body`` was stored
+    pre-fold. Idempotent via the membership guard."""
+    leaf = chunk.heading_path.split(" > ")[-1].strip() if chunk.heading_path else ""
+    if leaf and leaf not in chunk.body:
+        chunk.body = f"{leaf}\n{chunk.body}"
+    return chunk
+
+
 def extract(
     path: Path,
     *,
@@ -717,7 +731,7 @@ def extract(
             chunk.parent_id = parent_id_now
             chunk.path = path_str_now
             chunk.mtime = mtime_now
-            yield chunk
+            yield _fold_own_heading(chunk)
         return
 
     # Dispatch the heavy extraction to a subprocess. pymupdf-layout
@@ -768,7 +782,8 @@ def extract(
         with contextlib.suppress(OSError):
             cache.put(key, chunks)
 
-    yield from chunks
+    for chunk in chunks:
+        yield _fold_own_heading(chunk)
 
 
 def _get_cache() -> ExtractionCache:
