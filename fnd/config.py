@@ -319,6 +319,10 @@ class RankingProfileConfig(BaseModel):
     recency_boost: float = 0.0
     recency_half_life: str = "365d"  # parsed via _parse_duration
     filetype_boosts: dict[str, float] = Field(default_factory=dict)
+    # Optional secondary proximity boost (full-body window-tightness),
+    # applied as a post-rank multiplier. Off by default — the primary
+    # proximity signal is fusion's graduated sloppy-phrase passes, scored
+    # natively by Tantivy's BM25. >0 enables this as an extra nudge.
     phrase_proximity: float = 0.0
     proximity_max_window: int = 50
     # forward-compat (currently ignored — see §21 Spike A)

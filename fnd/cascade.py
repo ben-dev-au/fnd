@@ -292,6 +292,7 @@ def _materialize_hits(
                 line=_first_int(doc, "line"),
                 mtime=_first_int(doc, "mtime"),
                 meta_blob=meta_blob_bytes,
+                body_text=body_text,
             )
         )
     return out
@@ -512,4 +513,5 @@ def _with_pass(h: Hit, pass_index: int) -> Hit:
         mtime=h.mtime,
         pass_index=pass_index,
         meta_blob=h.meta_blob,
+        body_text=h.body_text,
     )
