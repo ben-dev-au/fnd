@@ -58,6 +58,21 @@ def test_leaves_standalone_replacement_char_untouched() -> None:
     assert r.repair(md, "see X here") == md
 
 
+def test_bare_replacement_not_rewritten_even_when_vocab_has_ligature() -> None:
+    """A standalone U+FFFD must stay put even when the flat layer contains
+    a bare 'ff'/'fi'/'fl' token — repairing only fires inside a word."""
+    r = LigatureRepairer()
+    md = f"tempo {FFFD} marking ff dynamics"
+    assert r.repair(md, "tempo X marking ff dynamics") == md
+
+
+def test_repair_preserves_capital_on_midword_ligature() -> None:
+    """Capitalised words with a mid-word ligature keep the capital — the
+    real corpus case ('Miscon<?>gured', 'Con<?>dentiality')."""
+    r = LigatureRepairer()
+    assert r.repair(f"Miscon{FFFD}gured CAs", "a misconfigured ca") == "Misconfigured CAs"
+
+
 def test_leaves_unmatched_word_untouched() -> None:
     """No ligature expansion of the broken word is in the flat vocab."""
     r = LigatureRepairer()

@@ -594,7 +594,7 @@ def _flat_text_blocks(page: pymupdf.Page) -> list[str]:
     flat-fallback tier. ``sort=True`` orders top-to-bottom, left-to-right;
     image blocks (type 1) are dropped, leaving the page's text runs."""
     blocks = cast(list[tuple[Any, ...]], page.get_text("blocks", sort=True))
-    return [str(b[4]) for b in blocks if len(b) > 6 and b[6] == 0 and str(b[4]).strip()]
+    return [t for b in blocks if len(b) > 6 and b[6] == 0 and (t := str(b[4])).strip()]
 
 
 _recovery_pipeline_singleton: PageRecoveryPipeline | None = None

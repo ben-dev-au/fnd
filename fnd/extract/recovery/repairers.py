@@ -16,8 +16,12 @@ _REPLACEMENT = "�"
 # wider ligature ("ffi" over "ff"/"fi").
 _LIGATURES = ("ffi", "ffl", "ff", "fi", "fl")
 
-# A word run carrying at least one U+FFFD, plus any adjacent word chars.
-_BROKEN_WORD_RE = re.compile(rf"\w*{_REPLACEMENT}[\w{_REPLACEMENT}]*")
+# A word run carrying at least one U+FFFD AND at least one real word char,
+# so a bare standalone U+FFFD (a non-ligature unmapped glyph) is never a
+# match — repairing only ever fires inside a word.
+_BROKEN_WORD_RE = re.compile(
+    rf"\w+{_REPLACEMENT}[\w{_REPLACEMENT}]*|{_REPLACEMENT}[\w{_REPLACEMENT}]*\w+"
+)
 _WORD_RE = re.compile(r"\w+")
 
 # Most U+FFFD-per-word counts are 1, occasionally 2. Cap the brute-forced
