@@ -73,6 +73,44 @@ def test_repair_preserves_capital_on_midword_ligature() -> None:
     assert r.repair(f"Miscon{FFFD}gured CAs", "a misconfigured ca") == "Misconfigured CAs"
 
 
+def test_repair_uppercases_ligature_in_all_caps_word() -> None:
+    """An all-caps token stays all-caps — the recovered ligature letters
+    are not left lowercase mid-word."""
+    r = LigatureRepairer()
+    assert r.repair(f"TRA{FFFD}C ALERT", "inbound traffic alert") == "TRAFFIC ALERT"
+
+
+def test_repair_capitalises_leading_ligature_from_ground_truth() -> None:
+    """When the U+FFFD opens a capitalised word, the recovered letters
+    take the ground-truth casing ('<?>nal' -> 'Final')."""
+    r = LigatureRepairer()
+    assert r.repair(f"{FFFD}nal review", "the Final review") == "Final review"
+
+
+def test_repair_handles_non_f_ligatures() -> None:
+    """Not limited to f-ligatures: the standard 'st' and old-style 'ct'
+    ligatures (and the extended f-set) are recovered too — the repairer is
+    not hard-coded to this PDF's ff/fi/fl."""
+    r = LigatureRepairer()
+    assert r.repair(f"the fir{FFFD} step", "the first step") == "the first step"  # st
+    assert r.repair(f"a fa{FFFD} sheet", "a fact sheet") == "a fact sheet"  # ct
+
+
+def test_repair_disambiguates_ligature_gap_from_non_ligature_twin() -> None:
+    """A skeleton twin whose gap is NOT a ligature is ignored: '<?>ows'
+    fits 'flows' (fl, a ligature) and 'allows' (all, not) — pick 'flows'."""
+    r = LigatureRepairer()
+    assert r.repair(f"mail {FFFD}ows here", "flows and allows") == "mail flows here"
+
+
+def test_repair_leaves_ambiguous_skeleton_untouched() -> None:
+    """When two flat words fit AND both gaps are real ligatures, refuse to
+    guess — '<?>uff' fits 'fluff' (fl) and 'stuff' (st)."""
+    r = LigatureRepairer()
+    md = f"some {FFFD}uff here"
+    assert r.repair(md, "fluff and stuff") == md
+
+
 def test_leaves_unmatched_word_untouched() -> None:
     """No ligature expansion of the broken word is in the flat vocab."""
     r = LigatureRepairer()
