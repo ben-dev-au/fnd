@@ -109,24 +109,46 @@ def test_no_op_when_nothing_missing() -> None:
     assert _distinct_words(0, 35) in out.markdown
 
 
-def test_pipeline_runs_docling_table_before_flat_fallback() -> None:
-    """Composition invariant: flat-fallback is the LAST tier, after the
-    docling-table tier. Its FLAG_TEXTURE_RECOVERED therefore can't
-    retro-trigger the docling tier, so the two never double-process a page
-    (verified end-to-end on pages that legitimately need both)."""
+def test_flat_fallback_is_not_a_pipeline_tier() -> None:
+    """Flat-fallback runs in _finalize_body_md AFTER the born-digital
+    docling fallback, not inside the recovery pipeline — so the prose it
+    backfills can't be discarded by a later docling swap, and a
+    flat-appended 'Table N' can't retro-trigger that docling."""
     from fnd.extract import pdf
-    from fnd.extract.recovery import (
-        DoclingTableTier,
-        InvisibleTextTier,
-        LigatureRepairTier,
-        ProductionLayoutTier,
-    )
 
-    order = [type(t) for t in pdf._recovery_pipeline()._tiers]
-    assert order == [
-        ProductionLayoutTier,
-        LigatureRepairTier,
-        InvisibleTextTier,
-        DoclingTableTier,
-        FlatFallbackTier,
-    ]
+    order = [type(t).__name__ for t in pdf._recovery_pipeline()._tiers]
+    assert "FlatFallbackTier" not in order
+    assert isinstance(pdf._flat_fallback_tier, FlatFallbackTier)
+
+
+def test_finalize_runs_docling_check_before_flat_backfill(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The born-digital docling decision must see the structured markdown
+    BEFORE flat-fallback appends — otherwise a backfilled 'Table 1' block
+    could retro-trigger docling. Assert the markdown handed to
+    _needs_docling_fallback carries no flat-appended prose, and that
+    flat-fallback still backfills afterwards."""
+    from fnd.extract import pdf
+
+    seen: dict[str, str] = {}
+
+    def fake_needs(page: object, md: str) -> bool:
+        seen["md"] = md
+        return False  # don't run docling; we only care what it inspected
+
+    class FakeRect:
+        width = height = 100.0
+
+    class FakePage:
+        rect = FakeRect()
+
+        def get_text(self, _kind: str, sort: bool = False) -> list[tuple[object, ...]]:
+            return [(0, 0, 1, 1, "Table 1 lists the dropped prose tokens", 0, 0)]
+
+    monkeypatch.setattr(pdf, "_needs_docling_fallback", fake_needs)
+    flat = "heading only " + "Table 1 lists the dropped prose tokens " + _distinct_words(0, 30)
+    ctx = ExtractionContext(doc=object(), page=FakePage(), page_index=0, path="x.pdf", flat=flat)
+
+    result = pdf._finalize_body_md(ctx, "## Heading only")
+
+    assert "Table 1" not in seen["md"]  # docling inspected the pre-backfill md
+    assert "dropped prose tokens" in result  # flat-fallback ran afterwards

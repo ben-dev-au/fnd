@@ -155,5 +155,4 @@ def test_legibility_tier_not_in_live_pipeline() -> None:
         "LigatureRepairTier",
         "InvisibleTextTier",
         "DoclingTableTier",
-        "FlatFallbackTier",
     ]

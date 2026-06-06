@@ -45,6 +45,7 @@ from fnd.extract.recovery import (
     InvisibleTextTier,
     LigatureRepairer,
     LigatureRepairTier,
+    PageExtraction,
     PageRecoveryPipeline,
     ProductionLayoutTier,
 )
@@ -599,23 +600,47 @@ def _flat_text_blocks(page: pymupdf.Page) -> list[str]:
 
 _recovery_pipeline_singleton: PageRecoveryPipeline | None = None
 
+# Flat-fallback is NOT in the pipeline: it must run after the born-digital
+# docling fallback below (see _finalize_body_md), so the prose it backfills
+# is never discarded by a docling swap, and a flat-appended "Table N" can't
+# retro-trigger that docling. Stateless, so a module-level singleton is fine.
+_flat_fallback_tier = FlatFallbackTier(CoverageEvaluator(), _flat_text_blocks)
+
 
 def _recovery_pipeline() -> PageRecoveryPipeline:
     """The composed page-recovery pipeline (built once). Stateless tiers,
     so a module-level singleton avoids per-page allocation."""
     global _recovery_pipeline_singleton
     if _recovery_pipeline_singleton is None:
-        coverage = CoverageEvaluator()
         _recovery_pipeline_singleton = PageRecoveryPipeline(
             [
                 ProductionLayoutTier(_extract_page_md),
                 LigatureRepairTier(LigatureRepairer()),
-                InvisibleTextTier(_extract_invisible_md, coverage),
+                InvisibleTextTier(_extract_invisible_md, CoverageEvaluator()),
                 DoclingTableTier(_try_docling_fallback, _extract_md_tables),
-                FlatFallbackTier(coverage, _flat_text_blocks),
             ]
         )
     return _recovery_pipeline_singleton
+
+
+def _finalize_body_md(ctx: ExtractionContext, body_md: str) -> str:
+    """Post-recovery assembly for one structured page, in order:
+
+    1. born-digital docling fallback (image-rendered tables pymupdf4llm
+       missed) — unchanged detection/splice logic;
+    2. strip leftover picture-omitted markers;
+    3. flat-fallback LAST — backfill prose still missing after every
+       structured step, so nothing downstream can discard it and the
+       docling decision in step 1 never sees flat-appended text.
+    """
+    page = ctx.page
+    if body_md and _needs_docling_fallback(page, body_md):
+        docling_md = _try_docling_fallback(ctx.path, ctx.page_index)
+        if docling_md:
+            body_md = _splice_docling_tables(body_md, docling_md)
+    if body_md:
+        body_md = _strip_picture_markers(body_md)
+    return _flat_fallback_tier.refine(ctx, PageExtraction(markdown=body_md)).markdown
 
 
 def _config_hash() -> str:
@@ -896,11 +921,12 @@ def _extract_inner(  # pyright: ignore[reportUnusedFunction]
             blocks.append(Block(kind="p", text=text.strip()))
 
             # Structured path (opt-in): populate body_md so the preview
-            # dispatcher routes this page to the Markdown widget. Empty
-            # when the pdf-structure extra isn't installed — keeps
-            # behaviour byte-identical to today. Also skipped when the
-            # run-scoped ``_skip_structure_extraction`` flag is set
-            # (battery-saver mode).
+            # dispatcher routes this page to the Markdown widget. recover()
+            # runs the tier pipeline; _finalize_body_md then adds the
+            # born-digital docling fallback, marker stripping, and
+            # flat-fallback (in that order). Empty when the pdf-structure
+            # extra isn't installed, or when the run-scoped
+            # ``_skip_structure_extraction`` flag is set (battery-saver mode).
             structure_on = _HAS_PYMUPDF4LLM and not _skip_structure_extraction
             if structure_on:
                 ctx = ExtractionContext(
@@ -910,28 +936,9 @@ def _extract_inner(  # pyright: ignore[reportUnusedFunction]
                     path=str(path),
                     flat=text,
                 )
-                body_md = _recovery_pipeline().recover(ctx).markdown
+                body_md = _finalize_body_md(ctx, _recovery_pipeline().recover(ctx).markdown)
             else:
                 body_md = ""
-
-            # Phase 3 routing: if pymupdf4llm visibly missed structure
-            # (e.g. a big image-rendered table), try docling as a
-            # fallback. Docling's ML layout model can recover those.
-            # Splice the recovered table(s) into pymupdf4llm's formatted
-            # page rather than replacing it wholesale (which would drop
-            # bold/italic/headings, and on figure pages gain nothing).
-            # No-op when docling isn't installed.
-            if body_md and _needs_docling_fallback(page, body_md):
-                docling_md = _try_docling_fallback(str(path), page_index)
-                if docling_md:
-                    body_md = _splice_docling_tables(body_md, docling_md)
-
-            # Strip any leftover picture-omitted placeholders from the
-            # preview — done after routing/splice so the markers that
-            # positioned recovered tables are already gone, and multi-table
-            # pages are unaffected.
-            if body_md:
-                body_md = _strip_picture_markers(body_md)
 
             page_states.append(
                 {
