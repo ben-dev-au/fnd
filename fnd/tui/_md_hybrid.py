@@ -98,12 +98,18 @@ def _bake_match_spans_into_text(text: Text, spec: MatchSpec) -> bool:
         return False
     import re
 
+    from fnd.matching import phrase_char_spans
+    from fnd.render import HIGHLIGHT_STYLE
+
     hit = False
     for m in re.finditer(r"\w+", plain):
         runs = word_highlight_runs(m.group(0), spec)
         for off_s, off_e, style in runs:
             text.stylize(str(style), m.start() + off_s, m.start() + off_e)
             hit = True
+    for start, end in phrase_char_spans(plain, spec):
+        text.stylize(HIGHLIGHT_STYLE, start, end)
+        hit = True
     return hit
 
 

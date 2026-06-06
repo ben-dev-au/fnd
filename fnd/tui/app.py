@@ -60,9 +60,10 @@ from textual.widgets.tree import TreeNode
 from fnd import opener
 from fnd.config import Config, default_index_dir
 from fnd.explain import SearchTrace
-from fnd.matching import MatchSpec
+from fnd.matching import MatchSpec, phrase_char_spans
 from fnd.query import FileChunk, FileGroup, Hit, Searcher
 from fnd.render import (
+    HIGHLIGHT_STYLE,
     render_chunk_pieces,
     word_highlight_runs,
 )
@@ -354,6 +355,11 @@ def _build_match_spans(plain: str, spec: MatchSpec) -> list[Span]:
         runs = word_highlight_runs(m.group(0), spec)
         for offset_start, offset_end, style in runs:
             spans.append(Span(m.start() + offset_start, m.start() + offset_end, style))
+    # Quoted phrases highlight as one contiguous span (covering the
+    # punctuation/spaces between words), not per-word — so a phrase's
+    # stopwords never light up document-wide.
+    for start, end in phrase_char_spans(plain, spec):
+        spans.append(Span(start, end, HIGHLIGHT_STYLE))
     return spans
 
 

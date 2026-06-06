@@ -65,11 +65,13 @@ def text_has_any_match(text: str, spec: MatchSpec) -> bool:
     the cascade's pass semantics (exact-stem, fuzzy-AUTO, synonym).
     Used by the match-aware scrollbar so its markers cover all the
     same chunks the user-visible highlights cover."""
-    from fnd.matching import word_matches
+    from fnd.matching import phrase_char_spans, word_matches
 
     if spec.is_empty or not text:
         return False
-    return any(word_matches(m.group(0), spec) for m in re.finditer(r"\w+", text))
+    if any(word_matches(m.group(0), spec) for m in re.finditer(r"\w+", text)):
+        return True
+    return bool(phrase_char_spans(text, spec))
 
 
 def apply_stem_highlights(rendered: Text, term_stems: set[str]) -> bool:
@@ -90,7 +92,10 @@ def apply_stem_highlights(rendered: Text, term_stems: set[str]) -> bool:
 
 
 def apply_match_highlights(rendered: Text, spec: MatchSpec) -> bool:
-    """Stylize every matching word in ``rendered`` via word_highlight_runs."""
+    """Stylize matches in ``rendered``: quoted phrases as contiguous spans,
+    loose terms word-by-word via word_highlight_runs."""
+    from fnd.matching import phrase_char_spans
+
     if spec.is_empty:
         return False
     found = False
@@ -102,6 +107,9 @@ def apply_match_highlights(rendered: Text, spec: MatchSpec) -> bool:
             continue
         for offset_start, offset_end, style in runs:
             rendered.stylize(style, m.start() + offset_start, m.start() + offset_end)
+        found = True
+    for start, end in phrase_char_spans(plain, spec):
+        rendered.stylize(HIGHLIGHT_STYLE, start, end)
         found = True
     return found
 
@@ -181,7 +189,11 @@ def _terms_from_query(query: str) -> list[str]:
     q = re.sub(r"[+\-()\"~*?]", " ", q)
     # Drop bare AND / OR / NOT.
     q = re.sub(r"\b(AND|OR|NOT)\b", " ", q)
-    return [w for w in q.split() if w]
+    # Tokenize the same way the highlighter splits doc text (``\w+``) so a
+    # term carrying adjacent punctuation ("3." / "Monitoring,") yields the
+    # bare word — its stem then matches the clean doc-word stem instead of
+    # silently failing.
+    return re.findall(r"\w+", q)
 
 
 def render(blocks: list[Block], *, query: str = "") -> str:
