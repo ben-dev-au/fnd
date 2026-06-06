@@ -68,9 +68,15 @@ async def _drain(pilot: Pilot[None], n: int = 6) -> None:
 
 
 @pytest.mark.asyncio
-async def test_scroll_below_boundary_triggers_lazy_mount(cfg: Config, long_md_index: Path) -> None:
+async def test_scroll_below_boundary_triggers_lazy_mount(
+    cfg: Config, long_md_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Scrolling close to the bottom of the mounted region mounts more
-    chunks below it."""
+    chunks below it. Disable the active-file full-mount so the file stays
+    windowed — scroll-driven lazy-mount is the path for files beyond the
+    full-mount budget (monster docs); for in-budget files the eager fill
+    has already mounted everything below."""
+    monkeypatch.setattr("fnd.tui.app._FULLMOUNT_CHUNK_BUDGET", 0)
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -120,7 +126,7 @@ async def test_scroll_below_boundary_triggers_lazy_mount(cfg: Config, long_md_in
 
 @pytest.mark.asyncio
 async def test_lazy_mount_fires_after_settle_without_explicit_release(
-    cfg: Config, long_md_index: Path
+    cfg: Config, long_md_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Regression: an unfocused scroll (mouse-wheel hover) must still lazy-mount.
 
@@ -129,7 +135,11 @@ async def test_lazy_mount_fires_after_settle_without_explicit_release(
     so wheel-scrolling the unfocused pane never extended the window. Now the
     gate is is_settling — it clears when the nav's scroll commits — so this
     test does NOT call release() and lazy-mount must still fire.
+
+    Full-mount disabled so the file stays windowed (the >budget monster-file
+    path); in-budget files eagerly fill below, leaving nothing to lazy-mount.
     """
+    monkeypatch.setattr("fnd.tui.app._FULLMOUNT_CHUNK_BUDGET", 0)
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
