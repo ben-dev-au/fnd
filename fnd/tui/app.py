@@ -101,7 +101,11 @@ _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 # Container; switching files is then a single class-toggle. LRU-bounded.
 # See docs/PREVIEW_DOM_PLAN.md for the planned rework that aims to make
 # this cap effectively unlimited via screen-per-file isolation.
-_PREVIEW_CACHE_MAX_FILES = 4
+# Option A: only the active file stays mounted. Cached inactive containers
+# stayed in the pane and inflated every mount/settle (measured net-negative:
+# a "hit" rebuilt anyway since is_complete is never true in the windowed
+# model, while taxing the active path). 1 = no stale DOM behind the active file.
+_PREVIEW_CACHE_MAX_FILES = 1
 _PREVIEW_CACHE_MIN_CHUNKS = 1
 # Visible-first mount window — chunks are decoded already, mounting
 # focused ± these counts synchronously gives the user instant viewport
@@ -115,6 +119,10 @@ _VISIBLE_FIRST_BELOW = 7
 # buffer before lazy-mount engages (Stage 0a in PREVIEW_DOM_PLAN.md);
 # the trade-off is a small cold-mount cost per cached file.
 _BACKGROUND_FILL_RADIUS = 3
+# Option C: when the active file is within this many chunks, background-fill it
+# completely so internal match-jumps land on an already-mounted chunk (instant).
+# Larger files stay windowed (radius above) to protect DOM size / input lag.
+_FULLMOUNT_CHUNK_BUDGET = 250
 # Prefetch mounts only the focused chunk per cached file. User-side
 # resume expands on click via Phase 1b/2. Keeps prefetch DOM
 # contribution at ~1 widget per cached file.
@@ -2430,6 +2438,86 @@ class FNDApp(App[None]):
         _ = asyncio.get_event_loop()  # ensure a loop exists for the callback
         self.run_worker(_load, thread=True, exclusive=True, group="preview-load")
 
+    def _prune_active_to_window(self, margin: int = 3) -> None:
+        """Drop the currently-active container's off-screen chunks down to its
+        visible window. Used when switching files: the outgoing container stays
+        on screen while the incoming one builds, so its full-mounted DOM would
+        otherwise inflate the incoming mount's arrange (Option C's inter-file
+        cost). Flash-free — the visible window stays put; chunks removed ABOVE
+        the viewport are scroll-compensated so the on-screen content doesn't
+        shift while the outgoing container is still visible during the swap."""
+        import contextlib
+
+        container = self._active_preview
+        if container is None:
+            return
+        window = _VISIBLE_FIRST_ABOVE + _VISIBLE_FIRST_BELOW + 2 * margin + 1
+        if len(container.mounted_indices) <= window:
+            return  # not enough off-screen DOM to be worth pruning
+        try:
+            pane = self.query_one("#preview_pane", VerticalScroll)
+        except Exception:
+            return
+        if pane.size.height <= 0:
+            return
+        chunks = self._chunk_cache.get(container.parent_doc_id)
+        if not chunks:
+            return
+        vtop = float(pane.scroll_y)
+        vbot = vtop + float(pane.size.height)
+        ranges: list[tuple[int, Widget, float, float]] = []
+        for i in sorted(container.mounted_indices):
+            seq = chunks[i].chunk_seq
+            w = container.chunk_widgets.get(seq)
+            if w is None:
+                continue
+            try:
+                vr = w.virtual_region  # type: ignore[attr-defined]
+                ranges.append((i, w, float(vr.y), float(vr.y + vr.height)))
+            except Exception:
+                return  # geometry not ready — skip rather than risk a bad scroll
+        visible = [i for (i, _w, y0, y1) in ranges if y1 > vtop and y0 < vbot]
+        if not visible:
+            return
+        keep_lo, keep_hi = min(visible) - margin, max(visible) + margin
+        above_height = 0.0
+        to_remove: list[tuple[int, Widget]] = []
+        for i, w, y0, y1 in ranges:
+            if i < keep_lo:
+                above_height += y1 - y0
+                to_remove.append((i, w))
+            elif i > keep_hi:
+                to_remove.append((i, w))
+        if not to_remove:
+            return
+        import time as _time
+
+        from fnd.tui import _perf
+
+        _pt0 = _time.perf_counter()
+        self.begin_reconcile_scroll()
+        try:
+            for i, w in to_remove:
+                seq = chunks[i].chunk_seq
+                # display:none leaves the arrange immediately; remove() then frees
+                # it. (Keeping ~1000s of display:none widgets alive is worse — they
+                # still get walked by settle and inflate the next mount.)
+                with contextlib.suppress(Exception):
+                    w.display = False
+                with contextlib.suppress(Exception):
+                    w.remove()
+                container.mounted_indices.discard(i)
+                container.chunk_widgets.pop(seq, None)
+                container.match_targets.pop(seq, None)
+            if above_height > 0:
+                with contextlib.suppress(Exception):
+                    pane.scroll_to(
+                        y=max(0.0, vtop - above_height), animate=False, immediate=True
+                    )
+        finally:
+            self.end_reconcile_scroll()
+        _perf.mark("prune", removed=len(to_remove), ms=(_time.perf_counter() - _pt0) * 1000.0)
+
     def _dispatch_preview_mount(
         self,
         parent_id: str,
@@ -2466,14 +2554,15 @@ class FNDApp(App[None]):
         ):
             container = self._active_preview
             if container.is_complete or focus_chunk_seq in container.chunk_widgets:
-                from fnd.tui import _perf
+                # Target already mounted (Option C full-mount makes this the
+                # common case for internal jumps). A bare reconcile() scrolls
+                # before heavy match geometry is final and lands off-screen, so
+                # route through the scoped settle (cheap when already idle).
+                import asyncio as _asyncio
 
-                _perf.mark(
-                    "click_to_display_end",
-                    parent_id=parent_id,
-                    path="already_active_scroll_only",
+                self._preview_mount_task = _asyncio.create_task(
+                    self._settled_instant_scroll(container, parent_id, focus_chunk_seq)
                 )
-                self._preview_scroll.reconcile()
                 return
             # Same-file, target match OUTSIDE the mounted window. Resuming the
             # SAME container would mount the new window in document order —
@@ -2504,6 +2593,12 @@ class FNDApp(App[None]):
             return
 
         self._cancel_preview_mount_task()
+        # Option C hardening: the outgoing file may be FULL-mounted (~1000s of
+        # widgets). It stays on screen while the incoming file builds, and
+        # Textual's arrange scales with total DOM — so a big outgoing container
+        # inflates the new file's mount several-fold. Prune it to its visible
+        # window now (flash-free) so the incoming mount is cheap.
+        self._prune_active_to_window()
         # Sweep stranded containers — but preserve any still being filled by
         # a prefetch task. Removing those would orphan the task and trigger
         # a MountError on its next mount-before call.
@@ -3009,6 +3104,7 @@ class FNDApp(App[None]):
 
         from fnd.tui import _perf
 
+        _fin_t0 = time.perf_counter()
         header = container.chunk_widgets.get(focus_chunk_seq)
         # Step 1: wait for the focus chunk's build.
         try:
@@ -3059,7 +3155,21 @@ class FNDApp(App[None]):
         # is Textual's own message-drain signal (what Pilot waits on): it returns
         # only once every widget has processed its pending layout, so the geometry
         # the scroll reads is final.
-        await self._await_preview_settled()
+        _perf.mark(
+            "finalize_buildwait",
+            ms=(time.perf_counter() - _fin_t0) * 1000.0,
+            above=len(above_widgets),
+            path=path,
+        )
+        import os as _os
+
+        # Option B: scoped settle is the default — wait only on the geometry the
+        # scroll reads (focus + above-window heights), not a full-pane drain.
+        # _FND_FULL_SETTLE=1 restores the old behaviour as an escape hatch.
+        if _os.environ.get("_FND_FULL_SETTLE") == "1":
+            await self._await_preview_settled()
+        else:
+            await self._await_match_settled(header, above_widgets)
         wait_ms = (time.perf_counter() - t0) * 1000
         self._hide_progress_bar()
         _perf.mark(
@@ -3158,49 +3268,179 @@ class FNDApp(App[None]):
         bounded by ``max_rounds``. Replaces stability-polling heuristics, which
         can't tell a settled layout from a mid-reflow plateau."""
         import asyncio
+        import time as _time
 
-        for _ in range(max_rounds):
-            try:
-                screen = self.screen
-            except Exception:
-                return
-            # Drain only what bears on the preview's geometry: the app + screen
-            # (which run the arrange) and the preview pane's own subtree — NOT the
-            # whole screen (results tree, sidebars), which is irrelevant here and
-            # makes the per-round callback count scale with the unrelated DOM.
-            try:
-                pane = self.query_one("#preview_pane", VerticalScroll)
-                children = [self, screen, *pane.walk_children(with_self=True)]
-            except Exception:
-                # No pane yet — fall back to the screen-wide drain.
-                children = [self, *screen.walk_children(with_self=True)]
-            count = 0
-            done = asyncio.Event()
+        from fnd.tui import _perf
 
-            def _dec(_done: asyncio.Event = done) -> None:
-                nonlocal count
-                count -= 1
-                if count == 0:
-                    _done.set()
-
-            for child in children:
-                if child.call_later(_dec):
-                    count += 1
-            if count:
+        _t0 = _time.perf_counter()
+        rounds = 0
+        walked = 0
+        reason = "max_rounds"
+        try:
+            for _ in range(max_rounds):
                 try:
-                    async with asyncio.timeout(5.0):
-                        await done.wait()
-                except TimeoutError:
+                    screen = self.screen
+                except Exception:
+                    reason = "no_screen"
                     return
-            # Stop once the screen has no pending layout work — the geometry is
-            # now final. (These are the flags Screen._on_idle itself checks.)
-            if not (
-                getattr(screen, "_layout_required", False)
-                or getattr(screen, "_repaint_required", False)
-                or getattr(screen, "_recompose_required", False)
-                or getattr(screen, "_dirty_widgets", None)
-            ):
-                return
+                # Drain only what bears on the preview's geometry: the app + screen
+                # (which run the arrange) and the preview pane's own subtree — NOT the
+                # whole screen (results tree, sidebars), which is irrelevant here and
+                # makes the per-round callback count scale with the unrelated DOM.
+                try:
+                    pane = self.query_one("#preview_pane", VerticalScroll)
+                    children = [self, screen, *pane.walk_children(with_self=True)]
+                except Exception:
+                    # No pane yet — fall back to the screen-wide drain.
+                    children = [self, *screen.walk_children(with_self=True)]
+                count = 0
+                done = asyncio.Event()
+
+                def _dec(_done: asyncio.Event = done) -> None:
+                    nonlocal count
+                    count -= 1
+                    if count == 0:
+                        _done.set()
+
+                for child in children:
+                    if child.call_later(_dec):
+                        count += 1
+                rounds += 1
+                walked = len(children)
+                if count:
+                    try:
+                        async with asyncio.timeout(5.0):
+                            await done.wait()
+                    except TimeoutError:
+                        reason = "timeout"
+                        return
+                # Stop once the screen has no pending layout work — the geometry is
+                # now final. (These are the flags Screen._on_idle itself checks.)
+                if not (
+                    getattr(screen, "_layout_required", False)
+                    or getattr(screen, "_repaint_required", False)
+                    or getattr(screen, "_recompose_required", False)
+                    or getattr(screen, "_dirty_widgets", None)
+                ):
+                    reason = "settled"
+                    return
+        finally:
+            _perf.mark(
+                "settle",
+                rounds=rounds,
+                walked=walked,
+                ms=(_time.perf_counter() - _t0) * 1000.0,
+                reason=reason,
+            )
+
+    async def _await_match_settled(
+        self,
+        header: FNDMarkdown | Widget | None,
+        above_widgets: list[FNDMarkdown],
+        max_rounds: int = 12,
+    ) -> None:
+        """Option B — targeted settle. The full-pane drain waits for the WHOLE
+        screen to stop reflowing; but the only geometry the scroll reads is the
+        focus chunk's virtual_y, which is fixed once the above-window chunk
+        heights stop changing. So drain only [app, screen, focus, above] and
+        exit when those heights are stable for two consecutive rounds — far
+        fewer callbacks/round than walking every block in the pane, and an
+        earlier exit than the screen-global flags allow. Stability is judged on
+        the SPECIFIC heights that move the match, not a generic region poll, so
+        a mid-reflow plateau can't masquerade as settled (the heights are still
+        changing during reflow)."""
+        import asyncio
+        import time as _time
+
+        from fnd.tui import _perf
+
+        _t0 = _time.perf_counter()
+        watch: list[Widget] = [w for w in [header, *above_widgets] if w is not None]
+        # Nothing to track (no focus/above widgets, or no resolvable match) —
+        # fall back to the full-pane drain rather than scroll against unknown
+        # geometry. The scoped path only buys us anything when there ARE heights
+        # to watch settle.
+        if not watch:
+            await self._await_preview_settled()
+            return
+        targets = [self, self.screen, *watch]  # App + Screen + widgets all have call_later
+
+        def _sig() -> tuple[int, ...]:
+            out: list[int] = []
+            for w in watch:
+                try:
+                    out.append(w.size.height)
+                except Exception:
+                    out.append(-1)
+            return tuple(out)
+
+        prev: tuple[int, ...] | None = None
+        stable = 0
+        rounds = 0
+        reason = "max_rounds"
+        try:
+            for _ in range(max_rounds):
+                count = 0
+                done = asyncio.Event()
+
+                def _dec(_done: asyncio.Event = done) -> None:
+                    nonlocal count
+                    count -= 1
+                    if count == 0:
+                        _done.set()
+
+                for w in targets:
+                    if w.call_later(_dec):
+                        count += 1
+                rounds += 1
+                if count:
+                    try:
+                        async with asyncio.timeout(5.0):
+                            await done.wait()
+                    except TimeoutError:
+                        reason = "timeout"
+                        return
+                cur = _sig()
+                # All watched heights must be real (>0) AND unchanged twice.
+                if cur == prev and all(h > 0 for h in cur):
+                    stable += 1
+                    if stable >= 2:
+                        reason = "stable"
+                        return
+                else:
+                    stable = 0
+                prev = cur
+        finally:
+            _perf.mark(
+                "settle",
+                rounds=rounds,
+                walked=len(targets),
+                ms=(_time.perf_counter() - _t0) * 1000.0,
+                reason=reason,
+                scoped=True,
+            )
+
+    async def _settled_instant_scroll(
+        self, container: PreviewContainer, parent_id: str, focus_chunk_seq: int
+    ) -> None:
+        """Option C: the target chunk is already mounted, so scroll straight to
+        it — but settle the focus + nearest-above heights first (cheap, ~2 rounds
+        when the file is idle) so heavy table/fence geometry is final and the
+        match lands on-screen instead of clamping off."""
+        from fnd.tui import _perf
+
+        header = container.chunk_widgets.get(focus_chunk_seq)
+        above_seqs = sorted(s for s in container.chunk_widgets if s < focus_chunk_seq)[-7:]
+        above = [
+            w
+            for s in above_seqs
+            if isinstance((w := container.chunk_widgets.get(s)), FNDMarkdown)
+        ]
+        await self._await_match_settled(header, above)
+        _perf.mark(
+            "click_to_display_end", parent_id=parent_id, path="already_active_scroll_only"
+        )
+        self._preview_scroll.reconcile()
 
     def _cancel_preview_mount_task(self) -> None:
         """Cancel any in-flight mount task. The cancelled task's
@@ -3868,9 +4108,9 @@ class FNDApp(App[None]):
             await asyncio.sleep(0)
 
             # Phase 2a: background fill BELOW the window, capped at the
-            # lazy-mount radius. Mounting every chunk of a 5000-chunk
-            # PDF takes minutes AND inflates DOM enough to break the
-            # input-lag envelope; the radius bounds both.
+            # lazy-mount radius. Kept SMALL so first paint only needs the
+            # window — Option C's full-mount is deferred to Phase 3, strictly
+            # after the reveal, so it never delays first paint.
             below_end = min(len(chunks), focus_idx + 1 + _BACKGROUND_FILL_RADIUS)
             for i in range(win_end, below_end):
                 if i in container.mounted_indices:
@@ -3913,6 +4153,42 @@ class FNDApp(App[None]):
                     # "wrong position until expanded" symptom).
                     with contextlib.suppress(Exception):
                         self._preview_scroll.reconcile()
+
+            # Phase 3 (Option C): the first view has now painted (finalize
+            # revealed during Phase 1/2). Fill the REST of the file in the
+            # background so internal match-jumps land on an already-mounted
+            # chunk. Strictly AFTER the reveal so it never delays first paint;
+            # outward in small batches via _lazy_mount_batch (which keeps the
+            # view anchored when prepending above); generous yields so it never
+            # starves interaction; budget-capped so monster files stay windowed;
+            # bails the instant the user navigates away.
+            if len(chunks) <= _FULLMOUNT_CHUNK_BUDGET:
+                # Wait for finalize to actually reveal (first paint) before adding
+                # any DOM — otherwise this fill runs on the same coroutine and
+                # starves the finalize task, delaying first paint several-fold.
+                _ft = getattr(container, "_finalize_task", None)
+                if _ft is not None:
+                    with contextlib.suppress(Exception):
+                        await _ft
+                await asyncio.sleep(0.05)
+                batch_size = 6
+                # Fill BELOW only: appending in document order grows content
+                # DOWNWARD, so the match the user is reading never moves — no
+                # flicker. Downward match-jumps land on a mounted chunk (instant).
+                # We deliberately DON'T pre-fill ABOVE: inserting content above the
+                # viewport shoves it down, and the scroll can only re-pin a frame
+                # later (layout is async), so a passive above-fill always jitters
+                # the viewport. Upward jumps instead rebuild on demand (~140ms,
+                # correct, flicker-free) — movement during a deliberate jump is
+                # expected; movement while the user sits still is not.
+                i = max(container.mounted_indices) + 1
+                while i < len(chunks) and self._active_preview is container:
+                    if i not in container.mounted_indices:
+                        with contextlib.suppress(Exception):
+                            self._mount_chunk_into(container, chunks[i], i, chunks)
+                    i += 1
+                    if i % batch_size == 0:
+                        await asyncio.sleep(0.006)
         finally:
             # Always reveal any widgets we hid; a cancelled task that
             # left them hidden would leak a half-displayed container
