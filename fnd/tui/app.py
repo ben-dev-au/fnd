@@ -2511,9 +2511,7 @@ class FNDApp(App[None]):
                 container.match_targets.pop(seq, None)
             if above_height > 0:
                 with contextlib.suppress(Exception):
-                    pane.scroll_to(
-                        y=max(0.0, vtop - above_height), animate=False, immediate=True
-                    )
+                    pane.scroll_to(y=max(0.0, vtop - above_height), animate=False, immediate=True)
         finally:
             self.end_reconcile_scroll()
         _perf.mark("prune", removed=len(to_remove), ms=(_time.perf_counter() - _pt0) * 1000.0)
@@ -3432,14 +3430,10 @@ class FNDApp(App[None]):
         header = container.chunk_widgets.get(focus_chunk_seq)
         above_seqs = sorted(s for s in container.chunk_widgets if s < focus_chunk_seq)[-7:]
         above = [
-            w
-            for s in above_seqs
-            if isinstance((w := container.chunk_widgets.get(s)), FNDMarkdown)
+            w for s in above_seqs if isinstance((w := container.chunk_widgets.get(s)), FNDMarkdown)
         ]
         await self._await_match_settled(header, above)
-        _perf.mark(
-            "click_to_display_end", parent_id=parent_id, path="already_active_scroll_only"
-        )
+        _perf.mark("click_to_display_end", parent_id=parent_id, path="already_active_scroll_only")
         self._preview_scroll.reconcile()
 
     def _cancel_preview_mount_task(self) -> None:

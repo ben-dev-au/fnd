@@ -262,6 +262,10 @@ async def test_cold_nav_to_prefetched_non_first_file_lands_on_screen(
         ranking={"default": RankingProfileConfig()},
     )
     app = FNDApp(index_dir=tmp_index_dir, config=cfg, collection="notes")
+    # The shipped cache caps at 1 (see _PREVIEW_CACHE_MAX_FILES); lift it so a
+    # non-first file can stay pre-mounted and the prefetched-container nav path
+    # is exercised. The decode is prefetched regardless of cache size.
+    app._preview_cache.max_files = 8
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one("#preview_pane")
         rtree = app.query_one("#results_pane", Tree)
