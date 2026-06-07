@@ -1386,12 +1386,17 @@ class FNDApp(App[None]):
         # Bundled curated defaults + the user's optional personal table;
         # missing personal file is fine (defaults still apply).
         from fnd.config import app_data_dir
-        from fnd.synonyms import SynonymTable, load_merged_synonyms
+        from fnd.synonyms import SynonymTable, load_default_synonyms, load_merged_synonyms
 
         try:
             self._synonyms: SynonymTable = load_merged_synonyms(app_data_dir() / "synonyms.toml")
         except Exception:
-            self._synonyms = SynonymTable()
+            # A bad personal file is already skipped inside the loader; this is
+            # a last resort — still keep the bundled defaults, not an empty table.
+            try:
+                self._synonyms = load_default_synonyms()
+            except Exception:
+                self._synonyms = SynonymTable()
         # Ranking profile applied at search time. Built from the active
         # collection's ``ranking_profile`` field; default profile (all-zero)
         # is the BM25 identity, so the no-config case is unchanged.

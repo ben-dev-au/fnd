@@ -109,3 +109,11 @@ def test_quoted_multiword_is_hyphen_agnostic():
     table = load_default_synonyms()
     # a quoted full form WITHOUT the hyphen still expands to the acronym
     assert "mfa" in expand('"multi factor authentication"', table)
+
+
+def test_malformed_personal_file_keeps_defaults(tmp_path: Path):
+    personal = tmp_path / "synonyms.toml"
+    personal.write_text("this is = not valid toml [[[", encoding="utf-8")
+    table = load_merged_synonyms(personal)
+    # bundled defaults survive a broken personal file
+    assert table.expansions_for("mfa") is not None

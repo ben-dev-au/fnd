@@ -18,6 +18,7 @@ Group entries are bidirectional: any one form expands to the rest.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -114,10 +115,13 @@ def load_merged_synonyms(personal_path: Path | None = None) -> SynonymTable:
     """Bundled defaults merged with the user's optional personal table.
 
     Missing personal file is fine (defaults still apply); user groups extend
-    or fold into the defaults via :func:`merge_tables`."""
+    or fold into the defaults via :func:`merge_tables`. A malformed personal
+    file is skipped (bundled defaults are preserved, never discarded)."""
     tables = [load_default_synonyms()]
     if personal_path is not None:
-        tables.append(load_synonyms(personal_path))
+        # Invalid personal TOML is skipped so the bundled defaults survive.
+        with contextlib.suppress(Exception):
+            tables.append(load_synonyms(personal_path))
     return merge_tables(*tables)
 
 
