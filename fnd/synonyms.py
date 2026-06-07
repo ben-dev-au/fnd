@@ -121,54 +121,77 @@ def load_merged_synonyms(personal_path: Path | None = None) -> SynonymTable:
     return merge_tables(*tables)
 
 
-# Match either a quoted phrase ("..."), or a contiguous run of word chars.
-# The whole-string scan rebuilds the query: phrases are emitted untouched
-# (they short-circuit synonym expansion); bare words are looked up.
-_TOKEN_RE = re.compile(r'"[^"]*"|\w[\w\-]*')
-
-
 def expand(query: str, table: SynonymTable) -> str:
-    """Rewrite ``query`` so any term in a synonym group becomes a Tantivy
+    """Rewrite ``query`` so any synonym-group member becomes a Tantivy
     OR-disjunction over every member of that group.
 
-    Single-word synonyms are emitted bare; multi-word synonyms are quoted
-    so the parser sees a phrase. Inner words of a quoted phrase are NOT
-    expanded individually — the user already asked for an exact phrase. But
-    if the whole phrase itself matches a synonym group member, the phrase
-    expands as a unit.
-
-    The original term is always included in the disjunction so an exact
-    match still scores normally if Tantivy finds it.
+    Matches single words, multi-word phrases (hyphen/space-agnostic, so both
+    ``multi-factor authentication`` and ``multi factor authentication`` expand),
+    and whole quoted phrases. Words inside a user's quoted phrase are not
+    expanded individually — that span is already an exact-match request. The
+    original term stays in the disjunction so an exact hit still scores.
     """
     if not table.groups:
         return query
 
-    out_parts: list[str] = []
-    last = 0
+    # Group lookup keyed by the \w+ token tuple (hyphens are separators) so a
+    # query form matches a table form regardless of hyphenation. O(1) lookups.
+    key2group: dict[tuple[str, ...], tuple[str, ...]] = {}
+    max_len = 1
+    for g in table.groups:
+        for term in g:
+            toks = tuple(re.findall(r"\w+", term.casefold()))
+            if toks:
+                key2group.setdefault(toks, g)
+                max_len = max(max_len, len(toks))
 
-    # Walk phrases and bare words in document order, picking the right
-    # action for each.
-    token_re = re.compile(r'"([^"]*)"|(\w[\w\-]*)')
-    for m in token_re.finditer(query):
-        phrase_body = m.group(1)
-        word = m.group(2)
-        if phrase_body is not None:
-            # Whole-phrase synonym match? Expand. Otherwise leave it alone.
-            expansions = table.expansions_for(phrase_body)
-            if expansions is not None:
-                out_parts.append(query[last : m.start()])
-                out_parts.append(_format_disjunction(phrase_body, expansions))
-                last = m.end()
-            # else: drop through; phrase stays untouched in the output.
-        elif word is not None:
-            expansions = table.expansions_for(word)
-            if expansions is None:
+    quoted = list(re.finditer(r'"([^"]*)"', query))
+    qranges = [(m.start(), m.end()) for m in quoted]
+
+    def in_quote(pos: int) -> bool:
+        return any(s <= pos < e for s, e in qranges)
+
+    # Replacements as (start, end, text). Quoted-phrase and bare-word spans
+    # never overlap (bare words inside quotes are skipped).
+    repls: list[tuple[int, int, str]] = []
+    for m in quoted:
+        exp = table.expansions_for(m.group(1))
+        if exp is not None:
+            repls.append((m.start(), m.end(), _format_disjunction(m.group(1), exp)))
+
+    words = [m for m in re.finditer(r"\w+", query) if not in_quote(m.start())]
+    i, n = 0, len(words)
+    while i < n:
+        matched = False
+        for k in range(min(max_len, n - i), 0, -1):
+            run = words[i : i + k]
+            # Contiguous phrase: only whitespace/hyphens between the tokens.
+            if any(
+                set(query[run[j].end() : run[j + 1].start()]) - {" ", "\t", "-"}
+                for j in range(k - 1)
+            ):
                 continue
-            out_parts.append(query[last : m.start()])
-            out_parts.append(_format_disjunction(word, expansions))
-            last = m.end()
-    out_parts.append(query[last:])
-    return "".join(out_parts)
+            grp = key2group.get(tuple(w.group(0).casefold() for w in run))
+            if grp is not None:
+                surface = query[run[0].start() : run[-1].end()]
+                repls.append((run[0].start(), run[-1].end(), _format_disjunction(surface, grp)))
+                i += k
+                matched = True
+                break
+        if not matched:
+            i += 1
+
+    repls.sort()
+    out: list[str] = []
+    last = 0
+    for s, e, rep in repls:
+        if s < last:
+            continue
+        out.append(query[last:s])
+        out.append(rep)
+        last = e
+    out.append(query[last:])
+    return "".join(out)
 
 
 def _format_disjunction(original: str, group: tuple[str, ...]) -> str:

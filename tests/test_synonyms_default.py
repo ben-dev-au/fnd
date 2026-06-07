@@ -30,6 +30,23 @@ def test_mfa_expands_to_full_form():
     assert "mfa" in expand('"multi-factor authentication"', table)
 
 
+def test_unquoted_multiword_expands_to_acronym():
+    """The reverse direction: an UNQUOTED multi-word form must expand to the
+    acronym (hyphen/space-agnostic), not only acronym -> phrase."""
+    table = load_default_synonyms()
+    assert "mfa" in expand("multi-factor authentication", table)  # hyphenated
+    assert "mfa" in expand("multi factor authentication", table)  # spaced
+    # mid-query, with surrounding words preserved
+    out = expand("deploy multi factor authentication now", table)
+    assert "mfa" in out
+    assert out.startswith("deploy ") and out.endswith(" now")
+
+
+def test_unrelated_multiword_left_untouched():
+    table = load_default_synonyms()
+    assert expand("totally unrelated phrase here", table) == "totally unrelated phrase here"
+
+
 def test_acronym_groups_present():
     table = load_default_synonyms()
     for term in ("vpn", "pki", "ids", "siem", "tls"):
