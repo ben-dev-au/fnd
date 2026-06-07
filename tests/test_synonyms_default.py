@@ -39,7 +39,8 @@ def test_unquoted_multiword_expands_to_acronym():
     # mid-query, with surrounding words preserved
     out = expand("deploy multi factor authentication now", table)
     assert "mfa" in out
-    assert out.startswith("deploy ") and out.endswith(" now")
+    assert out.startswith("deploy ")
+    assert out.endswith(" now")
 
 
 def test_unrelated_multiword_left_untouched():
@@ -102,3 +103,9 @@ def test_merge_unions_shared_term_groups():
 
 def test_load_synonyms_missing_is_empty(tmp_path: Path):
     assert load_synonyms(tmp_path / "nope.toml").groups == []
+
+
+def test_quoted_multiword_is_hyphen_agnostic():
+    table = load_default_synonyms()
+    # a quoted full form WITHOUT the hyphen still expands to the acronym
+    assert "mfa" in expand('"multi factor authentication"', table)

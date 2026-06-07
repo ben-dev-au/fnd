@@ -60,3 +60,14 @@ def test_all_stopword_query_does_not_crash(stopword_index: Path) -> None:
     # becoming empty / crashing.
     hits = Searcher(index_dir=stopword_index).search("the and in", limit=10)
     assert isinstance(hits, list)
+
+
+def test_strip_handles_punctuation_adjacent_stopwords() -> None:
+    from fnd.stopwords import strip_query_stopwords
+
+    # "the," / "in." are recognised as stopwords despite trailing punctuation
+    assert strip_query_stopwords("the, defence in. depth") == "defence depth"
+    # a content token with trailing punctuation is kept in its original form
+    assert strip_query_stopwords("defence, depth") == "defence, depth"
+    # all-stopword (even punctuated) falls back to the original query
+    assert strip_query_stopwords("the, and.") == "the, and."

@@ -155,7 +155,9 @@ def expand(query: str, table: SynonymTable) -> str:
     # never overlap (bare words inside quotes are skipped).
     repls: list[tuple[int, int, str]] = []
     for m in quoted:
-        exp = table.expansions_for(m.group(1))
+        # Token-tuple lookup (not exact string) so a quoted phrase expands
+        # regardless of hyphen/space, matching the bare-word path below.
+        exp = key2group.get(tuple(re.findall(r"\w+", m.group(1).casefold())))
         if exp is not None:
             repls.append((m.start(), m.end(), _format_disjunction(m.group(1), exp)))
 

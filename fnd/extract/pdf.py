@@ -303,7 +303,7 @@ def _font_clustering_heading(
                 txt = (span.get("text") or "").strip()
                 if not txt:
                     continue
-                size = round(float(span.get("size", 0.0)))
+                size = round(float(span.get("size") or 0.0))
                 spans.append((float(size), txt, int(span.get("flags", 0))))
 
     if not spans:
@@ -369,7 +369,7 @@ def _largest_font_headings(page: pymupdf.Page) -> set[str]:
                 t = sp.get("text") or ""
                 if t.strip():
                     parts.append(t)
-                    size = max(size, round(float(sp.get("size", 0.0))))
+                    size = max(size, round(float(sp.get("size") or 0.0)))
             text = "".join(parts).strip()
             if text:
                 lines.append((size, text))
@@ -820,9 +820,11 @@ def _fold_own_heading(chunk: Chunk) -> Chunk:
     A TOC-derived heading often isn't rendered verbatim in the page text;
     prepend it unless already present. Applied at yield time — so it also
     fixes chunks served from the texture cache, where ``body`` was stored
-    pre-fold. Idempotent via the membership guard."""
+    pre-fold. Idempotent: skips when ``body`` already opens with the folded
+    heading line (a plain ``in`` check would false-match a substring, e.g.
+    leaf "Security" inside body "Cybersecurity")."""
     leaf = chunk.heading_path.split(" > ")[-1].strip() if chunk.heading_path else ""
-    if leaf and leaf not in chunk.body:
+    if leaf and not chunk.body.startswith(f"{leaf}\n"):
         chunk.body = f"{leaf}\n{chunk.body}"
     return chunk
 

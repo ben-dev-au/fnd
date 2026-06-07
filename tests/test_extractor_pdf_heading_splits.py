@@ -63,16 +63,15 @@ def test_consecutive_headings_split_into_own_chunks(tmp_path: Path) -> None:
     assert c1.chunk_seq != c2.chunk_seq
 
 
-_SAMPLE = Path(
-    "/Users/BenDavidson/Documents/Uni/B. Software Engineering (Honours)/"
-    "2026 Semester 1/Security Foundations/6 - Assignments/SFO Assignment 1/"
-    "Research/Research Notes for Case Study 1 – Network Security and CIA Triad.pdf"
-)
+# Path to a real PDF whose numbered-heading list reproduces the merge bug,
+# supplied out-of-band so no machine-specific path is committed.
+_SAMPLE_ENV = os.environ.get("FND_AUDIT_PDF_SAMPLE", "")
+_SAMPLE = Path(_SAMPLE_ENV) if _SAMPLE_ENV else None
 
 
 @pytest.mark.skipif(
-    not (_SAMPLE.exists() and os.environ.get("FND_AUDIT_REAL_CORPUS")),
-    reason="real SFO corpus not present (set FND_AUDIT_REAL_CORPUS=1)",
+    not (_SAMPLE and _SAMPLE.exists() and os.environ.get("FND_AUDIT_REAL_CORPUS")),
+    reason="real PDF sample absent (set FND_AUDIT_PDF_SAMPLE=<path> FND_AUDIT_REAL_CORPUS=1)",
 )
 def test_real_sample_item3_is_own_chunk() -> None:
     from fnd.extract import pdf as pdfx

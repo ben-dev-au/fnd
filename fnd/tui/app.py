@@ -716,9 +716,10 @@ def _find_first_match_coord_in_table(
 ) -> tuple[int, int] | None:
     """Return (row, col) of the first cell that contains a query match.
 
-    A cell matches iff one of its words matches ``spec`` — the same
-    ``word_matches`` gate the highlight overlay applies — so the
-    coordinate always points at a cell that is actually highlighted.
+    A cell matches iff ``text_has_any_match`` does — a word match OR a
+    quoted-phrase span, the same gate the highlight overlay applies — so the
+    coordinate always points at a cell that is actually highlighted (quoted
+    phrases included).
     (Checking the Content's ``spans`` instead is wrong: that set also
     carries the markdown styling spans — inline code, emphasis, links —
     so the first *styled* cell wins over the first *matched* one, parking

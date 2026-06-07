@@ -12,6 +12,7 @@ ranges, proximity, wildcards) so those paths are left untouched.
 from __future__ import annotations
 
 import re
+import string
 from typing import Final
 
 # Function words with ~zero IDF. Reused by the preview highlighter
@@ -75,7 +76,9 @@ def strip_query_stopwords(query: str) -> str:
     """
     if _SPECIAL.search(query):
         return query
-    kept = [t for t in query.split() if t.lower() not in STOPWORDS]
+    # Strip surrounding punctuation for the membership test so "the,"/"in."
+    # are recognised, but keep the original token when retained.
+    kept = [t for t in query.split() if t.strip(string.punctuation).lower() not in STOPWORDS]
     if not kept:
         return query
     return " ".join(kept)

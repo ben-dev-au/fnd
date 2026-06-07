@@ -1,5 +1,7 @@
-"""Proximity ranking: terms close together rank above scattered ones,
-measured over the full chunk body, and enabled by default.
+"""Proximity ranking: the optional post-rank multiplier scores terms close
+together above scattered ones over the full chunk body. It is opt-in
+(``phrase_proximity`` defaults to 0.0); the default proximity/exactness
+signal is fusion's exact-phrase pass.
 """
 
 from __future__ import annotations
@@ -44,7 +46,7 @@ def test_proximity_measures_full_body_not_just_snippet() -> None:
 
 
 def test_proximity_multiplier_off_by_default() -> None:
-    """The post-rank multiplier is opt-in; the default proximity signal is
-    fusion's native sloppy-phrase passes (see test_phase_9_fusion)."""
+    """The post-rank multiplier is opt-in; the default proximity/exactness
+    signal is fusion's exact-phrase pass (see test_fusion_phrase_pass)."""
     assert RankingProfileConfig().phrase_proximity == 0.0
     assert profile_from_config(RankingProfileConfig()).phrase_proximity == 0.0
