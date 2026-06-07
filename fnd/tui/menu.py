@@ -1970,26 +1970,48 @@ def _run_update_cache(app: FNDApp) -> None:
     files. So: forget the cache entry for each still-flat PDF first,
     THEN run the Update-all chain with texturise forced on. Cached
     already-textured PDFs are left alone and short-circuit normally."""
-    _forget_cache_for_flat_pdfs()
-    _push_update_all_confirm(app, texturise_override=True)
+    # The flat-PDF scan + per-file sha/cache-forget is seconds-long on a
+    # real corpus; running it in the menu handler froze the TUI before the
+    # confirm appeared. Do it on a worker thread, then push the confirm
+    # back on the UI thread. The menu stays responsive throughout.
+    import asyncio
+    import contextlib
+    import threading
+
+    def _worker() -> None:
+        _forget_cache_for_flat_pdfs()
+        with contextlib.suppress(Exception):
+            result = app.call_from_thread(_push_update_all_confirm, app, texturise_override=True)
+            if asyncio.iscoroutine(result):
+                result.close()
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def _forget_cache_for_flat_pdfs() -> None:
     """Delete the structured-extraction cache entry for every PDF
     that is currently flat in the index. Best-effort - any per-file
     failure (sha read, cache write) is suppressed so a single bad
-    file doesn't take down the whole texturise run."""
+    file doesn't take down the whole texturise run.
+
+    Reuses the most recent background scan when one is cached; otherwise
+    computes inline (this runs on a worker thread, never the event loop —
+    see ``_run_update_cache``)."""
     import contextlib
 
     try:
         from fnd.cache import ExtractionCache, sha256_file
         from fnd.extract.pdf import texture_signature
+        from fnd.tui import flat_pdf_scan
         from fnd.tui.settings_screen import _flat_pdfs_with_reasons
     except Exception:
         return
+    rows = flat_pdf_scan.cached_rows(None)
+    if rows is None:
+        rows = list(_flat_pdfs_with_reasons())
     cache = ExtractionCache()
     sig = texture_signature()
-    for _collection, path, _reason, _recorded_at in _flat_pdfs_with_reasons():
+    for _collection, path, _reason, _recorded_at in rows:
         with contextlib.suppress(OSError):
             from pathlib import Path
 

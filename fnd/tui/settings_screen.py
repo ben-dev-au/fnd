@@ -3881,7 +3881,7 @@ def _format_recorded_at(iso: str) -> str:
     return ts.strftime("%b %d %H:%M")
 
 
-def _flat_pdfs_with_reasons(
+def _flat_pdfs_with_reasons(  # pyright: ignore[reportUnusedFunction]  # consumed cross-module by fnd.tui.flat_pdf_scan + menu, never inline (the scan is too slow for the event loop)
     *, collection: str | None = None
 ) -> list[tuple[str, str, str, str | None]]:
     """Return a list of ``(collection, path, reason, recorded_at)`` for
@@ -4083,25 +4083,63 @@ class StillFlatDrillIn(Screen[None]):
             )
 
     def _refresh(self) -> None:
-        self._rows = _flat_pdfs_with_reasons(collection=self._collection_filter)
+        """Paint the last scan instantly (or a 'Scanning…' placeholder on
+        a cold cache) and recompute off the event loop. The flat-PDF scan
+        walks every source on disk and diffs the index — seconds on a real
+        corpus — so it must never run on the UI thread or the screen
+        freezes on open. ``_on_rows_ready`` repaints when the worker lands."""
+        from fnd.tui import flat_pdf_scan
+
+        cached = flat_pdf_scan.cached_rows(self._collection_filter)
+        if cached is not None:
+            self._render_rows(cached)
+        else:
+            self._render_placeholder("Scanning for flat PDFs…")
+        self._schedule_rescan()
+
+    def _schedule_rescan(self) -> None:
+        from fnd.tui import flat_pdf_scan
+
+        flat_pdf_scan.schedule_refresh(
+            self.app, self._collection_filter, on_ready=self._on_rows_ready
+        )
+
+    def _on_rows_ready(self, rows: list[tuple[str, str, str, str | None]]) -> None:
+        """Background scan finished (marshalled onto the UI thread)."""
+        self._render_rows(rows)
+
+    def _render_placeholder(self, text: str) -> None:
+        import contextlib as _ctx
+
+        with _ctx.suppress(Exception):
+            body = self.query_one("#still_flat_body", VerticalScroll)
+            for child in list(body.children):
+                child.remove()
+            body.mount(Static(text, id="empty_state"))
+
+    def _render_rows(self, rows: list[tuple[str, str, str, str | None]]) -> None:
+        import contextlib as _ctx
+
+        self._rows = rows
         # Clamp cursor after a row is removed by Retry/Dismiss so the
         # cursor doesn't index past the end.
         if self._cursor >= len(self._rows):
             self._cursor = max(0, len(self._rows) - 1)
-        body = self.query_one("#still_flat_body", VerticalScroll)
-        for child in list(body.children):
-            child.remove()
-        if not self._rows:
-            body.mount(Static("Nothing to fix - every PDF is textured.", id="empty_state"))
-            return
-        for i, (col, path, reason, recorded_at) in enumerate(self._rows):
-            cls = "row -cursor" if i == self._cursor else "row"
-            body.mount(
-                Static(
-                    self._format_row(i, col, path, reason, recorded_at),
-                    classes=cls,
+        with _ctx.suppress(Exception):
+            body = self.query_one("#still_flat_body", VerticalScroll)
+            for child in list(body.children):
+                child.remove()
+            if not self._rows:
+                body.mount(Static("Nothing to fix - every PDF is textured.", id="empty_state"))
+                return
+            for i, (col, path, reason, recorded_at) in enumerate(self._rows):
+                cls = "row -cursor" if i == self._cursor else "row"
+                body.mount(
+                    Static(
+                        self._format_row(i, col, path, reason, recorded_at),
+                        classes=cls,
+                    )
                 )
-            )
 
     def _format_row(self, i: int, col: str, path: str, reason: str, recorded_at: str | None) -> str:
         """Multi-line row: filename, then status chip + collection +
@@ -4248,7 +4286,14 @@ class StillFlatDrillIn(Screen[None]):
             mark_dismissed(sha)
             with _ctx.suppress(Exception):
                 clear_failure(collection=col, path=path)
-        self._refresh()
+        # Drop the row optimistically so it vanishes now, then invalidate
+        # the cached scan and recompute off-loop to reconcile (a fresh
+        # scan within the TTL would otherwise re-render the stale row).
+        from fnd.tui import flat_pdf_scan
+
+        self._render_rows([r for r in self._rows if r[1] != path])
+        flat_pdf_scan.invalidate(self._collection_filter)
+        self._schedule_rescan()
         self.notify(f"Dismissed: {Path(path).name}", severity="information")
 
     def action_copy_path(self) -> None:

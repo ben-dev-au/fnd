@@ -74,46 +74,13 @@ def fmt_duration(seconds: float) -> str:
 fmt_eta = fmt_duration
 
 
-_todo_cache: tuple[float, int] = (0.0, 0)
-_TODO_TTL_S = 5.0
-
-
-def _count_files_needing_attention() -> int:
-    """How many files belong on the to-do list right now.
-
-    Union of:
-    - PDFs on disk under a collection source that have no body_md chunk
-      in tantivy (flat: cache-hit-stays-flat or never-textured). body_md
-      is the texturing payload; body_struct is on every indexed PDF.
-    - Failed files recorded in the failure log.
-
-    Cached for ``_TODO_TTL_S`` seconds because the underlying call
-    walks every collection source on disk AND searches tantivy - too
-    heavy for the modal's 1Hz tick to invoke unconditionally."""
-    global _todo_cache
-    import time
-
-    now = time.monotonic()
-    cached_at, cached_count = _todo_cache
-    if now - cached_at < _TODO_TTL_S:
-        return cached_count
-    try:
-        from fnd.tui.settings_screen import _flat_pdfs_with_reasons
-
-        count = len(_flat_pdfs_with_reasons())
-    except Exception:
-        count = cached_count
-    _todo_cache = (now, count)
-    return count
-
-
 def invalidate_todo_count_cache() -> None:
-    """Force the next _count_files_needing_attention call to recompute.
+    """Drop the cached flat-PDF scan so the next refresh recomputes.
     Called when a chain finishes so the post-run count reflects the
-    just-resolved files immediately rather than after the next 5s
-    TTL window."""
-    global _todo_cache
-    _todo_cache = (0.0, 0)
+    just-resolved files rather than the pre-run backlog."""
+    from fnd.tui import flat_pdf_scan
+
+    flat_pdf_scan.invalidate(None)
 
 
 def _stuck_suffix() -> str:
@@ -307,6 +274,11 @@ class IndexerScreen(ModalScreen[None]):
         # Textual picks first and arrows go to the wrong place.
         with contextlib.suppress(Exception):
             self.query_one("#indexer_actions", OptionList).focus()
+        # Kick off the flat-PDF scan on a worker thread so the modal
+        # paints now and the "Flat PDFs" count appears when ready. The
+        # scan is seconds-long on a real corpus (20-30 s mid-rebuild);
+        # running it on the event loop is what froze the portal on open.
+        self._schedule_todo_refresh()
         # Spawn a coroutine that drains the event queue and updates
         # the widgets until the screen is dismissed.
         self.run_worker(self._drain_events(), exclusive=False)
@@ -442,7 +414,12 @@ class IndexerScreen(ModalScreen[None]):
             return
         want_done = self._chain_finished(app)
         want_skip = (not want_done) and bool(_stuck_suffix())
-        todo_count = _count_files_needing_attention()
+        # Read the last background scan; never compute inline (the scan is
+        # seconds-long and would freeze the modal). None = not scanned yet,
+        # so no to-do option until _on_todo_ready fires.
+        from fnd.tui import flat_pdf_scan
+
+        todo_count = flat_pdf_scan.cached_count(None) or 0
         want_todo = todo_count > 0
         if want_skip and "skip" not in self._added_options:
             with contextlib.suppress(Exception):
@@ -476,6 +453,29 @@ class IndexerScreen(ModalScreen[None]):
                 with contextlib.suppress(Exception):
                     opts.remove_option(opt_id)
                     self._removed_options.add(opt_id)
+
+    def _schedule_todo_refresh(self) -> None:
+        """Recompute the flat-PDF count off the event loop and re-sync
+        the action options when it lands. Bounded to mount + per-
+        collection completion — never the 1Hz tick — so a long rebuild
+        doesn't spawn a scan every few seconds that contends with the
+        indexer it's measuring."""
+        from fnd.tui import flat_pdf_scan
+
+        with contextlib.suppress(Exception):
+            flat_pdf_scan.schedule_refresh(self.app, None, on_ready=self._on_todo_ready)
+
+    def _on_todo_ready(self, _rows: Any) -> None:
+        """Background scan finished (marshalled onto the UI thread):
+        re-sync the option list so the now-known count shows."""
+        with contextlib.suppress(Exception):
+            self._sync_action_options(self._fnd_app())
+
+    def _refresh_todo_after_run(self) -> None:
+        """A collection finished/cancelled: the backlog just changed, so
+        drop the stale scan and recompute off-loop for an accurate count."""
+        invalidate_todo_count_cache()
+        self._schedule_todo_refresh()
 
     def _fnd_app(self) -> FNDApp:
         from fnd.tui.app import FNDApp
@@ -559,8 +559,10 @@ class IndexerScreen(ModalScreen[None]):
             bar.update(progress=ev.files_done)
         elif ev.kind == "cancelled":
             status.update("[yellow]Cancelled.[/] State saved; re-run to resume.")
+            self._refresh_todo_after_run()
         elif ev.kind == "done":
             status.update(f"[green]Done.[/]   {ev.files_done} / {ev.files_total} files")
+            self._refresh_todo_after_run()
 
         current.update(f"[dim]Current:[/] {_short_name(ev.current_file)}")
         self._render_timing(ev.elapsed_s)
