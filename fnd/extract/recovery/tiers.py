@@ -7,14 +7,23 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from fnd.extract.recovery.evaluators import CoverageEvaluator, LegibilityEvaluator
+from fnd.extract.recovery.evaluators import (
+    CoverageEvaluator,
+    LegibilityEvaluator,
+    alpha_tokens,
+)
 from fnd.extract.recovery.models import (
     FLAG_DOCLING_INVOKED,
+    FLAG_LIGATURE_REPAIRED,
     FLAG_LOW_QUALITY,
     FLAG_TEXTURE_RECOVERED,
     ExtractionContext,
     PageExtraction,
 )
+from fnd.extract.recovery.repairers import LigatureRepairer
+
+# U+FFFD: emitted by the layout text engine for unmapped glyphs.
+_REPLACEMENT = "�"
 
 # Injected from pdf.py so the recovery package stays free of pymupdf4llm
 # specifics: (doc, page_index) -> page Markdown. ``doc`` is a
@@ -37,6 +46,31 @@ class ProductionLayoutTier:
     def refine(self, ctx: ExtractionContext, current: PageExtraction) -> PageExtraction:
         md = self._extract_page_md(ctx.doc, ctx.page_index)
         return PageExtraction(markdown=md, tier="production-layout")
+
+
+class LigatureRepairTier:
+    """Repair the U+FFFD the layout text engine emits for ligature glyphs
+    (ff/fi/fl/ffi/ffl) in fonts lacking ToUnicode entries. Runs right
+    after the layout baseline so the later coverage gates assess the
+    corrected text. The flat layer resolves those glyphs, so it's the
+    repair's ground truth (see :class:`LigatureRepairer`). A pass-through
+    when the page carries no U+FFFD or nothing matched the flat vocab."""
+
+    def __init__(self, repairer: LigatureRepairer) -> None:
+        self._repairer = repairer
+
+    def refine(self, ctx: ExtractionContext, current: PageExtraction) -> PageExtraction:
+        if not current.markdown or _REPLACEMENT not in current.markdown:
+            return current
+        repaired = self._repairer.repair(current.markdown, ctx.flat)
+        if repaired == current.markdown:
+            return current
+        return dataclasses.replace(
+            current,
+            markdown=repaired,
+            tier="ligature-repair",
+            flags=current.flags | {FLAG_LIGATURE_REPAIRED},
+        )
 
 
 _HEADING_RE = re.compile(r"^#{1,6} ")
@@ -163,6 +197,85 @@ class DoclingTableTier:
             tier="docling-table",
             flags=current.flags | {FLAG_DOCLING_INVOKED},
         )
+
+
+# Injected by pdf.py: page -> its flat text blocks in reading order. Kept
+# here (rather than the raw pymupdf call) so the package stays import-light.
+ExtractFlatBlocks = Callable[[Any], list[str]]
+
+
+def _append_blocks(md: str, blocks: list[str]) -> str:
+    """Append already-stripped flat blocks after the structured Markdown,
+    blank-line separated so each reads as its own paragraph."""
+    tail = "\n\n".join(blocks)
+    base = md.rstrip()
+    return f"{base}\n\n{tail}\n" if base else tail + "\n"
+
+
+class FlatFallbackTier:
+    """Backfill prose the structured parsers dropped on graphically-complex
+    born-digital pages.
+
+    On infographic/multi-column report pages, pymupdf4llm's layout model
+    keeps pull-quotes and captions but omits whole body-text blocks it
+    can't place in reading order (and the non-layout path emits nothing),
+    so ``body_md`` is far less complete than the flat ``get_text`` layer the
+    index searches — a hit on the dropped prose can't be shown in preview.
+
+    When best coverage sits below the floor, append the flat blocks the
+    structured Markdown missed (token overlap below ``block_present_ratio``),
+    in reading order. The structured Markdown and its formatting are kept;
+    only the genuinely-dropped blocks are filled, so no block is duplicated
+    and a faithfully-extracted page (cov >= floor) is left untouched."""
+
+    def __init__(
+        self,
+        coverage: CoverageEvaluator,
+        extract_blocks: ExtractFlatBlocks,
+        *,
+        cov_floor: float = 0.90,
+        block_present_ratio: float = 0.5,
+        min_flat_tokens: int = 20,
+    ) -> None:
+        self._coverage = coverage
+        self._extract_blocks = extract_blocks
+        self._cov_floor = cov_floor
+        self._block_present_ratio = block_present_ratio
+        self._min_flat_tokens = min_flat_tokens
+
+    def refine(self, ctx: ExtractionContext, current: PageExtraction) -> PageExtraction:
+        if self._coverage.flat_token_count(ctx.flat) < self._min_flat_tokens:
+            return current
+        cov = (
+            current.coverage
+            if current.coverage is not None
+            else self._coverage.coverage(current.markdown, ctx.flat)
+        )
+        if cov >= self._cov_floor:
+            return dataclasses.replace(current, coverage=cov)
+        missing = self._missing_blocks(ctx, current.markdown)
+        if not missing:
+            return dataclasses.replace(current, coverage=cov)
+        merged = _append_blocks(current.markdown, missing)
+        return PageExtraction(
+            markdown=merged,
+            tier="flat-fallback",
+            coverage=self._coverage.coverage(merged, ctx.flat),
+            legibility=current.legibility,
+            flags=current.flags | {FLAG_TEXTURE_RECOVERED},
+        )
+
+    def _missing_blocks(self, ctx: ExtractionContext, md: str) -> list[str]:
+        md_tokens = alpha_tokens(md)
+        out: list[str] = []
+        for block in self._extract_blocks(ctx.page):
+            block_tokens = alpha_tokens(block)
+            if not block_tokens:
+                continue
+            present = len(block_tokens & md_tokens) / len(block_tokens)
+            if present < self._block_present_ratio:
+                out.append(block.strip())
+        return out
 
 
 # Injected reprocessors for the (deferred) legibility tier: native OCR of

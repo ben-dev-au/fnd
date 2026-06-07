@@ -10,6 +10,7 @@ FLAG_DOCLING_INVOKED = "docling-invoked"
 FLAG_LOW_QUALITY = "low-quality"
 FLAG_FIGURE_INCOMPLETE = "figure-incomplete"
 FLAG_TEXTURE_RECOVERED = "texture-recovered"
+FLAG_LIGATURE_REPAIRED = "ligature-repaired"
 
 
 @dataclass(frozen=True)
