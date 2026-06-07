@@ -74,27 +74,14 @@ _DEFAULT_WEIGHTS: dict[str, float] = {
     "syn": 0.6,
 }
 
-# Graduated sloppy-phrase passes (the Lucene-canonical proximity pattern):
-# besides the exact phrase (slop 0), emit two looser phrase passes scored
-# natively by Tantivy's BM25 phrase_count over the position index. A doc
-# with the terms adjacent matches all three (exact ⊆ near ⊆ loose) and so
-# accumulates the most RRF — graded proximity without hand-tuned constants.
-# ``(slop, weight, source)``; descending weight rewards tightness.
-_SLOP_PASSES: tuple[tuple[int, float, str], ...] = (
-    (5, 1.5, "near"),
-    (25, 1.0, "loose"),
-)
-
 # Map source name → pass_index used by the TUI glyph table.
 # Keep aligned with cascade: 0 = neutral (lex/exact), 1 = fuzzy,
-# 2 = synonym, 3 = fusion-phrase (exact + sloppy proximity).
+# 2 = synonym, 3 = fusion-phrase.
 _SOURCE_TO_PASS_INDEX: dict[str, int] = {
     "lex": 0,
     "fuzzy": 1,
     "syn": 2,
     "phrase": 3,
-    "near": 3,
-    "loose": 3,
 }
 
 # Strong-signal bypass thresholds (UX-pass-4 §1). Operate on a normalized
@@ -224,13 +211,6 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
     carries_phrase_intent = '"' in q or "{" in q or "NEAR/" in q
     if len(q.split()) >= 2 and not carries_phrase_intent:
         subs.append(SubQuery(query=f'"{q}"', weight=_DEFAULT_WEIGHTS["phrase"], source="phrase"))
-        # Graduated proximity: Tantivy scores ``"q"~N`` via BM25 phrase_count,
-        # so the closer the terms, the more passes a doc wins and the higher
-        # it fuses. Only for unquoted queries — a user-supplied quote means
-        # "exact", and broadening it with slop would surface docs they
-        # didn't ask for.
-        for slop, weight, source in _SLOP_PASSES:
-            subs.append(SubQuery(query=f'"{q}"~{slop}', weight=weight, source=source))
     subs.append(SubQuery(query=q, weight=_DEFAULT_WEIGHTS["lex"], source="lex"))
     if synonyms is not None and synonyms.groups:
         expanded = expand(q, synonyms)
