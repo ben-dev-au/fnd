@@ -25,9 +25,11 @@ from __future__ import annotations
 import re
 import threading
 from dataclasses import dataclass, field
+from itertools import pairwise
 
 import snowballstemmer
 
+from fnd.stopwords import STOPWORDS
 from fnd.synonyms import SynonymTable, expand
 
 # A double-quoted run is a phrase (Tantivy phrase syntax). Single quotes are
@@ -176,6 +178,21 @@ class MatchSpec:
         # unquoted remainder drives word-by-word highlighting.
         phrases = tuple(tuple(_stem(w) for w in words) for words in _phrase_word_lists(query))
         loose_query = _strip_quoted_spans(query)
+
+        # In-context stopwords: a connector like "in" in `defence in depth`
+        # should highlight where it sits next to a matched content word, but a
+        # standalone "in" elsewhere should not. Add every consecutive query
+        # bigram that pairs a stopword with a content word as an implicit
+        # highlight phrase ("defence in", "in depth"); overlapping bigrams also
+        # cover the full run. Stopword-only pairs are skipped so bare function
+        # words never light up.
+        loose_words = _terms_from_query(loose_query, keep_stopwords=True)
+        pair_phrases: list[tuple[str, ...]] = []
+        for a, b in pairwise(loose_words):
+            a_stop, b_stop = a.lower() in STOPWORDS, b.lower() in STOPWORDS
+            if (a_stop or b_stop) and not (a_stop and b_stop):
+                pair_phrases.append((_stem(a), _stem(b)))
+        phrases = phrases + tuple(pair_phrases)
 
         terms = _terms_from_query(loose_query)
         if not terms and not phrases:

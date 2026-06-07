@@ -170,12 +170,13 @@ def _highlight(text: str, terms: list[str]) -> str:
     return re.sub(r"\w+", _wrap, text)
 
 
-def _terms_from_query(query: str) -> list[str]:
+def _terms_from_query(query: str, *, keep_stopwords: bool = False) -> list[str]:
     """Pull plain-word terms out of a query string for highlighting.
 
     Strips operators (AND/OR/NOT/+/-/parens/quotes/wildcards/fuzzy/range
     syntax) and field qualifiers like ``kind:pdf`` so the highlighter only
-    bolds genuine search terms."""
+    bolds genuine search terms. Stopwords are dropped unless ``keep_stopwords``
+    (the caller building an in-context phrase needs the full word run)."""
     if not query:
         return []
     # Drop bracketed range syntax.
@@ -196,7 +197,10 @@ def _terms_from_query(query: str) -> list[str]:
     # silently failing. Stopwords are dropped: they carry ~zero IDF and
     # highlighting every "and"/"in" doc-wide is noise (quoted phrases keep
     # their stopwords via the separate phrase-span path).
-    return [w for w in re.findall(r"\w+", q) if w.lower() not in _HL_STOPWORDS]
+    words = re.findall(r"\w+", q)
+    if keep_stopwords:
+        return words
+    return [w for w in words if w.lower() not in _HL_STOPWORDS]
 
 
 def render(blocks: list[Block], *, query: str = "") -> str:
