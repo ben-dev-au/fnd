@@ -17,55 +17,12 @@ import snowballstemmer
 from rich.text import Text
 
 from fnd.extract.base import Block
+from fnd.stopwords import STOPWORDS as _HL_STOPWORDS
 
 if TYPE_CHECKING:
     from fnd.matching import MatchSpec
 
 _HEADING_KINDS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
-
-# Function words with ~zero IDF — never worth bolding standalone. Quoted
-# phrases keep their stopwords (they highlight via the phrase span, not here).
-_HL_STOPWORDS = frozenset(
-    {
-        "a",
-        "an",
-        "the",
-        "and",
-        "or",
-        "but",
-        "nor",
-        "of",
-        "to",
-        "in",
-        "on",
-        "at",
-        "for",
-        "from",
-        "by",
-        "with",
-        "as",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "being",
-        "this",
-        "that",
-        "these",
-        "those",
-        "it",
-        "its",
-        "into",
-        "than",
-        "then",
-        "so",
-        "such",
-        "not",
-        "no",
-    }
-)
 
 # Stem each query term and each document word so "penfold" highlights for
 # both "penfold" and "penfolds" (Tantivy's en_stem on F_BODY).

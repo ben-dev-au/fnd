@@ -270,9 +270,13 @@ class Searcher:
 
         from fnd.query_dsl import preprocess
         from fnd.schema import F_BODY, F_HEADING_PATH, F_PATH_TOKENS
+        from fnd.stopwords import strip_query_stopwords
 
         enforce_query_bounds(query)
-        user_query = preprocess(query)
+        # Drop standalone stopwords from plain bag-of-words queries so a chunk
+        # matching only "and"/"in"/"the" (~zero IDF) isn't retrieved. Quoted
+        # phrases and explicit-syntax queries pass through untouched.
+        user_query = strip_query_stopwords(preprocess(query))
         full_query = user_query
         if collection:
             full_query = f'collection:"{collection}" AND ({full_query})'
