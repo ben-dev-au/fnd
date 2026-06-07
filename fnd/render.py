@@ -23,6 +23,50 @@ if TYPE_CHECKING:
 
 _HEADING_KINDS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 
+# Function words with ~zero IDF — never worth bolding standalone. Quoted
+# phrases keep their stopwords (they highlight via the phrase span, not here).
+_HL_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "nor",
+        "of",
+        "to",
+        "in",
+        "on",
+        "at",
+        "for",
+        "from",
+        "by",
+        "with",
+        "as",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "into",
+        "than",
+        "then",
+        "so",
+        "such",
+        "not",
+        "no",
+    }
+)
+
 # Stem each query term and each document word so "penfold" highlights for
 # both "penfold" and "penfolds" (Tantivy's en_stem on F_BODY).
 # threading.local: snowballstemmer instances aren't thread-safe.
@@ -192,8 +236,10 @@ def _terms_from_query(query: str) -> list[str]:
     # Tokenize the same way the highlighter splits doc text (``\w+``) so a
     # term carrying adjacent punctuation ("3." / "Monitoring,") yields the
     # bare word — its stem then matches the clean doc-word stem instead of
-    # silently failing.
-    return re.findall(r"\w+", q)
+    # silently failing. Stopwords are dropped: they carry ~zero IDF and
+    # highlighting every "and"/"in" doc-wide is noise (quoted phrases keep
+    # their stopwords via the separate phrase-span path).
+    return [w for w in re.findall(r"\w+", q) if w.lower() not in _HL_STOPWORDS]
 
 
 def render(blocks: list[Block], *, query: str = "") -> str:
