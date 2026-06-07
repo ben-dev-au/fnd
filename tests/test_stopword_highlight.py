@@ -41,7 +41,7 @@ def test_content_word_that_looks_short_is_kept() -> None:
     assert "key" in _terms_from_query("key rotation")
 
 
-def _stopword_lit(text: str, spec, word: str) -> bool:
+def _stopword_lit(text: str, spec: MatchSpec, word: str) -> bool:
     """True if a whole-word occurrence of ``word`` falls inside a phrase span."""
     import re
 

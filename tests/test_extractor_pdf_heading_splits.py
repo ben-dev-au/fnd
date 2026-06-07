@@ -76,6 +76,7 @@ _SAMPLE = Path(_SAMPLE_ENV) if _SAMPLE_ENV else None
 def test_real_sample_item3_is_own_chunk() -> None:
     from fnd.extract import pdf as pdfx
 
+    assert _SAMPLE is not None  # guaranteed by skipif; narrows for the type checker
     pdfx.set_force_fresh_texture(True)
     try:
         chunks = list(pdfx.extract(_SAMPLE))

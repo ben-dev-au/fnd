@@ -54,7 +54,9 @@ def test_loose_terms_still_match_alongside_phrase() -> None:
 
 def test_punctuated_phrase_words_still_span() -> None:
     """The user's real case: heading text with '.' and ','."""
-    spec = MatchSpec.from_query('"3. Monitoring, segmentation and defence in depth"', auto_fuzzy=False)
+    spec = MatchSpec.from_query(
+        '"3. Monitoring, segmentation and defence in depth"', auto_fuzzy=False
+    )
     line = "3. Monitoring, segmentation and defence in depth"
     spans = phrase_char_spans(line, spec)
     assert len(spans) == 1
