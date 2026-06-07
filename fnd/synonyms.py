@@ -73,6 +73,54 @@ def load_synonyms(path: Path) -> SynonymTable:
     return SynonymTable.from_groups(groups)
 
 
+# Bundled curated default table (security/tech acronyms). Lives beside the
+# module so it ships in the wheel without packaging gymnastics.
+DEFAULT_SYNONYMS_PATH = Path(__file__).parent / "data" / "synonyms_default.toml"
+
+
+def merge_tables(*tables: SynonymTable) -> SynonymTable:
+    """Combine tables, unioning any groups that share a term (case-insensitive).
+
+    A personal group that names an existing term folds into that group rather
+    than competing with it, so the user always *extends* the defaults. Earlier
+    tables seed group order; later ones append their new forms."""
+    comps: list[list[str]] = []
+    for table in tables:
+        for g in table.groups:
+            keys = {t.casefold() for t in g}
+            overlap = [c for c in comps if any(t.casefold() in keys for t in c)]
+            if overlap:
+                merged: list[str] = []
+                seen: set[str] = set()
+                for src in (*overlap, list(g)):
+                    for t in src:
+                        if t.casefold() not in seen:
+                            seen.add(t.casefold())
+                            merged.append(t)
+                for c in overlap:
+                    comps.remove(c)
+                comps.append(merged)
+            else:
+                comps.append(list(g))
+    return SynonymTable.from_groups(comps)
+
+
+def load_default_synonyms() -> SynonymTable:
+    """The bundled curated table. Empty if the data file is somehow absent."""
+    return load_synonyms(DEFAULT_SYNONYMS_PATH)
+
+
+def load_merged_synonyms(personal_path: Path | None = None) -> SynonymTable:
+    """Bundled defaults merged with the user's optional personal table.
+
+    Missing personal file is fine (defaults still apply); user groups extend
+    or fold into the defaults via :func:`merge_tables`."""
+    tables = [load_default_synonyms()]
+    if personal_path is not None:
+        tables.append(load_synonyms(personal_path))
+    return merge_tables(*tables)
+
+
 # Match either a quoted phrase ("..."), or a contiguous run of word chars.
 # The whole-string scan rebuilds the query: phrases are emitted untouched
 # (they short-circuit synonym expansion); bare words are looked up.

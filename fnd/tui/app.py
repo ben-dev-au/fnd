@@ -1374,12 +1374,13 @@ class FNDApp(App[None]):
         self._latest_trace: SearchTrace | None = None
         self._fnd_keymap = keymap or load_keymap()
         # Synonyms for §9c cascade and §9d fusion's ``syn`` sub-query.
-        # Missing file → empty table → no synonym expansion (no-op).
+        # Bundled curated defaults + the user's optional personal table;
+        # missing personal file is fine (defaults still apply).
         from fnd.config import app_data_dir
-        from fnd.synonyms import SynonymTable, load_synonyms
+        from fnd.synonyms import SynonymTable, load_merged_synonyms
 
         try:
-            self._synonyms: SynonymTable = load_synonyms(app_data_dir() / "synonyms.toml")
+            self._synonyms: SynonymTable = load_merged_synonyms(app_data_dir() / "synonyms.toml")
         except Exception:
             self._synonyms = SynonymTable()
         # Ranking profile applied at search time. Built from the active
