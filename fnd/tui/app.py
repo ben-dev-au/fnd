@@ -60,9 +60,10 @@ from textual.widgets.tree import TreeNode
 from fnd import opener
 from fnd.config import Config, default_index_dir
 from fnd.explain import SearchTrace
-from fnd.matching import MatchSpec
+from fnd.matching import MatchSpec, phrase_char_spans
 from fnd.query import FileChunk, FileGroup, Hit, Searcher
 from fnd.render import (
+    HIGHLIGHT_STYLE,
     render_chunk_pieces,
     word_highlight_runs,
 )
@@ -362,6 +363,11 @@ def _build_match_spans(plain: str, spec: MatchSpec) -> list[Span]:
         runs = word_highlight_runs(m.group(0), spec)
         for offset_start, offset_end, style in runs:
             spans.append(Span(m.start() + offset_start, m.start() + offset_end, style))
+    # Quoted phrases highlight as one contiguous span (covering the
+    # punctuation/spaces between words), not per-word — so a phrase's
+    # stopwords never light up document-wide.
+    for start, end in phrase_char_spans(plain, spec):
+        spans.append(Span(start, end, HIGHLIGHT_STYLE))
     return spans
 
 
@@ -718,9 +724,10 @@ def _find_first_match_coord_in_table(
 ) -> tuple[int, int] | None:
     """Return (row, col) of the first cell that contains a query match.
 
-    A cell matches iff one of its words matches ``spec`` — the same
-    ``word_matches`` gate the highlight overlay applies — so the
-    coordinate always points at a cell that is actually highlighted.
+    A cell matches iff ``text_has_any_match`` does — a word match OR a
+    quoted-phrase span, the same gate the highlight overlay applies — so the
+    coordinate always points at a cell that is actually highlighted (quoted
+    phrases included).
     (Checking the Content's ``spans`` instead is wrong: that set also
     carries the markdown styling spans — inline code, emphasis, links —
     so the first *styled* cell wins over the first *matched* one, parking
@@ -1376,14 +1383,20 @@ class FNDApp(App[None]):
         self._latest_trace: SearchTrace | None = None
         self._fnd_keymap = keymap or load_keymap()
         # Synonyms for §9c cascade and §9d fusion's ``syn`` sub-query.
-        # Missing file → empty table → no synonym expansion (no-op).
+        # Bundled curated defaults + the user's optional personal table;
+        # missing personal file is fine (defaults still apply).
         from fnd.config import app_data_dir
-        from fnd.synonyms import SynonymTable, load_synonyms
+        from fnd.synonyms import SynonymTable, load_default_synonyms, load_merged_synonyms
 
         try:
-            self._synonyms: SynonymTable = load_synonyms(app_data_dir() / "synonyms.toml")
+            self._synonyms: SynonymTable = load_merged_synonyms(app_data_dir() / "synonyms.toml")
         except Exception:
-            self._synonyms = SynonymTable()
+            # A bad personal file is already skipped inside the loader; this is
+            # a last resort — still keep the bundled defaults, not an empty table.
+            try:
+                self._synonyms = load_default_synonyms()
+            except Exception:
+                self._synonyms = SynonymTable()
         # Ranking profile applied at search time. Built from the active
         # collection's ``ranking_profile`` field; default profile (all-zero)
         # is the BM25 identity, so the no-config case is unchanged.

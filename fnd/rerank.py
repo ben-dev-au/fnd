@@ -190,7 +190,11 @@ def rerank_hits(
         s = apply_recency_boost(score=s, mtime=h.mtime, profile=profile, now=now_ts)
         s = apply_filetype_boost(score=s, kind=h.kind, profile=profile)
         if terms:
-            s = apply_phrase_proximity(score=s, body=h.snippet, terms=terms, profile=profile)
+            # Prefer the full decoded body; fall back to the snippet for
+            # hits that predate body_text plumbing (e.g. external callers).
+            s = apply_phrase_proximity(
+                score=s, body=h.body_text or h.snippet, terms=terms, profile=profile
+            )
         out.append(_replace_score(h, s))
     out.sort(key=lambda x: x.score, reverse=True)
     return out
@@ -213,6 +217,7 @@ def _replace_score(h: Hit, score: float) -> Hit:
         mtime=h.mtime,
         pass_index=h.pass_index,
         meta_blob=h.meta_blob,
+        body_text=h.body_text,
     )
 
 

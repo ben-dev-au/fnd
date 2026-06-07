@@ -24,6 +24,7 @@ import contextlib
 import hashlib
 import importlib
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -313,7 +314,7 @@ def _font_clustering_heading(
                 txt = (span.get("text") or "").strip()
                 if not txt:
                     continue
-                size = round(float(span.get("size", 0.0)))
+                size = round(float(span.get("size") or 0.0))
                 spans.append((float(size), txt, int(span.get("flags", 0))))
 
     if not spans:
@@ -342,6 +343,154 @@ def _font_clustering_heading(
     page_title = page_headings[0] if page_headings else ""
     heading_text = page_title
     return (heading_text, page_title)
+
+
+# An ATX markdown heading line ("## Title"). Used to slice body_md into
+# per-section preview fragments when its heading count matches the
+# font-clustered split.
+_ATX_RE = re.compile(r"^#{1,6}\s+\S")
+
+
+def _md_segments(body_md: str) -> list[str]:
+    """Split ``body_md`` into ``[preamble, sec1, sec2, ...]`` at ATX
+    headings. Length is ``1 + heading_count``; preamble is whatever
+    precedes the first heading."""
+    lines = body_md.splitlines()
+    heads = [i for i, ln in enumerate(lines) if _ATX_RE.match(ln)]
+    if not heads:
+        return [body_md]
+    bounds = [0, *heads, len(lines)]
+    return ["\n".join(lines[a:b]).strip("\n") for a, b in itertools.pairwise(bounds)]
+
+
+def _largest_font_headings(page: pymupdf.Page) -> set[str]:
+    """Stripped text of every visual line at the page's single largest
+    font, or ``set()`` when the font-clustering sanity gates trip (≤1
+    distinct size, or >30% of lines are heading-sized — both signal that
+    clustering is unreliable). Span text is clean here (no layout-mode
+    ligature loss), so it's safe to match against the page's rendered
+    reading-order text."""
+    td = cast(dict[str, Any], page.get_text("dict"))
+    lines: list[tuple[int, str]] = []
+    for block in td.get("blocks", []):
+        for ln in block.get("lines", []):
+            size = 0
+            parts: list[str] = []
+            for sp in ln.get("spans", []):
+                t = sp.get("text") or ""
+                if t.strip():
+                    parts.append(t)
+                    size = max(size, round(float(sp.get("size") or 0.0)))
+            text = "".join(parts).strip()
+            if text:
+                lines.append((size, text))
+    if not lines:
+        return set()
+    sizes = {s for s, _ in lines}
+    if len(sizes) <= 1:
+        return set()
+    body_size = max(sizes, key=lambda z: sum(1 for s, _ in lines if s == z))
+    largest = max(sizes)
+    # The split tier must sit *above* the modal body size. When the page's
+    # largest font IS the body font (e.g. only footnotes are smaller),
+    # every body line would otherwise read as a heading and shatter the
+    # page — the cause of the worst over-fragmentation case observed.
+    if largest <= body_size:
+        return set()
+    heads = [
+        t for s, t in lines if s == largest and len(t) <= 120 and not t.endswith((".", "!", "?"))
+    ]
+    # Too many heading-sized lines → clustering is unreliable (dense
+    # emphasis, form labels); bail rather than fragment.
+    if len(heads) > 0.30 * len(lines):
+        return set()
+    return set(heads)
+
+
+def _split_page_sections(
+    page: pymupdf.Page,
+    sorted_text: str,
+    body_md: str,
+    *,
+    base_path: str,
+    carry_heading: str,
+) -> list[dict[str, Any]] | None:
+    """Split one page into per-heading sections, or ``None`` to keep it a
+    single chunk.
+
+    Detection authority is font-size clustering on clean span text
+    (:func:`_largest_font_headings`); the page's sorted (reading-order)
+    text is then partitioned at those headings so each section's
+    searchable ``body`` holds only its own prose — the consecutive-heading
+    merge bug was the whole page sharing the *first* heading. When
+    ``body_md`` carries one ATX heading per detected section its slices
+    feed the preview (keeps tables / bold); otherwise a plain markdown
+    body is rebuilt from the clean section text.
+
+    Splits only when ≥2 headings are detected, so single-heading and
+    headingless pages stay one chunk and prose PDFs don't fragment. The
+    leading (pre-first-heading) section inherits ``carry_heading`` — the
+    deepest heading carried over from the previous page — so a section
+    that continues across a page break keeps its attribution.
+    """
+    heads = _largest_font_headings(page)
+    if not heads:
+        return None
+
+    sections: list[dict[str, Any]] = [{"heading": "", "body": []}]
+    prev_head = False
+    for raw in sorted_text.splitlines():
+        stripped = raw.strip()
+        is_head = bool(stripped) and stripped in heads
+        if is_head and not prev_head:
+            sections.append({"heading": stripped, "body": []})
+        elif is_head and prev_head:
+            # A wrapped heading: fold the continuation line into the block.
+            sections[-1]["heading"] = f"{sections[-1]['heading']} {stripped}".strip()
+        else:
+            sections[-1]["body"].append(raw)
+        prev_head = is_head
+
+    if sum(1 for sec in sections if sec["heading"]) < 2:
+        return None
+
+    md_segs = _md_segments(body_md) if body_md.strip() else []
+    use_md = len(md_segs) == len(sections)
+
+    out: list[dict[str, Any]] = []
+    for idx, sec in enumerate(sections):
+        heading = cast(str, sec["heading"])
+        tail = "\n".join(cast("list[str]", sec["body"])).strip()
+        body_text = "\n".join(x for x in (heading, tail) if x).strip()
+        if use_md:
+            seg_md = md_segs[idx]
+        elif heading:
+            seg_md = f"## {heading}\n\n{tail}".strip()
+        else:
+            seg_md = tail
+        if not body_text and not seg_md.strip():
+            continue
+        if heading:
+            heading_path = f"{base_path} > {heading}" if base_path else heading
+            blocks = [Block(kind="h2", text=heading)]
+            if tail:
+                blocks.append(Block(kind="p", text=tail))
+        else:
+            heading_path = carry_heading
+            blocks = [Block(kind="p", text=body_text)] if body_text else []
+        out.append(
+            {
+                "heading_path": heading_path,
+                "body": body_text,
+                "body_md": seg_md,
+                "blocks": blocks,
+                "leaf": heading,
+            }
+        )
+
+    if sum(1 for sec in out if sec["leaf"]) < 2:
+        return None
+    return out
 
 
 @contextlib.contextmanager
@@ -715,6 +864,22 @@ def _has_docling() -> bool:
     return shutil.which("docling") is not None
 
 
+def _fold_own_heading(chunk: Chunk) -> Chunk:
+    """Fold the page's own (leaf) heading into ``body`` so it's searchable.
+
+    Parity with md/docx/pptx, which bake a chunk's own heading into body.
+    A TOC-derived heading often isn't rendered verbatim in the page text;
+    prepend it unless already present. Applied at yield time — so it also
+    fixes chunks served from the texture cache, where ``body`` was stored
+    pre-fold. Idempotent: skips when ``body`` already opens with the folded
+    heading line (a plain ``in`` check would false-match a substring, e.g.
+    leaf "Security" inside body "Cybersecurity")."""
+    leaf = chunk.heading_path.split(" > ")[-1].strip() if chunk.heading_path else ""
+    if leaf and not chunk.body.startswith(f"{leaf}\n"):
+        chunk.body = f"{leaf}\n{chunk.body}"
+    return chunk
+
+
 def extract(
     path: Path,
     *,
@@ -768,7 +933,7 @@ def extract(
             chunk.parent_id = parent_id_now
             chunk.path = path_str_now
             chunk.mtime = mtime_now
-            yield chunk
+            yield _fold_own_heading(chunk)
         return
 
     # Dispatch the heavy extraction to a subprocess. pymupdf-layout
@@ -819,7 +984,8 @@ def extract(
         with contextlib.suppress(OSError):
             cache.put(key, chunks)
 
-    yield from chunks
+    for chunk in chunks:
+        yield _fold_own_heading(chunk)
 
 
 def _get_cache() -> ExtractionCache:
@@ -873,6 +1039,9 @@ def _extract_inner(  # pyright: ignore[reportUnusedFunction]
         page_states: list[dict[str, Any] | None] = []
         meta_labels: list[str] = []
         margin_candidates: list[list[int]] = []
+        # Deepest heading carried across page breaks, so a section that
+        # continues onto the next page keeps its attribution.
+        carry_heading = ""
         for page_index in range(doc.page_count):
             # Heartbeat for the parent's stall detector. Fires before
             # the heavy structured-extraction call on this page so a
@@ -940,14 +1109,35 @@ def _extract_inner(  # pyright: ignore[reportUnusedFunction]
             else:
                 body_md = ""
 
+            # Split the page at each detected heading so heading_path
+            # reflects the section a match actually belongs to. Falls back
+            # to a single whole-page section when fewer than two headings
+            # are confidently detected (most pages), keeping behaviour and
+            # chunk counts unchanged for ordinary prose.
+            sorted_text = cast(str, page.get_text("text", sort=True) or text)
+            base_path = heading_path if toc else ""
+            sections = _split_page_sections(
+                page, sorted_text, body_md, base_path=base_path, carry_heading=carry_heading
+            )
+            if sections is not None:
+                carry_heading = sections[-1]["heading_path"]
+            else:
+                if heading_path:
+                    carry_heading = heading_path
+                sections = [
+                    {
+                        "heading_path": heading_path,
+                        "body": text,
+                        "body_md": body_md,
+                        "blocks": blocks,
+                    }
+                ]
+
             page_states.append(
                 {
                     "page_no": page_no,
                     "page_index": page_index,
-                    "text": text,
-                    "blocks": blocks,
-                    "body_md": body_md,
-                    "heading_path": heading_path,
+                    "sections": sections,
                 }
             )
 
@@ -957,23 +1147,26 @@ def _extract_inner(  # pyright: ignore[reportUnusedFunction]
             margin_candidates=margin_candidates,
         )
 
+        seq = 0
         for state in page_states:
             if state is None:
                 continue
-            yield Chunk(
-                parent_id=parent_id,
-                path=str(path),
-                mtime=mtime,
-                kind="pdf",
-                body=state["text"],
-                body_struct=state["blocks"],
-                body_md=state["body_md"],
-                page=state["page_no"],
-                page_label=labels[state["page_index"]],
-                heading_path=state["heading_path"],
-                title=meta_title,
-                author=meta_author,
-                chunk_seq=state["page_index"],
-            )
+            for sec in state["sections"]:
+                yield Chunk(
+                    parent_id=parent_id,
+                    path=str(path),
+                    mtime=mtime,
+                    kind="pdf",
+                    body=sec["body"],
+                    body_struct=sec["blocks"],
+                    body_md=sec["body_md"],
+                    page=state["page_no"],
+                    page_label=labels[state["page_index"]],
+                    heading_path=sec["heading_path"],
+                    title=meta_title,
+                    author=meta_author,
+                    chunk_seq=seq,
+                )
+                seq += 1
     finally:
         doc.close()

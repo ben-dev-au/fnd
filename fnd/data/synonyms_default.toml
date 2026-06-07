@@ -1,0 +1,89 @@
+# Default synonym table — curated security/tech acronyms and tight synonyms.
+# Query-time expansion only (no reindex). Groups are bidirectional: any one
+# form expands to the rest. Multi-word forms are auto-quoted as phrases.
+#
+# Scope is deliberately narrow: high-value, low-noise initialisms and exact
+# expansions sourced from public glossaries (NIST CSRC, CISA, MITRE, OWASP).
+# This is NOT a general thesaurus — broad English synonyms hurt precision in
+# technical search. Users extend this via their own synonyms.toml.
+
+[synonyms.identity]
+groups = [
+  ["mfa", "multi-factor authentication", "2fa", "two-factor authentication"],
+  ["sso", "single sign-on"],
+  ["iam", "identity and access management"],
+  ["pam", "privileged access management"],
+  ["rbac", "role-based access control"],
+  ["abac", "attribute-based access control"],
+  ["pki", "public key infrastructure"],
+  ["ca", "certificate authority"],
+  ["otp", "one-time password"],
+]
+
+[synonyms.network]
+groups = [
+  ["vpn", "virtual private network"],
+  ["ids", "intrusion detection system"],
+  ["ips", "intrusion prevention system"],
+  ["waf", "web application firewall"],
+  ["dns", "domain name system"],
+  ["dhcp", "dynamic host configuration protocol"],
+  ["nat", "network address translation"],
+  ["vlan", "virtual local area network"],
+  ["ddos", "distributed denial of service"],
+  ["dos", "denial of service"],
+  ["sdn", "software-defined networking"],
+  ["nac", "network access control"],
+]
+
+[synonyms.crypto]
+groups = [
+  ["tls", "transport layer security", "ssl", "secure sockets layer"],
+  ["aes", "advanced encryption standard"],
+  ["rsa", "rivest-shamir-adleman"],
+  ["hsm", "hardware security module"],
+  ["e2ee", "end-to-end encryption"],
+]
+
+[synonyms.operations]
+groups = [
+  ["siem", "security information and event management"],
+  ["soc", "security operations centre", "security operations center"],
+  ["soar", "security orchestration automation and response"],
+  ["edr", "endpoint detection and response"],
+  ["xdr", "extended detection and response"],
+  ["dlp", "data loss prevention"],
+  ["ir", "incident response"],
+  ["ti", "threat intelligence"],
+  ["iocs", "indicators of compromise", "ioc"],
+  ["ttps", "tactics techniques and procedures"],
+  ["apt", "advanced persistent threat"],
+]
+
+[synonyms.governance]
+groups = [
+  ["grc", "governance risk and compliance"],
+  ["bcp", "business continuity plan", "business continuity planning"],
+  ["dr", "disaster recovery"],
+  ["rpo", "recovery point objective"],
+  ["rto", "recovery time objective"],
+  ["sla", "service level agreement"],
+  ["pii", "personally identifiable information"],
+  ["cve", "common vulnerabilities and exposures"],
+  ["cvss", "common vulnerability scoring system"],
+  ["vm", "vulnerability management"],
+  ["pentest", "penetration test", "penetration testing"],
+  ["ztna", "zero trust network access"],
+]
+
+[synonyms.cloud]
+groups = [
+  ["iac", "infrastructure as code"],
+  ["casb", "cloud access security broker"],
+  ["cspm", "cloud security posture management"],
+  ["k8s", "kubernetes"],
+  ["api", "application programming interface"],
+  ["saas", "software as a service"],
+  ["iaas", "infrastructure as a service"],
+  ["paas", "platform as a service"],
+]

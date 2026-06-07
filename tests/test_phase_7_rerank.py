@@ -341,7 +341,8 @@ def test_load_config_with_ranking_profile(tmp_path: Path) -> None:
 
 def test_ranking_profile_unknown_name_is_neutral_default() -> None:
     """Calling Config.ranking_profile() with a missing name yields an
-    all-zero default — opt-in semantics."""
+    all-zero default — opt-in semantics. Proximity/exactness is handled by
+    fusion's exact-phrase pass, not this post-rank multiplier."""
     from fnd.config import Config
     from fnd.rerank import profile_from_config
 

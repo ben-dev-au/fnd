@@ -22,12 +22,35 @@ Public surface:
 
 from __future__ import annotations
 
+import re
 import threading
 from dataclasses import dataclass, field
+from itertools import pairwise
 
 import snowballstemmer
 
+from fnd.stopwords import STOPWORDS
 from fnd.synonyms import SynonymTable, expand
+
+# A double-quoted run is a phrase (Tantivy phrase syntax). Single quotes are
+# left to ordinary term extraction (they carry collection names, apostrophes).
+_QUOTED_PHRASE = re.compile(r'"([^"]*)"')
+
+
+def _phrase_word_lists(query: str) -> list[list[str]]:
+    """Raw word lists for each quoted phrase of two or more words."""
+    out: list[list[str]] = []
+    for m in _QUOTED_PHRASE.finditer(query):
+        words = re.findall(r"\w+", m.group(1))
+        if len(words) >= 2:
+            out.append(words)
+    return out
+
+
+def _strip_quoted_spans(query: str) -> str:
+    """Query with quoted-phrase contents removed — leaves only loose terms."""
+    return _QUOTED_PHRASE.sub(" ", query)
+
 
 # snowballstemmer holds per-call cursor state; not thread-safe.
 _STEMMER_LOCAL = threading.local()
@@ -120,6 +143,11 @@ class MatchSpec:
     exact_stems: frozenset[str] = field(default_factory=frozenset)
     fuzzy_per_stem: tuple[tuple[str, int], ...] = field(default_factory=tuple)
     raw_terms: tuple[str, ...] = field(default_factory=tuple)
+    # Stem sequences for each quoted phrase. Highlighted as a contiguous
+    # span (see :func:`phrase_char_spans`); their words are deliberately
+    # kept OUT of ``exact_stems`` so a stopword inside a phrase ("in",
+    # "and") doesn't light up document-wide.
+    phrases: tuple[tuple[str, ...], ...] = field(default_factory=tuple)
 
     @classmethod
     def from_query(
@@ -145,8 +173,29 @@ class MatchSpec:
         from fnd.cascade import _terms_with_fuzzy  # local import: avoid cycle
         from fnd.render import _terms_from_query  # local import: avoid cycle
 
-        terms = _terms_from_query(query)
-        if not terms:
+        # Quoted phrases are matched as contiguous spans; their words are
+        # kept out of the loose (document-wide) term set, so only the
+        # unquoted remainder drives word-by-word highlighting.
+        phrases = tuple(tuple(_stem(w) for w in words) for words in _phrase_word_lists(query))
+        loose_query = _strip_quoted_spans(query)
+
+        # In-context stopwords: a connector like "in" in `defence in depth`
+        # should highlight where it sits next to a matched content word, but a
+        # standalone "in" elsewhere should not. Add every consecutive query
+        # bigram that pairs a stopword with a content word as an implicit
+        # highlight phrase ("defence in", "in depth"); overlapping bigrams also
+        # cover the full run. Stopword-only pairs are skipped so bare function
+        # words never light up.
+        loose_words = _terms_from_query(loose_query, keep_stopwords=True)
+        pair_phrases: list[tuple[str, ...]] = []
+        for a, b in pairwise(loose_words):
+            a_stop, b_stop = a.lower() in STOPWORDS, b.lower() in STOPWORDS
+            if (a_stop or b_stop) and not (a_stop and b_stop):
+                pair_phrases.append((_stem(a), _stem(b)))
+        phrases = phrases + tuple(pair_phrases)
+
+        terms = _terms_from_query(loose_query)
+        if not terms and not phrases:
             return cls()
         raw = {t.lower() for t in terms if t}
         exact = {_stem(t) for t in raw}
@@ -154,8 +203,8 @@ class MatchSpec:
         # have surfaced docs containing them, so the highlighter
         # marks them too.
         if synonyms is not None and synonyms.groups:
-            expanded = expand(query, synonyms)
-            if expanded != query:
+            expanded = expand(loose_query, synonyms)
+            if expanded != loose_query:
                 expanded_terms = _terms_from_query(expanded)
                 for t in expanded_terms:
                     if t:
@@ -163,7 +212,7 @@ class MatchSpec:
                         exact.add(_stem(t))
         # Explicit per-term ~N — always honoured (user opt-in).
         explicit_pairs: dict[str, int] = {}
-        for term, dist in _terms_with_fuzzy(query):
+        for term, dist in _terms_with_fuzzy(loose_query):
             if dist is None or dist <= 0:
                 continue
             explicit_pairs[_stem(term.lower())] = max(
@@ -184,11 +233,12 @@ class MatchSpec:
             exact_stems=frozenset(exact),
             fuzzy_per_stem=fuzzy_pairs,
             raw_terms=tuple(sorted(raw)),
+            phrases=phrases,
         )
 
     @property
     def is_empty(self) -> bool:
-        return not self.exact_stems and not self.fuzzy_per_stem
+        return not self.exact_stems and not self.fuzzy_per_stem and not self.phrases
 
 
 def word_matches(word: str, spec: MatchSpec) -> bool:
@@ -204,6 +254,41 @@ def word_matches(word: str, spec: MatchSpec) -> bool:
         if levenshtein_within(s, q_stem, max_dist=max_d) <= max_d:
             return True
     return False
+
+
+def phrase_char_spans(text: str, spec: MatchSpec) -> list[tuple[int, int]]:
+    """Character spans of every quoted-phrase occurrence in ``text``.
+
+    Stem-aware and contiguous: a phrase matches where its stem sequence
+    appears as consecutive ``\\w+`` words, in order, regardless of the
+    punctuation/whitespace between them (so "3. Monitoring, segmentation"
+    matches "3 Monitoring segmentation" stems). Returns merged,
+    sorted ``(start, end)`` char ranges; empty when ``spec`` has no
+    phrases or none occur."""
+    if not spec.phrases or not text:
+        return []
+    bounds = [(m.start(), m.end()) for m in re.finditer(r"\w+", text)]
+    stems = [_stem(text[s:e]) for s, e in bounds]
+    raw: list[tuple[int, int]] = []
+    for phrase in spec.phrases:
+        plist = list(phrase)
+        n = len(plist)
+        if n == 0:
+            continue
+        for i in range(len(stems) - n + 1):
+            if stems[i : i + n] == plist:
+                raw.append((bounds[i][0], bounds[i + n - 1][1]))
+    if not raw:
+        return []
+    raw.sort()
+    merged: list[tuple[int, int]] = [raw[0]]
+    for start, end in raw[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end:
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def align_doc_word(doc_word: str, query_word: str) -> list[bool]:

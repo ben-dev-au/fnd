@@ -83,6 +83,10 @@ class Hit:
     # non-md or md without frontmatter. Read at search time from F_META_BLOB
     # so query-time post-filters (§5.5e-2) can decode and evaluate.
     meta_blob: bytes = b""
+    # Decoded chunk body text (from F_BODY_STRUCT). Carried so the §4
+    # phrase-proximity reranker can measure term spread across the whole
+    # chunk, not just the ~240-char snippet. Empty until populated.
+    body_text: str = ""
 
 
 @dataclass(slots=True, frozen=True)
@@ -266,9 +270,13 @@ class Searcher:
 
         from fnd.query_dsl import preprocess
         from fnd.schema import F_BODY, F_HEADING_PATH, F_PATH_TOKENS
+        from fnd.stopwords import strip_query_stopwords
 
         enforce_query_bounds(query)
-        user_query = preprocess(query)
+        # Drop standalone stopwords from plain bag-of-words queries so a chunk
+        # matching only "and"/"in"/"the" (~zero IDF) isn't retrieved. Quoted
+        # phrases and explicit-syntax queries pass through untouched.
+        user_query = strip_query_stopwords(preprocess(query))
         full_query = user_query
         if collection:
             full_query = f'collection:"{collection}" AND ({full_query})'
@@ -343,6 +351,7 @@ class Searcher:
                     line=_first_int(doc, F_LINE),
                     mtime=_first_int(doc, F_MTIME),
                     meta_blob=meta_blob_bytes,
+                    body_text=body_text,
                 )
             )
         return out

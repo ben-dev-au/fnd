@@ -98,6 +98,24 @@ def test_rrf_fuse_weight_dominance() -> None:
     assert fused[0].parent_id == "h"
 
 
+def test_rrf_position_bonus_scales_with_weight() -> None:
+    """The rank-1 position bonus is scaled by the sub-query weight, so the
+    top hit of a high-weight pass isn't out-bonused by a doc that merely
+    sits at rank 1 in several low-weight passes.
+
+    Mirrors the graduated-slop case: doc ``a`` is rank 1 in the heavy exact
+    phrase pass and rank 2 in the lighter slop/lex passes; doc ``b`` is
+    rank 1 in the three lighter passes only. ``a`` (the exact-phrase hit)
+    must win."""
+    a, b = _hit("a"), _hit("b")
+    heavy = [a]  # exact phrase, weight 2.0 — a at rank 1
+    near = [b, a]  # weight 1.5 — b rank 1, a rank 2
+    loose = [b, a]  # weight 1.0
+    lex = [b, a]  # weight 1.0
+    fused = rrf_fuse([heavy, near, loose, lex], weights=[2.0, 1.5, 1.0, 1.0])
+    assert fused[0].parent_id == "a"
+
+
 def test_rrf_fuse_score_field_holds_rrf_value() -> None:
     """Fused hits' :attr:`Hit.score` is the RRF score, not the original BM25.
     Required for downstream re-sorting and for displaying fusion ranks."""

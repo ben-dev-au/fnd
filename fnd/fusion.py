@@ -47,9 +47,25 @@ _RRF_K_DEFAULT = 60
 
 # Tiny additive bonus for being rank 1 / 2 / 3 in any sub-query. Tunes RRF
 # (which is otherwise smooth) toward a slight preference for the "very top"
-# of any single sub-query — matches the §9d spec.
+# of any single sub-query — matches the §9d spec. Scaled by the sub-query
+# weight (see :func:`_rrf_contribution`) so a heavy pass's rank-1 isn't
+# out-bonused by a doc sitting at rank 1 across several light passes.
 _POS_BONUS_RANK_1 = 0.05
 _POS_BONUS_RANK_2_3 = 0.02
+
+
+def _rrf_contribution(weight: float, rank: int, k: int = _RRF_K_DEFAULT) -> float:
+    """One sub-query's contribution to a doc's fused score: the RRF base
+    ``weight / (k + rank)`` plus a weight-scaled rank-1/2/3 position bonus.
+    Single source of truth for the fusion math (used by the fuser, the
+    source attributor, and the explain trace) so they can never drift."""
+    base = weight / (k + rank)
+    if rank == 1:
+        return base + weight * _POS_BONUS_RANK_1
+    if rank in (2, 3):
+        return base + weight * _POS_BONUS_RANK_2_3
+    return base
+
 
 # Default per-source weights (§9d worked example).
 _DEFAULT_WEIGHTS: dict[str, float] = {
@@ -60,7 +76,7 @@ _DEFAULT_WEIGHTS: dict[str, float] = {
 
 # Map source name → pass_index used by the TUI glyph table.
 # Keep aligned with cascade: 0 = neutral (lex/exact), 1 = fuzzy,
-# 2 = synonym, 3 = fusion-phrase (new in phase 9).
+# 2 = synonym, 3 = fusion-phrase.
 _SOURCE_TO_PASS_INDEX: dict[str, int] = {
     "lex": 0,
     "fuzzy": 1,
@@ -133,11 +149,13 @@ def rrf_fuse(
 
     Formula (per ranking, per doc d at rank r, 1-indexed)::
 
-        contribution = weight / (k + r) + position_bonus(r)
+        contribution = weight / (k + r) + weight * position_bonus(r)
 
     where ``position_bonus`` is +0.05 at rank 1, +0.02 at ranks 2-3,
-    0 otherwise. Final score is the sum across all rankings; output is
-    deduplicated by ``(parent_id, chunk_seq)`` and sorted descending.
+    0 otherwise (see :func:`_rrf_contribution`). The bonus is weight-scaled
+    so a heavy pass's top hit isn't out-bonused by a doc sitting at rank 1
+    across several light passes. Final score is the sum across all rankings;
+    output is deduplicated by ``(parent_id, chunk_seq)`` and sorted descending.
 
     The returned :class:`Hit` records carry the *fused* score in ``score``
     (the original BM25 is discarded after fusion — re-sorting downstream
@@ -156,11 +174,7 @@ def rrf_fuse(
     for ranking, weight in zip(rankings, weights, strict=True):
         for rank, hit in enumerate(ranking, start=1):
             key = (hit.parent_id, hit.chunk_seq)
-            contribution = weight / (k + rank)
-            if rank == 1:
-                contribution += _POS_BONUS_RANK_1
-            elif rank in (2, 3):
-                contribution += _POS_BONUS_RANK_2_3
+            contribution = _rrf_contribution(weight, rank, k)
             fused_score[key] = fused_score.get(key, 0.0) + contribution
             # Keep the first-seen Hit object as the representative — its body
             # snippet, page, etc. are equivalent across rankings (same chunk).
@@ -411,12 +425,7 @@ def _build_fusion_trace(
                 continue
             rank_per[key][sub.source] = rank
             bm25_per[key][sub.source] = h.score
-            rrf = sub.weight / (_RRF_K_DEFAULT + rank)
-            if rank == 1:
-                rrf += _POS_BONUS_RANK_1
-            elif rank in (2, 3):
-                rrf += _POS_BONUS_RANK_2_3
-            rrf_per[key][sub.source] = rrf
+            rrf_per[key][sub.source] = _rrf_contribution(sub.weight, rank)
 
     contribution_traces = [
         HitContribution(
@@ -478,11 +487,7 @@ def _attribute_sources(
     primary_value: dict[tuple[str, int], float] = {}
     for ranking, sub in zip(rankings, subs, strict=True):
         for rank, hit in enumerate(ranking, start=1):
-            contribution = sub.weight / (_RRF_K_DEFAULT + rank)
-            if rank == 1:
-                contribution += _POS_BONUS_RANK_1
-            elif rank in (2, 3):
-                contribution += _POS_BONUS_RANK_2_3
+            contribution = _rrf_contribution(sub.weight, rank)
             key = (hit.parent_id, hit.chunk_seq)
             if contribution > primary_value.get(key, -1.0):
                 primary_value[key] = contribution
@@ -507,6 +512,7 @@ def _with_score(h: Hit, score: float) -> Hit:
         mtime=h.mtime,
         pass_index=h.pass_index,
         meta_blob=h.meta_blob,
+        body_text=h.body_text,
     )
 
 
@@ -527,4 +533,5 @@ def _with_pass_index(h: Hit, pass_index: int) -> Hit:
         mtime=h.mtime,
         pass_index=pass_index,
         meta_blob=h.meta_blob,
+        body_text=h.body_text,
     )

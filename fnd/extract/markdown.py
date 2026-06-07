@@ -194,12 +194,23 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
             i += 1
             continue
 
-        # Other token types (lists, fences, hr, tables, blockquotes) —
-        # we don't expand them into the legacy Block list (that's still
-        # used only for snippets, and the inline children that DO appear
-        # already cover the searchable text), but flag the section as
-        # having content so a code-only or table-only section flushes
-        # as its own chunk.
+        # Fenced / indented code carries its text on ``tok.content`` with
+        # no ``inline`` children, so unlike paragraphs it would never reach
+        # F_BODY via the inline branch above. Index it so code-only matches
+        # are findable, and emit a Block so snippets can surface the line.
+        if tok.type in ("fence", "code_block"):
+            code = tok.content.strip()
+            if code:
+                blocks.append(Block(kind="code", text=code))
+                body_parts.append(code)
+            section_has_content = True
+            i += 1
+            continue
+
+        # Other token types (lists, hr, tables, blockquotes) — we don't
+        # expand them into the legacy Block list (the inline children that
+        # DO appear already cover the searchable text), but flag the section
+        # as having content so a table-only section flushes as its own chunk.
         if tok.type in _CONTENT_TOKEN_TYPES:
             section_has_content = True
         i += 1
