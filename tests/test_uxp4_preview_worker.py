@@ -154,10 +154,13 @@ async def test_switching_files_mid_load_cancels_mount_task(
         first_task: Any = app._preview_mount_task
         # Switch to small.md before big's mount finishes.
         app._render_full_doc(small_group.parent_id, focus_chunk_seq=0)
-        # The old task should be cancelled or already done; the
-        # _cancel_preview_mount_task helper also nils out the field, so
-        # treat None as a valid "cancelled" outcome.
-        assert first_task is None or first_task.done() or first_task.cancelled()
+        # task.cancel() only *requests* cancellation — the task settles to
+        # cancelled()/done() one loop tick later, so asserting those here
+        # races that settle (flakes under load). cancelling() flips to >0
+        # synchronously on cancel and stays until the task finishes, so it
+        # is the race-free postcondition. None covers the helper nilling
+        # the field; done() covers a mount that already completed.
+        assert first_task is None or first_task.done() or first_task.cancelling() > 0
         # Drain the small load.
         await pilot.pause()
         await pilot.pause()
@@ -171,6 +174,11 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
     threshold) should NOT remount on revisit — its PreviewContainer
     stays in the LRU and a return visit is an O(1) class flip."""
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
+    # The shipped cache caps at 1 (see _PREVIEW_CACHE_MAX_FILES) — leaving a file
+    # then returning rebuilds rather than reusing its container, which measured
+    # faster (a larger cache adds arrange overhead without a faster revisit).
+    # Lift the cap here to exercise the LRU-reuse path this test guards.
+    app._preview_cache.max_files = 8
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("target")

@@ -179,6 +179,11 @@ async def test_prefetch_premounts_structural_container(multi_md_index: Path) -> 
         ranking={"default": RankingProfileConfig()},
     )
     app = FNDApp(index_dir=multi_md_index, config=cfg, collection="notes")
+    # Prefetch pre-mounts up to the cache size; the shipped default caps the
+    # cache at 1 (a larger cache adds mount/arrange overhead without speeding
+    # revisits — see _PREVIEW_CACHE_MAX_FILES), with the decode still prefetched
+    # for every target. Lift the cap here to exercise the multi-file pre-mount.
+    app._preview_cache.max_files = 8
     async with app.run_test() as pilot:
         await pilot.pause()
         app._run_query("prefetch-anchor")
