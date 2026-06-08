@@ -325,19 +325,21 @@ Toggle off from **Settings → Indexing → Auto-resume on launch**, or set
 ## Search how-to
 
 fnd's query bar accepts plain words, phrases, boolean expressions, fuzzy and
-proximity matches, field qualifiers, date filters, and markdown frontmatter
-filters. They compose freely.
+proximity matches, wildcards and regex, field qualifiers, date filters, and
+markdown frontmatter filters. They compose freely.
 
 ### The basics
 
 | You type                      | What it does                                                                                                                                                           |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `entropy`                     | Single term. Matches anywhere in the document body, title, heading path, or filename. Stemmed, so `entropies` and `entropy` are equivalent.                            |
-| `cross entropy loss`          | Three terms, implicit AND. Every term must appear somewhere in the chunk, but not necessarily near each other or in order.                                             |
+| `cross entropy loss`          | Several terms, weighted. A document need not contain every term, but the more it matches the higher it ranks — documents with all three rise to the top. Use `AND` to require all, or quotes for an exact phrase. |
+| `cross AND entropy`           | Require both terms.                                                                                                                                                    |
 | `"cross entropy loss"`        | Exact phrase. The three words must appear in order, adjacent. Matches `cross entropy loss` and `cross-entropy loss` (hyphens are treated as separators at index time). |
 | `cross OR entropy`            | Either term. Useful when a concept goes by different names.                                                                                                            |
 | `NOT regression`              | Exclude. Almost always combined: `entropy NOT regression`.                                                                                                             |
-| `(loss OR cost) AND function` | Parentheses group boolean clauses.                                                                                                                                     |
+| `+rust -python`               | `+` requires a term, `-` excludes one — a quick alternative to `AND`/`NOT`.                                                                                            |
+| `(loss OR cost) AND function` | Parentheses group boolean clauses, to any depth.                                                                                                                       |
 
 ### Phrase search vs loose AND
 
@@ -379,29 +381,35 @@ takes exactly two single words.
 
 ### Fuzzy matching for typos and variants
 
-Suffix `~1` or `~2` to allow that many edits per term:
+Suffix `~1` or `~2` to allow that many edits per term — an adjacent transposition
+(`ir` ↔ `ri`) counts as one edit:
 
 | You type         | Matches                                            |
 | ---------------- | -------------------------------------------------- |
 | `mitochondira~1` | `mitochondria`, `mitochondrial`, etc.              |
-| `kubernates~2`   | `kubernetes`, `kubernates`, `kubernetes` variants. |
+| `kubernates~2`   | `kubernetes` and near spellings.                   |
 
-Use sparingly on short terms: `cat~2` matches almost everything.
+Works on a single term or alongside others (`powerhouse mitochondira~1`). Use
+sparingly on short terms: `cat~2` matches almost everything.
 
 ### Field qualifiers
 
-Restrict matches to a specific field:
+A field qualifier is a hard filter: it narrows the result set (it does not just
+boost), so you can combine it with search terms to constrain them.
 
-| You type                   | What it does                                                  |
-| -------------------------- | ------------------------------------------------------------- |
-| `title:transformer`        | Match only documents whose title contains `transformer`.      |
-| `heading_path:"chapter 4"` | Match the section heading path.                               |
-| `author:dijkstra`          | Match the document author metadata.                           |
-| `kind:pdf`                 | Restrict to a file type (`pdf`, `docx`, `pptx`, `md`, `txt`). |
-| `path_tokens:thesis`       | Match the filesystem path.                                    |
+| You type                       | What it does                                                       |
+| ------------------------------ | ------------------------------------------------------------------ |
+| `title:transformer`            | Only documents whose title contains `transformer`.                 |
+| `heading_path:"chapter 4"`     | Only sections under that heading path.                             |
+| `author:dijkstra`              | Only documents with that author metadata.                          |
+| `kind:pdf`                     | Only a file type (`pdf`, `docx`, `pptx`, `md`, `txt`).             |
+| `path_tokens:thesis`           | Only paths containing `thesis`.                                    |
+| `title:(rust OR golang)`       | Group alternatives within one field.                              |
+| `has:author`                   | Only documents that have a non-empty `author` field.              |
 
-Combine with normal terms: `kind:pdf "diffusion model"` returns PDFs containing
-the exact phrase.
+Combine with terms to constrain them: `kind:pdf "diffusion model"` returns **only
+PDFs** containing the exact phrase; `kind:pptx slide:>10 attention` only later
+slides mentioning attention.
 
 ### Collections
 
@@ -430,41 +438,53 @@ Numeric ranges use `[low TO high]`. Shorthand for one-sided comparisons:
 | `mtime:>2024-01-01`                         | Modified on or after 2024-01-01.   |
 | `mtime:[2024-01-01 TO 2024-06-30]`          | Modified in that ISO range.        |
 
-### Wildcards
+### Wildcards and regex
 
-`*` matches zero or more characters at the end of a term:
+`*` matches zero or more characters, `?` exactly one:
 
-| You type  | Matches                                                      |
-| --------- | ------------------------------------------------------------ |
-| `crypto*` | `crypto`, `cryptography`, `cryptographic`.                   |
-| `*tion`   | Wildcard prefixes are not supported; anchor at the end only. |
+| You type      | Matches                                                          |
+| ------------- | --------------------------------------------------------------- |
+| `crypto*`     | `crypto`, `cryptography`, `cryptographic` (fast prefix scan).   |
+| `*tion`       | Terms ending in `tion` (slower — scans the term dictionary).    |
+| `colou?r`     | `colour` / `color`.                                             |
+| `/crypt(o\|id)/` | A regular expression matched against indexed terms.          |
+
+Wildcards and regex match the **stemmed** term dictionary, so a literal suffix
+that the stemmer rewrites won't line up (e.g. `cryp*graphy` misses the stored stem
+`cryptographi`). Prefer a trailing `*` (`crypto*`), which only needs the prefix.
+Wildcards are also redundant with stemming for ordinary word endings — `entropy`
+already finds `entropies`.
 
 ### Markdown frontmatter filter
 
 If you're searching across markdown notes with YAML frontmatter, append a
-bracketed predicate that's evaluated against each note's frontmatter:
+bracketed predicate that's evaluated against each note's frontmatter. **String
+values are single-quoted** (double quotes denote a field name that contains
+spaces):
 
-| You type                                    | What it does                                      |
-| ------------------------------------------- | ------------------------------------------------- |
-| `mitm [Course == "Security Foundations"]`   | Notes where the `Course` field equals that value. |
-| `[Notes_Type in ["Lecture", "Tutorial"]]`   | All notes tagged Lecture or Tutorial.             |
-| `entropy [Course == "ML" AND Year >= 2024]` | Compound predicate.                               |
-| `[Tags ~~ "draft*"]`                        | Glob-match against the `Tags` field.              |
+| You type                                       | What it does                                          |
+| ---------------------------------------------- | ----------------------------------------------------- |
+| `mitm [Course == 'Security Foundations']`      | Notes where the `Course` field equals that value.     |
+| `[Notes_Type == 'Lecture' OR Notes_Type == 'Tutorial']` | Either value (there are no list literals — use `OR`). |
+| `entropy [Course == 'ML' AND Year >= 2024]`    | Compound predicate.                                   |
+| `['urgent' in Tags]`                           | `urgent` is an element of the `Tags` list.            |
+| `[Course ~~ 'Design *']`                       | Glob-match a string field (`~~` is for strings, not lists). |
+| `["Due Date" < 2026-01-01]`                    | A field name with a space, double-quoted.             |
 
-Supported operators: `==` `!=` `<` `<=` `>` `>=` `~~` (glob), `in`, `not in`,
-`AND`, `OR`, `NOT`, parentheses. Values can be strings (quoted), numbers, ISO
-dates, `true`/`false`/`null`. The filter applies only to markdown files; other
-kinds pass through unfiltered.
+Supported operators: `==` `!=` `<` `<=` `>` `>=` `~~` (glob, string fields),
+`in` / `not in` (membership in a list field), `AND`, `OR`, `NOT`, parentheses.
+Values are single-quoted strings, numbers, ISO dates, or `true`/`false`/`null`.
+The filter applies only to markdown files; other kinds pass through unfiltered.
 
 ### Composing: worked examples
 
 ```text
 "buffer overflow"                                  # exact phrase
 {10} buffer overflow exploit kind:pdf              # three terms within 10 tokens, PDFs only
-c:notes mitm [Course == "Security Foundations"]    # term + collection scope + frontmatter filter
+c:notes mitm [Course == 'Security Foundations']    # term + collection scope + frontmatter filter
 title:"chapter 4" heading_path:proof               # constrain to one chapter's proofs
 kind:pptx slide:>10 attention                      # later-half slides mentioning attention
-mtime:month NOT draft~1                            # recent docs, exclude anything close to "draft"
+mtime:month crypto*                                # recently-modified docs mentioning crypto-anything
 ```
 
 ### A few common pitfalls
@@ -473,12 +493,14 @@ mtime:month NOT draft~1                            # recent docs, exclude anythi
   `entropy`. Quotes only help for multi-word phrases.
 - **`OR` and `AND` are case-sensitive.** Lowercase `or` / `and` are treated
   as ordinary terms. Always uppercase boolean operators.
-- **Stopwords aren't filtered.** `the man` matches docs containing both `the`
-  and `man`. For common-word phrases, quote them or use proximity.
+- **Standalone stopwords are dropped.** `the man` searches just `man` — common
+  words (`the`, `in`, `of`, …) are removed from unquoted queries. To match a
+  phrase that includes them, quote it: `"man in the middle"`.
 - **Proximity is per-chunk.** A phrase or `{N}` query can't span a chunk
-  boundary. If the terms are paragraphs apart, drop to loose AND.
-- **Wildcards on very short stems are slow.** `a*` will scan every term in
-  the index. Use at least three letters before `*`.
+  boundary. If the terms are paragraphs apart, drop to a loose multi-term query.
+- **Wildcards on very short stems are slow.** `a*` scans a large slice of the
+  term dictionary. Use at least three letters before `*`, and prefer a trailing
+  `*` over a leading one.
 
 ## Contributing
 

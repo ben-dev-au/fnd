@@ -286,12 +286,21 @@ class Searcher:
         from fnd.schema import F_BODY
 
         toks = content.split()
-        has_special = any(
-            _WILDCARD_RE.match(t) or _FUZZY_RE.match(t) or _REGEX_RE.match(t) or _GLOB_RE.search(t)
-            for t in toks
-        )
-        is_complex = any(ch in content for ch in "()\"'") or any(
-            t in _CONTENT_BOOL_OPS for t in toks
+
+        def _special(t: str) -> bool:
+            return bool(
+                _WILDCARD_RE.match(t)
+                or _FUZZY_RE.match(t)
+                or _REGEX_RE.match(t)
+                or _GLOB_RE.search(t)
+            )
+
+        has_special = any(_special(t) for t in toks)
+        # "Complex" = a boolean operator, or a quote/paren in a NON-special token
+        # (parens inside a /regex/ are literal, not grouping). Such queries parse
+        # as one expression rather than per-token resolution.
+        is_complex = any(t in _CONTENT_BOOL_OPS for t in toks) or any(
+            ch in t for t in toks if not _special(t) for ch in "()\"'"
         )
         if not has_special or is_complex:
             return _parse_query(self._index, content, **body_parse_kwargs)
