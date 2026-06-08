@@ -68,6 +68,27 @@ async def test_non_mermaid_fence_unchanged_when_flag_on() -> None:
 
 
 @pytest.mark.asyncio
+async def test_wide_diagram_falls_back_to_source_when_it_exceeds_pane() -> None:
+    # A flowchart laid out left-to-right gets wide; with a narrow pane width
+    # threaded in, it must fall back to source rather than render blank.
+    wide = (
+        "```mermaid\nflowchart LR\n"
+        + "\n".join(f"    A{i} --> A{i + 1}" for i in range(12))
+        + "\n```"
+    )
+    plain = await _fence_plain(wide, render_mermaid=True, mermaid_width=40)
+    assert "flowchart" in plain  # source, not a diagram
+    assert "┌" not in plain
+
+
+@pytest.mark.asyncio
+async def test_narrow_diagram_renders_within_pane_width() -> None:
+    plain = await _fence_plain(FLOW, render_mermaid=True, mermaid_width=200)
+    assert "┌" in plain
+    assert "flowchart" not in plain
+
+
+@pytest.mark.asyncio
 async def test_match_inside_diagram_registers_anchor() -> None:
     src = "```mermaid\nflowchart TD\n    A[Needle] --> B[End]\n```"
     md = FNDMarkdown(src, render_mermaid=True, match_spec=MatchSpec.from_query("needle"))

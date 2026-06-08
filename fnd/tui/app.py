@@ -489,6 +489,11 @@ def _fence_language(token: Any) -> str:
     return (getattr(token, "info", "") or "").strip().split(" ", 1)[0].lower()
 
 
+def _content_max_width(art: Text) -> int:
+    """Widest rendered line, trailing padding ignored."""
+    return max((len(line.rstrip()) for line in art.plain.splitlines()), default=0)
+
+
 def _record_fence_anchor_if_matched(widget: FNDMarkdownFence, code: str) -> None:
     """Register a rendered-diagram fence as the first-match scroll target
     when the active query matches inside its source. Diagram art carries no
@@ -528,6 +533,13 @@ class FNDMarkdownFence(MarkdownFence):
             return False
         art = _MERMAID_RENDERER.render(code)
         if art is None:
+            return False
+        # A diagram wider than the preview pane overflows the fence's hidden
+        # horizontal scroll and renders blank, so fall back to the (wrapping)
+        # source. ``mermaid_width`` is the pane content width threaded in at
+        # mount; None (e.g. unit tests) means no cap.
+        avail = getattr(self._markdown, "mermaid_width", None)
+        if avail is not None and _content_max_width(art) > avail:
             return False
         self._mermaid_code = code
         self._set_diagram_content(art)
@@ -876,6 +888,7 @@ class FNDMarkdown(Markdown):
         *,
         match_spec: MatchSpec | None = None,
         render_mermaid: bool = False,
+        mermaid_width: int | None = None,
         name: str | None = None,
         id: str | None = None,
         classes: str | None = None,
@@ -887,6 +900,9 @@ class FNDMarkdown(Markdown):
         # Read by ``FNDMarkdownFence`` to decide whether a mermaid fence
         # renders as a diagram (default-on flag, off in tests unless set).
         self.render_mermaid: bool = render_mermaid
+        # Pane content width: a diagram wider than this falls back to source
+        # so it doesn't clip to blank. None means no width cap.
+        self.mermaid_width: int | None = mermaid_width
         self._first_match_block: MarkdownBlock | None = None
         # Set by ``_on_mount`` after ``super()._on_mount`` (which awaits
         # ``Markdown.update``) returns. Lets the scroll path event-trigger
@@ -4732,14 +4748,17 @@ class FNDApp(App[None]):
         source = c.body_md or _legacy_blocks_to_md(c.blocks)
         import os
 
+        # Pane content width, minus the fence's 1-col inset. A mermaid diagram
+        # wider than this falls back to source rather than clipping to blank.
+        try:
+            pane_widget = self.query_one("#preview_pane", VerticalScroll)
+            wrap_width = max(20, pane_widget.content_size.width - 1)
+        except Exception:
+            wrap_width = 80
+
         if os.environ.get("_FND_W_HYBRID") == "1":
             from fnd.tui._md_hybrid import FNDChunkHybrid
 
-            try:
-                pane_widget = self.query_one("#preview_pane", VerticalScroll)
-                wrap_width = max(20, pane_widget.content_size.width - 1)
-            except Exception:
-                wrap_width = 80
             md_widget = FNDChunkHybrid(
                 source,
                 match_spec=self._effective_match_spec,
@@ -4753,6 +4772,7 @@ class FNDApp(App[None]):
                 render_mermaid=bool(
                     self._config and self._config.defaults.render_mermaid
                 ),
+                mermaid_width=wrap_width,
                 classes="chunk-section chunk-md-body chunk-first",
             )
         parent.mount(md_widget, before=before)
