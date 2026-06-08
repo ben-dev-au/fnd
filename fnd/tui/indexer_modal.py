@@ -75,12 +75,13 @@ fmt_eta = fmt_duration
 
 
 def invalidate_todo_count_cache() -> None:
-    """Drop the cached flat-PDF scan so the next refresh recomputes.
-    Called when a chain finishes so the post-run count reflects the
-    just-resolved files rather than the pre-run backlog."""
+    """Drop every cached flat-PDF scan so the next refresh recomputes.
+    Called when a chain finishes: a run can resolve files across multiple
+    collections, so the unscoped count AND each per-collection scope (read
+    by StillFlatDrillIn) are stale — clear all of them."""
     from fnd.tui import flat_pdf_scan
 
-    flat_pdf_scan.invalidate(None)
+    flat_pdf_scan.invalidate_all()
 
 
 def _stuck_suffix() -> str:

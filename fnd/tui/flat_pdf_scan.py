@@ -38,6 +38,12 @@ Row = tuple[str, str, str, str | None]
 _CACHE: dict[str | None, tuple[list[Row], float]] = {}
 # Callbacks waiting on an in-flight compute for each scope.
 _PENDING: dict[str | None, list[Callable[[list[Row]], None]]] = {}
+# Scopes with a worker currently executing (so concurrent schedules coalesce).
+_RUNNING: set[str | None] = set()
+# Scopes invalidated while their worker was mid-scan: the worker's result is
+# now stale, so it must re-run rather than publish it (otherwise an
+# invalidate+reschedule after a run/dismiss could republish the pre-change scan).
+_DIRTY: set[str | None] = set()
 _LOCK = threading.Lock()
 _TTL_SECONDS = 5.0
 
@@ -82,38 +88,57 @@ def schedule_refresh(
     ``on_ready`` is notified.
     """
     fresh_rows: list[Row] | None = None
+    spawn = False
     with _LOCK:
         entry = _CACHE.get(collection)
         if not force and entry is not None and (time.monotonic() - entry[1]) < ttl:
             fresh_rows = entry[0]
         else:
-            already_running = collection in _PENDING
             waiters = _PENDING.setdefault(collection, [])
             if on_ready is not None:
                 waiters.append(on_ready)
-            if already_running:
-                # A worker is already computing this scope; it will call
-                # our callback when it finishes.
-                return
+            if collection not in _RUNNING:
+                # No worker for this scope: spawn one. Clearing the dirty
+                # mark here means this worker observes post-invalidate state.
+                _RUNNING.add(collection)
+                _DIRTY.discard(collection)
+                spawn = True
+            # else: a worker is already computing this scope; it publishes to
+            # every queued waiter when it finishes (and re-runs if dirtied).
     if fresh_rows is not None:
         if on_ready is not None:
             on_ready(fresh_rows)
         return
+    if not spawn:
+        return
 
     def _worker() -> None:
-        try:
-            from fnd.tui.settings_screen import _flat_pdfs_with_reasons
+        while True:
+            success = True
+            try:
+                from fnd.tui.settings_screen import _flat_pdfs_with_reasons
 
-            rows = list(_flat_pdfs_with_reasons(collection=collection))
-        except Exception:
-            # Keep any prior value rather than wiping the count to 0 on a
-            # transient scan failure (e.g. index locked mid-rebuild).
-            rows = cached_rows(collection) or []
-        with _LOCK:
-            _CACHE[collection] = (rows, time.monotonic())
-            waiters = _PENDING.pop(collection, [])
-        for cb in waiters:
-            _deliver(app, cb, rows)
+                rows = list(_flat_pdfs_with_reasons(collection=collection))
+            except Exception:
+                # Transient scan failure (e.g. index locked mid-rebuild):
+                # fall back to the prior value and DON'T refresh the cache
+                # timestamp below, so the next schedule retries immediately
+                # instead of serving a fake-empty result for the whole TTL.
+                success = False
+                rows = cached_rows(collection) or []
+            with _LOCK:
+                if collection in _DIRTY:
+                    # Invalidated mid-scan: this result is stale. Discard it
+                    # and re-run so queued waiters get post-invalidation data.
+                    _DIRTY.discard(collection)
+                    continue
+                if success:
+                    _CACHE[collection] = (rows, time.monotonic())
+                waiters = _PENDING.pop(collection, [])
+                _RUNNING.discard(collection)
+            for cb in waiters:
+                _deliver(app, cb, rows)
+            return
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -133,15 +158,26 @@ def _deliver(app: FNDApp | Any, cb: Callable[[list[Row]], None], rows: list[Row]
 
 def invalidate(collection: str | None = None) -> None:
     """Drop the cached scan for ``collection`` so the next schedule
-    recomputes (e.g. after a chain finishes or a row is dismissed)."""
+    recomputes (e.g. after a chain finishes or a row is dismissed).
+
+    Invalidating a specific collection also drops the unscoped (None)
+    entry: any change to one collection's flat set changes the
+    all-collections count the modal reads via ``cached_count(None)``.
+    ``_DIRTY`` forces an in-flight worker to re-run rather than publish a
+    now-stale result."""
     with _LOCK:
         _CACHE.pop(collection, None)
+        _DIRTY.add(collection)
+        if collection is not None:
+            _CACHE.pop(None, None)
+            _DIRTY.add(None)
 
 
 def invalidate_all() -> None:
-    """Wipe the whole cache. Used by tests."""
+    """Wipe the whole cache and force any in-flight workers to re-run."""
     with _LOCK:
         _CACHE.clear()
+        _DIRTY.update(_RUNNING)
 
 
 __all__ = [

@@ -34,6 +34,19 @@ def _wait_until(predicate: Callable[[], bool], timeout: float = 2.0) -> bool:
     return False
 
 
+async def _await_condition(
+    pilot: object, predicate: Callable[[], bool], timeout: float = 5.0, step: float = 0.05
+) -> bool:
+    """Pump the app until ``predicate`` holds or ``timeout`` elapses.
+    Deadline-based so slow CI runners don't flake on a fixed tick budget."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause(step)  # type: ignore[attr-defined]
+        if predicate():
+            return True
+    return False
+
+
 def test_cached_count_is_none_before_first_scan() -> None:
     flat_pdf_scan.invalidate_all()
     assert flat_pdf_scan.cached_count() is None
@@ -140,6 +153,95 @@ def test_concurrent_schedules_share_one_worker(monkeypatch: pytest.MonkeyPatch) 
     assert calls["n"] == 1
 
 
+def test_cold_scan_failure_is_not_cached_as_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A scan that raises before any success must not mint a fresh empty
+    result — that would show 'nothing to fix' and block retries for the TTL."""
+    flat_pdf_scan.invalidate_all()
+    calls = {"n": 0}
+
+    def _fake_scan(*, collection: str | None = None) -> list[flat_pdf_scan.Row]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("index locked mid-rebuild")
+        return [("c", "/x.pdf", "flat", None)]
+
+    monkeypatch.setattr("fnd.tui.settings_screen._flat_pdfs_with_reasons", _fake_scan)
+
+    d1 = threading.Event()
+    flat_pdf_scan.schedule_refresh(_StubApp(), None, on_ready=lambda _r: d1.set())
+    assert d1.wait(2.0)
+    assert _wait_until(lambda: calls["n"] == 1)
+    # Cold failure: cache stays absent (None), not a fake-fresh empty.
+    assert flat_pdf_scan.cached_count(None) is None
+
+    # Next schedule retries immediately rather than serving the empty.
+    d2 = threading.Event()
+    flat_pdf_scan.schedule_refresh(_StubApp(), None, on_ready=lambda _r: d2.set())
+    assert d2.wait(2.0)
+    assert _wait_until(lambda: flat_pdf_scan.cached_count(None) == 1)
+    assert calls["n"] == 2
+
+
+def test_invalidate_mid_scan_reruns_with_fresh_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An invalidate while a worker is mid-scan must make that worker
+    re-run and publish post-invalidation data, never the stale result."""
+    flat_pdf_scan.invalidate_all()
+    calls = {"n": 0}
+    started = threading.Event()
+    release = threading.Event()
+    payloads: list[list[flat_pdf_scan.Row]] = [
+        [("c", "/old.pdf", "flat", None)],
+        [("c", "/new.pdf", "flat", None)],
+    ]
+
+    def _fake_scan(*, collection: str | None = None) -> list[flat_pdf_scan.Row]:
+        i = calls["n"]
+        calls["n"] += 1
+        if i == 0:
+            started.set()
+            release.wait(2.0)  # hold the first scan until we've invalidated
+        return payloads[min(i, 1)]
+
+    monkeypatch.setattr("fnd.tui.settings_screen._flat_pdfs_with_reasons", _fake_scan)
+
+    got: list[list[flat_pdf_scan.Row]] = []
+    done = threading.Event()
+
+    def _cb(rows: list[flat_pdf_scan.Row]) -> None:
+        got.append(rows)
+        done.set()
+
+    flat_pdf_scan.schedule_refresh(_StubApp(), None, on_ready=_cb)
+    assert started.wait(2.0)  # first scan is in flight
+    flat_pdf_scan.invalidate(None)  # dirty it mid-scan
+    release.set()  # let the (now-stale) first scan return
+
+    assert done.wait(2.0)
+    assert calls["n"] == 2, "worker should have re-run after invalidation"
+    assert got[-1][0][1] == "/new.pdf", "waiter must get post-invalidation data"
+    assert flat_pdf_scan.cached_count(None) == 1
+
+
+def test_invalidate_specific_also_drops_unscoped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Invalidating one collection must drop the unscoped (None) entry too,
+    since the modal reads the all-collections count from it."""
+    flat_pdf_scan.invalidate_all()
+    monkeypatch.setattr(
+        "fnd.tui.settings_screen._flat_pdfs_with_reasons",
+        lambda *, collection=None: [("x", "/a.pdf", "flat", None)],
+    )
+    for scope in (None, "x"):
+        d = threading.Event()
+        flat_pdf_scan.schedule_refresh(_StubApp(), scope, on_ready=lambda _r: d.set())
+        assert d.wait(2.0)
+    assert _wait_until(lambda: flat_pdf_scan.cached_count(None) is not None)
+    assert _wait_until(lambda: flat_pdf_scan.cached_count("x") is not None)
+
+    flat_pdf_scan.invalidate("x")
+    assert flat_pdf_scan.cached_count("x") is None
+    assert flat_pdf_scan.cached_count(None) is None
+
+
 # ── Regression: the portal must never run the scan on the UI thread ──
 
 
@@ -180,12 +282,14 @@ async def test_indexer_modal_never_scans_on_ui_thread(
     async with app.run_test() as pilot:
         await pilot.pause()
         await app.push_screen(IndexerScreen("default"))
-        # Pump the event loop across several 1Hz ticks; if the scan ran
-        # inline on any of them the loop thread would appear below.
-        for _ in range(20):
-            await pilot.pause(0.05)
+        # Wait for the background scan to fire, then pump a couple of 1Hz
+        # ticks: if any scan ran inline (on mount or a tick) the loop
+        # thread would show up in threads_seen below.
+        assert await _await_condition(pilot, lambda: bool(threads_seen)), (
+            "the background scan should have run at least once"
+        )
+        await _await_condition(pilot, lambda: False, timeout=0.3)
 
-    assert threads_seen, "the background scan should have run at least once"
     assert loop_thread not in threads_seen, (
         "flat-PDF scan ran on the event-loop thread — portal would freeze"
     )
@@ -225,13 +329,12 @@ async def test_still_flat_drillin_never_scans_on_ui_thread(
     async with app.run_test() as pilot:
         await pilot.pause()
         await app.push_screen(StillFlatDrillIn(collection=None))
-        rendered = False
-        for _ in range(30):
-            await pilot.pause(0.05)
+
+        def _rows_rendered() -> bool:
             body = app.screen.query_one("#still_flat_body")
-            if any("flat.pdf" in str(c.render()) for c in body.children):
-                rendered = True
-                break
+            return any("flat.pdf" in str(c.render()) for c in body.children)
+
+        rendered = await _await_condition(pilot, _rows_rendered)
 
     assert threads_seen
     assert loop_thread not in threads_seen

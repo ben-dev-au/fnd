@@ -1979,6 +1979,15 @@ def _run_update_cache(app: FNDApp) -> None:
     import threading
 
     def _worker() -> None:
+        from fnd.tui import flat_pdf_scan
+
+        # Only flag the wait when the scan is actually cold (seconds);
+        # a warm cache makes the confirm appear instantly, no toast needed.
+        if not flat_pdf_scan.is_fresh(None):
+            with contextlib.suppress(Exception):
+                app.call_from_thread(
+                    app.notify, "Scanning flat PDFs and preparing update…", timeout=3
+                )
         _forget_cache_for_flat_pdfs()
         with contextlib.suppress(Exception):
             result = app.call_from_thread(_push_update_all_confirm, app, texturise_override=True)

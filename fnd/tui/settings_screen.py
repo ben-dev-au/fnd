@@ -4093,9 +4093,14 @@ class StillFlatDrillIn(Screen[None]):
         cached = flat_pdf_scan.cached_rows(self._collection_filter)
         if cached is not None:
             self._render_rows(cached)
+            # Only rescan when stale — a fresh cache would otherwise notify
+            # _on_rows_ready inline and rebuild the whole row list a second
+            # time (flicker + wasted work).
+            if not flat_pdf_scan.is_fresh(self._collection_filter):
+                self._schedule_rescan()
         else:
             self._render_placeholder("Scanning for flat PDFs…")
-        self._schedule_rescan()
+            self._schedule_rescan()
 
     def _schedule_rescan(self) -> None:
         from fnd.tui import flat_pdf_scan
