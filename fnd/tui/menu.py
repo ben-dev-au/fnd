@@ -784,6 +784,23 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             keywords=("scrollbar", "marker", "match", "highlight", "position"),
         ),
         MenuItem(
+            id="pref.render_mermaid",
+            label="Render mermaid diagrams (in development)",
+            description=(
+                "Render ```mermaid code fences as terminal text-art diagrams "
+                "instead of source. Unsupported or oversized diagrams fall back "
+                "to source. Applies on next preview load."
+            ),
+            kind=KIND_TOGGLE,
+            toggle_getter=lambda app: (  # type: ignore[arg-type]
+                app._config.defaults.render_mermaid  # type: ignore[attr-defined]
+                if app._config  # type: ignore[attr-defined]
+                else False
+            ),
+            toggle_setter=lambda app, v: _setting_writer("defaults.render_mermaid")(app, v),
+            keywords=("mermaid", "diagram", "flowchart", "render", "fence"),
+        ),
+        MenuItem(
             id="pref.drill_summary_mode",
             label="Drill row summaries",
             description="How drill-in rows render their trailing column.",
