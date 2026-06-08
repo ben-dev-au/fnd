@@ -91,6 +91,58 @@ async def test_zero_delay_dispatches_synchronously(
 
 
 @pytest.mark.asyncio
+async def test_return_to_cancelled_target_redispatches(
+    built_index: Path, cfg_with_debounce: Config
+) -> None:
+    """Overshoot-and-return during a fast sweep must not strand the preview.
+
+    Sweeping past a file whose mount is mid-flight cancels that mount; if the
+    cursor then lands back on it, the coalescing latch must not suppress the
+    remount — the cancelled mount will never land it. Regression: the latch was
+    cleared only on settle/new-query, so returning to a cancelled target was
+    mistaken for "already in flight" and the only dispatch that would mount it
+    was dedup-skipped, hanging the preview until an unrelated nav reset it.
+    """
+    import types
+
+    app = FNDApp(index_dir=built_index, config=cfg_with_debounce, initial_query="results")
+    async with app.run_test() as pilot:
+        await safe_pause(pilot)
+
+        renders: list[tuple[str, int]] = []
+        app._render_full_doc = lambda parent_id, *, focus_chunk_seq: renders.append(  # type: ignore[method-assign]
+            (parent_id, focus_chunk_seq)
+        )
+        app._prefetch_top_results = lambda **_k: None  # type: ignore[method-assign,assignment]
+
+        # A mount for ("target", 0) is mid-flight: latch set, a live task on the
+        # loop, and a *different* file on screen so the navigate-away cancel fires.
+        class _LiveTask:
+            def done(self) -> bool:
+                return False
+
+            def cancel(self) -> None:
+                pass
+
+        app._inflight_preview_target = ("target", 0)
+        app._preview_mount_task = _LiveTask()
+        app._active_preview = types.SimpleNamespace(parent_doc_id="onscreen")  # type: ignore[assignment]
+
+        # Overshoot to a neighbour (cancels the in-flight "target" mount) …
+        app._schedule_preview_load("neighbour", 0)
+        # … then land back on the original target.
+        app._schedule_preview_load("target", 0)
+
+        # Fire the matured debounce: the remount for "target" must run, not be
+        # dedup-skipped against its own cancelled mount.
+        app._fire_pending_preview_load()
+
+        assert ("target", 0) in renders, (
+            "returning to a target whose mount was cancelled must re-dispatch it"
+        )
+
+
+@pytest.mark.asyncio
 async def test_query_change_cancels_pending_load(
     built_index: Path, cfg_with_debounce: Config
 ) -> None:

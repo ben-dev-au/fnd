@@ -2294,6 +2294,17 @@ class FNDApp(App[None]):
         if active_parent is not None and active_parent != parent_id:
             self._cancel_preview_mount_task()
             self._cancel_lazy_mount_task()
+            # The cancelled mount will never reach settle to clear the in-flight
+            # coalescing latch. If that latched target differs from where the
+            # cursor is now heading, drop it — otherwise returning to it later
+            # (an overshoot-and-correct sweep) hits the dedup guard as "already
+            # in flight" and the remount is suppressed, stranding the preview
+            # mid-mount until an unrelated nav resets the latch.
+            if self._inflight_preview_target is not None and self._inflight_preview_target != (
+                parent_id,
+                focus_chunk_seq,
+            ):
+                self._inflight_preview_target = None
         self._preview_load_target = (parent_id, focus_chunk_seq)
         if self._config is not None:
             delay_ms = self._config.defaults.preview_load_debounce_ms
