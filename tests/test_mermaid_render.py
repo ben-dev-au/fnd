@@ -1,3 +1,4 @@
+import pytest
 from rich.text import Text
 
 import fnd.tui.mermaid_render as m
@@ -20,10 +21,10 @@ def test_empty_returns_none():
     assert MermaidRenderer().render("   ") is None
 
 
-def test_oversized_returns_none_without_rendering(monkeypatch):
+def test_oversized_returns_none_without_rendering(monkeypatch: pytest.MonkeyPatch):
     called = {"n": 0}
 
-    def boom(*a, **k):
+    def boom(*a: object, **k: object) -> Text:
         called["n"] += 1
         raise AssertionError("should not render oversized source")
 
@@ -35,14 +36,14 @@ def test_oversized_returns_none_without_rendering(monkeypatch):
     assert called["n"] == 0
 
 
-def test_cache_hit_does_not_reinvoke(monkeypatch):
+def test_cache_hit_does_not_reinvoke(monkeypatch: pytest.MonkeyPatch):
     m._render_cached.cache_clear()
     calls = {"n": 0}
     real = m.termaid.render_rich
 
-    def counting(*a, **k):
+    def counting(source: str, *, theme: str = "default", use_ascii: bool = False) -> Text:
         calls["n"] += 1
-        return real(*a, **k)
+        return real(source, theme=theme, use_ascii=use_ascii)
 
     monkeypatch.setattr(m.termaid, "render_rich", counting)
     r = MermaidRenderer()

@@ -27,9 +27,20 @@ class _Host(App[None]):
         yield self.md
 
 
-async def _fence_plain(source: str, **kw) -> str:
+async def _fence_plain(
+    source: str,
+    *,
+    render_mermaid: bool = False,
+    match_spec: MatchSpec | None = None,
+    mermaid_width: int | None = None,
+) -> str:
     """Rendered text of the first fence, captured while the app is live."""
-    md = FNDMarkdown(source, **kw)
+    md = FNDMarkdown(
+        source,
+        render_mermaid=render_mermaid,
+        match_spec=match_spec,
+        mermaid_width=mermaid_width,
+    )
     async with _Host(md).run_test():
         await md.build_done.wait()
         fences = list(md.query(FNDMarkdownFence))

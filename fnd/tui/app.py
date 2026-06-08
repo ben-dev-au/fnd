@@ -4769,9 +4769,7 @@ class FNDApp(App[None]):
             md_widget = FNDMarkdown(
                 source,
                 match_spec=self._effective_match_spec,
-                render_mermaid=bool(
-                    self._config and self._config.defaults.render_mermaid
-                ),
+                render_mermaid=bool(self._config and self._config.defaults.render_mermaid),
                 mermaid_width=wrap_width,
                 classes="chunk-section chunk-md-body chunk-first",
             )
