@@ -29,3 +29,19 @@ def test_texturising_line_drops_still_flat_when_zero() -> None:
 def test_texturising_line_shows_still_flat_when_nonzero() -> None:
     out = _format_texturising_line(newly=4, already=2, still_flat=1)
     assert "⚠ 1 still flat" in out
+
+
+def test_todo_scope_single_update_is_the_active_collection() -> None:
+    """The Flat-PDFs badge count, its background refresh, and the drill-in it
+    opens must all share one scope so the number matches what's shown."""
+    from fnd.tui.indexer_modal import IndexerScreen
+
+    single = IndexerScreen("default", chain_total=1)
+    assert single._todo_scope() == "default"
+
+
+def test_todo_scope_mid_chain_is_all_collections() -> None:
+    from fnd.tui.indexer_modal import IndexerScreen
+
+    chain = IndexerScreen("default", chain_total=3)
+    assert chain._todo_scope() is None

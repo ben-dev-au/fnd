@@ -2015,7 +2015,10 @@ def _forget_cache_for_flat_pdfs() -> None:
         from fnd.tui.settings_screen import _flat_pdfs_with_reasons
     except Exception:
         return
-    rows = flat_pdf_scan.cached_rows(None)
+    # Require a FRESH snapshot: a stale one could miss a newly-flat PDF and
+    # leave it un-forgotten, so it cache-hits and stays flat through the very
+    # run meant to fix it. Recompute (off-loop here) when stale.
+    rows = flat_pdf_scan.cached_rows(None) if flat_pdf_scan.is_fresh(None) else None
     if rows is None:
         rows = list(_flat_pdfs_with_reasons())
     cache = ExtractionCache()

@@ -420,7 +420,7 @@ class IndexerScreen(ModalScreen[None]):
         # so no to-do option until _on_todo_ready fires.
         from fnd.tui import flat_pdf_scan
 
-        todo_count = flat_pdf_scan.cached_count(None) or 0
+        todo_count = flat_pdf_scan.cached_count(self._todo_scope()) or 0
         want_todo = todo_count > 0
         if want_skip and "skip" not in self._added_options:
             with contextlib.suppress(Exception):
@@ -455,6 +455,13 @@ class IndexerScreen(ModalScreen[None]):
                     opts.remove_option(opt_id)
                     self._removed_options.add(opt_id)
 
+    def _todo_scope(self) -> str | None:
+        """Collection scope for the flat-PDF badge + drill-in: the active
+        collection for a single Update, all collections (None) mid-chain
+        (the chain cycles through several). Keeps the badge count and the
+        drill-in it opens consistent — same scope for both."""
+        return self._collection if self._chain_total <= 1 else None
+
     def _schedule_todo_refresh(self) -> None:
         """Recompute the flat-PDF count off the event loop and re-sync
         the action options when it lands. Bounded to mount + per-
@@ -464,7 +471,9 @@ class IndexerScreen(ModalScreen[None]):
         from fnd.tui import flat_pdf_scan
 
         with contextlib.suppress(Exception):
-            flat_pdf_scan.schedule_refresh(self.app, None, on_ready=self._on_todo_ready)
+            flat_pdf_scan.schedule_refresh(
+                self.app, self._todo_scope(), on_ready=self._on_todo_ready
+            )
 
     def _on_todo_ready(self, _rows: Any) -> None:
         """Background scan finished (marshalled onto the UI thread):
@@ -723,7 +732,7 @@ class IndexerScreen(ModalScreen[None]):
         cycles through multiple collections."""
         from fnd.tui.settings_screen import StillFlatDrillIn
 
-        scope = self._collection if self._chain_total <= 1 else None
+        scope = self._todo_scope()
         self.app.push_screen(StillFlatDrillIn(collection=scope))
 
     def action_done(self) -> None:
