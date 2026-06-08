@@ -1970,26 +1970,70 @@ def _run_update_cache(app: FNDApp) -> None:
     files. So: forget the cache entry for each still-flat PDF first,
     THEN run the Update-all chain with texturise forced on. Cached
     already-textured PDFs are left alone and short-circuit normally."""
-    _forget_cache_for_flat_pdfs()
-    _push_update_all_confirm(app, texturise_override=True)
+    # The flat-PDF scan + per-file sha/cache-forget is seconds-long on a
+    # real corpus; running it in the menu handler froze the TUI before the
+    # confirm appeared. Do it on a worker thread, then push the confirm
+    # back on the UI thread. The menu stays responsive throughout.
+    import asyncio
+    import contextlib
+    import threading
+
+    def _worker() -> None:
+        from fnd.tui import flat_pdf_scan
+
+        # Only flag the wait when the scan is actually cold (seconds);
+        # a warm cache makes the confirm appear instantly, no toast needed.
+        if not flat_pdf_scan.is_fresh(None):
+            with contextlib.suppress(Exception):
+                app.call_from_thread(
+                    app.notify, "Scanning flat PDFs and preparing update…", timeout=3
+                )
+        # Forgetting cache entries is a best-effort optimisation; a failure
+        # here (e.g. the cold recompute hitting a transient index lock) must
+        # not kill the worker before the confirm is pushed, or the click
+        # would silently do nothing. The texturise-all run still proceeds.
+        with contextlib.suppress(Exception):
+            _forget_cache_for_flat_pdfs()
+        with contextlib.suppress(Exception):
+            result = app.call_from_thread(_push_update_all_confirm, app, texturise_override=True)
+            if asyncio.iscoroutine(result):
+                result.close()
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def _forget_cache_for_flat_pdfs() -> None:
     """Delete the structured-extraction cache entry for every PDF
     that is currently flat in the index. Best-effort - any per-file
     failure (sha read, cache write) is suppressed so a single bad
-    file doesn't take down the whole texturise run."""
+    file doesn't take down the whole texturise run.
+
+    Reuses the most recent background scan when one is cached; otherwise
+    computes inline (this runs on a worker thread, never the event loop —
+    see ``_run_update_cache``)."""
     import contextlib
 
     try:
         from fnd.cache import ExtractionCache, sha256_file
         from fnd.extract.pdf import texture_signature
+        from fnd.tui import flat_pdf_scan
         from fnd.tui.settings_screen import _flat_pdfs_with_reasons
     except Exception:
         return
+    # Require a FRESH snapshot: a stale one could miss a newly-flat PDF and
+    # leave it un-forgotten, so it cache-hits and stays flat through the very
+    # run meant to fix it. Recompute (off-loop here) when stale.
+    rows = flat_pdf_scan.cached_rows(None) if flat_pdf_scan.is_fresh(None) else None
+    if rows is None:
+        try:
+            rows = list(_flat_pdfs_with_reasons())
+        except Exception:
+            # Transient scan failure (e.g. index locked mid-rebuild): forget
+            # what the last snapshot knew about rather than aborting entirely.
+            rows = flat_pdf_scan.cached_rows(None) or []
     cache = ExtractionCache()
     sig = texture_signature()
-    for _collection, path, _reason, _recorded_at in _flat_pdfs_with_reasons():
+    for _collection, path, _reason, _recorded_at in rows:
         with contextlib.suppress(OSError):
             from pathlib import Path
 
