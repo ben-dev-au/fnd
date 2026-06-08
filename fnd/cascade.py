@@ -101,6 +101,13 @@ def _fuzzy_term_variants(searcher: Searcher, stem: str, max_dist: int) -> list[s
     return out
 
 
+def _carries_phrase_intent(query: str) -> bool:
+    """True if the query expresses phrase/proximity precision intent — a quoted
+    phrase, ``{N}`` proximity, or ``NEAR/N``. Such queries must not be widened by
+    the fuzzy pass (which ignores proximity)."""
+    return '"' in query or "{" in query or "NEAR/" in query
+
+
 _FUZZY_TOKEN_RE = re.compile(r"^(\w+)(?:~(\d+)?)?$")
 # Strip ``~N`` (and bare trailing ``~``) only when preceded by a word
 # char — preserves phrase-proximity ``"a b"~3`` (~ after a quote).
@@ -245,6 +252,12 @@ def _fuzzy_pass(
             for src in active_sources
         ]
         subqueries.append((tantivy.Occur.Must, tantivy.Query.boolean_query(source_subqueries)))
+    # Apply the same field/range/collection hard filters as the literal pass, so
+    # widening to fuzzy can't leak docs the user's qualifiers excluded.
+    from fnd.query_filters import extract_filters
+
+    for filt in extract_filters(query, schema).filters:
+        subqueries.append((tantivy.Occur.Must, tantivy.Query.const_score_query(filt, 0.0)))
     bq = tantivy.Query.boolean_query(subqueries)
     result = searcher._searcher.search(bq, limit=limit)
     return _materialize_hits(searcher, result.hits, query=query, intent=intent)
@@ -428,15 +441,21 @@ def cascade_search(
     # Pass 1: fuzzy via typed API (text-syntax ~1 is not supported by
     # tantivy-py for indexed-non-fast text fields). Metadata filter is
     # applied post-hoc since the fuzzy pass bypasses parse_query entirely.
-    fuzzy_raw = _fuzzy_pass(
-        searcher,
-        query=query,
-        limit=pass_target,
-        collection=collection,
-        active_sources=active_sources,
-        intent=intent,
-        auto_fuzzy_enabled=auto_fuzzy_enabled,
-        min_term_chars=min_term_chars,
+    # Skipped for phrase/proximity queries: those express precision intent, and
+    # the fuzzy pass strips proximity ({N}/NEAR) and would re-admit far matches.
+    fuzzy_raw = (
+        []
+        if _carries_phrase_intent(query)
+        else _fuzzy_pass(
+            searcher,
+            query=query,
+            limit=pass_target,
+            collection=collection,
+            active_sources=active_sources,
+            intent=intent,
+            auto_fuzzy_enabled=auto_fuzzy_enabled,
+            min_term_chars=min_term_chars,
+        )
     )
     fuzzy_raw = _apply_metadata_filter(fuzzy_raw, metadata_filter)
     new_count = _ingest(fuzzy_raw, 1)

@@ -54,7 +54,9 @@ from fnd.schema import (
     build_schema,
 )
 
-_NOW = int(dt.datetime(2026, 6, 8, tzinfo=dt.UTC).timestamp())
+# Real clock so the mtime token windows (today/year, evaluated at query time
+# against the real clock) line up with the corpus stamps.
+_NOW = int(dt.datetime.now(dt.UTC).timestamp())
 _DAY = 86_400
 
 
@@ -128,7 +130,7 @@ _DOCS: list[tuple[str, _Doc]] = [
     ("sl-3", {"body": "early slide material", "kind": "pptx", "slide": 3}),
     ("sl-12", {"body": "late slide material attention mechanism", "kind": "pptx", "slide": 12}),
     ("mt-today", {"body": "edited very recently corpustoken", "mtime": _ago(0)}),
-    ("mt-old", {"body": "edited long ago corpustoken", "mtime": _ago(400)}),
+    ("mt-old", {"body": "edited long ago corpustoken", "mtime": _iso("2020-01-01")}),
     ("mt-2024h1", {"body": "edited early twenty four corpustoken", "mtime": _iso("2024-03-15")}),
     ("wc-crypto", {"body": "crypto wallet basics"}),
     ("wc-graphy", {"body": "cryptography protects messages"}),
@@ -202,117 +204,137 @@ def _layered(s: Searcher, q: str) -> set[str]:
     return {h.parent_id for g in groups for h in g.hits}
 
 
-# (id, query, predicate, xfail_phase)  — xfail_phase=None means "must pass today".
-type _Case = tuple[str, str, Callable[[set[str]], bool], str | None]
+# (id, query, predicate, broken_paths). ``broken_paths`` lists the paths that
+# are expected to FAIL today (strict xfail) — empty means "must pass on both".
+# As each phase lands, shrink the set; a strict xfail that starts passing fails
+# the suite, so a fixed capability can't silently stay marked broken.
+type _Case = tuple[str, str, Callable[[set[str]], bool], frozenset[str]]
+_OK: frozenset[str] = frozenset()
+_BOTH: frozenset[str] = frozenset({"single", "layered"})
 _CASES: list[_Case] = [
-    ("stemming", "entropy", lambda r: {"stem-sing", "stem-plur"} <= r, None),
+    ("stemming", "entropy", lambda r: {"stem-sing", "stem-plur"} <= r, _OK),
     (
         "phrase-order",
         '"cross entropy loss"',
         lambda r: "phrase-ok" in r and "phrase-reversed" not in r and "cross-only" not in r,
-        None,
+        _OK,
     ),
-    ("phrase-hyphen", '"cross entropy"', lambda r: "phrase-hyphen" in r, None),
-    ("bool-or", "crossxyz OR entropy", lambda r: "entropy-only" in r and "stem-sing" in r, None),
-    ("bool-not", "entropy NOT regression", lambda r: "stem-sing" in r and "has-reg" not in r, None),
-    ("bool-explicit-and", "cross AND loss", lambda r: "all3" in r and "cross-only" not in r, None),
+    ("phrase-hyphen", '"cross entropy"', lambda r: "phrase-hyphen" in r, _OK),
+    ("bool-or", "crossxyz OR entropy", lambda r: "entropy-only" in r and "stem-sing" in r, _OK),
+    ("bool-not", "entropy NOT regression", lambda r: "stem-sing" in r and "has-reg" not in r, _OK),
+    ("bool-explicit-and", "cross AND loss", lambda r: "all3" in r and "cross-only" not in r, _OK),
     (
         "parens-group",
         "(crossxyz OR entropy) AND loss",
         lambda r: "all3" in r and "entropy-only" not in r,
-        None,
+        _OK,
     ),
     (
         "parens-nested",
         "(cross AND loss) OR regression",
         lambda r: "all3" in r and "has-reg" in r and "cross-only" not in r,
-        None,
+        _OK,
     ),
-    ("path-tokens", "path_tokens:thesis", lambda r: "fld-path" in r, None),
-    ("heading-path", "heading_path:proofs", lambda r: "fld-heading" in r, None),
+    ("path-tokens", "path_tokens:thesis", lambda r: "fld-path" in r, _OK),
+    ("heading-path", "heading_path:proofs", lambda r: "fld-heading" in r, _OK),
     # weighted-default ranking is order-sensitive — see test_weighted_default_ranking_*.
-    # --- broken today; acceptance criteria per phase ---
-    ("filter-kind", "kind:docx diffusion", lambda r: r == {"kind-docx"}, "P2"),
+    # --- P2: filter context + ranges (now live) ---
+    ("filter-kind", "kind:docx diffusion", lambda r: r == {"kind-docx"}, _OK),
     (
+        # Hard filter: title:transformer AND body:networks → only the doc with
+        # both. A title qualifier must not OR-in body-only matches.
         "filter-title-hard",
-        "title:transformer diffusion",
-        lambda r: "fld-title" in r and "kind-pdf" not in r,
-        "P2",
+        "title:transformer networks",
+        lambda r: r == {"fld-title"},
+        _OK,
     ),
     (
         "filter-collection",
         "c:wine attack",
         lambda r: "col-wine" in r and "col-papers" not in r,
-        "P2",
+        _OK,
     ),
     (
         "filter-collection-multi",
         "c:wine,papers attack",
         lambda r: {"col-wine", "col-papers"} <= r,
-        "P2",
+        _OK,
     ),
     (
         "filter-page-exact",
         "page:5 content",
         lambda r: "pg-5" in r and "pg-15" not in r and "pg-25" not in r,
-        "P2",
+        _OK,
     ),
-    ("filter-page-gt", "page:>20 content", lambda r: "pg-25" in r and "pg-5" not in r, "P2"),
+    ("filter-page-gt", "page:>20 content", lambda r: "pg-25" in r and "pg-5" not in r, _OK),
     (
         "filter-page-range",
         "page:[10 TO 20] content",
         lambda r: "pg-15" in r and "pg-5" not in r and "pg-25" not in r,
-        "P2",
+        _OK,
     ),
-    ("filter-slide-lt", "slide:<5 material", lambda r: "sl-3" in r and "sl-12" not in r, "P2"),
+    ("filter-slide-lt", "slide:<5 material", lambda r: "sl-3" in r and "sl-12" not in r, _OK),
     (
         "filter-mtime-today",
         "mtime:today corpustoken",
         lambda r: "mt-today" in r and "mt-old" not in r and "mt-2024h1" not in r,
-        "P2",
+        _OK,
     ),
     (
         "filter-mtime-iso-gt",
         "mtime:>2024-01-01 corpustoken",
         lambda r: "mt-2024h1" in r and "mt-old" not in r,
-        "P2",
+        _OK,
     ),
     (
         "filter-mtime-iso-range",
         "mtime:[2024-01-01 TO 2024-06-30] corpustoken",
         lambda r: "mt-2024h1" in r and "mt-today" not in r and "mt-old" not in r,
-        "P2",
+        _OK,
     ),
     (
         "proximity-brace",
         "{6} cross entropy",
         lambda r: "prox-near" in r and "prox-far" not in r,
-        "P2",
+        _OK,
     ),
     (
         "proximity-near",
         "cross NEAR/6 entropy",
         lambda r: "prox-near" in r and "prox-far" not in r,
-        "P2",
+        _OK,
     ),
+    # --- P3: wildcard + fuzzy (not yet implemented) ---
     (
         "wildcard-prefix",
         "crypto*",
         lambda r: {"wc-crypto", "wc-graphy", "wc-graphic"} <= r and "wc-other" not in r,
-        "P3",
+        _BOTH,
     ),
-    ("fuzzy-transposition", "mitochondira~1", lambda r: "fuzzy-mito" in r, "P3"),
-    ("fuzzy-two", "kubernates~2", lambda r: "fuzzy-kube" in r, "P3"),
+    ("fuzzy-transposition", "mitochondira~1", lambda r: "fuzzy-mito" in r, _BOTH),
+    # fuzzy-two already works on the layered (cascade) path; only single-pass lacks it.
+    ("fuzzy-two", "kubernates~2", lambda r: "fuzzy-kube" in r, frozenset({"single"})),
 ]
 
 
-@pytest.mark.parametrize("case", _CASES, ids=[c[0] for c in _CASES])
-@pytest.mark.parametrize("path", ["single", "layered"])
-def test_query_capability(searcher: Searcher, case: _Case, path: str) -> None:
-    name, query, pred, xfail_phase = case
+def _params() -> list[object]:
+    out: list[object] = []
+    for name, query, pred, broken in _CASES:
+        for path in ("single", "layered"):
+            marks = (
+                (pytest.mark.xfail(strict=True, reason=f"{name}: unimplemented on {path} (P3)"),)
+                if path in broken
+                else ()
+            )
+            out.append(pytest.param(name, query, pred, path, marks=marks, id=f"{name}-{path}"))
+    return out
+
+
+@pytest.mark.parametrize(("name", "query", "pred", "path"), _params())
+def test_query_capability(
+    searcher: Searcher, name: str, query: str, pred: Callable[[set[str]], bool], path: str
+) -> None:
     run = _single if path == "single" else _layered
-    if xfail_phase is not None:
-        pytest.xfail(f"{name}: not implemented until {xfail_phase}")
     assert pred(run(searcher, query)), f"{name} [{path}] failed"
 
 

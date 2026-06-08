@@ -269,20 +269,40 @@ class Searcher:
         import tantivy
 
         from fnd.query_dsl import preprocess
-        from fnd.schema import F_BODY, F_HEADING_PATH, F_PATH_TOKENS
+        from fnd.query_filters import extract_filters
+        from fnd.schema import (
+            F_BODY,
+            F_COLLECTION,
+            F_HEADING_PATH,
+            F_PATH_TOKENS,
+            F_SOURCE_PATH,
+            build_schema,
+        )
         from fnd.stopwords import strip_query_stopwords
 
         enforce_query_bounds(query)
-        # Drop standalone stopwords from plain bag-of-words queries so a chunk
+        schema = build_schema()
+        # Lower field/range/collection clauses into typed, unscored hard filters
+        # (filter context) BEFORE proximity expansion: the registry parses raw
+        # ``c:``/``mtime:today``/``page:>N`` forms directly, so a multi-collection
+        # scope never becomes a re-parsed ``(a OR b)`` string. Proximity sugar
+        # ({N}, NEAR/N) is then expanded on the residual content only.
+        extracted = extract_filters(query, schema)
+        # Drop standalone stopwords from the bag-of-words content so a chunk
         # matching only "and"/"in"/"the" (~zero IDF) isn't retrieved. Quoted
         # phrases and explicit-syntax queries pass through untouched.
-        user_query = strip_query_stopwords(preprocess(query))
-        full_query = user_query
+        content = strip_query_stopwords(preprocess(extracted.content))
+        filters = list(extracted.filters)
+        # Active collection (-c / settings) and source scope are hard filters too.
         if collection:
-            full_query = f'collection:"{collection}" AND ({full_query})'
+            filters.append(tantivy.Query.term_query(schema, F_COLLECTION, collection))
         if active_sources:
-            src_clause = " OR ".join(f'source_path:"{s}"' for s in active_sources)
-            full_query = f"({src_clause}) AND ({full_query})"
+            src_terms = [tantivy.Query.term_query(schema, F_SOURCE_PATH, s) for s in active_sources]
+            filters.append(
+                src_terms[0]
+                if len(src_terms) == 1
+                else tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in src_terms])
+            )
         # tantivy-py's QueryParser doesn't honour ``term~N`` syntax for
         # tokenized fields, but it accepts a ``fuzzy_fields`` mapping
         # that auto-fuzzes every parsed term against the listed field.
@@ -292,29 +312,34 @@ class Searcher:
         }
         if fuzzy_distance > 0:
             body_parse_kwargs["fuzzy_fields"] = {F_BODY: (False, fuzzy_distance, True)}
-        # Must-clause: chunk's visible content (F_BODY) must match. Also
-        # carries collection / source filters. Heading-only ancestor
-        # matches no longer create hits.
-        body_required = _parse_query(self._index, full_query, **body_parse_kwargs)
-        # Should-clause: secondary fields contribute boost to the score
-        # but don't gate visibility. Parsed against the bare user query
-        # so collection/source aren't double-counted.
-        boost_secondary = _parse_query(
-            self._index,
-            user_query,
-            default_field_names=[F_HEADING_PATH, F_TITLE, F_PATH_TOKENS],
-            field_boosts={
-                F_HEADING_PATH: DEFAULT_FIELD_BOOSTS[F_HEADING_PATH],
-                F_TITLE: DEFAULT_FIELD_BOOSTS[F_TITLE],
-                F_PATH_TOKENS: DEFAULT_FIELD_BOOSTS[F_PATH_TOKENS],
-            },
+        # Must-clause: chunk's visible content (F_BODY) must match. A pure-filter
+        # query (e.g. ``kind:pdf`` alone) has no content → match every chunk and
+        # let the filters narrow. Heading-only ancestor matches don't create hits.
+        has_content = bool(content.strip())
+        body_required = (
+            _parse_query(self._index, content, **body_parse_kwargs)
+            if has_content
+            else tantivy.Query.all_query()
         )
-        parsed = tantivy.Query.boolean_query(
-            [
-                (tantivy.Occur.Must, body_required),
-                (tantivy.Occur.Should, boost_secondary),
-            ]
-        )
+        clauses: list[tuple[tantivy.Occur, tantivy.Query]] = [(tantivy.Occur.Must, body_required)]
+        # Hard filters: required, but const-scored to 0 so they don't perturb BM25.
+        for f in filters:
+            clauses.append((tantivy.Occur.Must, tantivy.Query.const_score_query(f, 0.0)))
+        # Should-clause: secondary fields boost score without gating visibility.
+        # Parsed against the content (filters already removed).
+        if has_content:
+            boost_secondary = _parse_query(
+                self._index,
+                content,
+                default_field_names=[F_HEADING_PATH, F_TITLE, F_PATH_TOKENS],
+                field_boosts={
+                    F_HEADING_PATH: DEFAULT_FIELD_BOOSTS[F_HEADING_PATH],
+                    F_TITLE: DEFAULT_FIELD_BOOSTS[F_TITLE],
+                    F_PATH_TOKENS: DEFAULT_FIELD_BOOSTS[F_PATH_TOKENS],
+                },
+            )
+            clauses.append((tantivy.Occur.Should, boost_secondary))
+        parsed = tantivy.Query.boolean_query(clauses)
         # Pin one generation for the whole search→doc sequence. A
         # concurrent reload() may swap self._searcher mid-op; the
         # DocAddresses below are generation-specific, so reading them
