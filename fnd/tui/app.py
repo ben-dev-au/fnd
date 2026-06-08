@@ -29,7 +29,7 @@ from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.content import Span
+from textual.content import Content, Span
 from textual.scrollbar import ScrollBar
 from textual.widget import Widget
 from textual.widgets import (
@@ -87,6 +87,7 @@ from fnd.tui.preview_scroll import (
 )
 from fnd.tui.preview_scrollbar import MatchAwareScroll, ThinScrollBarRender
 from fnd.tui.progress import FNDProgressBar, ProgressFacility, ProgressSession
+from fnd.tui.syntax_theme import highlight_fenced, inline_code_spans
 
 # App-wide thin scrollbars: every stock Textual ScrollBar (results/sidebar
 # trees, code fences, settings lists) renders the thumb as a hairline glyph
@@ -402,6 +403,23 @@ def _apply_highlights_after_build(block: MarkdownBlock) -> None:
     _record_first_match(block, spans)
 
 
+def _apply_inline_code_highlights(block: MarkdownBlock) -> None:
+    """Syntax-colour inline code (`` `x` ``) the same way fenced blocks are
+    coloured. The base build marks inline code with the ``.code_inline``
+    style; we tokenise each such run and overlay per-token colours on top
+    (foreground only — the inline-code background, if any, shows through).
+    Runs before the match overlay so search terms still read over it."""
+    content = block._content
+    syntax_spans: list[Span] = []
+    for span in content.spans:
+        if str(span.style) != ".code_inline":
+            continue
+        text = content.plain[span.start : span.end]
+        syntax_spans.extend(inline_code_spans(text, offset=span.start))
+    if syntax_spans:
+        block.set_content(content.add_spans(syntax_spans))
+
+
 class _HighlightingBlockMixin:
     """Drop-in mixin for the MarkdownBlock subclasses that should apply
     search-term highlights after the base build. Avoids repeating the
@@ -409,6 +427,7 @@ class _HighlightingBlockMixin:
 
     def build_from_token(self, token):  # type: ignore[override]
         super().build_from_token(token)  # type: ignore[misc]
+        _apply_inline_code_highlights(self)  # type: ignore[arg-type]
         _apply_highlights_after_build(self)  # type: ignore[arg-type]
 
 
@@ -488,6 +507,15 @@ class FNDMarkdownFence(MarkdownFence):
     unhighlighted. We add the match overlay on top of the lexer colours
     (the highlight reads over them) right after the base build, and
     re-apply it when a theme change rebuilds the syntax colouring."""
+
+    @classmethod
+    def highlight(cls, code: str, language: str, ansi: bool = False, dark: bool = False) -> Content:
+        # Stock highlighting maps Pygments tokens through a sparse theme;
+        # swap in the granular FND palette. Native-ANSI terminals keep the
+        # base ANSI themes (safety net — the app runs truecolor by default).
+        if ansi:
+            return super().highlight(code, language, ansi=ansi, dark=dark)
+        return highlight_fenced(code, language or None)
 
     def __init__(self, markdown: Markdown, token: Any, code: str) -> None:
         super().__init__(markdown, token, code)
