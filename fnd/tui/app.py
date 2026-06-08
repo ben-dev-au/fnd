@@ -77,6 +77,7 @@ from fnd.tui.line_buffer import (
     build_file_view,
     build_rendered_document,
 )
+from fnd.tui.mermaid_render import MermaidRenderer
 from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
 from fnd.tui.preview_scroll import (
     FlatScrollStrategy,
@@ -499,6 +500,26 @@ class FNDMarkdownTD(_HighlightingBlockMixin, MarkdownTD):
     pass
 
 
+_MERMAID_RENDERER = MermaidRenderer()
+
+
+def _fence_language(token: Any) -> str:
+    """First word of the fence info string, lowercased (the language)."""
+    return (getattr(token, "info", "") or "").strip().split(" ", 1)[0].lower()
+
+
+def _record_fence_anchor_if_matched(widget: FNDMarkdownFence, code: str) -> None:
+    """Register a rendered-diagram fence as the first-match scroll target
+    when the active query matches inside its source. Diagram art carries no
+    painted spans, so we only anchor — jump-to-match still scrolls here."""
+    spec = getattr(widget._markdown, "match_spec", None)
+    if spec is None or spec.is_empty or not _build_match_spans(code, spec):
+        return
+    md = widget._markdown
+    if isinstance(md, FNDMarkdown) and md._first_match_block is None:
+        md._first_match_block = widget
+
+
 class FNDMarkdownFence(MarkdownFence):
     """Code fence that overlays search-term highlights on the syntax
     colouring. Stock ``MarkdownFence`` builds a syntax-highlighted
@@ -506,7 +527,14 @@ class FNDMarkdownFence(MarkdownFence):
     no hook for match spans — so query terms inside a code block went
     unhighlighted. We add the match overlay on top of the lexer colours
     (the highlight reads over them) right after the base build, and
-    re-apply it when a theme change rebuilds the syntax colouring."""
+    re-apply it when a theme change rebuilds the syntax colouring.
+
+    A ``mermaid`` fence is rendered as a terminal text-art diagram instead
+    (when the ``render_mermaid`` flag rides the parent markdown), falling
+    back to the syntax-highlighted source on any unsupported diagram. A
+    diagram wider than the pane keeps its width and gains a thin horizontal
+    scrollbar (the ``mermaid-diagram`` class lifts the stock fence's
+    ``overflow-x: hidden``)."""
 
     @classmethod
     def highlight(cls, code: str, language: str, ansi: bool = False, dark: bool = False) -> Content:
@@ -519,12 +547,47 @@ class FNDMarkdownFence(MarkdownFence):
 
     def __init__(self, markdown: Markdown, token: Any, code: str) -> None:
         super().__init__(markdown, token, code)
+        if self._try_render_mermaid(token, code):
+            return
         self._apply_fence_highlights()
+
+    def _try_render_mermaid(self, token: Any, code: str) -> bool:
+        self._mermaid_code: str | None = None
+        if not getattr(self._markdown, "render_mermaid", False):
+            return False
+        if _fence_language(token) != "mermaid":
+            return False
+        art = _MERMAID_RENDERER.render(code)
+        if art is None:
+            return False
+        self._mermaid_code = code
+        self.add_class("mermaid-diagram")
+        self._set_diagram_content(art)
+        _record_fence_anchor_if_matched(self, code)
+        return True
+
+    def _set_diagram_content(self, art: Text) -> None:
+        # termaid hands back a Rich ``Text``; the fence renders a Textual
+        # ``Content`` (``set_content``/``add_spans``), so convert across.
+        content = Content.from_rich_text(art)
+        self._highlighted_code = content
+        self.set_content(content)
 
     def notify_style_update(self) -> None:
         # The base rebuilds ``_highlighted_code`` from scratch on a theme
-        # change, dropping our overlay — re-apply it afterwards.
+        # change, dropping our content — re-render the diagram if this is a
+        # mermaid fence, else re-apply the match overlay.
         super().notify_style_update()
+        code = getattr(self, "_mermaid_code", None)
+        if code is not None:
+            art = _MERMAID_RENDERER.render(code)
+            if art is not None:
+                self._set_diagram_content(art)
+                return
+            # Re-render failed — this is no longer a diagram: drop the
+            # diagram-only styling (hscroll/no-wrap) before falling back.
+            self.remove_class("mermaid-diagram")
+            self._mermaid_code = None
         self._apply_fence_highlights()
 
     def _apply_fence_highlights(self) -> None:
@@ -848,6 +911,7 @@ class FNDMarkdown(Markdown):
         markdown: str | None = None,
         *,
         match_spec: MatchSpec | None = None,
+        render_mermaid: bool = False,
         name: str | None = None,
         id: str | None = None,
         classes: str | None = None,
@@ -856,6 +920,9 @@ class FNDMarkdown(Markdown):
 
         super().__init__(markdown=markdown, name=name, id=id, classes=classes)
         self.match_spec: MatchSpec = match_spec or MatchSpec()
+        # Read by ``FNDMarkdownFence`` to decide whether a mermaid fence
+        # renders as a diagram (default-on flag, off in tests unless set).
+        self.render_mermaid: bool = render_mermaid
         self._first_match_block: MarkdownBlock | None = None
         # Set by ``_on_mount`` after ``super()._on_mount`` (which awaits
         # ``Markdown.update``) returns. Lets the scroll path event-trigger
@@ -1225,6 +1292,16 @@ class FNDApp(App[None]):
     MarkdownFence > Label {
         padding: 0;
         width: 1fr;
+    }
+    /* Rendered mermaid diagrams can't wrap (box-drawing breaks), so a wide
+       one keeps its width and gets a thin horizontal scrollbar instead of
+       being clipped to blank. The Label sizes to content, not the fence. */
+    FNDMarkdownFence.mermaid-diagram {
+        overflow-x: auto;
+        scrollbar-size-horizontal: 1;
+    }
+    FNDMarkdownFence.mermaid-diagram > Label {
+        width: auto;
     }
     /* Pane borders dim by default, brighten when the pane (or any
        descendant) is focused — lazygit's active-section convention.
@@ -4730,6 +4807,8 @@ class FNDApp(App[None]):
             md_widget = FNDMarkdown(
                 source,
                 match_spec=self._effective_match_spec,
+                # Default-on: honour the model default when no config is injected.
+                render_mermaid=(self._config.defaults.render_mermaid if self._config else True),
                 classes="chunk-section chunk-md-body chunk-first",
             )
         parent.mount(md_widget, before=before)

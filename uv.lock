@@ -159,6 +159,7 @@ dependencies = [
     { name = "rich" },
     { name = "snowballstemmer" },
     { name = "tantivy" },
+    { name = "termaid", extra = ["rich"] },
     { name = "textual" },
     { name = "tomli-w" },
     { name = "tomlkit" },
@@ -193,6 +194,7 @@ requires-dist = [
     { name = "rich", specifier = "~=15.0" },
     { name = "snowballstemmer", specifier = "~=3.0" },
     { name = "tantivy", specifier = "~=0.26" },
+    { name = "termaid", extras = ["rich"], specifier = "~=0.6.1" },
     { name = "textual", specifier = "~=8.0" },
     { name = "tomli-w", specifier = "~=1.2" },
     { name = "tomlkit", specifier = "~=0.14" },
@@ -1039,6 +1041,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ef/4b/fbc1293fc8108eaa2f11718d77070e09cefe4aac4055fd2036548a776946/tantivy-0.26.0-cp314-cp314-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:22f6acf0c4d9dff2aecb161071db921c9a0bd3e2485dbc8304fd4561fe50c6a7", size = 4622332, upload-time = "2026-04-29T11:51:25.483Z" },
     { url = "https://files.pythonhosted.org/packages/86/68/d1ae76c42b523b076434a357b675c37fd9684ac0fc6e0e63f703a1f1014a/tantivy-0.26.0-cp314-cp314-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a92825f3215fc4b5ef55da8a577eb9ad30c7ee5c7371daea82329e67aa4c7d12", size = 4573494, upload-time = "2026-04-29T11:51:27.512Z" },
     { url = "https://files.pythonhosted.org/packages/be/3b/6f1ababc26839b3baa0299da2319567ffbecfe0c1b295de1e75e605d98e4/tantivy-0.26.0-cp314-cp314-win_amd64.whl", hash = "sha256:0c9ce6c5a04c4a18244f38601ea18a94044c07f8e713894d456dcbfccd3fa0f5", size = 3761380, upload-time = "2026-04-29T11:51:29.546Z" },
+]
+
+[[package]]
+name = "termaid"
+version = "0.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a7/16/4facdf2b4910c6b8bdcb177cc31625b83fc44adbd4589649f5fdb6090c4a/termaid-0.6.1.tar.gz", hash = "sha256:f7284009b7e85fceae62ffed5dfc6d37b2e74cc6821698897654429ad943ed64", size = 382404, upload-time = "2026-03-30T09:58:03.655Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a2/c3/f8a70c3c1a66c543c1f9c80e5fd0001ffa7162db53457b6a78fe4d873590/termaid-0.6.1-py3-none-any.whl", hash = "sha256:44b15a47e2650dcdc08b2d94f3caf9588c369f6e1e945e2e5d99d35df8548bc1", size = 155353, upload-time = "2026-03-30T09:58:01.97Z" },
+]
+
+[package.optional-dependencies]
+rich = [
+    { name = "rich" },
 ]
 
 [[package]]
