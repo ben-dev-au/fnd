@@ -210,7 +210,6 @@ def _layered(s: Searcher, q: str) -> set[str]:
 # the suite, so a fixed capability can't silently stay marked broken.
 type _Case = tuple[str, str, Callable[[set[str]], bool], frozenset[str]]
 _OK: frozenset[str] = frozenset()
-_BOTH: frozenset[str] = frozenset({"single", "layered"})
 _CASES: list[_Case] = [
     ("stemming", "entropy", lambda r: {"stem-sing", "stem-plur"} <= r, _OK),
     (
@@ -304,16 +303,15 @@ _CASES: list[_Case] = [
         lambda r: "prox-near" in r and "prox-far" not in r,
         _OK,
     ),
-    # --- P3: wildcard + fuzzy (not yet implemented) ---
+    # --- P3: wildcard + fuzzy (now live on both paths) ---
     (
         "wildcard-prefix",
         "crypto*",
         lambda r: {"wc-crypto", "wc-graphy", "wc-graphic"} <= r and "wc-other" not in r,
-        _BOTH,
+        _OK,
     ),
-    ("fuzzy-transposition", "mitochondira~1", lambda r: "fuzzy-mito" in r, _BOTH),
-    # fuzzy-two already works on the layered (cascade) path; only single-pass lacks it.
-    ("fuzzy-two", "kubernates~2", lambda r: "fuzzy-kube" in r, frozenset({"single"})),
+    ("fuzzy-transposition", "mitochondira~1", lambda r: "fuzzy-mito" in r, _OK),
+    ("fuzzy-two", "kubernates~2", lambda r: "fuzzy-kube" in r, _OK),
 ]
 
 

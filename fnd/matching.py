@@ -115,6 +115,49 @@ def levenshtein_within(a: str, b: str, *, max_dist: int) -> int:
     return prev[lb]
 
 
+def osa_within(a: str, b: str, *, max_dist: int) -> int:
+    """Capped optimal-string-alignment (restricted Damerau-Levenshtein)
+    distance: an adjacent transposition costs 1, not 2. Matches Tantivy /
+    Lucene fuzzy semantics (``transposition_cost_one``), so a typo like
+    ``mitochondira`` → ``mitochondria`` resolves at distance 1. Returns
+    ``max_dist + 1`` once the running row minimum exceeds the cap.
+    """
+    if a == b:
+        return 0
+    la, lb = len(a), len(b)
+    if abs(la - lb) > max_dist:
+        return max_dist + 1
+    if la == 0:
+        return lb
+    if lb == 0:
+        return la
+    prev2: list[int] | None = None
+    prev = list(range(lb + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i] + [0] * lb
+        row_min = i
+        for j, cb in enumerate(b, 1):
+            ins = curr[j - 1] + 1
+            dele = prev[j] + 1
+            sub = prev[j - 1] + (0 if ca == cb else 1)
+            v = ins if ins < dele else dele
+            if sub < v:
+                v = sub
+            # Adjacent transposition: a[i-1]a[i] == b[j]b[j-1].
+            if prev2 is not None and i > 1 and j > 1 and ca == b[j - 2] and a[i - 2] == cb:
+                t = prev2[j - 2] + 1
+                if t < v:
+                    v = t
+            curr[j] = v
+            if v < row_min:
+                row_min = v
+        if row_min > max_dist:
+            return max_dist + 1
+        prev2 = prev
+        prev = curr
+    return prev[lb]
+
+
 @dataclass(frozen=True, slots=True)
 class MatchSpec:
     """Frozen description of which words count as "matches" for a query.

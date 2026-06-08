@@ -24,88 +24,26 @@ TUI shows exact matches above fuzzy ones above synonym ones.
 from __future__ import annotations
 
 import re
-import threading
 from typing import Literal, overload
 
-import snowballstemmer
 import tantivy
 
 from fnd.explain import CascadePassTrace, CascadeTrace
-from fnd.matching import auto_fuzzy_distance, levenshtein_within
+from fnd.matching import auto_fuzzy_distance
 from fnd.query import Hit, Searcher
+from fnd.query_resolvers import fuzzy_stem as _fuzzy_stem
+from fnd.query_resolvers import fuzzy_variants as _fuzzy_term_variants
 from fnd.schema import F_BODY, F_META_BLOB, F_PAGE_LABEL, F_PARENT_ID, build_schema
 from fnd.struct import decode as decode_body_struct
 from fnd.synonyms import SynonymTable, expand
 
-# ``F_BODY`` is analyzed with ``en_stem`` (Snowball English) at index
-# time, so the on-disk token form for "Templates" is ``templat``. The
-# fuzzy pass bypasses ``parse_query`` (which normally stems the query
-# the same way), so we have to stem each query term ourselves before
-# handing it to ``fuzzy_term_query`` — otherwise a 1-edit typo like
-# "Templatas" → ``templatas`` ends up at distance 2 from the indexed
-# ``templat`` and silently drops out of the cascade.
-# threading.local: snowballstemmer instances aren't thread-safe.
-_FUZZY_STEMMER_LOCAL = threading.local()
 
-
-def _fuzzy_stem(term: str) -> str:
-    s = getattr(_FUZZY_STEMMER_LOCAL, "instance", None)
-    if s is None:
-        s = snowballstemmer.stemmer("english")
-        _FUZZY_STEMMER_LOCAL.instance = s
-    return s.stemWord(term.lower())
-
-
-# Cap on dictionary entries scanned per character bucket. F_BODY is
-# en_stem-tokenised, so a typical English corpus has ~20-50k unique
-# stems per leading character — the cap keeps the worst-case scan
-# bounded on huge corpora without losing matches in normal ones.
-_FUZZY_DICT_LIMIT = 50_000
-
-
-def _fuzzy_term_variants(searcher: Searcher, stem: str, max_dist: int) -> list[str]:
-    """Enumerate indexed F_BODY stems within ``max_dist`` of ``stem``.
-
-    Walks the term dictionary (via ``Searcher.terms_with_prefix``) using
-    the stem's first character as a prefix anchor — same trick Lucene's
-    ``MultiTermQuery`` rewrite uses to keep the candidate set tight
-    when distance ≥ 2. For ``max_dist == 0`` returns ``[stem]`` if
-    indexed and ``[]`` otherwise. Returns the original stem first when
-    present so the BooleanQuery's first sub-clause is the exact stem
-    (matches Lucene's preference for the closest term).
-    """
-    if max_dist == 0:
-        # Probe the dictionary cheaply: any prefix scan including this
-        # stem returns it in the (term, count) list.
-        return [
-            t for t, _ in searcher._searcher.terms_with_prefix(F_BODY, stem, limit=1) if t == stem
-        ]
-    if not stem:
-        return []
-    # Anchor the scan to the first character — Lucene's rewrite uses a
-    # single-char prefix when prefix_length isn't set; works because
-    # any indexed term within edit distance N must share at least one
-    # char with the query stem.
-    prefix = stem[0]
-    candidates = searcher._searcher.terms_with_prefix(F_BODY, prefix, limit=_FUZZY_DICT_LIMIT)
-    out: list[str] = []
-    seen = False
-    for term, _count in candidates:
-        if term == stem:
-            seen = True
-            continue
-        if levenshtein_within(term, stem, max_dist=max_dist) <= max_dist:
-            out.append(term)
-    if seen:
-        out.insert(0, stem)
-    return out
-
-
-def _carries_phrase_intent(query: str) -> bool:
-    """True if the query expresses phrase/proximity precision intent — a quoted
-    phrase, ``{N}`` proximity, or ``NEAR/N``. Such queries must not be widened by
-    the fuzzy pass (which ignores proximity)."""
-    return '"' in query or "{" in query or "NEAR/" in query
+def _carries_precision_intent(query: str) -> bool:
+    """True if the query expresses precision intent that the recall-widening
+    fuzzy pass would violate: a quoted phrase, ``{N}`` proximity, ``NEAR/N``, or
+    a ``*``/``?`` wildcard (the fuzzy pass strips these and fuzzy-matches the
+    bare stem — e.g. ``crypto*`` would re-admit ``cryptid``)."""
+    return any(ch in query for ch in '"{*?') or "NEAR/" in query
 
 
 _FUZZY_TOKEN_RE = re.compile(r"^(\w+)(?:~(\d+)?)?$")
@@ -445,7 +383,7 @@ def cascade_search(
     # the fuzzy pass strips proximity ({N}/NEAR) and would re-admit far matches.
     fuzzy_raw = (
         []
-        if _carries_phrase_intent(query)
+        if _carries_precision_intent(query)
         else _fuzzy_pass(
             searcher,
             query=query,

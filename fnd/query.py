@@ -13,11 +13,12 @@ caller still gets ``limit`` survivors when the filter is strict.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from tantivy import Index, Query
+from tantivy import Index, Query, Schema
 
 from fnd.extract.base import Block
 from fnd.query_errors import QuerySyntaxError
@@ -45,6 +46,12 @@ from fnd.schema import (
 
 _SNIPPET_CTX = 240
 _DEFAULT_LIMIT: Final = 10
+# A trailing-``*`` prefix wildcard (``crypto*``) and a ``term~N`` fuzzy token.
+# Resolved against the stemmed dictionary into BM25 term_query ORs — parse_query
+# silently drops ``*`` and no-ops ``~N`` on the body field.
+_WILDCARD_RE: Final = re.compile(r"^(\w+)\*$")
+_FUZZY_RE: Final = re.compile(r"^(\w+)~(\d*)$")
+_CONTENT_BOOL_OPS: Final = frozenset({"AND", "OR", "NOT"})
 # Below this many chunks/file the thread-pool overhead outweighs the
 # decode parallelism — fall back to serial decode regardless of the
 # requested ``max_workers``.
@@ -256,6 +263,56 @@ class Searcher:
         self._index.reload()
         self._searcher = self._index.searcher()
 
+    def _content_body_query(
+        self, content: str, schema: Schema, body_parse_kwargs: dict[str, object]
+    ) -> Query:
+        """Scored F_BODY query for the content terms.
+
+        Trailing-``*`` wildcards and ``term~N`` fuzzies are resolved against the
+        stemmed term dictionary into BM25 ``term_query`` ORs (``parse_query``
+        drops ``*`` and no-ops ``~N`` on the body field); plain terms still go
+        through ``parse_query``. The pieces combine as a weighted OR (Should),
+        matching the bare-multi-term default. Content with explicit booleans,
+        quotes, or parens bypasses resolution and parses as one expression
+        (mixing per-token resolution into a boolean tree is the AST work in P4).
+        """
+        import tantivy
+
+        toks = content.split()
+        has_special = any(_WILDCARD_RE.match(t) or _FUZZY_RE.match(t) for t in toks)
+        is_complex = any(ch in content for ch in "()\"'") or any(
+            t in _CONTENT_BOOL_OPS for t in toks
+        )
+        if not has_special or is_complex:
+            return _parse_query(self._index, content, **body_parse_kwargs)
+
+        from fnd.matching import auto_fuzzy_distance
+        from fnd.query_resolvers import fuzzy_stem, fuzzy_variants, prefix_variants, term_or_query
+
+        subs: list[Query] = []
+        plain: list[str] = []
+        for tok in toks:
+            wm = _WILDCARD_RE.match(tok)
+            fm = _FUZZY_RE.match(tok)
+            if wm:
+                q = term_or_query(schema, prefix_variants(self, wm.group(1)))
+            elif fm:
+                stem = fuzzy_stem(fm.group(1))
+                dist = int(fm.group(2)) if fm.group(2) else auto_fuzzy_distance(stem)
+                q = term_or_query(schema, fuzzy_variants(self, stem, dist))
+            else:
+                plain.append(tok)
+                continue
+            if q is not None:
+                subs.append(q)
+        if plain:
+            subs.append(_parse_query(self._index, " ".join(plain), **body_parse_kwargs))
+        if not subs:
+            return tantivy.Query.empty_query()  # specials resolved to nothing
+        if len(subs) == 1:
+            return subs[0]
+        return tantivy.Query.boolean_query([(tantivy.Occur.Should, q) for q in subs])
+
     def _raw_hits(
         self,
         query: str,
@@ -317,7 +374,7 @@ class Searcher:
         # let the filters narrow. Heading-only ancestor matches don't create hits.
         has_content = bool(content.strip())
         body_required = (
-            _parse_query(self._index, content, **body_parse_kwargs)
+            self._content_body_query(content, schema, body_parse_kwargs)
             if has_content
             else tantivy.Query.all_query()
         )
