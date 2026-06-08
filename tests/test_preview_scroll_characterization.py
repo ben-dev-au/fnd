@@ -307,7 +307,10 @@ async def _coldnav_run_query_and_prefetch(app: FNDApp, pilot: Pilot[None]) -> Fi
     target_group = app._groups[1]
     nudged = False
     for _ in range(240):
-        await pilot.pause()
+        # safe_pause (not pilot.pause): under heavy suite load a raw pause can
+        # raise WaitForScreenTimeout and fail this setup loop — the very load
+        # spike this suite must tolerate.
+        await safe_pause(pilot)
         await asyncio.sleep(0.05)
         cont = app._preview_cache.get(target_group.parent_id, sig)
         if cont is not None and cont.mounted_indices:
