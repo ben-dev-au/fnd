@@ -795,7 +795,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             toggle_getter=lambda app: (  # type: ignore[arg-type]
                 app._config.defaults.render_mermaid  # type: ignore[attr-defined]
                 if app._config  # type: ignore[attr-defined]
-                else False
+                else True  # default-on: reflect the model default when config absent
             ),
             toggle_setter=lambda app, v: _setting_writer("defaults.render_mermaid")(app, v),
             keywords=("mermaid", "diagram", "flowchart", "render", "fence"),

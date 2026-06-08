@@ -556,6 +556,10 @@ class FNDMarkdownFence(MarkdownFence):
             if art is not None:
                 self._set_diagram_content(art)
                 return
+            # Re-render failed — this is no longer a diagram: drop the
+            # diagram-only styling (hscroll/no-wrap) before falling back.
+            self.remove_class("mermaid-diagram")
+            self._mermaid_code = None
         self._apply_fence_highlights()
 
     def _apply_fence_highlights(self) -> None:
@@ -4764,7 +4768,8 @@ class FNDApp(App[None]):
             md_widget = FNDMarkdown(
                 source,
                 match_spec=self._effective_match_spec,
-                render_mermaid=bool(self._config and self._config.defaults.render_mermaid),
+                # Default-on: honour the model default when no config is injected.
+                render_mermaid=(self._config.defaults.render_mermaid if self._config else True),
                 classes="chunk-section chunk-md-body chunk-first",
             )
         parent.mount(md_widget, before=before)

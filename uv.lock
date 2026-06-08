@@ -194,7 +194,7 @@ requires-dist = [
     { name = "rich", specifier = "~=15.0" },
     { name = "snowballstemmer", specifier = "~=3.0" },
     { name = "tantivy", specifier = "~=0.26" },
-    { name = "termaid", extras = ["rich"], specifier = ">=0.6.1" },
+    { name = "termaid", extras = ["rich"], specifier = "~=0.6.1" },
     { name = "textual", specifier = "~=8.0" },
     { name = "tomli-w", specifier = "~=1.2" },
     { name = "tomlkit", specifier = "~=0.14" },

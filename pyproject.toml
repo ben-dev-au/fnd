@@ -44,7 +44,7 @@ dependencies = [
     "snowballstemmer~=3.0",
     "tomlkit~=0.14",
     "tomli-w~=1.2",
-    "termaid[rich]>=0.6.1",
+    "termaid[rich]~=0.6.1",
 ]
 
 [project.urls]
