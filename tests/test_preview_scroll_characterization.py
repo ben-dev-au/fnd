@@ -411,12 +411,16 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
     # well after the focus chunk has mounted — forcing the lagging-landing path
     # deterministically instead of relying on load timing. ``_await_match_settled``
     # is the settle the cold finalize awaits before its single match scroll.
+    # Scoped to the TARGET nav only (enabled after prefetch): a global delay also
+    # slows the rank-0 auto-load and starves the prefetch-wait under load.
+    delay_target_landing = False
     orig_settle = FNDApp._await_match_settled
 
     async def _slow_settle(
         self: FNDApp, header: object, above_widgets: object, max_rounds: int = 12
     ) -> None:
-        await asyncio.sleep(0.4)
+        if delay_target_landing:
+            await asyncio.sleep(0.4)
         await orig_settle(self, header, above_widgets, max_rounds=max_rounds)  # type: ignore[arg-type]
 
     monkeypatch.setattr(FNDApp, "_await_match_settled", _slow_settle)
@@ -430,10 +434,29 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
 
         rtree.focus()
         await safe_pause(pilot)
+        # Arm the delay now — only the target navigation's landing lags.
+        delay_target_landing = True
         rtree.move_cursor(rtree.root.children[1])
 
-        # Gate on the real landed signal — it waits out the delayed correcting
-        # scroll that a fixed-tick settle would miss.
+        # Phase 1: prove the delayed-finalize path actually armed — the nav must
+        # enter the settling state on the target before we wait for it to clear,
+        # so a swap-in of the prefetched container can't satisfy phase 2 without
+        # the controller ever settling. Reliable here because the injected 0.4s
+        # delay holds the settling window wide open (we deliberately do NOT do
+        # this in the realistic-load test, where the fast landing can close the
+        # window inside one poll interval).
+        await wait_until(
+            pilot,
+            lambda: (
+                app._active_preview is not None
+                and app._active_preview.parent_doc_id == target_group.parent_id
+                and app._preview_scroll.is_settling
+            ),
+            timeout=20.0,
+            message="cold-nav target never entered settling",
+        )
+        # Phase 2: gate on the real landed signal — it waits out the delayed
+        # correcting scroll that a fixed-tick settle would miss.
         await wait_until(
             pilot,
             lambda: (
