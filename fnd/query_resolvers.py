@@ -14,6 +14,7 @@ path, and the wildcard path share one implementation.
 
 from __future__ import annotations
 
+import re
 import threading
 from typing import TYPE_CHECKING
 
@@ -85,6 +86,23 @@ def prefix_variants(searcher: Searcher, prefix: str, *, limit: int = _DICT_LIMIT
     if not pre:
         return []
     return [t for t, _ in searcher._searcher.terms_with_prefix(F_BODY, pre, limit=limit)]
+
+
+def glob_to_regex(glob: str) -> str:
+    """Translate a shell-style glob (``*`` → zero-or-more, ``?`` → one char) into
+    a regex matching a whole term. Other characters are regex-escaped, and the
+    glob is lowercased to match the (lowercased) indexed dictionary. Used for
+    infix/leading wildcards (``cr*to``, ``*tion``, ``colou?r``) via RegexQuery —
+    trailing ``word*`` takes the cheaper BM25 :func:`prefix_variants` path."""
+    out: list[str] = []
+    for ch in glob.lower():
+        if ch == "*":
+            out.append(".*")
+        elif ch == "?":
+            out.append(".")
+        else:
+            out.append(re.escape(ch))
+    return "".join(out)
 
 
 def term_or_query(schema: tantivy.Schema, terms: list[str]) -> tantivy.Query | None:

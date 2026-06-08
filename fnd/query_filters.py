@@ -111,9 +111,18 @@ def _uint_range(spec: FieldSpec, value: str, schema: tantivy.Schema) -> Query | 
     return rng(n, n)
 
 
-def _compile(spec: FieldSpec, value: str, schema: tantivy.Schema) -> Query | None:
+def _compile(
+    spec: FieldSpec, value: str, schema: tantivy.Schema, index: tantivy.Index | None
+) -> Query | None:
     """Lower one ``field:value`` clause into a typed tantivy query, or None when
     the value can't be parsed (caller then leaves the clause in content)."""
+    # Field grouping: ``title:(a OR b)`` → the boolean parsed against that field.
+    # Needs the index (parse_query); without it, fall through to term/phrase.
+    if index is not None and value.startswith("(") and value.endswith(")"):
+        try:
+            return index.parse_query(value, default_field_names=[spec.tantivy_field])
+        except ValueError:
+            return None
     if spec.value is FieldValue.UINT:
         return _uint_range(spec, value, schema)
     if spec.value is FieldValue.EXACT:
@@ -136,25 +145,35 @@ def _compile(spec: FieldSpec, value: str, schema: tantivy.Schema) -> Query | Non
     return Query.phrase_query(schema, spec.tantivy_field, words)
 
 
-def extract_filters(query: str, schema: tantivy.Schema) -> ExtractResult:
+def extract_filters(
+    query: str, schema: tantivy.Schema, index: tantivy.Index | None = None
+) -> ExtractResult:
     """Split ``query`` into (scored content string, typed hard-filter queries).
 
-    A ``field:value`` token is lifted only when it is at the top level and not
-    adjacent to a boolean operator; everything else stays in ``content``.
+    A ``field:value`` (or ``has:field`` presence) token is lifted only when it
+    is at the top level and not adjacent to a boolean operator; everything else
+    stays in ``content``. ``index`` enables field grouping (``title:(a OR b)``).
     """
     tokens = _tokenize_top_level(query)
     content: list[str] = []
     filters: list[Query] = []
     for i, tok in enumerate(tokens):
         m = _CLAUSE_RE.match(tok)
-        spec = resolve(m.group(1)) if m else None
         adjacent_bool = (i > 0 and tokens[i - 1] in _BOOL_OPS) or (
             i + 1 < len(tokens) and tokens[i + 1] in _BOOL_OPS
         )
-        if spec is None or adjacent_bool:
-            content.append(tok)
-            continue
-        compiled = _compile(spec, m.group(2), schema)  # type: ignore[union-attr]
+        compiled: Query | None = None
+        if m is not None and not adjacent_bool:
+            field, value = m.group(1), m.group(2)
+            if field in ("has", "exists"):
+                # Presence query: any doc with a non-empty term in that field.
+                target = resolve(value)
+                if target is not None:
+                    compiled = Query.regex_query(schema, target.tantivy_field, ".+")
+            else:
+                spec = resolve(field)
+                if spec is not None:
+                    compiled = _compile(spec, value, schema, index)
         if compiled is None:
             content.append(tok)
         else:

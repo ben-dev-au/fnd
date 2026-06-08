@@ -46,11 +46,16 @@ from fnd.schema import (
 
 _SNIPPET_CTX = 240
 _DEFAULT_LIMIT: Final = 10
-# A trailing-``*`` prefix wildcard (``crypto*``) and a ``term~N`` fuzzy token.
-# Resolved against the stemmed dictionary into BM25 term_query ORs — parse_query
-# silently drops ``*`` and no-ops ``~N`` on the body field.
+# Content tokens that parse_query can't handle on the body field and which we
+# resolve against the stemmed dictionary ourselves:
+#   _WILDCARD_RE  trailing prefix wildcard ``crypto*``  → BM25 prefix_variants
+#   _FUZZY_RE     ``term~N`` fuzzy                       → BM25 fuzzy_variants
+#   _REGEX_RE     ``/pattern/``                          → RegexQuery
+#   _GLOB_RE      any ``*``/``?`` (infix/leading)        → RegexQuery
 _WILDCARD_RE: Final = re.compile(r"^(\w+)\*$")
 _FUZZY_RE: Final = re.compile(r"^(\w+)~(\d*)$")
+_REGEX_RE: Final = re.compile(r"^/(.+)/$")
+_GLOB_RE: Final = re.compile(r"[*?]")
 _CONTENT_BOOL_OPS: Final = frozenset({"AND", "OR", "NOT"})
 # Below this many chunks/file the thread-pool overhead outweighs the
 # decode parallelism — fall back to serial decode regardless of the
@@ -278,8 +283,13 @@ class Searcher:
         """
         import tantivy
 
+        from fnd.schema import F_BODY
+
         toks = content.split()
-        has_special = any(_WILDCARD_RE.match(t) or _FUZZY_RE.match(t) for t in toks)
+        has_special = any(
+            _WILDCARD_RE.match(t) or _FUZZY_RE.match(t) or _REGEX_RE.match(t) or _GLOB_RE.search(t)
+            for t in toks
+        )
         is_complex = any(ch in content for ch in "()\"'") or any(
             t in _CONTENT_BOOL_OPS for t in toks
         )
@@ -287,19 +297,36 @@ class Searcher:
             return _parse_query(self._index, content, **body_parse_kwargs)
 
         from fnd.matching import auto_fuzzy_distance
-        from fnd.query_resolvers import fuzzy_stem, fuzzy_variants, prefix_variants, term_or_query
+        from fnd.query_resolvers import (
+            fuzzy_stem,
+            fuzzy_variants,
+            glob_to_regex,
+            prefix_variants,
+            term_or_query,
+        )
+
+        def _regex(pattern: str) -> Query | None:
+            try:
+                return tantivy.Query.regex_query(schema, F_BODY, pattern)
+            except ValueError:
+                return None  # malformed regex / glob → contributes nothing
 
         subs: list[Query] = []
         plain: list[str] = []
         for tok in toks:
             wm = _WILDCARD_RE.match(tok)
+            rm = _REGEX_RE.match(tok)
             fm = _FUZZY_RE.match(tok)
-            if wm:
+            if wm:  # trailing ``word*`` → BM25 prefix expansion
                 q = term_or_query(schema, prefix_variants(self, wm.group(1)))
-            elif fm:
+            elif rm:  # ``/pattern/`` literal regex
+                q = _regex(rm.group(1).lower())
+            elif fm:  # ``term~N`` fuzzy
                 stem = fuzzy_stem(fm.group(1))
                 dist = int(fm.group(2)) if fm.group(2) else auto_fuzzy_distance(stem)
                 q = term_or_query(schema, fuzzy_variants(self, stem, dist))
+            elif _GLOB_RE.search(tok):  # infix/leading wildcard → regex
+                q = _regex(glob_to_regex(tok))
             else:
                 plain.append(tok)
                 continue
@@ -344,7 +371,7 @@ class Searcher:
         # ``c:``/``mtime:today``/``page:>N`` forms directly, so a multi-collection
         # scope never becomes a re-parsed ``(a OR b)`` string. Proximity sugar
         # ({N}, NEAR/N) is then expanded on the residual content only.
-        extracted = extract_filters(query, schema)
+        extracted = extract_filters(query, schema, self._index)
         # Drop standalone stopwords from the bag-of-words content so a chunk
         # matching only "and"/"in"/"the" (~zero IDF) isn't retrieved. Quoted
         # phrases and explicit-syntax queries pass through untouched.
@@ -383,8 +410,14 @@ class Searcher:
         for f in filters:
             clauses.append((tantivy.Occur.Must, tantivy.Query.const_score_query(f, 0.0)))
         # Should-clause: secondary fields boost score without gating visibility.
-        # Parsed against the content (filters already removed).
-        if has_content:
+        # Parsed against the content (filters already removed). Skipped when the
+        # content carries wildcard/fuzzy/regex tokens — parse_query can't handle
+        # those (and the boost is best-effort, not a visibility gate).
+        content_is_special = any(
+            _WILDCARD_RE.match(t) or _FUZZY_RE.match(t) or _REGEX_RE.match(t) or _GLOB_RE.search(t)
+            for t in content.split()
+        )
+        if has_content and not content_is_special:
             boost_secondary = _parse_query(
                 self._index,
                 content,

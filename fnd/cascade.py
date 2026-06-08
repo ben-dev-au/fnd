@@ -40,10 +40,17 @@ from fnd.synonyms import SynonymTable, expand
 
 def _carries_precision_intent(query: str) -> bool:
     """True if the query expresses precision intent that the recall-widening
-    fuzzy pass would violate: a quoted phrase, ``{N}`` proximity, ``NEAR/N``, or
-    a ``*``/``?`` wildcard (the fuzzy pass strips these and fuzzy-matches the
-    bare stem — e.g. ``crypto*`` would re-admit ``cryptid``)."""
-    return any(ch in query for ch in '"{*?') or "NEAR/" in query
+    fuzzy pass would violate, so the fuzzy pass must be skipped:
+
+    * a quoted phrase, ``{N}`` proximity, or ``NEAR/N``;
+    * a ``*``/``?`` wildcard (the fuzzy pass strips these and fuzzy-matches the
+      bare stem — ``crypto*`` would re-admit ``cryptid``);
+    * an explicit exclusion (``NOT x`` / ``-x``) — the fuzzy pass strips the
+      operator and would re-admit the excluded docs.
+    """
+    if any(ch in query for ch in '"{*?') or "NEAR/" in query:
+        return True
+    return bool(re.search(r"\bNOT\b", query)) or bool(re.search(r"(?:^|\s)-\w", query))
 
 
 _FUZZY_TOKEN_RE = re.compile(r"^(\w+)(?:~(\d+)?)?$")
@@ -194,7 +201,7 @@ def _fuzzy_pass(
     # widening to fuzzy can't leak docs the user's qualifiers excluded.
     from fnd.query_filters import extract_filters
 
-    for filt in extract_filters(query, schema).filters:
+    for filt in extract_filters(query, schema, searcher._index).filters:
         subqueries.append((tantivy.Occur.Must, tantivy.Query.const_score_query(filt, 0.0)))
     bq = tantivy.Query.boolean_query(subqueries)
     result = searcher._searcher.search(bq, limit=limit)

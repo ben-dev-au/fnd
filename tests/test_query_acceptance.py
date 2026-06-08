@@ -312,6 +312,31 @@ _CASES: list[_Case] = [
     ),
     ("fuzzy-transposition", "mitochondira~1", lambda r: "fuzzy-mito" in r, _OK),
     ("fuzzy-two", "kubernates~2", lambda r: "fuzzy-kube" in r, _OK),
+    # --- P4: competitive operators ---
+    # Free via parse_query (locked as regression guards):
+    ("required-prohibited", "+cross -loss", lambda r: "cross-only" in r and "all3" not in r, _OK),
+    ("phrase-slop-alias", '"cross loss"~3', lambda r: "all3" in r and "stem-sing" not in r, _OK),
+    (
+        "negate-field-clause",
+        "diffusion NOT kind:pdf",
+        lambda r: "kind-docx" in r and "kind-pdf" not in r,
+        _OK,
+    ),
+    # Implemented this phase:
+    (
+        "regex",
+        "/crypto.*/",
+        lambda r: {"wc-crypto", "wc-graphy", "wc-graphic"} <= r and "wc-other" not in r,
+        _OK,
+    ),
+    ("wildcard-leading", "*graph", lambda r: "wc-graphic" in r and "wc-crypto" not in r, _OK),
+    (
+        "field-grouping",
+        "title:(transformer OR nonexistentxyz)",
+        lambda r: r == {"fld-title"},
+        _OK,
+    ),
+    ("has-field", "has:author", lambda r: r == {"fld-author"}, _OK),
 ]
 
 
