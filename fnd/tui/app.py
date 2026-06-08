@@ -515,8 +515,7 @@ class FNDMarkdownFence(MarkdownFence):
     back to the syntax-highlighted source on any unsupported diagram. A
     diagram wider than the pane keeps its width and gains a thin horizontal
     scrollbar (the ``mermaid-diagram`` class lifts the stock fence's
-    ``overflow-x: hidden``), centred on mount so it doesn't open on the
-    centred layout's blank left margin."""
+    ``overflow-x: hidden``)."""
 
     def __init__(self, markdown: Markdown, token: Any, code: str) -> None:
         super().__init__(markdown, token, code)
@@ -545,13 +544,6 @@ class FNDMarkdownFence(MarkdownFence):
         content = Content.from_rich_text(art)
         self._highlighted_code = content
         self.set_content(content)
-        # termaid centres the graph, so a diagram wider than the fence opens
-        # on blank left margin — centre the horizontal scroll once laid out.
-        self.call_after_refresh(self._centre_diagram)
-
-    def _centre_diagram(self) -> None:
-        if self.max_scroll_x > 0:
-            self.scroll_to(x=self.max_scroll_x // 2, y=0, animate=False)
 
     def notify_style_update(self) -> None:
         # The base rebuilds ``_highlighted_code`` from scratch on a theme
