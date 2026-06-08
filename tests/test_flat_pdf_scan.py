@@ -258,9 +258,7 @@ def test_texturise_flat_pushes_confirm_even_when_scan_fails(
     monkeypatch.setattr("fnd.tui.settings_screen._flat_pdfs_with_reasons", _raise)
 
     pushed = threading.Event()
-    monkeypatch.setattr(
-        menu, "_push_update_all_confirm", lambda *_a, **_k: pushed.set()
-    )
+    monkeypatch.setattr(menu, "_push_update_all_confirm", lambda *_a, **_k: pushed.set())
 
     class _App:
         def call_from_thread(self, fn: Callable[..., object], *a: object, **k: object) -> object:
