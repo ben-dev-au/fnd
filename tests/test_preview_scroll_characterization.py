@@ -10,13 +10,17 @@ it is now a hard-asserting regression test (no longer xfailed).
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from textual.geometry import Region
+from textual.pilot import Pilot
 from textual.widgets import DataTable, Tree
 
 from fnd.config import Config, Defaults, RankingProfileConfig
 from fnd.index import build_index
+from fnd.query import FileGroup
 from fnd.tui import FNDApp
 from fnd.tui.line_buffer import LineBufferPreview
 from tests._pilot_wait import safe_pause, settle, wait_until
@@ -232,24 +236,16 @@ def _coldnav_file(label: str) -> str:
     return "\n".join(lines)
 
 
-@pytest.mark.asyncio
-async def test_cold_nav_to_prefetched_non_first_file_lands_on_screen(
-    tmp_path: Path, tmp_index_dir: Path
-) -> None:
-    """Cold file-node navigation to a prefetched non-first structural file
-    lands the (correctly-resolved) prose match on-screen, ~25% down.
-
-    Regression guard for the cold-nav under-shoot the scroll controller fixes:
-    before the armed gate, navigating to a prefetched container could leave the
-    match just below the fold (the chunk top parked near the viewport edge
-    instead of the match dropped ~25% down) — a mid-settle lazy-mount yanked
-    position after the scroll committed. The armed gate suppresses lazy-mount
-    for the whole settle, so the match stays put. ``scroll_y > 0`` is NOT
-    sufficient — the under-shoot scrolls, just not far enough; we assert the
-    matched prose widget sits inside the pane viewport.
+def _build_coldnav_app(tmp_path: Path, tmp_index_dir: Path) -> FNDApp:
+    """Index four structural files and build an app with prefetch ON and the
+    preview cache lifted, so a non-first file can stay pre-mounted and the
+    cold / prefetched-container nav path is exercised.
 
     Prefetch must be ON: the autouse conftest fixture pins
     ``preview_prefetch_count=0``; an explicit ``Defaults`` value overrides it.
+    The shipped cache caps at 1 (see ``_PREVIEW_CACHE_MAX_FILES``); lifting
+    ``max_files`` lets the rank-1 file stay pre-mounted (the decode is
+    prefetched regardless of cache size).
     """
     notes = tmp_path / "notes"
     notes.mkdir()
@@ -262,82 +258,123 @@ async def test_cold_nav_to_prefetched_non_first_file_lands_on_screen(
         ranking={"default": RankingProfileConfig()},
     )
     app = FNDApp(index_dir=tmp_index_dir, config=cfg, collection="notes")
-    # The shipped cache caps at 1 (see _PREVIEW_CACHE_MAX_FILES); lift it so a
-    # non-first file can stay pre-mounted and the prefetched-container nav path
-    # is exercised. The decode is prefetched regardless of cache size.
     app._preview_cache.max_files = 8
+    return app
+
+
+def _coldnav_match_region(
+    app: FNDApp, parent_id: str, focus_seq: int
+) -> Callable[[], Region | None]:
+    """Return a probe for the region of the widget holding the unique query
+    text in the target file — the prose match the cold-nav scroll must land on.
+    The probe returns None until that widget is laid out in the active preview.
+    """
+
+    def _region() -> Region | None:
+        ap = app._active_preview
+        if ap is None or ap.parent_doc_id != parent_id:
+            return None
+        chunk = ap.match_targets.get(focus_seq) or ap.chunk_widgets.get(focus_seq)
+        if chunk is None:
+            return None
+        for w in chunk.query("*"):
+            if w is chunk:
+                continue
+            plain = getattr(getattr(w, "_content", None), "plain", None)
+            if plain and "quartzfin" in plain and w.region.height > 0:
+                return w.region
+        return None
+
+    return _region
+
+
+async def _coldnav_run_query_and_prefetch(app: FNDApp, pilot: Pilot[None]) -> FileGroup:
+    """Run the query, wait for >=3 result groups, then wait for the rank-1
+    (non-first) file to be prefetched + pre-mounted so navigation hits the
+    cold/prefetched-container code path. Returns the rank-1 group."""
+    app._run_query("quartzfin")
+    sig = app._current_query_signature()
+    await wait_until(
+        pilot,
+        lambda: len(app._groups) >= 3,
+        timeout=15.0,
+        message="results never accumulated 3 groups",
+    )
+    assert len(app._groups) >= 3
+    # Match is early-middle, not chunk 0 and not the last chunk.
+    assert app._groups[0].hits[0].chunk_seq > 0, "match should not be in the first chunk"
+
+    target_group = app._groups[1]
+    nudged = False
+    for _ in range(240):
+        # safe_pause (not pilot.pause): under heavy suite load a raw pause can
+        # raise WaitForScreenTimeout and fail this setup loop — the very load
+        # spike this suite must tolerate.
+        await safe_pause(pilot)
+        await asyncio.sleep(0.05)
+        cont = app._preview_cache.get(target_group.parent_id, sig)
+        if cont is not None and cont.mounted_indices:
+            break
+        if not nudged and not app._user_mount_in_flight():
+            app._prefetch_top_results()
+            nudged = True
+    prefetched = app._preview_cache.get(target_group.parent_id, sig)
+    assert prefetched is not None, f"prefetch never built {target_group.parent_id}"
+    assert prefetched.mounted_indices, f"prefetch never pre-mounted {target_group.parent_id}"
+    return target_group
+
+
+@pytest.mark.asyncio
+async def test_cold_nav_to_prefetched_non_first_file_lands_on_screen(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Cold file-node navigation to a prefetched non-first structural file
+    lands the (correctly-resolved) prose match on-screen, ~25% down.
+
+    Regression guard for the cold-nav under-shoot the scroll controller fixes:
+    navigating to a prefetched container must drop the match ~25% down the
+    viewport, not leave it below the fold. ``scroll_y > 0`` is NOT a sufficient
+    landed-signal here: the pane carries residual scroll from the previously
+    previewed file AND the prefetched focus chunk is already mounted, so both
+    ``scroll_y > 0`` and the match widget exist long before THIS navigation has
+    scrolled — asserting then reads the pre-landing position (the flake). The
+    controller exposes the real landed signal, ``is_settling`` (armed and the
+    nav's scroll has not committed); gating on ``not is_settling`` runs the
+    assert only once the match scroll has landed. The deterministic counterpart
+    that forces the lagging-landing window is
+    ``test_cold_nav_delayed_landing_waits_for_real_settle``.
+    """
+    app = _build_coldnav_app(tmp_path, tmp_index_dir)
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one("#preview_pane")
         rtree = app.query_one("#results_pane", Tree)
-        app._run_query("quartzfin")
-        sig = app._current_query_signature()
-
-        await wait_until(
-            pilot,
-            lambda: len(app._groups) >= 3,
-            timeout=15.0,
-            message="results never accumulated 3 groups",
-        )
-        assert len(app._groups) >= 3
-        # Match is early-middle, not chunk 0 and not the last chunk.
-        assert app._groups[0].hits[0].chunk_seq > 0, "match should not be in the first chunk"
-
-        # Wait for prefetch to pre-mount the NON-first target file's container,
-        # so navigation hits the cold/prefetched-container code path.
-        target_group = app._groups[1]
-        nudged = False
-        for _ in range(240):
-            await pilot.pause()
-            await asyncio.sleep(0.05)
-            cont = app._preview_cache.get(target_group.parent_id, sig)
-            if cont is not None and cont.mounted_indices:
-                break
-            if not nudged and not app._user_mount_in_flight():
-                app._prefetch_top_results()
-                nudged = True
-        prefetched = app._preview_cache.get(target_group.parent_id, sig)
-        assert prefetched is not None, f"prefetch never built {target_group.parent_id}"
-        assert prefetched.mounted_indices, f"prefetch never pre-mounted {target_group.parent_id}"
+        target_group = await _coldnav_run_query_and_prefetch(app, pilot)
+        focus_seq = target_group.hits[0].chunk_seq
+        match_region = _coldnav_match_region(app, target_group.parent_id, focus_seq)
 
         # Navigate the user to the (collapsed, non-first) target file node —
         # closest to the real user action — and drive the cold load.
-        target_node = rtree.root.children[1]
         rtree.focus()
         await safe_pause(pilot)
-        rtree.move_cursor(target_node)
-        focus_seq = target_group.hits[0].chunk_seq
+        rtree.move_cursor(rtree.root.children[1])
 
-        def _content_match_region():  # type: ignore[no-untyped-def]
-            """Region of the widget holding the unique query text — the prose
-            match the scroll should land on."""
-            ap = app._active_preview
-            if ap is None or ap.parent_doc_id != target_group.parent_id:
-                return None
-            chunk = ap.match_targets.get(focus_seq) or ap.chunk_widgets.get(focus_seq)
-            if chunk is None:
-                return None
-            for w in chunk.query("*"):
-                if w is chunk:
-                    continue
-                plain = getattr(getattr(w, "_content", None), "plain", None)
-                if plain and "quartzfin" in plain and w.region.height > 0:
-                    return w.region
-            return None
-
+        # Gate on the real landed signal — NOT ``scroll_y > 0`` (true from the
+        # prior file's residual scroll before this nav moves at all). Once the
+        # controller is no longer settling, the match scroll has committed.
         await wait_until(
             pilot,
             lambda: (
                 app._active_preview is not None
                 and app._active_preview.parent_doc_id == target_group.parent_id
-                and pane.scroll_y > 0
-                and _content_match_region() is not None
+                and not app._preview_scroll.is_settling
+                and match_region() is not None
             ),
             timeout=20.0,
             message="cold-nav target never activated / content match never laid out",
         )
         await settle(pilot)
 
-        region = _content_match_region()
+        region = match_region()
         assert region is not None, "content match widget never laid out"
         # The prose match must be inside the pane viewport — scroll_y > 0 alone
         # is not enough; the under-shoot scrolls but stops short of the match.
@@ -346,6 +383,100 @@ async def test_cold_nav_to_prefetched_non_first_file_lands_on_screen(
             f"content match at screen y={region.y} is outside the preview "
             f"viewport [{top}, {bottom}) — cold-render scroll under-shot, leaving "
             f"the match below the fold (pane.scroll_y={pane.scroll_y})"
+        )
+
+
+@pytest.mark.asyncio
+async def test_cold_nav_delayed_landing_waits_for_real_settle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Deterministic counterpart to the cold-nav landing test: force the match
+    scroll to land LATE (what full-suite load does intermittently) and assert
+    that gating on the controller's ``is_settling`` signal still lands the match
+    in the viewport.
+
+    The original flake was the test asserting on a fixed-tick settle that
+    expired before this late scroll committed (``scroll_y > 0`` + a mounted
+    match widget are both true well before THIS nav scrolls — see the sibling
+    test's docstring). Here the finalize settle is delayed so the correcting
+    scroll is guaranteed late; gating on ``not is_settling`` waits it out. We
+    assert only the post-settle invariant (match in viewport): the pre-landing
+    intermediate position is a transient, and sampling it in-suite would itself
+    be racy — that the weak proxy trips pre-landing is shown by the dev harness
+    in ``dev/tools/coldnav_timeline.py``.
+    """
+    app = _build_coldnav_app(tmp_path, tmp_index_dir)
+
+    # Delay finalize's pre-scroll settle so the correcting match scroll commits
+    # well after the focus chunk has mounted — forcing the lagging-landing path
+    # deterministically instead of relying on load timing. ``_await_match_settled``
+    # is the settle the cold finalize awaits before its single match scroll.
+    # Scoped to the TARGET nav only (enabled after prefetch): a global delay also
+    # slows the rank-0 auto-load and starves the prefetch-wait under load.
+    delay_target_landing = False
+    orig_settle = FNDApp._await_match_settled
+
+    async def _slow_settle(
+        self: FNDApp, header: object, above_widgets: object, max_rounds: int = 12
+    ) -> None:
+        if delay_target_landing:
+            await asyncio.sleep(0.4)
+        await orig_settle(self, header, above_widgets, max_rounds=max_rounds)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(FNDApp, "_await_match_settled", _slow_settle)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one("#preview_pane")
+        rtree = app.query_one("#results_pane", Tree)
+        target_group = await _coldnav_run_query_and_prefetch(app, pilot)
+        focus_seq = target_group.hits[0].chunk_seq
+        match_region = _coldnav_match_region(app, target_group.parent_id, focus_seq)
+
+        rtree.focus()
+        await safe_pause(pilot)
+        # Arm the delay now — only the target navigation's landing lags.
+        delay_target_landing = True
+        rtree.move_cursor(rtree.root.children[1])
+
+        # Phase 1: prove the delayed-finalize path actually armed — the nav must
+        # enter the settling state on the target before we wait for it to clear,
+        # so a swap-in of the prefetched container can't satisfy phase 2 without
+        # the controller ever settling. Reliable here because the injected 0.4s
+        # delay holds the settling window wide open (we deliberately do NOT do
+        # this in the realistic-load test, where the fast landing can close the
+        # window inside one poll interval).
+        await wait_until(
+            pilot,
+            lambda: (
+                app._active_preview is not None
+                and app._active_preview.parent_doc_id == target_group.parent_id
+                and app._preview_scroll.is_settling
+            ),
+            timeout=20.0,
+            message="cold-nav target never entered settling",
+        )
+        # Phase 2: gate on the real landed signal — it waits out the delayed
+        # correcting scroll that a fixed-tick settle would miss.
+        await wait_until(
+            pilot,
+            lambda: (
+                app._active_preview is not None
+                and app._active_preview.parent_doc_id == target_group.parent_id
+                and not app._preview_scroll.is_settling
+                and match_region() is not None
+            ),
+            timeout=20.0,
+            message="match scroll never landed after the controller settled",
+        )
+        await settle(pilot)
+        region = match_region()
+        assert region is not None, "content match widget never laid out"
+        top, bottom = pane.region.y, pane.region.y + pane.region.height
+        assert top <= region.y < bottom, (
+            f"with a delayed finalize, the match at y={region.y} is outside "
+            f"viewport [{top}, {bottom}) after the controller settled "
+            f"(pane.scroll_y={pane.scroll_y}) — gating on is_settling did not "
+            f"wait for the real landing"
         )
 
 

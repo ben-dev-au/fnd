@@ -22,6 +22,7 @@ from textual.widgets import ProgressBar
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import wait_until
 
 
 @pytest.fixture
@@ -131,8 +132,14 @@ async def test_cancel_stops_subprocess(built_index: Path, cfg: Config) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         start_extras_install(app, cmds=cmds, action_label="Install")
-        # Give the subprocess a moment to spawn.
-        await pilot.pause(0.2)
+        # Wait until the subprocess has actually spawned (event, not a fixed
+        # sleep) so Cancel has a live proc to SIGTERM.
+        await wait_until(
+            pilot,
+            lambda: app._extras_proc is not None,
+            timeout=5.0,
+            message="extras subprocess never spawned",
+        )
         # Send Cancel via the binding.
         await pilot.press("c")
         # The task should complete fairly quickly after cancel.
