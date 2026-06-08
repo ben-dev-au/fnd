@@ -1988,7 +1988,12 @@ def _run_update_cache(app: FNDApp) -> None:
                 app.call_from_thread(
                     app.notify, "Scanning flat PDFs and preparing update…", timeout=3
                 )
-        _forget_cache_for_flat_pdfs()
+        # Forgetting cache entries is a best-effort optimisation; a failure
+        # here (e.g. the cold recompute hitting a transient index lock) must
+        # not kill the worker before the confirm is pushed, or the click
+        # would silently do nothing. The texturise-all run still proceeds.
+        with contextlib.suppress(Exception):
+            _forget_cache_for_flat_pdfs()
         with contextlib.suppress(Exception):
             result = app.call_from_thread(_push_update_all_confirm, app, texturise_override=True)
             if asyncio.iscoroutine(result):
@@ -2020,7 +2025,12 @@ def _forget_cache_for_flat_pdfs() -> None:
     # run meant to fix it. Recompute (off-loop here) when stale.
     rows = flat_pdf_scan.cached_rows(None) if flat_pdf_scan.is_fresh(None) else None
     if rows is None:
-        rows = list(_flat_pdfs_with_reasons())
+        try:
+            rows = list(_flat_pdfs_with_reasons())
+        except Exception:
+            # Transient scan failure (e.g. index locked mid-rebuild): forget
+            # what the last snapshot knew about rather than aborting entirely.
+            rows = flat_pdf_scan.cached_rows(None) or []
     cache = ExtractionCache()
     sig = texture_signature()
     for _collection, path, _reason, _recorded_at in rows:

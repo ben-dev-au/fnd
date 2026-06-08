@@ -242,6 +242,37 @@ def test_invalidate_specific_also_drops_unscoped(monkeypatch: pytest.MonkeyPatch
     assert flat_pdf_scan.cached_count(None) is None
 
 
+def test_texturise_flat_pushes_confirm_even_when_scan_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Texturise-flat worker recomputes on a cold cache; if that scan
+    raises (transient index lock) it must not die silently — the update-all
+    confirm still has to be pushed."""
+    import fnd.tui.menu as menu
+
+    flat_pdf_scan.invalidate_all()
+
+    def _raise(*, collection: str | None = None) -> list[flat_pdf_scan.Row]:
+        raise RuntimeError("index locked mid-rebuild")
+
+    monkeypatch.setattr("fnd.tui.settings_screen._flat_pdfs_with_reasons", _raise)
+
+    pushed = threading.Event()
+    monkeypatch.setattr(
+        menu, "_push_update_all_confirm", lambda *_a, **_k: pushed.set()
+    )
+
+    class _App:
+        def call_from_thread(self, fn: Callable[..., object], *a: object, **k: object) -> object:
+            return fn(*a, **k)
+
+        def notify(self, *_a: object, **_k: object) -> None:
+            pass
+
+    menu._run_update_cache(_App())  # type: ignore[arg-type]
+    assert pushed.wait(2.0), "confirm must be pushed even when the cold scan fails"
+
+
 # ── Regression: the portal must never run the scan on the UI thread ──
 
 
