@@ -125,8 +125,22 @@ async def test_inline_code_highlighted_in_prose() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rust_scope_uses_single_colon_token() -> None:
+    # Rust lexes `::` as a single Punctuation token (unlike C++'s two `:`),
+    # so the scope/type heuristics must handle both forms.
+    md = FNDMarkdown("```rust\nlet v = std::vec::Vec::new();\n```")
+    async with _Host(md).run_test():
+        await md.build_done.wait()
+        content = next(iter(md.query(FNDMarkdownFence)))._highlighted_code
+        assert "#79E6F3" in _style_at(content, "std")  # namespace (before ::)
+        assert "#FD8A38" in _style_at(content, "new")  # call
+
+
+@pytest.mark.asyncio
 async def test_unknown_language_degrades_gracefully() -> None:
-    md = FNDMarkdown("```\njust plain text 123\n```")
+    # An explicitly invalid language tag exercises the ClassNotFound -> "text"
+    # fallback (a bare fence resolves via guess_language and never hits it).
+    md = FNDMarkdown("```definitely_not_a_real_lexer\njust plain text 123\n```")
     async with _Host(md).run_test():
         await md.build_done.wait()
         fence = next(iter(md.query(FNDMarkdownFence)))

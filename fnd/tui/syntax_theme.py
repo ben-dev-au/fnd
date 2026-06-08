@@ -103,7 +103,15 @@ _Tok = tuple[Any, str]
 
 
 def _is_colon(tok: _Tok | None) -> bool:
-    return tok is not None and tok[0] is Token.Operator and tok[1] == ":"
+    """A lone ``:`` token — C/C++ lex ``::`` as two of these. Matched on text
+    only (not token type), since lexers disagree (Operator vs Punctuation)."""
+    return tok is not None and tok[1] == ":"
+
+
+def _is_scope(tok: _Tok | None) -> bool:
+    """A single ``::`` scope token — Rust lexes it as ``Punctuation '::'`` and
+    Ruby as ``Operator '::'`` (C/C++ split it into two ``:`` instead)."""
+    return tok is not None and tok[1] == "::"
 
 
 def _name_style(before: Sequence[_Tok], after: Sequence[_Tok], text: str) -> str:
@@ -111,14 +119,15 @@ def _name_style(before: Sequence[_Tok], after: Sequence[_Tok], text: str) -> str
     namespace from a type from a variable). ``before``/``after`` are the
     nearest non-whitespace neighbours, nearest-first."""
     nxt = after[0] if after else None
+    prev = before[0] if before else None
     # `name(` — a call.
     if nxt is not None and nxt[0] is Token.Punctuation and nxt[1] == "(":
         return _FUNCTION
-    # `name::` — a namespace / scope qualifier (`::` is two `:` operators).
-    if _is_colon(nxt) and len(after) > 1 and _is_colon(after[1]):
+    # `name::` — a namespace / scope qualifier (one `::` token, or `:` then `:`).
+    if _is_scope(nxt) or (_is_colon(nxt) and len(after) > 1 and _is_colon(after[1])):
         return _NAMESPACE
     # `::name` — a qualified type or member.
-    if before and _is_colon(before[0]) and len(before) > 1 and _is_colon(before[1]):
+    if _is_scope(prev) or (_is_colon(prev) and len(before) > 1 and _is_colon(before[1])):
         return _TYPE
     if len(text) >= 2 and text.isupper():  # ALL_CAPS — a constant / macro.
         return _CONSTANT
@@ -133,7 +142,10 @@ def highlight_fenced(code: str, language: str | None) -> Content:
     Same lexer setup and ``stylize_before`` tail as
     ``textual.highlight.highlight``, but maps through :class:`FNDSyntaxTheme`,
     refines bare ``Name`` tokens positionally, and rainbow-colours brackets."""
-    language = language or guess_language(code, None)
+    # `guess_language` returns "text"/"default" (never falsy) and a bad name
+    # raises ClassNotFound below — so no crash today; the trailing "text" only
+    # guards against ever passing None if those contracts shift across versions.
+    language = language or guess_language(code, None) or "text"
     code = "\n".join(code.splitlines())
     try:
         lexer = get_lexer_by_name(language, stripnl=False, ensurenl=True, tabsize=8)
