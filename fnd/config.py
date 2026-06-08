@@ -432,6 +432,11 @@ class Defaults(BaseModel):
     # so its scroll track spans only part of the file and markers drift.
     # Default off until that's resolved; opt in to preview the feature.
     scrollbar_match_highlight: bool = False
+    # IN DEVELOPMENT — render ``mermaid`` code fences as terminal text-art
+    # diagrams (via termaid) instead of source. Any unsupported / garbage /
+    # oversized diagram falls back to the syntax-highlighted source. Default
+    # on; the branch merges only once the feature is ready.
+    render_mermaid: bool = True
     # Prune well-known dev/cache directories (node_modules, __pycache__,
     # .venv, Pods, …) at walk descent. The default set is
     # :data:`DEFAULT_JUNK_DIRS`. Disable to restore the legacy walk where
