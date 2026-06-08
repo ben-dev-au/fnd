@@ -32,15 +32,9 @@ async def _fence_plain(
     *,
     render_mermaid: bool = False,
     match_spec: MatchSpec | None = None,
-    mermaid_width: int | None = None,
 ) -> str:
     """Rendered text of the first fence, captured while the app is live."""
-    md = FNDMarkdown(
-        source,
-        render_mermaid=render_mermaid,
-        match_spec=match_spec,
-        mermaid_width=mermaid_width,
-    )
+    md = FNDMarkdown(source, render_mermaid=render_mermaid, match_spec=match_spec)
     async with _Host(md).run_test():
         await md.build_done.wait()
         fences = list(md.query(FNDMarkdownFence))
@@ -79,24 +73,23 @@ async def test_non_mermaid_fence_unchanged_when_flag_on() -> None:
 
 
 @pytest.mark.asyncio
-async def test_wide_diagram_falls_back_to_source_when_it_exceeds_pane() -> None:
-    # A flowchart laid out left-to-right gets wide; with a narrow pane width
-    # threaded in, it must fall back to source rather than render blank.
+async def test_wide_diagram_renders_with_horizontal_scroll_not_source() -> None:
+    # A wide diagram keeps its width (no wrap), tagged for the thin
+    # horizontal scrollbar, instead of clipping to blank or showing source.
     wide = (
         "```mermaid\nflowchart LR\n"
         + "\n".join(f"    A{i} --> A{i + 1}" for i in range(12))
         + "\n```"
     )
-    plain = await _fence_plain(wide, render_mermaid=True, mermaid_width=40)
-    assert "flowchart" in plain  # source, not a diagram
-    assert "┌" not in plain
-
-
-@pytest.mark.asyncio
-async def test_narrow_diagram_renders_within_pane_width() -> None:
-    plain = await _fence_plain(FLOW, render_mermaid=True, mermaid_width=200)
-    assert "┌" in plain
-    assert "flowchart" not in plain
+    md = FNDMarkdown(wide, render_mermaid=True)
+    async with _Host(md).run_test(size=(60, 24)) as pilot:
+        await md.build_done.wait()
+        await pilot.pause()
+        fence = next(iter(md.query(FNDMarkdownFence)))
+        assert "┌" in fence._highlighted_code.plain  # diagram, not source
+        assert fence.has_class("mermaid-diagram")
+        # wider than the 60-col pane => horizontally scrollable
+        assert fence.virtual_size.width > fence.size.width
 
 
 @pytest.mark.asyncio

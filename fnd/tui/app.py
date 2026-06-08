@@ -489,11 +489,6 @@ def _fence_language(token: Any) -> str:
     return (getattr(token, "info", "") or "").strip().split(" ", 1)[0].lower()
 
 
-def _content_max_width(art: Text) -> int:
-    """Widest rendered line, trailing padding ignored."""
-    return max((len(line.rstrip()) for line in art.plain.splitlines()), default=0)
-
-
 def _record_fence_anchor_if_matched(widget: FNDMarkdownFence, code: str) -> None:
     """Register a rendered-diagram fence as the first-match scroll target
     when the active query matches inside its source. Diagram art carries no
@@ -517,7 +512,11 @@ class FNDMarkdownFence(MarkdownFence):
 
     A ``mermaid`` fence is rendered as a terminal text-art diagram instead
     (when the ``render_mermaid`` flag rides the parent markdown), falling
-    back to the syntax-highlighted source on any unsupported diagram."""
+    back to the syntax-highlighted source on any unsupported diagram. A
+    diagram wider than the pane keeps its width and gains a thin horizontal
+    scrollbar (the ``mermaid-diagram`` class lifts the stock fence's
+    ``overflow-x: hidden``), centred on mount so it doesn't open on the
+    centred layout's blank left margin."""
 
     def __init__(self, markdown: Markdown, token: Any, code: str) -> None:
         super().__init__(markdown, token, code)
@@ -534,14 +533,8 @@ class FNDMarkdownFence(MarkdownFence):
         art = _MERMAID_RENDERER.render(code)
         if art is None:
             return False
-        # A diagram wider than the preview pane overflows the fence's hidden
-        # horizontal scroll and renders blank, so fall back to the (wrapping)
-        # source. ``mermaid_width`` is the pane content width threaded in at
-        # mount; None (e.g. unit tests) means no cap.
-        avail = getattr(self._markdown, "mermaid_width", None)
-        if avail is not None and _content_max_width(art) > avail:
-            return False
         self._mermaid_code = code
+        self.add_class("mermaid-diagram")
         self._set_diagram_content(art)
         _record_fence_anchor_if_matched(self, code)
         return True
@@ -552,6 +545,13 @@ class FNDMarkdownFence(MarkdownFence):
         content = Content.from_rich_text(art)
         self._highlighted_code = content
         self.set_content(content)
+        # termaid centres the graph, so a diagram wider than the fence opens
+        # on blank left margin — centre the horizontal scroll once laid out.
+        self.call_after_refresh(self._centre_diagram)
+
+    def _centre_diagram(self) -> None:
+        if self.max_scroll_x > 0:
+            self.scroll_to(x=self.max_scroll_x // 2, y=0, animate=False)
 
     def notify_style_update(self) -> None:
         # The base rebuilds ``_highlighted_code`` from scratch on a theme
@@ -888,7 +888,6 @@ class FNDMarkdown(Markdown):
         *,
         match_spec: MatchSpec | None = None,
         render_mermaid: bool = False,
-        mermaid_width: int | None = None,
         name: str | None = None,
         id: str | None = None,
         classes: str | None = None,
@@ -900,9 +899,6 @@ class FNDMarkdown(Markdown):
         # Read by ``FNDMarkdownFence`` to decide whether a mermaid fence
         # renders as a diagram (default-on flag, off in tests unless set).
         self.render_mermaid: bool = render_mermaid
-        # Pane content width: a diagram wider than this falls back to source
-        # so it doesn't clip to blank. None means no width cap.
-        self.mermaid_width: int | None = mermaid_width
         self._first_match_block: MarkdownBlock | None = None
         # Set by ``_on_mount`` after ``super()._on_mount`` (which awaits
         # ``Markdown.update``) returns. Lets the scroll path event-trigger
@@ -1272,6 +1268,16 @@ class FNDApp(App[None]):
     MarkdownFence > Label {
         padding: 0;
         width: 1fr;
+    }
+    /* Rendered mermaid diagrams can't wrap (box-drawing breaks), so a wide
+       one keeps its width and gets a thin horizontal scrollbar instead of
+       being clipped to blank. The Label sizes to content, not the fence. */
+    FNDMarkdownFence.mermaid-diagram {
+        overflow-x: auto;
+        scrollbar-size-horizontal: 1;
+    }
+    FNDMarkdownFence.mermaid-diagram > Label {
+        width: auto;
     }
     /* Pane borders dim by default, brighten when the pane (or any
        descendant) is focused — lazygit's active-section convention.
@@ -4748,17 +4754,14 @@ class FNDApp(App[None]):
         source = c.body_md or _legacy_blocks_to_md(c.blocks)
         import os
 
-        # Pane content width, minus the fence's 1-col inset. A mermaid diagram
-        # wider than this falls back to source rather than clipping to blank.
-        try:
-            pane_widget = self.query_one("#preview_pane", VerticalScroll)
-            wrap_width = max(20, pane_widget.content_size.width - 1)
-        except Exception:
-            wrap_width = 80
-
         if os.environ.get("_FND_W_HYBRID") == "1":
             from fnd.tui._md_hybrid import FNDChunkHybrid
 
+            try:
+                pane_widget = self.query_one("#preview_pane", VerticalScroll)
+                wrap_width = max(20, pane_widget.content_size.width - 1)
+            except Exception:
+                wrap_width = 80
             md_widget = FNDChunkHybrid(
                 source,
                 match_spec=self._effective_match_spec,
@@ -4770,7 +4773,6 @@ class FNDApp(App[None]):
                 source,
                 match_spec=self._effective_match_spec,
                 render_mermaid=bool(self._config and self._config.defaults.render_mermaid),
-                mermaid_width=wrap_width,
                 classes="chunk-section chunk-md-body chunk-first",
             )
         parent.mount(md_widget, before=before)
