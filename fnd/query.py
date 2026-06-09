@@ -235,6 +235,21 @@ def _passes_meta_filter(hit: Hit, predicate: object) -> bool:
     return bool(predicate(fm))  # type: ignore[operator]
 
 
+def _dedup_by_file(hits: list[Hit], limit: int) -> list[Hit]:
+    """First ``limit`` hits with one per ``parent_id`` (the file's best chunk,
+    since ``hits`` is already ranked)."""
+    seen: set[str] = set()
+    out: list[Hit] = []
+    for h in hits:
+        if h.parent_id in seen:
+            continue
+        seen.add(h.parent_id)
+        out.append(h)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _parse_query(index: Index, query: str, **kwargs: object) -> Query:
     """Parse via Tantivy, converting its raw ``ValueError`` syntax errors into a
     typed :class:`QuerySyntaxError` so callers never crash on a malformed query."""
@@ -482,14 +497,32 @@ class Searcher:
     ) -> list[Hit]:
         """Return one Hit per file (the file's best-scored chunk).
 
+        The default ranking is unified on fusion (RRF), the same weighted
+        ordering the TUI uses: a doc matching every query term outranks one
+        matching only a single rarer term (raw BM25 over an OR does not
+        guarantee that). The legacy single-pass BM25 path is kept only for the
+        rerank ``profile`` (§4 recency / filetype / phrase-proximity) and the
+        explicit cascade ``fuzzy_distance`` callers.
+
         Use :meth:`search_grouped` to keep all matched sections of each file.
-        When ``profile`` is set, applies the §4 Python post-rank adjustments
-        (recency / filetype / phrase-proximity) before per-file dedup.
-        ``active_sources`` further narrows scope to chunks indexed from
-        the listed source paths.
+        ``active_sources`` further narrows scope to chunks indexed from the
+        listed source paths.
         """
         if not query.strip():
             return []
+        if profile is None and fuzzy_distance == 0:
+            from fnd.fusion import fusion_search
+
+            fused = fusion_search(
+                self,
+                query=query,
+                limit=limit * 5,  # oversample: per-file dedup below thins this
+                collection=collection,
+                metadata_filter=metadata_filter,
+                active_sources=active_sources,
+                intent=intent,
+            )
+            return _dedup_by_file(fused, limit)
         raw = self._filtered_raw_hits(
             query,
             target=limit * 5,
@@ -504,16 +537,7 @@ class Searcher:
 
             assert isinstance(profile, RankingProfile)
             raw = rerank_hits(raw, profile=profile, query=query, now=now)
-        seen: set[str] = set()
-        out: list[Hit] = []
-        for h in raw:
-            if h.parent_id in seen:
-                continue
-            seen.add(h.parent_id)
-            out.append(h)
-            if len(out) >= limit:
-                break
-        return out
+        return _dedup_by_file(raw, limit)
 
     def _decode_chunk(self, searcher: object, address: object) -> FileChunk:
         """Decode a single chunk's stored fields at ``address`` into a

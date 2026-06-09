@@ -413,11 +413,10 @@ def test_weighted_default_ranking_layered(searcher: Searcher) -> None:
             )
 
 
-@pytest.mark.xfail(strict=True, reason="P4: CLI single-pass uses raw BM25; unify on fusion")
 def test_weighted_default_ranking_cli(searcher: Searcher) -> None:
-    """Single-pass CLI `search` should rank all-term docs first like the TUI.
-    Today it uses raw BM25, where a short doc matching one rarer term can outrank
-    a doc matching all terms. P4 unifies the CLI ranking on fusion."""
+    """Single-pass CLI `search` ranks all-term docs first like the TUI. Raw BM25
+    over an OR doesn't guarantee this (a short doc matching one rarer term can
+    outrank a doc matching every term); `search` now unifies on fusion (RRF)."""
     hits = searcher.search("cross entropy loss", limit=50)
     ranked = [h.parent_id for h in hits]
     all3_rank = ranked.index("all3")
