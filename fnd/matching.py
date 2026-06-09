@@ -45,6 +45,9 @@ _HL_GLOB = re.compile(r"[*?]")
 # Boolean operators are query structure, not content — they must never become
 # highlight terms or consume a colour slot.
 _BOOL_KEYWORDS = frozenset({"AND", "OR", "NOT"})
+# A field qualifier (``kind:pdf``, ``c:notes``, ``title:x``) is a filter, not a
+# body term — its value must not highlight or spend a colour slot.
+_FIELD_QUALIFIER_RE = re.compile(r"^[A-Za-z_]\w*:")
 
 
 def glob_to_regex(glob: str) -> str:
@@ -268,24 +271,37 @@ class MatchSpec:
         # same pattern the search expanded. Stored verbatim (globs) so the
         # highlighter can colour literal vs wildcard-filled chars. They are then
         # dropped from the plain-term run below so the bare residual (``crypto``
-        # from ``crypto*``) doesn't also auto-fuzzy-highlight.
+        # from ``crypto*``) doesn't also auto-fuzzy-highlight. Query structure
+        # (``+``/``-`` prefixes, surrounding parens/quotes, ``^boost``) is stripped
+        # before classifying so a grouped/boosted token like ``(discoun*`` is
+        # recognised as the wildcard it is; field qualifiers and prohibited
+        # (``-x`` / ``NOT x``) terms are dropped entirely — neither should light up.
         wildcards: list[str] = []
         regexes: list[str] = []
         plain_tokens: list[str] = []
         ordered_tokens: list[tuple[str, str]] = []  # (kind, key) in query order
+        negate_next = False
         for tok in loose_query.split():
-            if tok in _BOOL_KEYWORDS:  # AND/OR/NOT: structure, not a highlight term
+            if tok == "NOT":  # excludes the following token
+                negate_next = True
                 continue
-            rm = _HL_REGEX.match(tok)
+            if tok in _BOOL_KEYWORDS:  # AND / OR: structure, not a highlight term
+                continue
+            excluded = negate_next or tok.startswith("-")
+            negate_next = False
+            cleaned = re.sub(r"\^[\d.]+$", "", tok.lstrip("+-").strip("()'\""))
+            if not cleaned or _FIELD_QUALIFIER_RE.match(cleaned) or excluded:
+                continue
+            rm = _HL_REGEX.match(cleaned)
             if rm:
                 regexes.append(rm.group(1).lower())
                 ordered_tokens.append(("regex", rm.group(1).lower()))
-            elif _HL_GLOB.search(tok):
-                wildcards.append(tok.lower())
-                ordered_tokens.append(("wildcard", tok.lower()))
+            elif _HL_GLOB.search(cleaned):
+                wildcards.append(cleaned.lower())
+                ordered_tokens.append(("wildcard", cleaned.lower()))
             else:
-                plain_tokens.append(tok)
-                ordered_tokens.append(("plain", tok))
+                plain_tokens.append(cleaned)
+                ordered_tokens.append(("plain", cleaned))
         loose_query = " ".join(plain_tokens)
 
         # In-context stopwords: a connector like "in" in `defence in depth`

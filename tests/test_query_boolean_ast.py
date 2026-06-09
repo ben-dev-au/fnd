@@ -118,3 +118,15 @@ def test_empty_query_is_none() -> None:
 def test_single_child_groups_unwrap() -> None:
     # A lone term in parens collapses to the term — no needless wrapper node.
     assert parse_query_ast("(entropy)") == Term("entropy")
+
+
+def test_malformed_boost_does_not_crash() -> None:
+    """A boost must be a plain number; a malformed form (`foo^1.2.3`, `(a)^.`)
+    is parsed as a literal term, never a float() crash on the main query path."""
+    for q in ("foo^1.2.3", "(a)^.", "bar^..", "a^ b"):
+        parse_query_ast(q)  # must not raise
+
+
+def test_well_formed_boost_still_parses() -> None:
+    assert parse_query_ast("foo^2") == Boosted(Term("foo"), 2.0)
+    assert parse_query_ast("foo^1.5") == Boosted(Term("foo"), 1.5)

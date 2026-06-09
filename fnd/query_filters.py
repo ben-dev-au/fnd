@@ -87,28 +87,29 @@ def _uint_range(spec: FieldSpec, value: str, schema: tantivy.Schema) -> Query | 
     def rng(lo: int | None, hi: int | None, inc_lo: bool = True, inc_hi: bool = True) -> Query:
         return Query.range_query(schema, field, FieldType.Unsigned, lo, hi, inc_lo, inc_hi, False)
 
-    m = _RANGE_RE.match(value)
-    if m:
-        return rng(spec.coerce(m.group(1)), spec.coerce(m.group(2)))
-    m = _CMP_RE.match(value)
-    if m:
-        op, n = m.group(1), spec.coerce(m.group(2))
-        if op == ">":
-            return rng(n, None, inc_lo=False)
-        if op == ">=":
-            return rng(n, None)
-        if op == "<":
-            return rng(None, n, inc_hi=False)
-        return rng(None, n)  # <=
-    if spec.query_name == "mtime":
-        tok = mtime_token_range(value)
-        if tok is not None:
-            return rng(tok[0], tok[1])
+    # An unparsable bound (``page:>abc``, ``mtime:[2024-13-01 TO 10]``) returns
+    # None so the caller leaves the clause in content rather than crashing.
     try:
-        n = spec.coerce(value)  # bare point: page:5
+        m = _RANGE_RE.match(value)
+        if m:
+            return rng(spec.coerce(m.group(1)), spec.coerce(m.group(2)))
+        m = _CMP_RE.match(value)
+        if m:
+            op, n = m.group(1), spec.coerce(m.group(2))
+            if op == ">":
+                return rng(n, None, inc_lo=False)
+            if op == ">=":
+                return rng(n, None)
+            if op == "<":
+                return rng(None, n, inc_hi=False)
+            return rng(None, n)  # <=
+        if spec.query_name == "mtime":
+            tok = mtime_token_range(value)
+            if tok is not None:
+                return rng(tok[0], tok[1])
+        return rng(spec.coerce(value), spec.coerce(value))  # bare point: page:5
     except ValueError:
         return None
-    return rng(n, n)
 
 
 def _compile(

@@ -378,10 +378,13 @@ class Searcher:
         # Should-clause: secondary fields boost score without gating visibility.
         # Parsed against the content (filters already removed). Skipped when the
         # content carries wildcard/fuzzy/regex tokens — parse_query can't handle
-        # those (and the boost is best-effort, not a visibility gate).
+        # those (and the boost is best-effort, not a visibility gate). Each token
+        # is stripped of ``+``/``-``/parens first so a grouped/prefixed special
+        # token (``+crypto*``, ``(function~1)``) is still detected.
         content_is_special = any(
-            _WILDCARD_RE.match(t) or _FUZZY_RE.match(t) or _REGEX_RE.match(t) or _GLOB_RE.search(t)
+            _WILDCARD_RE.match(c) or _FUZZY_RE.match(c) or _REGEX_RE.match(c) or _GLOB_RE.search(c)
             for t in content.split()
+            for c in (t.strip("+-()"),)
         )
         if has_content and not content_is_special:
             boost_secondary = _parse_query(

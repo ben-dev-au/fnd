@@ -50,7 +50,9 @@ def _carries_precision_intent(query: str) -> bool:
     """
     if any(ch in query for ch in '"{*?') or "NEAR/" in query:
         return True
-    return bool(re.search(r"\bNOT\b", query)) or bool(re.search(r"(?:^|\s)-\w", query))
+    # ``-word`` or ``-(group)`` exclusion (the ``(`` case would otherwise slip
+    # past and the fuzzy pass would re-admit the excluded branch).
+    return bool(re.search(r"\bNOT\b", query)) or bool(re.search(r"(?:^|\s)-[\w(]", query))
 
 
 _FUZZY_TOKEN_RE = re.compile(r"^(\w+)(?:~(\d+)?)?$")
@@ -73,6 +75,7 @@ def _terms_with_fuzzy(query: str) -> list[tuple[str, int | None]]:
     q = re.sub(r"\[[^\]]*\]", " ", q)
     q = re.sub(r"\{\d+\}", " ", q)
     q = re.sub(r"\bNEAR/\d+\b", " ", q)
+    q = re.sub(r"\b\w+:\([^)]*\)", " ", q)  # field grouping: title:(a OR b)
     q = re.sub(r"\b\w+:\S+", " ", q)
     q = re.sub(r"[+\-()*?]", " ", q)
     q = re.sub(r"\b(AND|OR|NOT)\b", " ", q)

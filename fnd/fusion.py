@@ -46,11 +46,15 @@ from fnd.synonyms import SynonymTable, expand
 # wrapping such a query would quote the qualifier and produce a junk phrase.
 _FIELD_SYNTAX_RE: Final = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*:")
 # Explicit operator syntax — boolean keywords, ``+``/``-`` required/prohibited
-# prefixes, or wildcard/fuzzy/regex chars. Quoting such a query as a phrase
-# destroys its meaning (``"crypto* -wallet"`` becomes the phrase "crypto wallet"
-# and re-admits the very doc the ``-`` excluded). The lex pass already honours it
-# exactly via the boolean AST compiler, so the phrase pass must stand down.
-_OPERATOR_SYNTAX_RE: Final = re.compile(r"\b(?:AND|OR|NOT)\b|[*?~/]|(?:^|\s)[+\-]\S")
+# prefixes, wildcard/fuzzy chars, or a ``/regex/`` token. Quoting such a query as
+# a phrase destroys its meaning (``"crypto* -wallet"`` becomes the phrase "crypto
+# wallet" and re-admits the very doc the ``-`` excluded). The lex pass already
+# honours it exactly via the boolean AST compiler, so the phrase pass stands down.
+# ``/`` matches only as a delimited ``/regex/`` token, so plain slashes in paths
+# or ``TCP/IP`` don't suppress the phrase pass.
+_OPERATOR_SYNTAX_RE: Final = re.compile(
+    r"\b(?:AND|OR|NOT)\b|[*?~]|(?:^|\s)[+\-]\S|(?:^|\s)/[^/\s]+/(?:\s|$)"
+)
 
 # RRF constant; default 60 matches the original Cormack/Clarke/Buettcher 2009
 # paper and what QMD uses.

@@ -33,7 +33,7 @@ class FieldValue(Enum):
     """How a field's value is matched."""
 
     EXACT = auto()  # raw tokenizer; one untokenised term (kind, collection)
-    TEXT = auto()  # default/stem tokenizer; term or phrase (title, author, …)
+    TEXT = auto()  # default tokenizer (lowercased, unstemmed); term or phrase
     UINT = auto()  # numeric u64; point or range (page, slide, mtime, chunk_seq)
 
 

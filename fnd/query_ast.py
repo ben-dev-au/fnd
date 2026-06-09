@@ -30,8 +30,11 @@ _WILDCARD_RE: Final = re.compile(r"^(\w+)\*$")  # trailing prefix wildcard ``cry
 _FUZZY_RE: Final = re.compile(r"^(\w+)~(\d*)$")  # ``term~`` / ``term~N``
 _REGEX_RE: Final = re.compile(r"^/(.+)/$")  # ``/pattern/``
 _GLOB_RE: Final = re.compile(r"[*?]")  # any ``*``/``?`` → glob (infix/leading)
-_PHRASE_RE: Final = re.compile(r"""^(['"])(.*)\1(?:~(\d+))?(?:\^([\d.]+))?$""", re.DOTALL)
-_BOOST_RE: Final = re.compile(r"\^([\d.]+)$")
+# A boost literal is a plain number (`^2`, `^1.5`) — kept strict so a malformed
+# form like `foo^1.2.3` never reaches float() and crashes the query.
+_NUMBER: Final = r"\d+(?:\.\d+)?"
+_PHRASE_RE: Final = re.compile(rf"""^(['"])(.*)\1(?:~(\d+))?(?:\^({_NUMBER}))?$""", re.DOTALL)
+_BOOST_RE: Final = re.compile(rf"\^({_NUMBER})$")
 _KEYWORDS: Final = frozenset({"AND", "OR", "NOT"})
 
 
@@ -150,11 +153,13 @@ def _tokenize(s: str) -> list[tuple[str, str]]:
             continue
         if ch == "^" and not buf:
             # Standalone caret = boost on the just-closed group: ``(a OR b)^2``.
-            j = i + 1
-            while j < n and (s[j].isdigit() or s[j] == "."):
-                j += 1
-            toks.append(("CARET", s[i + 1 : j]))
-            i = j
+            # Only consume a well-formed number; a stray ``^`` is dropped.
+            m = re.match(_NUMBER, s[i + 1 :])
+            if m:
+                toks.append(("CARET", m.group(0)))
+                i += 1 + m.end()
+            else:
+                i += 1
             continue
         buf.append(ch)
         i += 1
@@ -167,7 +172,7 @@ def _consume_suffix(s: str, j: int) -> int:
     m = re.match(r"~\d+", s[j:])
     if m:
         j += m.end()
-    m = re.match(r"\^[\d.]+", s[j:])
+    m = re.match(rf"\^{_NUMBER}", s[j:])
     if m:
         j += m.end()
     return j

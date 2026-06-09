@@ -348,7 +348,7 @@ Quoting is the biggest precision win — quote any common phrase:
 | You type              | Matches                                                       |
 | --------------------- | ------------------------------------------------------------- |
 | `man in the middle`   | The four words anywhere in a chunk. Noisy.                    |
-| `"man in the middle"` | The four words together, in order. Also `man-in-the-middle`.  |
+| `"man in the middle"` | The four words together, in order. Also matches `man-in-the-middle`. |
 
 ### Proximity
 

@@ -127,6 +127,33 @@ def test_per_term_colours() -> None:
     ]
 
 
+def test_field_qualifier_does_not_consume_a_colour_slot() -> None:
+    """`kind:pdf` is a filter, not a body term — the real term keeps slot-0
+    yellow instead of being pushed to a later colour by `kind`/`pdf`."""
+    assert _coloured("kind:pdf strategy", "a strategy doc") == [("strategy", "Y")]
+
+
+def test_excluded_terms_are_not_highlighted() -> None:
+    """`-x` / `NOT x` are prohibited — they must never highlight."""
+    for q in ("crypto -wallet", "crypto NOT wallet"):
+        spec = MatchSpec.from_query(q)
+        assert word_matches("crypto", spec)
+        assert not word_matches("wallet", spec)
+
+
+def test_wildcard_inside_parens_still_highlights() -> None:
+    """A grouped wildcard keeps its highlight (the leading `(` used to leak into
+    the stored pattern and break the fullmatch)."""
+    spec = MatchSpec.from_query("(discoun* OR foo)")
+    assert word_matches("discount", spec)
+
+
+def test_exact_match_not_repainted_by_wildcard_mask() -> None:
+    """With `discount discoun*`, the exact word `discount` renders as one clean
+    yellow run, not `discoun` + a variance-painted `t` from the wildcard mask."""
+    assert _coloured("discount discoun*", "a discount") == [("discount", "Y")]
+
+
 def test_quoted_phrase_and_boolean_term_get_distinct_colours() -> None:
     """A quoted phrase highlights as one unit in the phrase colour; a loose term
     joined by a boolean gets a *different* colour (not the same slot-0 yellow).

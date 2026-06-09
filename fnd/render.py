@@ -202,13 +202,11 @@ def word_highlight_runs(word: str, spec: MatchSpec) -> list[tuple[int, int, str]
     if not word_matches(word, spec):
         return []
     hit_style = match_style(match_color(word, spec))
-    # Wildcard / glob: colour literal vs wildcard-filled chars.
-    for glob in spec.wildcards:
-        mask = glob_match_mask(word, glob)
-        if mask:
-            return _runs_from_mask(mask, hit_style)
     # Exact-stem or fuzzy: align against the closest typed term so a typo / stem
-    # suffix shows as orange. Only for words that matched THIS way (not regex) —
+    # suffix shows as orange. Checked BEFORE the wildcard mask so a word that
+    # exactly matches a typed term (e.g. ``discount`` under ``discount discoun*``)
+    # renders as a clean exact hit rather than having its tail painted as
+    # wildcard variance. Only for words that matched THIS way (not regex) —
     # otherwise an unrelated raw term would paint the whole word orange.
     s = _stem(word)
     matched_exact_or_fuzzy = s in spec.exact_stems or any(
@@ -220,6 +218,11 @@ def word_highlight_runs(word: str, spec: MatchSpec) -> list[tuple[int, int, str]
             mask = align_doc_word(word, raw)
             if mask:
                 return _runs_from_mask(mask, hit_style)
+    # Wildcard / glob: colour literal vs wildcard-filled chars.
+    for glob in spec.wildcards:
+        mask = glob_match_mask(word, glob)
+        if mask:
+            return _runs_from_mask(mask, hit_style)
     # Regex match or anything without a clean char attribution → whole-word.
     return [(0, len(word), hit_style)]
 

@@ -421,3 +421,15 @@ def test_weighted_default_ranking_cli(searcher: Searcher) -> None:
     ranked = [h.parent_id for h in hits]
     all3_rank = ranked.index("all3")
     assert all3_rank < ranked.index("cross-only")
+
+
+def test_unparsable_numeric_filter_does_not_crash() -> None:
+    """An invalid numeric/date bound must not blow up extraction — the clause
+    falls back to content (0 filters) instead of raising. Guards the `>N` /
+    `[lo TO hi]` branches that previously let `ValueError` escape."""
+    from fnd.query_filters import extract_filters
+
+    schema = build_schema()
+    for q in ("page:>abc", "mtime:[2024-13-01 TO 10]", "slide:[x TO y]"):
+        assert extract_filters(q, schema).filters == []  # no exception, no filter
+    assert len(extract_filters("page:>20", schema).filters) == 1  # valid still works
