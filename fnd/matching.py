@@ -42,6 +42,10 @@ _QUOTED_PHRASE = re.compile(r'"([^"]*)"')
 _HL_REGEX = re.compile(r"^/(.+)/$")
 _HL_GLOB = re.compile(r"[*?]")
 
+# Boolean operators are query structure, not content — they must never become
+# highlight terms or consume a colour slot.
+_BOOL_KEYWORDS = frozenset({"AND", "OR", "NOT"})
+
 
 def glob_to_regex(glob: str) -> str:
     """Translate a shell glob (``*`` → any run, ``?`` → one char) into a regex
@@ -256,7 +260,8 @@ class MatchSpec:
         # Quoted phrases are matched as contiguous spans; their words are
         # kept out of the loose (document-wide) term set, so only the
         # unquoted remainder drives word-by-word highlighting.
-        phrases = tuple(tuple(_stem(w) for w in words) for words in _phrase_word_lists(query))
+        quoted_word_lists = _phrase_word_lists(query)
+        phrases = tuple(tuple(_stem(w) for w in words) for words in quoted_word_lists)
         loose_query = _strip_quoted_spans(query)
 
         # Wildcard / regex tokens: highlight any doc word whose stem matches the
@@ -269,6 +274,8 @@ class MatchSpec:
         plain_tokens: list[str] = []
         ordered_tokens: list[tuple[str, str]] = []  # (kind, key) in query order
         for tok in loose_query.split():
+            if tok in _BOOL_KEYWORDS:  # AND/OR/NOT: structure, not a highlight term
+                continue
             rm = _HL_REGEX.match(tok)
             if rm:
                 regexes.append(rm.group(1).lower())
@@ -341,6 +348,13 @@ class MatchSpec:
         # the single slot-0 colour (see :func:`match_color`).
         order: list[tuple[str, str, int]] = []
         seen: set[tuple[str, str]] = set()
+        # A quoted phrase renders in the single phrase colour (slot 0). Reserve
+        # that slot so the loose terms around it get distinct *following* colours
+        # — e.g. `"defence in depth" OR diverse` → phrase yellow, diverse cyan.
+        # The sentinel never matches a word in ``match_color`` (it ignores the
+        # "phrase" kind); it only occupies the index.
+        if multicolour and quoted_word_lists:
+            order.append(("phrase", "", 0))
         for kind, key in ordered_tokens if multicolour else []:
             if kind == "plain":
                 for w in re.findall(r"\w+", key):

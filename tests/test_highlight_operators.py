@@ -127,6 +127,18 @@ def test_per_term_colours() -> None:
     ]
 
 
+def test_quoted_phrase_and_boolean_term_get_distinct_colours() -> None:
+    """A quoted phrase highlights as one unit in the phrase colour; a loose term
+    joined by a boolean gets a *different* colour (not the same slot-0 yellow).
+    Regression: the phrase used to be stripped before colours were assigned, so
+    the external term landed in slot 0 too and everything looked single-colour.
+    The OR keyword itself is never highlighted."""
+    spans = _coloured('"defence in depth" OR diverse', "a defence in depth model is diverse")
+    assert ("defence in depth", "Y") in spans
+    assert ("diverse", "C") in spans
+    assert not any(seg.strip() in ("OR", "or") for seg, _ in spans)
+
+
 def test_phrase_highlights_as_span() -> None:
     # Quoted phrase highlights via the phrase-span path, contiguous in order.
     from fnd.matching import phrase_char_spans
