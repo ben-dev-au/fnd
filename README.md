@@ -449,11 +449,17 @@ Numeric ranges use `[low TO high]`. Shorthand for one-sided comparisons:
 | `gr?y`        | `?` matches exactly one character: `gray` / `grey`.            |
 | `/crypt(o\|id)/` | A regular expression matched against indexed terms.          |
 
-Wildcards and regex match the **stemmed** term dictionary, so a literal suffix
-that the stemmer rewrites won't line up (e.g. `cryp*graphy` misses the stored stem
-`cryptographi`). Prefer a trailing `*` (`crypto*`), which only needs the prefix.
-Wildcards are also redundant with stemming for ordinary word endings — `entropy`
-already finds `entropies`.
+Wildcards and regex match the **stemmed** term dictionary, so a literal *ending*
+the stemmer rewrites won't line up — e.g. `*efence` finds nothing because `defence`
+is stored as the stem `defenc` (the trailing `e` is dropped); `*efenc` would match.
+Leading and infix wildcards are hit hardest by this — they anchor on the word's
+end, which is exactly what stemming chops — and they scan the whole term
+dictionary, so they're slower too. Prefer a trailing `*` (`crypto*`), which needs
+only the prefix. Wildcards are also redundant with stemming for ordinary endings:
+`entropy` already finds `entropies`.
+
+Wildcards, fuzzy (`~N`), regex, and phrases all compose inside `AND`/`OR`/`NOT`
+and parentheses — e.g. `crypto* AND wallet`, `(diffuse* OR diffusion) AND kind:pdf`.
 
 ### Markdown frontmatter filter
 
@@ -476,6 +482,11 @@ Supported operators: `==` `!=` `<` `<=` `>` `>=` `~~` (glob, string fields),
 Values are single-quoted strings, numbers, ISO dates, or `true`/`false`/`null`.
 The filter applies only to markdown files; other kinds pass through unfiltered.
 
+`~~` glob-matches a frontmatter **string value** (`Course ~~ 'Design *'` keeps
+notes whose `Course` starts with `Design `). It is unrelated to the `~N` fuzzy
+operator, which tolerates typos in **body** search terms (`templatas~1`) — `~~`
+lives only inside the `[…]` predicate, `~N` only in the main query.
+
 ### Composing: worked examples
 
 ```text
@@ -485,6 +496,9 @@ c:notes mitm [Course == 'Security Foundations']    # term + collection scope + f
 title:"chapter 4" heading_path:proof               # constrain to one chapter's proofs
 kind:pptx slide:>10 attention                      # later-half slides mentioning attention
 mtime:month crypto*                                # recently-modified docs mentioning crypto-anything
+crypto* AND wallet                                 # a wildcard required inside a boolean
+(loss OR cost) AND function~1                      # grouping with a fuzzy term
+"defence in depth" OR diverse                      # an exact phrase OR a loose term
 ```
 
 ### A few common pitfalls
