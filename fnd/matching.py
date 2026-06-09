@@ -36,6 +36,29 @@ from fnd.synonyms import SynonymTable, expand
 # left to ordinary term extraction (they carry collection names, apostrophes).
 _QUOTED_PHRASE = re.compile(r'"([^"]*)"')
 
+# Content-token patterns mirroring fnd.query so highlighting expands a match the
+# same way the search did: trailing wildcard (prefix), /regex/, infix/leading
+# glob. All matched against the *stemmed* doc word, matching search semantics.
+_HL_REGEX = re.compile(r"^/(.+)/$")
+_HL_GLOB = re.compile(r"[*?]")
+
+
+def glob_to_regex(glob: str) -> str:
+    """Translate a shell glob (``*`` → any run, ``?`` → one char) into a regex
+    matching a whole term; other chars are escaped and the glob lowercased.
+    Shared by the search resolvers and the highlighter so both expand a wildcard
+    identically."""
+    return "".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in glob.lower())
+
+
+def _glob_capture_regex(glob: str) -> str:
+    """Like :func:`glob_to_regex`, but wraps each ``*``/``?`` fill in a capturing
+    group so the highlighter can colour wildcard-filled chars distinctly from the
+    literal (typed) chars."""
+    return "".join(
+        "(.*)" if c == "*" else "(.)" if c == "?" else re.escape(c) for c in glob.lower()
+    )
+
 
 def _phrase_word_lists(query: str) -> list[list[str]]:
     """Raw word lists for each quoted phrase of two or more words."""
@@ -186,6 +209,14 @@ class MatchSpec:
     exact_stems: frozenset[str] = field(default_factory=frozenset)
     fuzzy_per_stem: tuple[tuple[str, int], ...] = field(default_factory=tuple)
     raw_terms: tuple[str, ...] = field(default_factory=tuple)
+    # Original glob tokens (``discoun*``, ``cr*to``, ``*graph``, ``gr?y``) and
+    # literal ``/regex/`` patterns, matched against the stemmed doc word — so
+    # wildcard, regex, and glob matches highlight the same words the search
+    # surfaced. The glob tokens are kept verbatim (not pre-compiled) so the
+    # highlighter can colour literal chars yellow and wildcard-filled chars
+    # orange. Kept out of ``raw_terms`` (the fuzzy char-aligner).
+    wildcards: tuple[str, ...] = field(default_factory=tuple)
+    regexes: tuple[str, ...] = field(default_factory=tuple)
     # Stem sequences for each quoted phrase. Highlighted as a contiguous
     # span (see :func:`phrase_char_spans`); their words are deliberately
     # kept OUT of ``exact_stems`` so a stopword inside a phrase ("in",
@@ -222,6 +253,24 @@ class MatchSpec:
         phrases = tuple(tuple(_stem(w) for w in words) for words in _phrase_word_lists(query))
         loose_query = _strip_quoted_spans(query)
 
+        # Wildcard / regex tokens: highlight any doc word whose stem matches the
+        # same pattern the search expanded. Stored verbatim (globs) so the
+        # highlighter can colour literal vs wildcard-filled chars. They are then
+        # dropped from the plain-term run below so the bare residual (``crypto``
+        # from ``crypto*``) doesn't also auto-fuzzy-highlight.
+        wildcards: list[str] = []
+        regexes: list[str] = []
+        plain_tokens: list[str] = []
+        for tok in loose_query.split():
+            rm = _HL_REGEX.match(tok)
+            if rm:
+                regexes.append(rm.group(1).lower())
+            elif _HL_GLOB.search(tok):
+                wildcards.append(tok.lower())
+            else:
+                plain_tokens.append(tok)
+        loose_query = " ".join(plain_tokens)
+
         # In-context stopwords: a connector like "in" in `defence in depth`
         # should highlight where it sits next to a matched content word, but a
         # standalone "in" elsewhere should not. Add every consecutive query
@@ -238,7 +287,7 @@ class MatchSpec:
         phrases = phrases + tuple(pair_phrases)
 
         terms = _terms_from_query(loose_query)
-        if not terms and not phrases:
+        if not terms and not phrases and not wildcards and not regexes:
             return cls()
         raw = {t.lower() for t in terms if t}
         exact = {_stem(t) for t in raw}
@@ -277,24 +326,42 @@ class MatchSpec:
             fuzzy_per_stem=fuzzy_pairs,
             raw_terms=tuple(sorted(raw)),
             phrases=phrases,
+            wildcards=tuple(wildcards),
+            regexes=tuple(regexes),
         )
 
     @property
     def is_empty(self) -> bool:
-        return not self.exact_stems and not self.fuzzy_per_stem and not self.phrases
+        return not (
+            self.exact_stems
+            or self.fuzzy_per_stem
+            or self.phrases
+            or self.wildcards
+            or self.regexes
+        )
 
 
 def word_matches(word: str, spec: MatchSpec) -> bool:
-    """True if ``word`` matches ``spec`` under any of the cascade's
-    pass semantics: exact-stem (literal / phrase / synonym) or
-    fuzzy-AUTO."""
+    """True if ``word`` matches ``spec`` under any of the search's pass
+    semantics: exact-stem (literal / phrase / synonym), wildcard / glob,
+    ``/regex/``, or fuzzy. All tested against the word's stem so highlighting
+    marks exactly the words the search surfaced."""
     if spec.is_empty or not word:
         return False
     s = _stem(word)
     if s in spec.exact_stems:
         return True
+    for pattern in (glob_to_regex(g) for g in spec.wildcards):
+        if re.fullmatch(pattern, s) is not None:
+            return True
+    for pattern in spec.regexes:
+        try:
+            if re.fullmatch(pattern, s) is not None:
+                return True
+        except re.error:
+            continue
     for q_stem, max_d in spec.fuzzy_per_stem:
-        if levenshtein_within(s, q_stem, max_dist=max_d) <= max_d:
+        if osa_within(s, q_stem, max_dist=max_d) <= max_d:
             return True
     return False
 
@@ -332,6 +399,22 @@ def phrase_char_spans(text: str, spec: MatchSpec) -> list[tuple[int, int]]:
         else:
             merged.append((start, end))
     return merged
+
+
+def glob_match_mask(word: str, glob: str) -> list[bool] | None:
+    """For ``word`` matched by a wildcard ``glob``, one bool per char: True where
+    the char aligns to a LITERAL glob char (a "match"), False where ``*``/``?``
+    filled it (a wildcard "variance"). None when the surface word doesn't fully
+    match the glob (e.g. stemming dropped a suffix) — caller falls back to a
+    whole-word highlight."""
+    m = re.fullmatch(_glob_capture_regex(glob), word.lower())
+    if m is None:
+        return None
+    fill: set[int] = set()
+    for gi in range(1, (m.lastindex or 0) + 1):
+        start, end = m.span(gi)
+        fill.update(range(start, end))
+    return [i not in fill for i in range(len(word))]
 
 
 def align_doc_word(doc_word: str, query_word: str) -> list[bool]:

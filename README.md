@@ -446,7 +446,7 @@ Numeric ranges use `[low TO high]`. Shorthand for one-sided comparisons:
 | ------------- | --------------------------------------------------------------- |
 | `crypto*`     | `crypto`, `cryptography`, `cryptographic` (fast prefix scan).   |
 | `*tion`       | Terms ending in `tion` (slower — scans the term dictionary).    |
-| `colou?r`     | `colour` / `color`.                                             |
+| `gr?y`        | `?` matches exactly one character: `gray` / `grey`.            |
 | `/crypt(o\|id)/` | A regular expression matched against indexed terms.          |
 
 Wildcards and regex match the **stemmed** term dictionary, so a literal suffix

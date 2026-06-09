@@ -115,11 +115,35 @@ def apply_match_highlights(rendered: Text, spec: MatchSpec) -> bool:
     return found
 
 
+def _runs_from_mask(mask: list[bool]) -> list[tuple[int, int, str]]:
+    """Compress a per-char match mask into (start, end, style) runs: True chars
+    get the yellow match style, False chars the orange variance style."""
+    runs: list[tuple[int, int, str]] = []
+    cur_start = 0
+    cur = mask[0]
+    for i in range(1, len(mask)):
+        if mask[i] != cur:
+            runs.append((cur_start, i, HIGHLIGHT_STYLE if cur else MISMATCH_STYLE))
+            cur_start = i
+            cur = mask[i]
+    runs.append((cur_start, len(mask), HIGHLIGHT_STYLE if cur else MISMATCH_STYLE))
+    return runs
+
+
 def word_highlight_runs(word: str, spec: MatchSpec) -> list[tuple[int, int, str]]:
-    """Per-char highlight runs for ``word``: yellow on aligning chars, orange on divergent."""
+    """Per-char highlight runs for ``word``, coloured by *how* it matched:
+
+    * wildcard / glob — literal chars yellow, ``*``/``?``-filled chars orange;
+    * exact-stem / fuzzy — chars aligning to the typed term yellow, the typo /
+      stem-suffix divergence orange;
+    * regex (or any match with no clean char attribution) — whole word yellow.
+    """
     from fnd.matching import (
+        _stem,
         align_doc_word,
         closest_raw_term,
+        glob_match_mask,
+        osa_within,
         word_matches,
     )
 
@@ -127,25 +151,26 @@ def word_highlight_runs(word: str, spec: MatchSpec) -> list[tuple[int, int, str]
         return []
     if not word_matches(word, spec):
         return []
-    raw = closest_raw_term(word, spec)
-    if raw is None:
-        return [(0, len(word), HIGHLIGHT_STYLE)]
-    matches = align_doc_word(word, raw)
-    if not matches:
-        return [(0, len(word), HIGHLIGHT_STYLE)]
-    # Compress consecutive same-state chars into runs.
-    runs: list[tuple[int, int, str]] = []
-    cur_start = 0
-    cur_match = matches[0]
-    for i in range(1, len(matches)):
-        if matches[i] != cur_match:
-            style = HIGHLIGHT_STYLE if cur_match else MISMATCH_STYLE
-            runs.append((cur_start, i, style))
-            cur_start = i
-            cur_match = matches[i]
-    style = HIGHLIGHT_STYLE if cur_match else MISMATCH_STYLE
-    runs.append((cur_start, len(matches), style))
-    return runs
+    # Wildcard / glob: colour literal vs wildcard-filled chars.
+    for glob in spec.wildcards:
+        mask = glob_match_mask(word, glob)
+        if mask:
+            return _runs_from_mask(mask)
+    # Exact-stem or fuzzy: align against the closest typed term so a typo / stem
+    # suffix shows as orange. Only for words that matched THIS way (not regex) —
+    # otherwise an unrelated raw term would paint the whole word orange.
+    s = _stem(word)
+    matched_exact_or_fuzzy = s in spec.exact_stems or any(
+        osa_within(s, q_stem, max_dist=d) <= d for q_stem, d in spec.fuzzy_per_stem
+    )
+    if matched_exact_or_fuzzy:
+        raw = closest_raw_term(word, spec)
+        if raw is not None:
+            mask = align_doc_word(word, raw)
+            if mask:
+                return _runs_from_mask(mask)
+    # Regex match or anything without a clean char attribution → whole-word.
+    return [(0, len(word), HIGHLIGHT_STYLE)]
 
 
 def _highlight(text: str, terms: list[str]) -> str:

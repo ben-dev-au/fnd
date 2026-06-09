@@ -305,11 +305,10 @@ class Searcher:
         if not has_special or is_complex:
             return _parse_query(self._index, content, **body_parse_kwargs)
 
-        from fnd.matching import auto_fuzzy_distance
+        from fnd.matching import auto_fuzzy_distance, glob_to_regex
         from fnd.query_resolvers import (
             fuzzy_stem,
             fuzzy_variants,
-            glob_to_regex,
             prefix_variants,
             term_or_query,
         )
