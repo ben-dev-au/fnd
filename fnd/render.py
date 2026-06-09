@@ -34,6 +34,22 @@ HIGHLIGHT_STYLE = "bold black on #ffd866"
 # typed. Same black foreground as HIGHLIGHT_STYLE so adjacent
 # yellow/orange runs feel like one painted word.
 MISMATCH_STYLE = "bold black on #ff9e64"
+# Per-term match palette: in a multi-word query each distinct term highlights
+# in its own colour so the eye can tell which match is which. Slot 0 is
+# HIGHLIGHT_STYLE, so single-term queries are unchanged. The orange
+# MISMATCH_STYLE is shared across terms for the variance/wildcard-filled chars.
+MATCH_STYLES = [
+    HIGHLIGHT_STYLE,  # yellow
+    "bold black on #7dcfff",  # cyan
+    "bold black on #9ece6a",  # green
+    "bold black on #bb9af7",  # purple
+    "bold black on #82aaff",  # blue
+]
+
+
+def match_style(color: int) -> str:
+    """Match style for colour slot ``color`` (cycles through the palette)."""
+    return MATCH_STYLES[color % len(MATCH_STYLES)]
 
 
 def _stem(word: str) -> str:
@@ -92,57 +108,91 @@ def apply_stem_highlights(rendered: Text, term_stems: set[str]) -> bool:
     return found
 
 
+def phrase_gap_spans(
+    phrase_spans: list[tuple[int, int]], covered: set[int]
+) -> list[tuple[int, int]]:
+    """Split each phrase span into the maximal runs of chars NOT already covered
+    by a per-term span. Phrase highlighting (a stopword between content words, or
+    a quoted phrase) must never *overlap* a term span: in multi-colour mode the
+    phrase colour and the term colour differ, and Textual's Content drops
+    overlapping differently-styled spans — so the whole word goes unhighlighted.
+    Filling only the gaps (e.g. the ``in`` of ``Defence-in-Depth``) keeps every
+    span non-overlapping."""
+    out: list[tuple[int, int]] = []
+    for start, end in phrase_spans:
+        run_start: int | None = None
+        for i in range(start, end):
+            if i not in covered:
+                if run_start is None:
+                    run_start = i
+            elif run_start is not None:
+                out.append((run_start, i))
+                run_start = None
+        if run_start is not None:
+            out.append((run_start, end))
+    return out
+
+
 def apply_match_highlights(rendered: Text, spec: MatchSpec) -> bool:
-    """Stylize matches in ``rendered``: quoted phrases as contiguous spans,
-    loose terms word-by-word via word_highlight_runs."""
+    """Stylize matches in ``rendered``: per-term loose words via
+    word_highlight_runs, then quoted/connector phrases in the GAPS between term
+    spans (never overlapping them, so per-term colours survive)."""
     from fnd.matching import phrase_char_spans
 
     if spec.is_empty:
         return False
     found = False
     plain = rendered.plain
+    covered: set[int] = set()
     for m in re.finditer(r"\w+", plain):
-        word = m.group(0)
-        runs = word_highlight_runs(word, spec)
+        runs = word_highlight_runs(m.group(0), spec)
         if not runs:
             continue
         for offset_start, offset_end, style in runs:
-            rendered.stylize(style, m.start() + offset_start, m.start() + offset_end)
+            a, b = m.start() + offset_start, m.start() + offset_end
+            rendered.stylize(style, a, b)
+            covered.update(range(a, b))
         found = True
-    for start, end in phrase_char_spans(plain, spec):
+    for start, end in phrase_gap_spans(phrase_char_spans(plain, spec), covered):
         rendered.stylize(HIGHLIGHT_STYLE, start, end)
         found = True
     return found
 
 
-def _runs_from_mask(mask: list[bool]) -> list[tuple[int, int, str]]:
+def _runs_from_mask(mask: list[bool], hit_style: str) -> list[tuple[int, int, str]]:
     """Compress a per-char match mask into (start, end, style) runs: True chars
-    get the yellow match style, False chars the orange variance style."""
+    get ``hit_style`` (the term's match colour), False chars the orange variance
+    style."""
     runs: list[tuple[int, int, str]] = []
     cur_start = 0
     cur = mask[0]
     for i in range(1, len(mask)):
         if mask[i] != cur:
-            runs.append((cur_start, i, HIGHLIGHT_STYLE if cur else MISMATCH_STYLE))
+            runs.append((cur_start, i, hit_style if cur else MISMATCH_STYLE))
             cur_start = i
             cur = mask[i]
-    runs.append((cur_start, len(mask), HIGHLIGHT_STYLE if cur else MISMATCH_STYLE))
+    runs.append((cur_start, len(mask), hit_style if cur else MISMATCH_STYLE))
     return runs
 
 
 def word_highlight_runs(word: str, spec: MatchSpec) -> list[tuple[int, int, str]]:
     """Per-char highlight runs for ``word``, coloured by *how* it matched:
 
-    * wildcard / glob — literal chars yellow, ``*``/``?``-filled chars orange;
-    * exact-stem / fuzzy — chars aligning to the typed term yellow, the typo /
-      stem-suffix divergence orange;
-    * regex (or any match with no clean char attribution) — whole word yellow.
+    * wildcard / glob — literal chars in the term's colour, ``*``/``?``-filled
+      chars orange;
+    * exact-stem / fuzzy — chars aligning to the typed term in its colour, the
+      typo / stem-suffix divergence orange;
+    * regex (or any match with no clean char attribution) — whole word in colour.
+
+    In a multi-word query each term has its own colour (see :data:`MATCH_STYLES`);
+    single-term queries use slot 0 (yellow).
     """
     from fnd.matching import (
         _stem,
         align_doc_word,
         closest_raw_term,
         glob_match_mask,
+        match_color,
         osa_within,
         word_matches,
     )
@@ -151,11 +201,12 @@ def word_highlight_runs(word: str, spec: MatchSpec) -> list[tuple[int, int, str]
         return []
     if not word_matches(word, spec):
         return []
+    hit_style = match_style(match_color(word, spec))
     # Wildcard / glob: colour literal vs wildcard-filled chars.
     for glob in spec.wildcards:
         mask = glob_match_mask(word, glob)
         if mask:
-            return _runs_from_mask(mask)
+            return _runs_from_mask(mask, hit_style)
     # Exact-stem or fuzzy: align against the closest typed term so a typo / stem
     # suffix shows as orange. Only for words that matched THIS way (not regex) —
     # otherwise an unrelated raw term would paint the whole word orange.
@@ -168,9 +219,9 @@ def word_highlight_runs(word: str, spec: MatchSpec) -> list[tuple[int, int, str]
         if raw is not None:
             mask = align_doc_word(word, raw)
             if mask:
-                return _runs_from_mask(mask)
+                return _runs_from_mask(mask, hit_style)
     # Regex match or anything without a clean char attribution → whole-word.
-    return [(0, len(word), HIGHLIGHT_STYLE)]
+    return [(0, len(word), hit_style)]
 
 
 def _highlight(text: str, terms: list[str]) -> str:

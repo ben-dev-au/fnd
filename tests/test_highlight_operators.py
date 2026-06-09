@@ -12,7 +12,10 @@ import pytest
 from rich.text import Text
 
 from fnd.matching import MatchSpec, word_matches
-from fnd.render import HIGHLIGHT_STYLE, MISMATCH_STYLE, apply_match_highlights
+from fnd.render import MATCH_STYLES, MISMATCH_STYLE, apply_match_highlights
+
+# Tag styles for readable assertions: palette slots Y/C/G/P/B, variance O.
+_TAGS = {MATCH_STYLES[0]: "Y", MATCH_STYLES[1]: "C", MATCH_STYLES[2]: "G", MISMATCH_STYLE: "O"}
 
 
 def _highlighted(query: str, text: str) -> set[str]:
@@ -29,8 +32,7 @@ def _coloured(query: str, text: str) -> list[tuple[str, str]]:
     apply_match_highlights(t, spec)
     out: list[tuple[str, str]] = []
     for sp in sorted(t.spans, key=lambda s: s.start):
-        tag = "Y" if sp.style == HIGHLIGHT_STYLE else ("O" if sp.style == MISMATCH_STYLE else "?")
-        out.append((text[sp.start : sp.end], tag))
+        out.append((text[sp.start : sp.end], _TAGS.get(str(sp.style), "?")))
     return out
 
 
@@ -71,12 +73,12 @@ def test_wildcard_excludes_non_prefix() -> None:
 @pytest.mark.parametrize(
     ("query", "text", "expected"),
     [
-        # wildcard with another term: the all-orange regression — discount must be
-        # discoun(yellow) + t(orange), NOT aligned against "strategy".
+        # wildcard with another term: the all-orange regression is gone, and each
+        # term gets its own colour — strategy(slot 0 Y), discoun(slot 1 C) + t(O).
         (
             "strategy discoun*",
             "the strategy gave a discount",
-            [("strategy", "Y"), ("discoun", "Y"), ("t", "O")],
+            [("strategy", "Y"), ("discoun", "C"), ("t", "O")],
         ),
         ("discoun*", "a discount", [("discoun", "Y"), ("t", "O")]),
         # infix / leading / single-char globs: literal chars yellow, fill orange
@@ -93,6 +95,36 @@ def test_wildcard_excludes_non_prefix() -> None:
 )
 def test_match_colouring(query: str, text: str, expected: list[tuple[str, str]]) -> None:
     assert _coloured(query, text) == expected
+
+
+def test_single_colour_mode() -> None:
+    """With multicolour off, every term uses slot-0 yellow; variance stays
+    orange. (The Settings toggle / config.multicolour_highlights drives this.)"""
+    from rich.text import Text
+
+    spec = MatchSpec.from_query("cross entropy loss", auto_fuzzy=True, multicolour=False)
+    t = Text("cross entropy loss")
+    apply_match_highlights(t, spec)
+    tags = [_TAGS.get(str(sp.style), "?") for sp in sorted(t.spans, key=lambda s: s.start)]
+    assert tags == ["Y", "Y", "Y"]
+
+
+def test_per_term_colours() -> None:
+    """Each distinct word in a multi-word query highlights in its own colour;
+    the variance (orange) is shared. Single-term queries stay slot-0 yellow."""
+    assert _coloured("cross entropy loss", "cross entropy loss") == [
+        ("cross", "Y"),
+        ("entropy", "C"),
+        ("loss", "G"),
+    ]
+    # single term unchanged
+    assert _coloured("discount", "a discount") == [("discount", "Y")]
+    # a repeated term keeps its first colour
+    assert _coloured("cross entropy cross", "cross entropy cross") == [
+        ("cross", "Y"),
+        ("entropy", "C"),
+        ("cross", "Y"),
+    ]
 
 
 def test_phrase_highlights_as_span() -> None:

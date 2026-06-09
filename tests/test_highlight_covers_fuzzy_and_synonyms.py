@@ -45,10 +45,13 @@ def test_match_spec_fuzzy_variant() -> None:
 
 
 def test_match_spec_two_typo_fuzzy() -> None:
-    """Long stems get AUTO distance 2 so 2-edit typos still light up
-    the original word."""
-    spec = MatchSpec.from_query("tempplatas")
+    """An explicit ``~2`` highlights 2-edit typos. (AUTO-fuzzy highlighting is
+    capped at distance 1 — distance 2 lights up too many unrelated false friends
+    on a clean query; the search-side cascade still uses AUTO distance 2.)"""
+    spec = MatchSpec.from_query("tempplatas~2")
     assert word_matches("templates", spec)
+    # AUTO (no ~N) does NOT reach distance 2:
+    assert not word_matches("templates", MatchSpec.from_query("tempplatas"))
 
 
 def test_match_spec_synonym_expansion() -> None:
@@ -127,12 +130,12 @@ def test_word_runs_synonym_match_is_all_yellow() -> None:
 
 
 def test_word_runs_two_typo_fuzzy_marks_both_diverging_chars() -> None:
-    """Long stems get AUTO distance 2. User typo "tempplatas" (extra
-    'p' AND 'a' in place of 'e') still surfaces "templates", and
-    alignment marks both diverging positions orange."""
+    """An explicit ``~2`` for a 2-edit typo ("tempplatas" — extra 'p' AND 'a'
+    for 'e') still surfaces "templates", and alignment marks both diverging
+    positions orange. (AUTO-fuzzy highlighting caps at distance 1.)"""
     from fnd.render import MISMATCH_STYLE, word_highlight_runs
 
-    spec = MatchSpec.from_query("tempplatas")
+    spec = MatchSpec.from_query("tempplatas~2")
     runs = word_highlight_runs("templates", spec)
     # Expect at least one orange run somewhere in the middle/end.
     assert any(style == MISMATCH_STYLE for _, _, style in runs)

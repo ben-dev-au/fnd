@@ -14,7 +14,7 @@ from textual.widgets import Input
 
 from fnd.config import Config, load
 from fnd.index import build_index
-from fnd.render import HIGHLIGHT_STYLE, MISMATCH_STYLE, word_highlight_runs
+from fnd.render import MATCH_STYLES, MISMATCH_STYLE, word_highlight_runs
 from fnd.tui import FNDApp
 
 
@@ -65,5 +65,7 @@ async def test_wildcard_match_colours_prefix_yellow_fill_orange(
 
         assert word_matches("discount", spec), "live app spec did not match the wildcard word"
         # ...and colour it discoun(yellow) + t(orange), NOT all-orange against "strategy".
+        # "discoun*" is the 2nd query term → its own colour (palette slot 1),
+        # the wildcard-filled "t" stays orange.
         runs = word_highlight_runs("discount", spec)
-        assert runs == [(0, 7, HIGHLIGHT_STYLE), (7, 8, MISMATCH_STYLE)], runs
+        assert runs == [(0, 7, MATCH_STYLES[1]), (7, 8, MISMATCH_STYLE)], runs

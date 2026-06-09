@@ -64,6 +64,7 @@ from fnd.matching import MatchSpec, phrase_char_spans
 from fnd.query import FileChunk, FileGroup, Hit, Searcher
 from fnd.render import (
     HIGHLIGHT_STYLE,
+    phrase_gap_spans,
     render_chunk_pieces,
     word_highlight_runs,
 )
@@ -361,14 +362,18 @@ def _build_match_spans(plain: str, spec: MatchSpec) -> list[Span]:
     if spec.is_empty or not plain:
         return []
     spans: list[Span] = []
+    covered: set[int] = set()
     for m in re.finditer(r"\w+", plain):
         runs = word_highlight_runs(m.group(0), spec)
         for offset_start, offset_end, style in runs:
-            spans.append(Span(m.start() + offset_start, m.start() + offset_end, style))
-    # Quoted phrases highlight as one contiguous span (covering the
-    # punctuation/spaces between words), not per-word — so a phrase's
-    # stopwords never light up document-wide.
-    for start, end in phrase_char_spans(plain, spec):
+            a, b = m.start() + offset_start, m.start() + offset_end
+            spans.append(Span(a, b, style))
+            covered.update(range(a, b))
+    # Phrase highlighting (quoted phrase, or a stopword between content words)
+    # fills only the GAPS between term spans — never overlaps them. Textual's
+    # Content drops overlapping differently-styled spans, so an overlapping
+    # phrase span in multi-colour mode would blank the whole word.
+    for start, end in phrase_gap_spans(phrase_char_spans(plain, spec), covered):
         spans.append(Span(start, end, HIGHLIGHT_STYLE))
     return spans
 
@@ -2108,6 +2113,7 @@ class FNDApp(App[None]):
             synonyms=self._synonyms,
             auto_fuzzy=defaults.fuzzy_enabled if defaults else True,
             min_term_chars=defaults.fuzzy_min_term_chars if defaults else 0,
+            multicolour=defaults.multicolour_highlights if defaults else True,
         )
         # Phase F: build the filter scaffolding (kind:, mtime:) and
         # multi-collection scope (c:) as a SEPARATE prefix. The lexical

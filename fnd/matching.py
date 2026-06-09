@@ -217,6 +217,11 @@ class MatchSpec:
     # orange. Kept out of ``raw_terms`` (the fuzzy char-aligner).
     wildcards: tuple[str, ...] = field(default_factory=tuple)
     regexes: tuple[str, ...] = field(default_factory=tuple)
+    # Ordered, de-duplicated ``(kind, key, dist)`` per distinct typed term, in
+    # query order, so each term highlights in its own colour. kind is
+    # ``term`` (key=stem, dist>0 ⇒ fuzzy) / ``wildcard`` (key=glob) /
+    # ``regex`` (key=pattern). Drives :func:`match_color`.
+    order: tuple[tuple[str, str, int], ...] = field(default_factory=tuple)
     # Stem sequences for each quoted phrase. Highlighted as a contiguous
     # span (see :func:`phrase_char_spans`); their words are deliberately
     # kept OUT of ``exact_stems`` so a stopword inside a phrase ("in",
@@ -231,6 +236,7 @@ class MatchSpec:
         synonyms: SynonymTable | None = None,
         auto_fuzzy: bool = True,
         min_term_chars: int = 0,
+        multicolour: bool = True,
     ) -> MatchSpec:
         """Build a spec from a user query string.
 
@@ -261,14 +267,18 @@ class MatchSpec:
         wildcards: list[str] = []
         regexes: list[str] = []
         plain_tokens: list[str] = []
+        ordered_tokens: list[tuple[str, str]] = []  # (kind, key) in query order
         for tok in loose_query.split():
             rm = _HL_REGEX.match(tok)
             if rm:
                 regexes.append(rm.group(1).lower())
+                ordered_tokens.append(("regex", rm.group(1).lower()))
             elif _HL_GLOB.search(tok):
                 wildcards.append(tok.lower())
+                ordered_tokens.append(("wildcard", tok.lower()))
             else:
                 plain_tokens.append(tok)
+                ordered_tokens.append(("plain", tok))
         loose_query = " ".join(plain_tokens)
 
         # In-context stopwords: a connector like "in" in `defence in depth`
@@ -315,12 +325,35 @@ class MatchSpec:
             for s in exact:
                 if len(s) < min_term_chars:
                     continue
-                d = auto_fuzzy_distance(s)
+                # Cap AUTO-fuzzy *highlighting* at distance 1. At distance 2 a
+                # 6-char term lights up unrelated false friends (defence→defeat,
+                # diverse→reverse) — pure noise on a clean query. The search-side
+                # cascade and an explicit ``~2`` still use distance 2.
+                d = min(auto_fuzzy_distance(s), 1)
                 if d > 0:
                     auto_pairs[s] = d
         # Explicit wins on collision (user is asserting a distance).
         merged = {**auto_pairs, **explicit_pairs}
         fuzzy_pairs = tuple(sorted(merged.items()))
+        # Colour order: one slot per distinct term, in query order. Repeats and
+        # stopwords are skipped (a repeated term keeps its first colour). Left
+        # empty when multi-colour highlighting is off, so every term paints in
+        # the single slot-0 colour (see :func:`match_color`).
+        order: list[tuple[str, str, int]] = []
+        seen: set[tuple[str, str]] = set()
+        for kind, key in ordered_tokens if multicolour else []:
+            if kind == "plain":
+                for w in re.findall(r"\w+", key):
+                    if w.lower() in STOPWORDS:
+                        continue
+                    st = _stem(w)
+                    if ("term", st) in seen:
+                        continue
+                    seen.add(("term", st))
+                    order.append(("term", st, merged.get(st, 0)))
+            elif (kind, key) not in seen:
+                seen.add((kind, key))
+                order.append((kind, key, 0))
         return cls(
             exact_stems=frozenset(exact),
             fuzzy_per_stem=fuzzy_pairs,
@@ -328,6 +361,7 @@ class MatchSpec:
             phrases=phrases,
             wildcards=tuple(wildcards),
             regexes=tuple(regexes),
+            order=tuple(order),
         )
 
     @property
@@ -364,6 +398,28 @@ def word_matches(word: str, spec: MatchSpec) -> bool:
         if osa_within(s, q_stem, max_dist=max_d) <= max_d:
             return True
     return False
+
+
+def match_color(word: str, spec: MatchSpec) -> int:
+    """Colour slot of the first ordered query term ``word`` matches — so each
+    distinct term in a multi-word query highlights in its own colour. Returns 0
+    (the default yellow slot) when no ordered term matches (e.g. a synonym
+    variant, or an empty ``order``)."""
+    s = _stem(word)
+    for i, (kind, key, dist) in enumerate(spec.order):
+        if kind == "term":
+            if s == key or (dist and osa_within(s, key, max_dist=dist) <= dist):
+                return i
+        elif kind == "wildcard":
+            if re.fullmatch(glob_to_regex(key), s) is not None:
+                return i
+        elif kind == "regex":
+            try:
+                if re.fullmatch(key, s) is not None:
+                    return i
+            except re.error:
+                continue
+    return 0
 
 
 def phrase_char_spans(text: str, spec: MatchSpec) -> list[tuple[int, int]]:
