@@ -56,7 +56,6 @@ _WILDCARD_RE: Final = re.compile(r"^(\w+)\*$")
 _FUZZY_RE: Final = re.compile(r"^(\w+)~(\d*)$")
 _REGEX_RE: Final = re.compile(r"^/(.+)/$")
 _GLOB_RE: Final = re.compile(r"[*?]")
-_CONTENT_BOOL_OPS: Final = frozenset({"AND", "OR", "NOT"})
 # Below this many chunks/file the thread-pool overhead outweighs the
 # decode parallelism — fall back to serial decode regardless of the
 # requested ``max_workers``.
@@ -273,80 +272,24 @@ class Searcher:
     ) -> Query:
         """Scored F_BODY query for the content terms.
 
-        Trailing-``*`` wildcards and ``term~N`` fuzzies are resolved against the
-        stemmed term dictionary into BM25 ``term_query`` ORs (``parse_query``
-        drops ``*`` and no-ops ``~N`` on the body field); plain terms still go
-        through ``parse_query``. The pieces combine as a weighted OR (Should),
-        matching the bare-multi-term default. Content with explicit booleans,
-        quotes, or parens bypasses resolution and parses as one expression
-        (mixing per-token resolution into a boolean tree is the AST work in P4).
+        Parsed into a boolean AST (:mod:`fnd.query_ast`) and lowered to Tantivy
+        (:mod:`fnd.query_compile`), so wildcards (``crypto*``/``*tion``/``col?r``),
+        ``term~N`` fuzzies, ``/regex/``, phrases, ``+``/``-`` and ``^`` boosts all
+        compose inside ``AND``/``OR``/``NOT`` and parentheses. ``parse_query``
+        (which drops ``*`` and no-ops ``~N``) is used only for plain term/phrase
+        leaves, where it gives correct analyzer/stemming parity. Adjacency is a
+        weighted OR (Should) so the bare-multi-term default still ranks all-term
+        docs highest.
         """
         import tantivy
 
-        from fnd.schema import F_BODY
+        from fnd.query_ast import parse_query_ast
+        from fnd.query_compile import compile_query
 
-        toks = content.split()
-
-        def _special(t: str) -> bool:
-            return bool(
-                _WILDCARD_RE.match(t)
-                or _FUZZY_RE.match(t)
-                or _REGEX_RE.match(t)
-                or _GLOB_RE.search(t)
-            )
-
-        has_special = any(_special(t) for t in toks)
-        # "Complex" = a boolean operator, or a quote/paren in a NON-special token
-        # (parens inside a /regex/ are literal, not grouping). Such queries parse
-        # as one expression rather than per-token resolution.
-        is_complex = any(t in _CONTENT_BOOL_OPS for t in toks) or any(
-            ch in t for t in toks if not _special(t) for ch in "()\"'"
-        )
-        if not has_special or is_complex:
-            return _parse_query(self._index, content, **body_parse_kwargs)
-
-        from fnd.matching import auto_fuzzy_distance, glob_to_regex
-        from fnd.query_resolvers import (
-            fuzzy_stem,
-            fuzzy_variants,
-            prefix_variants,
-            term_or_query,
-        )
-
-        def _regex(pattern: str) -> Query | None:
-            try:
-                return tantivy.Query.regex_query(schema, F_BODY, pattern)
-            except ValueError:
-                return None  # malformed regex / glob → contributes nothing
-
-        subs: list[Query] = []
-        plain: list[str] = []
-        for tok in toks:
-            wm = _WILDCARD_RE.match(tok)
-            rm = _REGEX_RE.match(tok)
-            fm = _FUZZY_RE.match(tok)
-            if wm:  # trailing ``word*`` → BM25 prefix expansion
-                q = term_or_query(schema, prefix_variants(self, wm.group(1)))
-            elif rm:  # ``/pattern/`` literal regex
-                q = _regex(rm.group(1).lower())
-            elif fm:  # ``term~N`` fuzzy
-                stem = fuzzy_stem(fm.group(1))
-                dist = int(fm.group(2)) if fm.group(2) else auto_fuzzy_distance(stem)
-                q = term_or_query(schema, fuzzy_variants(self, stem, dist))
-            elif _GLOB_RE.search(tok):  # infix/leading wildcard → regex
-                q = _regex(glob_to_regex(tok))
-            else:
-                plain.append(tok)
-                continue
-            if q is not None:
-                subs.append(q)
-        if plain:
-            subs.append(_parse_query(self._index, " ".join(plain), **body_parse_kwargs))
-        if not subs:
-            return tantivy.Query.empty_query()  # specials resolved to nothing
-        if len(subs) == 1:
-            return subs[0]
-        return tantivy.Query.boolean_query([(tantivy.Occur.Should, q) for q in subs])
+        node = parse_query_ast(content)
+        if node is None:
+            return tantivy.Query.empty_query()
+        return compile_query(node, searcher=self, schema=schema, parse_kwargs=body_parse_kwargs)
 
     def _raw_hits(
         self,

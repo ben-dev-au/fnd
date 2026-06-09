@@ -337,6 +337,40 @@ _CASES: list[_Case] = [
         _OK,
     ),
     ("has-field", "has:author", lambda r: r == {"fld-author"}, _OK),
+    # --- Operators composing INSIDE booleans/parens (boolean AST compiler) ---
+    # The discriminator in each: the dropped ``*``/no-op ``~N`` of the old
+    # parse_query handoff would intersect on the *literal* stem and return {} —
+    # only a real wildcard/fuzzy/regex leaf inside the AND yields the doc.
+    (
+        "and-wildcard",
+        "crypto* AND messages",  # crypto*→cryptographi, AND messages → only wc-graphy
+        lambda r: r == {"wc-graphy"},
+        _OK,
+    ),
+    (
+        "and-fuzzy",
+        "kubernates~2 AND containers",  # ~2→kubernetes, AND containers → fuzzy-kube
+        lambda r: r == {"fuzzy-kube"},
+        _OK,
+    ),
+    (
+        "and-regex",
+        "/crypto.*/ AND hash",  # regex→cryptograph, AND hash → wc-graphic
+        lambda r: r == {"wc-graphic"},
+        _OK,
+    ),
+    (
+        "group-wildcard-and",
+        "(cryptozzz OR crypto*) AND messages",  # grouped wildcard branch → wc-graphy
+        lambda r: r == {"wc-graphy"},
+        _OK,
+    ),
+    (
+        "wildcard-exclude",
+        "crypto* -wallet",  # all crypto*, minus the wallet doc
+        lambda r: {"wc-graphy", "wc-graphic"} <= r and "wc-crypto" not in r,
+        _OK,
+    ),
 ]
 
 

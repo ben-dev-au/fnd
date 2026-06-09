@@ -45,6 +45,12 @@ from fnd.synonyms import SynonymTable, expand
 # A field qualifier (``kind:pdf``, ``c:wine``) anywhere in the query — phrase
 # wrapping such a query would quote the qualifier and produce a junk phrase.
 _FIELD_SYNTAX_RE: Final = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*:")
+# Explicit operator syntax — boolean keywords, ``+``/``-`` required/prohibited
+# prefixes, or wildcard/fuzzy/regex chars. Quoting such a query as a phrase
+# destroys its meaning (``"crypto* -wallet"`` becomes the phrase "crypto wallet"
+# and re-admits the very doc the ``-`` excluded). The lex pass already honours it
+# exactly via the boolean AST compiler, so the phrase pass must stand down.
+_OPERATOR_SYNTAX_RE: Final = re.compile(r"\b(?:AND|OR|NOT)\b|[*?~/]|(?:^|\s)[+\-]\S")
 
 # RRF constant; default 60 matches the original Cormack/Clarke/Buettcher 2009
 # paper and what QMD uses.
@@ -217,7 +223,13 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
     # text is meaningless and quoting it mangles the qualifier.
     carries_phrase_intent = '"' in q or "{" in q or "NEAR/" in q
     carries_field_syntax = bool(_FIELD_SYNTAX_RE.search(q))
-    if len(q.split()) >= 2 and not carries_phrase_intent and not carries_field_syntax:
+    carries_operator_syntax = bool(_OPERATOR_SYNTAX_RE.search(q))
+    if (
+        len(q.split()) >= 2
+        and not carries_phrase_intent
+        and not carries_field_syntax
+        and not carries_operator_syntax
+    ):
         subs.append(SubQuery(query=f'"{q}"', weight=_DEFAULT_WEIGHTS["phrase"], source="phrase"))
     subs.append(SubQuery(query=q, weight=_DEFAULT_WEIGHTS["lex"], source="lex"))
     if synonyms is not None and synonyms.groups:
