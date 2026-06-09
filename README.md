@@ -332,32 +332,27 @@ markdown frontmatter filters. They compose freely.
 
 | You type                      | What it does                                                                                                                                                           |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `entropy`                     | Single term. Matches anywhere in the document body, title, heading path, or filename. Stemmed, so `entropies` and `entropy` are equivalent.                            |
-| `cross entropy loss`          | Several terms, weighted. A document need not contain every term, but the more it matches the higher it ranks — documents with all three rise to the top. Use `AND` to require all, or quotes for an exact phrase. |
-| `cross AND entropy`           | Require both terms.                                                                                                                                                    |
-| `"cross entropy loss"`        | Exact phrase. The three words must appear in order, adjacent. Matches `cross entropy loss` and `cross-entropy loss` (hyphens are treated as separators at index time). |
-| `cross OR entropy`            | Either term. Useful when a concept goes by different names.                                                                                                            |
-| `NOT regression`              | Exclude. Almost always combined: `entropy NOT regression`.                                                                                                             |
-| `+rust -python`               | `+` requires a term, `-` excludes one — a quick alternative to `AND`/`NOT`.                                                                                            |
-| `(loss OR cost) AND function` | Parentheses group boolean clauses, to any depth.                                                                                                                       |
+| `entropy`                     | One term. Searches body, title, headings, and filename. Stemmed (`entropy` = `entropies`). |
+| `cross entropy loss`          | Several terms, ranked. Docs matching more terms rank higher; all-term docs reach the top.   |
+| `cross AND entropy`           | Require both terms.                                                                          |
+| `"cross entropy loss"`        | Exact phrase, in order. Also matches `cross-entropy loss`.                                   |
+| `cross OR entropy`            | Either term.                                                                                |
+| `entropy NOT regression`      | Has `entropy`, excludes `regression`.                                                       |
+| `+rust -python`               | `+` require, `-` exclude (shorthand for `AND` / `NOT`).                                      |
+| `(loss OR cost) AND function` | Group with parentheses, to any depth.                                                       |
 
-### Phrase search vs loose AND
+### Phrases
 
-Quotes are the single biggest precision win:
+Quoting is the biggest precision win — quote any common phrase:
 
-- `man in the middle`: every doc with the words `man`, `in`, `the`, and
-  `middle` _anywhere_ in a chunk. Lots of noise.
-- `"man in the middle"`: only docs where those four words appear together,
-  in order. Also matches `man-in-the-middle` (hyphens split into the same
-  tokens at index time).
+| You type              | Matches                                                       |
+| --------------------- | ------------------------------------------------------------- |
+| `man in the middle`   | The four words anywhere in a chunk. Noisy.                    |
+| `"man in the middle"` | The four words together, in order. Also `man-in-the-middle`.  |
 
-If you find yourself searching for a common phrase, quote it.
+### Proximity
 
-### Proximity: "near each other, not necessarily adjacent"
-
-When you want the terms close together but don't care about exact order or
-adjacent words between them, use a proximity (slop) search. Two equivalent
-forms:
+Find terms near each other, in any order — `{N}` and `NEAR/N` are equivalent:
 
 | You type                           | Means                                        |
 | ---------------------------------- | -------------------------------------------- |
@@ -367,17 +362,12 @@ forms:
 | `{60} buffer overflow exploit`     | Within ~a few lines.                         |
 | `{500} race condition mitigations` | Within ~one page.                            |
 
-Rough mapping: ~5 tokens = very near, ~20 = one line, ~60 = a few lines,
-~500 = roughly a page. Proximity is bounded by chunk size: if the terms
-straddle a chunk boundary, no proximity query will catch them; that's when
-you fall back to loose AND.
-
-`{N}` binds to the run of plain words right after it and stops at the first
-field qualifier, operator, or parenthesis — so `{10} buffer overflow kind:pdf`
-applies the proximity to `buffer overflow` and keeps `kind:pdf` as a normal
-filter. Order is flexible (reversed terms still match, within the slop budget);
-use a quoted phrase like `"cross entropy"` when you need strict order. `NEAR/N`
-takes exactly two single words.
+- **Scale:** `5` ≈ very near, `20` ≈ a line, `60` ≈ a few lines, `500` ≈ a page.
+- **Order doesn't matter** — quote (`"cross entropy"`) when it does.
+- `{N}` covers the words right after it, up to the first operator, `(`, or
+  filter, so `{10} buffer overflow kind:pdf` slops only `buffer overflow`.
+- Can't cross a chunk boundary; if terms are far apart, drop the `{N}`.
+- `NEAR/N` takes exactly two words.
 
 ### Fuzzy matching for typos and variants
 
@@ -407,9 +397,8 @@ boost), so you can combine it with search terms to constrain them.
 | `title:(rust OR golang)`       | Group alternatives within one field.                              |
 | `has:author`                   | Only documents that have a non-empty `author` field.              |
 
-Combine with terms to constrain them: `kind:pdf "diffusion model"` returns **only
-PDFs** containing the exact phrase; `kind:pptx slide:>10 attention` only later
-slides mentioning attention.
+Combine with terms to constrain them — `kind:pdf "diffusion model"` finds the
+phrase in **PDFs only**.
 
 ### Collections
 
@@ -440,33 +429,25 @@ Numeric ranges use `[low TO high]`. Shorthand for one-sided comparisons:
 
 ### Wildcards and regex
 
-`*` matches zero or more characters, `?` exactly one:
+| You type   | Matches                                      |
+| ---------- | -------------------------------------------- |
+| `crypto*`  | Words starting with `crypto`.                |
+| `gr?y`     | `?` = exactly one character: `gray`, `grey`. |
+| `/cryp.*/` | A regular expression over indexed words.     |
 
-| You type      | Matches                                                          |
-| ------------- | --------------------------------------------------------------- |
-| `crypto*`     | `crypto`, `cryptography`, `cryptographic` (fast prefix scan).   |
-| `*tion`       | Terms ending in `tion` (slower — scans the term dictionary).    |
-| `gr?y`        | `?` matches exactly one character: `gray` / `grey`.            |
-| `/crypt(o\|id)/` | A regular expression matched against indexed terms.          |
+> **`*` only works at the end of a word.** Leading or infix wildcards (`*tion`,
+> `de*ce`) match almost nothing — search strips word endings before matching.
+> Use a trailing `crypto*` or a `/regex/` instead.
 
-Wildcards and regex match the **stemmed** term dictionary, so a literal *ending*
-the stemmer rewrites won't line up — e.g. `*efence` finds nothing because `defence`
-is stored as the stem `defenc` (the trailing `e` is dropped); `*efenc` would match.
-Leading and infix wildcards are hit hardest by this — they anchor on the word's
-end, which is exactly what stemming chops — and they scan the whole term
-dictionary, so they're slower too. Prefer a trailing `*` (`crypto*`), which needs
-only the prefix. Wildcards are also redundant with stemming for ordinary endings:
-`entropy` already finds `entropies`.
-
-Wildcards, fuzzy (`~N`), regex, and phrases all compose inside `AND`/`OR`/`NOT`
-and parentheses — e.g. `crypto* AND wallet`, `(diffuse* OR diffusion) AND kind:pdf`.
+You rarely need `*`: search already matches word variants (`entropy` finds
+`entropies`). Wildcards, fuzzy, regex, and phrases all work inside
+`AND` / `OR` / `NOT` / `()`.
 
 ### Markdown frontmatter filter
 
-If you're searching across markdown notes with YAML frontmatter, append a
-bracketed predicate that's evaluated against each note's frontmatter. **String
-values are single-quoted** (double quotes denote a field name that contains
-spaces):
+Filter markdown notes by their YAML frontmatter with a `[…]` predicate.
+**String values use single quotes**; double quotes mark a field name with
+spaces (`"Due Date"`):
 
 | You type                                       | What it does                                          |
 | ---------------------------------------------- | ----------------------------------------------------- |
@@ -474,7 +455,7 @@ spaces):
 | `[Notes_Type == 'Lecture' OR Notes_Type == 'Tutorial']` | Either value (there are no list literals — use `OR`). |
 | `entropy [Course == 'ML' AND Year >= 2024]`    | Compound predicate.                                   |
 | `['urgent' in Tags]`                           | `urgent` is an element of the `Tags` list.            |
-| `[Course ~~ 'Design *']`                       | Glob-match a string field (`~~` is for strings, not lists). |
+| `[Course ~~ 'Design *']`                       | Glob-match a string value.                            |
 | `["Due Date" < 2026-01-01]`                    | A field name with a space, double-quoted.             |
 
 Supported operators: `==` `!=` `<` `<=` `>` `>=` `~~` (glob, string fields),
@@ -482,10 +463,8 @@ Supported operators: `==` `!=` `<` `<=` `>` `>=` `~~` (glob, string fields),
 Values are single-quoted strings, numbers, ISO dates, or `true`/`false`/`null`.
 The filter applies only to markdown files; other kinds pass through unfiltered.
 
-`~~` glob-matches a frontmatter **string value** (`Course ~~ 'Design *'` keeps
-notes whose `Course` starts with `Design `). It is unrelated to the `~N` fuzzy
-operator, which tolerates typos in **body** search terms (`templatas~1`) — `~~`
-lives only inside the `[…]` predicate, `~N` only in the main query.
+`~~` globs a frontmatter **string value** (`Course ~~ 'Design *'`) — it is not
+the body-search `~N` fuzzy operator.
 
 ### Composing: worked examples
 
@@ -512,9 +491,8 @@ crypto* AND wallet                                 # a wildcard required inside 
   phrase that includes them, quote it: `"man in the middle"`.
 - **Proximity is per-chunk.** A phrase or `{N}` query can't span a chunk
   boundary. If the terms are paragraphs apart, drop to a loose multi-term query.
-- **Wildcards on very short stems are slow.** `a*` scans a large slice of the
-  term dictionary. Use at least three letters before `*`, and prefer a trailing
-  `*` over a leading one.
+- **`*` only works at the end of a word.** Leading/infix wildcards (`*tion`,
+  `de*ce`) match almost nothing — use `crypto*` or `/regex/`.
 
 ## Contributing
 
