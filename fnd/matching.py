@@ -285,10 +285,10 @@ class MatchSpec:
         plain_tokens: list[str] = []
         ordered_tokens: list[tuple[str, str]] = []  # (kind, key) in query order
         negate_next = False
-        neg_depth = 0  # >0 while inside an excluded ``NOT (…)`` / ``-(…)`` group
+        skip_depth = 0  # >0 while inside a skipped NOT-/-/field-scoped group
         for tok in loose_query.split():
-            if neg_depth > 0:  # whole group excluded — track until it closes
-                neg_depth = max(0, neg_depth + tok.count("(") - tok.count(")"))
+            if skip_depth > 0:  # inside a skipped group — track until it closes
+                skip_depth = max(0, skip_depth + tok.count("(") - tok.count(")"))
                 continue
             if tok == "NOT":  # excludes the following token or group
                 negate_next = True
@@ -297,24 +297,31 @@ class MatchSpec:
                 continue
             negated = negate_next or tok.startswith("-")
             negate_next = False
-            if negated and "(" in tok:  # ``NOT (a OR b)`` / ``-(a OR b)``: drop it all
-                neg_depth = max(0, tok.count("(") - tok.count(")"))
-                continue
             # Strip surrounding structure only; ``~N`` / ``^boost`` stay on the
             # token so the explicit-fuzzy pass below can still read them.
             cleaned = tok.lstrip("+-").strip("()'\"")
-            if not cleaned or _FIELD_QUALIFIER_RE.match(cleaned) or negated:
+            is_field = bool(_FIELD_QUALIFIER_RE.match(cleaned))
+            # An open ``NOT (…)`` / ``-(…)`` / ``field:(…)`` group — none of its
+            # contents are body highlight terms; skip until it closes.
+            if tok.count("(") > tok.count(")") and (negated or is_field):
+                skip_depth = tok.count("(") - tok.count(")")
                 continue
-            rm = _HL_REGEX.match(cleaned)
+            if not cleaned or is_field or negated:
+                continue
+            # Classify against a modifier-free key so a boosted structured token
+            # (``discoun*^2``, ``/crypt.*/^2``) is still recognised as wildcard/
+            # regex; the plain term keeps ``~N`` for the fuzzy pass.
+            key = re.sub(r"(?:~\d*|\^[\d.]+)+$", "", cleaned)
+            rm = _HL_REGEX.match(key)
             if rm:
                 regexes.append(rm.group(1).lower())
                 ordered_tokens.append(("regex", rm.group(1).lower()))
-            elif _HL_GLOB.search(cleaned):
-                wildcards.append(cleaned.lower())
-                ordered_tokens.append(("wildcard", cleaned.lower()))
+            elif _HL_GLOB.search(key):
+                wildcards.append(key.lower())
+                ordered_tokens.append(("wildcard", key.lower()))
             else:
                 plain_tokens.append(cleaned)
-                ordered_tokens.append(("plain", cleaned))
+                ordered_tokens.append(("plain", key))
         loose_query = " ".join(plain_tokens)
         # Modifier-free view for plain terms / colour slots / synonyms; the raw
         # ``loose_query`` (with ``~N``) is reserved for explicit-fuzzy extraction.

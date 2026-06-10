@@ -122,6 +122,23 @@ def _tokenize(s: str) -> list[tuple[str, str]]:
             i += 1
             continue
         if ch == "(":
+            if buf and buf[-1] == ":":
+                # ``field:(…)`` — keep the scoped group attached as one atom. The
+                # AST has no field node, so the leaf is handed to parse_query
+                # (which understands field syntax); other leaves around it
+                # (wildcards/fuzzy) still compile normally.
+                depth = 1
+                buf.append(ch)
+                j = i + 1
+                while j < n and depth > 0:
+                    if s[j] == "(":
+                        depth += 1
+                    elif s[j] == ")":
+                        depth -= 1
+                    buf.append(s[j])
+                    j += 1
+                i = j
+                continue
             flush()
             toks.append(("LP", "("))
             i += 1

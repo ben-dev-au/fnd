@@ -160,6 +160,15 @@ _DOCS: list[tuple[str, _Doc]] = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def _frozen_clock(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Pin the mtime-resolution clock to the same instant the corpus was stamped
+    against (``_NOW``). Otherwise ``mtime:today`` resolves against the live clock
+    and a run that straddles UTC midnight flips ``mt-today`` out of the bucket."""
+    monkeypatch.setattr("fnd.query_fields._now_ts", lambda: _NOW)
+    monkeypatch.setattr("fnd.query_dsl._now_ts", lambda: _NOW)
+
+
 @pytest.fixture(scope="module")
 def searcher() -> Searcher:
     schema = build_schema()
@@ -343,6 +352,14 @@ _CASES: list[_Case] = [
     (
         "field-group-in-boolean",
         "title:(transformer OR zzz) AND networks",
+        lambda r: r == {"fld-title"},
+        _OK,
+    ),
+    # A wildcard beside a field group must keep its wildcard semantics (the group
+    # is parsed by Tantivy, the wildcard still compiles through the AST).
+    (
+        "field-group-plus-wildcard",
+        "title:(transformer OR zzz) AND network*",
         lambda r: r == {"fld-title"},
         _OK,
     ),

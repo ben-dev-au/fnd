@@ -156,6 +156,21 @@ def test_negated_group_terms_are_not_highlighted() -> None:
     assert word_matches("loss", s2)
 
 
+def test_field_group_value_is_not_highlighted() -> None:
+    """A scoped field group (`title:(a OR b)`) is a filter — its values must not
+    highlight in the body or consume a colour slot, even split across tokens."""
+    spec = MatchSpec.from_query("networks title:(wallet OR purse)")
+    assert word_matches("networks", spec)
+    assert not word_matches("wallet", spec)
+    assert not word_matches("purse", spec)
+
+
+def test_boosted_wildcard_and_regex_still_highlight() -> None:
+    """A `^boost` on a structured token must not break its highlight match."""
+    assert word_matches("discount", MatchSpec.from_query("discoun*^2"))
+    assert word_matches("cryptography", MatchSpec.from_query("/crypt.*/^2"))
+
+
 def test_fuzzy_and_boost_modifiers_do_not_leak_into_highlight_terms() -> None:
     """`~N` / `^boost` digits must not become highlight terms or colour slots:
     `mitochondira~1 discount` highlights only those two words, not a bare `1`."""
