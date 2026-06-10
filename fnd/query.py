@@ -56,6 +56,10 @@ _WILDCARD_RE: Final = re.compile(r"^(\w+)\*$")
 _FUZZY_RE: Final = re.compile(r"^(\w+)~(\d*)$")
 _REGEX_RE: Final = re.compile(r"^/(.+)/$")
 _GLOB_RE: Final = re.compile(r"[*?]")
+# A field-grouped clause (``title:(a OR b)``) left in the content by filter
+# extraction — the AST tokenizer can't keep ``field:`` attached to its group, so
+# such residue is handed to ``parse_query`` whole.
+_FIELD_GROUP_RE: Final = re.compile(r"\b\w+:\(")
 # Below this many chunks/file the thread-pool overhead outweighs the
 # decode parallelism — fall back to serial decode regardless of the
 # requested ``max_workers``.
@@ -295,12 +299,20 @@ class Searcher:
         leaves, where it gives correct analyzer/stemming parity. Adjacency is a
         weighted OR (Should) so the bare-multi-term default still ranks all-term
         docs highest.
+
+        A boolean-composed field-grouped clause (``title:(a OR b) AND networks``)
+        survives filter extraction but can't be represented in the AST — the
+        tokenizer splits ``field:`` from its group. Hand that residue to Tantivy's
+        parser, which understands field syntax. (A plain ``kind:pdf OR kind:docx``
+        needs no special case: its leaves resolve through ``parse_query``.)
         """
         import tantivy
 
         from fnd.query_ast import parse_query_ast
         from fnd.query_compile import compile_query
 
+        if _FIELD_GROUP_RE.search(content):
+            return _parse_query(self._index, content, **body_parse_kwargs)
         node = parse_query_ast(content)
         if node is None:
             return tantivy.Query.empty_query()

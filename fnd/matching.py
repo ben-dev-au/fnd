@@ -48,6 +48,10 @@ _BOOL_KEYWORDS = frozenset({"AND", "OR", "NOT"})
 # A field qualifier (``kind:pdf``, ``c:notes``, ``title:x``) is a filter, not a
 # body term — its value must not highlight or spend a colour slot.
 _FIELD_QUALIFIER_RE = re.compile(r"^[A-Za-z_]\w*:")
+# ``~N`` fuzzy / ``^boost`` modifiers. Stripped when deriving plain terms and
+# colour slots (so ``mitochondira~1`` doesn't light up a bare ``1``), but KEPT in
+# the token stream that feeds the explicit-``~N`` fuzzy extraction.
+_MODIFIER_RE = re.compile(r"(?:~\d*|\^[\d.]+)")
 
 
 def glob_to_regex(glob: str) -> str:
@@ -296,7 +300,9 @@ class MatchSpec:
             if negated and "(" in tok:  # ``NOT (a OR b)`` / ``-(a OR b)``: drop it all
                 neg_depth = max(0, tok.count("(") - tok.count(")"))
                 continue
-            cleaned = re.sub(r"\^[\d.]+$", "", tok.lstrip("+-").strip("()'\""))
+            # Strip surrounding structure only; ``~N`` / ``^boost`` stay on the
+            # token so the explicit-fuzzy pass below can still read them.
+            cleaned = tok.lstrip("+-").strip("()'\"")
             if not cleaned or _FIELD_QUALIFIER_RE.match(cleaned) or negated:
                 continue
             rm = _HL_REGEX.match(cleaned)
@@ -310,6 +316,9 @@ class MatchSpec:
                 plain_tokens.append(cleaned)
                 ordered_tokens.append(("plain", cleaned))
         loose_query = " ".join(plain_tokens)
+        # Modifier-free view for plain terms / colour slots / synonyms; the raw
+        # ``loose_query`` (with ``~N``) is reserved for explicit-fuzzy extraction.
+        bare_query = _MODIFIER_RE.sub(" ", loose_query)
 
         # In-context stopwords: a connector like "in" in `defence in depth`
         # should highlight where it sits next to a matched content word, but a
@@ -318,7 +327,7 @@ class MatchSpec:
         # highlight phrase ("defence in", "in depth"); overlapping bigrams also
         # cover the full run. Stopword-only pairs are skipped so bare function
         # words never light up.
-        loose_words = _terms_from_query(loose_query, keep_stopwords=True)
+        loose_words = _terms_from_query(bare_query, keep_stopwords=True)
         pair_phrases: list[tuple[str, ...]] = []
         for a, b in pairwise(loose_words):
             a_stop, b_stop = a.lower() in STOPWORDS, b.lower() in STOPWORDS
@@ -326,7 +335,7 @@ class MatchSpec:
                 pair_phrases.append((_stem(a), _stem(b)))
         phrases = phrases + tuple(pair_phrases)
 
-        terms = _terms_from_query(loose_query)
+        terms = _terms_from_query(bare_query)
         if not terms and not phrases and not wildcards and not regexes:
             return cls()
         raw = {t.lower() for t in terms if t}
@@ -335,8 +344,8 @@ class MatchSpec:
         # have surfaced docs containing them, so the highlighter
         # marks them too.
         if synonyms is not None and synonyms.groups:
-            expanded = expand(loose_query, synonyms)
-            if expanded != loose_query:
+            expanded = expand(bare_query, synonyms)
+            if expanded != bare_query:
                 expanded_terms = _terms_from_query(expanded)
                 for t in expanded_terms:
                     if t:
@@ -380,7 +389,7 @@ class MatchSpec:
             order.append(("phrase", "", 0))
         for kind, key in ordered_tokens if multicolour else []:
             if kind == "plain":
-                for w in re.findall(r"\w+", key):
+                for w in re.findall(r"\w+", _MODIFIER_RE.sub(" ", key)):
                     if w.lower() in STOPWORDS:
                         continue
                     st = _stem(w)

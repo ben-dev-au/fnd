@@ -156,6 +156,14 @@ def test_negated_group_terms_are_not_highlighted() -> None:
     assert word_matches("loss", s2)
 
 
+def test_fuzzy_and_boost_modifiers_do_not_leak_into_highlight_terms() -> None:
+    """`~N` / `^boost` digits must not become highlight terms or colour slots:
+    `mitochondira~1 discount` highlights only those two words, not a bare `1`."""
+    spec = MatchSpec.from_query("mitochondira~1 discount")
+    assert not word_matches("1", spec)
+    assert [key for _, key, _ in spec.order] == ["mitochondira", "discount"]
+
+
 def test_wildcard_inside_parens_still_highlights() -> None:
     """A grouped wildcard keeps its highlight (the leading `(` used to leak into
     the stored pattern and break the fullmatch)."""

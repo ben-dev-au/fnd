@@ -337,6 +337,18 @@ _CASES: list[_Case] = [
         _OK,
     ),
     ("has-field", "has:author", lambda r: r == {"fld-author"}, _OK),
+    # Field grouping composed with a boolean stays in content (filter extraction
+    # leaves it) — it must reach Tantivy's parser, not the AST (which would crash
+    # splitting ``title:`` from its group).
+    (
+        "field-group-in-boolean",
+        "title:(transformer OR zzz) AND networks",
+        lambda r: r == {"fld-title"},
+        _OK,
+    ),
+    # Presence on a numeric field is "has a real (non-zero) value" — pages 5/15/25,
+    # not the page:0 default of every other doc.
+    ("has-uint-presence", "has:page", lambda r: r == {"pg-5", "pg-15", "pg-25"}, _OK),
     # --- Operators composing INSIDE booleans/parens (boolean AST compiler) ---
     # The discriminator in each: the dropped ``*``/no-op ``~N`` of the old
     # parse_query handoff would intersect on the *literal* stem and return {} —

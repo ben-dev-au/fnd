@@ -167,10 +167,25 @@ def extract_filters(
         if m is not None and not adjacent_bool:
             field, value = m.group(1), m.group(2)
             if field in ("has", "exists"):
-                # Presence query: any doc with a non-empty term in that field.
+                # Presence query. A text field: any doc with a non-empty term.
+                # A numeric (u64) field: a real (non-zero) value — ``regex_query``
+                # is text-only and ``.+`` would also match the 0 default, so use a
+                # ``>= 1`` range (``has:page`` ⇒ paginated, ``exists:mtime`` ⇒ dated).
                 target = resolve(value)
                 if target is not None:
-                    compiled = Query.regex_query(schema, target.tantivy_field, ".+")
+                    if target.value is FieldValue.UINT:
+                        compiled = Query.range_query(
+                            schema,
+                            target.tantivy_field,
+                            FieldType.Unsigned,
+                            1,
+                            None,
+                            True,
+                            True,
+                            False,
+                        )
+                    else:
+                        compiled = Query.regex_query(schema, target.tantivy_field, ".+")
             else:
                 spec = resolve(field)
                 if spec is not None:

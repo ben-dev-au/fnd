@@ -207,12 +207,16 @@ def _fuzzy_pass(
     for filt in extract_filters(query, schema, searcher._index).filters:
         subqueries.append((tantivy.Occur.Must, tantivy.Query.const_score_query(filt, 0.0)))
     bq = tantivy.Query.boolean_query(subqueries)
-    result = searcher._searcher.search(bq, limit=limit)
-    return _materialize_hits(searcher, result.hits, query=query, intent=intent)
+    # Pin one searcher generation for the whole search→doc sequence so a
+    # concurrent reload() can't swap it between the search and materialisation
+    # (the same guard _raw_hits uses against cross-generation DocAddresses).
+    searcher_view = searcher._searcher
+    result = searcher_view.search(bq, limit=limit)
+    return _materialize_hits(searcher_view, result.hits, query=query, intent=intent)
 
 
 def _materialize_hits(
-    searcher: Searcher,
+    searcher_view: object,
     pairs: list[tuple[float, tantivy.DocAddress]],
     *,
     query: str,
@@ -223,12 +227,14 @@ def _materialize_hits(
     Pulled out of ``Searcher._raw_hits`` so the cascade can issue queries
     that bypass ``parse_query`` (e.g. the dictionary-rewritten fuzzy pass)
     but still yield the same Hit shape the rest of the system expects.
+    ``searcher_view`` is the generation-pinned snapshot the caller searched
+    against — addresses must be dereferenced on the same generation.
     """
     from fnd.query import _first_int, _first_str, _make_snippet  # local import: avoid cycle
 
     out: list[Hit] = []
     for score, address in pairs:
-        doc = searcher._searcher.doc(address)
+        doc = searcher_view.doc(address)  # type: ignore[attr-defined]
         body_struct_bytes = doc.get_first("body_struct")  # type: ignore[attr-defined]
         body_text = ""
         if body_struct_bytes is not None:
