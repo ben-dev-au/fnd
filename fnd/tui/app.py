@@ -1511,6 +1511,17 @@ class FNDApp(App[None]):
         # collection's ``ranking_profile`` field; default profile (all-zero)
         # is the BM25 identity, so the no-config case is unchanged.
         self._config = config
+        # Repair a desynced persisted scope: a collection in ``_collections``
+        # renders ● (whole collection in scope), so every one of its sources
+        # must be active. Older builds stripped a shared source when a sibling
+        # collection toggled off, leaving the ● collection silently narrowed.
+        # The legacy ``sources = []`` shape is left alone (it means "no
+        # per-source narrowing", not "partial").
+        if self._active_sources:
+            for _name in self._collections:
+                for _sid in self._collection_source_ids(_name):
+                    if _sid not in self._active_sources:
+                        self._active_sources.append(_sid)
         # Reading mode: hide the sidebar so the preview fills the width for
         # clean text selection / distraction-free reading. Session-only;
         # owns mouse capture (off while reading so the terminal handles
@@ -5867,7 +5878,16 @@ class FNDApp(App[None]):
                 if name in self._collections:
                     self._collections.remove(name)
                 if source_ids:
-                    keep = set(self._active_sources) - set(source_ids)
+                    # A source shared with a still-active collection stays
+                    # on — only drop ids no remaining collection claims.
+                    still_claimed = {
+                        sid
+                        for other in self._collections
+                        for sid in self._collection_source_ids(other)
+                    }
+                    keep = (set(self._active_sources) - set(source_ids)) | (
+                        set(self._active_sources) & still_claimed
+                    )
                     # Preserve the user's relative ordering of the kept
                     # sources (set difference loses it).
                     self._active_sources = [s for s in self._active_sources if s in keep]

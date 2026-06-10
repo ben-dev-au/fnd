@@ -213,6 +213,93 @@ async def test_legacy_scope_only_collections_renders_as_full(
             assert "●" in str(child.label), f"source label was {child.label!r}"
 
 
+@pytest.fixture
+def shared_source_config(fixtures_dir: Path) -> Config:
+    """Two collections that both include the same source path (the
+    CPL/SFO Obsidian-vault shape): one private source each, plus a
+    shared one whose resolved id is identical in both."""
+    return Config(
+        collections={
+            "AAA": CollectionConfig(
+                sources=[
+                    SourceConfig(path=fixtures_dir / "notes"),
+                    SourceConfig(path=fixtures_dir / "vault"),
+                ],
+            ),
+            "BBB": CollectionConfig(
+                sources=[
+                    SourceConfig(path=fixtures_dir / "papers"),
+                    SourceConfig(path=fixtures_dir / "vault"),
+                ],
+            ),
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_collection_off_keeps_shared_source_of_active_sibling(
+    built_index: Path, shared_source_config: Config, isolated_ui_state: Path
+) -> None:
+    """Toggling a collection OFF must not deactivate a source it shares
+    with a collection that is still fully on. Regression: turning CPL
+    off stripped the shared Obsidian vault from SFO's scope while SFO
+    kept its ● marker, so SFO searches silently lost every md file."""
+    app = FNDApp(index_dir=built_index, config=shared_source_config)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        ctree = app.query_one("#collections_panel_tree", Tree)
+        ctree.focus()
+        await pilot.pause()
+        # Rows 0/1 are AAA/BBB (collapsed). Toggle both fully on.
+        ctree.cursor_line = 0
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        ctree.cursor_line = 1
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert sorted(app._collections) == ["AAA", "BBB"]
+        assert len(app._active_sources) == 3  # notes, vault, papers
+        # Toggle AAA off.
+        ctree.cursor_line = 0
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app._collections == ["BBB"]
+        vault_id = app._collection_source_ids("BBB")[1]
+        assert vault_id in app._active_sources, (
+            "shared source must survive the sibling collection's toggle-off"
+        )
+        assert all(sid in app._active_sources for sid in app._collection_source_ids("BBB")), (
+            f"BBB no longer fully scoped: {app._active_sources}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_saved_scope_desync_repaired_on_launch(
+    built_index: Path, shared_source_config: Config, isolated_ui_state: Path
+) -> None:
+    """A persisted scope where a collection is in ``collections`` but
+    only some of its sources are in ``sources`` (written by the
+    shared-source bug above) must be repaired at launch: the marker
+    reads ● so the search scope has to match it."""
+    notes_id = str((Path(__file__).parent / "fixtures" / "notes").resolve())
+    isolated_ui_state.parent.mkdir(parents=True, exist_ok=True)
+    isolated_ui_state.write_text(
+        f'[scope]\ncollections = ["AAA"]\nsources = ["{notes_id}"]\n'
+        "[panels]\ncollapsed = []\nexpanded_collections = []\nexpanded_filter_branches = []\n"
+        '[filters]\nkinds = []\ndate = "any"\n'
+    )
+    app = FNDApp(index_dir=built_index, config=shared_source_config)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app._collections == ["AAA"]
+        assert all(sid in app._active_sources for sid in app._collection_source_ids("AAA")), (
+            f"desynced scope not repaired: {app._active_sources}"
+        )
+
+
 @pytest.mark.asyncio
 async def test_toggle_collection_off_from_cli_state(
     built_index: Path, multi_source_config: Config, isolated_ui_state: Path
