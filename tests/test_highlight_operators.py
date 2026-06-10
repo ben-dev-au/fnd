@@ -165,6 +165,16 @@ def test_field_group_value_is_not_highlighted() -> None:
     assert not word_matches("purse", spec)
 
 
+def test_regex_metacharacters_are_not_corrupted() -> None:
+    """A `/regex/` is kept verbatim — lowercasing would flip `\\D`→`\\d` etc. —
+    and matched case-insensitively against the (lowercased) doc word."""
+    spec = MatchSpec.from_query(r"/\D+/")  # non-digits
+    assert word_matches("abc", spec)
+    assert not word_matches("123", spec)
+    # case-insensitive: an uppercase literal still matches the lowercased word
+    assert word_matches("crypto", MatchSpec.from_query("/CRYPTO/"))
+
+
 def test_boosted_wildcard_and_regex_still_highlight() -> None:
     """A `^boost` on a structured token must not break its highlight match."""
     assert word_matches("discount", MatchSpec.from_query("discoun*^2"))
@@ -208,9 +218,10 @@ def test_phrase_highlights_as_span() -> None:
     # Quoted phrase highlights via the phrase-span path, contiguous in order.
     from fnd.matching import phrase_char_spans
 
+    # single-word quote == bare word; the term must still highlight via THIS spec
     spec = MatchSpec.from_query('"powerhouse"', auto_fuzzy=False)
-    # single-word quote == bare word; ensure the term still highlights
-    assert _highlighted("powerhouse", _TEXT) == {"powerhouse"}
+    assert word_matches("powerhouse", spec)
+    assert not word_matches("strawberry", spec)
     spec = MatchSpec.from_query('"the mitochondria"', auto_fuzzy=False)
     spans = phrase_char_spans(_TEXT, spec)
     assert spans, "expected a contiguous phrase span for the quoted phrase"

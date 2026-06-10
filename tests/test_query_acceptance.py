@@ -339,6 +339,14 @@ _CASES: list[_Case] = [
         _OK,
     ),
     ("wildcard-leading", "*graph", lambda r: "wc-graphic" in r and "wc-crypto" not in r, _OK),
+    # Regex is matched case-insensitively against the lowercased index, and the
+    # pattern is kept verbatim (no destructive lowercasing of \\D etc.).
+    (
+        "regex-case-insensitive",
+        "/CRYPTO.*/",
+        lambda r: {"wc-crypto", "wc-graphy", "wc-graphic"} <= r and "wc-other" not in r,
+        _OK,
+    ),
     (
         "field-grouping",
         "title:(transformer OR nonexistentxyz)",

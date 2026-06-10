@@ -367,13 +367,15 @@ class Searcher:
             body_parse_kwargs["fuzzy_fields"] = {F_BODY: (False, fuzzy_distance, True)}
         # Must-clause: chunk's visible content (F_BODY) must match. A pure-filter
         # query (e.g. ``kind:pdf`` alone) has no content → match every chunk and
-        # let the filters narrow. Heading-only ancestor matches don't create hits.
+        # let the filters narrow. With neither content nor filters there is
+        # nothing to match — return no results rather than the whole corpus.
         has_content = bool(content.strip())
-        body_required = (
-            self._content_body_query(content, schema, body_parse_kwargs)
-            if has_content
-            else tantivy.Query.all_query()
-        )
+        if has_content:
+            body_required = self._content_body_query(content, schema, body_parse_kwargs)
+        elif filters:
+            body_required = tantivy.Query.all_query()
+        else:
+            body_required = tantivy.Query.empty_query()
         clauses: list[tuple[tantivy.Occur, tantivy.Query]] = [(tantivy.Occur.Must, body_required)]
         # Hard filters: required, but const-scored to 0 so they don't perturb BM25.
         for f in filters:
@@ -382,12 +384,14 @@ class Searcher:
         # Parsed against the content (filters already removed). Skipped when the
         # content carries wildcard/fuzzy/regex tokens — parse_query can't handle
         # those (and the boost is best-effort, not a visibility gate). Each token
-        # is stripped of ``+``/``-``/parens first so a grouped/prefixed special
-        # token (``+crypto*``, ``(function~1)``) is still detected.
+        # is stripped of ``+``/``-``/parens and a trailing ``^boost`` first so a
+        # grouped / prefixed / boosted special token (``+crypto*``, ``(function~1)``,
+        # ``/crypt(o|id)/^2``) is still detected. (``~N`` is KEPT — it's what makes
+        # a fuzzy token special.)
         content_is_special = any(
             _WILDCARD_RE.match(c) or _FUZZY_RE.match(c) or _REGEX_RE.match(c) or _GLOB_RE.search(c)
             for t in content.split()
-            for c in (t.strip("+-()"),)
+            for c in (re.sub(r"\^[\d.]+$", "", t.strip("+-()")),)
         )
         if has_content and not content_is_special:
             boost_secondary = _parse_query(

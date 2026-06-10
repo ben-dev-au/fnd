@@ -295,7 +295,7 @@ def _classify(value: str) -> Node | None:
 def _classify_core(value: str) -> Node | None:
     rm = _REGEX_RE.match(value)
     if rm:
-        return Regex(rm.group(1).lower())
+        return Regex(rm.group(1))  # verbatim — lowercasing corrupts \D/\B/named groups
     fm = _FUZZY_RE.match(value)
     if fm:
         return Fuzzy(fm.group(1), int(fm.group(2)) if fm.group(2) else None)

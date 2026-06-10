@@ -134,7 +134,9 @@ class _Compiler:
         return q if q is not None else Query.empty_query()
 
     def _regex(self, pattern: str) -> Query:
+        # F_BODY tokens are lowercased (en_stem), and the pattern is kept verbatim
+        # (no destructive lowercasing), so match case-insensitively via ``(?i)``.
         try:
-            return Query.regex_query(self._schema, F_BODY, pattern)
+            return Query.regex_query(self._schema, F_BODY, f"(?i){pattern}")
         except ValueError:
             return Query.empty_query()  # malformed regex/glob contributes nothing

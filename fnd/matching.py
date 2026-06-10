@@ -270,6 +270,16 @@ class MatchSpec:
         quoted_word_lists = _phrase_word_lists(query)
         phrases = tuple(tuple(_stem(w) for w in words) for words in quoted_word_lists)
         loose_query = _strip_quoted_spans(query)
+        # A single-word quote (`"powerhouse"`) is the same as the bare word, so
+        # fold it back into the loose terms — otherwise it's stripped above and
+        # never highlights, despite the search surfacing it.
+        single_quoted = [
+            m.group(1).strip()
+            for m in _QUOTED_PHRASE.finditer(query)
+            if len(m.group(1).split()) == 1 and m.group(1).strip()
+        ]
+        if single_quoted:
+            loose_query = f"{loose_query} {' '.join(single_quoted)}".strip()
 
         # Wildcard / regex tokens: highlight any doc word whose stem matches the
         # same pattern the search expanded. Stored verbatim (globs) so the
@@ -314,8 +324,11 @@ class MatchSpec:
             key = re.sub(r"(?:~\d*|\^[\d.]+)+$", "", cleaned)
             rm = _HL_REGEX.match(key)
             if rm:
-                regexes.append(rm.group(1).lower())
-                ordered_tokens.append(("regex", rm.group(1).lower()))
+                # Keep the pattern verbatim — lowercasing would corrupt syntax
+                # (``\D``→``\d``, ``\B``→``\b``, named groups). Case-insensitivity
+                # is applied at match time (the doc word is already lowercased).
+                regexes.append(rm.group(1))
+                ordered_tokens.append(("regex", rm.group(1)))
             elif _HL_GLOB.search(key):
                 wildcards.append(key.lower())
                 ordered_tokens.append(("wildcard", key.lower()))
@@ -443,7 +456,7 @@ def word_matches(word: str, spec: MatchSpec) -> bool:
             return True
     for pattern in spec.regexes:
         try:
-            if re.fullmatch(pattern, s) is not None:
+            if re.fullmatch(pattern, s, re.IGNORECASE) is not None:
                 return True
         except re.error:
             continue
@@ -468,7 +481,7 @@ def match_color(word: str, spec: MatchSpec) -> int:
                 return i
         elif kind == "regex":
             try:
-                if re.fullmatch(key, s) is not None:
+                if re.fullmatch(key, s, re.IGNORECASE) is not None:
                     return i
             except re.error:
                 continue
