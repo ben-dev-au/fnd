@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 if TYPE_CHECKING:
     from rich.text import Text
 
+    from fnd.synonyms import SynonymTable
+
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -45,7 +47,7 @@ from fnd.query import FileChunk, FileGroup, Hit, Searcher
 from fnd.render import (
     render_chunk_pieces,
 )
-from fnd.rerank import RankingProfile, profile_from_config
+from fnd.rerank import RankingProfile
 from fnd.tui.actions import REGISTRY, Keymap, load_keymap
 from fnd.tui.indexer_service import IndexerService
 from fnd.tui.line_buffer import (
@@ -67,16 +69,16 @@ from fnd.tui.preview_scrollbar import MatchAwareScroll, ThinScrollBarRender
 from fnd.tui.progress import FNDProgressBar, ProgressFacility, ProgressSession
 from fnd.tui.results_labels import (
     _elide_middle_keep_suffix,
-    _format_file_label,
-    _format_hit_label,
-    _styled_parent_label,
 )
+from fnd.tui.results_labels import _format_hit_label as _format_hit_label
 from fnd.tui.results_labels import _score_bar as _score_bar
 from fnd.tui.results_labels import _trim_redundant_heading as _trim_redundant_heading
 
 # Single-name self-alias imports below are deliberate re-exports: tests and
 # sibling modules historically import these names from fnd.tui.app.
+from fnd.tui.results_view import ResultsView
 from fnd.tui.scope_panel import ScopeController
+from fnd.tui.search_controller import SearchController
 from fnd.tui.widgets.markdown import (
     FNDMarkdown,
     _build_match_spans,
@@ -200,40 +202,6 @@ def render_hint_bar(
         joined.append_text(Text("      ", style=""))
         joined.append_text(_cluster(contextual))
     return joined
-
-
-class _PrefixingSearcher:
-    """Wrap a :class:`Searcher` and AND a fixed filter prefix into every
-    query string before it reaches Tantivy.
-
-    Fusion's phrase pass would otherwise wrap the whole query (including
-    field-restrictor prefixes like ``kind:md``) in quotes, which the
-    Tantivy parser reads as a literal phrase. By keeping the lexical
-    part clean and re-attaching the filter prefix at every sub-query
-    issue point, both fusion and cascade get correct field-restricted
-    behaviour without changing their public signatures.
-    """
-
-    def __init__(self, inner: Searcher, *, prefix: str) -> None:
-        self._inner = inner
-        self._prefix = prefix.strip()
-
-    def _wrap(self, query: str) -> str:
-        if not self._prefix:
-            return query
-        return f"({self._prefix}) AND ({query})"
-
-    def _filtered_raw_hits(self, query: str, **kwargs: Any) -> list[Hit]:
-        return self._inner._filtered_raw_hits(self._wrap(query), **kwargs)
-
-    def _raw_hits(self, query: str, **kwargs: Any) -> list[Hit]:
-        return self._inner._raw_hits(self._wrap(query), **kwargs)
-
-    def __getattr__(self, name: str) -> Any:
-        # Forward attribute access to the underlying searcher (e.g.
-        # ``_searcher`` for fuzzy_pass's typed-API path, plus public
-        # methods callers might still want).
-        return getattr(self._inner, name)
 
 
 class FNDApp(App[None]):
@@ -416,48 +384,12 @@ class FNDApp(App[None]):
         super().__init__()
         self._index_dir = index_dir or default_index_dir()
         self._initial_query = initial_query
-        self._searcher: Searcher | None = None
-        self._current_query: str = ""
-        # Cached match-spec for the active query — drives the markdown-
-        # widget highlight subclasses, the per-line plain renderer's
-        # highlight pass, and the match-aware scrollbar marker map. The
-        # spec captures the SAME literal / fuzzy / synonym semantics
-        # the cascade uses, so any word the searcher would have hit on
-        # gets the user-visible highlight (not just exact-stem hits).
-        # Recomputed on every ``_run_query``.
-        self._current_match_spec: MatchSpec = MatchSpec()
-        # Distraction-free reading toggle. When ``False`` the renderers
-        # see an empty MatchSpec and emit no highlight spans / scrollbar
-        # markers, leaving the preview as plain text. The current
-        # query stays intact so flipping the toggle back on restores
-        # highlights without re-running the search. Bound to ``h`` via
-        # the action registry.
-        self._highlights_enabled: bool = True
-        # Last :multi block's intent line, if any. Disables strong-signal
-        # bypass and biases snippet selection (UX-pass-4 §3). None until
-        # the user submits a :multi block.
-        self._current_intent: str | None = None
-        self._groups: list[FileGroup] = []
-        # Most-recent SearchTrace, populated on every _run_query so the
-        # :explain overlay (UX-pass-4 §2) can dump it as JSON. None until
-        # the first search runs.
-        self._latest_trace: SearchTrace | None = None
+        # Search state + orchestration (searcher, query, match spec,
+        # result groups, trace); see fnd/tui/search_controller.py.
+        self._search = SearchController(self)
+        # Results-tree rendering; see fnd/tui/results_view.py.
+        self._results = ResultsView(self)
         self._fnd_keymap = keymap or load_keymap()
-        # Synonyms for §9c cascade and §9d fusion's ``syn`` sub-query.
-        # Bundled curated defaults + the user's optional personal table;
-        # missing personal file is fine (defaults still apply).
-        from fnd.config import app_data_dir
-        from fnd.synonyms import SynonymTable, load_default_synonyms, load_merged_synonyms
-
-        try:
-            self._synonyms: SynonymTable = load_merged_synonyms(app_data_dir() / "synonyms.toml")
-        except Exception:
-            # A bad personal file is already skipped inside the loader; this is
-            # a last resort — still keep the bundled defaults, not an empty table.
-            try:
-                self._synonyms = load_default_synonyms()
-            except Exception:
-                self._synonyms = SynonymTable()
         # Ranking profile applied at search time. Built from the active
         # collection's ``ranking_profile`` field; default profile (all-zero)
         # is the BM25 identity, so the no-config case is unchanged.
@@ -470,7 +402,7 @@ class FNDApp(App[None]):
         # owns mouse capture (off while reading so the terminal handles
         # drag-select, right-click Copy, ⌘C, macOS Speak-selection).
         self._reading_mode: bool = False
-        self._ranking_profile: RankingProfile = self._resolve_profile()
+        self._ranking_profile = self._resolve_profile()
         # Cache of (parent_id) → list[FileChunk] so we don't re-fetch the
         # full document on every cursor move within the same file. Keyed by
         # parent_id, invalidated on new query.
@@ -754,35 +686,12 @@ class FNDApp(App[None]):
     # ── Ranking profile (§7) ──────────────────────────────────────
 
     def _resolve_profile(self) -> RankingProfile:
-        """Pick the ranking profile to apply to search results.
-
-        Resolution order:
-          1. If a single collection is active and its ``ranking_profile``
-             is defined in the config, use that.
-          2. Else fall back to the ``default`` ranking profile if defined.
-          3. Else neutral (BM25 identity) — return ``RankingProfile()``.
-        """
-        if self._config is None:
-            return RankingProfile()
-        name = "default"
-        if len(self._collections) == 1:
-            try:
-                col = self._config.collection(self._collections[0])
-                name = col.ranking_profile or "default"
-            except KeyError:
-                name = "default"
-        return profile_from_config(self._config.ranking_profile(name))
+        return self._search.resolve_profile()
 
     # ── Pane border titles ────────────────────────────────────────
 
     def _results_title(self) -> str:
-        """Border title for the results pane — counts live next to the data
-        they describe, not in a global status bar."""
-        n_files = len(self._groups)
-        n_sections = sum(len(g.hits) for g in self._groups)
-        if not self._groups:
-            return "Results"
-        return f"Results — {n_files} files / {n_sections} sections"
+        return self._results.title()
 
     def _preview_title(self, edge_width: int = 0) -> str:
         """Border title for the preview pane — ``Preview — <file>``.
@@ -973,278 +882,87 @@ class FNDApp(App[None]):
         self._run_query(ev.value)
 
     def _run_query(self, query: str) -> None:
-        if self._searcher is None:
-            return
-        # Re-point the searcher at the latest committed generation so a
-        # reindex (in-app or external `fnd reindex`) that landed while the
-        # app is open shows up on this query — no restart. Near-free
-        # (~0.1 ms) when nothing changed; ignore a vanished index dir.
-        import contextlib as _contextlib
+        self._search.run(query)
 
-        with _contextlib.suppress(FileNotFoundError, RuntimeError, ValueError):
-            self._searcher.reload()
-        # A new query must always re-render the first result, even when it
-        # lands on the same (parent, seq) as the last one — release the
-        # in-flight coalescing latch so this query's dispatch isn't
-        # mistaken for a redundant same-tick duplicate of the previous.
-        self._inflight_preview_target = None
-        from fnd.filter_dsl import FilterError
-        from fnd.query_errors import QueryError
-        from fnd.query_plan import QueryPlan
+    # ── Search delegation (state lives on SearchController) ───────
+    # Tests and sibling modules read AND write these names on the app;
+    # the property pairs keep that surface stable while the controller
+    # owns the state.
 
-        # One validated plan: bounds, inline [filter] split, proximity. Malformed
-        # queries surface a calm inline notice and the search doesn't run.
-        try:
-            plan = QueryPlan.from_user_text(query)
-        except QueryError as e:
-            self._show_query_notice(e)
-            self._groups = []
-            self._refresh_results_tree()
-            return
-        self._clear_query_notice()
-        lexical = plan.lexical
-        metadata_filter = plan.metadata_filter
+    @property
+    def _searcher(self) -> Searcher | None:
+        return self._search.searcher
 
-        self._current_query = query  # save the original (with [...]) for history
-        # Build a comprehensive MatchSpec covering literal stems +
-        # fuzzy-AUTO variants + synonym expansions, mirroring the
-        # cascade's match semantics. Every preview render this query
-        # drives reads from this single spec so the highlight rules
-        # never drift from the search rules.
-        defaults = self._config.defaults if self._config else None
-        self._current_match_spec = MatchSpec.from_query(
-            lexical,
-            synonyms=self._synonyms,
-            auto_fuzzy=defaults.fuzzy_enabled if defaults else True,
-            min_term_chars=defaults.fuzzy_min_term_chars if defaults else 0,
-            multicolour=defaults.multicolour_highlights if defaults else True,
-        )
-        # Phase F: build the filter scaffolding (kind:, mtime:) and
-        # multi-collection scope (c:) as a SEPARATE prefix. The lexical
-        # part stays clean so the §9d fusion phrase-pass can wrap it
-        # in quotes without dragging field qualifiers inside the
-        # phrase (which Tantivy would parse as a literal phrase
-        # ``kind:md glimmer`` rather than a field-restricted query).
-        filter_clauses: list[str] = []
-        if self._filter_kinds:
-            if len(self._filter_kinds) == 1:
-                filter_clauses.append(f"kind:{self._filter_kinds[0]}")
-            else:
-                filter_clauses.append(f"kind:({' '.join(sorted(self._filter_kinds))})")
-        if self._filter_date and self._filter_date != "any":
-            filter_clauses.append(f"mtime:{self._filter_date}")
-        if len(self._collections) >= 2:
-            filter_clauses.append(f"c:{','.join(self._collections)}")
-            single_col = None
-        else:
-            single_col = self._collections[0] if self._collections else None
-        filter_prefix = " ".join(filter_clauses)
-        cfg_defaults = self._config.defaults if self._config else None
-        sections_cap = cfg_defaults.sections_per_file_max if cfg_defaults else 200
-        sections_threshold = cfg_defaults.sections_score_threshold if cfg_defaults else 0.5
-        try:
-            self._groups = self._search_layered(
-                lexical=lexical,
-                filter_prefix=filter_prefix,
-                limit=50,
-                sections_per_file=sections_cap,
-                sections_score_threshold=sections_threshold,
-                collection=single_col,
-                metadata_filter=metadata_filter,
-                active_sources=list(self._active_sources) or None,
-            )
-        except (QueryError, FilterError) as e:
-            self._show_query_notice(e)
-            self._groups = []
-            self._refresh_results_tree()
-            return
-        self._clear_query_notice()
-        # New query → invalidate BOTH caches:
-        # * _chunk_cache (decoded chunk data; rebuilt by next decode)
-        # * _preview_cache (mounted widgets; their highlights were baked
-        #   from the previous query, so they're stale even if the file
-        #   shows up in the new results)
-        # The cache invalidation also drops the rendered widgets from
-        # the DOM so the next preview load starts from a clean slate.
-        import contextlib
+    @_searcher.setter
+    def _searcher(self, value: Searcher | None) -> None:
+        self._search.searcher = value
 
-        self._chunk_cache.clear()
-        # Bundles bake highlight spans from the previous query, so they
-        # go stale at the same moment the chunk cache does.
-        self._prebuilt_cache.clear()
-        self._cancel_preview_mount_task()
-        self._cancel_lazy_mount_task()
-        evicted = self._preview_cache.clear()
-        for old in evicted:
-            with contextlib.suppress(Exception):
-                old.remove()
-        # Also drop the currently-active container if any (it was
-        # already evicted above if it was in cache; otherwise it's a
-        # small file that wasn't cached and we still need to clear).
-        if self._active_preview is not None and self._active_preview.parent is not None:
-            with contextlib.suppress(Exception):
-                self._active_preview.remove()
-        self._active_preview = None
-        # Highlights baked into every cached doc are stale on query change.
-        self._flat_buffer_cache.clear()
-        self._reset_shared_flat_buffer()
-        self._chunk_widgets = {}
-        self._match_targets = {}
-        self._preview_parent_id = None
-        self._hide_progress_bar()
-        self._refresh_results_tree()
-        # Defer prefetch start so the top result's user-side render gets the
-        # main thread to itself for the first ~half-second. Without the
-        # delay, 10 parallel prefetch mount tasks starve the auto-load.
-        self.set_timer(0.5, self._prefetch_top_results, name="prefetch-defer")
+    @property
+    def _current_query(self) -> str:
+        return self._search.current_query
 
-    def _show_query_notice(self, err: Exception) -> None:
-        """Render a calm, practical line below the query bar for a malformed
-        query — message plus an actionable hint where we have one."""
-        from fnd.filter_dsl import FilterError
-        from fnd.query_errors import QuerySyntaxError
+    @_current_query.setter
+    def _current_query(self, value: str) -> None:
+        self._search.current_query = value
 
-        if isinstance(err, FilterError):
-            text = f"filter: {err.message} (col {err.column})"
-        elif isinstance(err, QuerySyntaxError):
-            text = err.message if not err.hint else f"{err.message} — {err.hint}"
-        else:
-            text = str(err)
-        try:
-            notice = self.query_one("#query_notice", Static)
-        except Exception:
-            return
-        notice.update(text)
-        notice.display = True
+    @property
+    def _current_match_spec(self) -> MatchSpec:
+        return self._search.match_spec
 
-    def _clear_query_notice(self) -> None:
-        try:
-            notice = self.query_one("#query_notice", Static)
-        except Exception:
-            return
-        if notice.display:
-            notice.update("")
-            notice.display = False
+    @_current_match_spec.setter
+    def _current_match_spec(self, value: MatchSpec) -> None:
+        self._search.match_spec = value
 
-    def _search_layered(
-        self,
-        *,
-        lexical: str,
-        filter_prefix: str,
-        limit: int,
-        sections_per_file: int,
-        sections_score_threshold: float = 0.0,
-        collection: str | None,
-        metadata_filter: str | None,
-        active_sources: list[str] | None,
-    ) -> list[FileGroup]:
-        """Master plan §9c + §9d wiring + UX-pass-4 §1 strong-signal regime.
+    @property
+    def _highlights_enabled(self) -> bool:
+        return self._search.highlights_enabled
 
-        Delegates the regime decision to :func:`fnd.layered.search_layered`
-        so the TUI and CLI share one entry point. ``filter_prefix`` is
-        applied via :class:`_PrefixingSearcher` so fusion + cascade +
-        the regime probe all see the same effective query without any
-        signature changes.
-        """
-        if self._searcher is None or not lexical.strip():
-            self._latest_trace = None
-            return []
-        from fnd.layered import search_layered
+    @_highlights_enabled.setter
+    def _highlights_enabled(self, value: bool) -> None:
+        self._search.highlights_enabled = value
 
-        searcher = (
-            _PrefixingSearcher(self._searcher, prefix=filter_prefix)
-            if filter_prefix
-            else self._searcher
-        )
-        defaults = self._config.defaults if self._config else None
-        groups, trace = search_layered(
-            searcher,  # type: ignore[arg-type]
-            query=lexical,
-            limit=limit,
-            sections_per_file=sections_per_file,
-            sections_score_threshold=sections_score_threshold,
-            collection=collection,
-            synonyms=self._synonyms,
-            metadata_filter=metadata_filter,
-            active_sources=active_sources,
-            intent=self._current_intent,
-            profile=self._ranking_profile,
-            auto_fuzzy_enabled=defaults.fuzzy_enabled if defaults else True,
-            min_term_chars=defaults.fuzzy_min_term_chars if defaults else 0,
-            with_trace=True,
-        )
-        self._latest_trace = trace
-        return groups
+    @property
+    def _current_intent(self) -> str | None:
+        return self._search.intent
+
+    @_current_intent.setter
+    def _current_intent(self, value: str | None) -> None:
+        self._search.intent = value
+
+    @property
+    def _groups(self) -> list[FileGroup]:
+        return self._search.groups
+
+    @_groups.setter
+    def _groups(self, value: list[FileGroup]) -> None:
+        self._search.groups = value
+
+    @property
+    def _latest_trace(self) -> SearchTrace | None:
+        return self._search.latest_trace
+
+    @_latest_trace.setter
+    def _latest_trace(self, value: SearchTrace | None) -> None:
+        self._search.latest_trace = value
+
+    @property
+    def _synonyms(self) -> SynonymTable:
+        return self._search.synonyms
+
+    @_synonyms.setter
+    def _synonyms(self, value: SynonymTable) -> None:
+        self._search.synonyms = value
+
+    @property
+    def _ranking_profile(self) -> RankingProfile:
+        return self._search.ranking_profile
+
+    @_ranking_profile.setter
+    def _ranking_profile(self, value: RankingProfile) -> None:
+        self._search.ranking_profile = value
 
     def _refresh_results_tree(self) -> None:
-        """Rebuild the results tree from ``self._groups`` and refresh status.
-
-        The top result is auto-expanded so its section rows (with their
-        ``§ heading`` / ``p.N`` / ``chunk N`` locators) are immediately
-        visible — saves a keypress and makes the locator format
-        discoverable on first launch.
-        """
-        # Cancel any debounced preview load from the previous result
-        # set — its parent_id may no longer be a hit, and the new
-        # cursor placement below will arm a fresh timer.
-        self._cancel_pending_preview_load()
-        tree = self.query_one("#results_pane", Tree)
-        tree.clear()
-        max_score = max((g.top_score for g in self._groups), default=0.0)
-        budget = self._file_label_budget(tree)
-        for i, g in enumerate(self._groups):
-            file_node = tree.root.add(
-                _styled_parent_label(
-                    _format_file_label(g, max_score=max_score, name_budget=budget)
-                ),
-                data={"kind": "file", "group": g},
-                expand=(i == 0),
-            )
-            for h in g.hits:
-                file_node.add_leaf(
-                    _format_hit_label(h, max_score=max_score),
-                    data={"kind": "section", "hit": h},
-                )
-        self._refresh_status()
-        if self._groups:
-            tree.focus()
-            # Park cursor on the first hit so the preview already shows the match.
-            top_file = tree.root.children[0]
-            if top_file.children:
-                tree.cursor_line = 1
-            # Dispatch explicitly — NodeHighlighted is suppressed when
-            # cursor_line lands on the same index as before.
-            top_group = self._groups[0]
-            top_hit = top_group.hits[0] if top_group.hits else None
-            self._schedule_preview_load(
-                top_group.parent_id,
-                top_hit.chunk_seq if top_hit else 0,
-            )
-
-    @staticmethod
-    def _file_label_budget(tree: Tree[Any]) -> int:
-        """Char budget for a file row's name: the visible content width
-        (border + scrollbar excluded) minus the tree's 2-cell row prefix
-        (toggle/guide, measured) and the 7-cell score column. 0 before layout."""
-        return max(0, tree.scrollable_content_region.width - 2 - 7)
-
-    def _relabel_file_rows(self) -> None:
-        """Re-elide file-row labels in place (no tree rebuild, so the cursor
-        and preview are untouched) — used on resize when the budget changes."""
-        try:
-            tree = self.query_one("#results_pane", Tree)
-        except Exception:
-            return
-        budget = self._file_label_budget(tree)
-        max_score = max((g.top_score for g in self._groups), default=0.0)
-        for node in tree.root.children:
-            data = node.data
-            if isinstance(data, dict) and data.get("kind") == "file":
-                node.set_label(
-                    _styled_parent_label(
-                        _format_file_label(data["group"], max_score=max_score, name_budget=budget)
-                    )
-                )
+        self._results.refresh()
 
     def on_resize(self, _event: events.Resize) -> None:
         """Re-fit elided filenames to the new pane widths. Deferred to after
@@ -1252,8 +970,7 @@ class FNDApp(App[None]):
         self.call_after_refresh(self._refit_after_resize)
 
     def _refit_after_resize(self) -> None:
-        self._refresh_status()  # preview title
-        self._relabel_file_rows()  # result rows
+        self._results.refit_after_resize()
 
     # ── Preview ───────────────────────────────────────────────────
 
@@ -1942,17 +1659,7 @@ class FNDApp(App[None]):
         )
 
     def _current_query_signature(self) -> str:
-        """Stable signature for the current query — match-bearing
-        widgets are baked with this query's highlights, so the cache
-        must invalidate when it changes. Includes intent because intent
-        biases snippet selection (UX-pass-4 §3), and the highlight
-        toggle state because the rendered spans differ on/off: without
-        it, toggling highlights re-uses the opposite-state cached
-        container for the same file + query and the toggle has no
-        visible effect."""
-        return (
-            f"{self._current_query}|{self._current_intent or ''}|hl={int(self._highlights_enabled)}"
-        )
+        return self._search.query_signature()
 
     def _show_progress_bar(
         self,
@@ -3838,21 +3545,7 @@ class FNDApp(App[None]):
 
     @staticmethod
     def _target_for_node(node: TreeNode[Any]) -> tuple[FileGroup, Hit] | None:
-        data: Any = node.data
-        if not isinstance(data, dict):
-            return None
-        kind = data.get("kind")
-        if kind == "section":
-            hit: Hit = data["hit"]
-            parent = node.parent
-            if parent is not None and isinstance(parent.data, dict):
-                g: FileGroup = parent.data["group"]
-                return g, hit
-        elif kind == "file":
-            g = data["group"]
-            if g.hits:
-                return g, g.hits[0]
-        return None
+        return ResultsView.target_for_node(node)
 
     # ── Async indexer plumbing ────────────────────────────────────
 
@@ -4302,41 +3995,10 @@ class FNDApp(App[None]):
         return self._current_match_spec if self._highlights_enabled else MatchSpec()
 
     def action_toggle_highlights(self) -> None:
-        """Flip the search-highlight overlay on/off without re-running
-        the query. Re-renders the currently-shown preview file from
-        scratch so the new state takes effect immediately on whatever
-        the user is reading."""
-        self._highlights_enabled = not self._highlights_enabled
-        self.notify(
-            "Highlights " + ("on" if self._highlights_enabled else "off"),
-            timeout=1.5,
-        )
-        self._rerender_current_preview()
+        self._search.toggle_highlights()
 
     def action_toggle_fuzzy(self) -> None:
-        """Flip ``defaults.fuzzy_enabled`` in the config TOML and re-run
-        the current search so the new state is visible immediately.
-        Per-term ``~N`` modifiers still trigger fuzzy expansion when
-        the toggle is off — only the auto-fuzzy pass is gated."""
-        from fnd.config import default_config_path, write_setting
-
-        current = self._config.defaults.fuzzy_enabled if self._config else True
-        new_value = not current
-        try:
-            self._config = write_setting(
-                config_path=default_config_path(),
-                dotted_path="defaults.fuzzy_enabled",
-                value=new_value,
-            )
-        except Exception as e:
-            self.notify(f"Couldn't toggle fuzzy: {e}", severity="error", timeout=3)
-            return
-        self.notify(
-            "Fuzzy " + ("on" if new_value else "off"),
-            timeout=1.5,
-        )
-        if self._current_query.strip():
-            self._run_query(self._current_query)
+        self._search.toggle_fuzzy()
 
     def _rerender_current_preview(self) -> None:
         """Drop the preview cache (its widgets carry already-applied
@@ -4404,41 +4066,7 @@ class FNDApp(App[None]):
         self.query_one("#collections_panel_tree", Tree).focus()
 
     def _clear_query_results(self) -> None:
-        """Drop the current result set and preview without re-running.
-
-        Used when the user changes scope (toggles a collection) and the
-        existing results are about to go stale — but we don't want to
-        steal focus or thrash through a fresh search until the user
-        explicitly asks for one. Mirrors the cache invalidation in
-        ``_run_query`` minus the actual search call and the
-        ``tree.focus()`` step inside ``_refresh_results_tree``.
-        """
-        import contextlib
-
-        self._groups = []
-        self._chunk_cache.clear()
-        self._prebuilt_cache.clear()
-        self._cancel_preview_mount_task()
-        self._cancel_lazy_mount_task()
-        self._cancel_pending_preview_load()
-        evicted = self._preview_cache.clear()
-        for old in evicted:
-            with contextlib.suppress(Exception):
-                old.remove()
-        if self._active_preview is not None and self._active_preview.parent is not None:
-            with contextlib.suppress(Exception):
-                self._active_preview.remove()
-        self._active_preview = None
-        self._flat_buffer_cache.clear()
-        self._reset_shared_flat_buffer()
-        self._chunk_widgets = {}
-        self._match_targets = {}
-        self._preview_parent_id = None
-        self._hide_progress_bar()
-        # Rebuild the results tree (now empty). The empty-groups branch
-        # in ``_refresh_results_tree`` skips ``tree.focus()``, so focus
-        # stays in the panel the user is currently driving.
-        self._refresh_results_tree()
+        self._search.clear_results()
 
     # ── Scope delegation (state lives on ScopeController) ─────────
     # Tests and sibling modules read AND write these names on the app;
