@@ -51,9 +51,11 @@ _FIELD_SYNTAX_RE: Final = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*:")
 # wallet" and re-admits the very doc the ``-`` excluded). The lex pass already
 # honours it exactly via the boolean AST compiler, so the phrase pass stands down.
 # ``/`` matches only as a delimited ``/regex/`` token, so plain slashes in paths
-# or ``TCP/IP`` don't suppress the phrase pass.
+# or ``TCP/IP`` don't suppress the phrase pass. Parens and ``^`` (grouping /
+# boost) also count as structure — ``(cross entropy)`` and ``foo^2`` already
+# carry intent in the lex pass and shouldn't get an auto-phrase pass.
 _OPERATOR_SYNTAX_RE: Final = re.compile(
-    r"\b(?:AND|OR|NOT)\b|[*?~]|(?:^|\s)[+\-]\S|(?:^|\s)/[^/\s]+/(?:\s|$)"
+    r"\b(?:AND|OR|NOT)\b|[*?~^()]|(?:^|\s)[+\-]\S|(?:^|\s)/[^/\s]+/(?:\s|$)"
 )
 
 # RRF constant; default 60 matches the original Cormack/Clarke/Buettcher 2009

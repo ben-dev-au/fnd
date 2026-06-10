@@ -281,16 +281,23 @@ class MatchSpec:
         plain_tokens: list[str] = []
         ordered_tokens: list[tuple[str, str]] = []  # (kind, key) in query order
         negate_next = False
+        neg_depth = 0  # >0 while inside an excluded ``NOT (…)`` / ``-(…)`` group
         for tok in loose_query.split():
-            if tok == "NOT":  # excludes the following token
+            if neg_depth > 0:  # whole group excluded — track until it closes
+                neg_depth = max(0, neg_depth + tok.count("(") - tok.count(")"))
+                continue
+            if tok == "NOT":  # excludes the following token or group
                 negate_next = True
                 continue
             if tok in _BOOL_KEYWORDS:  # AND / OR: structure, not a highlight term
                 continue
-            excluded = negate_next or tok.startswith("-")
+            negated = negate_next or tok.startswith("-")
             negate_next = False
+            if negated and "(" in tok:  # ``NOT (a OR b)`` / ``-(a OR b)``: drop it all
+                neg_depth = max(0, tok.count("(") - tok.count(")"))
+                continue
             cleaned = re.sub(r"\^[\d.]+$", "", tok.lstrip("+-").strip("()'\""))
-            if not cleaned or _FIELD_QUALIFIER_RE.match(cleaned) or excluded:
+            if not cleaned or _FIELD_QUALIFIER_RE.match(cleaned) or negated:
                 continue
             rm = _HL_REGEX.match(cleaned)
             if rm:

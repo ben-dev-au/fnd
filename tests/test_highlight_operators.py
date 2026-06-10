@@ -141,6 +141,21 @@ def test_excluded_terms_are_not_highlighted() -> None:
         assert not word_matches("wallet", spec)
 
 
+def test_negated_group_terms_are_not_highlighted() -> None:
+    """`NOT (a OR b)` / `-(a OR b)` excludes the whole group — none of its terms
+    highlight (a single-token negation flag would leak everything past the first)."""
+    for q in ("crypto NOT (wallet OR purse)", "crypto -(wallet OR purse)"):
+        spec = MatchSpec.from_query(q)
+        assert word_matches("crypto", spec)
+        assert not word_matches("wallet", spec)
+        assert not word_matches("purse", spec)
+    # A normal, non-negated group still highlights its terms.
+    s2 = MatchSpec.from_query("(cross OR entropy) loss")
+    assert word_matches("cross", s2)
+    assert word_matches("entropy", s2)
+    assert word_matches("loss", s2)
+
+
 def test_wildcard_inside_parens_still_highlights() -> None:
     """A grouped wildcard keeps its highlight (the leading `(` used to leak into
     the stored pattern and break the fullmatch)."""
