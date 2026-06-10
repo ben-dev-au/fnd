@@ -24,81 +24,35 @@ TUI shows exact matches above fuzzy ones above synonym ones.
 from __future__ import annotations
 
 import re
-import threading
 from typing import Literal, overload
 
-import snowballstemmer
 import tantivy
 
 from fnd.explain import CascadePassTrace, CascadeTrace
-from fnd.matching import auto_fuzzy_distance, levenshtein_within
+from fnd.matching import auto_fuzzy_distance
 from fnd.query import Hit, Searcher
+from fnd.query_resolvers import fuzzy_stem as _fuzzy_stem
+from fnd.query_resolvers import fuzzy_variants as _fuzzy_term_variants
 from fnd.schema import F_BODY, F_META_BLOB, F_PAGE_LABEL, F_PARENT_ID, build_schema
 from fnd.struct import decode as decode_body_struct
 from fnd.synonyms import SynonymTable, expand
 
-# ``F_BODY`` is analyzed with ``en_stem`` (Snowball English) at index
-# time, so the on-disk token form for "Templates" is ``templat``. The
-# fuzzy pass bypasses ``parse_query`` (which normally stems the query
-# the same way), so we have to stem each query term ourselves before
-# handing it to ``fuzzy_term_query`` — otherwise a 1-edit typo like
-# "Templatas" → ``templatas`` ends up at distance 2 from the indexed
-# ``templat`` and silently drops out of the cascade.
-# threading.local: snowballstemmer instances aren't thread-safe.
-_FUZZY_STEMMER_LOCAL = threading.local()
 
+def _carries_precision_intent(query: str) -> bool:
+    """True if the query expresses precision intent that the recall-widening
+    fuzzy pass would violate, so the fuzzy pass must be skipped:
 
-def _fuzzy_stem(term: str) -> str:
-    s = getattr(_FUZZY_STEMMER_LOCAL, "instance", None)
-    if s is None:
-        s = snowballstemmer.stemmer("english")
-        _FUZZY_STEMMER_LOCAL.instance = s
-    return s.stemWord(term.lower())
-
-
-# Cap on dictionary entries scanned per character bucket. F_BODY is
-# en_stem-tokenised, so a typical English corpus has ~20-50k unique
-# stems per leading character — the cap keeps the worst-case scan
-# bounded on huge corpora without losing matches in normal ones.
-_FUZZY_DICT_LIMIT = 50_000
-
-
-def _fuzzy_term_variants(searcher: Searcher, stem: str, max_dist: int) -> list[str]:
-    """Enumerate indexed F_BODY stems within ``max_dist`` of ``stem``.
-
-    Walks the term dictionary (via ``Searcher.terms_with_prefix``) using
-    the stem's first character as a prefix anchor — same trick Lucene's
-    ``MultiTermQuery`` rewrite uses to keep the candidate set tight
-    when distance ≥ 2. For ``max_dist == 0`` returns ``[stem]`` if
-    indexed and ``[]`` otherwise. Returns the original stem first when
-    present so the BooleanQuery's first sub-clause is the exact stem
-    (matches Lucene's preference for the closest term).
+    * a quoted phrase, ``{N}`` proximity, or ``NEAR/N``;
+    * a ``*``/``?`` wildcard (the fuzzy pass strips these and fuzzy-matches the
+      bare stem — ``crypto*`` would re-admit ``cryptid``);
+    * an explicit exclusion (``NOT x`` / ``-x``) — the fuzzy pass strips the
+      operator and would re-admit the excluded docs.
     """
-    if max_dist == 0:
-        # Probe the dictionary cheaply: any prefix scan including this
-        # stem returns it in the (term, count) list.
-        return [
-            t for t, _ in searcher._searcher.terms_with_prefix(F_BODY, stem, limit=1) if t == stem
-        ]
-    if not stem:
-        return []
-    # Anchor the scan to the first character — Lucene's rewrite uses a
-    # single-char prefix when prefix_length isn't set; works because
-    # any indexed term within edit distance N must share at least one
-    # char with the query stem.
-    prefix = stem[0]
-    candidates = searcher._searcher.terms_with_prefix(F_BODY, prefix, limit=_FUZZY_DICT_LIMIT)
-    out: list[str] = []
-    seen = False
-    for term, _count in candidates:
-        if term == stem:
-            seen = True
-            continue
-        if levenshtein_within(term, stem, max_dist=max_dist) <= max_dist:
-            out.append(term)
-    if seen:
-        out.insert(0, stem)
-    return out
+    if any(ch in query for ch in '"{*?') or "NEAR/" in query:
+        return True
+    # ``-word`` or ``-(group)`` exclusion (the ``(`` case would otherwise slip
+    # past and the fuzzy pass would re-admit the excluded branch).
+    return bool(re.search(r"\bNOT\b", query)) or bool(re.search(r"(?:^|\s)-[\w(]", query))
 
 
 _FUZZY_TOKEN_RE = re.compile(r"^(\w+)(?:~(\d+)?)?$")
@@ -121,6 +75,7 @@ def _terms_with_fuzzy(query: str) -> list[tuple[str, int | None]]:
     q = re.sub(r"\[[^\]]*\]", " ", q)
     q = re.sub(r"\{\d+\}", " ", q)
     q = re.sub(r"\bNEAR/\d+\b", " ", q)
+    q = re.sub(r"\b\w+:\([^)]*\)", " ", q)  # field grouping: title:(a OR b)
     q = re.sub(r"\b\w+:\S+", " ", q)
     q = re.sub(r"[+\-()*?]", " ", q)
     q = re.sub(r"\b(AND|OR|NOT)\b", " ", q)
@@ -245,13 +200,23 @@ def _fuzzy_pass(
             for src in active_sources
         ]
         subqueries.append((tantivy.Occur.Must, tantivy.Query.boolean_query(source_subqueries)))
+    # Apply the same field/range/collection hard filters as the literal pass, so
+    # widening to fuzzy can't leak docs the user's qualifiers excluded.
+    from fnd.query_filters import extract_filters
+
+    for filt in extract_filters(query, schema, searcher._index).filters:
+        subqueries.append((tantivy.Occur.Must, tantivy.Query.const_score_query(filt, 0.0)))
     bq = tantivy.Query.boolean_query(subqueries)
-    result = searcher._searcher.search(bq, limit=limit)
-    return _materialize_hits(searcher, result.hits, query=query, intent=intent)
+    # Pin one searcher generation for the whole search→doc sequence so a
+    # concurrent reload() can't swap it between the search and materialisation
+    # (the same guard _raw_hits uses against cross-generation DocAddresses).
+    searcher_view = searcher._searcher
+    result = searcher_view.search(bq, limit=limit)
+    return _materialize_hits(searcher_view, result.hits, query=query, intent=intent)
 
 
 def _materialize_hits(
-    searcher: Searcher,
+    searcher_view: object,
     pairs: list[tuple[float, tantivy.DocAddress]],
     *,
     query: str,
@@ -262,12 +227,14 @@ def _materialize_hits(
     Pulled out of ``Searcher._raw_hits`` so the cascade can issue queries
     that bypass ``parse_query`` (e.g. the dictionary-rewritten fuzzy pass)
     but still yield the same Hit shape the rest of the system expects.
+    ``searcher_view`` is the generation-pinned snapshot the caller searched
+    against — addresses must be dereferenced on the same generation.
     """
     from fnd.query import _first_int, _first_str, _make_snippet  # local import: avoid cycle
 
     out: list[Hit] = []
     for score, address in pairs:
-        doc = searcher._searcher.doc(address)
+        doc = searcher_view.doc(address)  # type: ignore[attr-defined]
         body_struct_bytes = doc.get_first("body_struct")  # type: ignore[attr-defined]
         body_text = ""
         if body_struct_bytes is not None:
@@ -428,15 +395,21 @@ def cascade_search(
     # Pass 1: fuzzy via typed API (text-syntax ~1 is not supported by
     # tantivy-py for indexed-non-fast text fields). Metadata filter is
     # applied post-hoc since the fuzzy pass bypasses parse_query entirely.
-    fuzzy_raw = _fuzzy_pass(
-        searcher,
-        query=query,
-        limit=pass_target,
-        collection=collection,
-        active_sources=active_sources,
-        intent=intent,
-        auto_fuzzy_enabled=auto_fuzzy_enabled,
-        min_term_chars=min_term_chars,
+    # Skipped for phrase/proximity queries: those express precision intent, and
+    # the fuzzy pass strips proximity ({N}/NEAR) and would re-admit far matches.
+    fuzzy_raw = (
+        []
+        if _carries_precision_intent(query)
+        else _fuzzy_pass(
+            searcher,
+            query=query,
+            limit=pass_target,
+            collection=collection,
+            active_sources=active_sources,
+            intent=intent,
+            auto_fuzzy_enabled=auto_fuzzy_enabled,
+            min_term_chars=min_term_chars,
+        )
     )
     fuzzy_raw = _apply_metadata_filter(fuzzy_raw, metadata_filter)
     new_count = _ingest(fuzzy_raw, 1)

@@ -38,6 +38,29 @@ def test_single_word_has_no_phrase_pass() -> None:
     assert [s.source for s in auto_subqueries("alpha", synonyms=None)] == ["lex"]
 
 
+def test_structured_queries_skip_the_phrase_pass() -> None:
+    """A query that already carries structure — booleans, ``+``/``-``, wildcard,
+    fuzzy, regex, grouping, or a ``^`` boost — runs lex-only. Wrapping it as a
+    phrase mangles the operators (``"crypto* -wallet"`` → phrase "crypto wallet")
+    and skews ranking toward adjacency the user never asked for."""
+    for q in (
+        "alpha AND beta",
+        "crypto* wallet",
+        "alpha -beta",
+        "proto~1 beta",
+        "/al.*/ beta",
+        "(cross entropy)",
+        "foo^2 bar",
+    ):
+        assert [s.source for s in auto_subqueries(q, synonyms=None)] == ["lex"], q
+
+
+def test_plain_slash_does_not_suppress_phrase_pass() -> None:
+    """A bare slash (paths, ``TCP/IP``) is not a ``/regex/`` token, so the phrase
+    pass still runs for an otherwise-plain multi-word query."""
+    assert "phrase" in [s.source for s in auto_subqueries("TCP/IP overview notes", synonyms=None)]
+
+
 def test_exact_phrase_beats_scattered(tmp_path: Path) -> None:
     """End-to-end, length-controlled: every doc has ``alpha`` and ``beta`` once
     and the SAME total length, so BM25/fieldnorm is equal. The doc with the

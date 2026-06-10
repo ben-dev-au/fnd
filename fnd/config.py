@@ -432,6 +432,12 @@ class Defaults(BaseModel):
     # so its scroll track spans only part of the file and markers drift.
     # Default off until that's resolved; opt in to preview the feature.
     scrollbar_match_highlight: bool = False
+    # Multi-colour match highlights: in a multi-word query, paint each distinct
+    # term in its own colour (yellow, cyan, green, …) so matches are easy to
+    # tell apart. When False, every term uses the single yellow highlight. The
+    # orange variance colour (typos, stem suffixes, wildcard-filled chars) is
+    # unaffected either way.
+    multicolour_highlights: bool = True
     # IN DEVELOPMENT — render ``mermaid`` code fences as terminal text-art
     # diagrams (via termaid) instead of source. Any unsupported / garbage /
     # oversized diagram falls back to the syntax-highlighted source. Default

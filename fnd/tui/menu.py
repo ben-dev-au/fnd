@@ -765,6 +765,22 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             keywords=("highlight",),
         ),
         MenuItem(
+            id="pref.multicolour_highlights",
+            label="Multi-colour highlights",
+            description=(
+                "Give each word in a multi-word query its own highlight colour. "
+                "When off, all matches use one colour. Applies on the next search."
+            ),
+            kind=KIND_TOGGLE,
+            toggle_getter=lambda app: (  # type: ignore[arg-type]
+                app._config.defaults.multicolour_highlights  # type: ignore[attr-defined]
+                if app._config  # type: ignore[attr-defined]
+                else True
+            ),
+            toggle_setter=lambda app, v: _setting_writer("defaults.multicolour_highlights")(app, v),
+            keywords=("highlight", "colour", "color", "multi", "rainbow", "term"),
+        ),
+        MenuItem(
             id="pref.scrollbar_match_highlight",
             label="Scrollbar match markers (in development)",
             description=(

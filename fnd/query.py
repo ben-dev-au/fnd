@@ -13,11 +13,12 @@ caller still gets ``limit`` survivors when the filter is strict.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from tantivy import Index, Query
+from tantivy import Index, Query, Schema
 
 from fnd.extract.base import Block
 from fnd.query_errors import QuerySyntaxError
@@ -45,6 +46,16 @@ from fnd.schema import (
 
 _SNIPPET_CTX = 240
 _DEFAULT_LIMIT: Final = 10
+# Content tokens that parse_query can't handle on the body field and which we
+# resolve against the stemmed dictionary ourselves:
+#   _WILDCARD_RE  trailing prefix wildcard ``crypto*``  → BM25 prefix_variants
+#   _FUZZY_RE     ``term~N`` fuzzy                       → BM25 fuzzy_variants
+#   _REGEX_RE     ``/pattern/``                          → RegexQuery
+#   _GLOB_RE      any ``*``/``?`` (infix/leading)        → RegexQuery
+_WILDCARD_RE: Final = re.compile(r"^(\w+)\*$")
+_FUZZY_RE: Final = re.compile(r"^(\w+)~(\d*)$")
+_REGEX_RE: Final = re.compile(r"^/(.+)/$")
+_GLOB_RE: Final = re.compile(r"[*?]")
 # Below this many chunks/file the thread-pool overhead outweighs the
 # decode parallelism — fall back to serial decode regardless of the
 # requested ``max_workers``.
@@ -224,6 +235,21 @@ def _passes_meta_filter(hit: Hit, predicate: object) -> bool:
     return bool(predicate(fm))  # type: ignore[operator]
 
 
+def _dedup_by_file(hits: list[Hit], limit: int) -> list[Hit]:
+    """First ``limit`` hits with one per ``parent_id`` (the file's best chunk,
+    since ``hits`` is already ranked)."""
+    seen: set[str] = set()
+    out: list[Hit] = []
+    for h in hits:
+        if h.parent_id in seen:
+            continue
+        seen.add(h.parent_id)
+        out.append(h)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _parse_query(index: Index, query: str, **kwargs: object) -> Query:
     """Parse via Tantivy, converting its raw ``ValueError`` syntax errors into a
     typed :class:`QuerySyntaxError` so callers never crash on a malformed query."""
@@ -256,6 +282,33 @@ class Searcher:
         self._index.reload()
         self._searcher = self._index.searcher()
 
+    def _content_body_query(
+        self, content: str, schema: Schema, body_parse_kwargs: dict[str, object]
+    ) -> Query:
+        """Scored F_BODY query for the content terms.
+
+        Parsed into a boolean AST (:mod:`fnd.query_ast`) and lowered to Tantivy
+        (:mod:`fnd.query_compile`), so wildcards (``crypto*``/``*tion``/``col?r``),
+        ``term~N`` fuzzies, ``/regex/``, phrases, ``+``/``-`` and ``^`` boosts all
+        compose inside ``AND``/``OR``/``NOT`` and parentheses. ``parse_query``
+        (which drops ``*`` and no-ops ``~N``) is used only for plain term/phrase
+        leaves, where it gives correct analyzer/stemming parity. Adjacency is a
+        weighted OR (Should) so the bare-multi-term default still ranks all-term
+        docs highest. A field-grouped clause (``title:(a OR b)``) left in the
+        content by filter extraction is kept whole by the tokenizer and lowered
+        through ``parse_query`` as one leaf, so wildcards/fuzzy beside it still
+        compile.
+        """
+        import tantivy
+
+        from fnd.query_ast import parse_query_ast
+        from fnd.query_compile import compile_query
+
+        node = parse_query_ast(content)
+        if node is None:
+            return tantivy.Query.empty_query()
+        return compile_query(node, searcher=self, schema=schema, parse_kwargs=body_parse_kwargs)
+
     def _raw_hits(
         self,
         query: str,
@@ -269,20 +322,40 @@ class Searcher:
         import tantivy
 
         from fnd.query_dsl import preprocess
-        from fnd.schema import F_BODY, F_HEADING_PATH, F_PATH_TOKENS
+        from fnd.query_filters import extract_filters
+        from fnd.schema import (
+            F_BODY,
+            F_COLLECTION,
+            F_HEADING_PATH,
+            F_PATH_TOKENS,
+            F_SOURCE_PATH,
+            build_schema,
+        )
         from fnd.stopwords import strip_query_stopwords
 
         enforce_query_bounds(query)
-        # Drop standalone stopwords from plain bag-of-words queries so a chunk
+        schema = build_schema()
+        # Lower field/range/collection clauses into typed, unscored hard filters
+        # (filter context) BEFORE proximity expansion: the registry parses raw
+        # ``c:``/``mtime:today``/``page:>N`` forms directly, so a multi-collection
+        # scope never becomes a re-parsed ``(a OR b)`` string. Proximity sugar
+        # ({N}, NEAR/N) is then expanded on the residual content only.
+        extracted = extract_filters(query, schema, self._index)
+        # Drop standalone stopwords from the bag-of-words content so a chunk
         # matching only "and"/"in"/"the" (~zero IDF) isn't retrieved. Quoted
         # phrases and explicit-syntax queries pass through untouched.
-        user_query = strip_query_stopwords(preprocess(query))
-        full_query = user_query
+        content = strip_query_stopwords(preprocess(extracted.content))
+        filters = list(extracted.filters)
+        # Active collection (-c / settings) and source scope are hard filters too.
         if collection:
-            full_query = f'collection:"{collection}" AND ({full_query})'
+            filters.append(tantivy.Query.term_query(schema, F_COLLECTION, collection))
         if active_sources:
-            src_clause = " OR ".join(f'source_path:"{s}"' for s in active_sources)
-            full_query = f"({src_clause}) AND ({full_query})"
+            src_terms = [tantivy.Query.term_query(schema, F_SOURCE_PATH, s) for s in active_sources]
+            filters.append(
+                src_terms[0]
+                if len(src_terms) == 1
+                else tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in src_terms])
+            )
         # tantivy-py's QueryParser doesn't honour ``term~N`` syntax for
         # tokenized fields, but it accepts a ``fuzzy_fields`` mapping
         # that auto-fuzzes every parsed term against the listed field.
@@ -292,29 +365,47 @@ class Searcher:
         }
         if fuzzy_distance > 0:
             body_parse_kwargs["fuzzy_fields"] = {F_BODY: (False, fuzzy_distance, True)}
-        # Must-clause: chunk's visible content (F_BODY) must match. Also
-        # carries collection / source filters. Heading-only ancestor
-        # matches no longer create hits.
-        body_required = _parse_query(self._index, full_query, **body_parse_kwargs)
-        # Should-clause: secondary fields contribute boost to the score
-        # but don't gate visibility. Parsed against the bare user query
-        # so collection/source aren't double-counted.
-        boost_secondary = _parse_query(
-            self._index,
-            user_query,
-            default_field_names=[F_HEADING_PATH, F_TITLE, F_PATH_TOKENS],
-            field_boosts={
-                F_HEADING_PATH: DEFAULT_FIELD_BOOSTS[F_HEADING_PATH],
-                F_TITLE: DEFAULT_FIELD_BOOSTS[F_TITLE],
-                F_PATH_TOKENS: DEFAULT_FIELD_BOOSTS[F_PATH_TOKENS],
-            },
+        # Must-clause: chunk's visible content (F_BODY) must match. A pure-filter
+        # query (e.g. ``kind:pdf`` alone) has no content → match every chunk and
+        # let the filters narrow. With neither content nor filters there is
+        # nothing to match — return no results rather than the whole corpus.
+        has_content = bool(content.strip())
+        if has_content:
+            body_required = self._content_body_query(content, schema, body_parse_kwargs)
+        elif filters:
+            body_required = tantivy.Query.all_query()
+        else:
+            body_required = tantivy.Query.empty_query()
+        clauses: list[tuple[tantivy.Occur, tantivy.Query]] = [(tantivy.Occur.Must, body_required)]
+        # Hard filters: required, but const-scored to 0 so they don't perturb BM25.
+        for f in filters:
+            clauses.append((tantivy.Occur.Must, tantivy.Query.const_score_query(f, 0.0)))
+        # Should-clause: secondary fields boost score without gating visibility.
+        # Parsed against the content (filters already removed). Skipped when the
+        # content carries wildcard/fuzzy/regex tokens — parse_query can't handle
+        # those (and the boost is best-effort, not a visibility gate). Each token
+        # is stripped of ``+``/``-``/parens and a trailing ``^boost`` first so a
+        # grouped / prefixed / boosted special token (``+crypto*``, ``(function~1)``,
+        # ``/crypt(o|id)/^2``) is still detected. (``~N`` is KEPT — it's what makes
+        # a fuzzy token special.)
+        content_is_special = any(
+            _WILDCARD_RE.match(c) or _FUZZY_RE.match(c) or _REGEX_RE.match(c) or _GLOB_RE.search(c)
+            for t in content.split()
+            for c in (re.sub(r"\^[\d.]+$", "", t.strip("+-()")),)
         )
-        parsed = tantivy.Query.boolean_query(
-            [
-                (tantivy.Occur.Must, body_required),
-                (tantivy.Occur.Should, boost_secondary),
-            ]
-        )
+        if has_content and not content_is_special:
+            boost_secondary = _parse_query(
+                self._index,
+                content,
+                default_field_names=[F_HEADING_PATH, F_TITLE, F_PATH_TOKENS],
+                field_boosts={
+                    F_HEADING_PATH: DEFAULT_FIELD_BOOSTS[F_HEADING_PATH],
+                    F_TITLE: DEFAULT_FIELD_BOOSTS[F_TITLE],
+                    F_PATH_TOKENS: DEFAULT_FIELD_BOOSTS[F_PATH_TOKENS],
+                },
+            )
+            clauses.append((tantivy.Occur.Should, boost_secondary))
+        parsed = tantivy.Query.boolean_query(clauses)
         # Pin one generation for the whole search→doc sequence. A
         # concurrent reload() may swap self._searcher mid-op; the
         # DocAddresses below are generation-specific, so reading them
@@ -416,14 +507,32 @@ class Searcher:
     ) -> list[Hit]:
         """Return one Hit per file (the file's best-scored chunk).
 
+        The default ranking is unified on fusion (RRF), the same weighted
+        ordering the TUI uses: a doc matching every query term outranks one
+        matching only a single rarer term (raw BM25 over an OR does not
+        guarantee that). The legacy single-pass BM25 path is kept only for the
+        rerank ``profile`` (§4 recency / filetype / phrase-proximity) and the
+        explicit cascade ``fuzzy_distance`` callers.
+
         Use :meth:`search_grouped` to keep all matched sections of each file.
-        When ``profile`` is set, applies the §4 Python post-rank adjustments
-        (recency / filetype / phrase-proximity) before per-file dedup.
-        ``active_sources`` further narrows scope to chunks indexed from
-        the listed source paths.
+        ``active_sources`` further narrows scope to chunks indexed from the
+        listed source paths.
         """
         if not query.strip():
             return []
+        if profile is None and fuzzy_distance == 0:
+            from fnd.fusion import fusion_search
+
+            fused = fusion_search(
+                self,
+                query=query,
+                limit=limit * 5,  # oversample: per-file dedup below thins this
+                collection=collection,
+                metadata_filter=metadata_filter,
+                active_sources=active_sources,
+                intent=intent,
+            )
+            return _dedup_by_file(fused, limit)
         raw = self._filtered_raw_hits(
             query,
             target=limit * 5,
@@ -438,16 +547,7 @@ class Searcher:
 
             assert isinstance(profile, RankingProfile)
             raw = rerank_hits(raw, profile=profile, query=query, now=now)
-        seen: set[str] = set()
-        out: list[Hit] = []
-        for h in raw:
-            if h.parent_id in seen:
-                continue
-            seen.add(h.parent_id)
-            out.append(h)
-            if len(out) >= limit:
-                break
-        return out
+        return _dedup_by_file(raw, limit)
 
     def _decode_chunk(self, searcher: object, address: object) -> FileChunk:
         """Decode a single chunk's stored fields at ``address`` into a

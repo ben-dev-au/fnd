@@ -34,12 +34,29 @@ the implementation here is a Python rewrite. See README acknowledgments.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from typing import Literal, overload
+from typing import Final, Literal, overload
 
 from fnd.explain import FusionTrace, HitContribution, SubQueryTrace
 from fnd.query import Hit, Searcher
 from fnd.synonyms import SynonymTable, expand
+
+# A field qualifier (``kind:pdf``, ``c:wine``) anywhere in the query — phrase
+# wrapping such a query would quote the qualifier and produce a junk phrase.
+_FIELD_SYNTAX_RE: Final = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*:")
+# Explicit operator syntax — boolean keywords, ``+``/``-`` required/prohibited
+# prefixes, wildcard/fuzzy chars, or a ``/regex/`` token. Quoting such a query as
+# a phrase destroys its meaning (``"crypto* -wallet"`` becomes the phrase "crypto
+# wallet" and re-admits the very doc the ``-`` excluded). The lex pass already
+# honours it exactly via the boolean AST compiler, so the phrase pass stands down.
+# ``/`` matches only as a delimited ``/regex/`` token, so plain slashes in paths
+# or ``TCP/IP`` don't suppress the phrase pass. Parens and ``^`` (grouping /
+# boost) also count as structure — ``(cross entropy)`` and ``foo^2`` already
+# carry intent in the lex pass and shouldn't get an auto-phrase pass.
+_OPERATOR_SYNTAX_RE: Final = re.compile(
+    r"\b(?:AND|OR|NOT)\b|[*?~^()]|(?:^|\s)[+\-]\S|(?:^|\s)/[^/\s]+/(?:\s|$)"
+)
 
 # RRF constant; default 60 matches the original Cormack/Clarke/Buettcher 2009
 # paper and what QMD uses.
@@ -207,9 +224,18 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
     # the lex pass: a user-supplied quote (Tantivy parses ``"a b c"`` as a
     # PhraseQuery directly) or proximity (``{N} …`` / ``a NEAR/N b`` expand to
     # ``"a b"~N`` downstream). Re-wrapping either would double-quote — ``""a b""``
-    # or ``""a b"~N`` — and crash the parser.
+    # or ``""a b"~N`` — and crash the parser. Also skip when the query carries a
+    # field qualifier (``kind:pdf``, ``c:wine``): a phrase over the raw qualifier
+    # text is meaningless and quoting it mangles the qualifier.
     carries_phrase_intent = '"' in q or "{" in q or "NEAR/" in q
-    if len(q.split()) >= 2 and not carries_phrase_intent:
+    carries_field_syntax = bool(_FIELD_SYNTAX_RE.search(q))
+    carries_operator_syntax = bool(_OPERATOR_SYNTAX_RE.search(q))
+    if (
+        len(q.split()) >= 2
+        and not carries_phrase_intent
+        and not carries_field_syntax
+        and not carries_operator_syntax
+    ):
         subs.append(SubQuery(query=f'"{q}"', weight=_DEFAULT_WEIGHTS["phrase"], source="phrase"))
     subs.append(SubQuery(query=q, weight=_DEFAULT_WEIGHTS["lex"], source="lex"))
     if synonyms is not None and synonyms.groups:
