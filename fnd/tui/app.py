@@ -54,9 +54,9 @@ from fnd.tui.line_buffer import (
     FileView,
     LineBufferPreview,
     RenderedDocument,
-    build_file_view,
     build_rendered_document,
 )
+from fnd.tui.preview.flat_view import FlatBufferView
 from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
 from fnd.tui.preview_scroll import (
     FlatScrollStrategy,
@@ -81,7 +81,6 @@ from fnd.tui.scope_panel import ScopeController
 from fnd.tui.search_controller import SearchController
 from fnd.tui.widgets.markdown import (
     FNDMarkdown,
-    _build_match_spans,
     _legacy_blocks_to_md,
 )
 from fnd.tui.widgets.markdown import FNDMarkdownFence as FNDMarkdownFence
@@ -94,6 +93,7 @@ from fnd.tui.widgets.markdown import FNDMarkdownH6 as FNDMarkdownH6
 from fnd.tui.widgets.markdown import FNDMarkdownParagraph as FNDMarkdownParagraph
 from fnd.tui.widgets.markdown import FNDMarkdownTableDT as FNDMarkdownTableDT
 from fnd.tui.widgets.markdown import FNDMarkdownTH as FNDMarkdownTH
+from fnd.tui.widgets.markdown import _build_match_spans as _build_match_spans
 from fnd.tui.widgets.markdown import _compute_table_col_widths as _compute_table_col_widths
 from fnd.tui.widgets.markdown import _HeadingMarkerMixin as _HeadingMarkerMixin
 from fnd.tui.widgets.markdown import _record_first_match as _record_first_match
@@ -419,18 +419,10 @@ class FNDApp(App[None]):
         # invisibly (opacity:0) and only when its scroll lands do we hide this
         # one and reveal the new one in a single tick. Cleared by that swap.
         self._outgoing_preview: PreviewContainer | None = None
-        # Per-file flat-buffer value cache (Stage 1c). One shared
-        # LineBufferPreview is mounted on first need and re-installed
-        # via set_prebuilt_view for every (parent_id, query_sig)
-        # activation. ``_active_flat_buffer`` is the shared widget when
-        # flat is the visible preview, else None.
-        self._flat_buffer_cache: OrderedDict[tuple[str, str], RenderedDocument] = OrderedDict()
-        self._active_flat_buffer: LineBufferPreview | None = None
-        self._shared_flat_buffer: LineBufferPreview | None = None
-        # (parent_id, query_sig) of whichever RenderedDocument is currently
-        # installed in the shared widget. Lets intra-file navigation skip
-        # set_prebuilt_view and just scroll.
-        self._installed_flat_key: tuple[str, str] | None = None
+        # Flat (line-buffer) preview path: the shared widget, its value
+        # cache, and the install/activate lifecycle; see
+        # fnd/tui/preview/flat_view.py.
+        self._flat = FlatBufferView(self)
         # Background indexer lifecycle (task / cancel / events + the
         # update-all chain bookkeeping); see fnd/tui/indexer_service.py.
         # The modal reads this through the app's _indexer_* accessors.
@@ -1534,22 +1526,7 @@ class FNDApp(App[None]):
         self._refresh_status()
 
     def _ensure_shared_flat_buffer(self) -> LineBufferPreview:
-        """Lazy-mount the single hidden LineBufferPreview under #preview_pane."""
-        import contextlib
-
-        buf = self._shared_flat_buffer
-        if buf is not None and buf.parent is not None:
-            return buf
-        pane = self.query_one("#preview_pane", VerticalScroll)
-        for w in list(pane.children):
-            if isinstance(w, Static) and w.id == "placeholder":
-                with contextlib.suppress(Exception):
-                    w.remove()
-        buf = LineBufferPreview(wrap=True, show_match_markers=self._scrollbar_markers_enabled)
-        buf.add_class("-hidden")
-        pane.mount(buf)
-        self._shared_flat_buffer = buf
-        return buf
+        return self._flat.ensure_shared_buffer()
 
     def _install_flat_doc(
         self,
@@ -1560,103 +1537,59 @@ class FNDApp(App[None]):
         parent_id: str,
         context_fraction: float = 0.0,
     ) -> None:
-        """Install ``doc`` into ``buf`` scrolled to the focused chunk's match."""
-        focus_line = self._focus_line_for_chunk(doc.fv, focus_chunk_seq)
-        buf.set_prebuilt_view(
-            doc.fv,
-            doc.strips,
-            doc.visual_to_logical,
-            doc.logical_to_visual_start,
-            wrap_width=doc.wrap_width,
-            base_width=doc.base_width,
-            initial_focus_line=focus_line,
-            context_fraction=context_fraction,
+        self._flat.install_doc(
+            buf, doc, focus_chunk_seq, parent_id=parent_id, context_fraction=context_fraction
         )
-        buf.parent_doc_id = parent_id  # type: ignore[attr-defined]
 
     def _reset_shared_flat_buffer(self) -> None:
-        """Hide + clear the shared widget when the value cache is invalidated."""
-        import contextlib
-
-        self._active_flat_buffer = None
-        self._installed_flat_key = None
-        buf = self._shared_flat_buffer
-        if buf is None:
-            return
-        with contextlib.suppress(Exception):
-            buf.add_class("-hidden")
-        with contextlib.suppress(Exception):
-            buf.clear()
+        self._flat.reset()
 
     @staticmethod
     def _focus_line_for_chunk(fv: FileView, chunk_id: int) -> int | None:
-        """First matched line in ``chunk_id``, falling back to chunk start.
-        Mirrors LineBufferPreview.scroll_to_chunk so the synchronous
-        pre-paint scroll lands at the same place the deferred call did."""
-        target = fv.first_hit_line_in_chunk.get(chunk_id)
-        if target is None:
-            rng = fv.chunk_to_range.get(chunk_id)
-            if rng is not None:
-                target = rng[0]
-        return target
+        return FlatBufferView.focus_line_for_chunk(fv, chunk_id)
 
     def _build_file_view_for_chunks(self, chunks: list[FileChunk]) -> FileView:
-        """Convert decoded chunks into a :class:`FileView` for the flat
-        path. Reuses the same word-level match-span helper the
-        structural renderer uses so highlight semantics — including
-        the per-word colour (yellow for exact matches, orange for
-        fuzzy ones) — agree across pipelines."""
-        spec = self._effective_match_spec
-        import os
-
-        if (
-            os.environ.get("_FND_FLAT_MD_STYLED") == "1"
-            and chunks
-            and any(c.kind == "md" and c.body_md for c in chunks)
-        ):
-            from fnd.tui._md_flat import build_md_file_view
-
-            try:
-                pane_widget = self.query_one("#preview_pane", VerticalScroll)
-                wrap_width = max(20, pane_widget.content_size.width - 1)
-            except Exception:
-                wrap_width = 80
-            return build_md_file_view(chunks, spec=spec, wrap_width=wrap_width)
-        triples: list[tuple[int, str, list[tuple[int, int] | tuple[int, int, str]]]] = []
-        for c in chunks:
-            body_text = "\n".join(b.text for b in c.blocks)
-            spans = _build_match_spans(body_text, spec) if not spec.is_empty else []
-            styled_spans: list[tuple[int, int] | tuple[int, int, str]] = [
-                (s.start, s.end, str(s.style)) for s in spans
-            ]
-            triples.append((c.chunk_seq, body_text, styled_spans))
-        return build_file_view(triples)
+        return self._flat.build_file_view(chunks)
 
     def _activate_flat_buffer(self, buf: LineBufferPreview) -> None:
-        """Show ``buf`` and hide every other preview widget (structural
-        containers and other flat buffers) so only one file is on
-        screen at a time."""
-        from fnd.tui import _perf
+        self._flat.activate(buf)
 
-        self._clear_pane_placeholder()
-        for child in self.query(PreviewContainer):
-            child.add_class("-hidden")
-        for child in self.query(LineBufferPreview):
-            if child is buf:
-                child.remove_class("-hidden")
-            else:
-                child.add_class("-hidden")
-        self._active_flat_buffer = buf
-        self._active_preview = None
-        # Reset the structural-path alias dicts so any straggler scroll
-        # call can't accidentally try to scroll to a now-orphaned widget.
-        self._chunk_widgets = {}
-        self._match_targets = {}
-        _perf.mark(
-            "click_to_display_end",
-            parent_id=getattr(buf, "parent_doc_id", None),
-            path="flat_activate",
-        )
+    # ── Flat-buffer delegation (state lives on FlatBufferView) ────
+    # Tests and the preview/scroll code read AND write these names on
+    # the app; the property pairs keep that surface stable while the
+    # view owns the state.
+
+    @property
+    def _flat_buffer_cache(self) -> OrderedDict[tuple[str, str], RenderedDocument]:
+        return self._flat.cache
+
+    @_flat_buffer_cache.setter
+    def _flat_buffer_cache(self, value: OrderedDict[tuple[str, str], RenderedDocument]) -> None:
+        self._flat.cache = value
+
+    @property
+    def _active_flat_buffer(self) -> LineBufferPreview | None:
+        return self._flat.active_buffer
+
+    @_active_flat_buffer.setter
+    def _active_flat_buffer(self, value: LineBufferPreview | None) -> None:
+        self._flat.active_buffer = value
+
+    @property
+    def _shared_flat_buffer(self) -> LineBufferPreview | None:
+        return self._flat.shared_buffer
+
+    @_shared_flat_buffer.setter
+    def _shared_flat_buffer(self, value: LineBufferPreview | None) -> None:
+        self._flat.shared_buffer = value
+
+    @property
+    def _installed_flat_key(self) -> tuple[str, str] | None:
+        return self._flat.installed_key
+
+    @_installed_flat_key.setter
+    def _installed_flat_key(self, value: tuple[str, str] | None) -> None:
+        self._flat.installed_key = value
 
     def _current_query_signature(self) -> str:
         return self._search.query_signature()
