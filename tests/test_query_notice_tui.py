@@ -46,12 +46,12 @@ async def test_malformed_proximity_notice_then_clears(cfg: Config, md_index: Pat
     app = FNDApp(index_dir=md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("{60}")
+        app._search.run("{60}")
         await pilot.pause()
         notice = app.query_one("#query_notice", Static)
         assert notice.display is True
         assert "proximity" in str(notice.render()).lower()
 
-        app._run_query("templates")
+        app._search.run("templates")
         await pilot.pause()
         assert app.query_one("#query_notice", Static).display is False

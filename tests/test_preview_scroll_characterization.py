@@ -23,6 +23,7 @@ from fnd.index import build_index
 from fnd.query import FileGroup
 from fnd.tui import FNDApp
 from fnd.tui.line_buffer import LineBufferPreview
+from fnd.tui.preview.presenter import PreviewPresenter
 from tests._pilot_wait import safe_pause, settle, wait_until
 
 
@@ -40,7 +41,7 @@ async def test_initial_query_flat_match_scrolls_into_view(built_index: Path) -> 
         await wait_until(
             pilot,
             lambda: (
-                bool(app._groups)
+                bool(app._search.groups)
                 and bool(list(app.query(LineBufferPreview)))
                 and next(iter(app.query(LineBufferPreview))).scroll_y > 0
             ),
@@ -58,7 +59,7 @@ async def test_requery_same_flat_file_lands_on_new_match(built_index: Path) -> N
     async with app.run_test(size=(120, 40)) as pilot:
         await wait_until(
             pilot,
-            lambda: app._active_flat_buffer is not None and app._active_flat_buffer._fv is not None,
+            lambda: app._flat.active_buffer is not None and app._flat.active_buffer._fv is not None,
             timeout=15.0,
             message="initial flat buffer never activated",
         )
@@ -66,19 +67,19 @@ async def test_requery_same_flat_file_lands_on_new_match(built_index: Path) -> N
         # query either swaps in a new FileView or clears it. Without
         # this token the predicate can match the first query's already-
         # scrolled buffer before the second has rewired it.
-        pre_fv = app._active_flat_buffer._fv  # type: ignore[union-attr]
-        app._run_query("blue penguin sandwich")
+        pre_fv = app._flat.active_buffer._fv  # type: ignore[union-attr]
+        app._search.run("blue penguin sandwich")
         await wait_until(
             pilot,
             lambda: (
-                app._active_flat_buffer is not None
-                and app._active_flat_buffer._fv is not pre_fv
-                and (app._active_flat_buffer.scroll_y > 0 or not app._active_flat_buffer._fv)
+                app._flat.active_buffer is not None
+                and app._flat.active_buffer._fv is not pre_fv
+                and (app._flat.active_buffer.scroll_y > 0 or not app._flat.active_buffer._fv)
             ),
             timeout=15.0,
             message="flat buffer never settled after second query",
         )
-        active = app._active_flat_buffer
+        active = app._flat.active_buffer
         assert active is not None
         assert active.scroll_y > 0 or not active._fv
 
@@ -165,12 +166,12 @@ async def test_section_to_section_navigation_scrolls_each_match(
         rtree = app.query_one("#results_pane", Tree)
         await wait_until(
             pilot,
-            lambda: len(app._groups) >= 2,
+            lambda: len(app._search.groups) >= 2,
             timeout=15.0,
             message="results never accumulated 2 groups",
         )
-        for i, _g in enumerate(app._groups):
-            expected_parent = app._groups[i].parent_id
+        for i, _g in enumerate(app._search.groups):
+            expected_parent = app._search.groups[i].parent_id
             rtree.focus()
             await safe_pause(pilot)
             rtree.cursor_line = rtree.cursor_line + 1 if i > 0 else 1
@@ -181,14 +182,14 @@ async def test_section_to_section_navigation_scrolls_each_match(
             await wait_until(
                 pilot,
                 lambda parent=expected_parent: (
-                    app._active_preview is not None
-                    and app._active_preview.parent_doc_id == parent
+                    app._preview.active is not None
+                    and app._preview.active.parent_doc_id == parent
                     and pane.scroll_y > 0
                 ),
                 timeout=20.0,
                 message=(
                     f"result {i} parent={expected_parent} "
-                    f"active={app._active_preview.parent_doc_id if app._active_preview else None} "
+                    f"active={app._preview.active.parent_doc_id if app._preview.active else None} "
                     f"scroll_y={pane.scroll_y}"
                 ),
             )
@@ -258,7 +259,7 @@ def _build_coldnav_app(tmp_path: Path, tmp_index_dir: Path) -> FNDApp:
         ranking={"default": RankingProfileConfig()},
     )
     app = FNDApp(index_dir=tmp_index_dir, config=cfg, collection="notes")
-    app._preview_cache.max_files = 8
+    app._preview.preview_cache.max_files = 8
     return app
 
 
@@ -271,7 +272,7 @@ def _coldnav_match_region(
     """
 
     def _region() -> Region | None:
-        ap = app._active_preview
+        ap = app._preview.active
         if ap is None or ap.parent_doc_id != parent_id:
             return None
         chunk = ap.match_targets.get(focus_seq) or ap.chunk_widgets.get(focus_seq)
@@ -292,19 +293,19 @@ async def _coldnav_run_query_and_prefetch(app: FNDApp, pilot: Pilot[None]) -> Fi
     """Run the query, wait for >=3 result groups, then wait for the rank-1
     (non-first) file to be prefetched + pre-mounted so navigation hits the
     cold/prefetched-container code path. Returns the rank-1 group."""
-    app._run_query("quartzfin")
-    sig = app._current_query_signature()
+    app._search.run("quartzfin")
+    sig = app._search.query_signature()
     await wait_until(
         pilot,
-        lambda: len(app._groups) >= 3,
+        lambda: len(app._search.groups) >= 3,
         timeout=15.0,
         message="results never accumulated 3 groups",
     )
-    assert len(app._groups) >= 3
+    assert len(app._search.groups) >= 3
     # Match is early-middle, not chunk 0 and not the last chunk.
-    assert app._groups[0].hits[0].chunk_seq > 0, "match should not be in the first chunk"
+    assert app._search.groups[0].hits[0].chunk_seq > 0, "match should not be in the first chunk"
 
-    target_group = app._groups[1]
+    target_group = app._search.groups[1]
     nudged = False
     for _ in range(240):
         # safe_pause (not pilot.pause): under heavy suite load a raw pause can
@@ -312,13 +313,13 @@ async def _coldnav_run_query_and_prefetch(app: FNDApp, pilot: Pilot[None]) -> Fi
         # spike this suite must tolerate.
         await safe_pause(pilot)
         await asyncio.sleep(0.05)
-        cont = app._preview_cache.get(target_group.parent_id, sig)
+        cont = app._preview.preview_cache.get(target_group.parent_id, sig)
         if cont is not None and cont.mounted_indices:
             break
-        if not nudged and not app._user_mount_in_flight():
-            app._prefetch_top_results()
+        if not nudged and not app._preview.user_mount_in_flight():
+            app._prefetch.prefetch_top_results()
             nudged = True
-    prefetched = app._preview_cache.get(target_group.parent_id, sig)
+    prefetched = app._preview.preview_cache.get(target_group.parent_id, sig)
     assert prefetched is not None, f"prefetch never built {target_group.parent_id}"
     assert prefetched.mounted_indices, f"prefetch never pre-mounted {target_group.parent_id}"
     return target_group
@@ -364,8 +365,8 @@ async def test_cold_nav_to_prefetched_non_first_file_lands_on_screen(
         await wait_until(
             pilot,
             lambda: (
-                app._active_preview is not None
-                and app._active_preview.parent_doc_id == target_group.parent_id
+                app._preview.active is not None
+                and app._preview.active.parent_doc_id == target_group.parent_id
                 and not app._preview_scroll.is_settling
                 and match_region() is not None
             ),
@@ -409,21 +410,21 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
 
     # Delay finalize's pre-scroll settle so the correcting match scroll commits
     # well after the focus chunk has mounted — forcing the lagging-landing path
-    # deterministically instead of relying on load timing. ``_await_match_settled``
+    # deterministically instead of relying on load timing. ``await_match_settled``
     # is the settle the cold finalize awaits before its single match scroll.
     # Scoped to the TARGET nav only (enabled after prefetch): a global delay also
     # slows the rank-0 auto-load and starves the prefetch-wait under load.
     delay_target_landing = False
-    orig_settle = FNDApp._await_match_settled
+    orig_settle = PreviewPresenter.await_match_settled
 
     async def _slow_settle(
-        self: FNDApp, header: object, above_widgets: object, max_rounds: int = 12
+        self: PreviewPresenter, header: object, above_widgets: object, max_rounds: int = 12
     ) -> None:
         if delay_target_landing:
             await asyncio.sleep(0.4)
         await orig_settle(self, header, above_widgets, max_rounds=max_rounds)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(FNDApp, "_await_match_settled", _slow_settle)
+    monkeypatch.setattr(PreviewPresenter, "await_match_settled", _slow_settle)
 
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one("#preview_pane")
@@ -448,8 +449,8 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
         await wait_until(
             pilot,
             lambda: (
-                app._active_preview is not None
-                and app._active_preview.parent_doc_id == target_group.parent_id
+                app._preview.active is not None
+                and app._preview.active.parent_doc_id == target_group.parent_id
                 and app._preview_scroll.is_settling
             ),
             timeout=20.0,
@@ -460,8 +461,8 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
         await wait_until(
             pilot,
             lambda: (
-                app._active_preview is not None
-                and app._active_preview.parent_doc_id == target_group.parent_id
+                app._preview.active is not None
+                and app._preview.active.parent_doc_id == target_group.parent_id
                 and not app._preview_scroll.is_settling
                 and match_region() is not None
             ),
@@ -501,7 +502,7 @@ def _reading_doc(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 def _top_chunk_seq(app: FNDApp) -> int | None:
     """The structural chunk whose region spans the preview viewport top."""
-    c = app._active_preview
+    c = app._preview.active
     if c is None:
         return None
     pane = app.query_one("#preview_pane")
@@ -526,7 +527,7 @@ async def test_reading_view_preserves_match_position(tmp_path: Path, tmp_index_d
         await wait_until(
             pilot,
             lambda: (
-                app._active_preview is not None
+                app._preview.active is not None
                 and pane.scroll_y > 0
                 and _top_chunk_seq(app) is not None
             ),
@@ -542,7 +543,7 @@ async def test_reading_view_preserves_match_position(tmp_path: Path, tmp_index_d
         await settle(pilot, ticks=12)
 
         assert app._reading_mode is True
-        c = app._active_preview
+        c = app._preview.active
         assert c is not None
         w = c.chunk_widgets.get(match_seq)
         assert w is not None
@@ -571,7 +572,7 @@ async def test_reading_view_preserves_scrolled_position(
         await wait_until(
             pilot,
             lambda: (
-                app._active_preview is not None
+                app._preview.active is not None
                 and pane.scroll_y > 0
                 and _top_chunk_seq(app) is not None
             ),

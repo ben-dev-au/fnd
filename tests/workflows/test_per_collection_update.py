@@ -34,7 +34,7 @@ async def test_single_collection_update_does_not_show_chain_suffix(
         from fnd.tui.first_reindex_warning import mark_seen as _mark_seen
 
         _mark_seen()
-        app._reindex_with_warning_if_needed("default")
+        app._indexer.reindex_with_warning("default")
         await wait_until(pilot, lambda: isinstance(app.screen, IndexerScreen))
         screen = app.screen
         assert isinstance(screen, IndexerScreen)
@@ -53,7 +53,7 @@ async def test_unknown_collection_does_not_crash(
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         # Should not raise.
-        app._reindex_with_warning_if_needed("does-not-exist")
+        app._indexer.reindex_with_warning("does-not-exist")
         await pilot.pause()
         # App still alive.
-        assert app._indexer_task is None
+        assert app._indexer.task is None

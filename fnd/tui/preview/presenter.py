@@ -51,19 +51,19 @@ class PreviewPresenter:
         # Cache of (parent_id) → list[FileChunk] so we don't re-fetch the
         # full document on every cursor move within the same file. Keyed by
         # parent_id, invalidated on new query.
-        self._chunk_cache: dict[str, list[FileChunk]] = {}
+        self.chunk_cache: dict[str, list[FileChunk]] = {}
         # Widget-level cache (UX-pass-4 §4 hybrid): keeps the mounted
         # widget tree alive across file switches so repeat visits are
         # O(1). Cleared on every new query (highlights would be wrong).
-        self._preview_cache: PreviewCache = PreviewCache()
+        self.preview_cache: PreviewCache = PreviewCache()
         # The currently-active PreviewContainer (the one with `-active`
         # class). None until the first file is rendered.
-        self._active_preview: PreviewContainer | None = None
+        self.active: PreviewContainer | None = None
         # The previously-visible container, kept on screen during a cold/swap
         # mount so the pane never blanks: the incoming container builds
         # invisibly (opacity:0) and only when its scroll lands do we hide this
         # one and reveal the new one in a single tick. Cleared by that swap.
-        self._outgoing_preview: PreviewContainer | None = None
+        self.outgoing: PreviewContainer | None = None
         # Convenience aliases that point into the active container —
         # legacy code paths (_scroll_preview_to_chunk, etc.) read from
         # these instead of poking at the container directly.
@@ -71,37 +71,35 @@ class PreviewPresenter:
         # plain renderer) or whole-chunk ``FNDMarkdown`` widgets (md
         # / docx / pptx structural renderer). The dict is widened to
         # ``Widget`` so both can be stored without complaint.
-        self._chunk_widgets: dict[int, Widget] = {}
-        self._match_targets: dict[int, Widget] = {}
+        self.chunk_widgets: dict[int, Widget] = {}
+        self.match_targets: dict[int, Widget] = {}
         # The parent_id whose chunks are currently mounted in the preview
         # pane (so we don't re-mount when cursor moves within the same file).
-        self._preview_parent_id: str | None = None
+        self.parent_id: str | None = None
         # (loaded, total) while a chunk-decode + mount worker is running.
-        self._preview_load_progress: tuple[int, int | None] | None = None
+        self.load_progress: tuple[int, int | None] | None = None
         # Strong ref so the event loop doesn't GC the in-flight mount task.
-        self._preview_mount_task: object | None = None
+        self.mount_task: object | None = None
         # Prebuilt flat-buffer bundles keyed by (parent_id, query_sig).
         # Cleared on query change — highlight spans are baked in at build time.
-        self._prebuilt_cache: dict[tuple[str, str], RenderedDocument] = {}
+        self.prebuilt_cache: dict[tuple[str, str], RenderedDocument] = {}
         # Debounced preview load — latest target + Timer.
         from typing import Any as _Any
 
-        self._preview_load_timer: _Any | None = None
-        self._preview_load_target: tuple[str, int] | None = None
+        self.load_timer: _Any | None = None
+        self.load_target: tuple[str, int] | None = None
         # The (parent_id, focus_chunk_seq) of the render currently in
         # flight, so redundant identical dispatches landing in the same
         # tick coalesce. Cleared when that render finishes settling.
-        self._inflight_preview_target: tuple[str, int] | None = None
+        self.inflight_target: tuple[str, int] | None = None
 
-    def _schedule_preview_load(self, parent_id: str, focus_chunk_seq: int) -> None:
+    def schedule_load(self, parent_id: str, focus_chunk_seq: int) -> None:
         """Debounce a cursor-move → preview-load; coalesces rapid arrow sweeps."""
         # Preempt stale tail-mount on the previous file so the loop is
         # free during the debounce window.
-        active_parent = (
-            self._active_preview.parent_doc_id if self._active_preview is not None else None
-        )
+        active_parent = self.active.parent_doc_id if self.active is not None else None
         if active_parent is not None and active_parent != parent_id:
-            self._cancel_preview_mount_task()
+            self.cancel_mount_task()
             self._app._cancel_lazy_mount_task()
             # The cancelled mount will never reach settle to clear the in-flight
             # coalescing latch. If that latched target differs from where the
@@ -109,12 +107,12 @@ class PreviewPresenter:
             # (an overshoot-and-correct sweep) hits the dedup guard as "already
             # in flight" and the remount is suppressed, stranding the preview
             # mid-mount until an unrelated nav resets the latch.
-            if self._inflight_preview_target is not None and self._inflight_preview_target != (
+            if self.inflight_target is not None and self.inflight_target != (
                 parent_id,
                 focus_chunk_seq,
             ):
-                self._inflight_preview_target = None
-        self._preview_load_target = (parent_id, focus_chunk_seq)
+                self.inflight_target = None
+        self.load_target = (parent_id, focus_chunk_seq)
         if self._app._config is not None:
             delay_ms = self._app._config.defaults.preview_load_debounce_ms
         else:
@@ -122,23 +120,23 @@ class PreviewPresenter:
 
             delay_ms = Defaults().preview_load_debounce_ms
         if delay_ms <= 0:
-            self._fire_pending_preview_load()
+            self.fire_pending_load()
             return
-        if self._preview_load_timer is not None:
+        if self.load_timer is not None:
             with contextlib.suppress(Exception):
-                self._preview_load_timer.stop()
-        self._preview_load_timer = self._app.set_timer(
+                self.load_timer.stop()
+        self.load_timer = self._app.set_timer(
             delay_ms / 1000.0,
-            self._fire_pending_preview_load,
+            self.fire_pending_load,
             name="preview-load-debounce",
         )
 
-    def _fire_pending_preview_load(self) -> None:
-        self._preview_load_timer = None
-        target = self._preview_load_target
+    def fire_pending_load(self) -> None:
+        self.load_timer = None
+        target = self.load_target
         if target is None:
             return
-        self._preview_load_target = None
+        self.load_target = None
         parent_id, focus_chunk_seq = target
         # Coalesce redundant identical loads. A query both parks the
         # cursor (which fires NodeHighlighted) AND dispatches explicitly
@@ -148,25 +146,25 @@ class PreviewPresenter:
         # warm-resume and cancel the 1st's still-building mount, orphaning
         # the focus chunk's build_done and losing the match scroll. If the
         # exact same render is already in flight, skip — it will land it.
-        if self._inflight_preview_target == (parent_id, focus_chunk_seq):
+        if self.inflight_target == (parent_id, focus_chunk_seq):
             return
-        self._inflight_preview_target = (parent_id, focus_chunk_seq)
+        self.inflight_target = (parent_id, focus_chunk_seq)
         # Re-anchor prefetch around where the cursor actually settled
         # every time, not only on cache miss. Cursor-following: window
         # follows the user instead of waiting for them to outrun it.
         # Prefetch is an exclusive-group worker so the previous run is
         # cancelled cleanly.
         self._app._prefetch_top_results(anchor_parent_id=parent_id)
-        self._app._render_full_doc(parent_id, focus_chunk_seq=focus_chunk_seq)
+        self.render_full_doc(parent_id, focus_chunk_seq=focus_chunk_seq)
 
-    def _cancel_pending_preview_load(self) -> None:
-        if self._preview_load_timer is not None:
+    def cancel_pending_load(self) -> None:
+        if self.load_timer is not None:
             with contextlib.suppress(Exception):
-                self._preview_load_timer.stop()
-            self._preview_load_timer = None
-        self._preview_load_target = None
+                self.load_timer.stop()
+            self.load_timer = None
+        self.load_target = None
 
-    def _render_full_doc(self, parent_id: str, *, focus_chunk_seq: int) -> None:
+    def render_full_doc(self, parent_id: str, *, focus_chunk_seq: int) -> None:
         """Render the full document for ``parent_id`` as one widget per
         chunk, then scroll to the chunk identified by ``focus_chunk_seq``.
 
@@ -191,7 +189,7 @@ class PreviewPresenter:
         # Any pending debounce timer is now moot — we're committing to
         # a load. Cancel so a late-firing timer can't race the current
         # dispatch and clobber it with a stale target.
-        self._cancel_pending_preview_load()
+        self.cancel_pending_load()
 
         if self._app._searcher is None:
             return
@@ -206,7 +204,7 @@ class PreviewPresenter:
         # gap would be lumpy, and prepending an out-of-window window above the
         # current match slides the view (reflow). Consistent rule: glide when
         # the content is there, cut when it must be built.
-        active = self._active_preview
+        active = self.active
         target_mounted = (
             active is not None
             and active.parent_doc_id == parent_id
@@ -216,7 +214,7 @@ class PreviewPresenter:
             ScrollAnchor(parent_id, focus_chunk_seq, animate=target_mounted)
         )
 
-        chunks = self._chunk_cache.get(parent_id)
+        chunks = self.chunk_cache.get(parent_id)
         if chunks is not None:
             # We have decoded data — go to the mount path. If the
             # prefetch worker (or an earlier load) has already built
@@ -224,14 +222,14 @@ class PreviewPresenter:
             # it through so the dispatcher skips the main-thread
             # FileView + strip rebuild entirely.
             query_sig = self._app._current_query_signature()
-            prebuilt = self._prebuilt_cache.get((parent_id, query_sig))
-            self._dispatch_preview_mount(parent_id, focus_chunk_seq, chunks, prebuilt=prebuilt)
+            prebuilt = self.prebuilt_cache.get((parent_id, query_sig))
+            self.dispatch_mount(parent_id, focus_chunk_seq, chunks, prebuilt=prebuilt)
             return
 
         # Need to decode first. The bar appears immediately; the worker
         # decodes off-thread and its callback re-enters via the chunk
         # data path.
-        self._cancel_preview_mount_task()
+        self.cancel_mount_task()
         # Keep the previously-active content visible during the decode
         # rather than blanking the pane. The app-level progress strip
         # is the user-visible loading signal, and the debounced cursor-
@@ -239,7 +237,7 @@ class PreviewPresenter:
         # file before we land here. The flat-buffer
         # ``_activate_flat_buffer`` / structural ``_activate_preview_container``
         # paths swap visibility atomically once the new content is ready.
-        self._show_progress_bar(total=1, phase="decoding…")
+        self.show_progress_bar(total=1, phase="decoding…")
 
         target_parent_id = parent_id
         target_focus = focus_chunk_seq
@@ -303,7 +301,7 @@ class PreviewPresenter:
         _ = asyncio.get_event_loop()  # ensure a loop exists for the callback
         self._app.run_worker(_load, thread=True, exclusive=True, group="preview-load")
 
-    def _prune_active_to_window(self, margin: int = 3) -> None:
+    def prune_active_to_window(self, margin: int = 3) -> None:
         """Drop the currently-active container's off-screen chunks down to its
         visible window. Used when switching files: the outgoing container stays
         on screen while the incoming one builds, so its full-mounted DOM would
@@ -313,7 +311,7 @@ class PreviewPresenter:
         shift while the outgoing container is still visible during the swap."""
         import contextlib
 
-        container = self._active_preview
+        container = self.active
         if container is None:
             return
         window = (
@@ -327,7 +325,7 @@ class PreviewPresenter:
             return
         if pane.size.height <= 0:
             return
-        chunks = self._chunk_cache.get(container.parent_doc_id)
+        chunks = self.chunk_cache.get(container.parent_doc_id)
         if not chunks:
             return
         vtop = float(pane.scroll_y)
@@ -391,7 +389,7 @@ class PreviewPresenter:
             self._app.end_reconcile_scroll()
         _perf.mark("prune", removed=len(to_remove), ms=(_time.perf_counter() - _pt0) * 1000.0)
 
-    def _dispatch_preview_mount(
+    def dispatch_mount(
         self,
         parent_id: str,
         focus_chunk_seq: int,
@@ -408,7 +406,7 @@ class PreviewPresenter:
         # scrollbar markers). MD / DOCX / PPTX stay on the structural
         # Markdown widget below.
         if choose_preview_mode(chunks) == "flat":
-            self._dispatch_flat_buffer_mount(parent_id, focus_chunk_seq, chunks, prebuilt=prebuilt)
+            self.dispatch_flat_mount(parent_id, focus_chunk_seq, chunks, prebuilt=prebuilt)
             return
 
         query_sig = self._app._current_query_signature()
@@ -421,11 +419,11 @@ class PreviewPresenter:
         #       with the new focus window. We keep all already-mounted
         #       chunks; the worker only mounts the missing ones.
         if (
-            self._active_preview is not None
-            and self._active_preview.parent_doc_id == parent_id
-            and self._active_preview.query_signature == query_sig
+            self.active is not None
+            and self.active.parent_doc_id == parent_id
+            and self.active.query_signature == query_sig
         ):
-            container = self._active_preview
+            container = self.active
             if container.is_complete or focus_chunk_seq in container.chunk_widgets:
                 # Target already mounted (Option C full-mount makes this the
                 # common case for internal jumps). A bare reconcile() scrolls
@@ -433,7 +431,7 @@ class PreviewPresenter:
                 # route through the scoped settle (cheap when already idle).
                 import asyncio as _asyncio
 
-                self._preview_mount_task = _asyncio.create_task(
+                self.mount_task = _asyncio.create_task(
                     self._settled_instant_scroll(container, parent_id, focus_chunk_seq)
                 )
                 return
@@ -447,15 +445,15 @@ class PreviewPresenter:
             # shift), then the swap hides the old and reveals the new at the
             # match in one tick. The old container is dropped from the cache by
             # the fresh one's put() and swept on the next navigation.
-            self._cancel_preview_mount_task()
+            self.cancel_mount_task()
             self._app._cancel_lazy_mount_task()
-            self._hide_progress_bar()
+            self.hide_progress_bar()
             fresh = PreviewContainer(
                 parent_doc_id=parent_id,
                 query_signature=query_sig,
                 total_chunks=len(chunks),
             )
-            self._preview_mount_task = asyncio.create_task(
+            self.mount_task = asyncio.create_task(
                 self._mount_chunks_async(
                     parent_id,
                     focus_chunk_seq,
@@ -465,19 +463,19 @@ class PreviewPresenter:
             )
             return
 
-        self._cancel_preview_mount_task()
+        self.cancel_mount_task()
         # Option C hardening: the outgoing file may be FULL-mounted (~1000s of
         # widgets). It stays on screen while the incoming file builds, and
         # Textual's arrange scales with total DOM — so a big outgoing container
         # inflates the new file's mount several-fold. Prune it to its visible
         # window now (flash-free) so the incoming mount is cheap.
-        self._prune_active_to_window()
+        self.prune_active_to_window()
         # Sweep stranded containers — but preserve any still being filled by
         # a prefetch task. Removing those would orphan the task and trigger
         # a MountError on its next mount-before call.
         import contextlib as _contextlib
 
-        cached_containers = set(self._preview_cache._cache.values())
+        cached_containers = set(self.preview_cache._cache.values())
         for stranded in list(self._app.query(PreviewContainer)):
             if stranded in cached_containers:
                 continue
@@ -486,12 +484,12 @@ class PreviewPresenter:
                 continue
             with _contextlib.suppress(Exception):
                 stranded.remove()
-        if self._active_preview is not None and self._active_preview not in cached_containers:
-            self._active_preview = None
+        if self.active is not None and self.active not in cached_containers:
+            self.active = None
         # Adopt a still-in-flight prefetched container for this key so the
         # cold branch resumes it; _mount_chunks_async cancels its prefetch
         # task first to avoid concurrent-mount races.
-        cached = self._preview_cache.get(parent_id, query_sig)
+        cached = self.preview_cache.get(parent_id, query_sig)
         if cached is None:
             for c in self._app.query(PreviewContainer):
                 if (
@@ -505,7 +503,7 @@ class PreviewPresenter:
         import os
 
         reveal_first = os.environ.get("_FND_REVEAL_FIRST") == "1"
-        cache_keys = [f"{pid[:8]}/{sig[:6]}" for (pid, sig) in self._preview_cache._cache]
+        cache_keys = [f"{pid[:8]}/{sig[:6]}" for (pid, sig) in self.preview_cache._cache]
         dom_keys = [
             f"{c.parent_doc_id[:8]}/{c.query_signature[:6]}"
             f"(t={'a' if getattr(c, '_prefetch_task', None) is not None and not c._prefetch_task.done() else 'd'})"  # pyright: ignore[reportAttributeAccessIssue]
@@ -524,8 +522,8 @@ class PreviewPresenter:
         ):
             # Reveal-first: activate visible, scroll on next refresh.
             if reveal_first:
-                self._activate_preview_container(cached, pre_reveal=False)
-                self._refresh_match_scrollbar(chunks)
+                self.activate_container(cached, pre_reveal=False)
+                self.refresh_match_scrollbar(chunks)
                 # One-tick scroll: _do_scroll_to_chunk's own retry chain
                 # handles any residual region.height==0 race. The prior
                 # two-tick wrapping was wasting a refresh tick (~50-200ms
@@ -537,7 +535,7 @@ class PreviewPresenter:
                     # own scroll attempts.
                     import asyncio as _asyncio
 
-                    self._preview_mount_task = _asyncio.create_task(
+                    self.mount_task = _asyncio.create_task(
                         self._mount_chunks_async(
                             parent_id,
                             focus_chunk_seq,
@@ -547,10 +545,10 @@ class PreviewPresenter:
                         )
                     )
                 return
-            self._activate_preview_container(cached, pre_reveal=True, keep_outgoing=True)
-            self._refresh_match_scrollbar(chunks)
-            self._show_progress_bar(total=1, progress=0, phase="rendering…")
-            self._app.call_after_refresh(self._finalize_pre_reveal, cached, focus_chunk_seq)
+            self.activate_container(cached, pre_reveal=True, keep_outgoing=True)
+            self.refresh_match_scrollbar(chunks)
+            self.show_progress_bar(total=1, progress=0, phase="rendering…")
+            self._app.call_after_refresh(self.finalize_pre_reveal, cached, focus_chunk_seq)
             return
 
         # Either no container yet OR a partially-mounted one (resume).
@@ -564,16 +562,16 @@ class PreviewPresenter:
             )
         else:
             container = cached
-        self._show_progress_bar(
+        self.show_progress_bar(
             total=len(chunks),
             progress=len(container.mounted_indices),
             phase="mounting…",
         )
-        self._preview_mount_task = asyncio.create_task(
+        self.mount_task = asyncio.create_task(
             self._mount_chunks_async(parent_id, focus_chunk_seq, chunks, container)
         )
 
-    def _dispatch_flat_buffer_mount(
+    def dispatch_flat_mount(
         self,
         parent_id: str,
         focus_chunk_seq: int,
@@ -640,11 +638,11 @@ class PreviewPresenter:
             f"prebuilt={'yes' if prebuilt is not None else 'no'} strips={len(doc.strips)} "
             f"wrap_width={doc.wrap_width} chunks={len(chunks)}"
         )
-        self._hide_progress_bar()
-        self._preview_parent_id = parent_id
+        self.hide_progress_bar()
+        self.parent_id = parent_id
         self._app._refresh_status()
 
-    def _show_progress_bar(
+    def show_progress_bar(
         self,
         *,
         total: int | None,
@@ -670,7 +668,7 @@ class PreviewPresenter:
         with contextlib.suppress(Exception):
             self._app.query_one("#preview_pane", VerticalScroll).add_class("is-loading")
 
-    def _hide_progress_bar(self) -> None:
+    def hide_progress_bar(self) -> None:
         """Close the active session + re-enable pane scrolling. Idempotent."""
         s = self._app._progress.active
         if s is not None and not s.closed:
@@ -680,12 +678,12 @@ class PreviewPresenter:
         with contextlib.suppress(Exception):
             self._app.query_one("#preview_pane", VerticalScroll).remove_class("is-loading")
 
-    def _update_progress_bar(self, progress: int) -> None:
+    def update_progress_bar(self, progress: int) -> None:
         s = self._app._progress.active
         if s is not None and not s.closed:
             s.set_progress(progress)
 
-    def _clear_pane_placeholder(self) -> None:
+    def clear_pane_placeholder(self) -> None:
         """Drop the empty-state Static. Called by every activate path so the
         placeholder never paints above a real preview."""
         import contextlib
@@ -697,7 +695,7 @@ class PreviewPresenter:
                     with contextlib.suppress(Exception):
                         w.remove()
 
-    def _activate_preview_container(
+    def activate_container(
         self,
         container: PreviewContainer,
         *,
@@ -712,12 +710,12 @@ class PreviewPresenter:
         reveal swaps to ``container`` (see :meth:`_swap_reveal_target`)."""
         from fnd.tui import _perf
 
-        self._clear_pane_placeholder()
+        self.clear_pane_placeholder()
         # Hold the outgoing preview on screen while the incoming one builds
         # invisibly; the reveal swap hides it and shows the new one in one tick.
         # Only keep a genuinely-visible prior container (not one left invisible
         # by a superseded mount) — otherwise the pane would blank anyway.
-        prior = self._active_preview
+        prior = self.active
         outgoing = (
             prior
             if keep_outgoing
@@ -728,7 +726,7 @@ class PreviewPresenter:
             and not prior.has_class("-hidden")
             else None
         )
-        self._outgoing_preview = outgoing
+        self.outgoing = outgoing
         for child in self._app.query(PreviewContainer):
             if child is container:
                 child.remove_class("-hidden")
@@ -745,7 +743,7 @@ class PreviewPresenter:
                 child.remove_class("-pre-reveal")
         for child in self._app.query(LineBufferPreview):
             child.add_class("-hidden")
-        self._active_preview = container
+        self.active = container
         self._app._active_flat_buffer = None
         if not pre_reveal:
             _perf.mark(
@@ -753,9 +751,9 @@ class PreviewPresenter:
                 parent_id=container.parent_doc_id,
                 path="structural_immediate",
             )
-        self._preview_parent_id = container.parent_doc_id
-        self._chunk_widgets = container.chunk_widgets
-        self._match_targets = container.match_targets
+        self.parent_id = container.parent_doc_id
+        self.chunk_widgets = container.chunk_widgets
+        self.match_targets = container.match_targets
         # Cache-hit paths return without _mount_chunks_async (which is
         # where _refresh_status normally fires at the end); refresh here
         # so the pane title swaps to the activated file immediately.
@@ -772,8 +770,8 @@ class PreviewPresenter:
         match — no blank, no scroll-into-place. ``target``'s offset is taken
         relative to the incoming container's top, which is scroll-independent
         and so survives the outgoing container leaving the layout."""
-        outgoing = self._outgoing_preview
-        new = self._active_preview
+        outgoing = self.outgoing
+        new = self.active
         if outgoing is None or new is None or outgoing is new:
             return False
         offset = target.region.y - new.region.y
@@ -782,10 +780,31 @@ class PreviewPresenter:
         outgoing.add_class("-hidden")
         pane.scroll_to(y=target_y, animate=False, immediate=True)
         new.remove_class("-pre-reveal")
-        self._outgoing_preview = None
+        self.outgoing = None
         return True
 
-    def _finalize_pre_reveal(self, container: PreviewContainer, focus_chunk_seq: int) -> None:
+    def reveal(self, container: PreviewContainer) -> None:
+        """Reveal ``container`` and drop any still-held outgoing preview.
+        Fallback for paths where :meth:`swap_reveal_target` did not run (no
+        match resolved, or no outgoing) — a no-op for the class already lifted
+        by the swap.
+
+        Guard: a finalize/reveal callback is queued via ``call_after_refresh``
+        and runs a tick later. If a newer navigation superseded this mount in
+        the meantime, ``container`` is no longer ``_active_preview`` — revealing
+        it would surface the wrong file and clobber the new nav's outgoing
+        reference. Detached finalize tasks aren't cancelled, so this staleness
+        check (not task cancellation) is the single point that makes a
+        superseded reveal a no-op."""
+        if container is not self.active:
+            return
+        outgoing = self.outgoing
+        if outgoing is not None and outgoing is not container:
+            outgoing.add_class("-hidden")
+        self.outgoing = None
+        container.remove_class("-pre-reveal")
+
+    def finalize_pre_reveal(self, container: PreviewContainer, focus_chunk_seq: int) -> None:
         """Lift ``-pre-reveal`` once focused chunk's compose is ready, then scroll."""
         import time
 
@@ -881,11 +900,11 @@ class PreviewPresenter:
         # scroll reads (focus + above-window heights), not a full-pane drain.
         # _FND_FULL_SETTLE=1 restores the old behaviour as an escape hatch.
         if _os.environ.get("_FND_FULL_SETTLE") == "1":
-            await self._await_preview_settled()
+            await self.await_settled()
         else:
-            await self._app._await_match_settled(header, above_widgets)
+            await self.await_match_settled(header, above_widgets)
         wait_ms = (time.perf_counter() - t0) * 1000
-        self._hide_progress_bar()
+        self.hide_progress_bar()
         _perf.mark(
             "click_to_display_end",
             parent_id=container.parent_doc_id,
@@ -894,7 +913,7 @@ class PreviewPresenter:
         )
 
         def _reveal_when_landed() -> None:
-            self._app._reveal_preview(container)
+            self.reveal(container)
 
         # Scroll while the container is still invisible (opacity:0), then reveal
         # once it lands — so the match never flashes at the file top first. The
@@ -902,7 +921,7 @@ class PreviewPresenter:
         self._app._preview_scroll.reconcile(_reveal_when_landed)
         # This render has settled — release the in-flight coalescing
         # latch so a later genuine re-render of the same target can run.
-        self._inflight_preview_target = None
+        self.inflight_target = None
         self._app._diag_log(
             f"finalize_via_lock done seq={focus_chunk_seq} path={path} "
             f"wait_ms={wait_ms:.1f} above_waited={len(above_widgets)}"
@@ -934,7 +953,7 @@ class PreviewPresenter:
             return
 
         wait_ms = (time.perf_counter() - t0) * 1000
-        self._hide_progress_bar()
+        self.hide_progress_bar()
         _perf.mark(
             "click_to_display_end",
             parent_id=container.parent_doc_id,
@@ -943,7 +962,7 @@ class PreviewPresenter:
         )
 
         def _reveal_when_landed() -> None:
-            self._app._reveal_preview(container)
+            self.reveal(container)
             self._app._diag_log(
                 f"finalize_pre_reveal done seq={focus_chunk_seq} "
                 f"wait_ms={wait_ms:.1f} elapsed_ms={(time.perf_counter() - t0) * 1000:.1f} "
@@ -956,7 +975,7 @@ class PreviewPresenter:
         import asyncio as _asyncio
 
         async def _settled_reconcile() -> None:
-            await self._await_preview_settled()
+            await self.await_settled()
             self._app._preview_scroll.reconcile(_reveal_when_landed)
 
         # Cancel a prior settle-await on this container before replacing it — a
@@ -969,7 +988,7 @@ class PreviewPresenter:
             _prior.cancel()
         container._finalize_task = _asyncio.create_task(_settled_reconcile())  # type: ignore[attr-defined]
 
-    async def _await_preview_settled(self, max_rounds: int = 10) -> None:
+    async def await_settled(self, max_rounds: int = 10) -> None:
         """Deterministically wait until the screen has processed all pending
         layout messages, so the preview geometry is final before we scroll.
 
@@ -1047,7 +1066,7 @@ class PreviewPresenter:
                 reason=reason,
             )
 
-    async def _await_match_settled(
+    async def await_match_settled(
         self,
         header: FNDMarkdown | Widget | None,
         above_widgets: list[FNDMarkdown],
@@ -1075,7 +1094,7 @@ class PreviewPresenter:
         # geometry. The scoped path only buys us anything when there ARE heights
         # to watch settle.
         if not watch:
-            await self._await_preview_settled()
+            await self.await_settled()
             return
         try:
             screen = self._app.screen
@@ -1152,17 +1171,17 @@ class PreviewPresenter:
         above = [
             w for s in above_seqs if isinstance((w := container.chunk_widgets.get(s)), FNDMarkdown)
         ]
-        await self._app._await_match_settled(header, above)
+        await self.await_match_settled(header, above)
         _perf.mark("click_to_display_end", parent_id=parent_id, path="already_active_scroll_only")
         self._app._preview_scroll.reconcile()
 
-    def _cancel_preview_mount_task(self) -> None:
+    def cancel_mount_task(self) -> None:
         """Cancel any in-flight mount task. The cancelled task's
         partial-mount state lives on its :class:`PreviewContainer`,
         so a later visit can resume it."""
         import contextlib
 
-        task = self._preview_mount_task
+        task = self.mount_task
         if task is None:
             return
         try:
@@ -1172,14 +1191,14 @@ class PreviewPresenter:
         if not done:
             with contextlib.suppress(Exception):
                 task.cancel()  # type: ignore[attr-defined]
-        self._preview_mount_task = None
+        self.mount_task = None
 
-    def _on_preview_load_failed(self, exc: BaseException) -> None:
+    def on_load_failed(self, exc: BaseException) -> None:
         """Worker error callback. Hide the bar, surface a notify."""
-        self._hide_progress_bar()
+        self.hide_progress_bar()
         self._app.notify(f"Preview load failed: {exc}", severity="error")
 
-    def _on_preview_chunks_loaded(
+    def on_chunks_loaded(
         self,
         parent_id: str,
         focus_chunk_seq: int,
@@ -1188,22 +1207,22 @@ class PreviewPresenter:
     ) -> None:
         """Worker callback. Caches chunks + (optional) flat-path bundle;
         re-enters the mount path."""
-        self._chunk_cache[parent_id] = chunks
+        self.chunk_cache[parent_id] = chunks
         if prebuilt is not None:
             # Cache the bundle so a later visit to the same file in the
             # same query can install it without re-decoding or re-
             # rendering. Same key as ``_flat_buffer_cache``.
-            self._prebuilt_cache[(parent_id, self._app._current_query_signature())] = prebuilt
+            self.prebuilt_cache[(parent_id, self._app._current_query_signature())] = prebuilt
         if not chunks:
             # Empty file — hide bar, leave pane blank.
-            self._hide_progress_bar()
-            self._preview_parent_id = parent_id
+            self.hide_progress_bar()
+            self.parent_id = parent_id
             self._app._refresh_status()
             return
-        self._dispatch_preview_mount(parent_id, focus_chunk_seq, chunks, prebuilt=prebuilt)
+        self.dispatch_mount(parent_id, focus_chunk_seq, chunks, prebuilt=prebuilt)
 
-    def _user_mount_in_flight(self) -> bool:
-        task = self._preview_mount_task
+    def user_mount_in_flight(self) -> bool:
+        task = self.mount_task
         if task is None:
             return False
         try:
@@ -1257,11 +1276,11 @@ class PreviewPresenter:
         else:
             await pane.remove_children("#placeholder")
         await self._app._cancel_prefetch_task_on(container)
-        self._activate_preview_container(
+        self.activate_container(
             container, pre_reveal=needs_pre_reveal, keep_outgoing=needs_pre_reveal
         )
         cold_mount = needs_pre_reveal
-        self._refresh_match_scrollbar(chunks)
+        self.refresh_match_scrollbar(chunks)
 
         # Establish the focused window indices (clamped to chunks).
         focus_idx = next(
@@ -1284,7 +1303,7 @@ class PreviewPresenter:
             # and should see THAT chunk's content first, not stare at a
             # progress bar while neighbouring chunks slowly fill in.
             if focus_idx not in container.mounted_indices:
-                self._mount_chunk_into(container, chunks[focus_idx], focus_idx, chunks)
+                self.mount_chunk_into(container, chunks[focus_idx], focus_idx, chunks)
             # Event-based finalize: parallel task awaits the focused
             # chunk widget's lock (Markdown.update build-done signal)
             # before scrolling. Replaces the polling retry chain which
@@ -1314,7 +1333,7 @@ class PreviewPresenter:
                     )
                 )
                 container._finalize_task = _finalize_task  # type: ignore[attr-defined]
-            self._update_progress_bar(progress=len(container.mounted_indices))
+            self.update_progress_bar(progress=len(container.mounted_indices))
             await asyncio.sleep(0)
 
             # Phase 1b: mount the visible window. Closest-to-focus first.
@@ -1322,11 +1341,11 @@ class PreviewPresenter:
             for offset in range(1, max_offset + 1):
                 below = focus_idx + offset
                 if below < win_end and below not in container.mounted_indices:
-                    self._mount_chunk_into(container, chunks[below], below, chunks)
+                    self.mount_chunk_into(container, chunks[below], below, chunks)
                 above = focus_idx - offset
                 if win_start <= above and above not in container.mounted_indices:
-                    self._mount_chunk_into(container, chunks[above], above, chunks)
-            self._update_progress_bar(progress=len(container.mounted_indices))
+                    self.mount_chunk_into(container, chunks[above], above, chunks)
+            self.update_progress_bar(progress=len(container.mounted_indices))
             await asyncio.sleep(0)
 
             # Phase 2a: background fill BELOW the window, capped at the
@@ -1337,8 +1356,8 @@ class PreviewPresenter:
             for i in range(win_end, below_end):
                 if i in container.mounted_indices:
                     continue
-                self._mount_chunk_into(container, chunks[i], i, chunks)
-                self._update_progress_bar(progress=len(container.mounted_indices))
+                self.mount_chunk_into(container, chunks[i], i, chunks)
+                self.update_progress_bar(progress=len(container.mounted_indices))
                 await asyncio.sleep(0.002)
             await asyncio.sleep(0)
 
@@ -1350,12 +1369,12 @@ class PreviewPresenter:
                 if i in container.mounted_indices:
                     continue
                 before = set(container.children)
-                self._mount_chunk_into(container, chunks[i], i, chunks)
+                self.mount_chunk_into(container, chunks[i], i, chunks)
                 for w in container.children:
                     if w not in before:
                         w.display = False
                         hidden_widgets.append(w)
-                self._update_progress_bar(progress=len(container.mounted_indices))
+                self.update_progress_bar(progress=len(container.mounted_indices))
                 # Wall-clock yield — see prefetch loop.
                 await asyncio.sleep(0.002)
 
@@ -1415,12 +1434,12 @@ class PreviewPresenter:
                 )
                 while (
                     i < len(chunks)
-                    and self._active_preview is container
+                    and self.active is container
                     and self._app._preview_scroll.is_armed
                 ):
                     if i not in container.mounted_indices:
                         with contextlib.suppress(Exception):
-                            self._mount_chunk_into(container, chunks[i], i, chunks)
+                            self.mount_chunk_into(container, chunks[i], i, chunks)
                     i += 1
                     if i % batch_size == 0:
                         await asyncio.sleep(0.006)
@@ -1443,12 +1462,12 @@ class PreviewPresenter:
             # background. The container we just mounted IS the active one,
             # so it's protected from its own eviction by definition (it just
             # got moved to the MRU slot).
-            evicted = self._preview_cache.put(container, protect=container)
+            evicted = self.preview_cache.put(container, protect=container)
             for old in evicted:
                 with contextlib.suppress(Exception):
                     old.remove()
             if container.is_complete:
-                self._hide_progress_bar()
+                self.hide_progress_bar()
             # Re-anchor only needed for cancellation case: a successful
             # Phase 2b reveal+anchor inline already scrolled to the
             # focused chunk. The inline anchor sees the post-reveal
@@ -1459,7 +1478,7 @@ class PreviewPresenter:
             # user reports.
             self._app._refresh_status()
 
-    def _mount_chunk_into(
+    def mount_chunk_into(
         self,
         container: PreviewContainer,
         chunk: FileChunk,
@@ -1493,12 +1512,12 @@ class PreviewPresenter:
         container.mounted_indices.add(index)
 
     @property
-    def _scrollbar_markers_enabled(self) -> bool:
+    def scrollbar_markers_enabled(self) -> bool:
         """In-development scrollbar match highlighting — off unless the
         user opts in via ``[defaults] scrollbar_match_highlight``."""
         return bool(self._app._config and self._app._config.defaults.scrollbar_match_highlight)
 
-    def _refresh_match_scrollbar(self, chunks: list[FileChunk]) -> None:
+    def refresh_match_scrollbar(self, chunks: list[FileChunk]) -> None:
         """Forward line-weighted match positions to the preview's custom
         scrollbar so markers sit where the matches actually render.
 
@@ -1512,7 +1531,7 @@ class PreviewPresenter:
             pane = self._app.query_one("#preview_pane", MatchAwareScroll)
         except Exception:
             return
-        if not self._scrollbar_markers_enabled:
+        if not self.scrollbar_markers_enabled:
             # Clear any markers a prior (enabled) load left, so toggling
             # the feature off takes effect on the next preview load.
             pane.set_match_lines([], 0)
@@ -1538,7 +1557,7 @@ class PreviewPresenter:
             total_chunks=len(chunks),
         )
         pane.mount(container)
-        self._activate_preview_container(container)
+        self.activate_container(container)
         if not chunks:
             return
         first_chunk = chunks[0]
@@ -1598,8 +1617,8 @@ class PreviewPresenter:
             parent.chunk_widgets[c.chunk_seq] = first_widget
             parent.match_targets[c.chunk_seq] = first_match or first_widget
         else:
-            self._chunk_widgets[c.chunk_seq] = first_widget
-            self._match_targets[c.chunk_seq] = first_match or first_widget
+            self.chunk_widgets[c.chunk_seq] = first_widget
+            self.match_targets[c.chunk_seq] = first_match or first_widget
 
     def _mount_structured_chunk(
         self,
@@ -1660,10 +1679,10 @@ class PreviewPresenter:
             parent.chunk_widgets[c.chunk_seq] = md_widget
             parent.match_targets[c.chunk_seq] = md_widget
         else:
-            self._chunk_widgets[c.chunk_seq] = md_widget
-            self._match_targets[c.chunk_seq] = md_widget
+            self.chunk_widgets[c.chunk_seq] = md_widget
+            self.match_targets[c.chunk_seq] = md_widget
 
-    def _rerender_current_preview(self) -> None:
+    def rerender_current(self) -> None:
         """Drop the preview cache (its widgets carry already-applied
         highlight spans, so they can't simply re-paint themselves) and
         re-issue the render for the focused result. Used by
@@ -1674,24 +1693,24 @@ class PreviewPresenter:
         # Re-use the per-query cache invalidation: clear decoded
         # chunks, kill any in-flight mount worker, drop cached
         # PreviewContainers from the DOM, reset alias maps.
-        self._chunk_cache.clear()
-        self._prebuilt_cache.clear()
-        self._cancel_preview_mount_task()
+        self.chunk_cache.clear()
+        self.prebuilt_cache.clear()
+        self.cancel_mount_task()
         self._app._cancel_lazy_mount_task()
-        evicted = self._preview_cache.clear()
+        evicted = self.preview_cache.clear()
         for old in evicted:
             with contextlib.suppress(Exception):
                 old.remove()
-        if self._active_preview is not None and self._active_preview.parent is not None:
+        if self.active is not None and self.active.parent is not None:
             with contextlib.suppress(Exception):
-                self._active_preview.remove()
-        self._active_preview = None
+                self.active.remove()
+        self.active = None
         self._app._flat_buffer_cache.clear()
         self._app._reset_shared_flat_buffer()
-        self._chunk_widgets = {}
-        self._match_targets = {}
-        self._preview_parent_id = None
-        self._hide_progress_bar()
+        self.chunk_widgets = {}
+        self.match_targets = {}
+        self.parent_id = None
+        self.hide_progress_bar()
         # Re-trigger the preview render for the focused result. We pull
         # the (parent_id, focus_chunk_seq) pair off the cursor's
         # data — same logic ``_on_tree_highlight`` uses on cursor
@@ -1706,8 +1725,8 @@ class PreviewPresenter:
         kind = cursor.data.get("kind")
         if kind == "section":
             hit: Hit = cursor.data["hit"]
-            self._app._render_full_doc(hit.parent_id, focus_chunk_seq=hit.chunk_seq)
+            self.render_full_doc(hit.parent_id, focus_chunk_seq=hit.chunk_seq)
         elif kind == "file":
             g: FileGroup = cursor.data["group"]
             top = g.hits[0] if g.hits else None
-            self._app._render_full_doc(g.parent_id, focus_chunk_seq=top.chunk_seq if top else 0)
+            self.render_full_doc(g.parent_id, focus_chunk_seq=top.chunk_seq if top else 0)

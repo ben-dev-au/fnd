@@ -54,7 +54,7 @@ async def test_toggling_collection_on_marks_all_sources(
         coll.expand()
         await pilot.pause()
         # Pre-condition: no sources active
-        assert len(app._active_sources) == 0
+        assert len(app._scope.active_sources) == 0
         # Cursor on the collection row, press Enter
         ctree.focus()
         await pilot.pause()
@@ -63,8 +63,8 @@ async def test_toggling_collection_on_marks_all_sources(
         await pilot.press("enter")
         await pilot.pause()
         # After toggle: all sources should be in _active_sources
-        assert len(app._active_sources) == 2, (
-            f"expected both sources active, got {app._active_sources}"
+        assert len(app._scope.active_sources) == 2, (
+            f"expected both sources active, got {app._scope.active_sources}"
         )
         # Collection marker should be ● (full)
         assert "●" in str(coll.label), f"collection label was {coll.label}"
@@ -97,7 +97,7 @@ async def test_single_source_toggle_marks_collection_partial(
         await pilot.press("enter")
         await pilot.pause()
         # One source on, one off → collection should be partial (◐)
-        assert len(app._active_sources) == 1
+        assert len(app._scope.active_sources) == 1
         assert "◐" in str(coll.label), (
             f"expected partial marker, collection label was {coll.label!r}"
         )
@@ -150,11 +150,11 @@ async def test_toggle_collection_off_clears_sources(
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        assert len(app._active_sources) == 2
+        assert len(app._scope.active_sources) == 2
         # Turn collection off
         await pilot.press("enter")
         await pilot.pause()
-        assert len(app._active_sources) == 0
+        assert len(app._scope.active_sources) == 0
         assert "○" in str(coll.label), f"expected empty marker, got {coll.label!r}"
 
 
@@ -169,7 +169,7 @@ async def test_cli_collection_shows_full_marker(
         await pilot.pause()
         ctree = app.query_one("#collections_panel_tree", Tree)
         # The seeded collection should be in scope.
-        assert "TWO" in app._collections
+        assert "TWO" in app._scope.collections
         # Its sources should also be marked active so the tri-state
         # marker reads ● (full), not ○ (no sources active).
         coll = _first_collection_node(ctree)
@@ -202,7 +202,7 @@ async def test_legacy_scope_only_collections_renders_as_full(
     app = FNDApp(index_dir=built_index, config=multi_source_config)
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert "TWO" in app._collections
+        assert "TWO" in app._scope.collections
         ctree = app.query_one("#collections_panel_tree", Tree)
         coll = _first_collection_node(ctree)
         assert coll is not None
@@ -259,21 +259,21 @@ async def test_collection_off_keeps_shared_source_of_active_sibling(
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        assert sorted(app._collections) == ["AAA", "BBB"]
-        assert len(app._active_sources) == 3  # notes, vault, papers
+        assert sorted(app._scope.collections) == ["AAA", "BBB"]
+        assert len(app._scope.active_sources) == 3  # notes, vault, papers
         # Toggle AAA off.
         ctree.cursor_line = 0
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        assert app._collections == ["BBB"]
-        vault_id = app._collection_source_ids("BBB")[1]
-        assert vault_id in app._active_sources, (
+        assert app._scope.collections == ["BBB"]
+        vault_id = app._scope.collection_source_ids("BBB")[1]
+        assert vault_id in app._scope.active_sources, (
             "shared source must survive the sibling collection's toggle-off"
         )
-        assert all(sid in app._active_sources for sid in app._collection_source_ids("BBB")), (
-            f"BBB no longer fully scoped: {app._active_sources}"
-        )
+        assert all(
+            sid in app._scope.active_sources for sid in app._scope.collection_source_ids("BBB")
+        ), f"BBB no longer fully scoped: {app._scope.active_sources}"
 
 
 @pytest.mark.asyncio
@@ -294,10 +294,10 @@ async def test_saved_scope_desync_repaired_on_launch(
     app = FNDApp(index_dir=built_index, config=shared_source_config)
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app._collections == ["AAA"]
-        assert all(sid in app._active_sources for sid in app._collection_source_ids("AAA")), (
-            f"desynced scope not repaired: {app._active_sources}"
-        )
+        assert app._scope.collections == ["AAA"]
+        assert all(
+            sid in app._scope.active_sources for sid in app._scope.collection_source_ids("AAA")
+        ), f"desynced scope not repaired: {app._scope.active_sources}"
 
 
 @pytest.mark.asyncio
@@ -320,6 +320,6 @@ async def test_toggle_collection_off_from_cli_state(
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        assert "TWO" not in app._collections
-        assert app._active_sources == []
+        assert "TWO" not in app._scope.collections
+        assert app._scope.active_sources == []
         assert "○" in str(coll.label), f"collection label was {coll.label!r}"

@@ -75,8 +75,8 @@ async def test_cancel_does_not_start_chain(
         await pilot.press("enter")
         await pilot.pause()
 
-    assert app._indexer_task is None
-    assert app._indexer_chain_remaining == []
+    assert app._indexer.task is None
+    assert app._indexer.chain_remaining == []
 
 
 @pytest.mark.asyncio
@@ -95,4 +95,4 @@ async def test_empty_queue_is_a_noop(
         await pilot.press("enter")
         await pilot.pause()
 
-    assert app._indexer_task is None
+    assert app._indexer.task is None

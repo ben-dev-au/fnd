@@ -1,4 +1,4 @@
-"""Guard tests for FNDApp._reveal_preview (PR #22 review #2/#3).
+"""Guard tests for PreviewPresenter.reveal (PR #22 review #2/#3).
 
 A finalize/reveal callback is queued a tick late; if a newer navigation
 superseded the mount, revealing the captured (now stale) container would
@@ -22,19 +22,19 @@ class _FakeContainer:
 
 
 class _RevealHost:
-    """Minimal stand-in exposing only what _reveal_preview touches."""
+    """Minimal stand-in exposing only what reveal() touches."""
 
     def __init__(self, active: object, outgoing: object) -> None:
-        self._active_preview = active
-        self._outgoing_preview = outgoing
+        self.active = active
+        self.outgoing = outgoing
 
 
 def _reveal(host: object, container: object) -> None:
-    # Call FNDApp._reveal_preview as an unbound method against the stub host,
-    # so we exercise the real guard logic without constructing the full app.
-    from fnd.tui.app import FNDApp
+    # Call PreviewPresenter.reveal as an unbound method against the stub
+    # host, so we exercise the real guard logic without the full app.
+    from fnd.tui.preview.presenter import PreviewPresenter
 
-    FNDApp._reveal_preview(host, container)  # type: ignore[arg-type]
+    PreviewPresenter.reveal(host, container)  # type: ignore[arg-type]
 
 
 def test_reveal_preview_reveals_active_container_and_drops_outgoing() -> None:
@@ -45,7 +45,7 @@ def test_reveal_preview_reveals_active_container_and_drops_outgoing() -> None:
     _reveal(host, new)
     assert "-pre-reveal" not in new.classes  # revealed
     assert "-hidden" in old.classes  # outgoing hidden
-    assert host._outgoing_preview is None
+    assert host.outgoing is None
 
 
 def test_reveal_preview_is_noop_for_superseded_container() -> None:
@@ -59,5 +59,5 @@ def test_reveal_preview_is_noop_for_superseded_container() -> None:
     host = _RevealHost(active=current, outgoing=new_outgoing)
     _reveal(host, superseded)
     assert "-pre-reveal" in superseded.classes  # stale container NOT revealed
-    assert host._outgoing_preview is new_outgoing  # new nav's outgoing intact
+    assert host.outgoing is new_outgoing  # new nav's outgoing intact
     assert "-hidden" not in new_outgoing.classes

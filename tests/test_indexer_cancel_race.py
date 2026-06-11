@@ -43,12 +43,12 @@ async def test_stale_run_teardown_does_not_clobber_newer_chain(
     app = FNDApp(index_dir=index_dir, config=cfg)
     async with app.run_test():
         monkeypatch.setattr(im, "run_indexer", _fake_cancelled_run)
-        app._indexer_events = asyncio.Queue()
-        app._indexer_started_at = "now"
+        app._indexer.events = asyncio.Queue()
+        app._indexer.started_at = "now"
         # A newer run owns the chain (generation 5).
-        app._indexer_run_seq = 5
-        app._indexer_chain_remaining = ["B", "C"]
-        app._indexer_chain_total = 3
+        app._indexer.run_seq = 5
+        app._indexer.chain_remaining = ["B", "C"]
+        app._indexer.chain_total = 3
         cancel = asyncio.Event()
         cancel.set()
         # A stale (generation 4), cancelled run tears down late.
@@ -58,12 +58,12 @@ async def test_stale_run_teardown_does_not_clobber_newer_chain(
             config=cfg.collections["A"],
             index_dir=index_dir,
             cancel=cancel,
-            events=app._indexer_events,
+            events=app._indexer.events,
             run_seq=4,
         )
         # The newer run's queue must survive.
-        assert app._indexer_chain_remaining == ["B", "C"]
-        assert app._indexer_chain_total == 3
+        assert app._indexer.chain_remaining == ["B", "C"]
+        assert app._indexer.chain_total == 3
 
 
 @pytest.mark.asyncio
@@ -76,11 +76,11 @@ async def test_current_run_teardown_still_resets_chain(
     app = FNDApp(index_dir=index_dir, config=cfg)
     async with app.run_test():
         monkeypatch.setattr(im, "run_indexer", _fake_cancelled_run)
-        app._indexer_events = asyncio.Queue()
-        app._indexer_started_at = "now"
-        app._indexer_run_seq = 7
-        app._indexer_chain_remaining = []
-        app._indexer_chain_total = 4
+        app._indexer.events = asyncio.Queue()
+        app._indexer.started_at = "now"
+        app._indexer.run_seq = 7
+        app._indexer.chain_remaining = []
+        app._indexer.chain_total = 4
         cancel = asyncio.Event()
         cancel.set()
         await im.drive_indexer(
@@ -89,7 +89,7 @@ async def test_current_run_teardown_still_resets_chain(
             config=cfg.collections["A"],
             index_dir=index_dir,
             cancel=cancel,
-            events=app._indexer_events,
+            events=app._indexer.events,
             run_seq=7,  # current generation
         )
-        assert app._indexer_chain_total == 1  # reset on terminal teardown
+        assert app._indexer.chain_total == 1  # reset on terminal teardown

@@ -83,7 +83,7 @@ async def test_highlights_default_on(cfg: Config, md_index: Path) -> None:
             timeout=15.0,
             message="expected highlights on by default",
         )
-        assert app._highlights_enabled is True
+        assert app._search.highlights_enabled is True
 
 
 @pytest.mark.asyncio
@@ -107,7 +107,7 @@ async def test_h_key_toggles_highlights_off_then_on(cfg: Config, md_index: Path)
         await safe_press(pilot, "h")
         await wait_until(
             pilot,
-            lambda: app._highlights_enabled is False and not _has_highlight_span(pane),
+            lambda: app._search.highlights_enabled is False and not _has_highlight_span(pane),
             timeout=15.0,
             message="highlights didn't clear after first toggle",
         )
@@ -116,7 +116,7 @@ async def test_h_key_toggles_highlights_off_then_on(cfg: Config, md_index: Path)
         await safe_press(pilot, "h")
         await wait_until(
             pilot,
-            lambda: app._highlights_enabled is True and _has_highlight_span(pane),
+            lambda: app._search.highlights_enabled is True and _has_highlight_span(pane),
             timeout=15.0,
             message="highlights didn't restore after second toggle",
         )
@@ -134,4 +134,4 @@ async def test_h_typed_in_query_bar_does_not_toggle(cfg: Config, md_index: Path)
         # Default focus is the query input on launch with no query.
         await safe_press(pilot, "h")
         await safe_pause(pilot)
-        assert app._highlights_enabled is True
+        assert app._search.highlights_enabled is True

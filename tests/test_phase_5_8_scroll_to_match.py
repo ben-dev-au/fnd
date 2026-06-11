@@ -138,7 +138,7 @@ async def test_match_target_is_a_line_widget_not_the_header(
         await pilot.press("down")
         await pilot.pause()
 
-        buf = app._active_flat_buffer
+        buf = app._flat.active_buffer
         assert buf is not None, "PDF should mount the flat-buffer preview"
         fv = buf.file_view
         assert fv is not None
@@ -174,7 +174,7 @@ async def test_match_target_falls_back_to_header_when_no_match_in_chunk(
         await pilot.press("down")
         await pilot.pause()
 
-        buf = app._active_flat_buffer
+        buf = app._flat.active_buffer
         assert buf is not None
         fv = buf.file_view
         assert fv is not None

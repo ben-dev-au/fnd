@@ -50,13 +50,13 @@ async def test_explain_overlay_captures_trace_and_toggles(cfg: Config, small_ind
     app = FNDApp(index_dir=small_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("mitochondrion")
+        app._search.run("mitochondrion")
         await pilot.pause()
         # Trace captured on the app — regime depends on corpus IDF, but
         # the trace itself must always be populated when groups exist.
-        assert app._latest_trace is not None
-        assert app._latest_trace.query == "mitochondrion"
-        assert app._latest_trace.regime in {
+        assert app._search.latest_trace is not None
+        assert app._search.latest_trace.query == "mitochondrion"
+        assert app._search.latest_trace.regime in {
             "strong-signal",
             "fusion",
             "cascade",
@@ -82,7 +82,7 @@ async def test_explain_overlay_no_search_warns(cfg: Config, small_index: Path) -
     async with app.run_test() as pilot:
         await pilot.pause()
         # No query run; trace is None
-        assert app._latest_trace is None
+        assert app._search.latest_trace is None
         app.action_show_explain_overlay()
         await pilot.pause()
         # No overlay mounted
@@ -95,7 +95,7 @@ async def test_dismiss_overlay_closes_explain(cfg: Config, small_index: Path) ->
     app = FNDApp(index_dir=small_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("mitochondrion")
+        app._search.run("mitochondrion")
         await pilot.pause()
         app.action_show_explain_overlay()
         await pilot.pause()

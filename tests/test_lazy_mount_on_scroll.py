@@ -80,20 +80,20 @@ async def test_scroll_below_boundary_triggers_lazy_mount(
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("target")
+        app._search.run("target")
         pane = app.query_one("#preview_pane", VerticalScroll)
         # Wait for the initial mount AND the focus-chunk scroll to land.
         await wait_until(
             pilot,
             lambda: (
-                app._active_preview is not None
-                and bool(app._active_preview.mounted_indices)
+                app._preview.active is not None
+                and bool(app._preview.active.mounted_indices)
                 and pane.scroll_y > 0
             ),
             timeout=15.0,
             message="initial mount + focus scroll never landed",
         )
-        container = app._active_preview
+        container = app._preview.active
         assert container is not None
         mounted_before = set(container.mounted_indices)
         max_before = max(mounted_before)
@@ -110,7 +110,7 @@ async def test_scroll_below_boundary_triggers_lazy_mount(
         # several async hops that can be lost under load.
         # ``_check_preview_lazy_mount`` is idempotent and reads the
         # current scroll position directly.
-        app._check_preview_lazy_mount()
+        app._lazy.check()
         await wait_until(
             pilot,
             lambda: any(i > max_before for i in (container.mounted_indices - mounted_before)),
@@ -143,13 +143,13 @@ async def test_lazy_mount_fires_after_settle_without_explicit_release(
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("target")
+        app._search.run("target")
         pane = app.query_one("#preview_pane", VerticalScroll)
         await wait_until(
             pilot,
             lambda: (
-                app._active_preview is not None
-                and bool(app._active_preview.mounted_indices)
+                app._preview.active is not None
+                and bool(app._preview.active.mounted_indices)
                 and pane.scroll_y > 0
             ),
             timeout=15.0,
@@ -159,7 +159,7 @@ async def test_lazy_mount_fires_after_settle_without_explicit_release(
         assert not app._preview_scroll.is_settling, (
             "nav settled but is_settling still True — lazy-mount would dead-end"
         )
-        container = app._active_preview
+        container = app._preview.active
         assert container is not None
         mounted_before = set(container.mounted_indices)
         max_before = max(mounted_before)
@@ -168,7 +168,7 @@ async def test_lazy_mount_fires_after_settle_without_explicit_release(
         if pane.scroll_y == target:
             pane.scroll_to(y=max(0, target - 1), animate=False, immediate=True)
         pane.scroll_to(y=target, animate=False, immediate=True)
-        app._check_preview_lazy_mount()
+        app._lazy.check()
         await wait_until(
             pilot,
             lambda: any(i > max_before for i in (container.mounted_indices - mounted_before)),
@@ -188,7 +188,7 @@ async def test_scroll_above_after_settled_triggers_lazy_mount(
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("target")
+        app._search.run("target")
         # Wait for initial mount AND for the focus-chunk scroll to land.
         # If we proceed before scroll lands, ``pane.scroll_to(y=0)``
         # below is a no-op because the pane is already at y=0.
@@ -196,14 +196,14 @@ async def test_scroll_above_after_settled_triggers_lazy_mount(
         await wait_until(
             pilot,
             lambda: (
-                app._active_preview is not None
-                and bool(app._active_preview.mounted_indices)
+                app._preview.active is not None
+                and bool(app._preview.active.mounted_indices)
                 and pane.scroll_y > 0
             ),
             timeout=15.0,
             message="initial mount + focus scroll never landed",
         )
-        container = app._active_preview
+        container = app._preview.active
         assert container is not None
         # Top hit is chunk 50 (only section that mentions "target keyword").
         # Initial window is focus ± 7 = 43..57. min_mounted should be 43.
@@ -220,7 +220,7 @@ async def test_scroll_above_after_settled_triggers_lazy_mount(
         if pane.scroll_y == 0:
             pane.scroll_to(y=1, animate=False, immediate=True)
         pane.scroll_to(y=0, animate=False, immediate=True)
-        app._check_preview_lazy_mount()
+        app._lazy.check()
         await wait_until(
             pilot,
             lambda: any(i < min_initial for i in (container.mounted_indices - mounted_initial)),
@@ -245,27 +245,27 @@ async def test_far_in_file_nav_lands_in_fresh_contiguous_region(
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("target")
+        app._search.run("target")
         await wait_until(
             pilot,
-            lambda: app._active_preview is not None and bool(app._active_preview.mounted_indices),
+            lambda: app._preview.active is not None and bool(app._preview.active.mounted_indices),
             message="active preview never mounted any chunks",
         )
         # Auto-load focuses on section 50. Jump far UP to section 10 — the
         # case that used to prepend a window above the view and reflow.
-        group = app._groups[0]
-        app._render_full_doc(group.parent_id, focus_chunk_seq=10)
+        group = app._search.groups[0]
+        app._preview.render_full_doc(group.parent_id, focus_chunk_seq=10)
         await wait_until(
             pilot,
             lambda: (
-                app._active_preview is not None
-                and app._active_preview.parent_doc_id == group.parent_id
-                and 10 in app._active_preview.chunk_widgets
+                app._preview.active is not None
+                and app._preview.active.parent_doc_id == group.parent_id
+                and 10 in app._preview.active.chunk_widgets
             ),
             timeout=15.0,
             message="far in-file nav never landed on the new focus chunk",
         )
-        container = app._active_preview
+        container = app._preview.active
         assert container is not None
         from itertools import pairwise
 
@@ -303,15 +303,15 @@ async def test_file_switch_cancels_lazy_mount(
     app = FNDApp(index_dir=tmp_index_dir, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("target")
+        app._search.run("target")
         await _drain(pilot, 8)
-        a = next(g for g in app._groups if g.path.endswith("a.md"))
-        b = next(g for g in app._groups if g.path.endswith("b.md"))
-        app._render_full_doc(a.parent_id, focus_chunk_seq=5)
+        a = next(g for g in app._search.groups if g.path.endswith("a.md"))
+        b = next(g for g in app._search.groups if g.path.endswith("b.md"))
+        app._preview.render_full_doc(a.parent_id, focus_chunk_seq=5)
         await _drain(pilot, 6)
         # Switch files mid-stream.
-        app._render_full_doc(b.parent_id, focus_chunk_seq=0)
+        app._preview.render_full_doc(b.parent_id, focus_chunk_seq=0)
         await _drain(pilot, 6)
-        task = app._lazy_mount_task
+        task = app._lazy.task
         if task is not None:
             assert task.done()  # type: ignore[attr-defined]

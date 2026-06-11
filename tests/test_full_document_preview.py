@@ -150,7 +150,7 @@ async def test_tui_renders_full_document_when_section_focused(built_index: Path)
 
         # The PDF takes the flat-buffer path; an active LineBufferPreview
         # holds the whole file.
-        buf = app._active_flat_buffer
+        buf = app._flat.active_buffer
         assert buf is not None, "PDF should mount the flat-buffer preview"
         fv = buf.file_view
         assert fv is not None

@@ -52,7 +52,7 @@ async def test_launch_does_not_resume_by_default(
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._maybe_resume_indexer()
+        app._indexer.maybe_resume()
         await pilot.pause()
 
     assert calls == [], "indexing started on launch without the user asking"

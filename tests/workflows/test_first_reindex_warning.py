@@ -42,7 +42,7 @@ async def test_skipped_when_no_pdfs_in_collection(
     app = app_factory(cfg_one)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        app._reindex_with_warning_if_needed("default")
+        app._indexer.reindex_with_warning("default")
         await pilot.pause()
         # The warning must NOT be on the stack.
         assert not any(isinstance(s, FirstReindexWarningScreen) for s in app.screen_stack)

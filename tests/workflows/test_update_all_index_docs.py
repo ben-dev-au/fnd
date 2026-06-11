@@ -94,17 +94,17 @@ async def test_chain_commits_final_collection_docs(tmp_path: Path) -> None:
         ok = await wait_until(
             pilot,
             lambda: (
-                app._indexer_chain_remaining == []
-                and not app._indexer_chain_callback_pending
-                and (app._indexer_task is None or app._indexer_task.done())
+                app._indexer.chain_remaining == []
+                and not app._indexer.chain_callback_pending
+                and (app._indexer.task is None or app._indexer.task.done())
             ),
             timeout=20.0,
             ticks=200,
         )
         assert ok, (
-            f"chain never reset: remaining={app._indexer_chain_remaining}, "
-            f"callback_pending={app._indexer_chain_callback_pending}, "
-            f"task_done={app._indexer_task and app._indexer_task.done()}"
+            f"chain never reset: remaining={app._indexer.chain_remaining}, "
+            f"callback_pending={app._indexer.chain_callback_pending}, "
+            f"task_done={app._indexer.task and app._indexer.task.done()}"
         )
         # Let any in-flight wait_merging_threads / file syncs settle so
         # the searcher we open below sees the committed segments.

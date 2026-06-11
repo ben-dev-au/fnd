@@ -41,16 +41,16 @@ async def test_prefetch_populates_chunk_cache(
     app = FNDApp(index_dir=two_file_index, config=cfg_with_prefetch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("test")
+        app._search.run("test")
         # Give the prefetch worker time to walk its sequential targets.
         for _ in range(20):
             await pilot.pause()
             await asyncio.sleep(0.05)
-            if app._groups and app._groups[0].parent_id in app._chunk_cache:
+            if app._search.groups and app._search.groups[0].parent_id in app._preview.chunk_cache:
                 break
-        assert app._groups, "search returned no results"
-        top = app._groups[0]
-        assert top.parent_id in app._chunk_cache, (
+        assert app._search.groups, "search returned no results"
+        top = app._search.groups[0]
+        assert top.parent_id in app._preview.chunk_cache, (
             f"prefetch didn't warm {top.parent_id} in _chunk_cache"
         )
 
@@ -65,23 +65,25 @@ async def test_prefetch_populates_prebuilt_cache_for_flat_files(
     app = FNDApp(index_dir=two_file_index, config=cfg_with_prefetch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("results")
+        app._search.run("results")
         flat_parents: set[str] = set()
         # Drain a few cycles to give the prefetch worker time.
         for _ in range(30):
             await pilot.pause()
             await asyncio.sleep(0.05)
             flat_parents = {
-                g.parent_id for g in app._groups if g.path.lower().endswith((".pdf", ".txt"))
+                g.parent_id for g in app._search.groups if g.path.lower().endswith((".pdf", ".txt"))
             }
             if flat_parents and any(
-                (pid, app._current_query_signature()) in app._prebuilt_cache for pid in flat_parents
+                (pid, app._search.query_signature()) in app._preview.prebuilt_cache
+                for pid in flat_parents
             ):
                 break
         if not flat_parents:
             pytest.skip("no flat-path results in fixture corpus for this query")
         assert any(
-            (pid, app._current_query_signature()) in app._prebuilt_cache for pid in flat_parents
+            (pid, app._search.query_signature()) in app._preview.prebuilt_cache
+            for pid in flat_parents
         )
 
 
@@ -93,7 +95,7 @@ async def test_prefetch_zero_disables(two_file_index: Path) -> None:
     app = FNDApp(index_dir=two_file_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("test")
+        app._search.run("test")
         await pilot.pause()
         assert not any(w.group == "preview-prefetch" for w in app.workers)
 
@@ -107,15 +109,15 @@ async def test_query_change_clears_prebuilt_cache(
     app = FNDApp(index_dir=two_file_index, config=cfg_with_prefetch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("test")
+        app._search.run("test")
         # Force a bundle into the cache directly so we don't depend
         # on prefetch timing.
         from fnd.tui.line_buffer import FileView, RenderedDocument
 
-        app._prebuilt_cache[("fake-parent", "old-sig")] = RenderedDocument(fv=FileView())
-        app._run_query("different")
+        app._preview.prebuilt_cache[("fake-parent", "old-sig")] = RenderedDocument(fv=FileView())
+        app._search.run("different")
         await pilot.pause()
-        assert app._prebuilt_cache == {}
+        assert app._preview.prebuilt_cache == {}
 
 
 @pytest.mark.asyncio
@@ -131,23 +133,23 @@ async def test_prefetch_populates_flat_buffer_cache(
     app = FNDApp(index_dir=two_file_index, config=cfg_with_prefetch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("results")
-        sig = app._current_query_signature()
+        app._search.run("results")
+        sig = app._search.query_signature()
         flat_parents: set[str] = set()
         for _ in range(40):
             await pilot.pause()
             await asyncio.sleep(0.05)
             flat_parents = {
-                g.parent_id for g in app._groups if g.path.lower().endswith((".pdf", ".txt"))
+                g.parent_id for g in app._search.groups if g.path.lower().endswith((".pdf", ".txt"))
             }
-            if flat_parents and any((pid, sig) in app._flat_buffer_cache for pid in flat_parents):
+            if flat_parents and any((pid, sig) in app._flat.cache for pid in flat_parents):
                 break
         if not flat_parents:
             pytest.skip("no flat-path results in fixture corpus for this query")
-        prefetched = [pid for pid in flat_parents if (pid, sig) in app._flat_buffer_cache]
+        prefetched = [pid for pid in flat_parents if (pid, sig) in app._flat.cache]
         assert prefetched, f"prefetch failed to cache any flat doc; flat={flat_parents}"
         for pid in prefetched:
-            doc = app._flat_buffer_cache[(pid, sig)]
+            doc = app._flat.cache[(pid, sig)]
             assert isinstance(doc, RenderedDocument)
             assert doc.strips, f"prefetched doc for {pid} has no strips"
 
@@ -183,17 +185,17 @@ async def test_prefetch_premounts_structural_container(multi_md_index: Path) -> 
     # cache at 1 (a larger cache adds mount/arrange overhead without speeding
     # revisits — see _PREVIEW_CACHE_MAX_FILES), with the decode still prefetched
     # for every target. Lift the cap here to exercise the multi-file pre-mount.
-    app._preview_cache.max_files = 8
+    app._preview.preview_cache.max_files = 8
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("prefetch-anchor")
-        sig = app._current_query_signature()
+        app._search.run("prefetch-anchor")
+        sig = app._search.query_signature()
 
         def _non_top_done() -> bool:
-            if len(app._groups) < 3:
+            if len(app._search.groups) < 3:
                 return False
-            for g in app._groups[1:]:
-                c = app._preview_cache.get(g.parent_id, sig)
+            for g in app._search.groups[1:]:
+                c = app._preview.preview_cache.get(g.parent_id, sig)
                 if c is None or not c.mounted_indices:
                     return False
             return True
@@ -208,12 +210,16 @@ async def test_prefetch_premounts_structural_container(multi_md_index: Path) -> 
             await asyncio.sleep(0.05)
             if _non_top_done():
                 break
-            if not nudged and not app._user_mount_in_flight() and len(app._groups) >= 3:
-                app._prefetch_top_results()
+            if (
+                not nudged
+                and not app._preview.user_mount_in_flight()
+                and len(app._search.groups) >= 3
+            ):
+                app._prefetch.prefetch_top_results()
                 nudged = True
-        assert len(app._groups) >= 3, "expected three md results in this corpus"
-        for g in app._groups[1:]:
-            cont = app._preview_cache.get(g.parent_id, sig)
+        assert len(app._search.groups) >= 3, "expected three md results in this corpus"
+        for g in app._search.groups[1:]:
+            cont = app._preview.preview_cache.get(g.parent_id, sig)
             assert cont is not None, f"prefetch failed to pre-mount {g.parent_id}"
             assert "-hidden" in cont.classes, f"prefetched {g.parent_id} not hidden"
             assert cont.mounted_indices, f"prefetched {g.parent_id} has no mounted chunks"
@@ -239,14 +245,14 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
     app = FNDApp(index_dir=multi_md_index, config=cfg, collection="notes")
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        app._run_query("prefetch-anchor")
+        app._search.run("prefetch-anchor")
         for _ in range(60):
             await pilot.pause()
             await asyncio.sleep(0.05)
-        assert len(app._groups) >= 3
-        target = app._groups[1]
+        assert len(app._search.groups) >= 3
+        target = app._search.groups[1]
         target_focus = target.hits[0].chunk_seq if target.hits else 0
-        app._render_full_doc(target.parent_id, focus_chunk_seq=target_focus)
+        app._preview.render_full_doc(target.parent_id, focus_chunk_seq=target_focus)
 
         def _expected_coverage(total: int, focus_idx: int, radius: int) -> int:
             """Phase 2a+2b coverage: [max(0, focus-r), min(total, focus+r+1))."""
@@ -255,13 +261,13 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
         for _ in range(80):
             await pilot.pause()
             await asyncio.sleep(0.05)
-            ap = app._active_preview
+            ap = app._preview.active
             if ap is None:
                 continue
             focus_idx = next(
                 (
                     i
-                    for i, c in enumerate(app._chunk_cache.get(target.parent_id, []))
+                    for i, c in enumerate(app._preview.chunk_cache.get(target.parent_id, []))
                     if c.chunk_seq == target_focus
                 ),
                 0,
@@ -269,13 +275,13 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
             expected = _expected_coverage(ap.total_chunks, focus_idx, _BACKGROUND_FILL_RADIUS)
             if len(ap.mounted_indices) >= expected:
                 break
-        ap = app._active_preview
+        ap = app._preview.active
         assert ap is not None, "user-side mount produced no active preview"
         assert ap.parent_doc_id == target.parent_id
         focus_idx = next(
             (
                 i
-                for i, c in enumerate(app._chunk_cache.get(target.parent_id, []))
+                for i, c in enumerate(app._preview.chunk_cache.get(target.parent_id, []))
                 if c.chunk_seq == target_focus
             ),
             0,

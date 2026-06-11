@@ -59,10 +59,10 @@ async def test_preview_load_dispatches_worker_on_cache_miss(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("target")
+        app._search.run("target")
         await pilot.pause()
-        big_group = next(g for g in app._groups if g.path.endswith("big.md"))
-        app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
+        big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
+        app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         # Worker dispatched in the preview-load group.
         worker_groups = [w.group for w in app.workers]
         assert "preview-load" in worker_groups
@@ -70,12 +70,12 @@ async def test_preview_load_dispatches_worker_on_cache_miss(
         await pilot.pause()
         await pilot.pause()
         # Cache populated after load completes.
-        assert big_group.parent_id in app._chunk_cache
+        assert big_group.parent_id in app._preview.chunk_cache
         # Cache hit path: no new worker, no progress, no spinner.
         before_workers = len(app.workers)
-        app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
+        app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         await pilot.pause()
-        assert app._preview_load_progress is None
+        assert app._preview.load_progress is None
         assert len(app.workers) <= before_workers
 
 
@@ -87,17 +87,17 @@ async def test_preview_clears_old_content_and_shows_progress_bar(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("target")
+        app._search.run("target")
         await pilot.pause()
-        small_group = next(g for g in app._groups if g.path.endswith("small.md"))
-        big_group = next(g for g in app._groups if g.path.endswith("big.md"))
+        small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
+        big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         # Load small file first so something is mounted.
-        app._render_full_doc(small_group.parent_id, focus_chunk_seq=0)
+        app._preview.render_full_doc(small_group.parent_id, focus_chunk_seq=0)
         await pilot.pause()
         await pilot.pause()
-        assert app._preview_parent_id == small_group.parent_id
+        assert app._preview.parent_id == small_group.parent_id
         # Switch to the big file. Strip should become visible immediately.
-        app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
+        app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         strip = app.query_one(FNDProgressBar)
         assert "-idle" not in strip.classes
         # Pane has scroll lock during load.
@@ -114,10 +114,10 @@ async def test_progress_strip_runs_determinate_then_hides_on_complete(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("target")
+        app._search.run("target")
         await pilot.pause()
-        big_group = next(g for g in app._groups if g.path.endswith("big.md"))
-        app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
+        big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
+        app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         # Visible + determinate at start (decode phase).
         strip = app.query_one(FNDProgressBar)
         assert "-idle" not in strip.classes
@@ -144,16 +144,16 @@ async def test_switching_files_mid_load_cancels_mount_task(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("target")
+        app._search.run("target")
         await pilot.pause()
-        small_group = next(g for g in app._groups if g.path.endswith("small.md"))
-        big_group = next(g for g in app._groups if g.path.endswith("big.md"))
+        small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
+        big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         # Trigger big.md load and let decode complete + mount start.
-        app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
+        app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         await pilot.pause()  # decode done, mount task started
-        first_task: Any = app._preview_mount_task
+        first_task: Any = app._preview.mount_task
         # Switch to small.md before big's mount finishes.
-        app._render_full_doc(small_group.parent_id, focus_chunk_seq=0)
+        app._preview.render_full_doc(small_group.parent_id, focus_chunk_seq=0)
         # task.cancel() only *requests* cancellation — the task settles to
         # cancelled()/done() one loop tick later, so asserting those here
         # races that settle (flakes under load). cancelling() flips to >0
@@ -165,7 +165,7 @@ async def test_switching_files_mid_load_cancels_mount_task(
         await pilot.pause()
         await pilot.pause()
         # Final state reflects small.md, not big.md.
-        assert app._preview_parent_id == small_group.parent_id
+        assert app._preview.parent_id == small_group.parent_id
 
 
 @pytest.mark.asyncio
@@ -178,19 +178,19 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
     # then returning rebuilds rather than reusing its container, which measured
     # faster (a larger cache adds arrange overhead without a faster revisit).
     # Lift the cap here to exercise the LRU-reuse path this test guards.
-    app._preview_cache.max_files = 8
+    app._preview.preview_cache.max_files = 8
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("target")
+        app._search.run("target")
         await pilot.pause()
-        big_group = next(g for g in app._groups if g.path.endswith("big.md"))
-        small_group = next(g for g in app._groups if g.path.endswith("small.md"))
+        big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
+        small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
         # First visit to big — fully mount.
-        app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
+        app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         for _ in range(10):
             await pilot.pause()
         # Should be cached now (60+ chunks, above min threshold).
-        cached = app._preview_cache.get(big_group.parent_id, app._current_query_signature())
+        cached = app._preview.preview_cache.get(big_group.parent_id, app._search.query_signature())
         assert cached is not None
         # Mount is radius-bounded (Phase 2a/2b cap at _BACKGROUND_FILL_RADIUS).
         # The contract this test guards is "revisit hits the same cached
@@ -198,17 +198,17 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
         big_container = cached
         # Switch to small; no new mount task expected for big when we
         # come back (it's complete and cached).
-        app._render_full_doc(small_group.parent_id, focus_chunk_seq=0)
+        app._preview.render_full_doc(small_group.parent_id, focus_chunk_seq=0)
         for _ in range(5):
             await pilot.pause()
         # Return to big — strip shows briefly during the cache-hit reveal
         # cycle, then idles once _finalize_pre_reveal's on_done fires.
-        app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
+        app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         for _ in range(8):
             await pilot.pause()
         strip = app.query_one(FNDProgressBar)
         assert "-idle" in strip.classes
-        assert app._active_preview is big_container
+        assert app._preview.active is big_container
 
 
 @pytest.mark.asyncio
@@ -222,17 +222,17 @@ async def test_rapid_file_switching_does_not_raise_duplicate_ids(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("target")
+        app._search.run("target")
         await pilot.pause()
-        small_group = next(g for g in app._groups if g.path.endswith("small.md"))
-        big_group = next(g for g in app._groups if g.path.endswith("big.md"))
+        small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
+        big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         # Toggle several times in quick succession — each call cancels
         # the in-flight mount and starts a new one. None of these calls
         # should raise.
         for _ in range(5):
-            app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
+            app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
             await pilot.pause()
-            app._render_full_doc(small_group.parent_id, focus_chunk_seq=0)
+            app._preview.render_full_doc(small_group.parent_id, focus_chunk_seq=0)
             await pilot.pause()
         # Drain to a settled state.
         await pilot.pause()
@@ -248,10 +248,10 @@ async def test_preview_title_no_longer_carries_progress_text(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("target")
+        app._search.run("target")
         await pilot.pause()
-        big_group = next(g for g in app._groups if g.path.endswith("big.md"))
-        app._render_full_doc(big_group.parent_id, focus_chunk_seq=0)
+        big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
+        app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         # During load, title must not contain 'loading' / 'chunks'.
         title = app._preview_title()
         assert "loading" not in title.lower()

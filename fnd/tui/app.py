@@ -928,125 +928,125 @@ class FNDApp(App[None]):
 
     @property
     def _chunk_cache(self) -> dict[str, list[FileChunk]]:
-        return self._preview._chunk_cache
+        return self._preview.chunk_cache
 
     @_chunk_cache.setter
     def _chunk_cache(self, value: dict[str, list[FileChunk]]) -> None:
-        self._preview._chunk_cache = value
+        self._preview.chunk_cache = value
 
     @property
     def _preview_cache(self) -> PreviewCache:
-        return self._preview._preview_cache
+        return self._preview.preview_cache
 
     @_preview_cache.setter
     def _preview_cache(self, value: PreviewCache) -> None:
-        self._preview._preview_cache = value
+        self._preview.preview_cache = value
 
     @property
     def _prebuilt_cache(self) -> dict[tuple[str, str], RenderedDocument]:
-        return self._preview._prebuilt_cache
+        return self._preview.prebuilt_cache
 
     @_prebuilt_cache.setter
     def _prebuilt_cache(self, value: dict[tuple[str, str], RenderedDocument]) -> None:
-        self._preview._prebuilt_cache = value
+        self._preview.prebuilt_cache = value
 
     @property
     def _active_preview(self) -> PreviewContainer | None:
-        return self._preview._active_preview
+        return self._preview.active
 
     @_active_preview.setter
     def _active_preview(self, value: PreviewContainer | None) -> None:
-        self._preview._active_preview = value
+        self._preview.active = value
 
     @property
     def _outgoing_preview(self) -> PreviewContainer | None:
-        return self._preview._outgoing_preview
+        return self._preview.outgoing
 
     @_outgoing_preview.setter
     def _outgoing_preview(self, value: PreviewContainer | None) -> None:
-        self._preview._outgoing_preview = value
+        self._preview.outgoing = value
 
     @property
     def _chunk_widgets(self) -> dict[int, Widget]:
-        return self._preview._chunk_widgets
+        return self._preview.chunk_widgets
 
     @_chunk_widgets.setter
     def _chunk_widgets(self, value: dict[int, Widget]) -> None:
-        self._preview._chunk_widgets = value
+        self._preview.chunk_widgets = value
 
     @property
     def _match_targets(self) -> dict[int, Widget]:
-        return self._preview._match_targets
+        return self._preview.match_targets
 
     @_match_targets.setter
     def _match_targets(self, value: dict[int, Widget]) -> None:
-        self._preview._match_targets = value
+        self._preview.match_targets = value
 
     @property
     def _preview_parent_id(self) -> str | None:
-        return self._preview._preview_parent_id
+        return self._preview.parent_id
 
     @_preview_parent_id.setter
     def _preview_parent_id(self, value: str | None) -> None:
-        self._preview._preview_parent_id = value
+        self._preview.parent_id = value
 
     @property
     def _preview_load_progress(self) -> tuple[int, int | None] | None:
-        return self._preview._preview_load_progress
+        return self._preview.load_progress
 
     @_preview_load_progress.setter
     def _preview_load_progress(self, value: tuple[int, int | None] | None) -> None:
-        self._preview._preview_load_progress = value
+        self._preview.load_progress = value
 
     @property
     def _preview_mount_task(self) -> object | None:
-        return self._preview._preview_mount_task
+        return self._preview.mount_task
 
     @_preview_mount_task.setter
     def _preview_mount_task(self, value: object | None) -> None:
-        self._preview._preview_mount_task = value
+        self._preview.mount_task = value
 
     @property
     def _preview_load_timer(self) -> Any | None:
-        return self._preview._preview_load_timer
+        return self._preview.load_timer
 
     @_preview_load_timer.setter
     def _preview_load_timer(self, value: Any | None) -> None:
-        self._preview._preview_load_timer = value
+        self._preview.load_timer = value
 
     @property
     def _preview_load_target(self) -> tuple[str, int] | None:
-        return self._preview._preview_load_target
+        return self._preview.load_target
 
     @_preview_load_target.setter
     def _preview_load_target(self, value: tuple[str, int] | None) -> None:
-        self._preview._preview_load_target = value
+        self._preview.load_target = value
 
     @property
     def _inflight_preview_target(self) -> tuple[str, int] | None:
-        return self._preview._inflight_preview_target
+        return self._preview.inflight_target
 
     @_inflight_preview_target.setter
     def _inflight_preview_target(self, value: tuple[str, int] | None) -> None:
-        self._preview._inflight_preview_target = value
+        self._preview.inflight_target = value
 
     def _schedule_preview_load(self, parent_id: str, focus_chunk_seq: int) -> None:
-        self._preview._schedule_preview_load(parent_id, focus_chunk_seq)
+        self._preview.schedule_load(parent_id, focus_chunk_seq)
 
     def _fire_pending_preview_load(self) -> None:
-        self._preview._fire_pending_preview_load()
+        self._preview.fire_pending_load()
 
     def _cancel_pending_preview_load(self) -> None:
-        self._preview._cancel_pending_preview_load()
+        self._preview.cancel_pending_load()
 
     def _render_full_doc(self, parent_id: str, *, focus_chunk_seq: int) -> None:
-        self._preview._render_full_doc(parent_id, focus_chunk_seq=focus_chunk_seq)
+        self._preview.render_full_doc(parent_id, focus_chunk_seq=focus_chunk_seq)
 
     def _cancel_preview_mount_task(self) -> None:
-        self._preview._cancel_preview_mount_task()
+        self._preview.cancel_mount_task()
 
     async def _await_preview_settled(self, max_rounds: int = 10) -> None:
-        await self._preview._await_preview_settled(max_rounds)
+        await self._preview.await_settled(max_rounds)
 
     async def _await_match_settled(
         self,
@@ -1056,10 +1056,10 @@ class FNDApp(App[None]):
     ) -> None:
         """Targeted settle for the focus chunk — see the presenter. Kept
         as a real app method so test patches keep intercepting it."""
-        await self._preview._await_match_settled(header, above_widgets, max_rounds)
+        await self._preview.await_match_settled(header, above_widgets, max_rounds)
 
     def _user_mount_in_flight(self) -> bool:
-        return self._preview._user_mount_in_flight()
+        return self._preview.user_mount_in_flight()
 
     def _mount_chunk_into(
         self,
@@ -1068,14 +1068,14 @@ class FNDApp(App[None]):
         index: int,
         all_chunks: list[FileChunk],
     ) -> None:
-        self._preview._mount_chunk_into(container, chunk, index, all_chunks)
+        self._preview.mount_chunk_into(container, chunk, index, all_chunks)
 
     @property
     def _scrollbar_markers_enabled(self) -> bool:
-        return self._preview._scrollbar_markers_enabled
+        return self._preview.scrollbar_markers_enabled
 
     def _refresh_match_scrollbar(self, chunks: list[FileChunk]) -> None:
-        self._preview._refresh_match_scrollbar(chunks)
+        self._preview.refresh_match_scrollbar(chunks)
 
     def _show_progress_bar(
         self,
@@ -1084,40 +1084,22 @@ class FNDApp(App[None]):
         progress: int = 0,
         phase: str | None = None,
     ) -> None:
-        self._preview._show_progress_bar(total=total, progress=progress, phase=phase)
+        self._preview.show_progress_bar(total=total, progress=progress, phase=phase)
 
     def _hide_progress_bar(self) -> None:
-        self._preview._hide_progress_bar()
+        self._preview.hide_progress_bar()
 
     def _clear_pane_placeholder(self) -> None:
-        self._preview._clear_pane_placeholder()
+        self._preview.clear_pane_placeholder()
 
     def _reveal_preview(self, container: PreviewContainer) -> None:
-        """Reveal ``container`` and drop any still-held outgoing preview.
-        Fallback for paths where :meth:`swap_reveal_target` did not run (no
-        match resolved, or no outgoing) — a no-op for the class already lifted
-        by the swap.
-
-        Guard: a finalize/reveal callback is queued via ``call_after_refresh``
-        and runs a tick later. If a newer navigation superseded this mount in
-        the meantime, ``container`` is no longer ``_active_preview`` — revealing
-        it would surface the wrong file and clobber the new nav's outgoing
-        reference. Detached finalize tasks aren't cancelled, so this staleness
-        check (not task cancellation) is the single point that makes a
-        superseded reveal a no-op."""
-        if container is not self._active_preview:
-            return
-        outgoing = self._outgoing_preview
-        if outgoing is not None and outgoing is not container:
-            outgoing.add_class("-hidden")
-        self._outgoing_preview = None
-        container.remove_class("-pre-reveal")
+        self._preview.reveal(container)
 
     def swap_reveal_target(self, target: Widget, margin: int) -> bool:
         return self._preview.swap_reveal_target(target, margin)
 
     def _on_preview_load_failed(self, exc: BaseException) -> None:
-        self._preview._on_preview_load_failed(exc)
+        self._preview.on_load_failed(exc)
 
     def _on_preview_chunks_loaded(
         self,
@@ -1126,7 +1108,7 @@ class FNDApp(App[None]):
         chunks: list[FileChunk],
         prebuilt: RenderedDocument | None = None,
     ) -> None:
-        self._preview._on_preview_chunks_loaded(parent_id, focus_chunk_seq, chunks, prebuilt)
+        self._preview.on_chunks_loaded(parent_id, focus_chunk_seq, chunks, prebuilt)
 
     def _ensure_shared_flat_buffer(self) -> LineBufferPreview:
         return self._flat.ensure_shared_buffer()
@@ -1811,7 +1793,7 @@ class FNDApp(App[None]):
         self._search.toggle_fuzzy()
 
     def _rerender_current_preview(self) -> None:
-        self._preview._rerender_current_preview()
+        self._preview.rerender_current()
 
     def action_focus_results_pane(self) -> None:
         """Single-key teleport from anywhere → results tree."""

@@ -38,21 +38,21 @@ async def test_rapid_cursor_sweep_dispatches_once(
         await safe_pause(pilot)
 
         render_calls: list[tuple[str, int]] = []
-        original = app._render_full_doc
+        original = app._preview.render_full_doc
 
         def counted(parent_id: str, *, focus_chunk_seq: int) -> None:
             render_calls.append((parent_id, focus_chunk_seq))
             original(parent_id, focus_chunk_seq=focus_chunk_seq)
 
-        app._render_full_doc = counted  # type: ignore[method-assign]
+        app._preview.render_full_doc = counted  # type: ignore[method-assign]
 
         # Schedule five highlights back-to-back. Only the last one
         # should win once the timer fires.
-        app._schedule_preview_load("p1", 0)
-        app._schedule_preview_load("p2", 0)
-        app._schedule_preview_load("p3", 0)
-        app._schedule_preview_load("p4", 0)
-        app._schedule_preview_load("p5", 0)
+        app._preview.schedule_load("p1", 0)
+        app._preview.schedule_load("p2", 0)
+        app._preview.schedule_load("p3", 0)
+        app._preview.schedule_load("p4", 0)
+        app._preview.schedule_load("p5", 0)
         assert render_calls == [], "no load should fire before the timer matures"
 
         # Wait past the 150 ms debounce — predicate-driven so a load
@@ -79,14 +79,14 @@ async def test_zero_delay_dispatches_synchronously(
     async with app.run_test() as pilot:
         await safe_pause(pilot)
         render_calls: list[str] = []
-        original = app._render_full_doc
+        original = app._preview.render_full_doc
 
         def counted(parent_id: str, *, focus_chunk_seq: int) -> None:
             render_calls.append(parent_id)
             original(parent_id, focus_chunk_seq=focus_chunk_seq)
 
-        app._render_full_doc = counted  # type: ignore[method-assign]
-        app._schedule_preview_load("only", 0)
+        app._preview.render_full_doc = counted  # type: ignore[method-assign]
+        app._preview.schedule_load("only", 0)
         assert render_calls == ["only"]
 
 
@@ -110,7 +110,7 @@ async def test_return_to_cancelled_target_redispatches(
         await safe_pause(pilot)
 
         renders: list[tuple[str, int]] = []
-        app._render_full_doc = lambda parent_id, *, focus_chunk_seq: renders.append(  # type: ignore[method-assign]
+        app._preview.render_full_doc = lambda parent_id, *, focus_chunk_seq: renders.append(  # type: ignore[method-assign]
             (parent_id, focus_chunk_seq)
         )
         app._prefetch_top_results = lambda **_k: None  # type: ignore[method-assign,assignment]
@@ -124,18 +124,18 @@ async def test_return_to_cancelled_target_redispatches(
             def cancel(self) -> None:
                 pass
 
-        app._inflight_preview_target = ("target", 0)
-        app._preview_mount_task = _LiveTask()
-        app._active_preview = types.SimpleNamespace(parent_doc_id="onscreen")  # type: ignore[assignment]
+        app._preview.inflight_target = ("target", 0)
+        app._preview.mount_task = _LiveTask()
+        app._preview.active = types.SimpleNamespace(parent_doc_id="onscreen")  # type: ignore[assignment]
 
         # Overshoot to a neighbour (cancels the in-flight "target" mount) …
-        app._schedule_preview_load("neighbour", 0)
+        app._preview.schedule_load("neighbour", 0)
         # … then land back on the original target.
-        app._schedule_preview_load("target", 0)
+        app._preview.schedule_load("target", 0)
 
         # Fire the matured debounce: the remount for "target" must run, not be
         # dedup-skipped against its own cancelled mount.
-        app._fire_pending_preview_load()
+        app._preview.fire_pending_load()
 
         assert ("target", 0) in renders, (
             "returning to a target whose mount was cancelled must re-dispatch it"
@@ -153,14 +153,14 @@ async def test_query_change_cancels_pending_load(
         await safe_pause(pilot)
         # Arm a debounced load that points at a parent_id we won't have
         # any more after the rebuild.
-        app._schedule_preview_load("stale-parent-id", 0)
-        assert app._preview_load_target == ("stale-parent-id", 0)
+        app._preview.schedule_load("stale-parent-id", 0)
+        assert app._preview.load_target == ("stale-parent-id", 0)
         # Run a fresh query: this calls _refresh_results_tree, which
         # cancels pending loads.
-        app._run_query("nonsense-query-that-matches-nothing")
+        app._search.run("nonsense-query-that-matches-nothing")
         await wait_until(
             pilot,
-            lambda: app._preview_load_target is None and app._preview_load_timer is None,
+            lambda: app._preview.load_target is None and app._preview.load_timer is None,
             timeout=15.0,
             message="pending load wasn't cancelled by query change",
         )
