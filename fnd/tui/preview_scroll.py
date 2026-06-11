@@ -20,8 +20,8 @@ from textual.widget import Widget
 from fnd.matching import MatchSpec
 
 if TYPE_CHECKING:
-    from fnd.tui.app import FNDMarkdown
     from fnd.tui.line_buffer import LineBufferPreview
+    from fnd.tui.widgets.markdown import FNDMarkdown
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,7 +245,7 @@ class StructuralScrollStrategy:
         generation: int = 0,
         current_generation: Callable[[], int] | None = None,
     ) -> None:
-        from fnd.tui.app import FNDMarkdown
+        from fnd.tui.widgets.markdown import FNDMarkdown
 
         seq = anchor.focus_chunk_seq
         header = self._host.chunk_widgets.get(seq)
@@ -286,7 +286,7 @@ class StructuralScrollStrategy:
         generation: int = 0,
         current_generation: Callable[[], int] | None = None,
     ) -> None:
-        from fnd.tui.app import FNDMarkdown
+        from fnd.tui.widgets.markdown import FNDMarkdown
 
         # Generation guard (entry): a superseded retry chain dies on its next
         # tick — no scroll, no reschedule — but still fires on_done so the
@@ -454,7 +454,7 @@ class StructuralScrollStrategy:
         non-table targets or any lookup failure."""
         from textual.widgets import DataTable
 
-        from fnd.tui.app import FNDMarkdownTableDT
+        from fnd.tui.widgets.markdown import FNDMarkdownTableDT
 
         if isinstance(target, DataTable):
             table = target
@@ -517,7 +517,7 @@ class StructuralScrollStrategy:
         ``Content`` and scroll to it directly. Bounded by the number
         of cells in the chunk's tables — no full descendant walk.
         """
-        from fnd.tui.app import FNDMarkdownTableDT
+        from fnd.tui.widgets.markdown import FNDMarkdownTableDT
 
         # W3 path: the inner is the FNDMarkdownTableDT itself (which
         # registered itself as first_match_block). Scroll the DataTable

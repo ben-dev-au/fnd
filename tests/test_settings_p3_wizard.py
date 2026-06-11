@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from fnd.tui import FNDApp
+from fnd.tui.indexer_service import IndexerService
 
 
 @pytest.fixture
@@ -191,8 +192,8 @@ async def test_save_writes_collection_and_reindexes(
     # which would push IndexerScreen on top. Stub it so we can assert on the
     # per-collection screen the wizard lands on.
     monkeypatch.setattr(
-        FNDApp,
-        "_reindex_with_warning_if_needed",
+        IndexerService,
+        "reindex_with_warning",
         lambda self, name, **kwargs: None,
     )
 

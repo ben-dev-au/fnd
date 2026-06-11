@@ -12,8 +12,8 @@ from __future__ import annotations
 import pytest
 from textual.app import App, ComposeResult
 
-from fnd.tui.app import FNDMarkdown, FNDMarkdownFence, FNDMarkdownParagraph
 from fnd.tui.syntax_theme import inline_code_spans
+from fnd.tui.widgets.markdown import FNDMarkdown, FNDMarkdownFence, FNDMarkdownParagraph
 
 
 class _Host(App[None]):

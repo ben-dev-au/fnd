@@ -54,9 +54,9 @@ async def test_preview_container_count_bounded_by_cache(
 
     from fnd.index import build_index
     from fnd.tui import FNDApp
-    from fnd.tui.app import PreviewContainer
+    from fnd.tui.widgets.preview_container import PreviewContainer
 
-    monkeypatch.setattr("fnd.tui.app._PREVIEW_CACHE_MAX_FILES", _TEST_LRU_CAP)
+    monkeypatch.setattr("fnd.tui.preview.tuning.PREVIEW_CACHE_MAX_FILES", _TEST_LRU_CAP)
     build_index(roots=[small_corpus], index_dir=tmp_index_dir, collection="default")
     app = FNDApp(index_dir=tmp_index_dir, initial_query="apple")
     # PreviewCache binds its default max_files at class-definition time;

@@ -20,6 +20,7 @@ from fnd.config import (
 )
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from fnd.tui.indexer_service import IndexerService
 from fnd.tui.settings_screen import (
     DeleteSourceScreen,
     SourceFormScreen,
@@ -96,8 +97,8 @@ async def test_delete_modal_confirm_removes_source_and_lands_above(
     # Wizards now route through _reindex_with_warning_if_needed so the
     # user sees the IndexerScreen; stub it to a no-op for this test.
     monkeypatch.setattr(
-        FNDApp,
-        "_reindex_with_warning_if_needed",
+        IndexerService,
+        "reindex_with_warning",
         lambda self, name, **kwargs: None,
     )
 

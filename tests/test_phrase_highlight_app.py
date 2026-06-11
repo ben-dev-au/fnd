@@ -9,7 +9,7 @@ elsewhere.
 from __future__ import annotations
 
 from fnd.matching import MatchSpec
-from fnd.tui.app import _build_match_spans
+from fnd.tui.widgets.markdown import _build_match_spans
 
 
 def test_phrase_span_built_for_phrase_line() -> None:

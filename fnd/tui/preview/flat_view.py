@@ -56,7 +56,9 @@ class FlatBufferView:
             if isinstance(w, Static) and w.id == "placeholder":
                 with contextlib.suppress(Exception):
                     w.remove()
-        buf = LineBufferPreview(wrap=True, show_match_markers=self._app._scrollbar_markers_enabled)
+        buf = LineBufferPreview(
+            wrap=True, show_match_markers=self._app._preview.scrollbar_markers_enabled
+        )
         buf.add_class("-hidden")
         pane.mount(buf)
         self.shared_buffer = buf
@@ -149,7 +151,7 @@ class FlatBufferView:
         screen at a time."""
         from fnd.tui import _perf
 
-        self._app._clear_pane_placeholder()
+        self._app._preview.clear_pane_placeholder()
         for child in self._app.query(PreviewContainer):
             child.add_class("-hidden")
         for child in self._app.query(LineBufferPreview):
@@ -158,11 +160,11 @@ class FlatBufferView:
             else:
                 child.add_class("-hidden")
         self.active_buffer = buf
-        self._app._active_preview = None
+        self._app._preview.active = None
         # Reset the structural-path alias dicts so any straggler scroll
         # call can't accidentally try to scroll to a now-orphaned widget.
-        self._app._chunk_widgets = {}
-        self._app._match_targets = {}
+        self._app._preview.chunk_widgets = {}
+        self._app._preview.match_targets = {}
         _perf.mark(
             "click_to_display_end",
             parent_id=getattr(buf, "parent_doc_id", None),

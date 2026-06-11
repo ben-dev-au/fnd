@@ -27,7 +27,7 @@ from textual.widgets.tree import TreeNode
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from fnd.tui.app import ResultsTree
+from fnd.tui.widgets.results_tree import ResultsTree
 
 
 @pytest.fixture

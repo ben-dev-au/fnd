@@ -196,8 +196,8 @@ async def test_filters_persist_across_restart(
         await pilot.pause()
     # Fresh app reads the same state file (autouse fixture isolates path).
     app2 = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
-    assert app2._filter_kinds == ["pdf"]
-    assert app2._filter_date == "week"
+    assert app2._scope.filter_kinds == ["pdf"]
+    assert app2._scope.filter_date == "week"
 
 
 @pytest.mark.asyncio

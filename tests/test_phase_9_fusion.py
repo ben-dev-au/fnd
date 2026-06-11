@@ -363,7 +363,7 @@ def test_fusion_search_pass_index_2_for_synonym_primary(
 def test_format_hit_label_shows_phrase_glyph_for_pass_index_3() -> None:
     """The fusion phrase pass gets its own glyph (e.g. ❝) so the TUI tree
     visually distinguishes phrase-led hits from lex/fuzzy/synonym ones."""
-    from fnd.tui.app import _format_hit_label
+    from fnd.tui.results_labels import _format_hit_label
 
     base = Hit(
         score=1.23,

@@ -25,10 +25,7 @@ from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.render import HIGHLIGHT_STYLE
 from fnd.tui import FNDApp
-from fnd.tui.app import (
-    FNDMarkdown,
-    FNDMarkdownParagraph,
-)
+from fnd.tui.widgets.markdown import FNDMarkdown, FNDMarkdownParagraph
 from tests._pilot_wait import settle, wait_until
 
 

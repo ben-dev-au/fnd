@@ -123,9 +123,9 @@ class SearchController:
         if self._app._config is None:
             return RankingProfile()
         name = "default"
-        if len(self._app._collections) == 1:
+        if len(self._app._scope.collections) == 1:
             try:
-                col = self._app._config.collection(self._app._collections[0])
+                col = self._app._config.collection(self._app._scope.collections[0])
                 name = col.ranking_profile or "default"
             except KeyError:
                 name = "default"
@@ -146,7 +146,7 @@ class SearchController:
         # lands on the same (parent, seq) as the last one — release the
         # in-flight coalescing latch so this query's dispatch isn't
         # mistaken for a redundant same-tick duplicate of the previous.
-        self._app._inflight_preview_target = None
+        self._app._preview.inflight_target = None
         from fnd.filter_dsl import FilterError
         from fnd.query_errors import QueryError
         from fnd.query_plan import QueryPlan
@@ -158,7 +158,7 @@ class SearchController:
         except QueryError as e:
             self._show_query_notice(e)
             self.groups = []
-            self._app._refresh_results_tree()
+            self._app._results.refresh()
             return
         self._clear_query_notice()
         lexical = plan.lexical
@@ -185,18 +185,18 @@ class SearchController:
         # phrase (which Tantivy would parse as a literal phrase
         # ``kind:md glimmer`` rather than a field-restricted query).
         filter_clauses: list[str] = []
-        if self._app._filter_kinds:
-            if len(self._app._filter_kinds) == 1:
-                filter_clauses.append(f"kind:{self._app._filter_kinds[0]}")
+        if self._app._scope.filter_kinds:
+            if len(self._app._scope.filter_kinds) == 1:
+                filter_clauses.append(f"kind:{self._app._scope.filter_kinds[0]}")
             else:
-                filter_clauses.append(f"kind:({' '.join(sorted(self._app._filter_kinds))})")
-        if self._app._filter_date and self._app._filter_date != "any":
-            filter_clauses.append(f"mtime:{self._app._filter_date}")
-        if len(self._app._collections) >= 2:
-            filter_clauses.append(f"c:{','.join(self._app._collections)}")
+                filter_clauses.append(f"kind:({' '.join(sorted(self._app._scope.filter_kinds))})")
+        if self._app._scope.filter_date and self._app._scope.filter_date != "any":
+            filter_clauses.append(f"mtime:{self._app._scope.filter_date}")
+        if len(self._app._scope.collections) >= 2:
+            filter_clauses.append(f"c:{','.join(self._app._scope.collections)}")
             single_col = None
         else:
-            single_col = self._app._collections[0] if self._app._collections else None
+            single_col = self._app._scope.collections[0] if self._app._scope.collections else None
         filter_prefix = " ".join(filter_clauses)
         cfg_defaults = self._app._config.defaults if self._app._config else None
         sections_cap = cfg_defaults.sections_per_file_max if cfg_defaults else 200
@@ -210,12 +210,12 @@ class SearchController:
                 sections_score_threshold=sections_threshold,
                 collection=single_col,
                 metadata_filter=metadata_filter,
-                active_sources=list(self._app._active_sources) or None,
+                active_sources=list(self._app._scope.active_sources) or None,
             )
         except (QueryError, FilterError) as e:
             self._show_query_notice(e)
             self.groups = []
-            self._app._refresh_results_tree()
+            self._app._results.refresh()
             return
         self._clear_query_notice()
         # New query → invalidate BOTH caches:
@@ -227,35 +227,35 @@ class SearchController:
         # the DOM so the next preview load starts from a clean slate.
         import contextlib
 
-        self._app._chunk_cache.clear()
+        self._app._preview.chunk_cache.clear()
         # Bundles bake highlight spans from the previous query, so they
         # go stale at the same moment the chunk cache does.
-        self._app._prebuilt_cache.clear()
-        self._app._cancel_preview_mount_task()
-        self._app._cancel_lazy_mount_task()
-        evicted = self._app._preview_cache.clear()
+        self._app._preview.prebuilt_cache.clear()
+        self._app._preview.cancel_mount_task()
+        self._app._lazy.cancel()
+        evicted = self._app._preview.preview_cache.clear()
         for old in evicted:
             with contextlib.suppress(Exception):
                 old.remove()
         # Also drop the currently-active container if any (it was
         # already evicted above if it was in cache; otherwise it's a
         # small file that wasn't cached and we still need to clear).
-        if self._app._active_preview is not None and self._app._active_preview.parent is not None:
+        if self._app._preview.active is not None and self._app._preview.active.parent is not None:
             with contextlib.suppress(Exception):
-                self._app._active_preview.remove()
-        self._app._active_preview = None
+                self._app._preview.active.remove()
+        self._app._preview.active = None
         # Highlights baked into every cached doc are stale on query change.
-        self._app._flat_buffer_cache.clear()
-        self._app._reset_shared_flat_buffer()
-        self._app._chunk_widgets = {}
-        self._app._match_targets = {}
-        self._app._preview_parent_id = None
-        self._app._hide_progress_bar()
-        self._app._refresh_results_tree()
+        self._app._flat.cache.clear()
+        self._app._flat.reset()
+        self._app._preview.chunk_widgets = {}
+        self._app._preview.match_targets = {}
+        self._app._preview.parent_id = None
+        self._app._preview.hide_progress_bar()
+        self._app._results.refresh()
         # Defer prefetch start so the top result's user-side render gets the
         # main thread to itself for the first ~half-second. Without the
         # delay, 10 parallel prefetch mount tasks starve the auto-load.
-        self._app.set_timer(0.5, self._app._prefetch_top_results, name="prefetch-defer")
+        self._app.set_timer(0.5, self._app._prefetch.prefetch_top_results, name="prefetch-defer")
 
     def _show_query_notice(self, err: Exception) -> None:
         """Render a calm, practical line below the query bar for a malformed
@@ -356,7 +356,7 @@ class SearchController:
             "Highlights " + ("on" if self.highlights_enabled else "off"),
             timeout=1.5,
         )
-        self._app._rerender_current_preview()
+        self._app._preview.rerender_current()
 
     def toggle_fuzzy(self) -> None:
         """Flip ``defaults.fuzzy_enabled`` in the config TOML and re-run
@@ -396,26 +396,26 @@ class SearchController:
         import contextlib
 
         self.groups = []
-        self._app._chunk_cache.clear()
-        self._app._prebuilt_cache.clear()
-        self._app._cancel_preview_mount_task()
-        self._app._cancel_lazy_mount_task()
-        self._app._cancel_pending_preview_load()
-        evicted = self._app._preview_cache.clear()
+        self._app._preview.chunk_cache.clear()
+        self._app._preview.prebuilt_cache.clear()
+        self._app._preview.cancel_mount_task()
+        self._app._lazy.cancel()
+        self._app._preview.cancel_pending_load()
+        evicted = self._app._preview.preview_cache.clear()
         for old in evicted:
             with contextlib.suppress(Exception):
                 old.remove()
-        if self._app._active_preview is not None and self._app._active_preview.parent is not None:
+        if self._app._preview.active is not None and self._app._preview.active.parent is not None:
             with contextlib.suppress(Exception):
-                self._app._active_preview.remove()
-        self._app._active_preview = None
-        self._app._flat_buffer_cache.clear()
-        self._app._reset_shared_flat_buffer()
-        self._app._chunk_widgets = {}
-        self._app._match_targets = {}
-        self._app._preview_parent_id = None
-        self._app._hide_progress_bar()
+                self._app._preview.active.remove()
+        self._app._preview.active = None
+        self._app._flat.cache.clear()
+        self._app._flat.reset()
+        self._app._preview.chunk_widgets = {}
+        self._app._preview.match_targets = {}
+        self._app._preview.parent_id = None
+        self._app._preview.hide_progress_bar()
         # Rebuild the results tree (now empty). The empty-groups branch
         # in ``_refresh_results_tree`` skips ``tree.focus()``, so focus
         # stays in the panel the user is currently driving.
-        self._app._refresh_results_tree()
+        self._app._results.refresh()

@@ -299,8 +299,8 @@ class ScopeController:
         self.refresh_filters_panel()
         self._app._refresh_status()
         self.persist()
-        if self._app._current_query:
-            self._app._run_query(self._app._current_query)
+        if self._app._search.current_query:
+            self._app._search.run(self._app._search.current_query)
 
     def on_collections_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
         """Enter on a collection node toggles the whole collection's
@@ -394,7 +394,7 @@ class ScopeController:
                     self.collections.append(parent_name)
         else:
             return
-        self._app._ranking_profile = self._app._resolve_profile()
+        self._app._search.ranking_profile = self._app._search.resolve_profile()
         # In-place marker swap on the toggled node (+ siblings whose
         # markers depend on the same source state) instead of
         # ``refresh_collections_panel()``, which calls ``tree.clear()``
@@ -411,8 +411,8 @@ class ScopeController:
         # the next Enter in the query bar re-runs against the new scope;
         # keep _current_query so the user's last query is recallable in
         # the input.
-        if self._app._current_query and self._app._groups:
-            self._app._clear_query_results()
+        if self._app._search.current_query and self._app._search.groups:
+            self._app._search.clear_results()
 
     def _update_collections_panel_node(self, node: Any) -> None:
         """Swap the marker on a toggled node + cascade to dependent rows.

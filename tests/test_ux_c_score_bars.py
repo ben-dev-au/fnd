@@ -20,7 +20,7 @@ from textual.widgets import Tree
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from fnd.tui.app import _score_bar
+from fnd.tui.results_labels import _score_bar
 
 
 def test_score_bar_full_at_max() -> None:

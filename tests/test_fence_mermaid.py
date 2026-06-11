@@ -13,7 +13,7 @@ import pytest
 from textual.app import App, ComposeResult
 
 from fnd.matching import MatchSpec
-from fnd.tui.app import FNDMarkdown, FNDMarkdownFence
+from fnd.tui.widgets.markdown import FNDMarkdown, FNDMarkdownFence
 
 FLOW = "```mermaid\nflowchart TD\n    A[Start] --> B[End]\n```"
 

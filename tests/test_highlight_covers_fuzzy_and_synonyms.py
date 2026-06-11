@@ -23,7 +23,7 @@ from fnd.index import build_index
 from fnd.matching import MatchSpec, word_matches
 from fnd.synonyms import SynonymTable
 from fnd.tui import FNDApp
-from fnd.tui.app import FNDMarkdown
+from fnd.tui.widgets.markdown import FNDMarkdown
 
 # ── Unit: MatchSpec covers all three pass semantics ──────────────────
 

@@ -379,7 +379,7 @@ class IndexerService:
                     self._app.notify, f"Reindex failed: {e}", severity="error"
                 )
                 return
-            self._app.call_from_thread(self._app._on_reindex_complete)
+            self._app.call_from_thread(self._app._indexer.on_reindex_complete)
             self._app.call_from_thread(
                 self._app.notify,
                 f"Indexed {n} chunks for {name}.",
@@ -400,8 +400,8 @@ class IndexerService:
         see ghost rows from the old gen.
         """
         try:
-            self._app._searcher = Searcher(index_dir=self._app._index_dir)
+            self._app._search.searcher = Searcher(index_dir=self._app._index_dir)
         except (FileNotFoundError, RuntimeError, ValueError):
-            self._app._searcher = None
-        if self._app._current_query:
-            self._app._run_query(self._app._current_query)
+            self._app._search.searcher = None
+        if self._app._search.current_query:
+            self._app._search.run(self._app._search.current_query)

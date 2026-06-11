@@ -93,7 +93,7 @@ async def test_md_match_in_tall_table_lands_on_matched_row(
     top-of-table bug satisfies it. Asserts both the recorded coordinate
     points at the matched cell AND that cell's screen-y is in the pane
     viewport."""
-    from fnd.tui.app import FNDMarkdownTableDT
+    from fnd.tui.widgets.markdown import FNDMarkdownTableDT
 
     notes = tmp_path / "notes"
     notes.mkdir()
