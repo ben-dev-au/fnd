@@ -30,9 +30,9 @@ class ResultsView:
     def title(self) -> str:
         """Border title for the results pane — counts live next to the data
         they describe, not in a global status bar."""
-        n_files = len(self._app._groups)
-        n_sections = sum(len(g.hits) for g in self._app._groups)
-        if not self._app._groups:
+        n_files = len(self._app._search.groups)
+        n_sections = sum(len(g.hits) for g in self._app._search.groups)
+        if not self._app._search.groups:
             return "Results"
         return f"Results — {n_files} files / {n_sections} sections"
 
@@ -47,12 +47,12 @@ class ResultsView:
         # Cancel any debounced preview load from the previous result
         # set — its parent_id may no longer be a hit, and the new
         # cursor placement below will arm a fresh timer.
-        self._app._cancel_pending_preview_load()
+        self._app._preview.cancel_pending_load()
         tree = self._app.query_one("#results_pane", Tree)
         tree.clear()
-        max_score = max((g.top_score for g in self._app._groups), default=0.0)
+        max_score = max((g.top_score for g in self._app._search.groups), default=0.0)
         budget = self.file_label_budget(tree)
-        for i, g in enumerate(self._app._groups):
+        for i, g in enumerate(self._app._search.groups):
             file_node = tree.root.add(
                 _styled_parent_label(
                     _format_file_label(g, max_score=max_score, name_budget=budget)
@@ -66,7 +66,7 @@ class ResultsView:
                     data={"kind": "section", "hit": h},
                 )
         self._app._refresh_status()
-        if self._app._groups:
+        if self._app._search.groups:
             tree.focus()
             # Park cursor on the first hit so the preview already shows the match.
             top_file = tree.root.children[0]
@@ -74,9 +74,9 @@ class ResultsView:
                 tree.cursor_line = 1
             # Dispatch explicitly — NodeHighlighted is suppressed when
             # cursor_line lands on the same index as before.
-            top_group = self._app._groups[0]
+            top_group = self._app._search.groups[0]
             top_hit = top_group.hits[0] if top_group.hits else None
-            self._app._schedule_preview_load(
+            self._app._preview.schedule_load(
                 top_group.parent_id,
                 top_hit.chunk_seq if top_hit else 0,
             )
@@ -96,7 +96,7 @@ class ResultsView:
         except Exception:
             return
         budget = self.file_label_budget(tree)
-        max_score = max((g.top_score for g in self._app._groups), default=0.0)
+        max_score = max((g.top_score for g in self._app._search.groups), default=0.0)
         for node in tree.root.children:
             data = node.data
             if isinstance(data, dict) and data.get("kind") == "file":

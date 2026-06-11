@@ -11,7 +11,7 @@ from textual.widgets import Tree
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from fnd.tui.app import _elide_middle_keep_suffix
+from fnd.tui.results_labels import _elide_middle_keep_suffix
 
 # ── Pure helper ──────────────────────────────────────────────────────
 

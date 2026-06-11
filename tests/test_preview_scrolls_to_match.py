@@ -244,7 +244,7 @@ async def test_md_preview_scrolls_to_matched_row_inside_tall_table(
     term, and its on-screen position is inside the preview viewport."""
     from textual.widgets import DataTable
 
-    from fnd.tui.app import FNDMarkdownTableDT
+    from fnd.tui.widgets.markdown import FNDMarkdownTableDT
 
     notes = tmp_path / "notes"
     notes.mkdir()

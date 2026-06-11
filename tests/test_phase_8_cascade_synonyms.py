@@ -233,7 +233,7 @@ def test_hit_pass_index_default_is_zero() -> None:
 def test_format_hit_label_shows_per_pass_glyph() -> None:
     """The TUI tree label adds a glyph for fuzzy / synonym hits but stays
     quiet for the exact pass (the common case)."""
-    from fnd.tui.app import _format_hit_label
+    from fnd.tui.results_labels import _format_hit_label
 
     def _make(pass_index: int) -> Hit:
         return Hit(

@@ -249,9 +249,9 @@ class IndexerScreen(ModalScreen[None]):
         the next collection. Reads the new collection name + chain
         index from the FNDApp."""
         app = self._fnd_app()
-        new_name = getattr(app, "_indexer_collection", None) or self._collection
-        chain_pending = getattr(app, "_indexer_chain_remaining", None) or []
-        chain_total = getattr(app, "_indexer_chain_total", None) or self._chain_total
+        new_name = getattr(app._indexer, "collection", None) or self._collection
+        chain_pending = getattr(app._indexer, "chain_remaining", None) or []
+        chain_total = getattr(app._indexer, "chain_total", None) or self._chain_total
         chain_index = max(1, chain_total - len(chain_pending))
         self._collection = new_name
         self._chain_total = chain_total
@@ -293,7 +293,7 @@ class IndexerScreen(ModalScreen[None]):
 
     def _apply_latest_state(self) -> None:
         app = self._fnd_app()
-        state = app._indexer_state
+        state = app._indexer.state
         if state is None:
             return
         self._apply_state_snapshot(state)
@@ -307,11 +307,11 @@ class IndexerScreen(ModalScreen[None]):
         away after the run has finished - the recorded elapsed_s from
         the done event is the truthful run duration."""
         app = self._fnd_app()
-        started_at = app._indexer_started_at
+        started_at = app._indexer.started_at
         if not started_at:
             return
         if self._chain_finished(app):
-            ev = app._indexer_last_event
+            ev = app._indexer.last_event
             if ev is not None and getattr(ev, "kind", "") in ("done", "cancelled"):
                 self._render_timing_from_event(ev)
             # Clear the per-file Pages bar / label - no file is in
@@ -321,7 +321,7 @@ class IndexerScreen(ModalScreen[None]):
                 self.query_one("#indexer_pages_label", Static).add_class("hidden")
                 self.query_one("#indexer_pages_progress", ProgressBar).add_class("hidden")
             return
-        ev = app._indexer_last_event
+        ev = app._indexer.last_event
         elapsed_now = _live_elapsed_seconds(started_at)
         if ev is not None:
             elapsed_now = max(elapsed_now, getattr(ev, "elapsed_s", 0.0))
@@ -337,12 +337,12 @@ class IndexerScreen(ModalScreen[None]):
         a PDF is mid-extraction."""
         from fnd.tui import live_progress
 
-        ev = app._indexer_last_event
+        ev = app._indexer.last_event
         current_path = (
             getattr(ev, "current_file", "")
             if ev is not None
-            else app._indexer_state.current_file
-            if app._indexer_state is not None
+            else app._indexer.state.current_file
+            if app._indexer.state is not None
             else ""
         )
         stuck_suffix = _stuck_suffix()
@@ -387,7 +387,7 @@ class IndexerScreen(ModalScreen[None]):
         (cancelled). Both states should freeze the live timer so the
         displayed elapsed reflects the truthful run duration, not how
         long the user left the modal open afterwards."""
-        ev = app._indexer_last_event
+        ev = app._indexer.last_event
         if ev is None:
             return False
         kind = getattr(ev, "kind", "")
@@ -395,8 +395,8 @@ class IndexerScreen(ModalScreen[None]):
             return True
         if kind != "done":
             return False
-        pending = getattr(app, "_indexer_chain_remaining", None) or []
-        callback_pending = getattr(app, "_indexer_chain_callback_pending", False)
+        pending = getattr(app._indexer, "chain_remaining", None) or []
+        callback_pending = getattr(app._indexer, "chain_callback_pending", False)
         return not pending and not callback_pending
 
     def _sync_action_options(self, app: FNDApp) -> None:
@@ -496,13 +496,13 @@ class IndexerScreen(ModalScreen[None]):
     async def _drain_events(self) -> None:
         """Keep draining while the chain has more work.
 
-        ``app._indexer_chain_remaining`` is populated by
+        ``app._indexer.chain_remaining`` is populated by
         ``UpdateAllConfirm`` with the collections still to process.
         On ``done`` we only exit when that list is empty; otherwise we
         keep listening so the next collection's events render in this
         same modal. ``cancelled`` always exits."""
         app = self._fnd_app()
-        queue = app._indexer_events
+        queue = app._indexer.events
         if queue is None:
             return
         try:
@@ -515,8 +515,8 @@ class IndexerScreen(ModalScreen[None]):
                 if ev.kind == "cancelled":
                     break
                 if ev.kind == "done":
-                    pending = getattr(app, "_indexer_chain_remaining", None) or []
-                    callback_pending = getattr(app, "_indexer_chain_callback_pending", False)
+                    pending = getattr(app._indexer, "chain_remaining", None) or []
+                    callback_pending = getattr(app._indexer, "chain_callback_pending", False)
                     if not pending and not callback_pending:
                         break
                     continue
@@ -638,7 +638,7 @@ class IndexerScreen(ModalScreen[None]):
         except Exception:
             return
         app = self._fnd_app()
-        history = getattr(app, "_indexer_chain_history", None) or []
+        history = getattr(app._indexer, "chain_history", None) or []
         if not history:
             tree.add_class("hidden")
             tree.root.remove_children()
@@ -670,8 +670,8 @@ class IndexerScreen(ModalScreen[None]):
 
     async def action_cancel(self) -> None:
         app = self._fnd_app()
-        if app._indexer_cancel is not None:
-            app._indexer_cancel.set()
+        if app._indexer.cancel is not None:
+            app._indexer.cancel.set()
         # Setting the event alone isn't enough: the runner only checks
         # cancel.is_set() at file boundaries. A 10-minute PDF in
         # flight means Cancel sits unresponsive for ten minutes. Set
@@ -740,7 +740,7 @@ class IndexerScreen(ModalScreen[None]):
         also resets the chain-history snapshot so the next Update-all
         starts with a clean slate."""
         app = self._fnd_app()
-        app._indexer_chain_history = []  # type: ignore[attr-defined]
+        app._indexer.chain_history = []  # type: ignore[attr-defined]
         self.dismiss(None)
 
     # ---- OptionList action dispatch ----
@@ -885,7 +885,7 @@ async def drive_indexer(
     """Owns the async indexer for the app's lifetime of this run.
 
     Pushes each ProgressEvent onto ``events`` (the modal drains them)
-    and also writes the latest snapshot to ``app._indexer_state`` so
+    and also writes the latest snapshot to ``app._indexer.state`` so
     the footer indicator + a re-opened modal can read current state
     without subscribing to the queue mid-stream.
 
@@ -912,10 +912,10 @@ async def drive_indexer(
     try:
         async for ev in gen:
             snap = _event_to_state(
-                ev, collection=collection, started_at_default=app._indexer_started_at
+                ev, collection=collection, started_at_default=app._indexer.started_at
             )
-            app._indexer_state = snap
-            app._indexer_last_event = ev
+            app._indexer.state = snap
+            app._indexer.last_event = ev
             with _SuppressFullQueueLoss():
                 events.put_nowait(ev)
             if ev.kind in ("done", "cancelled"):
@@ -925,7 +925,7 @@ async def drive_indexer(
         await gen.aclose()  # type: ignore[attr-defined]
 
     if final_event is not None and final_event.kind == "done":
-        history: list[Any] = getattr(app, "_indexer_chain_history", None) or []
+        history: list[Any] = getattr(app._indexer, "chain_history", None) or []
         history.append(
             ChainStepSummary(
                 collection=collection,
@@ -940,25 +940,25 @@ async def drive_indexer(
                 elapsed_s=final_event.elapsed_s,
             )
         )
-        app._indexer_chain_history = history  # type: ignore[attr-defined]
+        app._indexer.chain_history = history  # type: ignore[attr-defined]
 
     # A superseded run — a newer explicit run bumped the generation while
     # this one was winding down (e.g. cancel-then-Rebuild-all) — must not
     # touch the shared chain state, or its late teardown would clobber the
     # queue the newer run just set up. The newer run owns the chain now.
-    if getattr(app, "_indexer_run_seq", run_seq) != run_seq:
+    if getattr(app._indexer, "run_seq", run_seq) != run_seq:
         return
 
-    pending: list[str] = getattr(app, "_indexer_chain_remaining", None) or []
+    pending: list[str] = getattr(app._indexer, "chain_remaining", None) or []
     if pending and not cancel.is_set():
         next_collection = pending.pop(0)
-        app._indexer_chain_remaining = pending  # type: ignore[attr-defined]
-        app._indexer_chain_callback_pending = True  # type: ignore[attr-defined]
+        app._indexer.chain_remaining = pending  # type: ignore[attr-defined]
+        app._indexer.chain_callback_pending = True  # type: ignore[attr-defined]
         app.call_later(_start_next_in_chain, app, next_collection)
     else:
-        app._indexer_chain_remaining = []  # type: ignore[attr-defined]
-        app._indexer_chain_total = 1  # type: ignore[attr-defined]
-        app._indexer_chain_callback_pending = False  # type: ignore[attr-defined]
+        app._indexer.chain_remaining = []  # type: ignore[attr-defined]
+        app._indexer.chain_total = 1  # type: ignore[attr-defined]
+        app._indexer.chain_callback_pending = False  # type: ignore[attr-defined]
         # No auto-push of a separate summary screen at chain end - the
         # in-modal Done tree carries the same data inline and the
         # user explicitly didn't want a screen swap after indexing.
@@ -970,7 +970,7 @@ async def drive_indexer(
         # re-run the active query so newly-indexed files show up without
         # the user retyping. _run_query also reloads per-query as a
         # backstop, but this updates already-displayed results in place.
-        app.call_later(app._on_reindex_complete)
+        app.call_later(app._indexer.on_reindex_complete)
 
 
 def _start_next_in_chain(app: FNDApp, collection: str) -> None:
@@ -979,17 +979,17 @@ def _start_next_in_chain(app: FNDApp, collection: str) -> None:
     pyright can type-check the call site."""
     from fnd.config import load as _load_config
 
-    app._indexer_chain_callback_pending = False  # type: ignore[attr-defined]
+    app._indexer.chain_callback_pending = False  # type: ignore[attr-defined]
     in_memory_cfg = getattr(app, "_config", None)
     cfg = in_memory_cfg if in_memory_cfg is not None else _load_config()
     if collection not in cfg.collections:
         return
     col_cfg = cfg.collections[collection]
-    app._indexer_task = None  # type: ignore[attr-defined] # release
-    override = getattr(app, "_indexer_texturise_override", None)
-    skip_unchanged = getattr(app, "_indexer_skip_unchanged", True)
-    force_fresh = getattr(app, "_indexer_force_fresh", False)
-    rebuild = getattr(app, "_indexer_rebuild", False)
+    app._indexer.task = None  # type: ignore[attr-defined] # release
+    override = getattr(app._indexer, "texturise_override", None)
+    skip_unchanged = getattr(app._indexer, "skip_unchanged", True)
+    force_fresh = getattr(app._indexer, "force_fresh", False)
+    rebuild = getattr(app._indexer, "rebuild", False)
     app.start_indexer(
         collection=collection,
         config=col_cfg,

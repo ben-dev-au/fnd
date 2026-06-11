@@ -314,7 +314,7 @@ async def test_switching_md_to_pdf_hides_structural_container(
             await safe_pause(pilot)
 
         pane = app.query_one("#preview_pane")
-        from fnd.tui.app import PreviewContainer
+        from fnd.tui.widgets.preview_container import PreviewContainer
 
         # Settle until exactly one pipeline owns the visible widget.
         await wait_until(

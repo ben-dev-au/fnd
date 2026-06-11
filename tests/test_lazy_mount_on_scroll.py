@@ -4,7 +4,7 @@ scrolls toward the boundary of the currently-mounted region.
 Before this path existed, the structural preview was locked to a fixed
 focus ± _VISIBLE_FIRST_* window; scrolling past it just hit a wall. Now
 ``MatchAwareScroll.watch_scroll_y`` notifies the app and the app mounts
-the next ``_LAZY_MOUNT_BATCH`` chunks in the scroll direction.
+the next ``LAZY_MOUNT_BATCH`` chunks in the scroll direction.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from textual.pilot import Pilot
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from fnd.tui.app import _LAZY_MOUNT_BATCH
+from fnd.tui.preview.tuning import LAZY_MOUNT_BATCH
 from tests._pilot_wait import settle, wait_until
 
 
@@ -76,7 +76,7 @@ async def test_scroll_below_boundary_triggers_lazy_mount(
     windowed — scroll-driven lazy-mount is the path for files beyond the
     full-mount budget (monster docs); for in-budget files the eager fill
     has already mounted everything below."""
-    monkeypatch.setattr("fnd.tui.app._FULLMOUNT_CHUNK_BUDGET", 0)
+    monkeypatch.setattr("fnd.tui.preview.tuning.FULLMOUNT_CHUNK_BUDGET", 0)
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -121,7 +121,7 @@ async def test_scroll_below_boundary_triggers_lazy_mount(
         mounted_after = set(container.mounted_indices)
         new_below = {i for i in mounted_after - mounted_before if i > max_before}
         # Batch size is bounded — not unbounded fill.
-        assert len(new_below) <= _LAZY_MOUNT_BATCH * 4
+        assert len(new_below) <= LAZY_MOUNT_BATCH * 4
 
 
 @pytest.mark.asyncio
@@ -139,7 +139,7 @@ async def test_lazy_mount_fires_after_settle_without_explicit_release(
     Full-mount disabled so the file stays windowed (the >budget monster-file
     path); in-budget files eagerly fill below, leaving nothing to lazy-mount.
     """
-    monkeypatch.setattr("fnd.tui.app._FULLMOUNT_CHUNK_BUDGET", 0)
+    monkeypatch.setattr("fnd.tui.preview.tuning.FULLMOUNT_CHUNK_BUDGET", 0)
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from textual.containers import VerticalScroll
 
 from fnd.tui.line_buffer import build_rendered_document
+from fnd.tui.preview import tuning
 from fnd.tui.preview_dispatcher import choose_preview_mode
 from fnd.tui.widgets.markdown import FNDMarkdown
 from fnd.tui.widgets.preview_container import PreviewContainer
@@ -90,7 +91,7 @@ class PrefetchEngine:
                 drained += 1
             if drained:
                 self._app._diag_log(f"prefetch_top drained_stale_jobs={drained}")
-        if self._app._searcher is None or not self._app._groups:
+        if self._app._search.searcher is None or not self._app._search.groups:
             return
         if self._app._config is not None:
             n = self._app._config.defaults.preview_prefetch_count
@@ -106,7 +107,11 @@ class PrefetchEngine:
         start_idx = 0
         if anchor_parent_id is not None:
             anchor_idx = next(
-                (i for i, g in enumerate(self._app._groups) if g.parent_id == anchor_parent_id),
+                (
+                    i
+                    for i, g in enumerate(self._app._search.groups)
+                    if g.parent_id == anchor_parent_id
+                ),
                 -1,
             )
             if anchor_idx >= 0:
@@ -115,8 +120,8 @@ class PrefetchEngine:
         targets: list[tuple[str, int]] = []
         seen: set[str] = set()
         already_cached: list[str] = []
-        query_sig_for_filter = self._app._current_query_signature()
-        for g in self._app._groups[start_idx:]:
+        query_sig_for_filter = self._app._search.query_signature()
+        for g in self._app._search.groups[start_idx:]:
             if g.parent_id in seen:
                 continue
             seen.add(g.parent_id)
@@ -124,11 +129,13 @@ class PrefetchEngine:
             # a file whose chunks are cached but whose mount got drained
             # by a prior cursor move must be re-queued. Also skip if it's
             # the active preview — that one's owned by the user-side path.
-            in_preview = self._app._preview_cache.get(g.parent_id, query_sig_for_filter) is not None
+            in_preview = (
+                self._app._preview.preview_cache.get(g.parent_id, query_sig_for_filter) is not None
+            )
             is_active = (
-                self._app._active_preview is not None
-                and self._app._active_preview.parent_doc_id == g.parent_id
-                and self._app._active_preview.query_signature == query_sig_for_filter
+                self._app._preview.active is not None
+                and self._app._preview.active.parent_doc_id == g.parent_id
+                and self._app._preview.active.query_signature == query_sig_for_filter
             )
             if in_preview or is_active:
                 already_cached.append(g.parent_id[:8])
@@ -145,7 +152,7 @@ class PrefetchEngine:
         if not targets:
             return
 
-        searcher = self._app._searcher
+        searcher = self._app._search.searcher
         decode_workers = (
             self._app._config.defaults.preview_decode_workers
             if self._app._config is not None
@@ -162,7 +169,7 @@ class PrefetchEngine:
             estimated_wrap_width = max(20, measured) if measured > 0 else 0
         except Exception:
             estimated_wrap_width = 0
-        query_sig = self._app._current_query_signature()
+        query_sig = self._app._search.query_signature()
         app = self._app
 
         def _prefetch_one(parent_id: str, focus_seq: int) -> None:
@@ -171,7 +178,7 @@ class PrefetchEngine:
             t0 = _time.perf_counter()
             # Reuse cached chunk data if present — only the mount got dropped,
             # not the decode. Avoids re-running PDF/docx extraction.
-            cached_chunks = app._chunk_cache.get(parent_id)
+            cached_chunks = app._preview.chunk_cache.get(parent_id)
             if cached_chunks is not None:
                 fetched = cached_chunks
                 decode_ms = 0.0
@@ -187,13 +194,13 @@ class PrefetchEngine:
                 decode_ms = (_time.perf_counter() - t0) * 1000.0
             # Stale-query guard: if the user has moved on, drop the
             # work without scheduling any main-thread sinks.
-            if query_sig != app._current_query_signature():
+            if query_sig != app._search.query_signature():
                 app.call_from_thread(
                     app._diag_log,
                     f"prefetch_one stale parent={parent_id[:8]} decode_ms={decode_ms:.0f}",
                 )
                 return
-            app.call_from_thread(app._record_prefetched_chunks, parent_id, fetched)
+            app.call_from_thread(app._prefetch.record_chunks, parent_id, fetched)
             if not fetched:
                 return
             mode = choose_preview_mode(fetched)
@@ -204,16 +211,16 @@ class PrefetchEngine:
             )
             if mode == "flat":
                 try:
-                    fv = app._build_file_view_for_chunks(fetched)
+                    fv = app._flat.build_file_view(fetched)
                     wrap_width = estimated_wrap_width if estimated_wrap_width > 0 else 0
                     doc = build_rendered_document(fv, wrap_width=wrap_width)
                 except Exception:
                     return
-                app.call_from_thread(app._record_prefetched_bundle, parent_id, query_sig, doc)
-                app.call_from_thread(app._prefetch_mount_flat, parent_id, query_sig, doc, focus_seq)
+                app.call_from_thread(app._prefetch.record_bundle, parent_id, query_sig, doc)
+                app.call_from_thread(app._prefetch.mount_flat, parent_id, query_sig, doc, focus_seq)
             else:
                 app.call_from_thread(
-                    app._prefetch_mount_structural,
+                    app._prefetch.mount_structural,
                     parent_id,
                     query_sig,
                     list(fetched),
@@ -229,7 +236,7 @@ class PrefetchEngine:
                 for f in as_completed(futures):
                     # Drop everything on query change — _run_query has cleared
                     # caches and any in-flight work here is stale.
-                    if query_sig != app._current_query_signature():
+                    if query_sig != app._search.query_signature():
                         for other in futures:
                             other.cancel()
                         return
@@ -248,8 +255,8 @@ class PrefetchEngine:
         """Main-thread sink for prefetch worker chunk results. Stored
         only if not already present so a concurrent user-initiated
         load (which would have richer state) wins."""
-        if parent_id not in self._app._chunk_cache:
-            self._app._chunk_cache[parent_id] = chunks
+        if parent_id not in self._app._preview.chunk_cache:
+            self._app._preview.chunk_cache[parent_id] = chunks
 
     def record_bundle(
         self,
@@ -258,9 +265,9 @@ class PrefetchEngine:
         doc: RenderedDocument,
     ) -> None:
         """Stash a worker-built bundle if the query is still current."""
-        if query_sig != self._app._current_query_signature():
+        if query_sig != self._app._search.query_signature():
             return
-        self._app._prebuilt_cache[(parent_id, query_sig)] = doc
+        self._app._preview.prebuilt_cache[(parent_id, query_sig)] = doc
 
     def mount_flat(
         self,
@@ -273,7 +280,7 @@ class PrefetchEngine:
         q = self.sink_queue
         if q is None:
             return
-        if query_sig != self._app._current_query_signature():
+        if query_sig != self._app._search.query_signature():
             return
 
         async def _job() -> None:
@@ -291,17 +298,15 @@ class PrefetchEngine:
         """Stash the prefetched RenderedDocument in the value cache. No mount —
         user activation installs into the shared widget on click."""
         _ = focus_chunk_seq  # focus is recomputed at install time
-        import fnd.tui.app as _app_mod
-
-        if query_sig != self._app._current_query_signature():
+        if query_sig != self._app._search.query_signature():
             return
         cache_key = (parent_id, query_sig)
-        if cache_key in self._app._flat_buffer_cache:
+        if cache_key in self._app._flat.cache:
             return
-        self._app._flat_buffer_cache[cache_key] = doc
-        self._app._flat_buffer_cache.move_to_end(cache_key)
-        while len(self._app._flat_buffer_cache) > _app_mod._PREVIEW_CACHE_MAX_FILES:
-            self._app._flat_buffer_cache.popitem(last=False)
+        self._app._flat.cache[cache_key] = doc
+        self._app._flat.cache.move_to_end(cache_key)
+        while len(self._app._flat.cache) > tuning.PREVIEW_CACHE_MAX_FILES:
+            self._app._flat.cache.popitem(last=False)
 
     def mount_structural(
         self,
@@ -324,7 +329,7 @@ class PrefetchEngine:
                 f"prefetch_mount_structural SKIPPED no-queue parent={parent_id[:8]}"
             )
             return
-        if query_sig != self._app._current_query_signature():
+        if query_sig != self._app._search.query_signature():
             self._app._diag_log(
                 f"prefetch_mount_structural SKIPPED stale-sig parent={parent_id[:8]}"
             )
@@ -346,20 +351,20 @@ class PrefetchEngine:
         chunks: list[FileChunk],
         focus_chunk_seq: int,
     ) -> None:
-        if query_sig != self._app._current_query_signature():
+        if query_sig != self._app._search.query_signature():
             self._app._diag_log(
                 f"prefetch_mount_structural_async SKIPPED stale-sig parent={parent_id[:8]}"
             )
             return
-        if self._app._preview_cache.get(parent_id, query_sig) is not None:
+        if self._app._preview.preview_cache.get(parent_id, query_sig) is not None:
             self._app._diag_log(
                 f"prefetch_mount_structural_async SKIPPED already-cached parent={parent_id[:8]}"
             )
             return
         if (
-            self._app._active_preview is not None
-            and self._app._active_preview.parent_doc_id == parent_id
-            and self._app._active_preview.query_signature == query_sig
+            self._app._preview.active is not None
+            and self._app._preview.active.parent_doc_id == parent_id
+            and self._app._preview.active.query_signature == query_sig
         ):
             self._app._diag_log(
                 f"prefetch_mount_structural_async SKIPPED already-active parent={parent_id[:8]}"
@@ -413,7 +418,6 @@ class PrefetchEngine:
         import asyncio
         import contextlib
 
-        import fnd.tui.app as _app_mod
         from fnd.tui import _perf
 
         focus_idx = next(
@@ -423,8 +427,8 @@ class PrefetchEngine:
         # Prefetch only mounts a tiny window around the focused chunk
         # so the DOM stays small across many cached files. User-side
         # resume expands on click via Phase 1b/2.
-        win_start = max(0, focus_idx - _app_mod._PREFETCH_MOUNT_RADIUS)
-        win_end = min(len(chunks), focus_idx + _app_mod._PREFETCH_MOUNT_RADIUS + 1)
+        win_start = max(0, focus_idx - tuning.PREFETCH_MOUNT_RADIUS)
+        win_end = min(len(chunks), focus_idx + tuning.PREFETCH_MOUNT_RADIUS + 1)
         _perf.mark(
             "prefetch_loop_start",
             parent_id=parent_id,
@@ -439,17 +443,17 @@ class PrefetchEngine:
         n_mounted = 0
         try:
             for i in range(win_start, win_end):
-                if query_sig != self._app._current_query_signature():
+                if query_sig != self._app._search.query_signature():
                     return
                 if i in container.mounted_indices:
                     continue
                 # Bail out the moment user-side mount lights up: prefetch is
                 # background warming, foreground always wins.
-                if self._app._user_mount_in_flight():
+                if self._app._preview.user_mount_in_flight():
                     return
                 try:
                     with _perf.span("prefetch_mount_one", idx=i):
-                        self._app._mount_chunk_into(container, chunks[i], i, chunks)
+                        self._app._preview.mount_chunk_into(container, chunks[i], i, chunks)
                     n_mounted += 1
                 except Exception:
                     continue
@@ -478,7 +482,9 @@ class PrefetchEngine:
                 f"is_complete={container.is_complete}"
             )
             if container.mounted_indices:
-                evicted = self._app._preview_cache.put(container, protect=self._app._active_preview)
+                evicted = self._app._preview.preview_cache.put(
+                    container, protect=self._app._preview.active
+                )
                 for old in evicted:
                     with contextlib.suppress(Exception):
                         old.remove()
@@ -504,7 +510,7 @@ class PrefetchEngine:
             self._app._diag_log(f"drainer JOB pulled qsize={q.qsize()}")
             wait_iters = 0
             # Cooperative wait — user-side mount always preempts.
-            while self._app._user_mount_in_flight():
+            while self._app._preview.user_mount_in_flight():
                 wait_iters += 1
                 await asyncio.sleep(0.05)
             if wait_iters > 0:

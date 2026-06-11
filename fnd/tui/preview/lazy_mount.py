@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from textual.containers import VerticalScroll
 from textual.widget import Widget
 
+from fnd.tui.preview import tuning
 from fnd.tui.widgets.markdown import FNDMarkdown
 
 if TYPE_CHECKING:
@@ -80,7 +81,7 @@ class LazyMounter:
         if (
             user_initiated
             and self._app._preview_scroll.is_armed
-            and not self._app._preview_scroll_reconciling
+            and not self._app._preview.reconciling
         ):
             self._app._preview_scroll.release()
         if self.check_timer is not None:
@@ -97,8 +98,6 @@ class LazyMounter:
         progressively, not just the chunks past the absolute max/min
         mounted index."""
         self.check_timer = None
-        import fnd.tui.app as _app_mod
-
         # Suppress lazy-mount only while a navigation is still settling (the
         # controller owns the position until its scroll commits). Once the
         # reveal lands the gate opens, so user scrolls by ANY means — keyboard
@@ -107,17 +106,17 @@ class LazyMounter:
         # and only release() (a focused user scroll) cleared it.
         if self._app._preview_scroll.is_settling:
             return
-        container = self._app._active_preview
+        container = self._app._preview.active
         if container is None:
             return
-        chunks = self._app._chunk_cache.get(container.parent_doc_id)
+        chunks = self._app._preview.chunk_cache.get(container.parent_doc_id)
         if not chunks or not container.mounted_indices:
             return
         if len(container.mounted_indices) >= len(chunks):
             return
         # Don't compete with the initial visible-first mount task; it
         # owns the window and will hand off once it settles.
-        if self._app._user_mount_in_flight():
+        if self._app._preview.user_mount_in_flight():
             return
         task = self.task
         if task is not None:
@@ -136,7 +135,7 @@ class LazyMounter:
         scroll_y = float(pane.scroll_y)
         viewport_h = float(pane.size.height)
         viewport_bottom = scroll_y + viewport_h
-        margin = float(_app_mod._LAZY_MOUNT_TRIGGER_MARGIN)
+        margin = float(tuning.LAZY_MOUNT_TRIGGER_MARGIN)
 
         # Snapshot mounted chunks' virtual-y ranges so we can find the
         # widgets covering viewport top + bottom in O(mounted) — small
@@ -201,7 +200,7 @@ class LazyMounter:
         start_idx: int,
         direction: str,
     ) -> None:
-        """Mount ``_app_mod._LAZY_MOUNT_BATCH`` chunks starting at ``start_idx``,
+        """Mount ``tuning.LAZY_MOUNT_BATCH`` chunks starting at ``start_idx``,
         moving in ``direction``.
 
         Below: append in document order; no scroll adjustment needed
@@ -221,17 +220,15 @@ class LazyMounter:
         import asyncio
         import contextlib
 
-        import fnd.tui.app as _app_mod
-
         if direction == "below":
-            end = min(start_idx + _app_mod._LAZY_MOUNT_BATCH, len(chunks))
+            end = min(start_idx + tuning.LAZY_MOUNT_BATCH, len(chunks))
             for i in range(start_idx, end):
-                if self._app._active_preview is not container:
+                if self._app._preview.active is not container:
                     return
                 if i in container.mounted_indices:
                     continue
                 try:
-                    self._app._mount_chunk_into(container, chunks[i], i, chunks)
+                    self._app._preview.mount_chunk_into(container, chunks[i], i, chunks)
                 except Exception:
                     continue
                 seq = chunks[i].chunk_seq
@@ -255,18 +252,18 @@ class LazyMounter:
         # wall. ``_await_preview_settled`` (Textual's message-drain) makes it
         # reliable. ``hidden`` MUST be revealed even on cancel, else display=False
         # widgets cache as blank rows ("section only shows the heading").
-        end = max(start_idx - _app_mod._LAZY_MOUNT_BATCH, -1)
+        end = max(start_idx - tuning.LAZY_MOUNT_BATCH, -1)
         hidden: list[Widget] = []
         anchor_seq = chunks[start_idx + 1].chunk_seq if start_idx + 1 < len(chunks) else None
         try:
             for i in range(start_idx, end, -1):
-                if self._app._active_preview is not container:
+                if self._app._preview.active is not container:
                     return
                 if i in container.mounted_indices:
                     continue
                 before_children = set(container.children)
                 try:
-                    self._app._mount_chunk_into(container, chunks[i], i, chunks)
+                    self._app._preview.mount_chunk_into(container, chunks[i], i, chunks)
                 except Exception:
                     continue
                 for w in container.children:
@@ -296,15 +293,15 @@ class LazyMounter:
             # prepended chunks extend the scrollable region UPWARD without moving
             # the user's view — continuous scroll instead of a wall.
             if anchor_w is not None and before_y is not None:
-                await self._app._await_preview_settled()
-                if self._app._active_preview is container:
+                await self._app._preview.await_settled()
+                if self._app._preview.active is container:
                     delta = anchor_w.virtual_region.y - before_y
                     if delta > 0:
-                        self._app.begin_reconcile_scroll()
+                        self._app._preview.begin_reconcile_scroll()
                         try:
                             pane.scroll_to(y=before_scroll + delta, animate=False, immediate=True)
                         finally:
-                            self._app.end_reconcile_scroll()
+                            self._app._preview.end_reconcile_scroll()
         finally:
             # Cancellation or unexpected return: anything still in
             # ``hidden`` would otherwise stay invisible on the cached

@@ -99,7 +99,7 @@ async def test_update_all_sets_chain_total_for_modal_title(tmp_path: Path) -> No
     original_start = app.start_indexer
 
     def _capture(*, collection: str, **kw: object) -> bool:
-        captured_totals.append(getattr(app, "_indexer_chain_total", 0))
+        captured_totals.append(getattr(app._indexer, "chain_total", 0))
         return original_start(collection=collection, **kw)  # type: ignore[arg-type]
 
     app.start_indexer = _capture  # type: ignore[method-assign]

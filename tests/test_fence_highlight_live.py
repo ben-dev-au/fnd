@@ -18,7 +18,7 @@ from textual.app import App, ComposeResult
 
 from fnd.matching import MatchSpec
 from fnd.render import HIGHLIGHT_STYLE
-from fnd.tui.app import FNDMarkdown, FNDMarkdownFence
+from fnd.tui.widgets.markdown import FNDMarkdown, FNDMarkdownFence
 
 
 class _Host(App[None]):

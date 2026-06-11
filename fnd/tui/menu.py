@@ -579,7 +579,7 @@ def _setting_writer(path: str) -> Callable[[FNDApp, Any], None]:
             value=value,
         )
         app._config = load()  # type: ignore[attr-defined]
-        app._ranking_profile = app._resolve_profile()  # type: ignore[attr-defined]
+        app._search.ranking_profile = app._search.resolve_profile()  # type: ignore[attr-defined]
         app._refresh_status()  # type: ignore[attr-defined]
 
     return _set
@@ -621,7 +621,7 @@ def _choices_ranking(app: FNDApp) -> list[ChoiceOption]:
 
 
 def _set_highlights(app: FNDApp, value: bool) -> None:
-    if app._highlights_enabled != value:  # type: ignore[attr-defined]
+    if app._search.highlights_enabled != value:  # type: ignore[attr-defined]
         app.action_toggle_highlights()
 
 
@@ -760,7 +760,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             label="Highlights",
             description="Search-term highlights in the preview pane.",
             kind=KIND_TOGGLE,
-            toggle_getter=lambda app: app._highlights_enabled,  # type: ignore[attr-defined]
+            toggle_getter=lambda app: app._search.highlights_enabled,  # type: ignore[attr-defined]
             toggle_setter=_set_highlights,
             keywords=("highlight",),
         ),
@@ -962,7 +962,7 @@ def _collection_summary(app: FNDApp, name: str) -> str:
         return ""
     coll = cfg.collections[name]
     n = len(coll.sources)
-    active = "●" if name in (app._collections or []) else "○"  # type: ignore[attr-defined]
+    active = "●" if name in (app._scope.collections or []) else "○"  # type: ignore[attr-defined]
     profile = getattr(coll, "ranking_profile", None) or "default"
     return f"{active} {n} source{'s' if n != 1 else ''} · ranking:{profile}"
 
@@ -1034,7 +1034,7 @@ def _make_reindex(name: str) -> Callable[[FNDApp], None]:
     def _run(app: FNDApp) -> None:
         # Route through the warning + IndexerScreen modal so the user
         # sees progress instead of a silent background task.
-        app._reindex_with_warning_if_needed(name)  # type: ignore[attr-defined]
+        app._indexer.reindex_with_warning(name)  # type: ignore[attr-defined]
 
     return _run
 
@@ -1045,7 +1045,7 @@ def _make_texturise_flat(name: str) -> Callable[[FNDApp], None]:
     one texturising pass per still-flat PDF in the collection."""
 
     def _run(app: FNDApp) -> None:
-        app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
+        app._indexer.reindex_with_warning(  # type: ignore[attr-defined]
             name, texturise_override=True
         )
 
@@ -1058,7 +1058,7 @@ def _make_rebuild(name: str) -> Callable[[FNDApp], None]:
     (cache bypassed). The deliberate, costly redo."""
 
     def _run(app: FNDApp) -> None:
-        app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
+        app._indexer.reindex_with_warning(  # type: ignore[attr-defined]
             name,
             texturise_override=True,
             skip_unchanged=False,
@@ -1389,7 +1389,7 @@ def _set_collection_ranking_profile(app: FNDApp, name: str, value: Any) -> None:
         value=value,
     )
     app._config = load()  # type: ignore[attr-defined]
-    app._ranking_profile = app._resolve_profile()  # type: ignore[attr-defined]
+    app._search.ranking_profile = app._search.resolve_profile()  # type: ignore[attr-defined]
     app._refresh_status()  # type: ignore[attr-defined]
 
 

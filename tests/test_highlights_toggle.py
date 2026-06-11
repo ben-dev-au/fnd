@@ -19,7 +19,7 @@ from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.render import HIGHLIGHT_STYLE
 from fnd.tui import FNDApp
-from fnd.tui.app import FNDMarkdown
+from fnd.tui.widgets.markdown import FNDMarkdown
 from tests._pilot_wait import safe_pause, safe_press, wait_until
 
 

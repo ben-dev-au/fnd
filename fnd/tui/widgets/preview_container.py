@@ -8,25 +8,13 @@ from typing import Any
 from textual.containers import Container
 from textual.widget import Widget
 
+from fnd.tui.preview import tuning
+
 __all__ = [
-    "_PREVIEW_CACHE_MAX_FILES",
-    "_PREVIEW_CACHE_MIN_CHUNKS",
     "PreviewCache",
     "PreviewContainer",
     "_HitWithQuery",
 ]
-
-# Preview widget cache. Repeat visits to a previously-loaded file
-# should be instant — keep the mounted widget tree alive in a per-file
-# Container; switching files is then a single class-toggle. LRU-bounded.
-# See docs/PREVIEW_DOM_PLAN.md for the planned rework that aims to make
-# this cap effectively unlimited via screen-per-file isolation.
-# Option A: only the active file stays mounted. Cached inactive containers
-# stayed in the pane and inflated every mount/settle (measured net-negative:
-# a "hit" rebuilt anyway since is_complete is never true in the windowed
-# model, while taxing the active path). 1 = no stale DOM behind the active file.
-_PREVIEW_CACHE_MAX_FILES = 1
-_PREVIEW_CACHE_MIN_CHUNKS = 1
 
 
 class PreviewContainer(Container):
@@ -110,7 +98,7 @@ class _HitWithQuery:
 class PreviewCache:
     """LRU cache of :class:`PreviewContainer`, keyed by
     ``(parent_doc_id, query_signature)``. Files with fewer than
-    :data:`_PREVIEW_CACHE_MIN_CHUNKS` chunks are NOT cached — they
+    :data:`tuning.PREVIEW_CACHE_MIN_CHUNKS` chunks are NOT cached — they
     mount fast enough that keeping the widget tree alive isn't worth
     the memory.
     """
@@ -118,8 +106,8 @@ class PreviewCache:
     def __init__(
         self,
         *,
-        max_files: int = _PREVIEW_CACHE_MAX_FILES,
-        min_chunks: int = _PREVIEW_CACHE_MIN_CHUNKS,
+        max_files: int = tuning.PREVIEW_CACHE_MAX_FILES,
+        min_chunks: int = tuning.PREVIEW_CACHE_MIN_CHUNKS,
     ) -> None:
         self._cache: OrderedDict[tuple[str, str], PreviewContainer] = OrderedDict()
         self.max_files = max_files

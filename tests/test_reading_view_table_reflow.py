@@ -21,7 +21,7 @@ from textual.widgets import DataTable
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from fnd.tui.app import _compute_table_col_widths
+from fnd.tui.widgets.markdown import _compute_table_col_widths
 from tests._pilot_wait import wait_until
 
 

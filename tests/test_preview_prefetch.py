@@ -183,7 +183,7 @@ async def test_prefetch_premounts_structural_container(multi_md_index: Path) -> 
     app = FNDApp(index_dir=multi_md_index, config=cfg, collection="notes")
     # Prefetch pre-mounts up to the cache size; the shipped default caps the
     # cache at 1 (a larger cache adds mount/arrange overhead without speeding
-    # revisits — see _PREVIEW_CACHE_MAX_FILES), with the decode still prefetched
+    # revisits — see PREVIEW_CACHE_MAX_FILES), with the decode still prefetched
     # for every target. Lift the cap here to exercise the multi-file pre-mount.
     app._preview.preview_cache.max_files = 8
     async with app.run_test() as pilot:
@@ -232,11 +232,11 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
     """Selecting a prefetched container completes mount up to the
     background-fill radius (regression for a prefetch/user-side mount
     race that stalled at the visible window — narrower than the radius).
-    With ``_BACKGROUND_FILL_RADIUS = 10`` Phase 2a/2b cap mount at
+    With ``BACKGROUND_FILL_RADIUS = 10`` Phase 2a/2b cap mount at
     ``focus +/- 10``; full-file completion would need a wider radius."""
     import asyncio
 
-    from fnd.tui.app import _BACKGROUND_FILL_RADIUS
+    from fnd.tui.preview.tuning import BACKGROUND_FILL_RADIUS
 
     cfg = Config(
         defaults=Defaults(preview_prefetch_count=10, preview_load_debounce_ms=0),
@@ -272,7 +272,7 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
                 ),
                 0,
             )
-            expected = _expected_coverage(ap.total_chunks, focus_idx, _BACKGROUND_FILL_RADIUS)
+            expected = _expected_coverage(ap.total_chunks, focus_idx, BACKGROUND_FILL_RADIUS)
             if len(ap.mounted_indices) >= expected:
                 break
         ap = app._preview.active
@@ -286,10 +286,10 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
             ),
             0,
         )
-        expected = _expected_coverage(ap.total_chunks, focus_idx, _BACKGROUND_FILL_RADIUS)
+        expected = _expected_coverage(ap.total_chunks, focus_idx, BACKGROUND_FILL_RADIUS)
         assert len(ap.mounted_indices) >= expected, (
             f"user-side mount stalled at {len(ap.mounted_indices)}/{ap.total_chunks} "
-            f"(expected at least {expected} from focus +/- {_BACKGROUND_FILL_RADIUS} at idx {focus_idx})"
+            f"(expected at least {expected} from focus +/- {BACKGROUND_FILL_RADIUS} at idx {focus_idx})"
         )
         pane = app.query_one("#preview_pane")
         placeholders = [w for w in pane.children if getattr(w, "id", None) == "placeholder"]

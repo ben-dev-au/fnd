@@ -13,7 +13,7 @@ from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.query import Hit
 from fnd.tui import FNDApp
-from fnd.tui.app import _format_hit_label, _trim_redundant_heading
+from fnd.tui.results_labels import _format_hit_label, _trim_redundant_heading
 
 
 def test_trim_redundant_heading_strips_filename_prefix() -> None:
@@ -128,7 +128,7 @@ async def test_md_match_chunk_renders_via_markdown_widget_with_highlight(
     assertion — the structural renderer keeps tables / fenced code /
     lists rendering correctly even when a chunk contains a match.
     """
-    from fnd.tui.app import FNDMarkdown
+    from fnd.tui.widgets.markdown import FNDMarkdown
 
     app = FNDApp(
         index_dir=md_index,

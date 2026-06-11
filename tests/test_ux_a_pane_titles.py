@@ -94,7 +94,7 @@ def test_format_hit_label_falls_back_for_markdown_without_heading() -> None:
     should still carry a synthetic locator (``§N``) rather than the
     generic em-dash placeholder."""
     from fnd.query import Hit
-    from fnd.tui.app import _format_hit_label
+    from fnd.tui.results_labels import _format_hit_label
 
     h = Hit(
         score=1.0,

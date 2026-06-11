@@ -14,7 +14,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 
-from fnd.tui.app import (
+from fnd.tui.widgets.markdown import (
     FNDMarkdown,
     FNDMarkdownH1,
     FNDMarkdownH2,

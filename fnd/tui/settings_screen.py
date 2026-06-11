@@ -1465,7 +1465,7 @@ class SettingsScreen(Screen[None]):
                     value=ev.value,
                 )
                 app._config = load()  # type: ignore[attr-defined]
-                app._ranking_profile = app._resolve_profile()  # type: ignore[attr-defined]
+                app._search.ranking_profile = app._search.resolve_profile()  # type: ignore[attr-defined]
                 app._refresh_status()  # type: ignore[attr-defined]
         except Exception as e:
             self.query_one(EditBar).show_error(_summarize(e))
@@ -2259,14 +2259,14 @@ class SourceFormScreen(Screen[None]):
             self._show_error(_summarize(e))
             return
         app._config = load()  # type: ignore[attr-defined]
-        app._refresh_collections_panel()  # type: ignore[attr-defined]
+        app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
         # Trigger a reindex if the source set materially changed. Pop
         # FIRST so the IndexerScreen lands on top of the menu, not on
         # top of this wizard.
         needs_reindex = self._snapshot != self._fields or self._source_index is None
         self.app.pop_screen()
         if needs_reindex:
-            app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
+            app._indexer.reindex_with_warning(  # type: ignore[attr-defined]
                 self._collection_name, rebuild=True
             )
 
@@ -2732,7 +2732,7 @@ class AddCollectionWizard(Screen[None]):
             self._show_error(str(e))
             return
         app._config = load()  # type: ignore[attr-defined]
-        app._refresh_collections_panel()  # type: ignore[attr-defined]
+        app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
         # Pop wizard FIRST so the IndexerScreen lands on top of the
         # per-collection menu, not on top of this wizard. Switching the
         # reindex from the headless _reindex_collection_async worker to
@@ -2743,7 +2743,7 @@ class AddCollectionWizard(Screen[None]):
         from fnd.tui.menu import _make_open_collection_screen
 
         _make_open_collection_screen(name)(app)
-        app._reindex_with_warning_if_needed(name, rebuild=True)  # type: ignore[attr-defined]
+        app._indexer.reindex_with_warning(name, rebuild=True)  # type: ignore[attr-defined]
 
     def action_cycle_focus(self, direction: int) -> None:
         widgets = [
@@ -2814,7 +2814,7 @@ class NewCollectionScreen(Screen[None]):
             collection=CollectionConfig(sources=[]),
         )
         app._config = load()  # type: ignore[attr-defined]
-        app._refresh_collections_panel()  # type: ignore[attr-defined]
+        app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
         self.app.pop_screen()
 
     def action_back(self) -> None:
@@ -2883,12 +2883,12 @@ class RenameCollectionScreen(Screen[None]):
         )
         delete_collection(config_path=default_config_path(), name=self._old_name)
         app._config = load()  # type: ignore[attr-defined]
-        app._refresh_collections_panel()  # type: ignore[attr-defined]
+        app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
         # Pop twice — past Rename and the now-stale per-collection
         # screen — before pushing the IndexerScreen.
         self.app.pop_screen()
         self.app.pop_screen()
-        app._reindex_with_warning_if_needed(new_name, rebuild=True)  # type: ignore[attr-defined]
+        app._indexer.reindex_with_warning(new_name, rebuild=True)  # type: ignore[attr-defined]
 
     def action_back(self) -> None:
         self.app.pop_screen()
@@ -2993,7 +2993,7 @@ class DeleteCollectionScreen(Screen[None]):
             writer.wait_merging_threads()
         except Exception as e:
             self.notify(f"Index drop failed: {e}", severity="error")
-        app._refresh_collections_panel()  # type: ignore[attr-defined]
+        app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
         # Pop Delete screen AND the now-stale per-collection screen.
         self.app.pop_screen()
         self.app.pop_screen()
@@ -3257,19 +3257,19 @@ class UpdateAllConfirm(Screen[None]):
         app: FNDApp = self.app  # type: ignore[assignment]
         # First in the queue runs now; the rest queue up for chaining.
         first, rest = names[0], names[1:]
-        app._indexer_chain_remaining = rest  # type: ignore[attr-defined]
+        app._indexer.chain_remaining = rest  # type: ignore[attr-defined]
         # Total count is preserved so the IndexerScreen title can show
         # "papers (1 of 5)" even after rest has been depleted.
-        app._indexer_chain_total = len(names)  # type: ignore[attr-defined]
+        app._indexer.chain_total = len(names)  # type: ignore[attr-defined]
         # Stash the run mode so _start_next_in_chain re-applies it to
         # every subsequent collection (and so a re-trigger of this
         # confirm with a different mode replaces it).
-        app._indexer_texturise_override = self._texturise_override  # type: ignore[attr-defined]
-        app._indexer_skip_unchanged = self._skip_unchanged  # type: ignore[attr-defined]
-        app._indexer_force_fresh = self._force_fresh  # type: ignore[attr-defined]
-        app._indexer_rebuild = self._rebuild  # type: ignore[attr-defined]
+        app._indexer.texturise_override = self._texturise_override  # type: ignore[attr-defined]
+        app._indexer.skip_unchanged = self._skip_unchanged  # type: ignore[attr-defined]
+        app._indexer.force_fresh = self._force_fresh  # type: ignore[attr-defined]
+        app._indexer.rebuild = self._rebuild  # type: ignore[attr-defined]
         try:
-            app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
+            app._indexer.reindex_with_warning(  # type: ignore[attr-defined]
                 first,
                 texturise_override=self._texturise_override,
                 skip_unchanged=self._skip_unchanged,
@@ -3585,7 +3585,7 @@ class DeleteSourceScreen(Screen[None]):
             self.notify(f"Delete failed: {e}", severity="error")
             return
         app._config = load()  # type: ignore[attr-defined]
-        app._refresh_collections_panel()  # type: ignore[attr-defined]
+        app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
         # Pop DeleteSourceScreen AND the now-stale SourceFormScreen
         # below it — land back on the Sources screen — then trigger
         # the reindex so the IndexerScreen mounts on the right
@@ -3595,7 +3595,7 @@ class DeleteSourceScreen(Screen[None]):
         import contextlib
 
         with contextlib.suppress(Exception):
-            app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
+            app._indexer.reindex_with_warning(  # type: ignore[attr-defined]
                 self._collection_name, rebuild=True
             )
 
@@ -3791,7 +3791,7 @@ class CloneSourcePickSourceScreen(Screen[None]):
 
         app: FNDApp = self.app  # type: ignore[assignment]
         app._config = load()  # type: ignore[attr-defined]
-        app._refresh_collections_panel()  # type: ignore[attr-defined]
+        app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
         self.notify(
             f"Cloned source from {self._source_coll!r} into {self._target!r}. "
             f"Reindexing {self._target}…",
@@ -3805,7 +3805,7 @@ class CloneSourcePickSourceScreen(Screen[None]):
         import contextlib
 
         with contextlib.suppress(Exception):
-            app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
+            app._indexer.reindex_with_warning(  # type: ignore[attr-defined]
                 self._target, rebuild=True
             )
 
@@ -4239,7 +4239,7 @@ class StillFlatDrillIn(Screen[None]):
                 with _ctx.suppress(OSError):
                     entry.unlink()
         try:
-            app._reindex_with_warning_if_needed(  # type: ignore[attr-defined]
+            app._indexer.reindex_with_warning(  # type: ignore[attr-defined]
                 col, texturise_override=True
             )
         except Exception as e:

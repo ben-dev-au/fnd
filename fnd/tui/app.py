@@ -17,21 +17,18 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections import OrderedDict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from rich.text import Text
 
-    from fnd.synonyms import SynonymTable
 
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.scrollbar import ScrollBar
-from textual.widget import Widget
 from textual.widgets import (
     Input,
     Static,
@@ -41,17 +38,10 @@ from textual.widgets.tree import TreeNode
 
 from fnd import opener
 from fnd.config import Config, default_index_dir
-from fnd.explain import SearchTrace
 from fnd.matching import MatchSpec
-from fnd.query import FileChunk, FileGroup, Hit, Searcher
-from fnd.rerank import RankingProfile
+from fnd.query import FileGroup, Hit, Searcher
 from fnd.tui.actions import REGISTRY, Keymap, load_keymap
 from fnd.tui.indexer_service import IndexerService
-from fnd.tui.line_buffer import (
-    FileView,
-    LineBufferPreview,
-    RenderedDocument,
-)
 from fnd.tui.preview.flat_view import FlatBufferView
 from fnd.tui.preview.lazy_mount import LazyMounter
 from fnd.tui.preview.prefetch import PrefetchEngine
@@ -68,37 +58,10 @@ from fnd.tui.progress import FNDProgressBar, ProgressFacility, ProgressSession
 from fnd.tui.results_labels import (
     _elide_middle_keep_suffix,
 )
-from fnd.tui.results_labels import _format_hit_label as _format_hit_label
-from fnd.tui.results_labels import _score_bar as _score_bar
-from fnd.tui.results_labels import _trim_redundant_heading as _trim_redundant_heading
-
-# Single-name self-alias imports below are deliberate re-exports: tests and
-# sibling modules historically import these names from fnd.tui.app.
 from fnd.tui.results_view import ResultsView
 from fnd.tui.scope_panel import ScopeController
 from fnd.tui.search_controller import SearchController
-from fnd.tui.widgets.markdown import (
-    FNDMarkdown,
-)
-from fnd.tui.widgets.markdown import FNDMarkdownFence as FNDMarkdownFence
-from fnd.tui.widgets.markdown import FNDMarkdownH1 as FNDMarkdownH1
-from fnd.tui.widgets.markdown import FNDMarkdownH2 as FNDMarkdownH2
-from fnd.tui.widgets.markdown import FNDMarkdownH3 as FNDMarkdownH3
-from fnd.tui.widgets.markdown import FNDMarkdownH4 as FNDMarkdownH4
-from fnd.tui.widgets.markdown import FNDMarkdownH5 as FNDMarkdownH5
-from fnd.tui.widgets.markdown import FNDMarkdownH6 as FNDMarkdownH6
-from fnd.tui.widgets.markdown import FNDMarkdownParagraph as FNDMarkdownParagraph
-from fnd.tui.widgets.markdown import FNDMarkdownTableDT as FNDMarkdownTableDT
-from fnd.tui.widgets.markdown import FNDMarkdownTH as FNDMarkdownTH
-from fnd.tui.widgets.markdown import _build_match_spans as _build_match_spans
-from fnd.tui.widgets.markdown import _compute_table_col_widths as _compute_table_col_widths
-from fnd.tui.widgets.markdown import _HeadingMarkerMixin as _HeadingMarkerMixin
-from fnd.tui.widgets.markdown import _record_first_match as _record_first_match
-from fnd.tui.widgets.preview_container import _PREVIEW_CACHE_MAX_FILES as _PREVIEW_CACHE_MAX_FILES
-from fnd.tui.widgets.preview_container import _PREVIEW_CACHE_MIN_CHUNKS as _PREVIEW_CACHE_MIN_CHUNKS
 from fnd.tui.widgets.preview_container import (
-    PreviewCache,
-    PreviewContainer,
     _HitWithQuery,
 )
 from fnd.tui.widgets.results_tree import ResultsTree
@@ -108,36 +71,6 @@ from fnd.tui.widgets.results_tree import ResultsTree
 # hugging the frame instead of a reverse-video full-cell block. The preview's
 # MatchAwareScrollBar applies the same thinning via its own renderer subclass.
 ScrollBar.renderer = ThinScrollBarRender
-
-# Visible-first mount window — chunks are decoded already, mounting
-# focused ± these counts synchronously gives the user instant viewport
-# feedback before the background fill starts.
-_VISIBLE_FIRST_ABOVE = 7
-_VISIBLE_FIRST_BELOW = 7
-# Background-fill bound, applied beyond the ±_VISIBLE_FIRST_* window
-# during the initial cold mount. At < _VISIBLE_FIRST_* the phase 2a/2b
-# loops are no-ops; the scroll-driven lazy mount picks up from the
-# visible-window boundary instead. Raise to e.g. 10 for a small static
-# buffer before lazy-mount engages (Stage 0a in PREVIEW_DOM_PLAN.md);
-# the trade-off is a small cold-mount cost per cached file.
-_BACKGROUND_FILL_RADIUS = 3
-# Option C: when the active file is within this many chunks, background-fill it
-# completely so internal match-jumps land on an already-mounted chunk (instant).
-# Larger files stay windowed (radius above) to protect DOM size / input lag.
-_FULLMOUNT_CHUNK_BUDGET = 250
-# Prefetch mounts only the focused chunk per cached file. User-side
-# resume expands on click via Phase 1b/2. Keeps prefetch DOM
-# contribution at ~1 widget per cached file.
-_PREFETCH_MOUNT_RADIUS = 0
-# Scroll-driven lazy mount. When the user scrolls within this many
-# cells of the boundary of the mounted region, the next batch is
-# mounted on demand. Lets long files behave like a continuous document
-# without forcing the initial mount to cover everything.
-_LAZY_MOUNT_TRIGGER_MARGIN = 30
-_LAZY_MOUNT_BATCH = 3
-# Scroll-to-match leaves this fraction of the viewport above the match so
-# the user sees context before it, rather than pinning it to the top line.
-_MATCH_CONTEXT_FRACTION = 0.25
 
 
 # Per-chunk renderer choice lives in ``preview_dispatcher`` so the
@@ -399,7 +332,7 @@ class FNDApp(App[None]):
         # owns mouse capture (off while reading so the terminal handles
         # drag-select, right-click Copy, ⌘C, macOS Speak-selection).
         self._reading_mode: bool = False
-        self._ranking_profile = self._resolve_profile()
+        self._search.ranking_profile = self._search.resolve_profile()
         # Structural preview core (caches, active/outgoing containers,
         # debounced load + mount/reveal/settle pipeline); see
         # fnd/tui/preview/presenter.py.
@@ -424,16 +357,12 @@ class FNDApp(App[None]):
         self._extras_action_label: str = ""
         # Owns the structural preview scroll-to-match logic, reading the
         # chunk/match maps and pane back off this app via the host accessors.
-        self._preview_scroll_structural = StructuralScrollStrategy(host=self)
-        self._preview_scroll_flat = FlatScrollStrategy(host=self)
+        self._preview_scroll_structural = StructuralScrollStrategy(host=self._preview)
+        self._preview_scroll_flat = FlatScrollStrategy(host=self._preview)
         # Single source of truth for where the preview should sit: navigation
         # arms an anchor; mount/finalize events reconcile against it (idempotent
         # → the formerly racing scroll sites collapse to one target).
         self._preview_scroll = PreviewScrollController(select_strategy=self._select_scroll_strategy)
-        # Set around the controller's own structural scroll so the resulting
-        # scroll-watcher trip isn't mistaken for a user scroll and doesn't
-        # self-release the anchor.
-        self._preview_scroll_reconciling: bool = False
         # Scroll-driven lazy mounting (task + debounce timer); see
         # fnd/tui/preview/lazy_mount.py.
         self._lazy = LazyMounter(self)
@@ -564,11 +493,11 @@ class FNDApp(App[None]):
         _apps_mod.set_notice_sink(self._dispatch_apps_notice)
 
         try:
-            self._searcher = Searcher(index_dir=self._index_dir)
+            self._search.searcher = Searcher(index_dir=self._index_dir)
         except (FileNotFoundError, RuntimeError):
             # No index yet — the app still opens so the user can manage
             # collections, then reindex outside or from the CLI.
-            self._searcher = None
+            self._search.searcher = None
         tree = self.query_one("#results_pane", Tree)
         tree.show_root = False
         tree.guide_depth = 2
@@ -587,7 +516,7 @@ class FNDApp(App[None]):
         # persists state the user didn't ask for. Right still expands
         # via action_tree_smart_expand.
         ctree.auto_expand = False
-        self._refresh_collections_panel()
+        self._scope.refresh_collections_panel()
         # Filters panel — kind/date selectors that compose into the query.
         ftree = self.query_one("#filters_panel_tree", Tree)
         ftree.show_root = False
@@ -595,16 +524,16 @@ class FNDApp(App[None]):
         # Filters parents (File type / Modified) are no-ops on Enter — skip
         # past them when expanded.
         ftree._skip_expanded_parents = True  # type: ignore[attr-defined]
-        self._refresh_filters_panel()
+        self._scope.refresh_filters_panel()
         # Restore persisted panel collapse-to-header.
 
-        for panel_id in self._collapsed_panels:
+        for panel_id in self._scope.collapsed_panels:
             with contextlib.suppress(Exception):
                 self.query_one(f"#{panel_id}").add_class("collapsed")
         self._refresh_status()
         if self._initial_query:
-            self._run_query(self._initial_query)
-        if not self._initial_query or not self._groups:
+            self._search.run(self._initial_query)
+        if not self._initial_query or not self._search.groups:
             self.query_one("#query_bar", Input).focus()
         # Auto-resume any interrupted reindex from a previous fnd session.
         # Runs in background (no modal); user can click the footer
@@ -612,21 +541,13 @@ class FNDApp(App[None]):
         # Wrapped in try/except so a corrupt state file doesn't keep the
         # TUI from launching.
         with contextlib.suppress(Exception):
-            self._maybe_resume_indexer()
+            self._indexer.maybe_resume()
         # Pre-upgrade cache entries (PDFs textured on an older extractor
         # version) are surfaced passively in Settings → Indexing & PDF
         # Texture, not via a startup popup — re-texturising is a
         # preview-quality refresh the user opts into, never urgent.
 
     # ── Ranking profile (§7) ──────────────────────────────────────
-
-    def _resolve_profile(self) -> RankingProfile:
-        return self._search.resolve_profile()
-
-    # ── Pane border titles ────────────────────────────────────────
-
-    def _results_title(self) -> str:
-        return self._results.title()
 
     def _preview_title(self, edge_width: int = 0) -> str:
         """Border title for the preview pane — ``Preview — <file>``.
@@ -637,10 +558,10 @@ class FNDApp(App[None]):
         edge (2 corners + 2 pads + 2 filler dashes — measured), so the full
         title string must fit in ``edge_width - 6``.
         """
-        if self._preview_parent_id is None:
+        if self._preview.parent_id is None:
             return "Preview"
-        for g in self._groups:
-            if g.parent_id == self._preview_parent_id:
+        for g in self._search.groups:
+            if g.parent_id == self._preview.parent_id:
                 name = Path(g.path).name
                 if edge_width > 0:
                     prefix = "Preview — "
@@ -650,7 +571,7 @@ class FNDApp(App[None]):
 
     def _refresh_status(self) -> None:
         try:
-            self.query_one("#results_pane", Tree).border_title = self._results_title()
+            self.query_one("#results_pane", Tree).border_title = self._results.title()
             pane = self.query_one("#preview_pane")
             pane.border_title = self._preview_title(pane.region.width)
         except Exception:
@@ -812,100 +733,12 @@ class FNDApp(App[None]):
 
     @on(Input.Submitted, "#query_bar")
     def _on_query_submit(self, ev: Input.Submitted) -> None:
-        self._run_query(ev.value)
-
-    def _run_query(self, query: str) -> None:
-        self._search.run(query)
-
-    # ── Search delegation (state lives on SearchController) ───────
-    # Tests and sibling modules read AND write these names on the app;
-    # the property pairs keep that surface stable while the controller
-    # owns the state.
-
-    @property
-    def _searcher(self) -> Searcher | None:
-        return self._search.searcher
-
-    @_searcher.setter
-    def _searcher(self, value: Searcher | None) -> None:
-        self._search.searcher = value
-
-    @property
-    def _current_query(self) -> str:
-        return self._search.current_query
-
-    @_current_query.setter
-    def _current_query(self, value: str) -> None:
-        self._search.current_query = value
-
-    @property
-    def _current_match_spec(self) -> MatchSpec:
-        return self._search.match_spec
-
-    @_current_match_spec.setter
-    def _current_match_spec(self, value: MatchSpec) -> None:
-        self._search.match_spec = value
-
-    @property
-    def _highlights_enabled(self) -> bool:
-        return self._search.highlights_enabled
-
-    @_highlights_enabled.setter
-    def _highlights_enabled(self, value: bool) -> None:
-        self._search.highlights_enabled = value
-
-    @property
-    def _current_intent(self) -> str | None:
-        return self._search.intent
-
-    @_current_intent.setter
-    def _current_intent(self, value: str | None) -> None:
-        self._search.intent = value
-
-    @property
-    def _groups(self) -> list[FileGroup]:
-        return self._search.groups
-
-    @_groups.setter
-    def _groups(self, value: list[FileGroup]) -> None:
-        self._search.groups = value
-
-    @property
-    def _latest_trace(self) -> SearchTrace | None:
-        return self._search.latest_trace
-
-    @_latest_trace.setter
-    def _latest_trace(self, value: SearchTrace | None) -> None:
-        self._search.latest_trace = value
-
-    @property
-    def _synonyms(self) -> SynonymTable:
-        return self._search.synonyms
-
-    @_synonyms.setter
-    def _synonyms(self, value: SynonymTable) -> None:
-        self._search.synonyms = value
-
-    @property
-    def _ranking_profile(self) -> RankingProfile:
-        return self._search.ranking_profile
-
-    @_ranking_profile.setter
-    def _ranking_profile(self, value: RankingProfile) -> None:
-        self._search.ranking_profile = value
-
-    def _refresh_results_tree(self) -> None:
-        self._results.refresh()
+        self._search.run(ev.value)
 
     def on_resize(self, _event: events.Resize) -> None:
         """Re-fit elided filenames to the new pane widths. Deferred to after
         layout so the panes report their settled geometry."""
-        self.call_after_refresh(self._refit_after_resize)
-
-    def _refit_after_resize(self) -> None:
-        self._results.refit_after_resize()
-
-    # ── Preview ───────────────────────────────────────────────────
+        self.call_after_refresh(self._results.refit_after_resize)
 
     @on(Tree.NodeHighlighted)
     def _on_tree_highlight(self, ev: Tree.NodeHighlighted[Any]) -> None:
@@ -915,321 +748,16 @@ class FNDApp(App[None]):
         kind = data.get("kind")
         if kind == "section":
             hit: Hit = data["hit"]
-            self._schedule_preview_load(hit.parent_id, hit.chunk_seq)
+            self._preview.schedule_load(hit.parent_id, hit.chunk_seq)
         elif kind == "file":
             g: FileGroup = data["group"]
             top = g.hits[0] if g.hits else None
-            self._schedule_preview_load(g.parent_id, top.chunk_seq if top else 0)
+            self._preview.schedule_load(g.parent_id, top.chunk_seq if top else 0)
 
     # ── Preview delegation (state lives on PreviewPresenter) ──────
     # Tests, sibling components, and the scroll strategies read AND
     # write these names on the app; the property pairs keep that
     # surface stable while the presenter owns the state.
-
-    @property
-    def _chunk_cache(self) -> dict[str, list[FileChunk]]:
-        return self._preview.chunk_cache
-
-    @_chunk_cache.setter
-    def _chunk_cache(self, value: dict[str, list[FileChunk]]) -> None:
-        self._preview.chunk_cache = value
-
-    @property
-    def _preview_cache(self) -> PreviewCache:
-        return self._preview.preview_cache
-
-    @_preview_cache.setter
-    def _preview_cache(self, value: PreviewCache) -> None:
-        self._preview.preview_cache = value
-
-    @property
-    def _prebuilt_cache(self) -> dict[tuple[str, str], RenderedDocument]:
-        return self._preview.prebuilt_cache
-
-    @_prebuilt_cache.setter
-    def _prebuilt_cache(self, value: dict[tuple[str, str], RenderedDocument]) -> None:
-        self._preview.prebuilt_cache = value
-
-    @property
-    def _active_preview(self) -> PreviewContainer | None:
-        return self._preview.active
-
-    @_active_preview.setter
-    def _active_preview(self, value: PreviewContainer | None) -> None:
-        self._preview.active = value
-
-    @property
-    def _outgoing_preview(self) -> PreviewContainer | None:
-        return self._preview.outgoing
-
-    @_outgoing_preview.setter
-    def _outgoing_preview(self, value: PreviewContainer | None) -> None:
-        self._preview.outgoing = value
-
-    @property
-    def _chunk_widgets(self) -> dict[int, Widget]:
-        return self._preview.chunk_widgets
-
-    @_chunk_widgets.setter
-    def _chunk_widgets(self, value: dict[int, Widget]) -> None:
-        self._preview.chunk_widgets = value
-
-    @property
-    def _match_targets(self) -> dict[int, Widget]:
-        return self._preview.match_targets
-
-    @_match_targets.setter
-    def _match_targets(self, value: dict[int, Widget]) -> None:
-        self._preview.match_targets = value
-
-    @property
-    def _preview_parent_id(self) -> str | None:
-        return self._preview.parent_id
-
-    @_preview_parent_id.setter
-    def _preview_parent_id(self, value: str | None) -> None:
-        self._preview.parent_id = value
-
-    @property
-    def _preview_load_progress(self) -> tuple[int, int | None] | None:
-        return self._preview.load_progress
-
-    @_preview_load_progress.setter
-    def _preview_load_progress(self, value: tuple[int, int | None] | None) -> None:
-        self._preview.load_progress = value
-
-    @property
-    def _preview_mount_task(self) -> object | None:
-        return self._preview.mount_task
-
-    @_preview_mount_task.setter
-    def _preview_mount_task(self, value: object | None) -> None:
-        self._preview.mount_task = value
-
-    @property
-    def _preview_load_timer(self) -> Any | None:
-        return self._preview.load_timer
-
-    @_preview_load_timer.setter
-    def _preview_load_timer(self, value: Any | None) -> None:
-        self._preview.load_timer = value
-
-    @property
-    def _preview_load_target(self) -> tuple[str, int] | None:
-        return self._preview.load_target
-
-    @_preview_load_target.setter
-    def _preview_load_target(self, value: tuple[str, int] | None) -> None:
-        self._preview.load_target = value
-
-    @property
-    def _inflight_preview_target(self) -> tuple[str, int] | None:
-        return self._preview.inflight_target
-
-    @_inflight_preview_target.setter
-    def _inflight_preview_target(self, value: tuple[str, int] | None) -> None:
-        self._preview.inflight_target = value
-
-    def _schedule_preview_load(self, parent_id: str, focus_chunk_seq: int) -> None:
-        self._preview.schedule_load(parent_id, focus_chunk_seq)
-
-    def _fire_pending_preview_load(self) -> None:
-        self._preview.fire_pending_load()
-
-    def _cancel_pending_preview_load(self) -> None:
-        self._preview.cancel_pending_load()
-
-    def _render_full_doc(self, parent_id: str, *, focus_chunk_seq: int) -> None:
-        self._preview.render_full_doc(parent_id, focus_chunk_seq=focus_chunk_seq)
-
-    def _cancel_preview_mount_task(self) -> None:
-        self._preview.cancel_mount_task()
-
-    async def _await_preview_settled(self, max_rounds: int = 10) -> None:
-        await self._preview.await_settled(max_rounds)
-
-    async def _await_match_settled(
-        self,
-        header: FNDMarkdown | Widget | None,
-        above_widgets: list[FNDMarkdown],
-        max_rounds: int = 12,
-    ) -> None:
-        """Targeted settle for the focus chunk — see the presenter. Kept
-        as a real app method so test patches keep intercepting it."""
-        await self._preview.await_match_settled(header, above_widgets, max_rounds)
-
-    def _user_mount_in_flight(self) -> bool:
-        return self._preview.user_mount_in_flight()
-
-    def _mount_chunk_into(
-        self,
-        container: PreviewContainer,
-        chunk: FileChunk,
-        index: int,
-        all_chunks: list[FileChunk],
-    ) -> None:
-        self._preview.mount_chunk_into(container, chunk, index, all_chunks)
-
-    @property
-    def _scrollbar_markers_enabled(self) -> bool:
-        return self._preview.scrollbar_markers_enabled
-
-    def _refresh_match_scrollbar(self, chunks: list[FileChunk]) -> None:
-        self._preview.refresh_match_scrollbar(chunks)
-
-    def _show_progress_bar(
-        self,
-        *,
-        total: int | None,
-        progress: int = 0,
-        phase: str | None = None,
-    ) -> None:
-        self._preview.show_progress_bar(total=total, progress=progress, phase=phase)
-
-    def _hide_progress_bar(self) -> None:
-        self._preview.hide_progress_bar()
-
-    def _clear_pane_placeholder(self) -> None:
-        self._preview.clear_pane_placeholder()
-
-    def _reveal_preview(self, container: PreviewContainer) -> None:
-        self._preview.reveal(container)
-
-    def swap_reveal_target(self, target: Widget, margin: int) -> bool:
-        return self._preview.swap_reveal_target(target, margin)
-
-    def _on_preview_load_failed(self, exc: BaseException) -> None:
-        self._preview.on_load_failed(exc)
-
-    def _on_preview_chunks_loaded(
-        self,
-        parent_id: str,
-        focus_chunk_seq: int,
-        chunks: list[FileChunk],
-        prebuilt: RenderedDocument | None = None,
-    ) -> None:
-        self._preview.on_chunks_loaded(parent_id, focus_chunk_seq, chunks, prebuilt)
-
-    def _ensure_shared_flat_buffer(self) -> LineBufferPreview:
-        return self._flat.ensure_shared_buffer()
-
-    def _install_flat_doc(
-        self,
-        buf: LineBufferPreview,
-        doc: RenderedDocument,
-        focus_chunk_seq: int,
-        *,
-        parent_id: str,
-        context_fraction: float = 0.0,
-    ) -> None:
-        self._flat.install_doc(
-            buf, doc, focus_chunk_seq, parent_id=parent_id, context_fraction=context_fraction
-        )
-
-    def _reset_shared_flat_buffer(self) -> None:
-        self._flat.reset()
-
-    @staticmethod
-    def _focus_line_for_chunk(fv: FileView, chunk_id: int) -> int | None:
-        return FlatBufferView.focus_line_for_chunk(fv, chunk_id)
-
-    def _build_file_view_for_chunks(self, chunks: list[FileChunk]) -> FileView:
-        return self._flat.build_file_view(chunks)
-
-    def _activate_flat_buffer(self, buf: LineBufferPreview) -> None:
-        self._flat.activate(buf)
-
-    # ── Flat-buffer delegation (state lives on FlatBufferView) ────
-    # Tests and the preview/scroll code read AND write these names on
-    # the app; the property pairs keep that surface stable while the
-    # view owns the state.
-
-    @property
-    def _flat_buffer_cache(self) -> OrderedDict[tuple[str, str], RenderedDocument]:
-        return self._flat.cache
-
-    @_flat_buffer_cache.setter
-    def _flat_buffer_cache(self, value: OrderedDict[tuple[str, str], RenderedDocument]) -> None:
-        self._flat.cache = value
-
-    @property
-    def _active_flat_buffer(self) -> LineBufferPreview | None:
-        return self._flat.active_buffer
-
-    @_active_flat_buffer.setter
-    def _active_flat_buffer(self, value: LineBufferPreview | None) -> None:
-        self._flat.active_buffer = value
-
-    @property
-    def _shared_flat_buffer(self) -> LineBufferPreview | None:
-        return self._flat.shared_buffer
-
-    @_shared_flat_buffer.setter
-    def _shared_flat_buffer(self, value: LineBufferPreview | None) -> None:
-        self._flat.shared_buffer = value
-
-    @property
-    def _installed_flat_key(self) -> tuple[str, str] | None:
-        return self._flat.installed_key
-
-    @_installed_flat_key.setter
-    def _installed_flat_key(self, value: tuple[str, str] | None) -> None:
-        self._flat.installed_key = value
-
-    def _current_query_signature(self) -> str:
-        return self._search.query_signature()
-
-    def _cancel_lazy_mount_task(self) -> None:
-        self._lazy.cancel()
-
-    @property
-    def _lazy_mount_task(self) -> object | None:
-        return self._lazy.task
-
-    @_lazy_mount_task.setter
-    def _lazy_mount_task(self, value: object | None) -> None:
-        self._lazy.task = value
-
-    async def _cancel_prefetch_task_on(self, container: PreviewContainer) -> None:
-        await self._prefetch.cancel_task_on(container)
-
-    def _prefetch_top_results(self, *, anchor_parent_id: str | None = None) -> None:
-        self._prefetch.prefetch_top_results(anchor_parent_id=anchor_parent_id)
-
-    def _record_prefetched_chunks(self, parent_id: str, chunks: list[FileChunk]) -> None:
-        self._prefetch.record_chunks(parent_id, chunks)
-
-    def _record_prefetched_bundle(
-        self,
-        parent_id: str,
-        query_sig: str,
-        doc: RenderedDocument,
-    ) -> None:
-        self._prefetch.record_bundle(parent_id, query_sig, doc)
-
-    def _prefetch_mount_flat(
-        self,
-        parent_id: str,
-        query_sig: str,
-        doc: RenderedDocument,
-        focus_chunk_seq: int,
-    ) -> None:
-        self._prefetch.mount_flat(parent_id, query_sig, doc, focus_chunk_seq)
-
-    def _prefetch_mount_structural(
-        self,
-        parent_id: str,
-        query_sig: str,
-        chunks: list[FileChunk],
-        focus_chunk_seq: int,
-    ) -> None:
-        self._prefetch.mount_structural(parent_id, query_sig, chunks, focus_chunk_seq)
-
-    def _schedule_preview_lazy_mount_check(self, *, user_initiated: bool = False) -> None:
-        self._lazy.schedule_check(user_initiated=user_initiated)
-
-    def _check_preview_lazy_mount(self) -> None:
-        self._lazy.check()
 
     def _diag_log(self, msg: str) -> None:
         # _FND_PREVIEW_DIAG=1 appends to /tmp/fnd-preview-diag.log.
@@ -1257,8 +785,8 @@ class FNDApp(App[None]):
         from collections import Counter
 
         lines: list[str] = ["--- dump_preview ---"]
-        active = self._active_preview
-        flat = self._active_flat_buffer
+        active = self._preview.active
+        flat = self._flat.active_buffer
         if active is None and flat is None:
             lines.append("no active preview")
         if active is not None:
@@ -1291,39 +819,10 @@ class FNDApp(App[None]):
             timeout=2,
         )
 
-    # ── StructuralHost accessors ──────────────────────────────────
-    # The structural scroll strategy reads the pane, chunk/match maps,
-    # match spec and lazy-mount gate back off the app through these.
-    def preview_pane(self) -> VerticalScroll:
-        return self.query_one("#preview_pane", VerticalScroll)
-
-    def effective_match_spec(self) -> MatchSpec:
-        return self._effective_match_spec
-
-    def diag_log(self, msg: str) -> None:
-        self._diag_log(msg)
-
-    @property
-    def chunk_widgets(self) -> dict[int, Widget]:
-        return self._chunk_widgets
-
-    @property
-    def match_targets(self) -> dict[int, Widget]:
-        return self._match_targets
-
-    def active_flat_buffer(self) -> LineBufferPreview | None:
-        return self._active_flat_buffer
-
-    def begin_reconcile_scroll(self) -> None:
-        self._preview_scroll_reconciling = True
-
-    def end_reconcile_scroll(self) -> None:
-        self._preview_scroll_reconciling = False
-
     def _select_scroll_strategy(self) -> ScrollStrategy | None:
         """Pick the active preview's scroll strategy: the flat line-buffer when
         one is showing (PDF/TXT), else the structural per-chunk strategy."""
-        if self._active_flat_buffer is not None:
+        if self._flat.active_buffer is not None:
             return self._preview_scroll_flat
         return self._preview_scroll_structural
 
@@ -1334,12 +833,6 @@ class FNDApp(App[None]):
     # opening externally requires the explicit `o` (open at locator) or `O`
     # (open default app) bindings. Selection still fires NodeHighlighted
     # which drives the preview render via `_on_tree_highlight`.
-
-    @staticmethod
-    def _target_for_node(node: TreeNode[Any]) -> tuple[FileGroup, Hit] | None:
-        return ResultsView.target_for_node(node)
-
-    # ── Async indexer plumbing ────────────────────────────────────
 
     def start_indexer(
         self,
@@ -1374,170 +867,12 @@ class FNDApp(App[None]):
     # names on the app; the property pairs keep that surface stable
     # while the service owns the state.
 
-    @property
-    def _indexer_task(self) -> asyncio.Task[None] | None:
-        return self._indexer.task
-
-    @_indexer_task.setter
-    def _indexer_task(self, value: asyncio.Task[None] | None) -> None:
-        self._indexer.task = value
-
-    @property
-    def _indexer_cancel(self) -> asyncio.Event | None:
-        return self._indexer.cancel
-
-    @_indexer_cancel.setter
-    def _indexer_cancel(self, value: asyncio.Event | None) -> None:
-        self._indexer.cancel = value
-
-    @property
-    def _indexer_events(self) -> asyncio.Queue[Any] | None:
-        return self._indexer.events
-
-    @_indexer_events.setter
-    def _indexer_events(self, value: asyncio.Queue[Any] | None) -> None:
-        self._indexer.events = value
-
-    @property
-    def _indexer_state(self) -> Any:
-        return self._indexer.state
-
-    @_indexer_state.setter
-    def _indexer_state(self, value: Any) -> None:
-        self._indexer.state = value
-
-    @property
-    def _indexer_last_event(self) -> Any:
-        return self._indexer.last_event
-
-    @_indexer_last_event.setter
-    def _indexer_last_event(self, value: Any) -> None:
-        self._indexer.last_event = value
-
-    @property
-    def _indexer_run_seq(self) -> int:
-        return self._indexer.run_seq
-
-    @_indexer_run_seq.setter
-    def _indexer_run_seq(self, value: int) -> None:
-        self._indexer.run_seq = value
-
-    @property
-    def _indexer_deferred_task(self) -> asyncio.Task[None] | None:
-        return self._indexer.deferred_task
-
-    @_indexer_deferred_task.setter
-    def _indexer_deferred_task(self, value: asyncio.Task[None] | None) -> None:
-        self._indexer.deferred_task = value
-
-    @property
-    def _indexer_chain_remaining(self) -> list[str]:
-        return self._indexer.chain_remaining
-
-    @_indexer_chain_remaining.setter
-    def _indexer_chain_remaining(self, value: list[str]) -> None:
-        self._indexer.chain_remaining = value
-
-    @property
-    def _indexer_chain_total(self) -> int:
-        return self._indexer.chain_total
-
-    @_indexer_chain_total.setter
-    def _indexer_chain_total(self, value: int) -> None:
-        self._indexer.chain_total = value
-
-    @property
-    def _indexer_chain_callback_pending(self) -> bool:
-        return self._indexer.chain_callback_pending
-
-    @_indexer_chain_callback_pending.setter
-    def _indexer_chain_callback_pending(self, value: bool) -> None:
-        self._indexer.chain_callback_pending = value
-
-    @property
-    def _indexer_chain_history(self) -> list[Any]:
-        return self._indexer.chain_history
-
-    @_indexer_chain_history.setter
-    def _indexer_chain_history(self, value: list[Any]) -> None:
-        self._indexer.chain_history = value
-
-    @property
-    def _indexer_texturise_override(self) -> bool | None:
-        return self._indexer.texturise_override
-
-    @_indexer_texturise_override.setter
-    def _indexer_texturise_override(self, value: bool | None) -> None:
-        self._indexer.texturise_override = value
-
-    @property
-    def _indexer_skip_unchanged(self) -> bool:
-        return self._indexer.skip_unchanged
-
-    @_indexer_skip_unchanged.setter
-    def _indexer_skip_unchanged(self, value: bool) -> None:
-        self._indexer.skip_unchanged = value
-
-    @property
-    def _indexer_force_fresh(self) -> bool:
-        return self._indexer.force_fresh
-
-    @_indexer_force_fresh.setter
-    def _indexer_force_fresh(self, value: bool) -> None:
-        self._indexer.force_fresh = value
-
-    @property
-    def _indexer_rebuild(self) -> bool:
-        return self._indexer.rebuild
-
-    @_indexer_rebuild.setter
-    def _indexer_rebuild(self, value: bool) -> None:
-        self._indexer.rebuild = value
-
-    @property
-    def _indexer_collection(self) -> str:
-        return self._indexer.collection
-
-    @_indexer_collection.setter
-    def _indexer_collection(self, value: str) -> None:
-        self._indexer.collection = value
-
-    @property
-    def _indexer_started_at(self) -> str:
-        return self._indexer.started_at
-
-    @_indexer_started_at.setter
-    def _indexer_started_at(self, value: str) -> None:
-        self._indexer.started_at = value
-
     def action_reindex_default(self) -> None:
         """Convenience action: reindex the default collection."""
         try:
-            self._reindex_with_warning_if_needed("default")
+            self._indexer.reindex_with_warning("default")
         except Exception as e:
             self.notify(f"Could not start indexer: {e}", severity="error")
-
-    def _reindex_with_warning_if_needed(
-        self,
-        collection: str,
-        *,
-        texturise_override: bool | None = None,
-        skip_unchanged: bool = True,
-        force_fresh: bool = False,
-        rebuild: bool = False,
-    ) -> None:
-        self._indexer.reindex_with_warning(
-            collection,
-            texturise_override=texturise_override,
-            skip_unchanged=skip_unchanged,
-            force_fresh=force_fresh,
-            rebuild=rebuild,
-        )
-
-    def _maybe_resume_indexer(self) -> None:
-        self._indexer.maybe_resume()
-
-    # ── Actions ───────────────────────────────────────────────────
 
     def action_focus_query(self) -> None:
         self.query_one("#query_bar", Input).focus()
@@ -1562,7 +897,7 @@ class FNDApp(App[None]):
         tree = self.query_one("#results_pane", Tree)
         if tree.cursor_node is None:
             return
-        target = self._target_for_node(tree.cursor_node)
+        target = self._results.target_for_node(tree.cursor_node)
         if target is None:
             return
         _, hit = target
@@ -1574,7 +909,7 @@ class FNDApp(App[None]):
             slide=getattr(hit, "slide", 0),
             heading_path=getattr(hit, "heading_path", ""),
             line=getattr(hit, "line", 0),
-            query=self._current_query,
+            query=self._search.current_query,
             source=self._source_for_hit(hit),
         )
 
@@ -1583,7 +918,7 @@ class FNDApp(App[None]):
         tree = self.query_one("#results_pane", Tree)
         if tree.cursor_node is None:
             return
-        target = self._target_for_node(tree.cursor_node)
+        target = self._results.target_for_node(tree.cursor_node)
         if target is None:
             return
         _, hit = target
@@ -1601,7 +936,7 @@ class FNDApp(App[None]):
         tree = self.query_one("#results_pane", Tree)
         if tree.cursor_node is None:
             return
-        target = self._target_for_node(tree.cursor_node)
+        target = self._results.target_for_node(tree.cursor_node)
         if target is None:
             return
         _, hit = target
@@ -1633,7 +968,7 @@ class FNDApp(App[None]):
             registry=registry,
         )
         # The modal needs the raw query string for the OpenRequest.
-        hit_with_query = _HitWithQuery(hit, self._current_query)
+        hit_with_query = _HitWithQuery(hit, self._search.current_query)
         self.push_screen(
             OpenWithScreen(
                 hit=hit_with_query,
@@ -1658,7 +993,7 @@ class FNDApp(App[None]):
         # Scan every collection in the active scope; first containing
         # source wins. The hit's parent_id encodes its source path so a
         # future refactor could short-circuit via index lookup.
-        active = self._collections or list(cfg.collections.keys())
+        active = self._scope.collections or list(cfg.collections.keys())
         for name in active:
             coll = cfg.collections.get(name)
             if coll is None:
@@ -1720,8 +1055,8 @@ class FNDApp(App[None]):
                 # entire panel to its header strip.
                 if tree.id:
                     tree.add_class("collapsed")
-                    self._collapsed_panels.add(tree.id)
-                    self._persist_state()
+                    self._scope.collapsed_panels.add(tree.id)
+                    self._scope.persist()
                 return
             parent.collapse()
             tree.move_cursor(parent)
@@ -1748,8 +1083,8 @@ class FNDApp(App[None]):
         if "collapsed" in tree.classes:
             tree.remove_class("collapsed")
             if tree.id:
-                self._collapsed_panels.discard(tree.id)
-                self._persist_state()
+                self._scope.collapsed_panels.discard(tree.id)
+                self._scope.persist()
             return
         node = tree.cursor_node
         if node is None or not node.children:
@@ -1784,16 +1119,13 @@ class FNDApp(App[None]):
         empty spec when the user has toggled highlights off — the
         preview pane then renders the plain document with no yellow /
         orange overlays and no scrollbar match markers."""
-        return self._current_match_spec if self._highlights_enabled else MatchSpec()
+        return self._search.match_spec if self._search.highlights_enabled else MatchSpec()
 
     def action_toggle_highlights(self) -> None:
         self._search.toggle_highlights()
 
     def action_toggle_fuzzy(self) -> None:
         self._search.toggle_fuzzy()
-
-    def _rerender_current_preview(self) -> None:
-        self._preview.rerender_current()
 
     def action_focus_results_pane(self) -> None:
         """Single-key teleport from anywhere → results tree."""
@@ -1810,82 +1142,6 @@ class FNDApp(App[None]):
     def action_focus_collections_panel(self) -> None:
         """Single-key teleport from anywhere → collections sidebar panel."""
         self.query_one("#collections_panel_tree", Tree).focus()
-
-    def _clear_query_results(self) -> None:
-        self._search.clear_results()
-
-    # ── Scope delegation (state lives on ScopeController) ─────────
-    # Tests and sibling modules read AND write these names on the app;
-    # the property pairs keep that surface stable while the controller
-    # owns the state.
-
-    @property
-    def _collections(self) -> list[str]:
-        return self._scope.collections
-
-    @_collections.setter
-    def _collections(self, value: list[str]) -> None:
-        self._scope.collections = value
-
-    @property
-    def _active_sources(self) -> list[str]:
-        return self._scope.active_sources
-
-    @_active_sources.setter
-    def _active_sources(self, value: list[str]) -> None:
-        self._scope.active_sources = value
-
-    @property
-    def _filter_kinds(self) -> list[str]:
-        return self._scope.filter_kinds
-
-    @_filter_kinds.setter
-    def _filter_kinds(self, value: list[str]) -> None:
-        self._scope.filter_kinds = value
-
-    @property
-    def _filter_date(self) -> str:
-        return self._scope.filter_date
-
-    @_filter_date.setter
-    def _filter_date(self, value: str) -> None:
-        self._scope.filter_date = value
-
-    @property
-    def _collapsed_panels(self) -> set[str]:
-        return self._scope.collapsed_panels
-
-    @_collapsed_panels.setter
-    def _collapsed_panels(self, value: set[str]) -> None:
-        self._scope.collapsed_panels = value
-
-    @property
-    def _expanded_collections(self) -> set[str]:
-        return self._scope.expanded_collections
-
-    @_expanded_collections.setter
-    def _expanded_collections(self, value: set[str]) -> None:
-        self._scope.expanded_collections = value
-
-    @property
-    def _expanded_filter_branches(self) -> set[str]:
-        return self._scope.expanded_filter_branches
-
-    @_expanded_filter_branches.setter
-    def _expanded_filter_branches(self, value: set[str]) -> None:
-        self._scope.expanded_filter_branches = value
-
-    def _persist_state(self) -> None:
-        self._scope.persist()
-
-    def _collection_source_ids(self, name: str) -> list[str]:
-        return self._scope.collection_source_ids(name)
-
-    def _refresh_collections_panel(self) -> None:
-        self._scope.refresh_collections_panel()
-
-    def _refresh_filters_panel(self) -> None:
-        self._scope.refresh_filters_panel()
 
     @on(Tree.NodeSelected, "#filters_panel_tree")
     def _on_filters_panel_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
@@ -2048,7 +1304,7 @@ class FNDApp(App[None]):
             for w in existing:
                 w.remove()
             return
-        if self._latest_trace is None:
+        if self._search.latest_trace is None:
             self.notify(
                 "no search yet — type a query first",
                 severity="warning",
@@ -2059,10 +1315,10 @@ class FNDApp(App[None]):
 
         from textual.widgets import Markdown as _Md
 
-        body = json.dumps(self._latest_trace.to_json(), indent=2)
+        body = json.dumps(self._search.latest_trace.to_json(), indent=2)
         md = (
-            f"# Explain — `{self._latest_trace.query}`\n\n"
-            f"Regime: **{self._latest_trace.regime}**\n\n"
+            f"# Explain — `{self._search.latest_trace.query}`\n\n"
+            f"Regime: **{self._search.latest_trace.regime}**\n\n"
             f"```json\n{body}\n```\n"
         )
         overlay = Vertical(_Md(md), id="explain_overlay")
@@ -2127,15 +1383,15 @@ class FNDApp(App[None]):
         text = editor.text
         for w in self.query("#multi_panel"):
             w.remove()
-        result = parse_multi_input(text, synonyms=self._synonyms)
-        self._current_intent = result.intent
+        result = parse_multi_input(text, synonyms=self._search.synonyms)
+        self._search.intent = result.intent
         # Use lex line(s) as the search query (auto_subqueries inside
         # fusion_search will re-derive phrase + syn from this). Keeping
         # intent-only as the UX-pass-4 §3 hook; explicit sub-query
         # override is a future extension.
         lexical_parts = [s.query for s in result.subqueries if s.source == "lex"]
         if lexical_parts:
-            self._run_query(" ".join(lexical_parts))
+            self._search.run(" ".join(lexical_parts))
 
     def action_open_collections_form(self) -> None:
         """Palette entry: push the Collections sub-screen directly. One
@@ -2191,9 +1447,9 @@ class FNDApp(App[None]):
                 callback=self._on_recovery_done,
             )
             return
-        self._ranking_profile = self._resolve_profile()
+        self._search.ranking_profile = self._search.resolve_profile()
         self._refresh_status()
-        self._refresh_collections_panel()
+        self._scope.refresh_collections_panel()
         self.notify("Reloaded config", timeout=2)
 
     def action_open_keybindings_file(self) -> None:
@@ -2232,14 +1488,8 @@ class FNDApp(App[None]):
         if result == "valid":
             try:
                 self._config = load()
-                self._ranking_profile = self._resolve_profile()
+                self._search.ranking_profile = self._search.resolve_profile()
                 self._refresh_status()
-                self._refresh_collections_panel()
+                self._scope.refresh_collections_panel()
             except Exception:
                 pass
-
-    def _reindex_collection_async(self, name: str) -> None:
-        self._indexer.reindex_collection_async(name)
-
-    def _on_reindex_complete(self) -> None:
-        self._indexer.on_reindex_complete()
