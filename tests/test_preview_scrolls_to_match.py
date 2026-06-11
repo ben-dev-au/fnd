@@ -27,7 +27,7 @@ async def test_flat_preview_scrolls_to_match_on_initial_query(built_index: Path)
         await wait_until(
             pilot,
             lambda: (
-                bool(app._groups)
+                bool(app._search.groups)
                 and bool(list(app.query(LineBufferPreview)))
                 and next(iter(app.query(LineBufferPreview))).scroll_y > 0
             ),
@@ -44,7 +44,7 @@ async def test_flat_preview_scrolls_after_second_query(built_index: Path) -> Non
     async with app.run_test(size=(120, 40)) as pilot:
         await wait_until(
             pilot,
-            lambda: app._active_flat_buffer is not None and app._active_flat_buffer._fv is not None,
+            lambda: app._flat.active_buffer is not None and app._flat.active_buffer._fv is not None,
             timeout=15.0,
             message="initial flat buffer never activated",
         )
@@ -53,19 +53,19 @@ async def test_flat_preview_scrolls_after_second_query(built_index: Path) -> Non
         # or clears it; either way ``_fv`` identity changes. Without
         # this token the predicate can match the first query's already-
         # scrolled buffer before the second query has rewired it.
-        pre_fv = app._active_flat_buffer._fv  # type: ignore[union-attr]
-        app._run_query("blue penguin sandwich")
+        pre_fv = app._flat.active_buffer._fv  # type: ignore[union-attr]
+        app._search.run("blue penguin sandwich")
         await wait_until(
             pilot,
             lambda: (
-                app._active_flat_buffer is not None
-                and app._active_flat_buffer._fv is not pre_fv
-                and (app._active_flat_buffer.scroll_y > 0 or not app._active_flat_buffer._fv)
+                app._flat.active_buffer is not None
+                and app._flat.active_buffer._fv is not pre_fv
+                and (app._flat.active_buffer.scroll_y > 0 or not app._flat.active_buffer._fv)
             ),
             timeout=15.0,
             message="flat buffer never settled after second query",
         )
-        active = app._active_flat_buffer
+        active = app._flat.active_buffer
         assert active is not None
         assert active.scroll_y > 0 or not active._fv
 
@@ -90,8 +90,8 @@ async def test_md_preview_scrolls_to_match_chunk(tmp_path: Path, tmp_index_dir: 
             timeout=15.0,
             message=f"preview never scrolled; scroll_y={pane.scroll_y}",
         )
-        assert app._groups
-        assert app._groups[0].hits[0].chunk_seq > 0
+        assert app._search.groups
+        assert app._search.groups[0].hits[0].chunk_seq > 0
         assert pane.scroll_y > 0, f"scroll_y={pane.scroll_y}"
 
 
@@ -148,12 +148,12 @@ async def test_navigating_down_results_scrolls_each_preview(
         rtree = app.query_one("#results_pane", Tree)
         await wait_until(
             pilot,
-            lambda: len(app._groups) >= 2,
+            lambda: len(app._search.groups) >= 2,
             timeout=15.0,
             message="results never accumulated 2 groups",
         )
-        for i, _g in enumerate(app._groups):
-            expected_parent = app._groups[i].parent_id
+        for i, _g in enumerate(app._search.groups):
+            expected_parent = app._search.groups[i].parent_id
             rtree.focus()
             await safe_pause(pilot)
             rtree.cursor_line = rtree.cursor_line + 1 if i > 0 else 1
@@ -165,14 +165,14 @@ async def test_navigating_down_results_scrolls_each_preview(
             await wait_until(
                 pilot,
                 lambda parent=expected_parent: (
-                    app._active_preview is not None
-                    and app._active_preview.parent_doc_id == parent
+                    app._preview.active is not None
+                    and app._preview.active.parent_doc_id == parent
                     and pane.scroll_y > 0
                 ),
                 timeout=20.0,
                 message=(
                     f"result {i} parent={expected_parent} "
-                    f"active={app._active_preview.parent_doc_id if app._active_preview else None} "
+                    f"active={app._preview.active.parent_doc_id if app._preview.active else None} "
                     f"scroll_y={pane.scroll_y}"
                 ),
             )
@@ -375,11 +375,11 @@ async def test_flat_preview_no_jump_on_install(tmp_path: Path, tmp_index_dir: Pa
     async with app.run_test(size=(120, 40)) as pilot:
         await wait_until(
             pilot,
-            lambda: app._active_flat_buffer is not None and app._active_flat_buffer.scroll_y > 0,
+            lambda: app._flat.active_buffer is not None and app._flat.active_buffer.scroll_y > 0,
             timeout=15.0,
             message="flat buffer never scrolled",
         )
-        active = app._active_flat_buffer
+        active = app._flat.active_buffer
         assert active is not None, "no active flat buffer"
         assert active.scroll_y > 0, (
             f"buffer revealed at scroll_y=0; virtual_size={active.virtual_size}"
@@ -406,12 +406,12 @@ async def test_flat_match_lands_a_quarter_down_not_at_top(
     async with app.run_test(size=(120, 40)) as pilot:
         await wait_until(
             pilot,
-            lambda: app._active_flat_buffer is not None and app._active_flat_buffer.scroll_y > 0,
+            lambda: app._flat.active_buffer is not None and app._flat.active_buffer.scroll_y > 0,
             timeout=15.0,
             message="flat buffer never scrolled",
         )
         await settle(pilot)
-        buf = app._active_flat_buffer
+        buf = app._flat.active_buffer
         assert buf is not None
         assert buf._fv is not None
         match_logical = min(buf._fv.first_hit_line_in_chunk.values())

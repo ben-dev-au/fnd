@@ -36,7 +36,7 @@ async def test_tui_inline_filter_narrows_results(tui_corpus: Path) -> None:
         inp.value = "[Course == 'DPwC'] blue penguin"
         await pilot.press("enter")
         await pilot.pause()
-        paths = {Path(g.path).name for g in app._groups}  # type: ignore[attr-defined]
+        paths = {Path(g.path).name for g in app._search.groups}  # type: ignore[attr-defined]
         assert "in.md" in paths
         assert "out.md" not in paths
 
@@ -51,7 +51,7 @@ async def test_tui_invalid_filter_does_not_run_search(tui_corpus: Path) -> None:
         await pilot.press("enter")
         await pilot.pause()
         # Filter has invalid DSL syntax — should clear groups, not crash.
-        assert app._groups == []  # type: ignore[attr-defined]
+        assert app._search.groups == []  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -65,4 +65,4 @@ async def test_tui_unclosed_bracket_does_not_run_search(tui_corpus: Path) -> Non
         await pilot.pause()
         # ValueError from split_metadata_filter — should not run search,
         # leave groups empty (or as previous, depending on implementation).
-        assert app._groups == []  # type: ignore[attr-defined]
+        assert app._search.groups == []  # type: ignore[attr-defined]

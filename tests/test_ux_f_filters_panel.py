@@ -97,7 +97,7 @@ async def test_kind_toggle_is_multi_select(cfg_one_collection: Config, mixed_ind
         await pilot.pause()
         tree.select_node(md_leaf)
         await pilot.pause()
-        assert sorted(app._filter_kinds) == ["md", "pdf"]
+        assert sorted(app._scope.filter_kinds) == ["md", "pdf"]
 
 
 @pytest.mark.asyncio
@@ -115,11 +115,11 @@ async def test_date_toggle_is_single_select(cfg_one_collection: Config, mixed_in
         tree.focus()
         tree.select_node(week_leaf)
         await pilot.pause()
-        assert app._filter_date == "week"
+        assert app._scope.filter_date == "week"
         tree.select_node(month_leaf)
         await pilot.pause()
         # Single-select: month replaces week, not appended.
-        assert app._filter_date == "month"
+        assert app._scope.filter_date == "month"
 
 
 @pytest.mark.asyncio
@@ -133,7 +133,7 @@ async def test_filters_compose_into_query(cfg_one_collection: Config, mixed_inde
     async with app.run_test() as pilot:
         await pilot.pause()
         captured_queries: list[str] = []
-        searcher = app._searcher
+        searcher = app._search.searcher
         assert searcher is not None
         original = searcher._filtered_raw_hits
 
@@ -143,9 +143,9 @@ async def test_filters_compose_into_query(cfg_one_collection: Config, mixed_inde
 
         searcher._filtered_raw_hits = spy  # type: ignore[method-assign]
         # Activate kind=md filter.
-        app._filter_kinds = ["md"]
-        app._filter_date = "week"
-        app._run_query("glimmer")
+        app._scope.filter_kinds = ["md"]
+        app._scope.filter_date = "week"
+        app._search.run("glimmer")
         await pilot.pause()
         joined = " || ".join(captured_queries)
         assert "kind:md" in joined, joined
@@ -163,7 +163,7 @@ async def test_kind_multi_select_uses_or_group(
     async with app.run_test() as pilot:
         await pilot.pause()
         captured_queries: list[str] = []
-        searcher = app._searcher
+        searcher = app._search.searcher
         assert searcher is not None
         original = searcher._filtered_raw_hits
 
@@ -172,8 +172,8 @@ async def test_kind_multi_select_uses_or_group(
             return original(query, **kwargs)  # type: ignore[no-any-return,arg-type]
 
         searcher._filtered_raw_hits = spy  # type: ignore[method-assign]
-        app._filter_kinds = ["pdf", "md"]
-        app._run_query("glimmer")
+        app._scope.filter_kinds = ["pdf", "md"]
+        app._search.run("glimmer")
         await pilot.pause()
         joined = " || ".join(captured_queries)
         # Order-independent check across all sub-queries.
@@ -190,9 +190,9 @@ async def test_filters_persist_across_restart(
     app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._filter_kinds = ["pdf"]
-        app._filter_date = "week"
-        app._persist_state()
+        app._scope.filter_kinds = ["pdf"]
+        app._scope.filter_date = "week"
+        app._scope.persist()
         await pilot.pause()
     # Fresh app reads the same state file (autouse fixture isolates path).
     app2 = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
@@ -206,8 +206,8 @@ async def test_active_kind_marked_in_label(cfg_one_collection: Config, mixed_ind
     app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._filter_kinds = ["pdf"]
-        app._refresh_filters_panel()
+        app._scope.filter_kinds = ["pdf"]
+        app._scope.refresh_filters_panel()
         await pilot.pause()
         tree = app.query_one("#filters_panel_tree", Tree)
         kind_node = next(c for c in tree.root.children if "File type" in str(c.label))

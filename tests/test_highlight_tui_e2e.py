@@ -59,7 +59,7 @@ async def test_wildcard_match_colours_prefix_yellow_fill_orange(
         bar.value = "strategy discoun*"
         await pilot.press("enter")
         await pilot.pause()
-        spec = app._current_match_spec
+        spec = app._search.match_spec
         # The live spec must mark the wildcard match...
         from fnd.matching import word_matches
 

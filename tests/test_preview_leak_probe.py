@@ -61,7 +61,7 @@ async def test_preview_container_count_bounded_by_cache(
     app = FNDApp(index_dir=tmp_index_dir, initial_query="apple")
     # PreviewCache binds its default max_files at class-definition time;
     # override the instance attribute so this test's cap actually applies.
-    app._preview_cache.max_files = _TEST_LRU_CAP
+    app._preview.preview_cache.max_files = _TEST_LRU_CAP
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)

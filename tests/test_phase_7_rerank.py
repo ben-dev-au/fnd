@@ -370,8 +370,8 @@ def test_fnd_app_resolves_collection_specific_profile(
         },
     )
     app = FNDApp(index_dir=two_collection_index, collection="papers", config=cfg)
-    assert app._ranking_profile.recency_boost == pytest.approx(2.0)
-    assert app._ranking_profile.recency_half_life_seconds == 86_400
+    assert app._search.ranking_profile.recency_boost == pytest.approx(2.0)
+    assert app._search.ranking_profile.recency_half_life_seconds == 86_400
 
 
 def test_fnd_app_no_config_uses_neutral_profile(
@@ -380,5 +380,5 @@ def test_fnd_app_no_config_uses_neutral_profile(
     from fnd.tui import FNDApp
 
     app = FNDApp(index_dir=two_collection_index)
-    assert app._ranking_profile.recency_boost == 0.0
-    assert app._ranking_profile.filetype_boosts == {}
+    assert app._search.ranking_profile.recency_boost == 0.0
+    assert app._search.ranking_profile.filetype_boosts == {}

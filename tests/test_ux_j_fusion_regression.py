@@ -79,10 +79,10 @@ async def test_fusion_default_returns_many_files(cfg: Config, wide_index: Path) 
     app = FNDApp(index_dir=wide_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("templates")
+        app._search.run("templates")
         await pilot.pause()
-        assert len(app._groups) >= 10, (
-            f"expected >=10 files for a 15-file 'templates' corpus, got {len(app._groups)}"
+        assert len(app._search.groups) >= 10, (
+            f"expected >=10 files for a 15-file 'templates' corpus, got {len(app._search.groups)}"
         )
 
 
@@ -93,10 +93,10 @@ async def test_fusion_preserves_bm25_score_range(cfg: Config, wide_index: Path) 
     app = FNDApp(index_dir=wide_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("templates")
+        app._search.run("templates")
         await pilot.pause()
-        assert app._groups
-        top = app._groups[0].hits[0]
+        assert app._search.groups
+        top = app._search.groups[0].hits[0]
         # RRF-fused scores cap at ~0.13 even when a doc ranks #1 in
         # every sub-query (phrase + lex + syn at weights 2.0/1.0/0.6,
         # k=60, plus the 0.05 rank-1 bonus). BM25 for our fixture sits
@@ -111,7 +111,7 @@ async def test_fusion_preserves_bm25_score_range(cfg: Config, wide_index: Path) 
         # Belt-and-braces: the score on the hit must equal the BM25
         # score the searcher returns for the same doc through the
         # single-pass path. RRF would diverge.
-        searcher = app._searcher
+        searcher = app._search.searcher
         assert searcher is not None
         raw = searcher._filtered_raw_hits(
             "templates", target=500, collection="notes", metadata_filter=None

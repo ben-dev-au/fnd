@@ -56,15 +56,15 @@ async def test_typo_query_falls_back_to_cascade(cfg: Config, fuzzy_index: Path) 
     app = FNDApp(index_dir=fuzzy_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("glimer")
+        app._search.run("glimer")
         await pilot.pause()
-        assert app._groups, (
-            f"fusion+cascade should surface notes.md via fuzzy~1; got {app._groups!r}"
+        assert app._search.groups, (
+            f"fusion+cascade should surface notes.md via fuzzy~1; got {app._search.groups!r}"
         )
-        assert app._groups[0].path.endswith("notes.md")
+        assert app._search.groups[0].path.endswith("notes.md")
         # Cascade tags fuzzy hits with pass_index == 1; TUI renders the
         # ``~`` glyph for those.
-        assert any(h.pass_index == 1 for g in app._groups for h in g.hits)
+        assert any(h.pass_index == 1 for g in app._search.groups for h in g.hits)
 
 
 @pytest.mark.asyncio
@@ -74,10 +74,10 @@ async def test_exact_query_uses_fusion_path(cfg: Config, fuzzy_index: Path) -> N
     app = FNDApp(index_dir=fuzzy_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("glimmer")
+        app._search.run("glimmer")
         await pilot.pause()
-        assert app._groups
-        top = app._groups[0].hits[0]
+        assert app._search.groups
+        top = app._search.groups[0].hits[0]
         assert top.pass_index == 0
 
 

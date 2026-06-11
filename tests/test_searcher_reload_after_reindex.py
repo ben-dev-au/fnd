@@ -133,16 +133,16 @@ async def test_new_file_appears_on_next_query_without_restart(
     app = FNDApp(index_dir=tmp_index_dir, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._run_query("alpha")
+        app._search.run("alpha")
         await pilot.pause()
-        assert app._groups, "baseline doc should be found"
+        assert app._search.groups, "baseline doc should be found"
 
         # Index a new file while the app is running (mirrors an in-app or
         # external reindex committing a new generation).
         _write_md(docs / "second.md", "# Second\nbravo zero seconds marker.\n")
         build_index(roots=[docs], index_dir=tmp_index_dir, collection="notes")
 
-        app._run_query("bravo")
+        app._search.run("bravo")
         await pilot.pause()
-        assert app._groups, "newly-indexed file must appear on the next query"
-        assert app._groups[0].path.endswith("second.md")
+        assert app._search.groups, "newly-indexed file must appear on the next query"
+        assert app._search.groups[0].path.endswith("second.md")

@@ -263,7 +263,7 @@ async def test_chunk_widgets_mounted_per_pdf_page(
         await pilot.press("down")
         await pilot.pause()
 
-        buf = app._active_flat_buffer
+        buf = app._flat.active_buffer
         assert buf is not None, "PDF should mount the flat-buffer preview"
         fv = buf.file_view
         assert fv is not None

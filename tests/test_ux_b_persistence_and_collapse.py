@@ -60,13 +60,13 @@ async def test_scope_toggle_persists_to_disk(
     app = FNDApp(index_dir=two_index, config=cfg_two)
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app._collections == []
+        assert app._scope.collections == []
         tree = app.query_one("#collections_panel_tree", Tree)
         tree.focus()
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        assert len(app._collections) == 1
+        assert len(app._scope.collections) == 1
 
     # Re-load state from disk: should reflect the toggle.
     from fnd.state import load as load_state
@@ -89,7 +89,7 @@ async def test_app_restores_persisted_scope_on_launch(
     app = FNDApp(index_dir=two_index, config=cfg_two)  # no collection arg
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app._collections == ["papers"]
+        assert app._scope.collections == ["papers"]
 
 
 @pytest.mark.asyncio

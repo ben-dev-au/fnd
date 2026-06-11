@@ -111,11 +111,13 @@ async def test_reading_view_widens_table(tmp_path: Path, tmp_index_dir: Path) ->
     async with app.run_test(size=(120, 40)) as pilot:
         from textual.widgets import Tree
 
-        await wait_until(pilot, lambda: bool(app._groups), timeout=15.0, message="no results")
+        await wait_until(
+            pilot, lambda: bool(app._search.groups), timeout=15.0, message="no results"
+        )
         app.query_one("#results_pane", Tree).focus()
         await wait_until(
             pilot,
-            lambda: app._active_preview is not None and _col_total(app) is not None,
+            lambda: app._preview.active is not None and _col_total(app) is not None,
             timeout=20.0,
             message="DataTable never rendered in the structural preview",
         )

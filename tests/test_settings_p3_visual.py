@@ -446,11 +446,11 @@ async def test_on_reindex_complete_swaps_searcher(fixtures_dir: Path, tmp_index_
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test() as pilot:
         await pilot.pause()
-        original = app._searcher
+        original = app._search.searcher
         assert original is not None, "Searcher should exist after first mount"
-        app._on_reindex_complete()
-        assert app._searcher is not None
-        assert app._searcher is not original, (
+        app._indexer.on_reindex_complete()
+        assert app._search.searcher is not None
+        assert app._search.searcher is not original, (
             "Searcher instance was not replaced — stale searcher would keep "
             "querying the pre-rebuild index generation"
         )
@@ -596,7 +596,7 @@ async def test_collections_sidebar_toggle_preserves_cursor(
         # path. Posting the message exercises the real handler.
         tree.post_message(Tree.NodeSelected(bravo))
         await pilot.pause()
-        assert "bravo" in app._collections, "toggle did not register"
+        assert "bravo" in app._scope.collections, "toggle did not register"
         assert tree.cursor_line == cursor_before, (
             f"cursor moved from {cursor_before} to {tree.cursor_line} after a single toggle"
         )

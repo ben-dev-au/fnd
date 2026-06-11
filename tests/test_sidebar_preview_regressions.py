@@ -68,12 +68,12 @@ async def test_preview_loads_after_back_to_back_queries(built_index: Path) -> No
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app._groups, "test setup — initial query produced no results"
-        assert app._preview_parent_id is not None
-        app._run_query("penguin")
+        assert app._search.groups, "test setup — initial query produced no results"
+        assert app._preview.parent_id is not None
+        app._search.run("penguin")
         await pilot.pause()
-        assert app._groups, "test setup — second query produced no results"
-        assert app._preview_parent_id is not None, (
+        assert app._search.groups, "test setup — second query produced no results"
+        assert app._preview.parent_id is not None, (
             "preview pane stayed empty on the second query — the cursor "
             "landed on the same line as the previous query and the "
             "NodeHighlighted event was suppressed"
@@ -102,7 +102,7 @@ async def test_panel_collapse_writes_to_disk(
             timeout=30.0,
             message="ctree never gained 'collapsed' class",
         )
-        assert "collections_panel_tree" in app._collapsed_panels
+        assert "collections_panel_tree" in app._scope.collapsed_panels
         assert "collections_panel_tree" in isolated_ui_state.read_text()
 
 
@@ -161,7 +161,7 @@ async def test_enter_on_collection_does_not_undo_collapse(
         coll.collapse()
         await safe_pause(pilot)
         assert coll.data is not None
-        assert coll.data["name"] not in app._expanded_collections
+        assert coll.data["name"] not in app._scope.expanded_collections
         ctree.focus()
         await settle(pilot)
         for i, n in enumerate(ctree.root.children):
@@ -172,7 +172,7 @@ async def test_enter_on_collection_does_not_undo_collapse(
         await safe_press(pilot, "enter")
         await settle(pilot)
         assert not coll.is_expanded
-        assert coll.data["name"] not in app._expanded_collections
+        assert coll.data["name"] not in app._scope.expanded_collections
 
 
 # ── Bug 3: toggling a collection should not steal focus / rerun ─────
@@ -185,7 +185,7 @@ async def test_toggle_with_active_query_clears_results_without_focus_shift(
     app = FNDApp(index_dir=built_index, config=cfg, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
-        assert app._groups, "test setup — initial query produced no results"
+        assert app._search.groups, "test setup — initial query produced no results"
         ctree = app.query_one("#collections_panel_tree", Tree)
         ctree.focus()
         await settle(pilot)
@@ -198,7 +198,7 @@ async def test_toggle_with_active_query_clears_results_without_focus_shift(
         await safe_press(pilot, "enter")
         await wait_until(
             pilot,
-            lambda: app._groups == [],
+            lambda: app._search.groups == [],
             timeout=30.0,
             message="toggling collection did not clear results",
         )
@@ -231,7 +231,7 @@ async def test_collapse_state_survives_collection_cli_flag(
         ctree = app.query_one("#collections_panel_tree", Tree)
         ftree = app.query_one("#filters_panel_tree", Tree)
         # Scope override took effect.
-        assert app._collections == ["default"]
+        assert app._scope.collections == ["default"]
         # Panel layout was restored from disk — wait for the saved
         # collapsed state to settle onto the trees, including the
         # expanded_collections / expanded_filter_branches lists which
@@ -242,10 +242,10 @@ async def test_collapse_state_survives_collection_cli_flag(
             lambda: (
                 "collapsed" in ctree.classes
                 and "collapsed" in ftree.classes
-                and "alpha" in app._expanded_collections
-                and "kinds" in app._expanded_filter_branches
+                and "alpha" in app._scope.expanded_collections
+                and "kinds" in app._scope.expanded_filter_branches
             ),
             timeout=30.0,
             message="saved sidebar state not fully restored",
         )
-        assert app._collapsed_panels == {"collections_panel_tree", "filters_panel_tree"}
+        assert app._scope.collapsed_panels == {"collections_panel_tree", "filters_panel_tree"}

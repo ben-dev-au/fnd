@@ -133,8 +133,8 @@ async def test_chunk_widgets_rebuild_when_focus_moves_to_different_file(
         first_leaf_zero = children[0].children[0]
         tree.move_cursor(first_leaf_zero)
         await pilot.pause()
-        first_pid = app._preview_parent_id
-        first_buf = app._active_flat_buffer
+        first_pid = app._preview.parent_id
+        first_buf = app._flat.active_buffer
         assert first_buf is not None
         first_fv = first_buf.file_view
         assert first_fv is not None
@@ -146,11 +146,11 @@ async def test_chunk_widgets_rebuild_when_focus_moves_to_different_file(
         second_leaf_zero = children[1].children[0]
         tree.move_cursor(second_leaf_zero)
         await pilot.pause()
-        assert app._preview_parent_id is not None
-        assert app._preview_parent_id != first_pid, "preview did not rebuild for file 2"
+        assert app._preview.parent_id is not None
+        assert app._preview.parent_id != first_pid, "preview did not rebuild for file 2"
         # Stage 1c: a single shared LineBufferPreview is reused across files —
         # what swaps is the installed RenderedDocument (and therefore file_view).
-        second_buf = app._active_flat_buffer
+        second_buf = app._flat.active_buffer
         assert second_buf is not None
         second_fv = second_buf.file_view
         assert second_fv is not None

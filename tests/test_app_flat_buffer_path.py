@@ -137,13 +137,13 @@ async def test_pdf_preview_uses_line_buffer(pdf_index: Path) -> None:
         tree.focus()
         await safe_press(pilot, "down")
         await safe_pause(pilot)
-        assert app._active_flat_buffer is not None
-        assert app._active_preview is None
+        assert app._flat.active_buffer is not None
+        assert app._preview.active is None
         pane = app.query_one("#preview_pane")
         # Exactly one LineBufferPreview lives inside the pane.
         buffers = list(pane.query(LineBufferPreview))
         assert len(buffers) == 1
-        assert buffers[0] is app._active_flat_buffer
+        assert buffers[0] is app._flat.active_buffer
 
 
 @pytest.mark.asyncio
@@ -167,7 +167,7 @@ async def test_flat_buffer_scrollbar_carries_line_precise_markers(
         tree.focus()
         await safe_press(pilot, "down")
         await safe_pause(pilot)
-        buf = app._active_flat_buffer
+        buf = app._flat.active_buffer
         assert buf is not None
         bar = buf.vertical_scrollbar
         assert isinstance(bar, MatchAwareScrollBar)
@@ -201,7 +201,7 @@ async def test_cursor_between_sections_calls_scroll_to_chunk_each_time(
         # Cursor down once to land on the first section.
         await safe_press(pilot, "down")
         await safe_pause(pilot)
-        buf = app._active_flat_buffer
+        buf = app._flat.active_buffer
         assert buf is not None
         # The file should have multiple section children — bail clearly
         # if the fixture didn't produce them.
@@ -351,14 +351,14 @@ async def test_flat_buffer_cache_hit_reuses_widget(pdf_index: Path) -> None:
         tree.focus()
         await safe_press(pilot, "down")
         await safe_pause(pilot)
-        buf_first_visit = app._active_flat_buffer
+        buf_first_visit = app._flat.active_buffer
         assert buf_first_visit is not None
         # Move the cursor away then back to the same file.
         await safe_press(pilot, "up")
         await safe_pause(pilot)
         await safe_press(pilot, "down")
         await safe_pause(pilot)
-        assert app._active_flat_buffer is buf_first_visit, (
+        assert app._flat.active_buffer is buf_first_visit, (
             "cache hit should reuse the existing buffer, not remount a fresh one"
         )
 
@@ -381,7 +381,7 @@ async def test_md_preview_keeps_structural_path(cfg: Config, md_index: Path) -> 
         await safe_press(pilot, "down")
         await wait_until(
             pilot,
-            lambda: app._active_preview is not None and app._active_flat_buffer is None,
+            lambda: app._preview.active is not None and app._flat.active_buffer is None,
             timeout=15.0,
             message="markdown preview never activated structural container",
         )

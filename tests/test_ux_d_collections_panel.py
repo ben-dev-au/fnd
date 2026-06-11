@@ -79,7 +79,7 @@ async def test_enter_toggles_collection_scope(
     async with app.run_test() as pilot:
         await pilot.pause()
         # Start with no scope active.
-        assert app._collections == []
+        assert app._scope.collections == []
         tree = app.query_one("#collections_panel_tree", Tree)
         tree.focus()
         await pilot.pause()
@@ -87,11 +87,11 @@ async def test_enter_toggles_collection_scope(
         await pilot.press("enter")
         await pilot.pause()
         # Whichever collection is first alphabetically should now be active.
-        assert len(app._collections) == 1, app._collections
+        assert len(app._scope.collections) == 1, app._scope.collections
         # Press Enter again — should toggle off.
         await pilot.press("enter")
         await pilot.pause()
-        assert app._collections == []
+        assert app._scope.collections == []
 
 
 @pytest.mark.asyncio
