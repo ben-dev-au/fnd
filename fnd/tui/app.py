@@ -57,6 +57,8 @@ from fnd.tui.line_buffer import (
     build_rendered_document,
 )
 from fnd.tui.preview.flat_view import FlatBufferView
+from fnd.tui.preview.lazy_mount import LazyMounter
+from fnd.tui.preview.prefetch import PrefetchEngine
 from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
 from fnd.tui.preview_scroll import (
     FlatScrollStrategy,
@@ -465,17 +467,9 @@ class FNDApp(App[None]):
         self._preview_load_progress: tuple[int, int | None] | None = None
         # Strong ref so the event loop doesn't GC the in-flight mount task.
         self._preview_mount_task: object | None = None
-        # In-flight lazy-mount task (driven by scroll). One at a time;
-        # cleared on file switch alongside ``_preview_mount_task``.
-        self._lazy_mount_task: object | None = None
-        # Monotonic-time gate. Programmatic scrolls (navigation anchor,
-        # finalize reveal) push this forward so the watcher doesn't
-        # interpret their own scroll changes as user intent and fire a
-        # competing mount that yanks the focused chunk off-screen.
-        # Debounce timer so rapid scroll bursts collapse to a single
-        # check at the tail end — protects programmatic intermediate
-        # scrolls AND smooths user wheel/key scroll bursts.
-        self._lazy_mount_check_timer: object | None = None
+        # Scroll-driven lazy mounting (task + debounce timer); see
+        # fnd/tui/preview/lazy_mount.py.
+        self._lazy = LazyMounter(self)
         # Prebuilt flat-buffer bundles keyed by (parent_id, query_sig).
         # Cleared on query change — highlight spans are baked in at build time.
         self._prebuilt_cache: dict[tuple[str, str], RenderedDocument] = {}
@@ -489,11 +483,9 @@ class FNDApp(App[None]):
         # tick coalesce. Cleared when that render finishes settling.
         self._inflight_preview_target: tuple[str, int] | None = None
         self._progress = ProgressFacility(self)
-        # Single-consumer drainer serializes prefetch widget-mounts.
-        import asyncio as _asyncio
-
-        self._prefetch_sink_queue: _asyncio.Queue[_Any] | None = None
-        self._prefetch_sink_drainer: _Any | None = None
+        # Prefetch warming pipeline (sink queue + drainer task started in
+        # on_mount); see fnd/tui/preview/prefetch.py.
+        self._prefetch = PrefetchEngine(self)
 
     def open_progress(self, phase: str = "", *, total: int = 1) -> ProgressSession:
         """Open a new ProgressSession. Use as a context manager."""
@@ -581,10 +573,7 @@ class FNDApp(App[None]):
     def on_mount(self) -> None:
         # Tokyo-night theme: muted blue/teal pastel palette per user request.
         self.theme = "tokyo-night"
-        import asyncio as _asyncio
-
-        self._prefetch_sink_queue = _asyncio.Queue()
-        self._prefetch_sink_drainer = _asyncio.create_task(self._drain_prefetch_sinks())
+        self._prefetch.start()
 
         # One-time: promote PDF-texture cache entries produced by the current
         # engine but under the pre-`tex-vN` key format to the coarse
@@ -2146,47 +2135,18 @@ class FNDApp(App[None]):
         self._preview_mount_task = None
 
     def _cancel_lazy_mount_task(self) -> None:
-        """Drop any in-flight scroll-driven mount task. Called on file
-        switch / query change so the task can't mount stale chunks into
-        a container the user has moved away from."""
-        import contextlib
+        self._lazy.cancel()
 
-        if self._lazy_mount_check_timer is not None:
-            with contextlib.suppress(Exception):
-                self._lazy_mount_check_timer.stop()  # type: ignore[attr-defined]
-            self._lazy_mount_check_timer = None
-        task = self._lazy_mount_task
-        if task is None:
-            return
-        try:
-            done = task.done()  # type: ignore[attr-defined]
-        except Exception:
-            done = True
-        if not done:
-            with contextlib.suppress(Exception):
-                task.cancel()  # type: ignore[attr-defined]
-        self._lazy_mount_task = None
+    @property
+    def _lazy_mount_task(self) -> object | None:
+        return self._lazy.task
+
+    @_lazy_mount_task.setter
+    def _lazy_mount_task(self, value: object | None) -> None:
+        self._lazy.task = value
 
     async def _cancel_prefetch_task_on(self, container: PreviewContainer) -> None:
-        """Cancel + await any background prefetch task on ``container``
-        so the user-side mount doesn't race it and trip MountError."""
-        import asyncio
-        import contextlib
-
-        task = getattr(container, "_prefetch_task", None)
-        if task is None:
-            return
-        try:
-            if task.done():
-                container._prefetch_task = None  # type: ignore[attr-defined]
-                return
-        except Exception:
-            container._prefetch_task = None  # type: ignore[attr-defined]
-            return
-        task.cancel()
-        with contextlib.suppress(BaseException):
-            await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
-        container._prefetch_task = None  # type: ignore[attr-defined]
+        await self._prefetch.cancel_task_on(container)
 
     def _on_preview_load_failed(self, exc: BaseException) -> None:
         """Worker error callback. Hide the bar, surface a notify."""
@@ -2217,190 +2177,10 @@ class FNDApp(App[None]):
         self._dispatch_preview_mount(parent_id, focus_chunk_seq, chunks, prebuilt=prebuilt)
 
     def _prefetch_top_results(self, *, anchor_parent_id: str | None = None) -> None:
-        """Decode + pre-mount widgets for an N-result window so cursor moves
-        land on cache hits. ``preview_prefetch_count`` = N; 0 disables.
-        Parallelism bounded by ``preview_decode_workers``.
-
-        ``anchor_parent_id`` centres the window around the cursor's position
-        in the result list instead of starting from the top — lets the
-        buffer follow the user when they navigate past the initial range.
-        """
-        # Discard mount jobs queued for the previous anchor — stale
-        # work would otherwise keep the drainer (and the asyncio loop)
-        # busy across navigation.
-        q = self._prefetch_sink_queue
-        if q is not None:
-            import contextlib as _contextlib
-
-            drained = 0
-            while True:
-                try:
-                    q.get_nowait()
-                except Exception:
-                    break
-                with _contextlib.suppress(Exception):
-                    q.task_done()
-                drained += 1
-            if drained:
-                self._diag_log(f"prefetch_top drained_stale_jobs={drained}")
-        if self._searcher is None or not self._groups:
-            return
-        if self._config is not None:
-            n = self._config.defaults.preview_prefetch_count
-        else:
-            from fnd.config import Defaults
-
-            n = Defaults().preview_prefetch_count
-        if n <= 0:
-            return
-        # Build the candidate window. With no anchor we walk from rank 0;
-        # with an anchor we start ~N/2 above its position so we cover both
-        # directions of likely navigation.
-        start_idx = 0
-        if anchor_parent_id is not None:
-            anchor_idx = next(
-                (i for i, g in enumerate(self._groups) if g.parent_id == anchor_parent_id),
-                -1,
-            )
-            if anchor_idx >= 0:
-                half = max(1, n // 2)
-                start_idx = max(0, anchor_idx - half)
-        targets: list[tuple[str, int]] = []
-        seen: set[str] = set()
-        already_cached: list[str] = []
-        query_sig_for_filter = self._current_query_signature()
-        for g in self._groups[start_idx:]:
-            if g.parent_id in seen:
-                continue
-            seen.add(g.parent_id)
-            # Filter by preview_cache (widget tree ready), not chunk_cache:
-            # a file whose chunks are cached but whose mount got drained
-            # by a prior cursor move must be re-queued. Also skip if it's
-            # the active preview — that one's owned by the user-side path.
-            in_preview = self._preview_cache.get(g.parent_id, query_sig_for_filter) is not None
-            is_active = (
-                self._active_preview is not None
-                and self._active_preview.parent_doc_id == g.parent_id
-                and self._active_preview.query_signature == query_sig_for_filter
-            )
-            if in_preview or is_active:
-                already_cached.append(g.parent_id[:8])
-                continue
-            focus = g.hits[0].chunk_seq if g.hits else 0
-            targets.append((g.parent_id, focus))
-            if len(targets) >= n:
-                break
-        self._diag_log(
-            f"prefetch_top n={n} anchor={anchor_parent_id[:8] if anchor_parent_id else None} "
-            f"start_idx={start_idx} targets={[t[0][:8] for t in targets]} "
-            f"already_cached={already_cached}"
-        )
-        if not targets:
-            return
-
-        searcher = self._searcher
-        decode_workers = (
-            self._config.defaults.preview_decode_workers if self._config is not None else 1
-        )
-        try:
-            pane_widget = self.query_one("#preview_pane", VerticalScroll)
-            # Floor of 20 mirrors the cold-load + md-flat paths. Without
-            # it, if the pane isn't laid out at prefetch time (content
-            # width 0–1) every flat-path file gets pre-rendered to
-            # 1-cell strips and paints as a single vertical column on
-            # first reveal — the "PDF only shows a single line" symptom.
-            measured = pane_widget.content_size.width - 1
-            estimated_wrap_width = max(20, measured) if measured > 0 else 0
-        except Exception:
-            estimated_wrap_width = 0
-        query_sig = self._current_query_signature()
-        app = self
-
-        def _prefetch_one(parent_id: str, focus_seq: int) -> None:
-            import time as _time
-
-            t0 = _time.perf_counter()
-            # Reuse cached chunk data if present — only the mount got dropped,
-            # not the decode. Avoids re-running PDF/docx extraction.
-            cached_chunks = app._chunk_cache.get(parent_id)
-            if cached_chunks is not None:
-                fetched = cached_chunks
-                decode_ms = 0.0
-            else:
-                try:
-                    fetched = searcher.get_file_chunks(parent_id, max_workers=decode_workers)
-                except Exception:
-                    app.call_from_thread(
-                        app._diag_log,
-                        f"prefetch_one decode FAILED parent={parent_id[:8]}",
-                    )
-                    return
-                decode_ms = (_time.perf_counter() - t0) * 1000.0
-            # Stale-query guard: if the user has moved on, drop the
-            # work without scheduling any main-thread sinks.
-            if query_sig != app._current_query_signature():
-                app.call_from_thread(
-                    app._diag_log,
-                    f"prefetch_one stale parent={parent_id[:8]} decode_ms={decode_ms:.0f}",
-                )
-                return
-            app.call_from_thread(app._record_prefetched_chunks, parent_id, fetched)
-            if not fetched:
-                return
-            mode = choose_preview_mode(fetched)
-            app.call_from_thread(
-                app._diag_log,
-                f"prefetch_one done parent={parent_id[:8]} decode_ms={decode_ms:.0f} "
-                f"chunks={len(fetched)} mode={mode} focus_seq={focus_seq}",
-            )
-            if mode == "flat":
-                try:
-                    fv = app._build_file_view_for_chunks(fetched)
-                    wrap_width = estimated_wrap_width if estimated_wrap_width > 0 else 0
-                    doc = build_rendered_document(fv, wrap_width=wrap_width)
-                except Exception:
-                    return
-                app.call_from_thread(app._record_prefetched_bundle, parent_id, query_sig, doc)
-                app.call_from_thread(app._prefetch_mount_flat, parent_id, query_sig, doc, focus_seq)
-            else:
-                app.call_from_thread(
-                    app._prefetch_mount_structural,
-                    parent_id,
-                    query_sig,
-                    list(fetched),
-                    focus_seq,
-                )
-
-        def _prefetch() -> None:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-
-            workers = max(1, decode_workers)
-            with ThreadPoolExecutor(max_workers=workers) as ex:
-                futures = [ex.submit(_prefetch_one, pid, focus) for pid, focus in targets]
-                for f in as_completed(futures):
-                    # Drop everything on query change — _run_query has cleared
-                    # caches and any in-flight work here is stale.
-                    if query_sig != app._current_query_signature():
-                        for other in futures:
-                            other.cancel()
-                        return
-                    with contextlib.suppress(Exception):
-                        f.result()
-
-        self.run_worker(
-            _prefetch,
-            thread=True,
-            exclusive=True,
-            group="preview-prefetch",
-            description="prefetching top-N preview bundles",
-        )
+        self._prefetch.prefetch_top_results(anchor_parent_id=anchor_parent_id)
 
     def _record_prefetched_chunks(self, parent_id: str, chunks: list[FileChunk]) -> None:
-        """Main-thread sink for prefetch worker chunk results. Stored
-        only if not already present so a concurrent user-initiated
-        load (which would have richer state) wins."""
-        if parent_id not in self._chunk_cache:
-            self._chunk_cache[parent_id] = chunks
+        self._prefetch.record_chunks(parent_id, chunks)
 
     def _record_prefetched_bundle(
         self,
@@ -2408,10 +2188,7 @@ class FNDApp(App[None]):
         query_sig: str,
         doc: RenderedDocument,
     ) -> None:
-        """Stash a worker-built bundle if the query is still current."""
-        if query_sig != self._current_query_signature():
-            return
-        self._prebuilt_cache[(parent_id, query_sig)] = doc
+        self._prefetch.record_bundle(parent_id, query_sig, doc)
 
     def _prefetch_mount_flat(
         self,
@@ -2420,37 +2197,7 @@ class FNDApp(App[None]):
         doc: RenderedDocument,
         focus_chunk_seq: int,
     ) -> None:
-        """Queue a hidden flat-buffer pre-mount; drainer runs it serially."""
-        q = self._prefetch_sink_queue
-        if q is None:
-            return
-        if query_sig != self._current_query_signature():
-            return
-
-        async def _job() -> None:
-            await self._prefetch_mount_flat_async(parent_id, query_sig, doc, focus_chunk_seq)
-
-        q.put_nowait(_job)
-
-    async def _prefetch_mount_flat_async(
-        self,
-        parent_id: str,
-        query_sig: str,
-        doc: RenderedDocument,
-        focus_chunk_seq: int,
-    ) -> None:
-        """Stash the prefetched RenderedDocument in the value cache. No mount —
-        user activation installs into the shared widget on click."""
-        _ = focus_chunk_seq  # focus is recomputed at install time
-        if query_sig != self._current_query_signature():
-            return
-        cache_key = (parent_id, query_sig)
-        if cache_key in self._flat_buffer_cache:
-            return
-        self._flat_buffer_cache[cache_key] = doc
-        self._flat_buffer_cache.move_to_end(cache_key)
-        while len(self._flat_buffer_cache) > _PREVIEW_CACHE_MAX_FILES:
-            self._flat_buffer_cache.popitem(last=False)
+        self._prefetch.mount_flat(parent_id, query_sig, doc, focus_chunk_seq)
 
     def _prefetch_mount_structural(
         self,
@@ -2459,185 +2206,7 @@ class FNDApp(App[None]):
         chunks: list[FileChunk],
         focus_chunk_seq: int,
     ) -> None:
-        """Queue a hidden structural pre-mount so cached clicks land
-        as a visibility flip. Safe to default-on now that W3 collapses
-        per-cell widgets — see bench_input_lag for the DOM-size
-        breakdown. Opt out with _FND_NO_PREMOUNT=1."""
-        import os as _os
-
-        if _os.environ.get("_FND_NO_PREMOUNT") == "1":
-            return
-        q = self._prefetch_sink_queue
-        if q is None:
-            self._diag_log(f"prefetch_mount_structural SKIPPED no-queue parent={parent_id[:8]}")
-            return
-        if query_sig != self._current_query_signature():
-            self._diag_log(f"prefetch_mount_structural SKIPPED stale-sig parent={parent_id[:8]}")
-            return
-        self._diag_log(
-            f"prefetch_mount_structural QUEUED parent={parent_id[:8]} "
-            f"focus={focus_chunk_seq} qsize_before={q.qsize()}"
-        )
-
-        async def _job() -> None:
-            await self._prefetch_mount_structural_async(
-                parent_id, query_sig, chunks, focus_chunk_seq
-            )
-
-        q.put_nowait(_job)
-
-    async def _prefetch_mount_structural_async(
-        self,
-        parent_id: str,
-        query_sig: str,
-        chunks: list[FileChunk],
-        focus_chunk_seq: int,
-    ) -> None:
-        if query_sig != self._current_query_signature():
-            self._diag_log(
-                f"prefetch_mount_structural_async SKIPPED stale-sig parent={parent_id[:8]}"
-            )
-            return
-        if self._preview_cache.get(parent_id, query_sig) is not None:
-            self._diag_log(
-                f"prefetch_mount_structural_async SKIPPED already-cached parent={parent_id[:8]}"
-            )
-            return
-        if (
-            self._active_preview is not None
-            and self._active_preview.parent_doc_id == parent_id
-            and self._active_preview.query_signature == query_sig
-        ):
-            self._diag_log(
-                f"prefetch_mount_structural_async SKIPPED already-active parent={parent_id[:8]}"
-            )
-            return
-        import asyncio
-        import contextlib
-
-        try:
-            pane = self.query_one("#preview_pane", VerticalScroll)
-        except Exception:
-            self._diag_log(
-                f"prefetch_mount_structural_async SKIPPED no-pane parent={parent_id[:8]}"
-            )
-            return
-        self._diag_log(f"prefetch_mount_structural_async STARTING parent={parent_id[:8]}")
-        container = PreviewContainer(
-            parent_doc_id=parent_id,
-            query_signature=query_sig,
-            total_chunks=len(chunks),
-        )
-        container.add_class("-hidden")
-        mount_awaitable: object | None = None
-        with contextlib.suppress(Exception):
-            mount_awaitable = pane.mount(container)
-        if mount_awaitable is not None:
-            with contextlib.suppress(Exception):
-                await mount_awaitable  # type: ignore[misc]
-
-        sub_task = asyncio.create_task(
-            self._prefetch_mount_chunk_loop(
-                parent_id, query_sig, focus_chunk_seq, chunks, container
-            )
-        )
-        # Exposing the sub-task as _prefetch_task lets the user-side adopt
-        # branch (_cancel_prefetch_task_on) await its cancellation cleanly.
-        container._prefetch_task = sub_task  # type: ignore[attr-defined]
-        try:
-            await sub_task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            pass
-
-    async def _prefetch_mount_chunk_loop(
-        self,
-        parent_id: str,
-        query_sig: str,
-        focus_chunk_seq: int,
-        chunks: list[FileChunk],
-        container: PreviewContainer,
-    ) -> None:
-        import asyncio
-        import contextlib
-
-        from fnd.tui import _perf
-
-        focus_idx = next(
-            (i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq),
-            0,
-        )
-        # Prefetch only mounts a tiny window around the focused chunk
-        # so the DOM stays small across many cached files. User-side
-        # resume expands on click via Phase 1b/2.
-        win_start = max(0, focus_idx - _PREFETCH_MOUNT_RADIUS)
-        win_end = min(len(chunks), focus_idx + _PREFETCH_MOUNT_RADIUS + 1)
-        _perf.mark(
-            "prefetch_loop_start",
-            parent_id=parent_id,
-            focus_idx=focus_idx,
-            win=(win_start, win_end),
-            total_chunks=len(chunks),
-        )
-        self._diag_log(
-            f"prefetch_loop_start parent={parent_id[:8]} focus={focus_idx} "
-            f"win=({win_start},{win_end}) total_chunks={len(chunks)}"
-        )
-        n_mounted = 0
-        try:
-            for i in range(win_start, win_end):
-                if query_sig != self._current_query_signature():
-                    return
-                if i in container.mounted_indices:
-                    continue
-                # Bail out the moment user-side mount lights up: prefetch is
-                # background warming, foreground always wins.
-                if self._user_mount_in_flight():
-                    return
-                try:
-                    with _perf.span("prefetch_mount_one", idx=i):
-                        self._mount_chunk_into(container, chunks[i], i, chunks)
-                    n_mounted += 1
-                except Exception:
-                    continue
-                # Wait for the chunk widget's async build so
-                # ``first_match_block`` resolves before a user-side
-                # click adopts this pre-mount; without this, the click
-                # path's retry chain polls ~500 ms for a still-running build.
-                seq = chunks[i].chunk_seq
-                md_widget = container.chunk_widgets.get(seq)
-                if md_widget is not None and isinstance(md_widget, FNDMarkdown):
-                    with contextlib.suppress(Exception), _perf.span("prefetch_await_build", idx=i):
-                        async with md_widget.lock:
-                            pass
-                await asyncio.sleep(0.002)
-        finally:
-            _perf.mark(
-                "prefetch_loop_end",
-                parent_id=parent_id,
-                n_mounted=n_mounted,
-                mounted_indices_size=len(container.mounted_indices),
-                is_complete=container.is_complete,
-            )
-            self._diag_log(
-                f"prefetch_loop_end parent={parent_id[:8]} n_mounted={n_mounted} "
-                f"mounted_size={len(container.mounted_indices)} "
-                f"is_complete={container.is_complete}"
-            )
-            if container.mounted_indices:
-                evicted = self._preview_cache.put(container, protect=self._active_preview)
-                for old in evicted:
-                    with contextlib.suppress(Exception):
-                        old.remove()
-            else:
-                # Loop bailed on user-mount-in-flight (or every mount raised)
-                # before any chunk landed. Caching the empty container would
-                # block the next prefetch attempt for this (parent_id, sig)
-                # via the already-cached short-circuit; instead, drop it so a
-                # later trigger (cursor move, second query) can retry cleanly.
-                with contextlib.suppress(Exception):
-                    container.remove()
+        self._prefetch.mount_structural(parent_id, query_sig, chunks, focus_chunk_seq)
 
     def _user_mount_in_flight(self) -> bool:
         task = self._preview_mount_task
@@ -2647,32 +2216,6 @@ class FNDApp(App[None]):
             return not task.done()  # type: ignore[attr-defined]
         except Exception:
             return False
-
-    async def _drain_prefetch_sinks(self) -> None:
-        """Single-consumer drainer. Runs prefetch widget-mount jobs one at a
-        time and yields to user-side mount before each."""
-        import asyncio
-        import contextlib
-
-        q = self._prefetch_sink_queue
-        assert q is not None
-        while True:
-            job = await q.get()
-            self._diag_log(f"drainer JOB pulled qsize={q.qsize()}")
-            wait_iters = 0
-            # Cooperative wait — user-side mount always preempts.
-            while self._user_mount_in_flight():
-                wait_iters += 1
-                await asyncio.sleep(0.05)
-            if wait_iters > 0:
-                self._diag_log(f"drainer JOB started after {wait_iters * 50}ms wait")
-            try:
-                await job()
-            except Exception as e:
-                self._diag_log(f"drainer JOB threw: {type(e).__name__}: {e}")
-            with contextlib.suppress(Exception):
-                q.task_done()
-            await asyncio.sleep(0)
 
     async def _mount_chunks_async(
         self,
@@ -2923,252 +2466,10 @@ class FNDApp(App[None]):
             self._refresh_status()
 
     def _schedule_preview_lazy_mount_check(self, *, user_initiated: bool = False) -> None:
-        """Debounced entry point. Every scroll change re-arms a short
-        timer; only the *last* scroll in a burst actually runs the
-        check. Coalesces programmatic anchor scrolls (which fire one or
-        two watcher trips back-to-back) AND user wheel/key bursts down
-        to a single check at the tail end — no fighting between the
-        navigation's own scroll-to-widget and lazy-mount's compensate."""
-        import contextlib
-
-        # A genuine user scroll (pane focused, and not one of the controller's
-        # own reconcile scrolls) hands scroll control back to the user: release
-        # the anchor so lazy-mount-on-scroll resumes. Programmatic scrolls from
-        # navigation / container swaps trip this watcher too, but with the
-        # results tree focused, so they don't release.
-        if (
-            user_initiated
-            and self._preview_scroll.is_armed
-            and not self._preview_scroll_reconciling
-        ):
-            self._preview_scroll.release()
-        if self._lazy_mount_check_timer is not None:
-            with contextlib.suppress(Exception):
-                self._lazy_mount_check_timer.stop()  # type: ignore[attr-defined]
-        self._lazy_mount_check_timer = self.set_timer(
-            0.12, self._check_preview_lazy_mount, name="lazy-mount-debounce"
-        )
+        self._lazy.schedule_check(user_initiated=user_initiated)
 
     def _check_preview_lazy_mount(self) -> None:
-        """Scroll watcher entry point (after debounce). Mounts the next
-        batch of chunks in the scroll direction when the viewport
-        approaches a boundary of the chunk currently under it. Looks
-        at the next *unmounted* chunk in document order — so gaps left
-        behind when the user jumps between matches get filled
-        progressively, not just the chunks past the absolute max/min
-        mounted index."""
-        self._lazy_mount_check_timer = None
-        # Suppress lazy-mount only while a navigation is still settling (the
-        # controller owns the position until its scroll commits). Once the
-        # reveal lands the gate opens, so user scrolls by ANY means — keyboard
-        # OR an unfocused mouse-wheel — extend the window. Gating on is_armed
-        # instead dead-ended wheel-scroll: the anchor stays armed across navs
-        # and only release() (a focused user scroll) cleared it.
-        if self._preview_scroll.is_settling:
-            return
-        container = self._active_preview
-        if container is None:
-            return
-        chunks = self._chunk_cache.get(container.parent_doc_id)
-        if not chunks or not container.mounted_indices:
-            return
-        if len(container.mounted_indices) >= len(chunks):
-            return
-        # Don't compete with the initial visible-first mount task; it
-        # owns the window and will hand off once it settles.
-        if self._user_mount_in_flight():
-            return
-        task = self._lazy_mount_task
-        if task is not None:
-            try:
-                if not task.done():  # type: ignore[attr-defined]
-                    return
-            except Exception:
-                pass
-        try:
-            pane = self.query_one("#preview_pane", VerticalScroll)
-        except Exception:
-            return
-        if pane.size.height <= 0:
-            return
-
-        scroll_y = float(pane.scroll_y)
-        viewport_h = float(pane.size.height)
-        viewport_bottom = scroll_y + viewport_h
-        margin = float(_LAZY_MOUNT_TRIGGER_MARGIN)
-
-        # Snapshot mounted chunks' virtual-y ranges so we can find the
-        # widgets covering viewport top + bottom in O(mounted) — small
-        # under realistic mount counts.
-        chunk_ranges: list[tuple[int, int, int]] = []
-        for idx in sorted(container.mounted_indices):
-            seq = chunks[idx].chunk_seq
-            widget = container.chunk_widgets.get(seq)
-            if widget is None:
-                continue
-            try:
-                vr = widget.virtual_region  # type: ignore[attr-defined]
-                y0 = int(vr.y)
-                h = int(vr.height)
-            except Exception:
-                continue
-            chunk_ranges.append((idx, y0, y0 + h))
-        if not chunk_ranges:
-            return
-
-        def _covering(y: float) -> tuple[int, int, int] | None:
-            for entry in chunk_ranges:
-                if entry[1] <= y < entry[2]:
-                    return entry
-            return None
-
-        import asyncio
-
-        bottom_cover = _covering(viewport_bottom - 1) or chunk_ranges[-1]
-        bottom_idx, _, bottom_chunk_y1 = bottom_cover
-        # Only fire below if the IMMEDIATE next chunk in document order
-        # is unmounted — otherwise the user is mid-region and can
-        # scroll on through the contiguous mounted span without a wall.
-        next_idx = bottom_idx + 1
-        if (
-            next_idx < len(chunks)
-            and next_idx not in container.mounted_indices
-            and (bottom_chunk_y1 - viewport_bottom) <= margin
-        ):
-            self._lazy_mount_task = asyncio.create_task(
-                self._lazy_mount_batch(container, chunks, start_idx=next_idx, direction="below")
-            )
-            return
-
-        top_cover = _covering(scroll_y) or chunk_ranges[0]
-        top_idx, top_chunk_y0, _ = top_cover
-        prev_idx = top_idx - 1
-        if (
-            prev_idx >= 0
-            and prev_idx not in container.mounted_indices
-            and (scroll_y - top_chunk_y0) <= margin
-        ):
-            self._lazy_mount_task = asyncio.create_task(
-                self._lazy_mount_batch(container, chunks, start_idx=prev_idx, direction="above")
-            )
-
-    async def _lazy_mount_batch(
-        self,
-        container: PreviewContainer,
-        chunks: list[FileChunk],
-        *,
-        start_idx: int,
-        direction: str,
-    ) -> None:
-        """Mount ``_LAZY_MOUNT_BATCH`` chunks starting at ``start_idx``,
-        moving in ``direction``.
-
-        Below: append in document order; no scroll adjustment needed
-        because content grows downward.
-
-        Above: hidden-prepend, await build, reveal. No scroll
-        compensate — anchor preservation via virtual_region delta
-        proved unreliable post-reveal (returns 0 on consecutive
-        above-batches even after refresh), so newly-prepended chunks
-        appear at the top of the visible area, which IS the right UX
-        when the user just scrolled up to the wall.
-
-        ``start_idx`` is the first index to mount in each direction;
-        the loop skips already-mounted indices in case the gap was
-        partially filled by an earlier batch.
-        """
-        import asyncio
-        import contextlib
-
-        if direction == "below":
-            end = min(start_idx + _LAZY_MOUNT_BATCH, len(chunks))
-            for i in range(start_idx, end):
-                if self._active_preview is not container:
-                    return
-                if i in container.mounted_indices:
-                    continue
-                try:
-                    self._mount_chunk_into(container, chunks[i], i, chunks)
-                except Exception:
-                    continue
-                seq = chunks[i].chunk_seq
-                md_widget = container.chunk_widgets.get(seq)
-                if isinstance(md_widget, FNDMarkdown):
-                    with contextlib.suppress(Exception):
-                        async with md_widget.lock:
-                            pass
-                await asyncio.sleep(0)
-            return
-
-        # Mount chunks [start_idx, start_idx-1, …, start_idx-batch+1] in reverse
-        # so each new widget lands BEFORE the anchor in document order, build
-        # them hidden, then reveal AND scroll-compensate so the user's view stays
-        # put. The anchor is the first already-mounted chunk just below the
-        # prepend region; revealing the chunks above it shifts it DOWN by their
-        # combined height, so we scroll the pane by that delta — turning the old
-        # "wall, jump, scroll-down-to-retrigger" into a continuous upward scroll.
-        # Measuring the delta reliably needs a SETTLED layout: the earlier code
-        # read the delta as 0 pre-settle and gave up on compensation, leaving the
-        # wall. ``_await_preview_settled`` (Textual's message-drain) makes it
-        # reliable. ``hidden`` MUST be revealed even on cancel, else display=False
-        # widgets cache as blank rows ("section only shows the heading").
-        end = max(start_idx - _LAZY_MOUNT_BATCH, -1)
-        hidden: list[Widget] = []
-        anchor_seq = chunks[start_idx + 1].chunk_seq if start_idx + 1 < len(chunks) else None
-        try:
-            for i in range(start_idx, end, -1):
-                if self._active_preview is not container:
-                    return
-                if i in container.mounted_indices:
-                    continue
-                before_children = set(container.children)
-                try:
-                    self._mount_chunk_into(container, chunks[i], i, chunks)
-                except Exception:
-                    continue
-                for w in container.children:
-                    if w not in before_children:
-                        w.display = False
-                        hidden.append(w)
-                await asyncio.sleep(0.002)
-
-            for w in hidden:
-                if isinstance(w, FNDMarkdown):
-                    with contextlib.suppress(Exception):
-                        async with w.lock:
-                            pass
-
-            # Capture the anchor's content position + pane scroll just before the
-            # reveal grows the content above it.
-            pane = self.query_one("#preview_pane", VerticalScroll)
-            anchor_w = container.chunk_widgets.get(anchor_seq) if anchor_seq is not None else None
-            before_y = anchor_w.virtual_region.y if anchor_w is not None else None
-            before_scroll = pane.scroll_y
-
-            for w in hidden:
-                w.display = True
-            hidden.clear()
-
-            # Re-anchor: scroll by however far the anchor moved down, so the
-            # prepended chunks extend the scrollable region UPWARD without moving
-            # the user's view — continuous scroll instead of a wall.
-            if anchor_w is not None and before_y is not None:
-                await self._await_preview_settled()
-                if self._active_preview is container:
-                    delta = anchor_w.virtual_region.y - before_y
-                    if delta > 0:
-                        self.begin_reconcile_scroll()
-                        try:
-                            pane.scroll_to(y=before_scroll + delta, animate=False, immediate=True)
-                        finally:
-                            self.end_reconcile_scroll()
-        finally:
-            # Cancellation or unexpected return: anything still in
-            # ``hidden`` would otherwise stay invisible on the cached
-            # container.
-            for w in hidden:
-                with contextlib.suppress(Exception):
-                    w.display = True
+        self._lazy.check()
 
     def _mount_chunk_into(
         self,
