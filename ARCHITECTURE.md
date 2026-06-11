@@ -6,7 +6,7 @@ interactive search with live previews.
 
 ## Layers
 
-```
+```text
 extract  →  index  →  query  →  TUI
 ```
 
@@ -43,7 +43,7 @@ bindings and action dispatch, focus chrome, and the wiring of the
 components that own the actual state. Each component takes the app
 reference and exposes a plain public API.
 
-```
+```text
 FNDApp
 ├── SearchController   fnd/tui/search_controller.py   query → results
 ├── ResultsView        fnd/tui/results_view.py        results tree rendering
@@ -108,7 +108,7 @@ search result lands; chain continuations re-enter through
 
 ## Module map
 
-```
+```text
 fnd/
 ├── cli.py              CLI commands
 ├── config.py           Pydantic config (collections, sources, defaults)
