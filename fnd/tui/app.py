@@ -599,6 +599,12 @@ class FNDApp(App[None]):
         Returns one of ``"query"``, ``"results"``, ``"preview"``, or
         ``"global"`` (when nothing app-relevant is focused, e.g. an
         overlay)."""
+        # A background mount task can finalize and refresh the footer
+        # after the app has begun tearing down — at which point the screen
+        # stack is empty and ``self.focused`` (→ ``self.screen``) raises
+        # ScreenStackError. No screen means no focus context to resolve.
+        if not self.screen_stack:
+            return "global"
         focused = self.focused
         if focused is None:
             return "global"

@@ -56,6 +56,28 @@ def test_get_file_chunks_unknown_id_returns_empty(built_index: Path) -> None:
     assert chunks == []
 
 
+def test_get_file_chunks_dedups_file_shared_across_collections(
+    fixtures_dir: Path, tmp_index_dir: Path
+) -> None:
+    """A file covered by two collections (e.g. an Obsidian vault listed
+    under nested source roots) is stored once per collection. The
+    full-document preview must still return each chunk_seq exactly once —
+    otherwise every chunk renders twice in the preview pane.
+    """
+    build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="alpha")
+    build_index(roots=[fixtures_dir], index_dir=tmp_index_dir, collection="beta")
+
+    s = Searcher(index_dir=tmp_index_dir)
+    hits = s.search("blue penguin sandwich", limit=1)
+    assert hits
+    pid = hits[0].parent_id
+
+    chunks = s.get_file_chunks(pid)
+    seqs = [c.chunk_seq for c in chunks]
+    assert len(seqs) == len(set(seqs)), f"duplicated chunk_seqs: {seqs}"
+    assert seqs == sorted(seqs)
+
+
 # ── render_document ─────────────────────────────────────────────────
 
 
