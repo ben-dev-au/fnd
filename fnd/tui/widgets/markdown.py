@@ -344,10 +344,15 @@ class FNDMarkdownFence(MarkdownFence):
 
 
 class FNDMarkdownTableDT(MarkdownTable):
-    """W3 prototype: render a markdown table as a single DataTable
-    widget instead of ~N MarkdownTableCellContents widgets.
+    """Render a markdown table as a single DataTable widget instead of
+    ~N MarkdownTableCellContents widgets.
 
-    Gated by ``_FND_W3_DATATABLE=1`` (off => parent's compose runs).
+    This is the LIVE DEFAULT: ``FNDMarkdown.BLOCKS["table_open"]`` maps
+    here, and ``compose`` only falls back to the stock per-cell grid when
+    ``_FND_NO_W3=1`` (an opt-OUT, set nowhere by default). The DataTable
+    path mounts ~4x fewer widgets and reflows ~2x faster on a width change
+    (e.g. toggling Reading View) than the stock grid. (The old
+    ``_FND_W3_DATATABLE`` opt-in flag is gone — it is read nowhere.)
 
     Styling matches Textual's MarkdownTable as closely as DataTable
     allows: rounded outer border + zebra rows + primary-coloured bold

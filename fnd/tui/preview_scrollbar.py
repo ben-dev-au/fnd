@@ -329,12 +329,16 @@ class MatchAwareScroll(VerticalScroll):
         # usable in isolation.
         super().watch_scroll_y(old_value, new_value)
         try:
-            handler = getattr(self.app, "_schedule_preview_lazy_mount_check", None)
-            if handler is not None:
-                # Pass focus so the app can tell a user scroll (pane focused,
-                # e.g. Reading View) from a programmatic one (navigation /
-                # container swap, while the results tree holds focus).
-                handler(user_initiated=self.has_focus)
+            # Call the LazyMounter directly — the app-level delegation shim
+            # (_schedule_preview_lazy_mount_check) was removed when the
+            # delegation layer was dropped; this watcher kept calling the old
+            # name and silently no-op'd, severing scroll-driven lazy mount.
+            # Pass focus so the mounter can tell a user scroll (pane focused,
+            # e.g. Reading View) from a programmatic one (navigation /
+            # container swap, while the results tree holds focus).
+            lazy = getattr(self.app, "_lazy", None)
+            if lazy is not None:
+                lazy.schedule_check(user_initiated=self.has_focus)
         except Exception:
             pass
 
