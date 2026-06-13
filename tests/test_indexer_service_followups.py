@@ -142,20 +142,60 @@ async def test_reindex_async_surfaces_failed_reload(
 async def test_single_reindex_after_cancelled_chain_clears_queue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The cancel-then-single interleaving: a chain is cancelling (task
+    still in flight, cancel set) when the user starts a single reindex.
+    That request supersedes the dying chain, so it must drop the chain's
+    leftover queue and run as a single."""
     cfg, index_dir = _md_config(tmp_path)
     app = FNDApp(index_dir=index_dir, config=cfg)
     async with app.run_test():
         app._config = cfg
-        # A cancelled chain left its queue on the indexer (the superseded
-        # teardown returned early without resetting it).
-        app._indexer.chain_remaining = ["other_a", "other_b"]
-        app._indexer.chain_total = 3
+        running = asyncio.create_task(asyncio.sleep(3600))
+        try:
+            app._indexer.task = running
+            app._indexer.cancel = asyncio.Event()
+            app._indexer.cancel.set()  # cancelling → the new run supersedes it
+            app._indexer.chain_remaining = ["other_a", "other_b"]
+            app._indexer.chain_total = 3
+            # Don't actually spawn; just confirm the entry point clears the
+            # stale queue before start() supersedes the dying run.
+            monkeypatch.setattr(FNDApp, "start_indexer", lambda self, **kw: None)
 
-        # Don't actually spawn the indexer; just confirm the entry point
-        # re-establishes single-run chain state before starting.
-        monkeypatch.setattr(FNDApp, "start_indexer", lambda self, **kw: None)
+            app._indexer.reindex_with_warning("default")
 
-        app._indexer.reindex_with_warning("default")
+            assert app._indexer.chain_remaining == []
+            assert app._indexer.chain_total == 1
+        finally:
+            running.cancel()
 
-        assert app._indexer.chain_remaining == []
-        assert app._indexer.chain_total == 1
+
+@pytest.mark.asyncio
+async def test_running_chain_not_clobbered_by_rejected_single_reindex(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A chain running in the background (modal dismissed, cancel NOT set)
+    must survive a single reindex the user triggers meanwhile: start()
+    rejects the busy request, so reindex_with_warning must not pre-emptively
+    wipe the live chain's queue."""
+    cfg, index_dir = _md_config(tmp_path)
+    cfg.collections["single"] = CollectionConfig(
+        sources=[SourceConfig(path=tmp_path / "corpus")]
+    )
+    app = FNDApp(index_dir=index_dir, config=cfg)
+    async with app.run_test():
+        app._config = cfg
+        running = asyncio.create_task(asyncio.sleep(3600))
+        try:
+            app._indexer.task = running
+            app._indexer.cancel = asyncio.Event()  # not set → actively running
+            app._indexer.collection = "default"
+            app._indexer.chain_remaining = ["b", "c"]
+            app._indexer.chain_total = 3
+            monkeypatch.setattr(FNDApp, "start_indexer", lambda self, **kw: None)
+
+            app._indexer.reindex_with_warning("single")
+
+            assert app._indexer.chain_remaining == ["b", "c"]
+            assert app._indexer.chain_total == 3
+        finally:
+            running.cancel()

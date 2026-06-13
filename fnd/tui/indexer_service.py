@@ -283,10 +283,17 @@ class IndexerService:
         col_cfg = cfg.collections[collection]
 
         # Establish the chain queue for this request before start() reads
-        # it. A single reindex resets it so it can't inherit a cancelled
-        # chain's stale queue (see docstring).
-        self.chain_remaining = list(chain_remaining or [])
-        self.chain_total = max(1, chain_total)
+        # it — but only when start() will actually act on it. If a run is
+        # already in flight and NOT cancelling, start() rejects this request
+        # (busy modal); overwriting here would wipe the live chain's queue
+        # and strand its remaining collections. When there's no run, or the
+        # in-flight one is cancelling (so this request supersedes it), we own
+        # the queue: a single reindex resets it (can't inherit a cancelled
+        # chain's stale queue), a chain start seeds it.
+        cancelling = self.cancel is not None and self.cancel.is_set()
+        if self.task is None or self.task.done() or cancelling:
+            self.chain_remaining = list(chain_remaining or [])
+            self.chain_total = max(1, chain_total)
 
         # Only warn when extras are actually installed (otherwise the
         # cost is the old flat-extraction cost, which is sub-second/PDF).
