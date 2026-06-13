@@ -40,6 +40,7 @@ from typing import Final, Literal, overload
 
 from fnd.explain import FusionTrace, HitContribution, SubQueryTrace
 from fnd.query import Hit, Searcher
+from fnd.query_errors import QuerySyntaxError
 from fnd.synonyms import SynonymTable, expand
 
 # A field qualifier (``kind:pdf``, ``c:wine``) anywhere in the query — phrase
@@ -215,6 +216,14 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
     and would just dilute the RRF math). A ``syn`` pass is appended only
     when synonym expansion actually rewrites the query — otherwise it
     would issue an identical Tantivy round-trip for nothing.
+
+    The syn pass, like the phrase pass, stands down for any structured query
+    (quotes / ``{N}`` / ``NEAR``, field qualifiers, or operators): ``expand``
+    grafts an ``(a OR b)`` disjunction into the string, which strands a
+    proximity brace (``{20}("a b" OR c)``) or mangles the operator the lex
+    pass already honours. Tradeoff: ``kind:pdf threat intelligence`` no longer
+    auto-expands ``ti`` — synonym widening only applies to plain bag-of-words
+    queries.
     """
     q = query.strip()
     if not q:
@@ -238,7 +247,13 @@ def auto_subqueries(query: str, *, synonyms: SynonymTable | None) -> list[SubQue
     ):
         subs.append(SubQuery(query=f'"{q}"', weight=_DEFAULT_WEIGHTS["phrase"], source="phrase"))
     subs.append(SubQuery(query=q, weight=_DEFAULT_WEIGHTS["lex"], source="lex"))
-    if synonyms is not None and synonyms.groups:
+    if (
+        synonyms is not None
+        and synonyms.groups
+        and not carries_phrase_intent
+        and not carries_field_syntax
+        and not carries_operator_syntax
+    ):
         expanded = expand(q, synonyms)
         if expanded != q:
             subs.append(SubQuery(query=expanded, weight=_DEFAULT_WEIGHTS["syn"], source="syn"))
@@ -376,27 +391,42 @@ def fusion_search(
             return [], _empty_fusion_trace(query)
         return []
 
+    def _issue(q: str) -> list[Hit]:
+        # Oversample per sub-query so the post-fusion grouper has enough chunks
+        # to fill ``limit`` files. Mirrors the ``target=limit * 10`` contract the
+        # old single-pass ``Searcher.search_grouped`` used.
+        return searcher._filtered_raw_hits(
+            q,
+            target=limit * 10,
+            collection=collection,
+            metadata_filter=metadata_filter,
+            active_sources=active_sources,
+            intent=intent,
+        )
+
     rankings: list[list[Hit]] = []
+    degraded: list[bool] = []
     for sub in subs:
-        if sub.source == "lex" and precomputed_lex_ranking is not None:
-            # Reuse the regime probe's literal-pass result so we don't
-            # re-issue the same Tantivy query.
-            rankings.append(precomputed_lex_ranking)
-        else:
+        if sub.source == "lex":
+            # The lex pass carries the user's literal query: reuse the regime
+            # probe's result when supplied, else issue it. A syntax error here is
+            # the user's to fix, so it must propagate — the Searcher safety-net
+            # and the TUI's inline notice both rely on malformed queries raising.
             rankings.append(
-                searcher._filtered_raw_hits(
-                    sub.query,
-                    # Oversample per sub-query so the post-fusion grouper has
-                    # enough chunks to fill ``limit`` files. Mirrors the
-                    # ``target=limit * 10`` contract the old single-pass
-                    # ``Searcher.search_grouped`` used.
-                    target=limit * 10,
-                    collection=collection,
-                    metadata_filter=metadata_filter,
-                    active_sources=active_sources,
-                    intent=intent,
-                )
+                precomputed_lex_ranking
+                if precomputed_lex_ranking is not None
+                else _issue(sub.query)
             )
+            degraded.append(False)
+            continue
+        # Auto-derived passes (phrase / syn): a malformed sub-query degrades to
+        # an empty ranking rather than aborting the whole fused search.
+        try:
+            rankings.append(_issue(sub.query))
+            degraded.append(False)
+        except QuerySyntaxError:
+            rankings.append([])
+            degraded.append(True)
 
     weights = [s.weight for s in subs]
     fused = rrf_fuse(rankings, weights=weights)
@@ -415,7 +445,7 @@ def fusion_search(
 
     if not with_trace:
         return out
-    trace = _build_fusion_trace(query, subs, rankings, primary_source, out)
+    trace = _build_fusion_trace(query, subs, rankings, degraded, primary_source, out)
     return out, trace
 
 
@@ -423,6 +453,7 @@ def _build_fusion_trace(
     query: str,
     subs: list[SubQuery],
     rankings: list[list[Hit]],
+    degraded: list[bool],
     primary_source: dict[tuple[str, int], str],
     out: list[Hit],
 ) -> FusionTrace:
@@ -435,8 +466,9 @@ def _build_fusion_trace(
             bm25_top=r[0].score if r else 0.0,
             bm25_second=r[1].score if len(r) > 1 else 0.0,
             rrf_k=_RRF_K_DEFAULT,
+            degraded=d,
         )
-        for s, r in zip(subs, rankings, strict=True)
+        for s, r, d in zip(subs, rankings, degraded, strict=True)
     ]
     # Per-hit contributions: walk each ranking once, accumulate
     # rank/bm25/rrf for each (parent_id, chunk_seq) appearing in ``out``.

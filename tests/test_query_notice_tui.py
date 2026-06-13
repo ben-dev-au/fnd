@@ -55,3 +55,42 @@ async def test_malformed_proximity_notice_then_clears(cfg: Config, md_index: Pat
         app._search.run("templates")
         await pilot.pause()
         assert app.query_one("#query_notice", Static).display is False
+
+
+@pytest.mark.asyncio
+async def test_malformed_query_resets_explain_trace(cfg: Config, md_index: Path) -> None:
+    """Issue #61: a malformed query rejected at plan-validation must drop the
+    last good trace so ``:explain`` can't show a stale plan."""
+    app = FNDApp(index_dir=md_index, config=cfg, collection="notes")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._search.run("templates")
+        await pilot.pause()
+        assert app._search.latest_trace is not None
+        app._search.run("{60}")  # malformed → rejected at QueryPlan
+        await pilot.pause()
+        assert app._search.latest_trace is None
+
+
+@pytest.mark.asyncio
+async def test_layered_error_resets_explain_trace(
+    cfg: Config, md_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #61: an error raised from the layered search path also drops the
+    last good trace."""
+    from fnd.query_errors import QuerySyntaxError
+
+    app = FNDApp(index_dir=md_index, config=cfg, collection="notes")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._search.run("templates")
+        await pilot.pause()
+        assert app._search.latest_trace is not None
+
+        def _boom(**_kwargs: object) -> list[object]:
+            raise QuerySyntaxError("boom")
+
+        monkeypatch.setattr(app._search, "_search_layered", _boom)
+        app._search.run("anything")
+        await pilot.pause()
+        assert app._search.latest_trace is None
