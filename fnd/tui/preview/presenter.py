@@ -91,6 +91,10 @@ class PreviewPresenter:
         # flight, so redundant identical dispatches landing in the same
         # tick coalesce. Cleared when that render finishes settling.
         self.inflight_target: tuple[str, int] | None = None
+        # Monotonic generation for the off-thread scrollbar-marker scan: each
+        # refresh bumps it so a worker that finishes after a newer file/query
+        # superseded it drops its now-stale result instead of overwriting.
+        self._markers_seq: int = 0
 
     def schedule_load(self, parent_id: str, focus_chunk_seq: int) -> None:
         """Debounce a cursor-move → preview-load; coalesces rapid arrow sweeps."""
@@ -1553,15 +1557,38 @@ class PreviewPresenter:
             pane = self._app.query_one("#preview_pane", MatchAwareScroll)
         except Exception:
             return
+        # Bump the generation up front: a clear or a new scan both supersede
+        # any worker still running for the previous preview.
+        self._markers_seq += 1
         if not self.scrollbar_markers_enabled:
             # Clear any markers a prior (enabled) load left, so toggling
             # the feature off takes effect on the next preview load.
             pane.set_match_lines([], 0)
             return
-        from fnd.tui.preview_markers import structural_match_lines
+        # structural_match_lines scans every source line; a no/sparse-match
+        # query on a large doc was measured in seconds (multi-minute worst
+        # case). Run it off the event loop and apply when ready — stale
+        # results (a newer nav bumped the generation) are dropped.
+        token = self._markers_seq
+        spec = self._app._effective_match_spec
+        snapshot = list(chunks)
 
-        match_lines, total_lines = structural_match_lines(chunks, self._app._effective_match_spec)
-        pane.set_match_lines(match_lines, total_lines)
+        def _scan() -> None:
+            from fnd.tui.preview_markers import structural_match_lines
+
+            match_lines, total_lines = structural_match_lines(snapshot, spec)
+
+            def _apply() -> None:
+                if token != self._markers_seq:
+                    return
+                # The pane can be mid-teardown by the time this lands (app quit
+                # during a long scan); a failed marker update is never fatal.
+                with contextlib.suppress(Exception):
+                    pane.set_match_lines(match_lines, total_lines)
+
+            self._app.call_from_thread(_apply)
+
+        self._app.run_worker(_scan, thread=True, exclusive=True, group="preview-markers")
 
     def _mount_chunks_for_file(self, parent_id: str, chunks: list[FileChunk]) -> None:
         """Legacy synchronous mount path retained for tests that exercise

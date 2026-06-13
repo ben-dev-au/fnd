@@ -343,6 +343,9 @@ async def test_match_positions_propagate_to_scrollbar(cfg: Config, md_index: Pat
         await pilot.pause()
         await pilot.press("up")
         await pilot.pause()
+        # Markers are computed off-thread now; settle the worker before asserting.
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         bar = app.query_one("#preview_pane", MatchAwareScroll).vertical_scrollbar
         assert isinstance(bar, MatchAwareScrollBar)
         # ``glimmer`` matches in the fixture, so the line-precise feed is
@@ -352,6 +355,45 @@ async def test_match_positions_propagate_to_scrollbar(cfg: Config, md_index: Pat
         assert all(0 <= ln < bar._total_lines for ln in bar._match_lines)
         # The legacy chunk-uniform map is no longer used.
         assert bar._match_map == []
+
+
+@pytest.mark.asyncio
+async def test_marker_scan_runs_off_main_thread(
+    cfg: Config, md_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``structural_match_lines`` scans every source line and can freeze the
+    UI for seconds on a large no-match document, so the scan must run on a
+    worker thread, never the event loop. Capture the thread it executes on."""
+    import threading
+
+    from fnd.tui import preview_markers
+
+    seen: dict[str, object] = {}
+    real = preview_markers.structural_match_lines
+
+    def _spy(chunks: object, spec: object) -> object:
+        seen["thread"] = threading.current_thread()
+        return real(chunks, spec)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(preview_markers, "structural_match_lines", _spy)
+
+    cfg.defaults.scrollbar_match_highlight = True
+    app = FNDApp(index_dir=md_index, config=cfg, collection="notes", initial_query="glimmer")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#results_pane", Tree)
+        tree.focus()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "thread" in seen, "structural_match_lines was never invoked"
+        assert seen["thread"] is not threading.main_thread(), "marker scan ran on the event loop"
+        # Result still lands on the bar.
+        bar = app.query_one("#preview_pane", MatchAwareScroll).vertical_scrollbar
+        assert isinstance(bar, MatchAwareScrollBar)
+        assert bar._match_lines, bar._match_lines
 
 
 @pytest.mark.asyncio
