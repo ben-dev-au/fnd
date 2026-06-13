@@ -320,6 +320,30 @@ class MatchAwareScroll(VerticalScroll):
         Binding("left", "bridge_left", "Focus results", show=False),
     ]
 
+    # Lines advanced per scroll-key press in Reading View. Reading View turns
+    # off mouse reporting (so native select/copy/TTS work), which makes the
+    # terminal translate each wheel notch into a *stream* of arrow keys — one
+    # 1-line scroll + full repaint each. Advancing several lines per key lets a
+    # wheel/momentum burst cover ground in far fewer repaints, so scrolling
+    # feels responsive instead of crawling. Non-animated: during a burst,
+    # queued scroll animations would fight and add latency.
+    _READING_SCROLL_LINES = 3
+
+    def _reading_view(self) -> bool:
+        return bool(getattr(self.app, "_reading_mode", False))
+
+    def action_scroll_down(self) -> None:
+        if self._reading_view() and self.allow_vertical_scroll:
+            self.scroll_to(y=self.scroll_target_y + self._READING_SCROLL_LINES, animate=False)
+            return
+        super().action_scroll_down()
+
+    def action_scroll_up(self) -> None:
+        if self._reading_view() and self.allow_vertical_scroll:
+            self.scroll_to(y=self.scroll_target_y - self._READING_SCROLL_LINES, animate=False)
+            return
+        super().action_scroll_up()
+
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         # Bubble to the app so it can extend the mounted chunk window
         # when the viewport approaches a boundary. The app debounces
@@ -329,12 +353,16 @@ class MatchAwareScroll(VerticalScroll):
         # usable in isolation.
         super().watch_scroll_y(old_value, new_value)
         try:
-            handler = getattr(self.app, "_schedule_preview_lazy_mount_check", None)
-            if handler is not None:
-                # Pass focus so the app can tell a user scroll (pane focused,
-                # e.g. Reading View) from a programmatic one (navigation /
-                # container swap, while the results tree holds focus).
-                handler(user_initiated=self.has_focus)
+            # Call the LazyMounter directly — the app-level delegation shim
+            # (_schedule_preview_lazy_mount_check) was removed when the
+            # delegation layer was dropped; this watcher kept calling the old
+            # name and silently no-op'd, severing scroll-driven lazy mount.
+            # Pass focus so the mounter can tell a user scroll (pane focused,
+            # e.g. Reading View) from a programmatic one (navigation /
+            # container swap, while the results tree holds focus).
+            lazy = getattr(self.app, "_lazy", None)
+            if lazy is not None:
+                lazy.schedule_check(user_initiated=self.has_focus)
         except Exception:
             pass
 

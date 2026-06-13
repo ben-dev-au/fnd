@@ -620,7 +620,20 @@ class Searcher:
         else:
             chunks = [self._decode_chunk(searcher, a) for a in addresses]
         chunks.sort(key=lambda c: c.chunk_seq)
-        return chunks
+        # A file listed under several collections (typical: an Obsidian
+        # vault reachable via two nested source roots) is stored once per
+        # collection — same parent_id, same content, distinct `collection`
+        # field. The query above is scoped only by parent_id, so it sees
+        # every collection's copy. Collapse to one chunk per chunk_seq so
+        # the full-document preview renders each chunk once, not N times.
+        seen: set[int] = set()
+        deduped = []
+        for c in chunks:
+            if c.chunk_seq in seen:
+                continue
+            seen.add(c.chunk_seq)
+            deduped.append(c)
+        return deduped
 
     def search_grouped(
         self,

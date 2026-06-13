@@ -21,6 +21,16 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
     return tmp_index_dir
 
 
+def test_focus_context_without_screen_stack_returns_global(built_index: Path) -> None:
+    """A background mount task can finalize and refresh the footer after the
+    app tears down, when the screen stack is empty. ``_focus_context`` must
+    degrade to ``"global"`` instead of raising ScreenStackError (the
+    "No screens on stack" crash seen on quit mid-mount)."""
+    app = FNDApp(index_dir=built_index)
+    assert not app.screen_stack
+    assert app._focus_context() == "global"
+
+
 @pytest.mark.asyncio
 async def test_escape_from_query_focuses_results(built_index: Path) -> None:
     app = FNDApp(index_dir=built_index, initial_query="orange penguin sandwich")

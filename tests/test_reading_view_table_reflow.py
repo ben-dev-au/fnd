@@ -5,14 +5,14 @@ The live preview renders markdown tables via ``FNDMarkdownTableDT`` → a
 ``DataTable`` whose column widths are computed from the pane width and
 recomputed by ``on_resize`` when the pane widens. The reflow's core is the
 pure ``_compute_table_col_widths`` function — unit-tested here headlessly.
-The full-app integration is gated behind ``FND_LIVE_PREVIEW_TESTS`` because
-the DataTable preview path does not mount under ``app.run_test`` (the
-headless harness renders tables via the flat ``LineBufferPreview`` path).
+The full-app integration runs under ``app.run_test``: the DataTable preview
+path is the live default (``FNDMarkdown.BLOCKS["table_open"]``) and DOES
+mount headless, verified 2026-06-13. (It was previously gated behind
+``FND_LIVE_PREVIEW_TESTS`` on the stale assumption that it didn't.)
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -97,13 +97,6 @@ def _col_total(app: FNDApp) -> int | None:
     return sum(c.width for c in cols)
 
 
-@pytest.mark.skipif(
-    not os.environ.get("FND_LIVE_PREVIEW_TESTS"),
-    reason="DataTable preview path does not mount under app.run_test (the headless "
-    "harness renders markdown tables via the flat LineBufferPreview path). Set "
-    "FND_LIVE_PREVIEW_TESTS=1 to exercise the full reflow against a live-wired W3 "
-    "preview; the pure width recompute is covered headlessly above.",
-)
 @pytest.mark.asyncio
 async def test_reading_view_widens_table(tmp_path: Path, tmp_index_dir: Path) -> None:
     index = _table_doc(tmp_path, tmp_index_dir)

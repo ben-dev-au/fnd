@@ -278,6 +278,46 @@ async def test_far_in_file_nav_lands_in_fresh_contiguous_region(
 
 
 @pytest.mark.asyncio
+async def test_scroll_watcher_bridges_to_lazy_mounter(
+    cfg: Config, long_md_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``MatchAwareScroll.watch_scroll_y`` must actually reach the
+    LazyMounter. The app-level delegation shim was removed and this
+    watcher kept calling the dropped name, silently severing scroll-
+    driven lazy mount — undetected because the other tests drive
+    ``app._lazy.check()`` directly. This test exercises ONLY the bridge:
+    a real scroll on the focused pane must invoke ``schedule_check``."""
+    monkeypatch.setattr("fnd.tui.preview.tuning.FULLMOUNT_CHUNK_BUDGET", 0)
+    app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._search.run("target")
+        pane = app.query_one("#preview_pane", VerticalScroll)
+        await wait_until(
+            pilot,
+            lambda: app._preview.active is not None and pane.scroll_y > 0,
+            timeout=15.0,
+            message="initial mount never landed",
+        )
+        calls: list[bool] = []
+        orig = app._lazy.schedule_check
+
+        def _spy(*, user_initiated: bool = False) -> None:
+            calls.append(user_initiated)
+            orig(user_initiated=user_initiated)
+
+        monkeypatch.setattr(app._lazy, "schedule_check", _spy)
+        pane.focus()
+        await pilot.pause()
+        # A focused user scroll must bridge through to the mounter with
+        # user_initiated=True — NOT a direct check() call.
+        pane.scroll_to(y=pane.scroll_y + 5, animate=False, immediate=True)
+        await pilot.pause()
+        assert calls, "watch_scroll_y never reached LazyMounter.schedule_check"
+        assert any(calls), "bridge fired but never as a user-initiated (focused) scroll"
+
+
+@pytest.mark.asyncio
 async def test_file_switch_cancels_lazy_mount(
     cfg: Config, tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
