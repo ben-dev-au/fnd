@@ -126,26 +126,39 @@ async def test_prefetch_populates_flat_buffer_cache(
 ) -> None:
     """Prefetch stashes a RenderedDocument in _flat_buffer_cache so the next user
     click installs into the shared widget without a fresh build."""
-    import asyncio
-
     from fnd.tui.line_buffer import RenderedDocument
+    from tests._pilot_wait import safe_pause, wait_until
 
     app = FNDApp(index_dir=two_file_index, config=cfg_with_prefetch)
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         app._search.run("results")
         sig = app._search.query_signature()
-        flat_parents: set[str] = set()
-        for _ in range(40):
-            await pilot.pause()
-            await asyncio.sleep(0.05)
-            flat_parents = {
+
+        def _flat_parents() -> set[str]:
+            return {
                 g.parent_id for g in app._search.groups if g.path.lower().endswith((".pdf", ".txt"))
             }
-            if flat_parents and any((pid, sig) in app._flat.cache for pid in flat_parents):
-                break
-        if not flat_parents:
-            pytest.skip("no flat-path results in fixture corpus for this query")
+
+        def _flat_cached() -> bool:
+            fps = _flat_parents()
+            return bool(fps) and any((pid, sig) in app._flat.cache for pid in fps)
+
+        # Event-driven, wall-clock budgeted: a fixed iteration count is defeated
+        # by slow prefetch decode on a serial CI runner (the original flake);
+        # wait on the cache-population condition instead.
+        try:
+            await wait_until(
+                pilot,
+                _flat_cached,
+                timeout=15.0,
+                message="prefetch never populated _flat_buffer_cache",
+            )
+        except AssertionError:
+            if not _flat_parents():
+                pytest.skip("no flat-path results in fixture corpus for this query")
+            raise
+        flat_parents = _flat_parents()
         prefetched = [pid for pid in flat_parents if (pid, sig) in app._flat.cache]
         assert prefetched, f"prefetch failed to cache any flat doc; flat={flat_parents}"
         for pid in prefetched:
