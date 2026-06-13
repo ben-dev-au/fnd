@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from textual.widgets import Tree
+from textual.widgets.tree import TreeNode
 
 from fnd.config import CollectionConfig, Config, SourceConfig
 from fnd.index import build_index
@@ -300,12 +301,13 @@ async def test_saved_scope_desync_repaired_on_launch(
         assert app._scope.collections == ["AAA"]
         assert app._scope.collection_marker("AAA") == "●", "full collection must render ●"
         assert all(
-            app._scope._source_active("AAA", sid)
-            for sid in app._scope.collection_source_ids("AAA")
+            app._scope._source_active("AAA", sid) for sid in app._scope.collection_source_ids("AAA")
         ), "every source of a FULL collection is active"
 
 
-def _source_node(coll_node, basename: str):
+def _source_node(
+    coll_node: TreeNode[dict[str, object]], basename: str
+) -> TreeNode[dict[str, object]] | None:
     """Find the source leaf under a collection node by path basename."""
     for child in coll_node.children:
         data = child.data if isinstance(child.data, dict) else {}
@@ -330,11 +332,13 @@ async def test_collection_off_keeps_shared_source_of_partial_sibling(
         await pilot.pause()
         # Make BBB partial first: expand it, toggle ONLY its vault source.
         bbb = ctree.root.children[1]
-        assert isinstance(bbb.data, dict) and bbb.data.get("name") == "BBB"
+        assert isinstance(bbb.data, dict)
+        assert bbb.data.get("name") == "BBB"
         bbb.expand()
         await pilot.pause()
         vault_row = _source_node(bbb, "vault")
-        assert vault_row is not None and vault_row.line >= 0
+        assert vault_row is not None
+        assert vault_row.line >= 0
         ctree.cursor_line = vault_row.line
         await pilot.pause()
         await pilot.press("enter")
@@ -359,7 +363,9 @@ async def test_collection_off_keeps_shared_source_of_partial_sibling(
             f"PARTIAL sibling still claims it; got {app._scope.active_sources}"
         )
         assert "◐" in str(bbb.label), f"BBB lost its partial claim: {bbb.label!r}"
-        assert "●" in str(_source_node(bbb, "vault").label)
+        vault_row_after = _source_node(bbb, "vault")
+        assert vault_row_after is not None
+        assert "●" in str(vault_row_after.label)
 
 
 @pytest.mark.asyncio

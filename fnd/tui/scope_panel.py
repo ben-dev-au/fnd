@@ -122,11 +122,13 @@ class ScopeController:
         Only explicit (partial) selections contribute — FULL collections
         scope via the collection channel. Deterministic config order."""
         out: list[str] = []
+        seen: set[str] = set()
         for name, sel in self.selection.items():
             if not isinstance(sel, set):
                 continue
             for sid in self.collection_source_ids(name):
-                if sid in sel and sid not in out:
+                if sid in sel and sid not in seen:
+                    seen.add(sid)
                     out.append(sid)
         return out
 
