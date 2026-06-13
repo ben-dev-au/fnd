@@ -70,7 +70,7 @@ class PreviewContainer(Container):
         # coords but unreachable via scroll. Force the non-shortcut
         # branch by arranging with height=0, which lets each FNDMarkdown
         # child report its full intrinsic height.
-        if not self._nodes:
+        if not self.children:
             return 0
         from textual.geometry import Size as _Size
 

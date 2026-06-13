@@ -439,6 +439,75 @@ async def test_docx_preview_routes_through_fnd_markdown(cfg: Config, docx_corpus
 
 
 @pytest.mark.asyncio
+async def test_update_resets_per_render_match_state() -> None:
+    """A second ``update()`` on the same FNDMarkdown must reset the
+    document-scoped match state: clear ``build_done`` (so a waiter can't
+    return on the previous render) and drop ``first_match_block`` (so
+    match-nav doesn't stay anchored on the old document). Both resets
+    happen at the top of ``update()`` — synchronously, before the rebuild
+    completes — so the reset is observable the moment the call returns.
+    """
+    from textual.app import App, ComposeResult
+
+    from fnd.matching import MatchSpec
+
+    class _Harness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield FNDMarkdown(match_spec=MatchSpec.from_query("templates"))
+
+    async with _Harness().run_test() as pilot:
+        md = pilot.app.query_one(FNDMarkdown)
+        await md.update("# H\n\nthe templates pattern is here.\n")
+        await md.build_done.wait()
+        assert md.build_done.is_set()
+        assert md.first_match_block is not None
+
+        # Second update with no match. The reset must fire before the new
+        # build finishes, so it is already visible right after the call.
+        aw = md.update("# H\n\nplain prose with no query word.\n")
+        assert not md.build_done.is_set(), "build_done not cleared on re-update"
+        assert md.first_match_block is None, "stale first_match_block not cleared"
+        await aw
+        await md.build_done.wait()
+        # New document has no match, so no anchor is registered.
+        assert md.first_match_block is None
+
+
+@pytest.mark.asyncio
+async def test_update_superseded_future_does_not_set_build_done() -> None:
+    """A superseded update's future completing (or being cancelled) must
+    NOT set ``build_done`` — only the latest update's completion may, or a
+    waiter wakes on a stale/incomplete render. ``AwaitComplete._future`` is
+    a fresh ``gather`` per call and fires its done-callbacks on cancellation
+    too, so a rapid re-update would otherwise let the old future's callback
+    flip ``build_done`` for a render that's no longer current.
+    """
+    from textual.app import App, ComposeResult
+
+    from fnd.matching import MatchSpec
+
+    class _Harness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield FNDMarkdown(match_spec=MatchSpec.from_query("alpha"))
+
+    async with _Harness().run_test() as pilot:
+        md = pilot.app.query_one(FNDMarkdown)
+        # First update, not awaited; immediately superseded by a second.
+        aw_first = md.update("# A\n\nfirst render alpha.\n")
+        md.update("# B\n\nsecond render beta.\n")
+        assert not md.build_done.is_set()
+        # Fire the stale (first) update's done-callback directly — without
+        # pumping the loop, so the legitimate second render stays pending.
+        # The guard must keep build_done clear (a newer render is current).
+        stale_future = aw_first._future  # type: ignore[attr-defined]
+        for callback, _ctx in list(stale_future._callbacks):
+            callback(stale_future)
+        assert not md.build_done.is_set(), "stale update's callback set build_done"
+        # The latest render still resolves build_done normally.
+        await md.build_done.wait()
+
+
+@pytest.mark.asyncio
 async def test_preview_first_match_block_resolves_to_matched_paragraph(
     cfg: Config, multi_para_index: Path
 ) -> None:

@@ -674,6 +674,11 @@ class FNDMarkdown(Markdown):
         # ``Markdown.update``) returns. Lets the scroll path event-trigger
         # on build completion instead of polling.
         self.build_done: _asyncio.Event = _asyncio.Event()
+        # Bumped per ``update()``; the build-completion callback only sets
+        # ``build_done`` when its generation is still current, so a
+        # superseded render's future (which fires its done-callback on
+        # completion *or* cancellation) can't wake waiters early.
+        self._build_gen: int = 0
 
     @property
     def first_match_block(self) -> MarkdownBlock | None:
@@ -689,8 +694,18 @@ class FNDMarkdown(Markdown):
         # already consumed and called update("") which removed all
         # blocks. Hook into update() instead: AwaitComplete's future
         # fires when parse+mount completes — set build_done from there.
+        #
+        # Reset document-scoped match state before the rebuild: a re-update
+        # must not let a build_done waiter return on the prior render, and
+        # must drop the previous render's match anchor.
+        self.build_done.clear()
+        self._first_match_block = None
+        self._build_gen += 1
+        gen = self._build_gen
         aw = super().update(markdown)
-        aw._future.add_done_callback(lambda _: self.build_done.set())  # type: ignore[attr-defined]
+        aw._future.add_done_callback(  # type: ignore[attr-defined]
+            lambda _: self.build_done.set() if self._build_gen == gen else None
+        )
         return aw
 
 
