@@ -307,18 +307,27 @@ async def _coldnav_run_query_and_prefetch(app: FNDApp, pilot: Pilot[None]) -> Fi
 
     target_group = app._search.groups[1]
     nudged = False
-    for _ in range(240):
-        # safe_pause (not pilot.pause): under heavy suite load a raw pause can
-        # raise WaitForScreenTimeout and fail this setup loop — the very load
-        # spike this suite must tolerate.
-        await safe_pause(pilot)
-        await asyncio.sleep(0.05)
+
+    def _pre_mounted() -> bool:
+        # Event-driven wall-clock wait (not an iteration cap, which slow
+        # prefetch decode on a serial CI runner outruns). The initial deferred
+        # prefetch bails if the rank-0 user-mount was still in flight when it
+        # walked targets; nudge once that clears so the target gets re-queued.
+        nonlocal nudged
         cont = app._preview.preview_cache.get(target_group.parent_id, sig)
         if cont is not None and cont.mounted_indices:
-            break
+            return True
         if not nudged and not app._preview.user_mount_in_flight():
             app._prefetch.prefetch_top_results()
             nudged = True
+        return False
+
+    await wait_until(
+        pilot,
+        _pre_mounted,
+        timeout=20.0,
+        message=f"prefetch never pre-mounted {target_group.parent_id}",
+    )
     prefetched = app._preview.preview_cache.get(target_group.parent_id, sig)
     assert prefetched is not None, f"prefetch never built {target_group.parent_id}"
     assert prefetched.mounted_indices, f"prefetch never pre-mounted {target_group.parent_id}"
