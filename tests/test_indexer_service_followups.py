@@ -178,9 +178,7 @@ async def test_running_chain_not_clobbered_by_rejected_single_reindex(
     rejects the busy request, so reindex_with_warning must not pre-emptively
     wipe the live chain's queue."""
     cfg, index_dir = _md_config(tmp_path)
-    cfg.collections["single"] = CollectionConfig(
-        sources=[SourceConfig(path=tmp_path / "corpus")]
-    )
+    cfg.collections["single"] = CollectionConfig(sources=[SourceConfig(path=tmp_path / "corpus")])
     app = FNDApp(index_dir=index_dir, config=cfg)
     async with app.run_test():
         app._config = cfg
