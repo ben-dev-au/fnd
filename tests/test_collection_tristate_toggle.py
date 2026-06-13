@@ -62,10 +62,10 @@ async def test_toggling_collection_on_marks_all_sources(
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        # After toggle: all sources should be in _active_sources
-        assert len(app._scope.active_sources) == 2, (
-            f"expected both sources active, got {app._scope.active_sources}"
-        )
+        # After toggle the whole collection is FULL — it scopes via the
+        # collection filter, so it appears in ``collections`` (not by
+        # enumerating its source ids into ``active_sources``).
+        assert "TWO" in app._scope.collections, f"expected TWO full, got {app._scope.collections}"
         # Collection marker should be ● (full)
         assert "●" in str(coll.label), f"collection label was {coll.label}"
         # Each source row marker should be ●
@@ -150,11 +150,12 @@ async def test_toggle_collection_off_clears_sources(
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        assert len(app._scope.active_sources) == 2
+        assert "TWO" in app._scope.collections
         # Turn collection off
         await pilot.press("enter")
         await pilot.pause()
-        assert len(app._scope.active_sources) == 0
+        assert "TWO" not in app._scope.collections
+        assert app._scope.active_sources == []
         assert "○" in str(coll.label), f"expected empty marker, got {coll.label!r}"
 
 
@@ -243,7 +244,11 @@ async def test_collection_off_keeps_shared_source_of_active_sibling(
     """Toggling a collection OFF must not deactivate a source it shares
     with a collection that is still fully on. Regression: turning CPL
     off stripped the shared Obsidian vault from SFO's scope while SFO
-    kept its ● marker, so SFO searches silently lost every md file."""
+    kept its ● marker, so SFO searches silently lost every md file.
+
+    Both collections FULL scope via the collection filter, so survival
+    is observable as BBB staying ● (FULL) after AAA toggles off — its
+    shared vault is still in scope through BBB's collection channel."""
     app = FNDApp(index_dir=built_index, config=shared_source_config)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -260,20 +265,17 @@ async def test_collection_off_keeps_shared_source_of_active_sibling(
         await pilot.press("enter")
         await pilot.pause()
         assert sorted(app._scope.collections) == ["AAA", "BBB"]
-        assert len(app._scope.active_sources) == 3  # notes, vault, papers
         # Toggle AAA off.
         ctree.cursor_line = 0
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
         assert app._scope.collections == ["BBB"]
+        assert app._scope.collection_marker("BBB") == "●", "BBB must stay fully scoped"
         vault_id = app._scope.collection_source_ids("BBB")[1]
-        assert vault_id in app._scope.active_sources, (
+        assert app._scope._source_active("BBB", vault_id), (
             "shared source must survive the sibling collection's toggle-off"
         )
-        assert all(
-            sid in app._scope.active_sources for sid in app._scope.collection_source_ids("BBB")
-        ), f"BBB no longer fully scoped: {app._scope.active_sources}"
 
 
 @pytest.mark.asyncio
@@ -282,8 +284,9 @@ async def test_saved_scope_desync_repaired_on_launch(
 ) -> None:
     """A persisted scope where a collection is in ``collections`` but
     only some of its sources are in ``sources`` (written by the
-    shared-source bug above) must be repaired at launch: the marker
-    reads ● so the search scope has to match it."""
+    shared-source bug above) must read as FULL at launch: a full
+    collection is config-relative, so it covers every current source
+    and the marker reads ● regardless of the stale ``sources`` list."""
     notes_id = str((Path(__file__).parent / "fixtures" / "notes").resolve())
     isolated_ui_state.parent.mkdir(parents=True, exist_ok=True)
     isolated_ui_state.write_text(
@@ -295,9 +298,95 @@ async def test_saved_scope_desync_repaired_on_launch(
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app._scope.collections == ["AAA"]
+        assert app._scope.collection_marker("AAA") == "●", "full collection must render ●"
         assert all(
-            sid in app._scope.active_sources for sid in app._scope.collection_source_ids("AAA")
-        ), f"desynced scope not repaired: {app._scope.active_sources}"
+            app._scope._source_active("AAA", sid)
+            for sid in app._scope.collection_source_ids("AAA")
+        ), "every source of a FULL collection is active"
+
+
+def _source_node(coll_node, basename: str):
+    """Find the source leaf under a collection node by path basename."""
+    for child in coll_node.children:
+        data = child.data if isinstance(child.data, dict) else {}
+        if str(data.get("source_id", "")).rstrip("/").endswith(basename):
+            return child
+    return None
+
+
+@pytest.mark.asyncio
+async def test_collection_off_keeps_shared_source_of_partial_sibling(
+    built_index: Path, shared_source_config: Config, isolated_ui_state: Path
+) -> None:
+    """#63: AAA full + BBB *partial* (only the shared vault on). Toggling
+    AAA off must not strip the vault — BBB still claims it, so BBB stays
+    ◐ and the vault row under BBB stays ●. The flat ``active_sources``
+    list had no record of BBB's partial claim, so it was pruned."""
+    app = FNDApp(index_dir=built_index, config=shared_source_config)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        ctree = app.query_one("#collections_panel_tree", Tree)
+        ctree.focus()
+        await pilot.pause()
+        # Make BBB partial first: expand it, toggle ONLY its vault source.
+        bbb = ctree.root.children[1]
+        assert isinstance(bbb.data, dict) and bbb.data.get("name") == "BBB"
+        bbb.expand()
+        await pilot.pause()
+        vault_row = _source_node(bbb, "vault")
+        assert vault_row is not None and vault_row.line >= 0
+        ctree.cursor_line = vault_row.line
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        vault_id = app._scope.collection_source_ids("BBB")[1]
+        assert vault_id in app._scope.active_sources
+        assert "◐" in str(bbb.label), f"BBB should be partial, got {bbb.label!r}"
+        # Now toggle AAA fully on.
+        ctree.cursor_line = 0
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "AAA" in app._scope.collections
+        # Toggle AAA off — the shared vault must survive (BBB still claims it).
+        ctree.cursor_line = 0
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "AAA" not in app._scope.collections
+        assert vault_id in app._scope.active_sources, (
+            "shared source must survive a FULL sibling's toggle-off when a "
+            f"PARTIAL sibling still claims it; got {app._scope.active_sources}"
+        )
+        assert "◐" in str(bbb.label), f"BBB lost its partial claim: {bbb.label!r}"
+        assert "●" in str(_source_node(bbb, "vault").label)
+
+
+@pytest.mark.asyncio
+async def test_panel_title_source_count_agrees_with_markers(
+    built_index: Path, multi_source_config: Config, isolated_ui_state: Path
+) -> None:
+    """#58: the toggle-time title refresh must count sources by the same
+    rule the row markers use (``collection_full or id in active_sources``).
+    A CLI ``--collection`` full collection paints every row ● but, with
+    the old rule, the toggle-path title reported 0 sources — disagreeing
+    with the full-rebuild title."""
+    app = FNDApp(index_dir=built_index, collection="TWO", config=multi_source_config)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        ctree = app.query_one("#collections_panel_tree", Tree)
+        # Full rebuild computes the title alongside the ● row markers.
+        app._scope.refresh_collections_panel()
+        title_rebuild = str(ctree.border_title)
+        # Toggle-path refresh must produce the same title for the same state.
+        app._scope._refresh_collections_panel_title()
+        title_toggle = str(ctree.border_title)
+        assert title_toggle == title_rebuild, (
+            f"title disagreement: rebuild={title_rebuild!r} toggle={title_toggle!r}"
+        )
+        assert "2/2 sources" in title_toggle, (
+            f"CLI-full TWO should report all sources active; got {title_toggle!r}"
+        )
 
 
 @pytest.mark.asyncio
