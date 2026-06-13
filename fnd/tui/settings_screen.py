@@ -2929,6 +2929,10 @@ class DeleteCollectionScreen(Screen[None]):
     def __init__(self, *, collection_name: str) -> None:
         super().__init__()
         self._name = collection_name
+        # Set once the worker is dispatched: freezes the bindings so the user
+        # can't re-fire "Yes" (a second worker) or escape onto the now-stale
+        # parent screen mid-delete. Never cleared — the screen is single-use.
+        self._deleting = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
@@ -2977,6 +2981,8 @@ class DeleteCollectionScreen(Screen[None]):
         )
 
     def action_cursor(self, direction: int) -> None:
+        if self._deleting:
+            return
         lst = self.query_one("#confirm_list", OptionList)
         if direction > 0:
             lst.action_cursor_down()
@@ -2984,6 +2990,8 @@ class DeleteCollectionScreen(Screen[None]):
             lst.action_cursor_up()
 
     def action_activate(self) -> None:
+        if self._deleting:
+            return
         self.query_one("#confirm_list", OptionList).action_select()
 
     @on(OptionList.OptionSelected, "#confirm_list")
@@ -3031,10 +3039,13 @@ class DeleteCollectionScreen(Screen[None]):
         app.run_worker(_work, thread=True, exclusive=True, group=f"delete-{name}")
 
     def _show_deleting(self) -> None:
-        """Swap the confirm choices for the spinner while the worker runs."""
+        """Swap the confirm choices for the spinner while the worker runs and
+        freeze the bindings so the delete can't be re-fired or escaped."""
         import contextlib
 
         from textual.widgets import LoadingIndicator
+
+        self._deleting = True
 
         with contextlib.suppress(Exception):
             self.query_one("#confirm_summary", Static).add_class("-hidden")
@@ -3065,6 +3076,8 @@ class DeleteCollectionScreen(Screen[None]):
                     app.pop_screen()
 
     def action_back(self) -> None:
+        if self._deleting:
+            return
         self.app.pop_screen()
 
 

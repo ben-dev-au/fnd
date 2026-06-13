@@ -70,12 +70,17 @@ async def test_delete_drops_index_off_main_thread(
     import threading
 
     from fnd import index as index_mod
+    from fnd.config import write_collection
     from fnd.query import Searcher
     from fnd.tui.settings_screen import DeleteCollectionScreen
 
     cfg_path = tmp_path / "config.toml"
-    cfg_path.write_text("")
     monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+    # Seed the on-disk config the delete path edits + reloads — otherwise
+    # delete_collection no-ops on an absent collection and the reload assertion
+    # passes vacuously.
+    for cname, ccfg in cfg_three.collections.items():
+        write_collection(config_path=cfg_path, name=cname, collection=ccfg)
 
     seen: dict[str, object] = {}
     real_ensure = index_mod._ensure_index
@@ -112,4 +117,48 @@ async def test_delete_drops_index_off_main_thread(
 
     assert seen["thread"] is not threading.main_thread(), "index drop ran on the event loop"
     assert Searcher(index_dir=built_index).search("body", collection="alpha") == []
-    assert "alpha" not in app._config.collections  # type: ignore[union-attr]
+    # The persisted config actually lost 'alpha' (and kept its siblings).
+    from fnd.config import load as _load
+
+    on_disk = _load(cfg_path)
+    assert "alpha" not in on_disk.collections
+    assert "beta" in on_disk.collections
+
+
+@pytest.mark.asyncio
+async def test_delete_freezes_screen_during_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    app_factory: Callable[[Config], FNDApp],
+    cfg_three: Config,
+) -> None:
+    """Once 'Yes' starts the worker, the screen bindings must freeze: a second
+    Enter can't fire a second delete worker and Escape can't pop onto the stale
+    parent. Stub run_worker so the in-flight delete never completes/pops."""
+    from fnd.tui.settings_screen import DeleteCollectionScreen
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text("")
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+
+    app = app_factory(cfg_three)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        calls: list[str] = []
+        monkeypatch.setattr(app, "run_worker", lambda *a, **k: calls.append("x"))
+        app.push_screen(DeleteCollectionScreen(collection_name="alpha"))
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, DeleteCollectionScreen)
+        depth = len(app.screen_stack)
+        await pilot.press("enter")  # Yes → dispatch the (stubbed) worker
+        await pilot.pause()
+        assert screen._deleting is True
+        assert len(calls) == 1
+        # Re-fire Enter and Escape: both must be no-ops while deleting.
+        await pilot.press("enter")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert len(calls) == 1, "second Enter spawned another delete worker"
+        assert app.screen is screen, "Escape popped the screen mid-delete"
+        assert len(app.screen_stack) == depth
