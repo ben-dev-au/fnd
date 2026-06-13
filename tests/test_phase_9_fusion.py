@@ -203,6 +203,54 @@ def test_auto_subqueries_omits_syn_when_query_unchanged_after_expansion() -> Non
     assert all(s.source != "syn" for s in subs)
 
 
+def test_auto_subqueries_proximity_skips_synonym_pass() -> None:
+    """A ``{N}`` proximity query must NOT get a synonym pass even when a term
+    has a synonym: ``expand`` would rewrite ``{20}threat intelligence`` into
+    ``{20}("threat intelligence" OR ti)``, leaving an orphan ``{20}`` brace
+    that Tantivy rejects. The guard mirrors the phrase pass."""
+    table = SynonymTable.from_groups([["ti", "threat intelligence"]])
+    subs = auto_subqueries("{20}threat intelligence", synonyms=table)
+    assert all(s.source != "syn" for s in subs)
+
+
+def test_auto_subqueries_near_skips_synonym_pass() -> None:
+    table = SynonymTable.from_groups([["ti", "threat intelligence"]])
+    subs = auto_subqueries("threat NEAR/5 intelligence", synonyms=table)
+    assert all(s.source != "syn" for s in subs)
+
+
+def test_auto_subqueries_field_syntax_skips_synonym_pass() -> None:
+    """A field qualifier suppresses the syn pass: expanding the content portion
+    in place would graft a disjunction onto the qualified query."""
+    table = SynonymTable.from_groups([["ti", "threat intelligence"]])
+    subs = auto_subqueries("kind:pdf threat intelligence", synonyms=table)
+    assert all(s.source != "syn" for s in subs)
+
+
+def test_auto_subqueries_operator_syntax_skips_synonym_pass() -> None:
+    table = SynonymTable.from_groups([["mfa", "multi-factor authentication"]])
+    subs = auto_subqueries("mfa AND sso", synonyms=table)
+    assert all(s.source != "syn" for s in subs)
+
+
+def test_auto_subqueries_quoted_query_skips_synonym_pass() -> None:
+    """A user-quoted phrase carries phrase intent in the lex pass; the syn pass
+    stands down so we never re-wrap it."""
+    table = SynonymTable.from_groups([["ti", "threat intelligence"]])
+    subs = auto_subqueries('"threat intelligence"', synonyms=table)
+    assert all(s.source != "syn" for s in subs)
+
+
+def test_auto_subqueries_plain_query_still_expands_synonyms() -> None:
+    """The guard must not suppress the syn pass for a plain bag-of-words query —
+    that is the whole point of the synonym feature."""
+    table = SynonymTable.from_groups([["mfa", "multi-factor authentication"]])
+    subs = auto_subqueries("reset mfa", synonyms=table)
+    syn = next((s for s in subs if s.source == "syn"), None)
+    assert syn is not None
+    assert "multi-factor authentication" in syn.query
+
+
 def test_auto_subqueries_empty_query_returns_empty() -> None:
     assert auto_subqueries("", synonyms=None) == []
     assert auto_subqueries("   ", synonyms=None) == []
@@ -355,6 +403,36 @@ def test_fusion_search_pass_index_2_for_synonym_primary(
     hits = fusion_search(s, query="susy breaking", limit=10, synonyms=table)
     syn_hit = next(h for h in hits if Path(h.path).name == "synonym.md")
     assert syn_hit.pass_index == 2
+
+
+def test_fusion_search_degrades_malformed_subquery(fusion_corpus: Path) -> None:
+    """A malformed sub-query must degrade to an empty ranking, never abort the
+    whole fused search — the other sub-queries still return their hits."""
+    s = Searcher(index_dir=fusion_corpus)
+    subs = [
+        SubQuery(query="susy breaking", weight=1.0, source="lex"),
+        SubQuery(query="{20}", weight=0.6, source="syn"),  # orphan brace → Tantivy reject
+    ]
+    hits = fusion_search(s, query="susy breaking", limit=10, subqueries=subs)
+    assert hits, "the valid lex sub-query must still surface results"
+
+
+def test_fusion_trace_records_degraded_subquery(fusion_corpus: Path) -> None:
+    """The degraded sub-query is recorded on the trace (degraded flag, zero
+    hits) so ``:explain`` shows it stood down rather than silently vanishing."""
+    s = Searcher(index_dir=fusion_corpus)
+    subs = [
+        SubQuery(query="susy breaking", weight=1.0, source="lex"),
+        SubQuery(query="{20}", weight=0.6, source="syn"),
+    ]
+    _hits, trace = fusion_search(
+        s, query="susy breaking", limit=10, subqueries=subs, with_trace=True
+    )
+    syn_trace = next(t for t in trace.subqueries if t.source == "syn")
+    assert syn_trace.degraded is True
+    assert syn_trace.hit_count == 0
+    lex_trace = next(t for t in trace.subqueries if t.source == "lex")
+    assert lex_trace.degraded is False
 
 
 # ── TUI glyph for phrase ───────────────────────────────────────────

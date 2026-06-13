@@ -158,6 +158,8 @@ class SearchController:
         except QueryError as e:
             self._show_query_notice(e)
             self.groups = []
+            # Drop the last good trace so :explain can't show a stale plan (#61).
+            self.latest_trace = None
             self._app._results.refresh()
             return
         self._clear_query_notice()
@@ -215,6 +217,8 @@ class SearchController:
         except (QueryError, FilterError) as e:
             self._show_query_notice(e)
             self.groups = []
+            # Drop the last good trace so :explain can't show a stale plan (#61).
+            self.latest_trace = None
             self._app._results.refresh()
             return
         self._clear_query_notice()

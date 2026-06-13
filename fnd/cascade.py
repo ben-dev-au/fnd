@@ -427,8 +427,11 @@ def cascade_search(
     if len(out) >= threshold:
         return _trace_result() if with_trace else out
 
-    # Pass 2: synonym expansion through parse_query.
-    if synonyms is not None and synonyms.groups:
+    # Pass 2: synonym expansion through parse_query. Skipped for precision-intent
+    # queries (same as the fuzzy pass): ``expand`` grafts an ``(a OR b)``
+    # disjunction in, which strands a proximity brace (``{20}("a b" OR c)``) and
+    # Tantivy rejects it.
+    if synonyms is not None and synonyms.groups and not _carries_precision_intent(query):
         syn_q = expand(literal_query, synonyms)
         if syn_q != literal_query:
             raw = searcher._filtered_raw_hits(

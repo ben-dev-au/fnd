@@ -42,6 +42,7 @@ class SubQueryTrace:
     bm25_top: float  # raw BM25 of top hit in this sub-ranking (0.0 if empty)
     bm25_second: float
     rrf_k: int
+    degraded: bool = False  # sub-query rejected by Tantivy → forced to empty
 
 
 @dataclass(slots=True, frozen=True)
@@ -143,6 +144,7 @@ def _fusion_to_json(t: FusionTrace) -> dict[str, object]:
                 "bm25_top": round(s.bm25_top, 4),
                 "bm25_second": round(s.bm25_second, 4),
                 "rrf_k": s.rrf_k,
+                "degraded": s.degraded,
             }
             for s in t.subqueries
         ],
