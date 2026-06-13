@@ -3335,18 +3335,10 @@ class UpdateAllConfirm(Screen[None]):
             return
         app: FNDApp = self.app  # type: ignore[assignment]
         # First in the queue runs now; the rest queue up for chaining.
+        # reindex_with_warning seeds the chain queue from these (and
+        # chain_total is preserved so the IndexerScreen title can show
+        # "papers (1 of 5)" even after rest has been depleted).
         first, rest = names[0], names[1:]
-        app._indexer.chain_remaining = rest  # type: ignore[attr-defined]
-        # Total count is preserved so the IndexerScreen title can show
-        # "papers (1 of 5)" even after rest has been depleted.
-        app._indexer.chain_total = len(names)  # type: ignore[attr-defined]
-        # Stash the run mode so _start_next_in_chain re-applies it to
-        # every subsequent collection (and so a re-trigger of this
-        # confirm with a different mode replaces it).
-        app._indexer.texturise_override = self._texturise_override  # type: ignore[attr-defined]
-        app._indexer.skip_unchanged = self._skip_unchanged  # type: ignore[attr-defined]
-        app._indexer.force_fresh = self._force_fresh  # type: ignore[attr-defined]
-        app._indexer.rebuild = self._rebuild  # type: ignore[attr-defined]
         try:
             app._indexer.reindex_with_warning(  # type: ignore[attr-defined]
                 first,
@@ -3354,6 +3346,8 @@ class UpdateAllConfirm(Screen[None]):
                 skip_unchanged=self._skip_unchanged,
                 force_fresh=self._force_fresh,
                 rebuild=self._rebuild,
+                chain_remaining=rest,
+                chain_total=len(names),
             )
         except Exception:
             self.notify(f"Could not start Update index for {first}", severity="error")

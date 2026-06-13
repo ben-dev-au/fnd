@@ -123,9 +123,20 @@ class IndexerService:
                 # Either a chain continuation racing a busy task (defensive)
                 # or an actively-running run the user re-opened to watch:
                 # don't start a second, don't disturb its generation. Show
-                # the running modal so "view progress" still works.
+                # the running modal so "view progress" still works — with the
+                # in-flight chain context so a mid-chain re-open keeps its
+                # "(N of M)" title instead of dropping to a single-run one.
                 if open_modal and _bump_seq:
-                    self._app.push_screen(IndexerScreen(self.collection or collection))
+                    chain_total = getattr(self, "chain_total", 1) or 1
+                    chain_pending = getattr(self, "chain_remaining", None) or []
+                    chain_index = max(1, chain_total - len(chain_pending))
+                    self._app.push_screen(
+                        IndexerScreen(
+                            self.collection or collection,
+                            chain_total=chain_total,
+                            chain_index=chain_index,
+                        )
+                    )
                 return False
             # In flight but already cancelling (cancel-then-start-again):
             # serialise — bump the generation so the dying run's teardown
@@ -238,6 +249,8 @@ class IndexerService:
         skip_unchanged: bool = True,
         force_fresh: bool = False,
         rebuild: bool = False,
+        chain_remaining: list[str] | None = None,
+        chain_total: int = 1,
     ) -> None:
         """If the pdf-structure extra is installed and the first-reindex
         warning hasn't been seen, show it; on confirm, start the
@@ -245,7 +258,15 @@ class IndexerService:
 
         ``rebuild=True`` is for callers that need a fresh build after a
         config change (collection rename, source delete, etc.) — it
-        drops the collection's existing chunks before re-indexing."""
+        drops the collection's existing chunks before re-indexing.
+
+        This is the one user-initiated reindex entry point, so it owns the
+        chain queue: a chain start (``chain_total > 1``) seeds the queue;
+        a single reindex (the default) clears any queue a cancelled chain
+        left behind, so a single run started right after a cancelled chain
+        can't silently resume that chain's leftover collections. Chain
+        continuations re-enter ``start_indexer`` directly and inherit this
+        state untouched."""
         from fnd.config import load as _load_config
         from fnd.tui.first_reindex_warning import (
             FirstReindexWarningScreen,
@@ -260,6 +281,19 @@ class IndexerService:
             self._app.notify(f"Collection '{collection}' not found.", severity="error")
             return
         col_cfg = cfg.collections[collection]
+
+        # Establish the chain queue for this request before start() reads
+        # it — but only when start() will actually act on it. If a run is
+        # already in flight and NOT cancelling, start() rejects this request
+        # (busy modal); overwriting here would wipe the live chain's queue
+        # and strand its remaining collections. When there's no run, or the
+        # in-flight one is cancelling (so this request supersedes it), we own
+        # the queue: a single reindex resets it (can't inherit a cancelled
+        # chain's stale queue), a chain start seeds it.
+        cancelling = self.cancel is not None and self.cancel.is_set()
+        if self.task is None or self.task.done() or cancelling:
+            self.chain_remaining = list(chain_remaining or [])
+            self.chain_total = max(1, chain_total)
 
         # Only warn when extras are actually installed (otherwise the
         # cost is the old flat-extraction cost, which is sub-second/PDF).
@@ -315,7 +349,6 @@ class IndexerService:
         recent-and-real-collection guard that rejects leaked/stale state."""
         import datetime as _dt
 
-        from fnd.config import default_index_dir
         from fnd.index_runner import is_state_resumable, load_state, state_file_for
 
         try:
@@ -335,8 +368,11 @@ class IndexerService:
             return
         assert state is not None  # narrowed by is_state_resumable
         try:
+            # Honour the app's configured index dir (every other start
+            # path does); a test / CLI caller that built FNDApp with a
+            # custom index_dir must resume into that dir, not the default.
             self._app.start_indexer(
-                collection="default", index_dir=default_index_dir(), open_modal=False
+                collection="default", index_dir=self._app._index_dir, open_modal=False
             )
             self._app.notify(
                 f"Resuming indexing: {state.files_completed}/{state.total_files}",
@@ -349,16 +385,20 @@ class IndexerService:
         """Worker that drops + rebuilds chunks for ``name``. Notifies on
         start/finish/error. Reused by SourceFormScreen, RenameCollection,
         and the Reindex action in the per-collection sub-menu."""
-        # Reload config so we hit the latest source list.
-        import contextlib
-
+        # Reload config so we hit the latest source list. A failed reload
+        # must abort, not fall back to the stale in-memory config: callers
+        # reach here right after a source edit / rename, so rebuilding
+        # against the pre-edit list would silently produce a wrong index.
         from fnd.config import load
         from fnd.index import build_index_from_config
 
-        with contextlib.suppress(Exception):
+        try:
             self._app._config = load()
+        except Exception as e:
+            self._app.notify(f"Reindex aborted: could not reload config: {e}", severity="error")
+            return
         cfg = self._app._config
-        if cfg is None or name not in cfg.collections:
+        if name not in cfg.collections:
             return
         col = cfg.collections[name]
         index_dir = self._app._index_dir
