@@ -448,6 +448,16 @@ class FNDApp(App[None]):
         self._apply_mouse_capture(not self._reading_mode)
         if self._reading_mode:
             preview.focus()
+            # Reading View is pure scroll-nav — there are no result-driven
+            # match-jumps here, so the full-document mount (kept for instant
+            # in-file jumps in normal preview) buys nothing and just makes the
+            # widen-reflow and every subsequent scroll repaint a heavier tree.
+            # Drop to the visible window; scroll-driven lazy-mount refills as
+            # the reader scrolls. prune_active_to_window is scroll-compensated
+            # and flash-free, so the on-screen content stays put. On exit we
+            # leave it windowed — the next match-nav's render_full_doc restores
+            # the full mount when the results-driven workflow actually needs it.
+            self._preview.prune_active_to_window()
         else:
             self.query_one("#results_pane", ResultsTree).focus()
         if location is not None:
