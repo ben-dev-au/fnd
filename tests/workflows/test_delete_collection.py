@@ -92,6 +92,7 @@ async def test_delete_drops_index_off_main_thread(
     app = app_factory(cfg_three)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        base_depth = len(app.screen_stack)
         # Mirror the real stack: base → per-collection screen → delete confirm,
         # so the Yes branch's two pops return to the base.
         from textual.screen import Screen
@@ -103,9 +104,9 @@ async def test_delete_drops_index_off_main_thread(
         await pilot.press("enter")  # Yes is the first option
         ok = await wait_until(
             pilot,
-            lambda: "thread" in seen and not isinstance(app.screen, DeleteCollectionScreen),
+            lambda: "thread" in seen and len(app.screen_stack) == base_depth,
         )
-        assert ok, "delete worker never finished / screens never popped"
+        assert ok, "delete worker never finished / screens never popped to base"
         await app.workers.wait_for_complete()
         await pilot.pause()
 

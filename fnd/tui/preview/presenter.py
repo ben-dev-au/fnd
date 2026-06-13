@@ -1581,7 +1581,10 @@ class PreviewPresenter:
             def _apply() -> None:
                 if token != self._markers_seq:
                     return
-                pane.set_match_lines(match_lines, total_lines)
+                # The pane can be mid-teardown by the time this lands (app quit
+                # during a long scan); a failed marker update is never fatal.
+                with contextlib.suppress(Exception):
+                    pane.set_match_lines(match_lines, total_lines)
 
             self._app.call_from_thread(_apply)
 

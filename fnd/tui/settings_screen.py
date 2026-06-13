@@ -2994,6 +2994,10 @@ class DeleteCollectionScreen(Screen[None]):
         # Yes branch. Config writes are quick; the index drop's commit +
         # wait_merging_threads blocks for 95-145ms on a fresh index and
         # seconds on a fragmented one, so it runs on a worker with a spinner.
+        # Non-atomic by design: the config is committed here, before the worker
+        # drops the chunks. A _drop failure leaves orphan chunks with the
+        # collection already gone from config — surfaced to the user, cleared by
+        # a later "Rebuild all"; no auto-rollback (matches the prior sync path).
         import contextlib
 
         from fnd.config import default_config_path, delete_collection, load
@@ -3022,7 +3026,7 @@ class DeleteCollectionScreen(Screen[None]):
         def _work() -> None:
             error = _drop()
             with contextlib.suppress(Exception):
-                app.call_from_thread(self._finish_delete, error)
+                app.call_from_thread(self._finish_delete, app, error)
 
         app.run_worker(_work, thread=True, exclusive=True, group=f"delete-{name}")
 
@@ -3038,20 +3042,26 @@ class DeleteCollectionScreen(Screen[None]):
             self.query_one("#deleting_status", Static).remove_class("-hidden")
             self.query_one("#deleting_spinner", LoadingIndicator).remove_class("-hidden")
 
-    def _finish_delete(self, error: str | None) -> None:
-        """Back on the UI thread: report, refresh, and pop both screens."""
+    def _finish_delete(self, app: FNDApp, error: str | None) -> None:
+        """Back on the UI thread: report, refresh, and pop both screens.
+
+        ``app`` is passed in (not read off ``self``) so this survives the
+        screen being unmounted mid-delete."""
         import contextlib
 
-        app: FNDApp = self.app  # type: ignore[assignment]
         if error:
-            self.notify(f"Index drop failed: {error}", severity="error")
+            app.notify(f"Index drop failed: {error}", severity="error")
         with contextlib.suppress(Exception):
             app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
-        # Pop Delete screen AND the now-stale per-collection screen. Guard the
-        # pops so a quit / screen-swap mid-delete can't raise ScreenStackError.
-        for _ in range(2):
-            with contextlib.suppress(Exception):
-                if len(app.screen_stack) > 1:
+        # Pop the Delete screen + the now-stale per-collection screen beneath it
+        # — but only while the Delete screen is still on top. A manual escape
+        # mid-delete means the user already navigated elsewhere, so popping by
+        # count would drop unrelated screens. Never pop the root.
+        if app.screen is self:
+            for _ in range(2):
+                if len(app.screen_stack) <= 1:
+                    break
+                with contextlib.suppress(Exception):
                     app.pop_screen()
 
     def action_back(self) -> None:
