@@ -28,6 +28,25 @@ _FILTER_KINDS: tuple[str, ...] = ("pdf", "docx", "pptx", "md", "txt")
 _FILTER_DATES: tuple[str, ...] = ("any", "today", "week", "month", "year")
 
 
+class _FullScope:
+    """Sentinel: whole collection in scope, config-relative and
+    unenumerated. Distinct from an explicit ``set`` of source ids so a
+    full collection scopes via the collection filter (CLI / persisted /
+    all-on) without freezing the source list."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "FULL"
+
+
+FULL = _FullScope()
+
+# A collection's scope state in ``ScopeController.selection`` is either
+# the FULL sentinel (whole collection) or an explicit ``set`` of active
+# source ids (partial / granular). Absence from the map = out of scope.
+
+
 class ScopeController:
     """Owns scope state (collections / sources / filters), the sidebar
     panel layout, and their persistence to the UI-state file."""
@@ -53,30 +72,73 @@ class ScopeController:
         self.expanded_filter_branches: set[str] = {
             b for b in saved.expanded_filter_branches if b in ("kinds", "date")
         }
-        # Scope (collections / sources / filters) — override when
-        # ``--collection`` was passed, otherwise restore the persisted
-        # scope so the TUI starts where the user left it.
+        # Scope — one provenance-carrying map (``selection``) is the
+        # single source of truth; ``collections`` / ``active_sources``
+        # are derived views. Override when ``--collection`` was passed,
+        # otherwise reconstruct the map from the persisted flat scope.
         if collection:
-            self.collections: list[str] = [collection]
-            self.active_sources: list[str] = []
+            self.selection: dict[str, _FullScope | set[str]] = {collection: FULL}
             self.filter_kinds: list[str] = []
             self.filter_date: str = "any"
         else:
-            self.collections = list(saved.collections)
-            self.active_sources = list(saved.sources)
+            self.selection = self._derive_selection(saved.collections, saved.sources)
             self.filter_kinds = list(saved.filter_kinds)
             self.filter_date = saved.filter_date or "any"
-        # Repair a desynced persisted scope: a collection in ``collections``
-        # renders ● (whole collection in scope), so every one of its sources
-        # must be active. Older builds stripped a shared source when a sibling
-        # collection toggled off, leaving the ● collection silently narrowed.
-        # The legacy ``sources = []`` shape is left alone (it means "no
-        # per-source narrowing", not "partial").
-        if self.active_sources:
-            for _name in self.collections:
-                for _sid in self.collection_source_ids(_name):
-                    if _sid not in self.active_sources:
-                        self.active_sources.append(_sid)
+
+    def _derive_selection(
+        self, full_names: list[str], flat_sources: list[str]
+    ) -> dict[str, _FullScope | set[str]]:
+        """Rebuild the selection map from the persisted flat scope.
+
+        Full collections become ``FULL`` (config-relative). Each flat
+        source id is attributed as a partial claim to every non-full
+        collection whose config contains it — the on-disk shape carries
+        no provenance, so a shared id is claimed by all owners. The live
+        toggle path records exact provenance; only a save/reload of a
+        shared-partial scope reconstructs approximately.
+        """
+        sel: dict[str, _FullScope | set[str]] = dict.fromkeys(full_names, FULL)
+        if not flat_sources:
+            return sel
+        flat = set(flat_sources)
+        cfg = self._app._config
+        for name in cfg.collections if cfg else []:
+            if sel.get(name) is FULL:
+                continue
+            claimed = {sid for sid in self.collection_source_ids(name) if sid in flat}
+            if claimed:
+                sel[name] = claimed
+        return sel
+
+    @property
+    def collections(self) -> list[str]:
+        """Collections fully in scope (●) — the search collection-filter
+        channel. Derived from the selection map."""
+        return [name for name, sel in self.selection.items() if sel is FULL]
+
+    @property
+    def active_sources(self) -> list[str]:
+        """Flat active source ids for the per-source search filter.
+        Only explicit (partial) selections contribute — FULL collections
+        scope via the collection channel. Deterministic config order."""
+        out: list[str] = []
+        seen: set[str] = set()
+        for name, sel in self.selection.items():
+            if not isinstance(sel, set):
+                continue
+            for sid in self.collection_source_ids(name):
+                if sid in sel and sid not in seen:
+                    seen.add(sid)
+                    out.append(sid)
+        return out
+
+    def _source_active(self, collection: str, source_id: str) -> bool:
+        """O(1) check: is this source row active under its collection?
+        The single rule shared by markers, repaint, and title counts."""
+        sel = self.selection.get(collection)
+        if isinstance(sel, set):
+            return source_id in sel
+        return sel is FULL
 
     def persist(self) -> None:
         """Save the current scope + panel state to disk so the next
@@ -108,29 +170,16 @@ class ScopeController:
         return [str(Path(str(s.path)).expanduser().resolve()) for s in col.sources]
 
     def collection_marker(self, name: str) -> str:
-        """Tri-state marker for the collection row: full / partial / empty.
-
-        ``collections`` membership is the primary "whole collection in
-        scope" signal — it's set by the CLI ``--collection`` flag,
-        persisted scope, and the UI toggle handler — and reads as ●
-        full. The per-source ``active_sources`` set carries the
-        finer-grained on/off bits for individual rows and produces the
-        ◐ partial state when only some sources are active.
-
-        The toggle handler keeps these in sync (it removes the parent
-        from ``collections`` when a single source is turned off, and
-        re-adds it when every sibling is back on), so the only paths
-        that land in "collection in ``collections`` but no sources in
-        ``active_sources``" are the CLI flag and the legacy persisted
-        scope — both of which the user explicitly wants displayed as ●.
-        """
-        if name in self.collections:
-            return "●"
+        """Tri-state marker for the collection row: full / partial / empty,
+        read straight from the selection map. FULL → ●; absent → ○; an
+        explicit set → ● (covers every source), ◐ (some), or ○ (none)."""
+        sel = self.selection.get(name)
+        if not isinstance(sel, set):
+            return "●" if sel is FULL else "○"
         source_ids = self.collection_source_ids(name)
         if not source_ids:
             return "○"
-        active_sources = set(self.active_sources)
-        n_active = sum(1 for sid in source_ids if sid in active_sources)
+        n_active = sum(1 for sid in source_ids if sid in sel)
         if n_active == 0:
             return "○"
         if n_active == len(source_ids):
@@ -154,22 +203,15 @@ class ScopeController:
             except Exception:
                 cfg = None
         names = sorted(cfg.collections.keys()) if cfg else []
-        active_sources = set(self.active_sources)
         # Drop persisted expand entries for collections that no longer
         # exist so the saved set stays bounded over time.
         self.expanded_collections &= set(names)
         tree.show_root = False
         tree.clear()
-        active_source_count = 0
-        total_source_count = 0
-        n_full_collections = 0
         for name in names:
             col = cfg.collections[name] if cfg else None
             marker = self.collection_marker(name)
-            if marker == "●":
-                n_full_collections += 1
             n_sources = len(col.sources) if col else 0
-            total_source_count += n_sources
             label = f"{marker}  {name}  ({n_sources} source{'s' if n_sources != 1 else ''})"
             node = tree.root.add(
                 _styled_parent_label(label),
@@ -177,18 +219,9 @@ class ScopeController:
                 expand=name in self.expanded_collections,
             )
             if col:
-                # When the whole collection is in scope (CLI flag,
-                # persisted scope, or "all sources on" toggle), each
-                # source is implicitly active — the per-source toggle
-                # only fills in granular off-bits within an explicitly
-                # full collection.
-                collection_full = name in self.collections
                 for i, s in enumerate(col.sources):
                     source_id = str(Path(str(s.path)).expanduser().resolve())
-                    src_active = collection_full or source_id in active_sources
-                    if src_active:
-                        active_source_count += 1
-                    src_marker = "●" if src_active else "○"
+                    src_marker = "●" if self._source_active(name, source_id) else "○"
                     short = Path(str(s.path)).name or str(s.path)
                     src_label = f"{src_marker}  {i + 1}. {short}"
                     node.add_leaf(
@@ -199,10 +232,7 @@ class ScopeController:
                             "source_id": source_id,
                         },
                     )
-        title = f"Collections · {n_full_collections}/{len(names)} active"
-        if total_source_count and active_source_count:
-            title += f", {active_source_count}/{total_source_count} sources"
-        tree.border_title = title
+        tree.border_title = self._panel_title(names)
 
     # ── Filters panel (UX-F) ──────────────────────────────────────
 
@@ -303,95 +333,32 @@ class ScopeController:
             self._app._search.run(self._app._search.current_query)
 
     def on_collections_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
-        """Enter on a collection node toggles the whole collection's
-        scope (all sources at once); Enter on a single source row
-        toggles that source independently. Source toggles bubble up so
-        the parent collection marker reads ●/◐/○ — full / partial /
-        empty — depending on how many of its sources are now active.
-
-        Both toggle paths read "currently on" from BOTH state signals
-        (``collections`` membership + per-source ``active_sources``)
-        so the visible marker drives the toggle direction, even from
-        the legacy / CLI-flag entry case where ``collections`` has the
-        collection but ``active_sources`` hasn't been populated yet.
-        """
+        """Enter on a collection node toggles the whole collection's scope
+        (all sources at once); Enter on a single source row toggles that
+        source independently. Every change mutates the ``selection`` map —
+        the single source of truth — so the visible ●/◐/○ marker drives
+        the toggle direction and a shared source's per-collection
+        provenance is preserved (toggling one owner off can't strip a
+        source a sibling still claims)."""
         data = ev.node.data or {}
         kind = data.get("kind")
         if kind == "collection":
             name = str(data.get("name") or "")
             if not name:
                 return
-            source_ids = self.collection_source_ids(name)
-            # ``name in collections`` means "whole collection in scope"
-            # — either the user just toggled it via the UI (which also
-            # filled ``active_sources``) or the scope arrived from
-            # ``--collection`` / legacy persisted state (no per-source
-            # bits). Either way the marker reads ● and Enter should
-            # turn it off.
-            currently_full = name in self.collections or (
-                bool(source_ids) and all(sid in self.active_sources for sid in source_ids)
-            )
-            if currently_full:
-                if name in self.collections:
-                    self.collections.remove(name)
-                if source_ids:
-                    # A source shared with a still-active collection stays
-                    # on — only drop ids no remaining collection claims.
-                    still_claimed = {
-                        sid
-                        for other in self.collections
-                        for sid in self.collection_source_ids(other)
-                    }
-                    keep = (set(self.active_sources) - set(source_ids)) | (
-                        set(self.active_sources) & still_claimed
-                    )
-                    # Preserve the user's relative ordering of the kept
-                    # sources (set difference loses it).
-                    self.active_sources = [s for s in self.active_sources if s in keep]
+            # Marker ● (FULL or every source on) → off; otherwise → FULL.
+            if self.collection_marker(name) == "●":
+                self.selection.pop(name, None)
             else:
-                if name not in self.collections:
-                    self.collections.append(name)
-                for sid in source_ids:
-                    if sid not in self.active_sources:
-                        self.active_sources.append(sid)
+                self.selection[name] = FULL
         elif kind == "source":
             source_id = str(data.get("source_id") or "")
             if not source_id:
                 return
             parent_name = str(data.get("collection") or "")
-            sibling_ids = self.collection_source_ids(parent_name) if parent_name else []
-            # Normalise the "collections-only" entry case (CLI flag,
-            # legacy persisted scope) before deciding the toggle: a
-            # source row reads ● when the parent collection is in
-            # ``collections``, so flesh out ``active_sources`` to
-            # match before flipping a single bit. The very next branch
-            # will pop the toggled source back off, leaving every
-            # untouched sibling in ``active_sources`` — the partial
-            # state the user expected to land in.
-            if parent_name and parent_name in self.collections and sibling_ids:
-                for sid in sibling_ids:
-                    if sid not in self.active_sources:
-                        self.active_sources.append(sid)
-            if source_id in self.active_sources:
-                self.active_sources.remove(source_id)
-                # Source went off — the parent collection can no longer
-                # be "fully on" by the per-source rule. Drop it from
-                # ``collections`` so the search scope reflects what
-                # the user sees (partial / empty marker, not a full
-                # collection filter).
-                if parent_name and parent_name in self.collections:
-                    self.collections.remove(parent_name)
-            else:
-                self.active_sources.append(source_id)
-                # Source went on — if that was the last off source in
-                # its collection, the collection is now fully on.
-                if (
-                    parent_name
-                    and sibling_ids
-                    and all(sid in self.active_sources for sid in sibling_ids)
-                    and parent_name not in self.collections
-                ):
-                    self.collections.append(parent_name)
+            if not parent_name:
+                return
+            self._toggle_source(parent_name, source_id)
         else:
             return
         self._app._search.ranking_profile = self._app._search.resolve_profile()
@@ -413,6 +380,30 @@ class ScopeController:
         # the input.
         if self._app._search.current_query and self._app._search.groups:
             self._app._search.clear_results()
+
+    def _toggle_source(self, collection: str, source_id: str) -> None:
+        """Flip one source's bit within its collection. FULL resolves to
+        the explicit set of every sibling (so dropping one yields a
+        partial); a set that grows back to cover all siblings promotes to
+        FULL; an emptied set removes the collection from scope."""
+        sibling_ids = self.collection_source_ids(collection)
+        sel = self.selection.get(collection)
+        if isinstance(sel, set):
+            current = set(sel)
+        elif sel is FULL:
+            current = set(sibling_ids)
+        else:
+            current = set()
+        if source_id in current:
+            current.discard(source_id)
+        else:
+            current.add(source_id)
+        if not current:
+            self.selection.pop(collection, None)
+        elif sibling_ids and current.issuperset(sibling_ids):
+            self.selection[collection] = FULL
+        else:
+            self.selection[collection] = current
 
     def _update_collections_panel_node(self, node: Any) -> None:
         """Swap the marker on a toggled node + cascade to dependent rows.
@@ -457,12 +448,7 @@ class ScopeController:
         if not source_id:
             return
         parent_name = str(data.get("collection") or "")
-        # Mirror the rule used in ``refresh_collections_panel``: when
-        # the parent collection is in ``collections`` (CLI / persisted /
-        # toggled-on whole-collection), every child source reads as ●
-        # even if ``active_sources`` is empty.
-        collection_full = bool(parent_name) and parent_name in self.collections
-        src_marker = "●" if collection_full or source_id in self.active_sources else "○"
+        src_marker = "●" if self._source_active(parent_name, source_id) else "○"
         current_label = str(node.label)
         # The source label is "<marker>  <i>. <short>" — preserve the
         # ordinal and basename, just swap the marker glyph.
@@ -471,39 +457,39 @@ class ScopeController:
         else:
             node.set_label(current_label)
 
-    def _refresh_collections_panel_title(self) -> None:
-        """Recompute the panel's border-title counts after a toggle.
+    def _panel_title(self, names: list[str]) -> str:
+        """Border-title string from the selection map. Source counts use
+        ``_source_active`` — the same rule the row markers use — so the
+        title and the row glyphs always agree (the toggle path and the
+        full rebuild both call this)."""
+        cfg = self._app._config
+        n_full = active = total = 0
+        for n in names:
+            if self.collection_marker(n) == "●":
+                n_full += 1
+            col = cfg.collections.get(n) if cfg else None
+            if not col:
+                continue
+            for s in col.sources:
+                total += 1
+                source_id = str(Path(str(s.path)).expanduser().resolve())
+                if self._source_active(n, source_id):
+                    active += 1
+        title = f"Collections · {n_full}/{len(names)} active"
+        if total and active:
+            title += f", {active}/{total} sources"
+        return title
 
-        Pulled out so toggle handlers can update the counts without
-        going through the cursor-resetting tree rebuild. The "active"
-        collection count tracks rows that paint as ``●`` (full) — the
-        same per-source rule the row marker uses — so the title and
-        the row glyphs always agree.
-        """
+    def _refresh_collections_panel_title(self) -> None:
+        """Recompute the panel's border-title after a toggle without the
+        cursor-resetting tree rebuild."""
         try:
             tree = self._app.query_one("#collections_panel_tree", Tree)
         except Exception:
             return
         cfg = self._app._config
         names = sorted(cfg.collections.keys()) if cfg else []
-        active_sources = set(self.active_sources)
-        total_source_count = sum(len(cfg.collections[n].sources) for n in names if cfg)
-        active_source_count = 0
-        n_full_collections = 0
-        for n in names:
-            if self.collection_marker(n) == "●":
-                n_full_collections += 1
-            col = cfg.collections[n] if cfg else None
-            if not col:
-                continue
-            for s in col.sources:
-                source_id = str(Path(str(s.path)).expanduser().resolve())
-                if source_id in active_sources:
-                    active_source_count += 1
-        title = f"Collections · {n_full_collections}/{len(names)} active"
-        if total_source_count and active_source_count:
-            title += f", {active_source_count}/{total_source_count} sources"
-        tree.border_title = title
+        tree.border_title = self._panel_title(names)
 
     def on_collection_branch_expanded(self, ev: Tree.NodeExpanded[dict[str, object]]) -> None:
         data = ev.node.data if isinstance(ev.node.data, dict) else {}
