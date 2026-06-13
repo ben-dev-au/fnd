@@ -689,6 +689,12 @@ class FNDMarkdown(Markdown):
         # already consumed and called update("") which removed all
         # blocks. Hook into update() instead: AwaitComplete's future
         # fires when parse+mount completes — set build_done from there.
+        #
+        # Reset document-scoped match state before the rebuild: a re-update
+        # must not let a build_done waiter return on the prior render, and
+        # must drop the previous render's match anchor.
+        self.build_done.clear()
+        self._first_match_block = None
         aw = super().update(markdown)
         aw._future.add_done_callback(lambda _: self.build_done.set())  # type: ignore[attr-defined]
         return aw

@@ -439,6 +439,41 @@ async def test_docx_preview_routes_through_fnd_markdown(cfg: Config, docx_corpus
 
 
 @pytest.mark.asyncio
+async def test_update_resets_per_render_match_state() -> None:
+    """A second ``update()`` on the same FNDMarkdown must reset the
+    document-scoped match state: clear ``build_done`` (so a waiter can't
+    return on the previous render) and drop ``first_match_block`` (so
+    match-nav doesn't stay anchored on the old document). Both resets
+    happen at the top of ``update()`` — synchronously, before the rebuild
+    completes — so the reset is observable the moment the call returns.
+    """
+    from textual.app import App, ComposeResult
+
+    from fnd.matching import MatchSpec
+
+    class _Harness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield FNDMarkdown(match_spec=MatchSpec.from_query("templates"))
+
+    async with _Harness().run_test() as pilot:
+        md = pilot.app.query_one(FNDMarkdown)
+        await md.update("# H\n\nthe templates pattern is here.\n")
+        await md.build_done.wait()
+        assert md.build_done.is_set()
+        assert md.first_match_block is not None
+
+        # Second update with no match. The reset must fire before the new
+        # build finishes, so it is already visible right after the call.
+        aw = md.update("# H\n\nplain prose with no query word.\n")
+        assert not md.build_done.is_set(), "build_done not cleared on re-update"
+        assert md.first_match_block is None, "stale first_match_block not cleared"
+        await aw
+        await md.build_done.wait()
+        # New document has no match, so no anchor is registered.
+        assert md.first_match_block is None
+
+
+@pytest.mark.asyncio
 async def test_preview_first_match_block_resolves_to_matched_paragraph(
     cfg: Config, multi_para_index: Path
 ) -> None:
