@@ -134,18 +134,42 @@ def _build_doc(tmp_path: Path, tmp_index_dir: Path, n_sections: int) -> tuple[Co
     return load(cfg_path), Path(tmp_index_dir)
 
 
-async def _load_full(app: FNDApp, pilot: Pilot[None]) -> None:
-    import asyncio
+async def _wait_preview_settled(app: FNDApp, pilot: Pilot[None], *, min_mounted: int = 1) -> None:
+    """Wait until the active preview container has mounted at least
+    ``min_mounted`` chunks AND the count has stopped growing.
+
+    Not ``is_complete`` (``mounted >= total_chunks``): background fill does
+    not reliably mount every chunk under headless test timing for large
+    docs, so a count-settled gate is the deterministic readiness signal —
+    and waiting for the fill to settle keeps a later prune/toggle from
+    racing an in-flight mount.
+    """
+    from tests._pilot_wait import wait_until
+
+    state = {"prev": -1, "stable": 0}
+
+    def settled() -> bool:
+        active = app._preview.active
+        if active is None:
+            return False
+        n = len(active.mounted_indices)
+        state["stable"] = state["stable"] + 1 if n == state["prev"] else 0
+        state["prev"] = n
+        return n >= min_mounted and state["stable"] >= 3
+
+    await wait_until(pilot, settled, timeout=15.0, message="preview mount never settled")
+
+
+async def _load_full(app: FNDApp, pilot: Pilot[None], *, min_mounted: int = 30) -> None:
+    from tests._pilot_wait import wait_until
 
     app._search.run("target")
-    await asyncio.sleep(1.0)
+    await wait_until(
+        pilot, lambda: bool(app._search.groups), timeout=15.0, message="no search results"
+    )
     g = app._search.groups[0]
     app._preview.render_full_doc(g.parent_id, focus_chunk_seq=30)
-    for _ in range(80):
-        await asyncio.sleep(0.05)
-        a = app._preview.active
-        if a is not None and getattr(a, "is_complete", False):
-            break
+    await _wait_preview_settled(app, pilot, min_mounted=min_mounted)
     await pilot.pause()
 
 
@@ -200,10 +224,9 @@ async def test_reading_view_scroll_step_is_larger(tmp_path: Path, tmp_index_dir:
     so the comparison isolates the step size from the windowing path) with
     long bodies so there is ample room to scroll from the top.
     """
-    import asyncio
-
     from fnd.config import load
     from fnd.index import build_index
+    from tests._pilot_wait import wait_until
 
     notes = tmp_path / "notes"
     notes.mkdir()
@@ -223,14 +246,12 @@ async def test_reading_view_scroll_step_is_larger(tmp_path: Path, tmp_index_dir:
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         app._search.run("target")
-        await asyncio.sleep(1.0)
+        await wait_until(
+            pilot, lambda: bool(app._search.groups), timeout=15.0, message="no search results"
+        )
         g = app._search.groups[0]
         app._preview.render_full_doc(g.parent_id, focus_chunk_seq=0)
-        for _ in range(60):
-            await asyncio.sleep(0.05)
-            a = app._preview.active
-            if a is not None and getattr(a, "is_complete", False):
-                break
+        await _wait_preview_settled(app, pilot, min_mounted=1)
         await pilot.pause()
         pane = app.query_one("#preview_pane", MatchAwareScroll)
         pane.focus()
