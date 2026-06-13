@@ -2918,6 +2918,9 @@ class DeleteCollectionScreen(Screen[None]):
     }
     DeleteCollectionScreen #confirm_summary { padding: 0 0 1 0; }
     DeleteCollectionScreen #confirm_list { height: auto; }
+    DeleteCollectionScreen #deleting_status { padding: 1 0; color: $text-muted; }
+    DeleteCollectionScreen #deleting_spinner { height: 1; }
+    DeleteCollectionScreen .-hidden { display: none; }
     DeleteCollectionScreen > #footer_hints {
         dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
     }
@@ -2953,6 +2956,17 @@ class DeleteCollectionScreen(Screen[None]):
                 Option("Cancel", id="no"),
                 id="confirm_list",
             )
+            # Shown in place of the choices while the index drop runs on a
+            # worker; composed up-front and toggled so we never mount/remove
+            # mid-run (that races the rendered tree).
+            from textual.widgets import LoadingIndicator
+
+            yield Static(
+                f"Deleting '{self._name}' from the search index…",
+                id="deleting_status",
+                classes="-hidden",
+            )
+            yield LoadingIndicator(id="deleting_spinner", classes="-hidden")
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
@@ -2977,26 +2991,68 @@ class DeleteCollectionScreen(Screen[None]):
         if ev.option.id == "no":
             self.app.pop_screen()
             return
-        # Yes branch.
+        # Yes branch. Config writes are quick; the index drop's commit +
+        # wait_merging_threads blocks for 95-145ms on a fresh index and
+        # seconds on a fragmented one, so it runs on a worker with a spinner.
+        import contextlib
+
         from fnd.config import default_config_path, delete_collection, load
-        from fnd.index import _ensure_index
-        from fnd.schema import F_COLLECTION
 
         app: FNDApp = self.app  # type: ignore[assignment]
         delete_collection(config_path=default_config_path(), name=self._name)
         app._config = load()  # type: ignore[attr-defined]
-        try:
-            index = _ensure_index(app._index_dir)  # type: ignore[attr-defined]
-            writer = index.writer(heap_size=50_000_000)
-            writer.delete_documents(F_COLLECTION, self._name)
-            writer.commit()
-            writer.wait_merging_threads()
-        except Exception as e:
-            self.notify(f"Index drop failed: {e}", severity="error")
-        app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
-        # Pop Delete screen AND the now-stale per-collection screen.
-        self.app.pop_screen()
-        self.app.pop_screen()
+        self._show_deleting()
+        name = self._name
+        index_dir = app._index_dir  # type: ignore[attr-defined]
+
+        def _drop() -> str | None:
+            from fnd.index import _ensure_index
+            from fnd.schema import F_COLLECTION
+
+            try:
+                index = _ensure_index(index_dir)
+                writer = index.writer(heap_size=50_000_000)
+                writer.delete_documents(F_COLLECTION, name)
+                writer.commit()
+                writer.wait_merging_threads()
+            except Exception as e:
+                return str(e)
+            return None
+
+        def _work() -> None:
+            error = _drop()
+            with contextlib.suppress(Exception):
+                app.call_from_thread(self._finish_delete, error)
+
+        app.run_worker(_work, thread=True, exclusive=True, group=f"delete-{name}")
+
+    def _show_deleting(self) -> None:
+        """Swap the confirm choices for the spinner while the worker runs."""
+        import contextlib
+
+        from textual.widgets import LoadingIndicator
+
+        with contextlib.suppress(Exception):
+            self.query_one("#confirm_summary", Static).add_class("-hidden")
+            self.query_one("#confirm_list", OptionList).add_class("-hidden")
+            self.query_one("#deleting_status", Static).remove_class("-hidden")
+            self.query_one("#deleting_spinner", LoadingIndicator).remove_class("-hidden")
+
+    def _finish_delete(self, error: str | None) -> None:
+        """Back on the UI thread: report, refresh, and pop both screens."""
+        import contextlib
+
+        app: FNDApp = self.app  # type: ignore[assignment]
+        if error:
+            self.notify(f"Index drop failed: {error}", severity="error")
+        with contextlib.suppress(Exception):
+            app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
+        # Pop Delete screen AND the now-stale per-collection screen. Guard the
+        # pops so a quit / screen-swap mid-delete can't raise ScreenStackError.
+        for _ in range(2):
+            with contextlib.suppress(Exception):
+                if len(app.screen_stack) > 1:
+                    app.pop_screen()
 
     def action_back(self) -> None:
         self.app.pop_screen()
