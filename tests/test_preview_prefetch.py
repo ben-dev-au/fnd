@@ -144,20 +144,23 @@ async def test_prefetch_populates_flat_buffer_cache(
             fps = _flat_parents()
             return bool(fps) and any((pid, sig) in app._flat.cache for pid in fps)
 
-        # Event-driven, wall-clock budgeted: a fixed iteration count is defeated
-        # by slow prefetch decode on a serial CI runner (the original flake);
-        # wait on the cache-population condition instead.
-        try:
-            await wait_until(
-                pilot,
-                _flat_cached,
-                timeout=15.0,
-                message="prefetch never populated _flat_buffer_cache",
-            )
-        except AssertionError:
-            if not _flat_parents():
-                pytest.skip("no flat-path results in fixture corpus for this query")
-            raise
+        # Wait for results first so a no-flat-corpus skip is immediate, not a
+        # 15s timeout. Then event-gate on cache population (a fixed iteration
+        # count is outrun by slow prefetch decode on a serial CI runner).
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups),
+            timeout=5.0,
+            message="search results never populated",
+        )
+        if not _flat_parents():
+            pytest.skip("no flat-path results in fixture corpus for this query")
+        await wait_until(
+            pilot,
+            _flat_cached,
+            timeout=15.0,
+            message="prefetch never populated _flat_buffer_cache",
+        )
         flat_parents = _flat_parents()
         prefetched = [pid for pid in flat_parents if (pid, sig) in app._flat.cache]
         assert prefetched, f"prefetch failed to cache any flat doc; flat={flat_parents}"
