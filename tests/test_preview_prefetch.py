@@ -284,7 +284,11 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
 
         def _coverage_reached() -> bool:
             ap = app._preview.active
-            if ap is None:
+            # Must be the TARGET's container: until render_full_doc's swap
+            # completes, ``active`` is still the auto-loaded top result, whose
+            # mounted_indices could clear the (target-derived) coverage bar and
+            # exit the wait before the post-wait parent_doc_id assert is true.
+            if ap is None or ap.parent_doc_id != target.parent_id:
                 return False
             focus_idx = next(
                 (
