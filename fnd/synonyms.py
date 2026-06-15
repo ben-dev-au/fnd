@@ -19,6 +19,7 @@ Group entries are bidirectional: any one form expands to the rest.
 from __future__ import annotations
 
 import contextlib
+import functools
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -29,12 +30,13 @@ from pathlib import Path
 class SynonymTable:
     """Canonical lookup table built from user TOML.
 
-    Stored as a list of normalized groups. Lookups are case-insensitive on
-    the surface form but the original casing of the synonyms is preserved
-    in the expansion output (so users see what they typed plus what the
-    file declared)."""
+    Stored as an immutable tuple of normalized groups — fully immutable (not
+    just ``frozen``) so the memoised default table cannot be poisoned by an
+    in-place mutation. Lookups are case-insensitive on the surface form but
+    the original casing of the synonyms is preserved in the expansion output
+    (so users see what they typed plus what the file declared)."""
 
-    groups: list[tuple[str, ...]] = field(default_factory=list)
+    groups: tuple[tuple[str, ...], ...] = field(default_factory=tuple)
 
     @classmethod
     def from_groups(cls, raw_groups: list[list[str]]) -> SynonymTable:
@@ -43,7 +45,7 @@ class SynonymTable:
             terms = tuple(t.strip() for t in g if t.strip())
             if len(terms) >= 2:
                 cleaned.append(terms)
-        return cls(groups=cleaned)
+        return cls(groups=tuple(cleaned))
 
     def expansions_for(self, term: str) -> tuple[str, ...] | None:
         """Return every synonym in the group containing ``term``, or None
@@ -106,11 +108,15 @@ def merge_tables(*tables: SynonymTable) -> SynonymTable:
     return SynonymTable.from_groups(comps)
 
 
+@functools.cache
 def load_default_synonyms() -> SynonymTable:
     """The bundled curated table, merged with generated number<->word groups.
 
     Numbers ship on by default alongside the curated acronyms; ``expand``
-    still leaves quoted terms literal, so ``"4"`` never expands."""
+    still leaves quoted terms literal, so ``"4"`` never expands.
+
+    Memoised: the inputs (bundled TOML + generated number groups) are static
+    for the process lifetime, so the disk read and ``merge_tables`` run once."""
     # Lazy import: number_synonyms imports SynonymTable from this module.
     from fnd.number_synonyms import build_number_table
 
