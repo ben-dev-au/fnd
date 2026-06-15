@@ -64,9 +64,7 @@ async def test_cancel_during_early_mount_does_not_strand_progress_bar(
         # (flat vs structural, warm-cache) can't change the path under test.
         preview.show_progress_bar(total=len(chunks), phase="mounting…")
         preview.inflight_target = (g.parent_id, seq)
-        task = asyncio.create_task(
-            preview._mount_chunks_async(g.parent_id, seq, chunks, container)
-        )
+        task = asyncio.create_task(preview._mount_chunks_async(g.parent_id, seq, chunks, container))
         preview.mount_task = task
 
         # Let the task reach and park on the blocked early await.
