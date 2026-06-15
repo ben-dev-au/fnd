@@ -172,10 +172,34 @@ def _proximity_full_indices(
     return prox_stems, frozenset(full), stems_by_token
 
 
+def match_word_spans(plain: str, spec: MatchSpec) -> list[tuple[int, int, str]]:
+    """Absolute ``(start, end, style)`` highlight runs for every matching word in
+    ``plain``, with proximity-group terms that fall OUTSIDE a qualifying
+    co-occurrence window rendered in the dimmed palette.
+
+    This is the single place the two-tier proximity decision is made. Every
+    preview baker (the markdown widget, the flat/hybrid prototypes) and the
+    export path routes through here, so the full-vs-dim treatment can never
+    drift between rendering surfaces."""
+    if spec.is_empty or not plain:
+        return []
+    out: list[tuple[int, int, str]] = []
+    tokens = list(re.finditer(r"\w+", plain))
+    # ``full`` holds the token indices that DO qualify; only proximity group
+    # terms consult it, so plain queries get the undimmed runs unchanged.
+    prox_stems, full, stems_by_token = _proximity_full_indices(tokens, spec)
+    for ti, m in enumerate(tokens):
+        dim = bool(prox_stems) and stems_by_token[ti] in prox_stems and ti not in full
+        for offset_start, offset_end, style in word_highlight_runs(m.group(0), spec, dim=dim):
+            out.append((m.start() + offset_start, m.start() + offset_end, style))
+    return out
+
+
 def apply_match_highlights(rendered: Text, spec: MatchSpec) -> bool:
     """Stylize matches in ``rendered``: per-term loose words via
-    word_highlight_runs, then quoted/connector phrases in the GAPS between term
-    spans (never overlapping them, so per-term colours survive)."""
+    match_word_spans (proximity-aware), then quoted/connector phrases in the
+    GAPS between term spans (never overlapping them, so per-term colours
+    survive)."""
     from fnd.matching import phrase_char_spans
 
     if spec.is_empty:
@@ -183,20 +207,9 @@ def apply_match_highlights(rendered: Text, spec: MatchSpec) -> bool:
     found = False
     plain = rendered.plain
     covered: set[int] = set()
-    tokens = list(re.finditer(r"\w+", plain))
-    # Proximity: a group term outside any qualifying co-occurrence window renders
-    # dimmed. ``full`` holds the token indices that DO qualify; only proximity
-    # group terms consult it, so plain queries take the exact path below.
-    prox_stems, full, stems_by_token = _proximity_full_indices(tokens, spec)
-    for ti, m in enumerate(tokens):
-        dim = bool(prox_stems) and stems_by_token[ti] in prox_stems and ti not in full
-        runs = word_highlight_runs(m.group(0), spec, dim=dim)
-        if not runs:
-            continue
-        for offset_start, offset_end, style in runs:
-            a, b = m.start() + offset_start, m.start() + offset_end
-            rendered.stylize(style, a, b)
-            covered.update(range(a, b))
+    for a, b, style in match_word_spans(plain, spec):
+        rendered.stylize(style, a, b)
+        covered.update(range(a, b))
         found = True
     for start, end in phrase_gap_spans(phrase_char_spans(plain, spec), covered):
         rendered.stylize(HIGHLIGHT_STYLE, start, end)

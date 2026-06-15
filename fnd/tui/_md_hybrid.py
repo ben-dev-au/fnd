@@ -33,7 +33,7 @@ from textual.widget import Widget
 from textual.widgets import DataTable, Static
 
 from fnd.matching import MatchSpec
-from fnd.render import word_highlight_runs
+from fnd.render import match_word_spans
 
 
 @dataclass(slots=True)
@@ -96,17 +96,13 @@ def _bake_match_spans_into_text(text: Text, spec: MatchSpec) -> bool:
     plain = text.plain
     if not plain:
         return False
-    import re
-
     from fnd.matching import phrase_char_spans
     from fnd.render import HIGHLIGHT_STYLE
 
     hit = False
-    for m in re.finditer(r"\w+", plain):
-        runs = word_highlight_runs(m.group(0), spec)
-        for off_s, off_e, style in runs:
-            text.stylize(str(style), m.start() + off_s, m.start() + off_e)
-            hit = True
+    for a, b, style in match_word_spans(plain, spec):
+        text.stylize(str(style), a, b)
+        hit = True
     for start, end in phrase_char_spans(plain, spec):
         text.stylize(HIGHLIGHT_STYLE, start, end)
         hit = True

@@ -4,6 +4,7 @@ co-occurrence window render at full strength; the rest are dimmed."""
 from __future__ import annotations
 
 from rich.text import Text
+from textual.content import Span
 
 from fnd.matching import MatchSpec, _stem, proximity_qualifying_indices
 
@@ -171,3 +172,27 @@ def test_plain_query_never_dims():
     assert apply_match_highlights(t, spec)
     for off in (line.index("vulnerability"), line.rindex("vulnerability")):
         assert not (_styles_at(t, off) & set(DIM_MATCH_STYLES))
+
+
+# --- LIVE preview path (the markdown widget baker, not the export path) -----
+
+
+def _span_styles_at(spans: list[Span], offset: int) -> set[str]:
+    return {str(s.style) for s in spans if s.start <= offset < s.end}
+
+
+def test_live_markdown_baker_dims_lone_occurrence():
+    # The stock FNDMarkdown widget bakes highlights via _build_match_spans —
+    # this is the path the live preview actually uses, NOT apply_match_highlights.
+    from fnd.render import DIM_MATCH_STYLES, MATCH_STYLES
+    from fnd.tui.widgets.markdown import _build_match_spans
+
+    plain = "vulnerability threat risk " + ("filler " * 20) + "vulnerability"
+    spec = MatchSpec.from_query("{3}vulnerability threat risk", auto_fuzzy=False)
+    spans = _build_match_spans(plain, spec)
+
+    cluster_off = plain.index("vulnerability")
+    lone_off = plain.rindex("vulnerability")
+    assert _span_styles_at(spans, cluster_off) & set(MATCH_STYLES)
+    assert _span_styles_at(spans, lone_off) & set(DIM_MATCH_STYLES)
+    assert not (_span_styles_at(spans, lone_off) & set(MATCH_STYLES))

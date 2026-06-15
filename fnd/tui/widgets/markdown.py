@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, Any
 
 from textual import events
@@ -30,8 +29,8 @@ from textual.widgets._markdown import (
 from fnd.matching import MatchSpec, phrase_char_spans
 from fnd.render import (
     HIGHLIGHT_STYLE,
+    match_word_spans,
     phrase_gap_spans,
-    word_highlight_runs,
 )
 from fnd.tui.mermaid_render import MermaidRenderer
 from fnd.tui.syntax_theme import highlight_fenced, inline_code_spans
@@ -89,22 +88,20 @@ def _build_match_spans(plain: str, spec: MatchSpec) -> list[Span]:
     span covering the whole word. Fuzzy-only matches → multiple spans
     split by Levenshtein alignment against the closest typed query
     term (yellow for chars that align, orange for substitutions /
-    insertions). Same per-word run helper as the per-line plain
-    renderer (``fnd.render.word_highlight_runs``) so the visual
-    treatment is identical across markdown / docx / pptx / pdf / txt
-    previews. Span styles are concrete Rich style strings so the
-    visual doesn't depend on Textual's component-class CSS resolution.
+    insertions). Proximity-group terms outside a qualifying window are
+    dimmed. Same shared run helper as every other surface
+    (``fnd.render.match_word_spans``) so the visual treatment is
+    identical across markdown / docx / pptx / pdf / txt previews. Span
+    styles are concrete Rich style strings so the visual doesn't depend
+    on Textual's component-class CSS resolution.
     """
     if spec.is_empty or not plain:
         return []
     spans: list[Span] = []
     covered: set[int] = set()
-    for m in re.finditer(r"\w+", plain):
-        runs = word_highlight_runs(m.group(0), spec)
-        for offset_start, offset_end, style in runs:
-            a, b = m.start() + offset_start, m.start() + offset_end
-            spans.append(Span(a, b, style))
-            covered.update(range(a, b))
+    for a, b, style in match_word_spans(plain, spec):
+        spans.append(Span(a, b, style))
+        covered.update(range(a, b))
     # Phrase highlighting (quoted phrase, or a stopword between content words)
     # fills only the GAPS between term spans — never overlaps them. Textual's
     # Content drops overlapping differently-styled spans, so an overlapping
