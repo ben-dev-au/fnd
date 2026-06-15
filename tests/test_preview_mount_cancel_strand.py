@@ -91,3 +91,52 @@ async def test_cancel_during_early_mount_does_not_strand_progress_bar(
         )
 
         gate.set()  # release the blocked coroutine so the loop can drain
+
+
+@pytest.mark.asyncio
+async def test_exception_during_early_mount_does_not_strand_progress_bar(
+    built_index: Path,
+) -> None:
+    """A mount that FAILS (not cancelled) in its early-await phase must also
+    clean up. cancel_mount_task nulls mount_task; an exception does not — so
+    the finally checks `mount_task is current_task()` too, else the bar would
+    strand on any non-cancellation failure (e.g. a MountError)."""
+    import contextlib
+
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app._search.groups, "setup — query produced no results"
+
+        preview = app._preview
+        from fnd.tui.widgets.preview_container import PreviewContainer
+
+        async def _raising_cancel_task_on(_container: object) -> None:
+            raise RuntimeError("simulated early-mount failure")
+
+        app._prefetch.cancel_task_on = _raising_cancel_task_on  # type: ignore[assignment]
+
+        g = app._search.groups[0]
+        seq = g.hits[0].chunk_seq if g.hits else 0
+        chunks = app._search.searcher.get_file_chunks(g.parent_id)  # type: ignore[union-attr]
+        container = PreviewContainer(
+            parent_doc_id=g.parent_id,
+            query_signature=app._search.query_signature(),
+            total_chunks=len(chunks),
+        )
+
+        preview.show_progress_bar(total=len(chunks), phase="mounting…")
+        preview.inflight_target = (g.parent_id, seq)
+        task = asyncio.create_task(preview._mount_chunks_async(g.parent_id, seq, chunks, container))
+        preview.mount_task = task  # NOT nulled — the mount fails, it isn't cancelled
+
+        # Drain the task (it raises); the finally must still run.
+        with contextlib.suppress(RuntimeError):
+            await task
+        await safe_pause(pilot)
+
+        assert app._progress.active is None, (
+            "BUG: progress bar stranded after a cold mount FAILED before its "
+            "finalize task spawned (mount_task is current_task path)"
+        )
+        assert preview.inflight_target is None, "inflight latch not released on mount failure"

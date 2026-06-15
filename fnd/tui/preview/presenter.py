@@ -1498,14 +1498,20 @@ class PreviewPresenter:
                     old.remove()
             if container.is_complete:
                 self.hide_progress_bar()
-            elif getattr(container, "_finalize_task", None) is None and self.mount_task is None:
-                # Cancelled in the early-await phase — before the detached
-                # finalize task (the ONLY thing that hides the bar + releases
-                # the in-flight latch on success) was spawned — and no successor
-                # mount took over. Nothing else will ever clear them, so the
-                # bar stays "loading" until an unrelated navigation dispatches a
-                # fresh load. Hide + release here so a cancelled cold mount can't
-                # strand the preview.
+            elif getattr(container, "_finalize_task", None) is None and (
+                self.mount_task is None or self.mount_task is asyncio.current_task()
+            ):
+                # Ended in the early-await phase — before the detached finalize
+                # task (the ONLY thing that hides the bar + releases the in-flight
+                # latch on success) was spawned — and no successor mount took
+                # over. ``mount_task is None`` catches cancel_mount_task (which
+                # nulls it); ``is current_task()`` also catches an exception or a
+                # cancellation from any other path, where mount_task still points
+                # at this now-dead task. A successor mount would have overwritten
+                # mount_task, so neither holds and we correctly leave its bar. The
+                # bar would otherwise stay "loading" until an unrelated navigation
+                # dispatches a fresh load. Hide + release so a cancelled (or
+                # failed) cold mount can't strand the preview.
                 self.hide_progress_bar()
                 self.inflight_target = None
             # Re-anchor only needed for cancellation case: a successful
