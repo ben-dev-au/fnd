@@ -98,6 +98,22 @@ def test_make_snippet_prefers_intent_match() -> None:
     assert "performance" in snippet_no_intent.lower()
 
 
+def test_make_snippet_proximity_anchors_on_cooccurrence() -> None:
+    """A proximity/phrase query must anchor the snippet where its terms
+    co-occur (the real match), not on an earlier lone-term hit — and it must
+    see through the ``{N}`` / ``"…"~N`` / ``*`` DSL sigils that a raw split misses."""
+    from fnd.query import _make_snippet
+
+    body = (
+        "Static code analysis runs without executing it. "  # a lone 'code' up front
+        + ("filler word " * 30)
+        + "Exit codes tell the pipeline how to proceed."  # the genuine 'exit code'
+    )
+    for q in ("{5}exit code", '"exit code"~5', "{5}exit code*", "exit code"):
+        snip = _make_snippet(body, q)
+        assert "exit codes" in snip.lower(), f"{q!r} anchored wrong: {snip!r}"
+
+
 def test_make_snippet_falls_back_when_no_intent_match() -> None:
     """If no occurrence's window overlaps with intent tokens, return the
     first-occurrence snippet (no error, no missed result)."""

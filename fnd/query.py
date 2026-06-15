@@ -184,43 +184,38 @@ def _make_snippet(
     """
     if not body_text:
         return ""
+    from fnd.render import _terms_from_query  # lazy: avoid import cycle
+
     lower = body_text.lower()
-    needle = ""
-    for term in query.lower().split():
-        # Pick the first term that actually appears.
-        if term in lower:
-            needle = term
-            break
-    if not needle:
+    # Clean content terms — strips ``{N}``/``NEAR/N``/``"…"~N``/wildcards/operators/
+    # field qualifiers so a proximity or phrase query anchors on real words, not
+    # its DSL sigils. A raw ``query.split()`` would skip ``{5}exit`` and centre
+    # the window on the wrong lone term (the bug behind "result doesn't match").
+    terms = list(dict.fromkeys(t for t in _terms_from_query(query) if t in lower))
+    if not terms:
         return body_text[:ctx].strip()
 
-    # All occurrences — only build the list when intent biasing is in play
-    # (collecting all matches when there's only one to consider is wasteful).
-    intent_tokens = [t for t in (intent or "").lower().split() if len(t) >= 3] if intent else []
-    if intent_tokens:
-        positions: list[int] = []
+    half = ctx // 2
+    intent_tokens = [t for t in (intent or "").lower().split() if len(t) >= 3]
+    # Anchor on the occurrence whose ±half window covers the MOST distinct query
+    # terms (the actual proximity / phrase match), then an intent-token overlap,
+    # then the earliest position.
+    best_pos = lower.find(terms[0])
+    best_key: tuple[int, bool, int] | None = None
+    for term in terms:
         start = 0
-        while True:
-            i = lower.find(needle, start)
-            if i < 0:
-                break
-            positions.append(i)
-            start = i + len(needle)
-        chosen = positions[0]
-        for pos in positions:
-            lo = max(0, pos - ctx // 2)
-            hi = min(len(body_text), pos + ctx // 2)
-            window = lower[lo:hi]
-            if any(tok in window for tok in intent_tokens):
-                chosen = pos
-                break
-        pos = chosen
-    else:
-        pos = lower.find(needle)
-    start_idx = max(0, pos - ctx // 2)
-    end_idx = min(len(body_text), pos + ctx // 2)
-    snippet = body_text[start_idx:end_idx].replace("\n", " ").strip()
-    return snippet
+        while (i := lower.find(term, start)) >= 0:
+            window = lower[max(0, i - half) : i + half]
+            covered = sum(1 for t in terms if t in window)
+            has_intent = any(tok in window for tok in intent_tokens)
+            key = (covered, has_intent, -i)
+            if best_key is None or key > best_key:
+                best_key, best_pos = key, i
+            start = i + len(term)
+
+    start_idx = max(0, best_pos - half)
+    end_idx = min(len(body_text), best_pos + half)
+    return body_text[start_idx:end_idx].replace("\n", " ").strip()
 
 
 def _passes_meta_filter(hit: Hit, predicate: object) -> bool:
