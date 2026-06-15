@@ -107,7 +107,7 @@ def _fuzzy_pass(
     *,
     query: str,
     limit: int,
-    collection: str | None,
+    collection: str | list[str] | None,
     active_sources: list[str] | None = None,
     intent: str | None = None,
     auto_fuzzy_enabled: bool = True,
@@ -182,24 +182,32 @@ def _fuzzy_pass(
             )
             subqueries.append((tantivy.Occur.Must, term_or))
     if collection:
-        # Restrict to a collection by AND'ing a term query on the
-        # ``collection`` field.
-        subqueries.append(
-            (
-                tantivy.Occur.Must,
-                tantivy.Query.term_query(schema, "collection", collection),
-            )
+        # Restrict to a collection (or, for the TUI's multi-collection scope,
+        # ANY of a list) on the ``collection`` field. Const-scored to 0 so it's
+        # a pure hard filter — without it a multi-collection OR lets per-
+        # collection IDF skew BM25 between the selected collections (matches
+        # the unscored hard-filter handling in ``query.py::_raw_hits``).
+        cols = [collection] if isinstance(collection, str) else list(collection)
+        col_terms = [tantivy.Query.term_query(schema, "collection", c) for c in cols]
+        col_q = (
+            col_terms[0]
+            if len(col_terms) == 1
+            else tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in col_terms])
         )
+        subqueries.append((tantivy.Occur.Must, tantivy.Query.const_score_query(col_q, 0.0)))
     if active_sources:
-        # Active source-set filter: a Should-OR group inside a Must
-        # bucket so any one source path matching satisfies the clause.
+        # Active source-set filter, ANDed within the collection scope above
+        # (not unioned). Const-scored for the same reason as the collection
+        # filter: source-path IDF must not perturb ranking.
         from fnd.schema import F_SOURCE_PATH
 
-        source_subqueries: list[tuple[tantivy.Occur, tantivy.Query]] = [
-            (tantivy.Occur.Should, tantivy.Query.term_query(schema, F_SOURCE_PATH, src))
-            for src in active_sources
-        ]
-        subqueries.append((tantivy.Occur.Must, tantivy.Query.boolean_query(source_subqueries)))
+        src_terms = [tantivy.Query.term_query(schema, F_SOURCE_PATH, src) for src in active_sources]
+        src_q = (
+            src_terms[0]
+            if len(src_terms) == 1
+            else tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in src_terms])
+        )
+        subqueries.append((tantivy.Occur.Must, tantivy.Query.const_score_query(src_q, 0.0)))
     # Apply the same field/range/collection hard filters as the literal pass, so
     # widening to fuzzy can't leak docs the user's qualifiers excluded.
     from fnd.query_filters import extract_filters
@@ -272,7 +280,7 @@ def cascade_search(
     query: str,
     threshold: int,
     limit: int = ...,
-    collection: str | None = ...,
+    collection: str | list[str] | None = ...,
     synonyms: SynonymTable | None = ...,
     metadata_filter: str | None = ...,
     active_sources: list[str] | None = ...,
@@ -290,7 +298,7 @@ def cascade_search(
     query: str,
     threshold: int,
     limit: int = ...,
-    collection: str | None = ...,
+    collection: str | list[str] | None = ...,
     synonyms: SynonymTable | None = ...,
     metadata_filter: str | None = ...,
     active_sources: list[str] | None = ...,
@@ -307,7 +315,7 @@ def cascade_search(
     query: str,
     threshold: int,
     limit: int = 50,
-    collection: str | None = None,
+    collection: str | list[str] | None = None,
     synonyms: SynonymTable | None = None,
     metadata_filter: str | None = None,
     active_sources: list[str] | None = None,

@@ -77,13 +77,34 @@ class ScopeController:
         # are derived views. Override when ``--collection`` was passed,
         # otherwise reconstruct the map from the persisted flat scope.
         if collection:
-            self.selection: dict[str, _FullScope | set[str]] = {collection: FULL}
+            # ``--collection`` is one Option string; accept a comma-separated
+            # list and keep only names that exist in the config. Without this
+            # a value like ``-c "SSD,SSD Exam"`` becomes a single phantom key
+            # that no panel row can toggle yet still pins every search.
+            self.selection: dict[str, _FullScope | set[str]] = dict.fromkeys(
+                self._valid_collection_names(collection), FULL
+            )
             self.filter_kinds: list[str] = []
             self.filter_date: str = "any"
         else:
             self.selection = self._derive_selection(saved.collections, saved.sources)
             self.filter_kinds = list(saved.filter_kinds)
             self.filter_date = saved.filter_date or "any"
+
+    def _valid_collection_names(self, raw: str) -> list[str]:
+        """Resolve a ``--collection`` value to real config collection names.
+
+        A whole-string match wins (so a config name that itself contains a
+        comma survives); otherwise the value is split on commas. Unknown
+        names are dropped. With no config loaded, the raw value is trusted.
+        """
+        cfg = self._app._config
+        known = set(cfg.collections) if cfg else None
+        if known is None:
+            return [raw]
+        if raw in known:
+            return [raw]
+        return [n for n in (p.strip() for p in raw.split(",")) if n in known]
 
     def _derive_selection(
         self, full_names: list[str], flat_sources: list[str]
@@ -97,11 +118,17 @@ class ScopeController:
         toggle path records exact provenance; only a save/reload of a
         shared-partial scope reconstructs approximately.
         """
-        sel: dict[str, _FullScope | set[str]] = dict.fromkeys(full_names, FULL)
+        cfg = self._app._config
+        # Drop persisted names with no config collection: a corrupted entry
+        # (e.g. a comma-joined ``--collection`` value) has no panel row to
+        # toggle yet still drives scope, silently pinning every search. Keep
+        # all names when the config is unavailable rather than zeroing scope.
+        known = set(cfg.collections) if cfg else None
+        names = [n for n in full_names if known is None or n in known]
+        sel: dict[str, _FullScope | set[str]] = dict.fromkeys(names, FULL)
         if not flat_sources:
             return sel
         flat = set(flat_sources)
-        cfg = self._app._config
         for name in cfg.collections if cfg else []:
             if sel.get(name) is FULL:
                 continue
