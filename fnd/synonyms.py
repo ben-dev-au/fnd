@@ -107,8 +107,14 @@ def merge_tables(*tables: SynonymTable) -> SynonymTable:
 
 
 def load_default_synonyms() -> SynonymTable:
-    """The bundled curated table. Empty if the data file is somehow absent."""
-    return load_synonyms(DEFAULT_SYNONYMS_PATH)
+    """The bundled curated table, merged with generated number<->word groups.
+
+    Numbers ship on by default alongside the curated acronyms; ``expand``
+    still leaves quoted terms literal, so ``"4"`` never expands."""
+    # Lazy import: number_synonyms imports SynonymTable from this module.
+    from fnd.number_synonyms import build_number_table
+
+    return merge_tables(load_synonyms(DEFAULT_SYNONYMS_PATH), build_number_table())
 
 
 def load_merged_synonyms(personal_path: Path | None = None) -> SynonymTable:
@@ -160,8 +166,12 @@ def expand(query: str, table: SynonymTable) -> str:
     repls: list[tuple[int, int, str]] = []
     for m in quoted:
         # Token-tuple lookup (not exact string) so a quoted phrase expands
-        # regardless of hyphen/space, matching the bare-word path below.
-        exp = key2group.get(tuple(re.findall(r"\w+", m.group(1).casefold())))
+        # regardless of hyphen/space, matching the bare-word path below. A
+        # single quoted token (e.g. "4", "mfa") is left literal — quoting one
+        # word is the clearest exact-match request, so it never expands; only
+        # genuine multi-word phrases ("multi factor authentication") do.
+        key = tuple(re.findall(r"\w+", m.group(1).casefold()))
+        exp = key2group.get(key) if len(key) > 1 else None
         if exp is not None:
             repls.append((m.start(), m.end(), _format_disjunction(m.group(1), exp)))
 
