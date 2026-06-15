@@ -183,23 +183,31 @@ def _fuzzy_pass(
             subqueries.append((tantivy.Occur.Must, term_or))
     if collection:
         # Restrict to a collection (or, for the TUI's multi-collection scope,
-        # ANY of a list) by AND'ing an OR-of-terms on the ``collection`` field.
+        # ANY of a list) on the ``collection`` field. Const-scored to 0 so it's
+        # a pure hard filter — without it a multi-collection OR lets per-
+        # collection IDF skew BM25 between the selected collections (matches
+        # the unscored hard-filter handling in ``query.py::_raw_hits``).
         cols = [collection] if isinstance(collection, str) else list(collection)
-        col_subqueries: list[tuple[tantivy.Occur, tantivy.Query]] = [
-            (tantivy.Occur.Should, tantivy.Query.term_query(schema, "collection", c)) for c in cols
-        ]
-        subqueries.append((tantivy.Occur.Must, tantivy.Query.boolean_query(col_subqueries)))
+        col_terms = [tantivy.Query.term_query(schema, "collection", c) for c in cols]
+        col_q = (
+            col_terms[0]
+            if len(col_terms) == 1
+            else tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in col_terms])
+        )
+        subqueries.append((tantivy.Occur.Must, tantivy.Query.const_score_query(col_q, 0.0)))
     if active_sources:
-        # Active source-set filter: a Should-OR group inside a Must bucket so
-        # any one source path matching satisfies the clause. Narrows WITHIN
-        # the collection scope above (ANDed), not unioned with it.
+        # Active source-set filter, ANDed within the collection scope above
+        # (not unioned). Const-scored for the same reason as the collection
+        # filter: source-path IDF must not perturb ranking.
         from fnd.schema import F_SOURCE_PATH
 
-        source_subqueries: list[tuple[tantivy.Occur, tantivy.Query]] = [
-            (tantivy.Occur.Should, tantivy.Query.term_query(schema, F_SOURCE_PATH, src))
-            for src in active_sources
-        ]
-        subqueries.append((tantivy.Occur.Must, tantivy.Query.boolean_query(source_subqueries)))
+        src_terms = [tantivy.Query.term_query(schema, F_SOURCE_PATH, src) for src in active_sources]
+        src_q = (
+            src_terms[0]
+            if len(src_terms) == 1
+            else tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in src_terms])
+        )
+        subqueries.append((tantivy.Occur.Must, tantivy.Query.const_score_query(src_q, 0.0)))
     # Apply the same field/range/collection hard filters as the literal pass, so
     # widening to fuzzy can't leak docs the user's qualifiers excluded.
     from fnd.query_filters import extract_filters
