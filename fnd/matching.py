@@ -301,7 +301,12 @@ class MatchSpec:
         )
         quoted_word_lists = _phrase_word_lists(contiguous_src)
         phrases = tuple(tuple(_stem(w) for w in words) for words in quoted_word_lists)
-        loose_query = _strip_quoted_spans(query)
+        # Loose terms come from the EXPANDED query so ``{N}``/``NEAR/N`` aliases
+        # are already rewritten to ``"…"~N`` (then stripped as quoted spans, with
+        # their words re-supplied via ``prox_words`` below) — identical handling
+        # to a typed ``"a b"~N``, and the alias's ``{N}`` digits never leak into
+        # term/colour parsing.
+        loose_query = _strip_quoted_spans(expanded_query)
         # A single-word quote (`"powerhouse"`) is the same as the bare word, so
         # fold it back into the loose terms — otherwise it's stripped above and
         # never highlights, despite the search surfacing it.
@@ -313,9 +318,9 @@ class MatchSpec:
         if single_quoted:
             loose_query = f"{loose_query} {' '.join(single_quoted)}".strip()
         # Fold proximity-group words into the loose run so they flow through the
-        # normal term / exact-stem / colour machinery (a typed ``"a b"~N`` has its
-        # words stripped with the quotes above; ``{N}`` words are already loose —
-        # duplicates dedupe downstream).
+        # normal term / exact-stem / colour machinery — their quoted ``"…"~N``
+        # span was stripped from ``loose_query`` above. Duplicates dedupe
+        # downstream.
         if prox_words:
             loose_query = f"{loose_query} {' '.join(prox_words)}".strip()
 
@@ -477,6 +482,7 @@ class MatchSpec:
             or self.phrases
             or self.wildcards
             or self.regexes
+            or self.proximity_groups
         )
 
 

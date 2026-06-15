@@ -126,6 +126,21 @@ def test_slop_zero_phrase_stays_contiguous_not_proximity():
     assert _stems("climate", "change") in spec.phrases
 
 
+def test_proximity_only_spec_is_not_empty():
+    # is_empty must agree with from_query's guard, which counts proximity_groups.
+    assert not MatchSpec.from_query("{3}vulnerability threat risk").is_empty
+    assert not MatchSpec(proximity_groups=((("a", "b"), 3),)).is_empty
+
+
+def test_brace_alias_does_not_leak_digit_into_colour_order():
+    # The {N} digit must not consume a colour slot: the first real term gets
+    # slot 0 (yellow), matching a typed proximity query.
+    from fnd.matching import match_color
+
+    spec = MatchSpec.from_query("{4}vulnerability threat risk")
+    assert match_color("vulnerability", spec) == 0
+
+
 # --- dim style variants ----------------------------------------------------
 
 
