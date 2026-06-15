@@ -314,7 +314,7 @@ class Searcher:
         query: str,
         *,
         limit: int,
-        collection: str | None,
+        collection: str | list[str] | None,
         active_sources: list[str] | None = None,
         fuzzy_distance: int = 0,
         intent: str | None = None,
@@ -346,9 +346,21 @@ class Searcher:
         # phrases and explicit-syntax queries pass through untouched.
         content = strip_query_stopwords(preprocess(extracted.content))
         filters = list(extracted.filters)
-        # Active collection (-c / settings) and source scope are hard filters too.
+        # Active collection (-c / settings) and source scope are hard filters.
+        # ``collection`` accepts a single name (CLI ``-c``) or a list (the
+        # TUI's multi-collection scope); a list becomes an OR over F_COLLECTION
+        # terms so multi-collection scope HARD-restricts instead of riding a
+        # re-parsed ``c:`` string that ranks softly and splits spaced names.
+        # ``active_sources`` stays a SEPARATE filter, ANDed in: it narrows
+        # WITHIN the collection (partial-source selection), not a union.
         if collection:
-            filters.append(tantivy.Query.term_query(schema, F_COLLECTION, collection))
+            cols = [collection] if isinstance(collection, str) else list(collection)
+            col_terms = [tantivy.Query.term_query(schema, F_COLLECTION, c) for c in cols]
+            filters.append(
+                col_terms[0]
+                if len(col_terms) == 1
+                else tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in col_terms])
+            )
         if active_sources:
             src_terms = [tantivy.Query.term_query(schema, F_SOURCE_PATH, s) for s in active_sources]
             filters.append(
@@ -452,7 +464,7 @@ class Searcher:
         query: str,
         *,
         target: int,
-        collection: str | None,
+        collection: str | list[str] | None,
         metadata_filter: str | None,
         active_sources: list[str] | None = None,
         fuzzy_distance: int = 0,
@@ -497,7 +509,7 @@ class Searcher:
         query: str,
         *,
         limit: int = _DEFAULT_LIMIT,
-        collection: str | None = None,
+        collection: str | list[str] | None = None,
         profile: object | None = None,
         now: int | None = None,
         metadata_filter: str | None = None,
@@ -641,7 +653,7 @@ class Searcher:
         *,
         limit: int = _DEFAULT_LIMIT,
         sections_per_file: int = 5,
-        collection: str | None = None,
+        collection: str | list[str] | None = None,
         profile: object | None = None,
         now: int | None = None,
         metadata_filter: str | None = None,

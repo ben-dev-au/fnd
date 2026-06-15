@@ -194,11 +194,13 @@ class SearchController:
                 filter_clauses.append(f"kind:({' '.join(sorted(self._app._scope.filter_kinds))})")
         if self._app._scope.filter_date and self._app._scope.filter_date != "any":
             filter_clauses.append(f"mtime:{self._app._scope.filter_date}")
-        if len(self._app._scope.collections) >= 2:
-            filter_clauses.append(f"c:{','.join(self._app._scope.collections)}")
-            single_col = None
-        else:
-            single_col = self._app._scope.collections[0] if self._app._scope.collections else None
+        # Collections are a HARD filter, passed as a list straight to the
+        # query layer — never a ``c:`` prefix string. The prefix path rides
+        # the soft query parser (ranks instead of restricting) and splits
+        # collection names on spaces, so a multi-collection scope leaked
+        # other collections and dropped spaced names like ``SSD Exam``.
+        cols = self._app._scope.collections
+        collection_scope: str | list[str] | None = cols or None
         filter_prefix = " ".join(filter_clauses)
         cfg_defaults = self._app._config.defaults if self._app._config else None
         sections_cap = cfg_defaults.sections_per_file_max if cfg_defaults else 200
@@ -210,7 +212,7 @@ class SearchController:
                 limit=50,
                 sections_per_file=sections_cap,
                 sections_score_threshold=sections_threshold,
-                collection=single_col,
+                collection=collection_scope,
                 metadata_filter=metadata_filter,
                 active_sources=list(self._app._scope.active_sources) or None,
             )
@@ -297,7 +299,7 @@ class SearchController:
         limit: int,
         sections_per_file: int,
         sections_score_threshold: float = 0.0,
-        collection: str | None,
+        collection: str | list[str] | None,
         metadata_filter: str | None,
         active_sources: list[str] | None,
     ) -> list[FileGroup]:

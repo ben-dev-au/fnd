@@ -107,7 +107,7 @@ def _fuzzy_pass(
     *,
     query: str,
     limit: int,
-    collection: str | None,
+    collection: str | list[str] | None,
     active_sources: list[str] | None = None,
     intent: str | None = None,
     auto_fuzzy_enabled: bool = True,
@@ -182,17 +182,17 @@ def _fuzzy_pass(
             )
             subqueries.append((tantivy.Occur.Must, term_or))
     if collection:
-        # Restrict to a collection by AND'ing a term query on the
-        # ``collection`` field.
-        subqueries.append(
-            (
-                tantivy.Occur.Must,
-                tantivy.Query.term_query(schema, "collection", collection),
-            )
-        )
+        # Restrict to a collection (or, for the TUI's multi-collection scope,
+        # ANY of a list) by AND'ing an OR-of-terms on the ``collection`` field.
+        cols = [collection] if isinstance(collection, str) else list(collection)
+        col_subqueries: list[tuple[tantivy.Occur, tantivy.Query]] = [
+            (tantivy.Occur.Should, tantivy.Query.term_query(schema, "collection", c)) for c in cols
+        ]
+        subqueries.append((tantivy.Occur.Must, tantivy.Query.boolean_query(col_subqueries)))
     if active_sources:
-        # Active source-set filter: a Should-OR group inside a Must
-        # bucket so any one source path matching satisfies the clause.
+        # Active source-set filter: a Should-OR group inside a Must bucket so
+        # any one source path matching satisfies the clause. Narrows WITHIN
+        # the collection scope above (ANDed), not unioned with it.
         from fnd.schema import F_SOURCE_PATH
 
         source_subqueries: list[tuple[tantivy.Occur, tantivy.Query]] = [
@@ -272,7 +272,7 @@ def cascade_search(
     query: str,
     threshold: int,
     limit: int = ...,
-    collection: str | None = ...,
+    collection: str | list[str] | None = ...,
     synonyms: SynonymTable | None = ...,
     metadata_filter: str | None = ...,
     active_sources: list[str] | None = ...,
@@ -290,7 +290,7 @@ def cascade_search(
     query: str,
     threshold: int,
     limit: int = ...,
-    collection: str | None = ...,
+    collection: str | list[str] | None = ...,
     synonyms: SynonymTable | None = ...,
     metadata_filter: str | None = ...,
     active_sources: list[str] | None = ...,
@@ -307,7 +307,7 @@ def cascade_search(
     query: str,
     threshold: int,
     limit: int = 50,
-    collection: str | None = None,
+    collection: str | list[str] | None = None,
     synonyms: SynonymTable | None = None,
     metadata_filter: str | None = None,
     active_sources: list[str] | None = None,
