@@ -14,7 +14,7 @@ from rich.text import Text
 
 from fnd.matching import MatchSpec
 from fnd.query import FileChunk
-from fnd.render import word_highlight_runs
+from fnd.render import match_word_spans
 from fnd.tui.line_buffer import FileView
 
 
@@ -27,13 +27,9 @@ def _bake_match_spans(line: Text, spec: MatchSpec) -> bool:
     if not plain:
         return False
     hit = False
-    import re
-
-    for m in re.finditer(r"\w+", plain):
-        runs = word_highlight_runs(m.group(0), spec)
-        for off_s, off_e, style in runs:
-            line.stylize(str(style), m.start() + off_s, m.start() + off_e)
-            hit = True
+    for a, b, style in match_word_spans(plain, spec):
+        line.stylize(str(style), a, b)
+        hit = True
     return hit
 
 

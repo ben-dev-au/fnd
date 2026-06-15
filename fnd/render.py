@@ -45,11 +45,29 @@ MATCH_STYLES = [
     "bold black on #bb9af7",  # purple
     "bold black on #82aaff",  # blue
 ]
+# Dimmed ("receded") variants, used for proximity-group matches that fall OUTSIDE
+# a qualifying co-occurrence window: each swatch is a ~50/50 blend of the full
+# colour and the dark app background, with a normal-weight body foreground — so
+# the match stays clearly visible but reads as obviously secondary to the bright,
+# black-on-colour full highlights. Pre-computed (not SGR ``faint``) for
+# deterministic, terminal-independent rendering. Parallel to MATCH_STYLES.
+DIM_MATCH_STYLES = [
+    "#c0caf5 on #8c7a46",  # yellow → muted gold
+    "#c0caf5 on #4c7593",  # cyan
+    "#c0caf5 on #5c7548",  # green
+    "#c0caf5 on #6b5b8f",  # purple
+    "#c0caf5 on #4e6393",  # blue
+]
+# Dimmed mismatch overlay (orange variance chars within a dimmed near-match).
+DIM_MISMATCH_STYLE = "#c0caf5 on #8c5c45"
 
 
-def match_style(color: int) -> str:
-    """Match style for colour slot ``color`` (cycles through the palette)."""
-    return MATCH_STYLES[color % len(MATCH_STYLES)]
+def match_style(color: int, *, dim: bool = False) -> str:
+    """Match style for colour slot ``color`` (cycles through the palette).
+
+    ``dim`` selects the receded variant for proximity matches outside a window."""
+    palette = DIM_MATCH_STYLES if dim else MATCH_STYLES
+    return palette[color % len(palette)]
 
 
 def _stem(word: str) -> str:
@@ -133,10 +151,55 @@ def phrase_gap_spans(
     return out
 
 
+def _proximity_full_indices(
+    tokens: list[re.Match[str]], spec: MatchSpec
+) -> tuple[frozenset[str], frozenset[int], list[str]]:
+    """For a spec's proximity groups, return ``(prox_stems, full, stems_by_token)``.
+
+    ``prox_stems`` is the union of every group's stems; ``full`` is the set of
+    token indices that participate in a qualifying window for some group they
+    belong to. Returns empties (and an empty ``stems_by_token``) when the query
+    carries no proximity operator — so plain queries skip stemming entirely."""
+    if not spec.proximity_groups:
+        return frozenset(), frozenset(), []
+    from fnd.matching import _stem, proximity_qualifying_indices
+
+    stems_by_token = [_stem(m.group(0)) for m in tokens]
+    prox_stems = frozenset(s for stems, _ in spec.proximity_groups for s in stems)
+    full: set[int] = set()
+    for group in spec.proximity_groups:
+        full |= proximity_qualifying_indices(stems_by_token, group)
+    return prox_stems, frozenset(full), stems_by_token
+
+
+def match_word_spans(plain: str, spec: MatchSpec) -> list[tuple[int, int, str]]:
+    """Absolute ``(start, end, style)`` highlight runs for every matching word in
+    ``plain``, with proximity-group terms that fall OUTSIDE a qualifying
+    co-occurrence window rendered in the dimmed palette.
+
+    This is the single place the two-tier proximity decision is made. Every
+    preview baker (the markdown widget, the flat/hybrid prototypes) and the
+    export path routes through here, so the full-vs-dim treatment can never
+    drift between rendering surfaces."""
+    if spec.is_empty or not plain:
+        return []
+    out: list[tuple[int, int, str]] = []
+    tokens = list(re.finditer(r"\w+", plain))
+    # ``full`` holds the token indices that DO qualify; only proximity group
+    # terms consult it, so plain queries get the undimmed runs unchanged.
+    prox_stems, full, stems_by_token = _proximity_full_indices(tokens, spec)
+    for ti, m in enumerate(tokens):
+        dim = bool(prox_stems) and stems_by_token[ti] in prox_stems and ti not in full
+        for offset_start, offset_end, style in word_highlight_runs(m.group(0), spec, dim=dim):
+            out.append((m.start() + offset_start, m.start() + offset_end, style))
+    return out
+
+
 def apply_match_highlights(rendered: Text, spec: MatchSpec) -> bool:
     """Stylize matches in ``rendered``: per-term loose words via
-    word_highlight_runs, then quoted/connector phrases in the GAPS between term
-    spans (never overlapping them, so per-term colours survive)."""
+    match_word_spans (proximity-aware), then quoted/connector phrases in the
+    GAPS between term spans (never overlapping them, so per-term colours
+    survive)."""
     from fnd.matching import phrase_char_spans
 
     if spec.is_empty:
@@ -144,14 +207,9 @@ def apply_match_highlights(rendered: Text, spec: MatchSpec) -> bool:
     found = False
     plain = rendered.plain
     covered: set[int] = set()
-    for m in re.finditer(r"\w+", plain):
-        runs = word_highlight_runs(m.group(0), spec)
-        if not runs:
-            continue
-        for offset_start, offset_end, style in runs:
-            a, b = m.start() + offset_start, m.start() + offset_end
-            rendered.stylize(style, a, b)
-            covered.update(range(a, b))
+    for a, b, style in match_word_spans(plain, spec):
+        rendered.stylize(style, a, b)
+        covered.update(range(a, b))
         found = True
     for start, end in phrase_gap_spans(phrase_char_spans(plain, spec), covered):
         rendered.stylize(HIGHLIGHT_STYLE, start, end)
@@ -159,23 +217,27 @@ def apply_match_highlights(rendered: Text, spec: MatchSpec) -> bool:
     return found
 
 
-def _runs_from_mask(mask: list[bool], hit_style: str) -> list[tuple[int, int, str]]:
+def _runs_from_mask(
+    mask: list[bool], hit_style: str, mismatch_style: str = MISMATCH_STYLE
+) -> list[tuple[int, int, str]]:
     """Compress a per-char match mask into (start, end, style) runs: True chars
-    get ``hit_style`` (the term's match colour), False chars the orange variance
-    style."""
+    get ``hit_style`` (the term's match colour), False chars ``mismatch_style``
+    (the orange variance style, or its dimmed variant)."""
     runs: list[tuple[int, int, str]] = []
     cur_start = 0
     cur = mask[0]
     for i in range(1, len(mask)):
         if mask[i] != cur:
-            runs.append((cur_start, i, hit_style if cur else MISMATCH_STYLE))
+            runs.append((cur_start, i, hit_style if cur else mismatch_style))
             cur_start = i
             cur = mask[i]
-    runs.append((cur_start, len(mask), hit_style if cur else MISMATCH_STYLE))
+    runs.append((cur_start, len(mask), hit_style if cur else mismatch_style))
     return runs
 
 
-def word_highlight_runs(word: str, spec: MatchSpec) -> list[tuple[int, int, str]]:
+def word_highlight_runs(
+    word: str, spec: MatchSpec, *, dim: bool = False
+) -> list[tuple[int, int, str]]:
     """Per-char highlight runs for ``word``, coloured by *how* it matched:
 
     * wildcard / glob — literal chars in the term's colour, ``*``/``?``-filled
@@ -185,7 +247,8 @@ def word_highlight_runs(word: str, spec: MatchSpec) -> list[tuple[int, int, str]
     * regex (or any match with no clean char attribution) — whole word in colour.
 
     In a multi-word query each term has its own colour (see :data:`MATCH_STYLES`);
-    single-term queries use slot 0 (yellow).
+    single-term queries use slot 0 (yellow). ``dim`` selects the receded palette
+    for a proximity-group word that falls outside a qualifying window.
     """
     from fnd.matching import (
         _stem,
@@ -201,7 +264,8 @@ def word_highlight_runs(word: str, spec: MatchSpec) -> list[tuple[int, int, str]
         return []
     if not word_matches(word, spec):
         return []
-    hit_style = match_style(match_color(word, spec))
+    hit_style = match_style(match_color(word, spec), dim=dim)
+    mismatch_style = DIM_MISMATCH_STYLE if dim else MISMATCH_STYLE
     # Exact-stem or fuzzy: align against the closest typed term so a typo / stem
     # suffix shows as orange. Checked BEFORE the wildcard mask so a word that
     # exactly matches a typed term (e.g. ``discount`` under ``discount discoun*``)
@@ -217,12 +281,12 @@ def word_highlight_runs(word: str, spec: MatchSpec) -> list[tuple[int, int, str]
         if raw is not None:
             mask = align_doc_word(word, raw)
             if mask:
-                return _runs_from_mask(mask, hit_style)
+                return _runs_from_mask(mask, hit_style, mismatch_style)
     # Wildcard / glob: colour literal vs wildcard-filled chars.
     for glob in spec.wildcards:
         mask = glob_match_mask(word, glob)
         if mask:
-            return _runs_from_mask(mask, hit_style)
+            return _runs_from_mask(mask, hit_style, mismatch_style)
     # Regex match or anything without a clean char attribution → whole-word.
     return [(0, len(word), hit_style)]
 

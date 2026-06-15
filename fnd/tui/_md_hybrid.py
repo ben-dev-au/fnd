@@ -33,7 +33,7 @@ from textual.widget import Widget
 from textual.widgets import DataTable, Static
 
 from fnd.matching import MatchSpec
-from fnd.render import word_highlight_runs
+from fnd.render import match_word_spans
 
 
 @dataclass(slots=True)
@@ -96,18 +96,18 @@ def _bake_match_spans_into_text(text: Text, spec: MatchSpec) -> bool:
     plain = text.plain
     if not plain:
         return False
-    import re
-
     from fnd.matching import phrase_char_spans
-    from fnd.render import HIGHLIGHT_STYLE
+    from fnd.render import HIGHLIGHT_STYLE, phrase_gap_spans
 
     hit = False
-    for m in re.finditer(r"\w+", plain):
-        runs = word_highlight_runs(m.group(0), spec)
-        for off_s, off_e, style in runs:
-            text.stylize(str(style), m.start() + off_s, m.start() + off_e)
-            hit = True
-    for start, end in phrase_char_spans(plain, spec):
+    covered: set[int] = set()
+    for a, b, style in match_word_spans(plain, spec):
+        text.stylize(str(style), a, b)
+        covered.update(range(a, b))
+        hit = True
+    # Phrases fill only the GAPS between word spans — an overlapping span of a
+    # different style makes Textual's Content drop both, blanking the word.
+    for start, end in phrase_gap_spans(phrase_char_spans(plain, spec), covered):
         text.stylize(HIGHLIGHT_STYLE, start, end)
         hit = True
     return hit
