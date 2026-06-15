@@ -1296,32 +1296,36 @@ class PreviewPresenter:
         pane = self._app.query_one("#preview_pane", VerticalScroll)
 
         needs_pre_reveal = container.parent is None or container.has_class("-hidden")
-        if container.parent is None:
-            await pane.remove_children("#placeholder")
-            await pane.mount(container)
-        else:
-            await pane.remove_children("#placeholder")
-        await self._app._prefetch.cancel_task_on(container)
-        self.activate_container(
-            container, pre_reveal=needs_pre_reveal, keep_outgoing=needs_pre_reveal
-        )
-        cold_mount = needs_pre_reveal
-        self.refresh_match_scrollbar(chunks)
-
-        # Establish the focused window indices (clamped to chunks).
-        focus_idx = next(
-            (i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq),
-            0,
-        )
-        win_start = max(0, focus_idx - tuning.VISIBLE_FIRST_ABOVE)
-        win_end = min(len(chunks), focus_idx + tuning.VISIBLE_FIRST_BELOW + 1)
-
         # Newly-mounted "above-window" widgets get hidden until phase 2b
         # finishes; the finally block makes sure every entry in this
         # list ends up displayed even on cancellation.
         hidden_widgets: list[Widget] = []
 
+        # The try MUST cover the early awaits below (container mount,
+        # cancel_task_on): they run BEFORE the detached finalize task is
+        # spawned, and a cancellation here would otherwise skip the finally
+        # entirely — stranding the progress bar with no task left to hide it.
         try:
+            if container.parent is None:
+                await pane.remove_children("#placeholder")
+                await pane.mount(container)
+            else:
+                await pane.remove_children("#placeholder")
+            await self._app._prefetch.cancel_task_on(container)
+            self.activate_container(
+                container, pre_reveal=needs_pre_reveal, keep_outgoing=needs_pre_reveal
+            )
+            cold_mount = needs_pre_reveal
+            self.refresh_match_scrollbar(chunks)
+
+            # Establish the focused window indices (clamped to chunks).
+            focus_idx = next(
+                (i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq),
+                0,
+            )
+            win_start = max(0, focus_idx - tuning.VISIBLE_FIRST_ABOVE)
+            win_end = min(len(chunks), focus_idx + tuning.VISIBLE_FIRST_BELOW + 1)
+
             # Phase 1a: mount the focused chunk first and yield so it
             # paints before the surrounding context mounts. On large
             # files the rest of the visible window can take several
@@ -1494,6 +1498,16 @@ class PreviewPresenter:
                     old.remove()
             if container.is_complete:
                 self.hide_progress_bar()
+            elif getattr(container, "_finalize_task", None) is None and self.mount_task is None:
+                # Cancelled in the early-await phase — before the detached
+                # finalize task (the ONLY thing that hides the bar + releases
+                # the in-flight latch on success) was spawned — and no successor
+                # mount took over. Nothing else will ever clear them, so the
+                # bar stays "loading" until an unrelated navigation dispatches a
+                # fresh load. Hide + release here so a cancelled cold mount can't
+                # strand the preview.
+                self.hide_progress_bar()
+                self.inflight_target = None
             # Re-anchor only needed for cancellation case: a successful
             # Phase 2b reveal+anchor inline already scrolled to the
             # focused chunk. The inline anchor sees the post-reveal
