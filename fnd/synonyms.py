@@ -30,12 +30,13 @@ from pathlib import Path
 class SynonymTable:
     """Canonical lookup table built from user TOML.
 
-    Stored as a list of normalized groups. Lookups are case-insensitive on
-    the surface form but the original casing of the synonyms is preserved
-    in the expansion output (so users see what they typed plus what the
-    file declared)."""
+    Stored as an immutable tuple of normalized groups — fully immutable (not
+    just ``frozen``) so the memoised default table cannot be poisoned by an
+    in-place mutation. Lookups are case-insensitive on the surface form but
+    the original casing of the synonyms is preserved in the expansion output
+    (so users see what they typed plus what the file declared)."""
 
-    groups: list[tuple[str, ...]] = field(default_factory=list)
+    groups: tuple[tuple[str, ...], ...] = field(default_factory=tuple)
 
     @classmethod
     def from_groups(cls, raw_groups: list[list[str]]) -> SynonymTable:
@@ -44,7 +45,7 @@ class SynonymTable:
             terms = tuple(t.strip() for t in g if t.strip())
             if len(terms) >= 2:
                 cleaned.append(terms)
-        return cls(groups=cleaned)
+        return cls(groups=tuple(cleaned))
 
     def expansions_for(self, term: str) -> tuple[str, ...] | None:
         """Return every synonym in the group containing ``term``, or None

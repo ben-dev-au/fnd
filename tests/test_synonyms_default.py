@@ -102,7 +102,16 @@ def test_merge_unions_shared_term_groups():
 
 
 def test_load_synonyms_missing_is_empty(tmp_path: Path):
-    assert load_synonyms(tmp_path / "nope.toml").groups == []
+    assert load_synonyms(tmp_path / "nope.toml").groups == ()
+
+
+def test_default_table_is_memoised_and_immutable():
+    """The default table is cached (same instance per process) and its groups
+    are a tuple, so the shared instance cannot be poisoned by in-place mutation."""
+    first = load_default_synonyms()
+    assert load_default_synonyms() is first  # functools.cache
+    assert isinstance(first.groups, tuple)
+    assert all(isinstance(g, tuple) for g in first.groups)
 
 
 def test_quoted_multiword_is_hyphen_agnostic():
