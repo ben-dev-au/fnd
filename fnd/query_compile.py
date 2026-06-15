@@ -127,9 +127,19 @@ class _Compiler:
         from fnd.matching import glob_to_regex
         from fnd.query_resolvers import fuzzy_stem
 
-        patterns: list[str | tuple[int, str]] = [
-            glob_to_regex(w) if ("*" in w or "?" in w) else re.escape(fuzzy_stem(w)) for w in words
-        ]
+        patterns: list[str | tuple[int, str]] = []
+        for w in words:
+            if "*" in w or "?" in w:
+                patterns.append(glob_to_regex(w))
+            else:
+                # Match the en_stem analyzer: it splits on every non-alphanumeric
+                # char (hyphen, underscore, …) and stems each token, so a
+                # punctuated word like ``cross-entropy`` occupies one phrase
+                # position per sub-token. ``[\W_]`` splits on punctuation AND
+                # underscore while keeping Unicode letters/digits intact.
+                patterns.extend(re.escape(fuzzy_stem(sw)) for sw in re.split(r"[\W_]+", w) if sw)
+        if not patterns:
+            return Query.empty_query()
         try:
             return Query.regex_phrase_query(self._schema, F_BODY, patterns, slop=slop)
         except ValueError:

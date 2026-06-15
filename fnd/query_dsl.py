@@ -135,8 +135,11 @@ def _expand_numeric_compare(q: str) -> str:
 
 
 # A proximity run token: a quoted phrase, or a bare word that is neither a
-# boolean operator nor a field qualifier (``word:``) and carries no paren.
-_RUN_TOKEN: Final = r'(?:"[^"]*"|(?:(?!(?:AND|OR|NOT)\b)(?![^\s()]*:)[^\s()]+))'  # noqa: S105 — regex, not a password
+# boolean operator nor a field qualifier (``word:``) and carries no paren or
+# brace. Excluding braces stops a following ``{N}`` from being swallowed as a
+# run word (``{0}{0}`` → ``"{0}"~0``), which left a brace inside quotes that the
+# next pass re-expanded — breaking idempotency.
+_RUN_TOKEN: Final = r'(?:"[^"]*"|(?:(?!(?:AND|OR|NOT)\b)(?![^\s()]*:)[^\s(){}]+))'  # noqa: S105 — regex, not a password
 _BRACE_PROX: Final = re.compile(rf"\{{(\d+)\}}\s*((?:{_RUN_TOKEN})(?:\s+{_RUN_TOKEN})*)?")
 
 # A residual brace group that is a proximity attempt (no ``TO`` — that would be

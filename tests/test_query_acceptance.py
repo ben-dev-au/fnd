@@ -139,6 +139,9 @@ _DOCS: list[tuple[str, _Doc]] = [
     # Wildcard term sitting inside a proximity window (and one far outside it).
     ("wpx-near", {"body": "cryptography sits right beside entropy in this note"}),
     ("wpx-far", {"body": "cryptography " + "filler " * 40 + "entropy"}),
+    # Hyphenated plain word beside a wildcard in a proximity: the analyzer splits
+    # ``cross-entropy`` into two tokens, so the regex phrase must too.
+    ("wpx-hyphen", {"body": "the cross-entropy loss function is standard"}),
     (
         "fm-sec-lec",
         {
@@ -329,6 +332,14 @@ _CASES: list[_Case] = [
         "proximity-wildcard",
         "{6} crypto* entropy",
         lambda r: "wpx-near" in r and "wpx-far" not in r and "wc-graphy" not in r,
+        _OK,
+    ),
+    (
+        # A hyphenated plain word beside a wildcard must tokenize like the index
+        # (cross-entropy → cross, entropy), or the regex phrase never matches.
+        "proximity-wildcard-hyphen",
+        "{5}cross-entropy los*",
+        lambda r: "wpx-hyphen" in r,
         _OK,
     ),
     ("fuzzy-transposition", "mitochondira~1", lambda r: "fuzzy-mito" in r, _OK),
