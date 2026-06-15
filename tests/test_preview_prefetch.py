@@ -5,7 +5,6 @@ prefetch by default; these tests opt in with their own Config."""
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 import pytest
@@ -13,6 +12,7 @@ import pytest
 from fnd.config import Config, Defaults, RankingProfileConfig
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import wait_until
 
 
 @pytest.fixture
@@ -42,12 +42,17 @@ async def test_prefetch_populates_chunk_cache(
     async with app.run_test() as pilot:
         await pilot.pause()
         app._search.run("test")
-        # Give the prefetch worker time to walk its sequential targets.
-        for _ in range(20):
-            await pilot.pause()
-            await asyncio.sleep(0.05)
-            if app._search.groups and app._search.groups[0].parent_id in app._preview.chunk_cache:
-                break
+        # Wait (wall-clock, not a fixed iteration cap) for the prefetch worker
+        # to walk its targets — a fixed cap starves under full-suite CI load.
+        await wait_until(
+            pilot,
+            lambda: (
+                bool(app._search.groups)
+                and app._search.groups[0].parent_id in app._preview.chunk_cache
+            ),
+            timeout=30.0,
+            message="prefetch didn't warm the top result's chunk cache",
+        )
         assert app._search.groups, "search returned no results"
         top = app._search.groups[0]
         assert top.parent_id in app._preview.chunk_cache, (
@@ -66,25 +71,26 @@ async def test_prefetch_populates_prebuilt_cache_for_flat_files(
     async with app.run_test() as pilot:
         await pilot.pause()
         app._search.run("results")
-        flat_parents: set[str] = set()
-        # Drain a few cycles to give the prefetch worker time.
-        for _ in range(30):
-            await pilot.pause()
-            await asyncio.sleep(0.05)
-            flat_parents = {
-                g.parent_id for g in app._search.groups if g.path.lower().endswith((".pdf", ".txt"))
-            }
-            if flat_parents and any(
-                (pid, app._search.query_signature()) in app._preview.prebuilt_cache
-                for pid in flat_parents
-            ):
-                break
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups),
+            timeout=30.0,
+            message="search returned no results",
+        )
+        sig = app._search.query_signature()
+        flat_parents = {
+            g.parent_id for g in app._search.groups if g.path.lower().endswith((".pdf", ".txt"))
+        }
         if not flat_parents:
             pytest.skip("no flat-path results in fixture corpus for this query")
-        assert any(
-            (pid, app._search.query_signature()) in app._preview.prebuilt_cache
-            for pid in flat_parents
+        # Wall-clock wait for the prefetch worker to pre-build a flat bundle.
+        await wait_until(
+            pilot,
+            lambda: any((pid, sig) in app._preview.prebuilt_cache for pid in flat_parents),
+            timeout=30.0,
+            message="prefetch didn't pre-build a flat-path bundle",
         )
+        assert any((pid, sig) in app._preview.prebuilt_cache for pid in flat_parents)
 
 
 @pytest.mark.asyncio
@@ -190,7 +196,6 @@ def multi_md_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 async def test_prefetch_premounts_structural_container(multi_md_index: Path) -> None:
     """Prefetch pre-mounts a hidden PreviewContainer into _preview_cache for
     structural files the user hasn't selected yet."""
-    import asyncio
 
     cfg = Config(
         defaults=Defaults(preview_prefetch_count=3, preview_load_debounce_ms=0),
@@ -216,23 +221,24 @@ async def test_prefetch_premounts_structural_container(multi_md_index: Path) -> 
                     return False
             return True
 
-        # Two-phase wait: first let the initial deferred prefetch run; if
-        # the user-mount was still in flight when it walked the targets,
-        # it bails without caching anything, so nudge it once user-mount
-        # has cleared. Cap total wait at ~12s.
-        nudged = False
-        for _ in range(240):
-            await pilot.pause()
-            await asyncio.sleep(0.05)
-            if _non_top_done():
-                break
-            if (
-                not nudged
-                and not app._preview.user_mount_in_flight()
-                and len(app._search.groups) >= 3
-            ):
-                app._prefetch.prefetch_top_results()
-                nudged = True
+        # Two-phase wait. The initial deferred prefetch bails without caching
+        # if the user-mount was still in flight when it walked the targets, so
+        # wait for the user-mount to clear and results to be ready, then nudge
+        # it once. Both waits are wall-clock (not a fixed iteration cap) so a
+        # contended CI runner can't starve the assertions before mounts land.
+        await wait_until(
+            pilot,
+            lambda: len(app._search.groups) >= 3 and not app._preview.user_mount_in_flight(),
+            timeout=30.0,
+            message="results never reached 3 / user-mount never cleared",
+        )
+        app._prefetch.prefetch_top_results()
+        await wait_until(
+            pilot,
+            _non_top_done,
+            timeout=30.0,
+            message="prefetch did not pre-mount all non-top results",
+        )
         assert len(app._search.groups) >= 3, "expected three md results in this corpus"
         for g in app._search.groups[1:]:
             cont = app._preview.preview_cache.get(g.parent_id, sig)
@@ -250,7 +256,6 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
     race that stalled at the visible window — narrower than the radius).
     With ``BACKGROUND_FILL_RADIUS = 10`` Phase 2a/2b cap mount at
     ``focus +/- 10``; full-file completion would need a wider radius."""
-    import asyncio
 
     from fnd.tui.preview.tuning import BACKGROUND_FILL_RADIUS
 
@@ -262,9 +267,12 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         app._search.run("prefetch-anchor")
-        for _ in range(60):
-            await pilot.pause()
-            await asyncio.sleep(0.05)
+        await wait_until(
+            pilot,
+            lambda: len(app._search.groups) >= 3,
+            timeout=30.0,
+            message="expected three md results in this corpus",
+        )
         assert len(app._search.groups) >= 3
         target = app._search.groups[1]
         target_focus = target.hits[0].chunk_seq if target.hits else 0
@@ -274,12 +282,10 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
             """Phase 2a+2b coverage: [max(0, focus-r), min(total, focus+r+1))."""
             return min(total, focus_idx + radius + 1) - max(0, focus_idx - radius)
 
-        for _ in range(80):
-            await pilot.pause()
-            await asyncio.sleep(0.05)
+        def _coverage_reached() -> bool:
             ap = app._preview.active
             if ap is None:
-                continue
+                return False
             focus_idx = next(
                 (
                     i
@@ -289,8 +295,15 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
                 0,
             )
             expected = _expected_coverage(ap.total_chunks, focus_idx, BACKGROUND_FILL_RADIUS)
-            if len(ap.mounted_indices) >= expected:
-                break
+            return len(ap.mounted_indices) >= expected
+
+        # Wall-clock wait for the user-side mount to reach the fill radius.
+        await wait_until(
+            pilot,
+            _coverage_reached,
+            timeout=30.0,
+            message="user-side mount didn't reach the background-fill radius",
+        )
         ap = app._preview.active
         assert ap is not None, "user-side mount produced no active preview"
         assert ap.parent_doc_id == target.parent_id
