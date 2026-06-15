@@ -1498,18 +1498,25 @@ class PreviewPresenter:
                     old.remove()
             if container.is_complete:
                 self.hide_progress_bar()
-            elif getattr(container, "_finalize_task", None) is None and (
-                self.mount_task is None or self.mount_task is asyncio.current_task()
+            elif (
+                getattr(container, "_finalize_task", None) is None
+                and (self.mount_task is None or self.mount_task is asyncio.current_task())
+                and self.inflight_target in (None, (parent_id, focus_chunk_seq))
             ):
                 # Ended in the early-await phase — before the detached finalize
                 # task (the ONLY thing that hides the bar + releases the in-flight
-                # latch on success) was spawned — and no successor mount took
-                # over. ``mount_task is None`` catches cancel_mount_task (which
-                # nulls it); ``is current_task()`` also catches an exception or a
-                # cancellation from any other path, where mount_task still points
-                # at this now-dead task. A successor mount would have overwritten
-                # mount_task, so neither holds and we correctly leave its bar. The
-                # bar would otherwise stay "loading" until an unrelated navigation
+                # latch on success) was spawned — and no successor took over the
+                # loading state. Three ownership checks, all required:
+                #   * ``_finalize_task is None``: no detached finalize will clear it.
+                #   * ``mount_task is None`` (cancel_mount_task nulled it) OR
+                #     ``is current_task()`` (exception / other-path end, where it
+                #     still points at this now-dead task) — a successor MOUNT would
+                #     have overwritten it.
+                #   * ``inflight_target`` is still THIS target (or already clear):
+                #     the uncached decode path cancels us and opens a NEW
+                #     "decoding…" session WITHOUT assigning mount_task, so the
+                #     latch already points at the successor — don't hide its bar.
+                # Otherwise the bar stays "loading" until an unrelated navigation
                 # dispatches a fresh load. Hide + release so a cancelled (or
                 # failed) cold mount can't strand the preview.
                 self.hide_progress_bar()

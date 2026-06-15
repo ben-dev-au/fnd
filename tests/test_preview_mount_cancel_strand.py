@@ -140,3 +140,63 @@ async def test_exception_during_early_mount_does_not_strand_progress_bar(
             "finalize task spawned (mount_task is current_task path)"
         )
         assert preview.inflight_target is None, "inflight latch not released on mount failure"
+
+
+@pytest.mark.asyncio
+async def test_early_cancel_does_not_clobber_successor_decode_bar(
+    built_index: Path,
+) -> None:
+    """A mount cancelled in its early-await window must NOT hide a SUCCESSOR's
+    progress bar or clear its latch. The uncached decode path cancels the old
+    mount (nulling mount_task) and opens a new "decoding…" session without
+    reassigning mount_task — so mount_task being None is NOT enough to prove
+    ownership; the cleanup also checks the inflight latch still points at this
+    target."""
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app._search.groups, "setup — query produced no results"
+
+        preview = app._preview
+        from fnd.tui.widgets.preview_container import PreviewContainer
+
+        gate = asyncio.Event()
+
+        async def _blocking_cancel_task_on(_container: object) -> None:
+            await gate.wait()
+
+        app._prefetch.cancel_task_on = _blocking_cancel_task_on  # type: ignore[assignment]
+
+        g = app._search.groups[0]
+        seq = g.hits[0].chunk_seq if g.hits else 0
+        chunks = app._search.searcher.get_file_chunks(g.parent_id)  # type: ignore[union-attr]
+        container = PreviewContainer(
+            parent_doc_id=g.parent_id,
+            query_signature=app._search.query_signature(),
+            total_chunks=len(chunks),
+        )
+        preview.show_progress_bar(total=len(chunks), phase="mounting…")
+        preview.inflight_target = (g.parent_id, seq)
+        task = asyncio.create_task(preview._mount_chunks_async(g.parent_id, seq, chunks, container))
+        preview.mount_task = task
+        await safe_pause(pilot)
+        assert getattr(container, "_finalize_task", None) is None, "setup — must be pre-finalize"
+
+        # A successor (uncached) decode now owns the loading state: a DIFFERENT
+        # inflight target, and mount_task nulled — exactly what the decode path
+        # leaves behind (cancel_mount_task + show_progress_bar, no mount_task).
+        successor_target = ("successor-parent-id", 7)
+        preview.inflight_target = successor_target
+
+        preview.cancel_mount_task()  # cancels M1, nulls mount_task
+        await safe_pause(pilot)
+        await safe_pause(pilot)
+
+        assert app._progress.active is not None, (
+            "BUG: a cancelled early mount hid the SUCCESSOR's progress bar"
+        )
+        assert preview.inflight_target == successor_target, (
+            "BUG: a cancelled early mount cleared the SUCCESSOR's inflight latch"
+        )
+
+        gate.set()
