@@ -19,6 +19,7 @@ Group entries are bidirectional: any one form expands to the rest.
 from __future__ import annotations
 
 import contextlib
+import functools
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -106,11 +107,15 @@ def merge_tables(*tables: SynonymTable) -> SynonymTable:
     return SynonymTable.from_groups(comps)
 
 
+@functools.cache
 def load_default_synonyms() -> SynonymTable:
     """The bundled curated table, merged with generated number<->word groups.
 
     Numbers ship on by default alongside the curated acronyms; ``expand``
-    still leaves quoted terms literal, so ``"4"`` never expands."""
+    still leaves quoted terms literal, so ``"4"`` never expands.
+
+    Memoised: the inputs (bundled TOML + generated number groups) are static
+    for the process lifetime, so the disk read and ``merge_tables`` run once."""
     # Lazy import: number_synonyms imports SynonymTable from this module.
     from fnd.number_synonyms import build_number_table
 
