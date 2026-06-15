@@ -11,6 +11,7 @@ matches a document set to subtract from.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import tantivy
@@ -109,10 +110,30 @@ class _Compiler:
         return _parse_query(self._s._index, text, **self._pk)
 
     def _phrase(self, n: Phrase) -> Query:
+        words = n.text.split()
+        if any("*" in w or "?" in w for w in words):
+            # A wildcard inside the phrase: parse_query silently drops ``*`` and
+            # would match the bare (un-indexed) literal, so compile a positional
+            # regex phrase instead — wildcard words become a glob regex, plain
+            # words are stemmed to F_BODY token form (analyzer parity). Like the
+            # other wildcard/fuzzy leaves, this matches F_BODY only.
+            return self._wildcard_phrase(words, n.slop)
         from fnd.query import _parse_query
 
         q = f'"{n.text}"~{n.slop}' if n.slop else f'"{n.text}"'
         return _parse_query(self._s._index, q, **self._pk)
+
+    def _wildcard_phrase(self, words: list[str], slop: int) -> Query:
+        from fnd.matching import glob_to_regex
+        from fnd.query_resolvers import fuzzy_stem
+
+        patterns: list[str | tuple[int, str]] = [
+            glob_to_regex(w) if ("*" in w or "?" in w) else re.escape(fuzzy_stem(w)) for w in words
+        ]
+        try:
+            return Query.regex_phrase_query(self._schema, F_BODY, patterns, slop=slop)
+        except ValueError:
+            return Query.empty_query()  # malformed glob contributes nothing
 
     def _wildcard(self, n: Wildcard) -> Query:
         from fnd.query_resolvers import prefix_variants, term_or_query

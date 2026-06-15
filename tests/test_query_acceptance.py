@@ -136,6 +136,9 @@ _DOCS: list[tuple[str, _Doc]] = [
     ("wc-graphy", {"body": "cryptography protects messages"}),
     ("wc-graphic", {"body": "a cryptographic hash function"}),
     ("wc-other", {"body": "cryptids are mythical creatures"}),
+    # Wildcard term sitting inside a proximity window (and one far outside it).
+    ("wpx-near", {"body": "cryptography sits right beside entropy in this note"}),
+    ("wpx-far", {"body": "cryptography " + "filler " * 40 + "entropy"}),
     (
         "fm-sec-lec",
         {
@@ -317,6 +320,15 @@ _CASES: list[_Case] = [
         "wildcard-prefix",
         "crypto*",
         lambda r: {"wc-crypto", "wc-graphy", "wc-graphic"} <= r and "wc-other" not in r,
+        _OK,
+    ),
+    # A wildcard term INSIDE a proximity must keep its wildcard semantics: the
+    # dropped-``*`` parse_query handoff matched the literal stem ``crypto`` (not
+    # indexed) and returned {} for everything.
+    (
+        "proximity-wildcard",
+        "{6} crypto* entropy",
+        lambda r: "wpx-near" in r and "wpx-far" not in r and "wc-graphy" not in r,
         _OK,
     ),
     ("fuzzy-transposition", "mitochondira~1", lambda r: "fuzzy-mito" in r, _OK),
