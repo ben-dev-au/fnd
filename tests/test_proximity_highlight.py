@@ -111,6 +111,21 @@ def test_quoted_phrase_without_slop_stays_contiguous():
     assert _stems("climate", "change") in spec.phrases
 
 
+def test_standalone_phrase_survives_alongside_same_terms_proximity():
+    # A standalone contiguous phrase and a proximity group sharing its terms must
+    # coexist: the unsloped phrase stays contiguous, the sloped one is a group.
+    spec = MatchSpec.from_query('"climate change" "climate change"~4')
+    assert spec.proximity_groups == ((_stems("climate", "change"), 4),)
+    assert _stems("climate", "change") in spec.phrases
+
+
+def test_slop_zero_phrase_stays_contiguous_not_proximity():
+    # "a b"~0 is slop 0 == contiguous: no proximity group, still a phrase.
+    spec = MatchSpec.from_query('"climate change"~0')
+    assert spec.proximity_groups == ()
+    assert _stems("climate", "change") in spec.phrases
+
+
 # --- dim style variants ----------------------------------------------------
 
 

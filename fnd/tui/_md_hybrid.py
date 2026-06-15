@@ -97,13 +97,17 @@ def _bake_match_spans_into_text(text: Text, spec: MatchSpec) -> bool:
     if not plain:
         return False
     from fnd.matching import phrase_char_spans
-    from fnd.render import HIGHLIGHT_STYLE
+    from fnd.render import HIGHLIGHT_STYLE, phrase_gap_spans
 
     hit = False
+    covered: set[int] = set()
     for a, b, style in match_word_spans(plain, spec):
         text.stylize(str(style), a, b)
+        covered.update(range(a, b))
         hit = True
-    for start, end in phrase_char_spans(plain, spec):
+    # Phrases fill only the GAPS between word spans — an overlapping span of a
+    # different style makes Textual's Content drop both, blanking the word.
+    for start, end in phrase_gap_spans(phrase_char_spans(plain, spec), covered):
         text.stylize(HIGHLIGHT_STYLE, start, end)
         hit = True
     return hit

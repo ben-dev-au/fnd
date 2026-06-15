@@ -279,30 +279,27 @@ class MatchSpec:
         # ``"…"~N`` form the matcher sees — no drift. A group is a phrase with
         # slop > 0; its words also feed the loose term set below so every
         # occurrence is found (proximity only splits full vs dim at render time).
+        expanded_query = _expand_proximity_aliases(query)
         proximity_groups: list[tuple[tuple[str, ...], int]] = []
-        prox_stem_tuples: set[tuple[str, ...]] = set()
         prox_words: list[str] = []
-        for pm in _PROX_PHRASE.finditer(_expand_proximity_aliases(query)):
+        for pm in _PROX_PHRASE.finditer(expanded_query):
             pwords = re.findall(r"\w+", pm.group(1))
             pslop = int(pm.group(2))
             if len(pwords) >= 2 and pslop > 0:
-                pstems = tuple(_stem(w) for w in pwords)
-                proximity_groups.append((pstems, pslop))
-                prox_stem_tuples.add(pstems)
+                proximity_groups.append((tuple(_stem(w) for w in pwords), pslop))
                 prox_words.extend(pwords)
 
         # Quoted phrases are matched as contiguous spans; their words are
         # kept out of the loose (document-wide) term set, so only the
-        # unquoted remainder drives word-by-word highlighting.
-        quoted_word_lists = _phrase_word_lists(query)
-        # A typed ``"a b"~N`` is a proximity group, not a contiguous phrase — drop
-        # it here so its words get loose per-term highlighting like ``{N} a b``.
-        if prox_stem_tuples:
-            quoted_word_lists = [
-                words
-                for words in quoted_word_lists
-                if tuple(_stem(w) for w in words) not in prox_stem_tuples
-            ]
+        # unquoted remainder drives word-by-word highlighting. A typed
+        # ``"a b"~N`` (slop > 0) is a proximity group, not a contiguous phrase,
+        # so strip those spans before extracting phrases — but keep ``"a b"~0``
+        # (slop 0 == contiguous) and any separately-typed unsloped ``"a b"`` even
+        # when a proximity group happens to share its terms.
+        contiguous_src = _PROX_PHRASE.sub(
+            lambda m: " " if int(m.group(2)) > 0 else m.group(0), expanded_query
+        )
+        quoted_word_lists = _phrase_word_lists(contiguous_src)
         phrases = tuple(tuple(_stem(w) for w in words) for words in quoted_word_lists)
         loose_query = _strip_quoted_spans(query)
         # A single-word quote (`"powerhouse"`) is the same as the bare word, so
