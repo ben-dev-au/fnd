@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import re
 import threading
+from collections import Counter
 from dataclasses import dataclass, field
 from itertools import pairwise
 
@@ -52,6 +53,9 @@ _FIELD_QUALIFIER_RE = re.compile(r"^[A-Za-z_]\w*:")
 # colour slots (so ``mitochondira~1`` doesn't light up a bare ``1``), but KEPT in
 # the token stream that feeds the explicit-``~N`` fuzzy extraction.
 _MODIFIER_RE = re.compile(r"(?:~\d*|\^[\d.]+)")
+# A proximity phrase in DSL-expanded form: ``"a b c"~N``. ``{N}``/``NEAR/N`` both
+# rewrite to this, so matching it captures every proximity group uniformly.
+_PROX_PHRASE = re.compile(r'"([^"]*)"~(\d+)')
 
 
 def glob_to_regex(glob: str) -> str:
@@ -238,6 +242,11 @@ class MatchSpec:
     # kept OUT of ``exact_stems`` so a stopword inside a phrase ("in",
     # "and") doesn't light up document-wide.
     phrases: tuple[tuple[str, ...], ...] = field(default_factory=tuple)
+    # Proximity groups: ``((stem, …), slop)`` per ``{N}`` / ``NEAR/N`` / typed
+    # ``"a b"~N`` operator (slop > 0). Their stems ALSO live in ``exact_stems``;
+    # the slop only governs which occurrences highlight at full vs dim strength
+    # (see :func:`proximity_qualifying_indices`).
+    proximity_groups: tuple[tuple[tuple[str, ...], int], ...] = field(default_factory=tuple)
 
     @classmethod
     def from_query(
@@ -262,12 +271,38 @@ class MatchSpec:
         depends on this module via the highlight helpers).
         """
         from fnd.cascade import _terms_with_fuzzy  # local import: avoid cycle
+        from fnd.query_dsl import _expand_proximity_aliases  # local import: avoid cycle
         from fnd.render import _terms_from_query  # local import: avoid cycle
+
+        # Proximity groups. Reuse the DSL's own expansion so ``{N} a b``,
+        # ``a NEAR/N b`` and a typed ``"a b"~N`` all resolve to the same
+        # ``"…"~N`` form the matcher sees — no drift. A group is a phrase with
+        # slop > 0; its words also feed the loose term set below so every
+        # occurrence is found (proximity only splits full vs dim at render time).
+        proximity_groups: list[tuple[tuple[str, ...], int]] = []
+        prox_stem_tuples: set[tuple[str, ...]] = set()
+        prox_words: list[str] = []
+        for pm in _PROX_PHRASE.finditer(_expand_proximity_aliases(query)):
+            pwords = re.findall(r"\w+", pm.group(1))
+            pslop = int(pm.group(2))
+            if len(pwords) >= 2 and pslop > 0:
+                pstems = tuple(_stem(w) for w in pwords)
+                proximity_groups.append((pstems, pslop))
+                prox_stem_tuples.add(pstems)
+                prox_words.extend(pwords)
 
         # Quoted phrases are matched as contiguous spans; their words are
         # kept out of the loose (document-wide) term set, so only the
         # unquoted remainder drives word-by-word highlighting.
         quoted_word_lists = _phrase_word_lists(query)
+        # A typed ``"a b"~N`` is a proximity group, not a contiguous phrase — drop
+        # it here so its words get loose per-term highlighting like ``{N} a b``.
+        if prox_stem_tuples:
+            quoted_word_lists = [
+                words
+                for words in quoted_word_lists
+                if tuple(_stem(w) for w in words) not in prox_stem_tuples
+            ]
         phrases = tuple(tuple(_stem(w) for w in words) for words in quoted_word_lists)
         loose_query = _strip_quoted_spans(query)
         # A single-word quote (`"powerhouse"`) is the same as the bare word, so
@@ -280,6 +315,12 @@ class MatchSpec:
         ]
         if single_quoted:
             loose_query = f"{loose_query} {' '.join(single_quoted)}".strip()
+        # Fold proximity-group words into the loose run so they flow through the
+        # normal term / exact-stem / colour machinery (a typed ``"a b"~N`` has its
+        # words stripped with the quotes above; ``{N}`` words are already loose —
+        # duplicates dedupe downstream).
+        if prox_words:
+            loose_query = f"{loose_query} {' '.join(prox_words)}".strip()
 
         # Wildcard / regex tokens: highlight any doc word whose stem matches the
         # same pattern the search expanded. Stored verbatim (globs) so the
@@ -356,7 +397,7 @@ class MatchSpec:
         phrases = phrases + tuple(pair_phrases)
 
         terms = _terms_from_query(bare_query)
-        if not terms and not phrases and not wildcards and not regexes:
+        if not terms and not phrases and not wildcards and not regexes and not proximity_groups:
             return cls()
         raw = {t.lower() for t in terms if t}
         exact = {_stem(t) for t in raw}
@@ -428,6 +469,7 @@ class MatchSpec:
             wildcards=tuple(wildcards),
             regexes=tuple(regexes),
             order=tuple(order),
+            proximity_groups=tuple(proximity_groups),
         )
 
     @property
@@ -521,6 +563,56 @@ def phrase_char_spans(text: str, spec: MatchSpec) -> list[tuple[int, int]]:
         else:
             merged.append((start, end))
     return merged
+
+
+def proximity_qualifying_indices(
+    stems_by_token: list[str], group: tuple[tuple[str, ...], int]
+) -> set[int]:
+    """Token indices that participate in a qualifying proximity cluster.
+
+    ``group`` is ``((stem, …), slop)``. A window of tokens qualifies when all
+    ``n`` distinct group stems appear within a token span ``<= slop + (n - 1)``
+    (Tantivy's in-order slop bound; order is ignored, so this is a slight
+    superset of the matcher — fine for a dim/full split). Returns the indices of
+    every group-stem occurrence that falls inside at least one such window.
+
+    Two-pointer sweep: ``r`` only advances, so the membership counter is
+    maintained incrementally. For each left edge ``l`` the widest in-bound window
+    ``[l, r]`` is the most inclusive; if it holds all stems, every member token in
+    it qualifies (a narrower window can only drop stems). Marked ranges are
+    merged via ``marked`` to keep the total work linear."""
+    stems, slop = group
+    need = set(stems)
+    n = len(need)
+    if n == 0:
+        return set()
+    bound = slop + n - 1
+    positions = [(i, s) for i, s in enumerate(stems_by_token) if s in need]
+    m = len(positions)
+    qualifying: set[int] = set()
+    if m < n:
+        return qualifying
+    counts: Counter[str] = Counter()
+    distinct = 0
+    r = -1
+    marked = -1  # highest positions-list index already added to ``qualifying``
+    for left in range(m):
+        if r < left:  # window collapsed past the new left edge
+            r = left - 1
+        while r + 1 < m and positions[r + 1][0] - positions[left][0] <= bound:
+            r += 1
+            counts[positions[r][1]] += 1
+            if counts[positions[r][1]] == 1:
+                distinct += 1
+        if distinct == n:
+            for k in range(max(left, marked + 1), r + 1):
+                qualifying.add(positions[k][0])
+            marked = max(marked, r)
+        counts[positions[left][1]] -= 1
+        if counts[positions[left][1]] == 0:
+            distinct -= 1
+            del counts[positions[left][1]]
+    return qualifying
 
 
 def glob_match_mask(word: str, glob: str) -> list[bool] | None:
