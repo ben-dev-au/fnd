@@ -46,19 +46,20 @@ MATCH_STYLES = [
     "bold black on #82aaff",  # blue
 ]
 # Dimmed ("receded") variants, used for proximity-group matches that fall OUTSIDE
-# a qualifying co-occurrence window: each swatch is pre-blended ~60% toward the
-# dark app background with a light-grey, non-bold foreground, so the match stays
-# visible but clearly de-emphasised. Pre-computed (not SGR ``faint``) for
-# deterministic, terminal-independent rendering. Parallel to MATCH_STYLES.
+# a qualifying co-occurrence window: each swatch is pre-blended ~85% toward the
+# dark app background with a normal-weight body foreground, so the block reads as
+# a faint, transparent tint behind otherwise-ordinary text rather than a solid
+# highlight. Pre-computed (not SGR ``faint``) for deterministic, terminal-
+# independent rendering. Parallel to MATCH_STYLES.
 DIM_MATCH_STYLES = [
-    "#c0caf5 on #766740",  # yellow → muted gold
-    "#c0caf5 on #42637d",  # cyan
-    "#c0caf5 on #4f6341",  # green
-    "#c0caf5 on #5a4e7a",  # purple
-    "#c0caf5 on #44547d",  # blue
+    "#c0caf5 on #3c3730",  # yellow → faint gold tint
+    "#c0caf5 on #293647",  # cyan
+    "#c0caf5 on #2e3630",  # green
+    "#c0caf5 on #322e45",  # purple
+    "#c0caf5 on #2a3047",  # blue
 ]
 # Dimmed mismatch overlay (orange variance chars within a dimmed near-match).
-DIM_MISMATCH_STYLE = "#c0caf5 on #764f3f"
+DIM_MISMATCH_STYLE = "#c0caf5 on #3c2f2f"
 
 
 def match_style(color: int, *, dim: bool = False) -> str:
