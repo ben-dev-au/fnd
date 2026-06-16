@@ -126,6 +126,16 @@ def test_brace_proximity_stops_at_paren() -> None:
     assert query_dsl.preprocess("{5} foo (bar baz)") == '"foo"~5 (bar baz)'
 
 
+def test_brace_proximity_does_not_swallow_following_brace() -> None:
+    # A ``{N}`` must not be consumed as the run word of a preceding brace, which
+    # would leave a brace inside quotes that the next pre-pass re-expands. The
+    # malformed ``{0}{0}`` stays put (for check_proximity to flag) and preprocess
+    # is idempotent.
+    out = query_dsl.preprocess("{0}{0}")
+    assert out == "{0}{0}"
+    assert query_dsl.preprocess(out) == out
+
+
 def test_near_alias() -> None:
     assert query_dsl.preprocess("foo NEAR/5 bar") == '"foo bar"~5'
 
