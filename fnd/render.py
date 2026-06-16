@@ -60,6 +60,10 @@ DIM_MATCH_STYLES = [
 ]
 # Dimmed mismatch overlay (orange variance chars within a dimmed near-match).
 DIM_MISMATCH_STYLE = "#c0caf5 on #8c5c45"
+# Every receded swatch a proximity-dimmed occurrence can carry. The preview's
+# auto-scroll target treats a span in this set as a non-qualifying stray, so a
+# {N}/"a b"~N query lands on the real co-occurrence, not an earlier lone term.
+DIM_STYLES: frozenset[str] = frozenset(DIM_MATCH_STYLES) | {DIM_MISMATCH_STYLE}
 
 
 def match_style(color: int, *, dim: bool = False) -> str:
@@ -105,6 +109,24 @@ def text_has_any_match(text: str, spec: MatchSpec) -> bool:
     if spec.is_empty or not text:
         return False
     if any(word_matches(m.group(0), spec) for m in re.finditer(r"\w+", text)):
+        return True
+    return bool(phrase_char_spans(text, spec))
+
+
+def text_has_full_match(text: str, spec: MatchSpec) -> bool:
+    """Like :func:`text_has_any_match`, but a proximity-group word that falls
+    OUTSIDE a qualifying co-occurrence window does NOT count — only a *full*
+    (in-window) match or a quoted-phrase span does. Lets a preview scroll
+    target prefer a real co-occurrence cell over a lone dimmed term above it.
+
+    For a plain query this is identical to :func:`text_has_any_match` (nothing
+    dims), so callers gate on ``spec.proximity_groups`` to keep the cheaper
+    any-match short-circuit on the common path."""
+    from fnd.matching import phrase_char_spans
+
+    if spec.is_empty or not text:
+        return False
+    if any(style not in DIM_STYLES for _, _, style in match_word_spans(text, spec)):
         return True
     return bool(phrase_char_spans(text, spec))
 

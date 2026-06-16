@@ -46,16 +46,14 @@ from textual.scroll_view import ScrollView
 from textual.scrollbar import ScrollBar
 from textual.strip import Strip
 
-from fnd.render import DIM_MATCH_STYLES, DIM_MISMATCH_STYLE
+# Dimmed proximity-match swatches (occurrences OUTSIDE a co-occurrence window).
+# The auto-scroll target prefers a full, qualifying match so a ``{N}``/``"a b"~N``
+# query lands on the actual co-occurrence, not an earlier dimmed lone-term hit.
+from fnd.render import DIM_STYLES as _DIM_STYLES
 from fnd.tui.preview_scrollbar import MatchAwareScrollBar
 
 if TYPE_CHECKING:
     pass
-
-# Dimmed proximity-match swatches (occurrences OUTSIDE a co-occurrence window).
-# The auto-scroll target prefers a full, qualifying match so a ``{N}``/``"a b"~N``
-# query lands on the actual co-occurrence, not an earlier dimmed lone-term hit.
-_DIM_STYLES: frozenset[str] = frozenset(DIM_MATCH_STYLES) | {DIM_MISMATCH_STYLE}
 
 
 # Focused-chunk row band. The legacy line-level match overlay
