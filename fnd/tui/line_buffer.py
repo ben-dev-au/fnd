@@ -46,10 +46,16 @@ from textual.scroll_view import ScrollView
 from textual.scrollbar import ScrollBar
 from textual.strip import Strip
 
+from fnd.render import DIM_MATCH_STYLES, DIM_MISMATCH_STYLE
 from fnd.tui.preview_scrollbar import MatchAwareScrollBar
 
 if TYPE_CHECKING:
     pass
+
+# Dimmed proximity-match swatches (occurrences OUTSIDE a co-occurrence window).
+# The auto-scroll target prefers a full, qualifying match so a ``{N}``/``"a b"~N``
+# query lands on the actual co-occurrence, not an earlier dimmed lone-term hit.
+_DIM_STYLES: frozenset[str] = frozenset(DIM_MATCH_STYLES) | {DIM_MISMATCH_STYLE}
 
 
 # Focused-chunk row band. The legacy line-level match overlay
@@ -162,7 +168,8 @@ def build_file_view(
         for raw_line in text.split("\n"):
             line_offsets.append((cursor, cursor + len(raw_line), raw_line))
             cursor += len(raw_line) + 1  # +1 for the dropped \n
-        chunk_first_match: int | None = None
+        chunk_first_match: int | None = None  # first FULL (qualifying) match line
+        chunk_first_dim: int | None = None  # fallback: a dim-only proximity line
         # Per-line list of (local_start, local_end, style) — preserves
         # styles per span so each matched word can render with its own
         # colour (e.g. fuzzy matches differ from exact matches).
@@ -187,15 +194,22 @@ def build_file_view(
                 for span_start, span_end, span_style in styled_spans:
                     t.stylize(span_style, span_start, span_end)
                 fv.match_lines.add(global_line_idx)
-                if chunk_first_match is None:
-                    chunk_first_match = global_line_idx
+                # Prefer a full (qualifying) match for the auto-scroll target; a
+                # line whose only matches are dimmed proximity strays is a
+                # fallback, so a proximity query lands on the real co-occurrence.
+                if any(style not in _DIM_STYLES for _, _, style in styled_spans):
+                    if chunk_first_match is None:
+                        chunk_first_match = global_line_idx
+                elif chunk_first_dim is None:
+                    chunk_first_dim = global_line_idx
             fv.lines.append(t)
             fv.line_to_chunk.append(chunk_id)
         chunk_end = len(fv.lines)
         fv.chunk_to_range[chunk_id] = (chunk_start, chunk_end)
         fv.structural_map.append((chunk_start, chunk_end, "chunk", chunk_id))
-        if chunk_first_match is not None:
-            fv.first_hit_line_in_chunk[chunk_id] = chunk_first_match
+        target_line = chunk_first_match if chunk_first_match is not None else chunk_first_dim
+        if target_line is not None:
+            fv.first_hit_line_in_chunk[chunk_id] = target_line
     return fv
 
 

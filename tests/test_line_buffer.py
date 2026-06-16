@@ -77,6 +77,28 @@ def test_build_file_view_match_spans_register_per_line() -> None:
     assert bold_spans, "expected a bold span over the matched substring"
 
 
+def test_build_file_view_first_hit_prefers_full_over_dimmed() -> None:
+    """A proximity query dims lone-term occurrences (#76); the auto-scroll
+    target must skip a dim-only line and land on the first FULL co-occurrence
+    match — otherwise a ``{N}`` query strands the preview on a faint stray hit."""
+    from fnd.render import DIM_MATCH_STYLES, MATCH_STYLES
+
+    # "alpha\nbravo\ncharlie": alpha 0..5 (dim, line 0), charlie 12..19 (full, line 2).
+    fv = build_file_view(
+        [(3, "alpha\nbravo\ncharlie", [(0, 5, DIM_MATCH_STYLES[0]), (12, 19, MATCH_STYLES[0])])]
+    )
+    assert fv.match_lines == {0, 2}  # both stay navigable / scrollbar-marked
+    assert fv.first_hit_line_in_chunk == {3: 2}  # but auto-scroll prefers the full match
+
+
+def test_build_file_view_first_hit_falls_back_to_dim_only() -> None:
+    """When every match is dimmed, the first dim line is still the target."""
+    from fnd.render import DIM_MATCH_STYLES
+
+    fv = build_file_view([(4, "alpha\nbravo", [(0, 5, DIM_MATCH_STYLES[0])])])
+    assert fv.first_hit_line_in_chunk == {4: 0}
+
+
 def test_build_file_view_handles_multiple_matches_on_same_line() -> None:
     """Two match spans on the same line both register; only one entry
     is added to ``match_lines`` (it's a set)."""
