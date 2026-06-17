@@ -616,25 +616,36 @@ def _find_first_match_coord_in_table(
 
     if spec.is_empty:
         return None
-    # Plain queries never dim, so full == any: one cheap scan suffices.
-    # Proximity queries scan for a full co-occurrence first, dimmed strays second.
-    # The full pass runs only for proximity queries (where a cell can match via
-    # a dimmed stray); plain queries take the single any-match pass, whose hit is
-    # always full. ``is_full`` is True on the first pass, False on the dim fallback.
-    passes = (
-        ((text_has_full_match, True), (text_has_any_match, False))
-        if spec.proximity_groups
-        else ((text_has_any_match, True),)
-    )
-    for predicate, is_full in passes:
-        for col, h in enumerate(headers):
-            if predicate(getattr(h, "plain", "") or "", spec):
-                return (0, col), is_full
-        for r_idx, row in enumerate(rows):
-            for c_idx, cell in enumerate(row):
-                if predicate(getattr(cell, "plain", "") or "", spec):
-                    return (r_idx, c_idx), is_full
-    return None
+    # Single pass with a cheap gate: ``text_has_any_match`` short-circuits on the
+    # first matching word, so a non-matching cell never pays for the heavier
+    # proximity-aware ``text_has_full_match`` (which stems every token). Only a
+    # cell that already matched is checked for a full co-occurrence. Return the
+    # first full match immediately; remember the first dimmed-only stray and fall
+    # back to it only if no full match exists. Plain queries never dim, so the
+    # full check is skipped entirely and the any-match hit is always full.
+    prox = bool(spec.proximity_groups)
+    first_dim: tuple[tuple[int, int], bool] | None = None
+
+    def _tier(plain: str) -> bool | None:
+        """``None`` no match · ``True`` full (qualifying) · ``False`` dim-only."""
+        if not text_has_any_match(plain, spec):
+            return None
+        return (not prox) or text_has_full_match(plain, spec)
+
+    for col, h in enumerate(headers):
+        tier = _tier(getattr(h, "plain", "") or "")
+        if tier:
+            return (0, col), True
+        if tier is False and first_dim is None:
+            first_dim = (0, col), False
+    for r_idx, row in enumerate(rows):
+        for c_idx, cell in enumerate(row):
+            tier = _tier(getattr(cell, "plain", "") or "")
+            if tier:
+                return (r_idx, c_idx), True
+            if tier is False and first_dim is None:
+                first_dim = (r_idx, c_idx), False
+    return first_dim
 
 
 class FNDMarkdown(Markdown):
