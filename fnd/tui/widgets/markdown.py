@@ -28,6 +28,7 @@ from textual.widgets._markdown import (
 
 from fnd.matching import MatchSpec, phrase_char_spans
 from fnd.render import (
+    DIM_STYLES,
     HIGHLIGHT_STYLE,
     match_word_spans,
     phrase_gap_spans,
@@ -111,17 +112,32 @@ def _build_match_spans(plain: str, spec: MatchSpec) -> list[Span]:
     return spans
 
 
+def _spans_have_full_match(spans: list[Span]) -> bool:
+    """True if any span carries a non-dimmed match style — i.e. a real
+    (in-window) proximity hit, phrase, or plain match, as opposed to a
+    proximity-dimmed out-of-window stray."""
+    return any(str(s.style) not in DIM_STYLES for s in spans)
+
+
 def _record_first_match(block: MarkdownBlock, spans: list[Span]) -> None:
     """If this block contains the first highlighted match in the
-    document, register it on the parent ``FNDMarkdown`` so the
-    preview pane can scroll to it. First-write-wins: subsequent matched
-    blocks don't overwrite.
+    document, register it on the parent ``FNDMarkdown`` so the preview
+    pane can scroll to it. First-write-wins per tier: a block with a full
+    (qualifying) match wins the primary slot; a block whose only matches
+    are dimmed proximity strays fills a fallback slot. ``first_match_block``
+    prefers the full slot, so a ``{N}``/``"a b"~N`` query lands on the real
+    co-occurrence, not an earlier lone-term hit (mirrors the flat path).
     """
     if not spans:
         return
     md = block._markdown  # weakref unwrap
-    if isinstance(md, FNDMarkdown) and md._first_match_block is None:
-        md._first_match_block = block
+    if not isinstance(md, FNDMarkdown):
+        return
+    if _spans_have_full_match(spans):
+        if md._first_match_block is None:
+            md._first_match_block = block
+    elif md._first_dim_match_block is None:
+        md._first_dim_match_block = block
 
 
 def _apply_highlights_after_build(block: MarkdownBlock) -> None:
@@ -251,11 +267,19 @@ def _record_fence_anchor_if_matched(widget: FNDMarkdownFence, code: str) -> None
     when the active query matches inside its source. Diagram art carries no
     painted spans, so we only anchor — jump-to-match still scrolls here."""
     spec = getattr(widget._markdown, "match_spec", None)
-    if spec is None or spec.is_empty or not _build_match_spans(code, spec):
+    if spec is None or spec.is_empty:
+        return
+    spans = _build_match_spans(code, spec)
+    if not spans:
         return
     md = widget._markdown
-    if isinstance(md, FNDMarkdown) and md._first_match_block is None:
-        md._first_match_block = widget
+    if not isinstance(md, FNDMarkdown):
+        return
+    if _spans_have_full_match(spans):
+        if md._first_match_block is None:
+            md._first_match_block = widget
+    elif md._first_dim_match_block is None:
+        md._first_dim_match_block = widget
 
 
 class FNDMarkdownFence(MarkdownFence):
@@ -415,13 +439,20 @@ class FNDMarkdownTableDT(MarkdownTable):
             dt.add_row(*row, height=None)
         md = self._markdown
         spec = getattr(md, "match_spec", None) or MatchSpec()
-        match_coord = _find_first_match_coord_in_table(headers, rows, spec)
-        if match_coord is not None:
+        found = _find_first_match_coord_in_table(headers, rows, spec)
+        if found is not None:
+            match_coord, is_full = found
             dt._fnd_match_coord = Coordinate(*match_coord)  # type: ignore[attr-defined]
-            # Register self as parent's first_match_block — TH/TD
-            # widgets are bypassed so _record_first_match never fires.
-            if isinstance(md, FNDMarkdown) and md._first_match_block is None:
-                md._first_match_block = self
+            # Register self as parent's first_match_block — TH/TD widgets are
+            # bypassed so _record_first_match never fires. A full co-occurrence
+            # claims the primary slot; a dim-only table fills the fallback, so a
+            # later full match elsewhere still wins the scroll target.
+            if isinstance(md, FNDMarkdown):
+                if is_full:
+                    if md._first_match_block is None:
+                        md._first_match_block = self
+                elif md._first_dim_match_block is None:
+                    md._first_dim_match_block = self
         yield dt
 
     def _available_table_width(self) -> int:
@@ -555,8 +586,10 @@ def _compute_table_col_widths(
 
 def _find_first_match_coord_in_table(
     headers: list[Any], rows: list[list[Any]], spec: MatchSpec
-) -> tuple[int, int] | None:
-    """Return (row, col) of the first cell that contains a query match.
+) -> tuple[tuple[int, int], bool] | None:
+    """Return ``((row, col), is_full)`` for the first cell that matches, where
+    ``is_full`` is True when the cell carries a real (qualifying) match rather
+    than a dimmed proximity stray. ``None`` when no cell matches.
 
     A cell matches iff ``text_has_any_match`` does — a word match OR a
     quoted-phrase span, the same gate the highlight overlay applies — so the
@@ -570,21 +603,49 @@ def _find_first_match_coord_in_table(
     skips the per-char alignment / Span allocation that building the full
     highlight spans here would waste on every cell of a large table.
 
+    For a proximity query (``{N}``/``NEAR/N``/``"a b"~N``) a cell can match
+    only via a dimmed out-of-window stray; we then prefer the first cell with
+    a *full* (in-window) co-occurrence and fall back to a dimmed cell only if
+    none exists — so the scroll lands on the genuine match, mirroring the flat
+    and block paths. Plain queries keep the cheaper any-match scan unchanged.
+
     Header hits map to row 0 col c as a best-effort approximation since
     the DataTable cursor doesn't address headers directly.
     """
-    from fnd.render import text_has_any_match
+    from fnd.render import text_has_any_match, text_has_full_match
 
     if spec.is_empty:
         return None
+    # Single pass with a cheap gate: ``text_has_any_match`` short-circuits on the
+    # first matching word, so a non-matching cell never pays for the heavier
+    # proximity-aware ``text_has_full_match`` (which stems every token). Only a
+    # cell that already matched is checked for a full co-occurrence. Return the
+    # first full match immediately; remember the first dimmed-only stray and fall
+    # back to it only if no full match exists. Plain queries never dim, so the
+    # full check is skipped entirely and the any-match hit is always full.
+    prox = bool(spec.proximity_groups)
+    first_dim: tuple[tuple[int, int], bool] | None = None
+
+    def _tier(plain: str) -> bool | None:
+        """``None`` no match · ``True`` full (qualifying) · ``False`` dim-only."""
+        if not text_has_any_match(plain, spec):
+            return None
+        return (not prox) or text_has_full_match(plain, spec)
+
     for col, h in enumerate(headers):
-        if text_has_any_match(getattr(h, "plain", "") or "", spec):
-            return (0, col)
+        tier = _tier(getattr(h, "plain", "") or "")
+        if tier:
+            return (0, col), True
+        if tier is False and first_dim is None:
+            first_dim = (0, col), False
     for r_idx, row in enumerate(rows):
         for c_idx, cell in enumerate(row):
-            if text_has_any_match(getattr(cell, "plain", "") or "", spec):
-                return (r_idx, c_idx)
-    return None
+            tier = _tier(getattr(cell, "plain", "") or "")
+            if tier:
+                return (r_idx, c_idx), True
+            if tier is False and first_dim is None:
+                first_dim = (r_idx, c_idx), False
+    return first_dim
 
 
 class FNDMarkdown(Markdown):
@@ -666,7 +727,12 @@ class FNDMarkdown(Markdown):
         # Read by ``FNDMarkdownFence`` to decide whether a mermaid fence
         # renders as a diagram (default-on flag, off in tests unless set).
         self.render_mermaid: bool = render_mermaid
+        # ``_first_match_block`` holds the first FULL (qualifying) match block;
+        # ``_first_dim_match_block`` the first block whose only matches are dimmed
+        # proximity strays. ``first_match_block`` prefers the full slot so a
+        # ``{N}``/``"a b"~N`` query scrolls to the real co-occurrence.
         self._first_match_block: MarkdownBlock | None = None
+        self._first_dim_match_block: MarkdownBlock | None = None
         # Set by ``_on_mount`` after ``super()._on_mount`` (which awaits
         # ``Markdown.update``) returns. Lets the scroll path event-trigger
         # on build completion instead of polling.
@@ -679,10 +745,12 @@ class FNDMarkdown(Markdown):
 
     @property
     def first_match_block(self) -> MarkdownBlock | None:
-        """The first highlighted block in document order, or ``None``
-        when the source has no matches. Set by the highlight-aware
-        block subclasses during ``build_from_token``."""
-        return self._first_match_block
+        """The block the preview scrolls to, or ``None`` when the source
+        has no matches. Prefers the first FULL (qualifying) match; only when
+        no full match exists anywhere does it fall back to the first dimmed
+        proximity stray. Set by the highlight-aware block subclasses during
+        ``build_from_token`` (and the table block during ``compose``)."""
+        return self._first_match_block or self._first_dim_match_block
 
     def update(self, markdown):  # type: ignore[no-untyped-def, override]
         # Textual's dispatcher walks the MRO and invokes every class's
@@ -697,6 +765,7 @@ class FNDMarkdown(Markdown):
         # must drop the previous render's match anchor.
         self.build_done.clear()
         self._first_match_block = None
+        self._first_dim_match_block = None
         self._build_gen += 1
         gen = self._build_gen
         aw = super().update(markdown)

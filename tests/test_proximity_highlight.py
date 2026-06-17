@@ -3,6 +3,7 @@ co-occurrence window render at full strength; the rest are dimmed."""
 
 from __future__ import annotations
 
+import pytest
 from rich.text import Text
 from textual.content import Span
 
@@ -226,3 +227,63 @@ def test_live_markdown_baker_dims_lone_occurrence():
     assert _span_styles_at(spans, cluster_off) & set(MATCH_STYLES)
     assert _span_styles_at(spans, lone_off) & set(DIM_MATCH_STYLES)
     assert not (_span_styles_at(spans, lone_off) & set(MATCH_STYLES))
+
+
+# --- Auto-scroll target: prefer the co-occurrence, not a dimmed stray --------
+# The structural (FNDMarkdown) preview path — used for MD/DOCX/PPTX — picks the
+# scroll target via _record_first_match (blocks) and _find_first_match_coord_in_table
+# (tables). #77 fixed the equivalent target in the flat (PDF/TXT) line_buffer path
+# but not these, so a proximity query landed on the first dimmed lone-term hit.
+
+
+def test_table_coord_prefers_proximity_cooccurrence():
+    # Early cell has a lone "code" (dimmed under {5}exit code); a later cell holds
+    # the real "exit code" co-occurrence. The scroll coord must point at the
+    # co-occurrence cell, not the dimmed lone-term cell above it.
+    from fnd.tui.widgets.markdown import _find_first_match_coord_in_table
+
+    spec = MatchSpec.from_query("{5}exit code", auto_fuzzy=False)
+    headers = [Text("Topic"), Text("Notes")]
+    rows = [
+        [Text("intro"), Text("the code sample")],  # lone "code" -> dim only
+        [Text("errors"), Text("returns exit code 1")],  # co-occurrence -> full
+    ]
+    assert _find_first_match_coord_in_table(headers, rows, spec) == ((1, 1), True)
+
+
+def test_table_coord_falls_back_to_dim_when_no_cooccurrence():
+    # No cell holds both terms together, so the only matches are dimmed strays.
+    # We still anchor on the first matching cell rather than returning nothing.
+    from fnd.tui.widgets.markdown import _find_first_match_coord_in_table
+
+    spec = MatchSpec.from_query("{5}exit code", auto_fuzzy=False)
+    headers = [Text("Topic"), Text("Notes")]
+    rows = [
+        [Text("intro"), Text("the code sample")],  # lone "code"
+        [Text("errors"), Text("clean exit path")],  # lone "exit"
+    ]
+    assert _find_first_match_coord_in_table(headers, rows, spec) == ((0, 1), False)
+
+
+@pytest.mark.asyncio
+async def test_first_match_block_prefers_proximity_cooccurrence():
+    # Paragraph one mentions only "code" (dimmed); paragraph two carries the
+    # real "exit code" co-occurrence. first_match_block must resolve to the
+    # co-occurrence paragraph so the preview scrolls to the genuine match.
+    from textual.app import App, ComposeResult
+
+    from fnd.tui.widgets.markdown import FNDMarkdown
+
+    spec = MatchSpec.from_query("{5}exit code", auto_fuzzy=False)
+
+    class _Harness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield FNDMarkdown(match_spec=spec)
+
+    async with _Harness().run_test() as pilot:
+        md = pilot.app.query_one(FNDMarkdown)
+        await md.update("para one mentions code only.\n\nlater the exit code is shown.\n")
+        await md.build_done.wait()
+        fm = md.first_match_block
+        assert fm is not None
+        assert "exit code" in fm._content.plain
