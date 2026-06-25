@@ -237,6 +237,12 @@ class SearchController:
         # must drop its (now-stale) container instead of re-caching it back into
         # the cache we clear just below.
         self._app._preview.bump_reset_generation()
+        # Cancel any debounced load from the prior result set so this reset block
+        # is self-contained. (_results.refresh() below also cancels it, but keep
+        # the invalidation explicit here alongside the mount/cache teardown,
+        # mirroring clear_results(), rather than relying on that later side
+        # effect.)
+        self._app._preview.cancel_pending_load()
         self._app._preview.chunk_cache.clear()
         # Bundles bake highlight spans from the previous query, so they
         # go stale at the same moment the chunk cache does.

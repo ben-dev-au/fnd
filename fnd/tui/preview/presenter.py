@@ -1520,10 +1520,26 @@ class PreviewPresenter:
                 # caching or leaving this container mounted would re-pollute the
                 # just-cleared pane with the previous query's half-built widget
                 # tree — the "stuck mid-mount after a new query" bug. Drop it.
+                self.diag_log(
+                    f"mount superseded gen={my_generation}->{self.reset_generation} "
+                    f"parent={container.parent_doc_id[:8]} — dropping stale container"
+                )
+                # The cold path spawns a DETACHED _finalize_via_lock task that, on
+                # completion, unconditionally hides the progress bar and clears
+                # inflight_target. Cancelling the mount task does NOT cancel it, so
+                # a superseded mount's finaliser would later clobber the SUCCESSOR
+                # query's bar + latch. Cancel it here before dropping the widget.
+                _ft = getattr(container, "_finalize_task", None)
+                if _ft is not None and not _ft.done():
+                    _ft.cancel()
                 with contextlib.suppress(Exception):
                     container.remove()
                 if self.active is container:
                     self.active = None
+                # Don't leave a removed widget dangling as the outgoing
+                # (held-visible-during-swap) reference for the next reveal.
+                if self.outgoing is container:
+                    self.outgoing = None
             else:
                 # Cache the container even when the mount didn't run to
                 # completion. For monster files (1000+ page PDFs with

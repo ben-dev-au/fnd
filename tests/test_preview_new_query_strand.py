@@ -14,6 +14,7 @@ state is re-polluted with the previous query's half-built container — the
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from pathlib import Path
 
 import pytest
@@ -21,7 +22,7 @@ import pytest
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.widgets.preview_container import PreviewContainer
-from tests._pilot_wait import safe_pause, wait_until
+from tests._pilot_wait import safe_pause
 
 
 @pytest.fixture
@@ -75,15 +76,13 @@ async def test_new_query_during_inflight_mount_purges_stale_container(
         await safe_pause(pilot)
         await safe_pause(pilot)
 
-        # Release the parked (now-cancelled) mount so its finally runs.
+        # Release the parked (now-cancelled) mount and await THIS task directly:
+        # run() nulls preview.mount_task during cancellation, so
+        # user_mount_in_flight() would report idle before this task's finally has
+        # actually drained. Awaiting the captured task is the deterministic wait.
         gate.set()
-        await wait_until(
-            pilot,
-            lambda: not preview.user_mount_in_flight(),
-            timeout=10.0,
-            message="cancelled mount never drained",
-        )
-        await safe_pause(pilot)
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=10.0)
         await safe_pause(pilot)
 
         assert app._progress.active is None, "progress bar stranded after new query"
@@ -94,3 +93,96 @@ async def test_new_query_during_inflight_mount_purges_stale_container(
             "BUG: cancelled mount left the stale container mounted in the pane (stuck mid-mount)"
         )
         assert preview.active is not stale, "BUG: stale container is still the active preview"
+
+
+@pytest.mark.asyncio
+async def test_superseded_mount_cancels_detached_finalizer(built_index: Path) -> None:
+    """A superseded mount must cancel its detached finaliser so it can't later
+    clobber the SUCCESSOR query's progress bar + inflight latch.
+
+    The cold path spawns ``container._finalize_task`` (``_finalize_via_lock``),
+    which on completion unconditionally hides the bar and clears
+    ``inflight_target``. Cancelling the mount task does not cancel that detached
+    task — so without the generation-guarded cancel, a stale finaliser fires
+    after a new query and tears down the new query's loading state.
+    """
+    app = FNDApp(index_dir=built_index, initial_query="results")
+    async with app.run_test() as pilot:
+        await safe_pause(pilot)
+        assert app._search.groups, "setup — query produced no results"
+        preview = app._preview
+
+        gate = asyncio.Event()
+
+        async def _blocking_cancel_task_on(_c: object) -> None:
+            await gate.wait()
+
+        app._prefetch.cancel_task_on = _blocking_cancel_task_on  # type: ignore[assignment]
+
+        g = app._search.groups[0]
+        seq = g.hits[0].chunk_seq if g.hits else 0
+        chunks = app._search.searcher.get_file_chunks(g.parent_id)  # type: ignore[union-attr]
+        container = PreviewContainer(
+            parent_doc_id=g.parent_id,
+            query_signature=app._search.query_signature(),
+            total_chunks=len(chunks),
+        )
+
+        # Stand-in for the detached _finalize_via_lock: parked on a gate; if it
+        # ever completes it hides the bar + clears the latch — the clobber the
+        # fix must prevent. Attached to the container exactly as the cold path
+        # attaches the real one.
+        finalize_gate = asyncio.Event()
+        clobbered = {"ran": False}
+
+        async def _fake_finalizer() -> None:
+            await finalize_gate.wait()
+            clobbered["ran"] = True
+            preview.hide_progress_bar()
+            preview.inflight_target = None
+
+        fin_task = asyncio.create_task(_fake_finalizer())
+        container._finalize_task = fin_task  # type: ignore[attr-defined]
+
+        preview.show_progress_bar(total=len(chunks), phase="mounting…")
+        preview.inflight_target = (g.parent_id, seq)
+        task = asyncio.create_task(
+            preview._mount_chunks_async(
+                g.parent_id, seq, chunks, container, reset_generation=preview.reset_generation
+            )
+        )
+        preview.mount_task = task
+        await safe_pause(pilot)  # park on the gate
+
+        # New query supersedes (mirrors run(): bump generation, then cancel).
+        preview.bump_reset_generation()
+        preview.cancel_mount_task()
+        gate.set()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=10.0)
+        await safe_pause(pilot)
+
+        assert fin_task.cancelled() or fin_task.done(), (
+            "superseded mount did not cancel its detached finaliser"
+        )
+
+        # Successor now owns the loading state.
+        successor = ("successor-parent-id", 3)
+        preview.inflight_target = successor
+        preview.show_progress_bar(total=2, phase="mounting…")
+
+        # Release the finaliser's gate; the fix already cancelled it, so it must
+        # not run and clobber the successor's bar / latch.
+        finalize_gate.set()
+        await safe_pause(pilot)
+        await safe_pause(pilot)
+
+        assert not clobbered["ran"], (
+            "BUG: superseded finaliser ran and tore down the successor's loading state"
+        )
+        assert app._progress.active is not None, (
+            "BUG: stale finaliser hid the successor's progress bar"
+        )
+        assert preview.inflight_target == successor, (
+            "BUG: stale finaliser cleared the successor's inflight latch"
+        )
