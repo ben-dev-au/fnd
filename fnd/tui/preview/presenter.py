@@ -30,6 +30,8 @@ from fnd.tui.widgets.markdown import FNDMarkdown, _legacy_blocks_to_md
 from fnd.tui.widgets.preview_container import PreviewCache, PreviewContainer
 
 if TYPE_CHECKING:
+    from textual.geometry import Region
+
     from fnd.query import FileChunk, FileGroup, Hit
     from fnd.tui.app import FNDApp
     from fnd.tui.line_buffer import RenderedDocument
@@ -785,7 +787,9 @@ class PreviewPresenter:
     def end_reconcile_scroll(self) -> None:
         self.reconciling = False
 
-    def swap_reveal_target(self, target: Widget, margin: int) -> bool:
+    def swap_reveal_target(
+        self, target: Widget, margin: int, anchor_region: Region | None = None
+    ) -> bool:
         """Atomic preview swap: hide the outgoing container, position the
         incoming one so ``target`` sits ``margin`` rows down, and reveal it —
         all in one tick. Returns True when a swap happened, False when there is
@@ -793,14 +797,21 @@ class PreviewPresenter:
 
         The outgoing container stayed on screen through the whole build, so the
         first frame the user sees after this is the new preview already at its
-        match — no blank, no scroll-into-place. ``target``'s offset is taken
+        match — no blank, no scroll-into-place. The anchor's offset is taken
         relative to the incoming container's top, which is scroll-independent
-        and so survives the outgoing container leaving the layout."""
+        and so survives the outgoing container leaving the layout.
+
+        ``anchor_region`` (screen space) overrides ``target.region`` when given:
+        a match inside a table renders as one full-height DataTable, so the
+        matched cell is not its own widget — the caller resolves the cell's
+        region and passes it here so the swap lands on the matched row, not the
+        table top."""
         outgoing = self.outgoing
         new = self.active
         if outgoing is None or new is None or outgoing is new:
             return False
-        offset = target.region.y - new.region.y
+        anchor_y = (anchor_region if anchor_region is not None else target.region).y
+        offset = anchor_y - new.region.y
         target_y = max(0, offset - margin)
         pane = self._app.query_one("#preview_pane", VerticalScroll)
         outgoing.add_class("-hidden")
