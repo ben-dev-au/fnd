@@ -95,6 +95,14 @@ class PreviewPresenter:
         # refresh bumps it so a worker that finishes after a newer file/query
         # superseded it drops its now-stale result instead of overwriting.
         self._markers_seq: int = 0
+        # Bumped on every full preview reset (new query / scope clear / highlight
+        # rerender). A mount task captures it at start; if it has moved by the
+        # time the task's `finally` runs, that reset cleared the caches + DOM
+        # under it — so the task must NOT resurrect its now-stale container
+        # (re-cache it / leave it mounted). cancel_mount_task only *requests*
+        # cancellation; the finally runs a tick later and would otherwise race
+        # the reset and re-pollute it ("stuck mid-mount after a new query").
+        self.reset_generation: int = 0
 
     def schedule_load(self, parent_id: str, focus_chunk_seq: int) -> None:
         """Debounce a cursor-move → preview-load; coalesces rapid arrow sweeps."""
@@ -460,6 +468,7 @@ class PreviewPresenter:
                     focus_chunk_seq,
                     chunks,
                     fresh,
+                    reset_generation=self.reset_generation,
                 )
             )
             return
@@ -543,6 +552,7 @@ class PreviewPresenter:
                             chunks,
                             cached,
                             skip_internal_scrolls=True,
+                            reset_generation=self.reset_generation,
                         )
                     )
                 return
@@ -569,7 +579,13 @@ class PreviewPresenter:
             phase="mounting…",
         )
         self.mount_task = asyncio.create_task(
-            self._mount_chunks_async(parent_id, focus_chunk_seq, chunks, container)
+            self._mount_chunks_async(
+                parent_id,
+                focus_chunk_seq,
+                chunks,
+                container,
+                reset_generation=self.reset_generation,
+            )
         )
 
     def dispatch_flat_mount(
@@ -1201,6 +1217,15 @@ class PreviewPresenter:
         _perf.mark("click_to_display_end", parent_id=parent_id, path="already_active_scroll_only")
         self._app._preview_scroll.reconcile()
 
+    def bump_reset_generation(self) -> None:
+        """Invalidate any in-flight mount. Call from every path that clears the
+        preview caches + DOM (new query, scope clear, highlight rerender): the
+        cancelled mount's deferred `finally` sees the changed generation and
+        drops its now-stale container instead of re-caching it. Navigation /
+        resume paths that cancel a mount but keep the cache must NOT call this —
+        their partial container is still wanted for a later resume."""
+        self.reset_generation += 1
+
     def cancel_mount_task(self) -> None:
         """Cancel any in-flight mount task. The cancelled task's
         partial-mount state lives on its :class:`PreviewContainer`,
@@ -1264,6 +1289,7 @@ class PreviewPresenter:
         container: PreviewContainer,
         *,
         skip_internal_scrolls: bool = False,
+        reset_generation: int,
     ) -> None:
         """Visible-first mount + hidden-prepend background fill.
 
@@ -1294,6 +1320,13 @@ class PreviewPresenter:
         import contextlib
 
         pane = self._app.query_one("#preview_pane", VerticalScroll)
+
+        # ``reset_generation`` was snapshotted by the caller AT create_task time
+        # (coroutine args evaluate eagerly), so it predates any reset that lands
+        # before this body's first slice runs. If a new query / scope clear /
+        # rerender bumps it while we're in flight, our finally drops this
+        # container instead of re-caching it back into the just-cleared state.
+        my_generation = reset_generation
 
         needs_pre_reveal = container.parent is None or container.has_class("-hidden")
         # Newly-mounted "above-window" widgets get hidden until phase 2b
@@ -1480,23 +1513,51 @@ class PreviewPresenter:
             for w in hidden_widgets:
                 with contextlib.suppress(Exception):
                     w.display = True
-            # Cache the container even when the mount didn't run to
-            # completion. For monster files (1000+ page PDFs with
-            # thousands of chunks) the user reliably navigates away
-            # before is_complete becomes True; without caching the
-            # partial container, every revisit re-mounts from scratch
-            # and the file looks like it has no cache. The resume path
-            # in ``_dispatch_preview_mount`` skips already-mounted
-            # indices so partial-cache hits paint the previously-
-            # mounted region instantly and continue the fill in the
-            # background. The container we just mounted IS the active one,
-            # so it's protected from its own eviction by definition (it just
-            # got moved to the MRU slot).
-            evicted = self.preview_cache.put(container, protect=container)
-            for old in evicted:
+            superseded = self.reset_generation != my_generation
+            if superseded:
+                # A new query / scope clear / rerender cleared the caches AND the
+                # DOM while this mount was in flight, then cancelled us. Re-
+                # caching or leaving this container mounted would re-pollute the
+                # just-cleared pane with the previous query's half-built widget
+                # tree — the "stuck mid-mount after a new query" bug. Drop it.
+                self.diag_log(
+                    f"mount superseded gen={my_generation}->{self.reset_generation} "
+                    f"parent={container.parent_doc_id[:8]} — dropping stale container"
+                )
+                # The cold path spawns a DETACHED _finalize_via_lock task that, on
+                # completion, unconditionally hides the progress bar and clears
+                # inflight_target. Cancelling the mount task does NOT cancel it, so
+                # a superseded mount's finaliser would later clobber the SUCCESSOR
+                # query's bar + latch. Cancel it here before dropping the widget.
+                _ft = getattr(container, "_finalize_task", None)
+                if _ft is not None and not _ft.done():
+                    _ft.cancel()
                 with contextlib.suppress(Exception):
-                    old.remove()
-            if container.is_complete:
+                    container.remove()
+                if self.active is container:
+                    self.active = None
+                # Don't leave a removed widget dangling as the outgoing
+                # (held-visible-during-swap) reference for the next reveal.
+                if self.outgoing is container:
+                    self.outgoing = None
+            else:
+                # Cache the container even when the mount didn't run to
+                # completion. For monster files (1000+ page PDFs with
+                # thousands of chunks) the user reliably navigates away
+                # before is_complete becomes True; without caching the
+                # partial container, every revisit re-mounts from scratch
+                # and the file looks like it has no cache. The resume path
+                # in ``_dispatch_preview_mount`` skips already-mounted
+                # indices so partial-cache hits paint the previously-
+                # mounted region instantly and continue the fill in the
+                # background. The container we just mounted IS the active one,
+                # so it's protected from its own eviction by definition (it just
+                # got moved to the MRU slot).
+                evicted = self.preview_cache.put(container, protect=container)
+                for old in evicted:
+                    with contextlib.suppress(Exception):
+                        old.remove()
+            if container.is_complete and not superseded:
                 self.hide_progress_bar()
             elif (
                 getattr(container, "_finalize_task", None) is None
@@ -1769,6 +1830,9 @@ class PreviewPresenter:
         # Re-use the per-query cache invalidation: clear decoded
         # chunks, kill any in-flight mount worker, drop cached
         # PreviewContainers from the DOM, reset alias maps.
+        # Invalidate first so a mid-flight mount's finally drops its stale
+        # container instead of re-caching it after the clear below.
+        self.bump_reset_generation()
         self.chunk_cache.clear()
         self.prebuilt_cache.clear()
         self.cancel_mount_task()

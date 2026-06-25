@@ -64,7 +64,11 @@ async def test_cancel_during_early_mount_does_not_strand_progress_bar(
         # (flat vs structural, warm-cache) can't change the path under test.
         preview.show_progress_bar(total=len(chunks), phase="mounting…")
         preview.inflight_target = (g.parent_id, seq)
-        task = asyncio.create_task(preview._mount_chunks_async(g.parent_id, seq, chunks, container))
+        task = asyncio.create_task(
+            preview._mount_chunks_async(
+                g.parent_id, seq, chunks, container, reset_generation=preview.reset_generation
+            )
+        )
         preview.mount_task = task
 
         # Let the task reach and park on the blocked early await.
@@ -127,7 +131,11 @@ async def test_exception_during_early_mount_does_not_strand_progress_bar(
 
         preview.show_progress_bar(total=len(chunks), phase="mounting…")
         preview.inflight_target = (g.parent_id, seq)
-        task = asyncio.create_task(preview._mount_chunks_async(g.parent_id, seq, chunks, container))
+        task = asyncio.create_task(
+            preview._mount_chunks_async(
+                g.parent_id, seq, chunks, container, reset_generation=preview.reset_generation
+            )
+        )
         preview.mount_task = task  # NOT nulled — the mount fails, it isn't cancelled
 
         # Drain the task (it raises); the finally must still run.
@@ -177,7 +185,11 @@ async def test_early_cancel_does_not_clobber_successor_decode_bar(
         )
         preview.show_progress_bar(total=len(chunks), phase="mounting…")
         preview.inflight_target = (g.parent_id, seq)
-        task = asyncio.create_task(preview._mount_chunks_async(g.parent_id, seq, chunks, container))
+        task = asyncio.create_task(
+            preview._mount_chunks_async(
+                g.parent_id, seq, chunks, container, reset_generation=preview.reset_generation
+            )
+        )
         preview.mount_task = task
         await safe_pause(pilot)
         assert getattr(container, "_finalize_task", None) is None, "setup — must be pre-finalize"
