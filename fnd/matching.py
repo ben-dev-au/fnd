@@ -321,11 +321,14 @@ class MatchSpec:
         loose_query = _strip_quoted_spans(expanded_query)
         # A single-word quote (`"powerhouse"`) is the same as the bare word, so
         # fold it back into the loose terms — otherwise it's stripped above and
-        # never highlights, despite the search surfacing it.
+        # never highlights, despite the search surfacing it. "Single word" means a
+        # single DOC_WORD_RE token, matching how _phrase_word_lists splits: a
+        # quoted underscore identifier ("recursive_directory_iterator") is a
+        # multi-token phrase, so it must NOT leak into the loose (doc-wide) set.
         single_quoted = [
-            m.group(1).strip()
+            stripped
             for m in _QUOTED_PHRASE.finditer(query)
-            if len(m.group(1).split()) == 1 and m.group(1).strip()
+            if (stripped := m.group(1).strip()) and len(DOC_WORD_RE.findall(stripped)) == 1
         ]
         if single_quoted:
             loose_query = f"{loose_query} {' '.join(single_quoted)}".strip()

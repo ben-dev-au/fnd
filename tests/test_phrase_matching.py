@@ -21,6 +21,25 @@ def test_pure_phrase_excludes_words_from_doc_wide_highlight() -> None:
     assert not word_matches("depth", spec)
 
 
+def test_quoted_underscore_identifier_stays_a_phrase_not_loose_terms() -> None:
+    # The en_stem split (DOC_WORD_RE) makes a quoted underscore identifier a
+    # multi-token phrase. Its parts must NOT leak into the loose (doc-wide) term
+    # set — otherwise quoting "recursive_directory_iterator" would light up
+    # 'recursive'/'directory'/'iterator' everywhere, breaking the phrase contract.
+    spec = MatchSpec.from_query('"recursive_directory_iterator"', auto_fuzzy=False)
+    assert spec.phrases  # recorded as a contiguous phrase
+    assert not spec.exact_stems  # but no loose, doc-wide single-word matches
+    assert not word_matches("iterator", spec)
+    assert not word_matches("recursive", spec)
+
+
+def test_single_word_quote_still_folds_into_loose_terms() -> None:
+    # A genuine single-token quote is the same as the bare word and must still
+    # highlight word-by-word (its DOC_WORD_RE token count is 1).
+    spec = MatchSpec.from_query('"powerhouse"', auto_fuzzy=False)
+    assert word_matches("powerhouse", spec)
+
+
 def test_phrase_char_spans_finds_contiguous_run() -> None:
     spec = MatchSpec.from_query('"defence in depth"', auto_fuzzy=False)
     text = "Our defence in depth strategy is layered."

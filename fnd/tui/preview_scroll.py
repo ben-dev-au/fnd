@@ -392,12 +392,14 @@ class StructuralScrollStrategy:
             return
         if anchor is None:
             # Retries exhausted with the cell still unresolved — fall back to the
-            # table's own region (its top), logged so the regression is visible.
+            # matched DataTable's own region (its top), logged so the regression
+            # is visible. anchor is None only in the table branch, so match_table
+            # is set; the wrapper target.region can be a zero-height/offset region.
             self._host.diag_log(
                 f"do_scroll seq={focus_chunk_seq} miss=table-cell-unresolved "
                 f"target={type(target).__name__} path={path}"
             )
-            anchor = target.region
+            anchor = match_table.region if match_table is not None else target.region
         # Generation guard (immediately before the commit): the resolution above
         # spanned refreshes, during which a newer navigation may have superseded
         # this chain. Re-check freshness right before the side effect — the

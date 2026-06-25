@@ -28,6 +28,7 @@ from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.scrollbar import ScrollBar
 from textual.widgets import (
     Input,
@@ -730,11 +731,15 @@ class FNDApp(App[None]):
         move; ``AppBlur`` fires a descendant *blur*, not focus, so the class —
         and the border — stays put. ``set_class(update=False)`` + a per-pane
         ``stylesheet.apply`` keeps this off the subtree style-walk path."""
+        # No screen (teardown mid-quit) → self.query_one would raise
+        # ScreenStackError; bail like _focus_context does rather than mask it.
+        if not self.screen_stack:
+            return
         focused_id = self._FOCUS_BORDER_PANES.get(self._focus_context())
         for pane_id in self._FOCUS_BORDER_PANES.values():
             try:
                 pane = self.query_one(pane_id)
-            except Exception:
+            except NoMatches:
                 continue
             should = pane_id == focused_id
             if should == ("-focused" in pane.classes):
