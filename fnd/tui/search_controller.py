@@ -233,6 +233,10 @@ class SearchController:
         # the DOM so the next preview load starts from a clean slate.
         import contextlib
 
+        # Invalidate any in-flight mount before clearing: its deferred finally
+        # must drop its (now-stale) container instead of re-caching it back into
+        # the cache we clear just below.
+        self._app._preview.bump_reset_generation()
         self._app._preview.chunk_cache.clear()
         # Bundles bake highlight spans from the previous query, so they
         # go stale at the same moment the chunk cache does.
@@ -402,6 +406,9 @@ class SearchController:
         import contextlib
 
         self.groups = []
+        # See run(): drop any in-flight mount's stale container rather than let
+        # its finally re-cache it after this clear.
+        self._app._preview.bump_reset_generation()
         self._app._preview.chunk_cache.clear()
         self._app._preview.prebuilt_cache.clear()
         self._app._preview.cancel_mount_task()
