@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report security issues privately. Email
-**sandals-shad.0o@icloud.com** with subject `fnd: <short description>`.
+**methyl-infills3l@icloud.com** with subject `fnd: <short description>`.
 Expect an initial reply within 5 business days. If you'd like to encrypt
 the report, attach a request for a PGP key and one will be returned.
 
