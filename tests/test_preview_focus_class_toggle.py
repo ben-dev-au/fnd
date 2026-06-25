@@ -67,6 +67,57 @@ async def test_preview_focused_class_toggles_with_focus(built_index: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_focus_border_class_moves_between_panes(built_index: Path) -> None:
+    """The accent border (``-focused``) follows focus across every pane —
+    not just the preview — and only the focused pane wears it."""
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        results = app.query_one("#results_pane", Tree)
+        preview = app.query_one("#preview_pane")
+
+        results.focus()
+        await pilot.pause()
+        assert "-focused" in results.classes
+        assert "-focused" not in preview.classes
+
+        preview.focus()
+        await pilot.pause()
+        assert "-focused" in preview.classes
+        assert "-focused" not in results.classes
+
+
+@pytest.mark.asyncio
+async def test_focus_border_survives_terminal_blur(built_index: Path) -> None:
+    """The accent border must NOT drop when the terminal loses focus.
+
+    Textual clears widget focus on ``AppBlur`` (``app_focus = False`` →
+    ``screen.set_focus(None)``) and only restores it on the next keypress —
+    which made the border vanish on tab-away and reappear a beat late. The
+    persistent ``-focused`` class is driven by descendant *focus*, never
+    cleared on blur, so it (and the border) stays put across the blur/refocus
+    cycle."""
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        results = app.query_one("#results_pane", Tree)
+        results.focus()
+        await pilot.pause()
+        assert "-focused" in results.classes
+
+        # Terminal loses focus: Textual blurs the focused widget.
+        app.app_focus = False
+        await pilot.pause()
+        assert app.screen.focused is None, "precondition: blur cleared widget focus"
+        assert "-focused" in results.classes, "border dropped on terminal blur"
+
+        # Terminal regains focus: border was never lost, still present.
+        app.app_focus = True
+        await pilot.pause()
+        assert "-focused" in results.classes
+
+
+@pytest.mark.asyncio
 async def test_focus_change_does_not_walk_preview_subtree(built_index: Path) -> None:
     """The pane's ``watch_has_focus`` override must not walk the subtree.
 

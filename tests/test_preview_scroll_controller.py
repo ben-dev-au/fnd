@@ -229,7 +229,7 @@ class _FakeHost:
     def end_reconcile_scroll(self) -> None:
         return None
 
-    def swap_reveal_target(self, target: object, margin: int) -> bool:
+    def swap_reveal_target(self, target: object, margin: int, anchor_region: object = None) -> bool:
         return False
 
     def call_after_refresh(self, callback: object, *args: object, **kwargs: object) -> object:

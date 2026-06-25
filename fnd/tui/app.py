@@ -28,6 +28,7 @@ from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.scrollbar import ScrollBar
 from textual.widgets import (
     Input,
@@ -204,21 +205,26 @@ class FNDApp(App[None]):
         border: round $primary 50%;
         overflow-x: hidden;
     }
-    #results_pane:focus-within { border: round $accent; }
+    /* Class-toggled focus border (not :focus-within) so it survives a
+       terminal blur — Textual clears :focus-within when the app loses focus,
+       which dropped the border on tab-away and reinstated it a beat late on
+       return. ``on_descendant_focus`` drives the class; nothing clears it on
+       blur. Mirrors the preview pane below. */
+    #results_pane.-focused { border: round $accent; }
     #collections_panel_tree {
         width: 100%; height: auto;
         max-height: 50%;
         border: round $primary 50%;
         overflow-x: hidden;
     }
-    #collections_panel_tree:focus-within { border: round $accent; }
+    #collections_panel_tree.-focused { border: round $accent; }
     #filters_panel_tree {
         width: 100%; height: auto;
         max-height: 50%;
         border: round $primary 50%;
         overflow-x: hidden;
     }
-    #filters_panel_tree:focus-within { border: round $accent; }
+    #filters_panel_tree.-focused { border: round $accent; }
     /* Section collapse-to-header: Left at the panel root shrinks the
        whole panel down to its border-title strip. ``overflow: hidden``
        suppresses any rogue scrollbar that would otherwise sneak past
@@ -702,19 +708,44 @@ class FNDApp(App[None]):
                 render_hint_bar(self._FOOTER_ANCHORS, contextual)
             )
 
+    # Maps a ``_focus_context`` result to the pane id that wears the accent
+    # border. ``query``/``global`` map to nothing — no pane is accented.
+    _FOCUS_BORDER_PANES: ClassVar[dict[str, str]] = {
+        "results": "#results_pane",
+        "collections": "#collections_panel_tree",
+        "filters": "#filters_panel_tree",
+        "preview": "#preview_pane",
+    }
+
     def on_descendant_focus(self) -> None:
         self._refresh_footer_hints()
-        # Toggle the focus-border class without triggering a subtree style walk.
-        try:
-            pane = self.query_one("#preview_pane")
-        except Exception:
+        self._sync_focus_border()
+
+    def _sync_focus_border(self) -> None:
+        """Move the ``-focused`` accent border onto the logically-focused pane.
+
+        A persistent class (not ``:focus-within``) so the border survives a
+        terminal blur: Textual clears focus on ``AppBlur`` and only restores it
+        on the next keypress, which made every pane's border vanish on tab-away
+        and reappear a beat late. We only touch the class on a genuine focus
+        move; ``AppBlur`` fires a descendant *blur*, not focus, so the class —
+        and the border — stays put. ``set_class(update=False)`` + a per-pane
+        ``stylesheet.apply`` keeps this off the subtree style-walk path."""
+        # No screen (teardown mid-quit) → self.query_one would raise
+        # ScreenStackError; bail like _focus_context does rather than mask it.
+        if not self.screen_stack:
             return
-        in_preview = self._focus_context() == "preview"
-        has_focus_class = "-focused" in pane.classes
-        if in_preview == has_focus_class:
-            return
-        pane.set_class(in_preview, "-focused", update=False)
-        self.app.stylesheet.apply(pane)
+        focused_id = self._FOCUS_BORDER_PANES.get(self._focus_context())
+        for pane_id in self._FOCUS_BORDER_PANES.values():
+            try:
+                pane = self.query_one(pane_id)
+            except NoMatches:
+                continue
+            should = pane_id == focused_id
+            if should == ("-focused" in pane.classes):
+                continue
+            pane.set_class(should, "-focused", update=False)
+            self.app.stylesheet.apply(pane)
 
     def on_key(self, event: events.Key) -> None:
         """Repurpose Up/Down to navigate between sidebar panels when the

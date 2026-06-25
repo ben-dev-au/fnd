@@ -20,6 +20,8 @@ from textual.widget import Widget
 from fnd.matching import MatchSpec
 
 if TYPE_CHECKING:
+    from textual.widgets import DataTable
+
     from fnd.tui.line_buffer import LineBufferPreview
     from fnd.tui.widgets.markdown import FNDMarkdown
 
@@ -212,7 +214,9 @@ class StructuralHost(Protocol):
     def effective_match_spec(self) -> MatchSpec: ...
     def begin_reconcile_scroll(self) -> None: ...
     def end_reconcile_scroll(self) -> None: ...
-    def swap_reveal_target(self, target: Widget, margin: int) -> bool: ...
+    def swap_reveal_target(
+        self, target: Widget, margin: int, anchor_region: Region | None = None
+    ) -> bool: ...
     def call_after_refresh(
         self, callback: Callable[..., Any], *args: Any, **kwargs: Any
     ) -> object: ...
@@ -364,6 +368,38 @@ class StructuralScrollStrategy:
                 f"do_scroll seq={focus_chunk_seq} miss=zero-region "
                 f"target={type(target).__name__} path={path}"
             )
+        # A match inside a table renders as one full-height DataTable (no
+        # per-cell widgets, no internal scroll), so the matched cell is not its
+        # own widget — resolve the cell's region as the scroll anchor instead of
+        # the table's own (which is the table top). While the rows are still
+        # mounting the cell region isn't laid out; retry rather than committing a
+        # scroll to the table top — the race that stranded deep-table matches at
+        # the top on a cold mount. ``_anchor_region`` returns ``target.region``
+        # unchanged for non-table targets.
+        match_table = self._match_table_for(target)
+        anchor = self._anchor_region(target, match_table)
+        if anchor is None and retries > 0:
+            self._host.call_after_refresh(
+                self._do_scroll_to_chunk,
+                focus_chunk_seq,
+                retries - 1,
+                on_done,
+                margin_from,
+                animate,
+                generation,
+                current_generation,
+            )
+            return
+        if anchor is None:
+            # Retries exhausted with the cell still unresolved — fall back to the
+            # matched DataTable's own region (its top), logged so the regression
+            # is visible. anchor is None only in the table branch, so match_table
+            # is set; the wrapper target.region can be a zero-height/offset region.
+            self._host.diag_log(
+                f"do_scroll seq={focus_chunk_seq} miss=table-cell-unresolved "
+                f"target={type(target).__name__} path={path}"
+            )
+            anchor = match_table.region if match_table is not None else target.region
         # Generation guard (immediately before the commit): the resolution above
         # spanned refreshes, during which a newer navigation may have superseded
         # this chain. Re-check freshness right before the side effect — the
@@ -386,26 +422,22 @@ class StructuralScrollStrategy:
             # the anchor.
             self._host.begin_reconcile_scroll()
             try:
-                # If an outgoing preview is being held on screen, hand the resolved
-                # target to the host so it can hide the old one, position this one,
-                # and reveal it in a single tick (no blank between previews). When
-                # there is no outgoing container this is a no-op and we scroll the
-                # already-visible pane normally.
-                if self._host.swap_reveal_target(target, margin):
+                # If an outgoing preview is being held on screen, hand the
+                # resolved anchor to the host so it can hide the old one, position
+                # this one, and reveal it in a single tick (no blank between
+                # previews). The anchor (screen space) is the matched table cell
+                # for a table match, so the swap lands on the matched row too —
+                # not the table top. When there is no outgoing container this is a
+                # no-op and we scroll the already-visible pane normally.
+                if self._host.swap_reveal_target(target, margin, anchor):
                     pass
-                # A match inside a table renders as a single full-height DataTable
-                # (one Rich render, no per-cell widgets and no internal scroll), so
-                # scroll_to_widget would only reach the table's top. Scroll the pane
-                # to the matched cell's region instead so a match in a lower row is
-                # actually revealed.
-                elif not self._scroll_pane_to_table_cell(pane, target, margin, animate=animate):
-                    # Map the target widget's screen region into the pane's
-                    # scrollable content space and scroll there in one shot.
-                    # (Reading scroll_offset back after scroll_to_widget to apply
-                    # the margin races a cold render — scroll_to_widget hasn't
-                    # committed the offset yet, so the nudge lands on a stale,
-                    # wrong position.)
-                    region = target.region.translate(
+                else:
+                    # Map the anchor's screen region into the pane's scrollable
+                    # content space and scroll there in one shot. (Reading
+                    # scroll_offset back after scroll_to_widget to apply the margin
+                    # races a cold render — the offset isn't committed yet, so the
+                    # nudge lands on a stale, wrong position.)
+                    region = anchor.translate(
                         pane.scroll_offset - pane.scrollable_content_region.offset
                     )
                     self._scroll_pane_to_match_region(pane, region, margin, animate=animate)
@@ -439,19 +471,14 @@ class StructuralScrollStrategy:
             )
         pane.scroll_to_region(region, top=True, animate=animate, immediate=not animate)
 
-    def _scroll_pane_to_table_cell(
-        self, pane: VerticalScroll, target: Widget, margin: int, *, animate: bool = False
-    ) -> bool:
-        """If ``target`` is (or wraps) a match-bearing DataTable, scroll
-        ``pane`` to the matched cell and return True. The W3 table renders
-        every row in one full-height DataTable with no internal scroll, so the
-        matched cell is not a scrollable widget — translate its region into the
-        pane's content space and scroll there. ``target`` may be the DataTable
-        itself or the ``FNDMarkdownTableDT`` wrapper (the match scroll resolves
-        to the wrapper when the first_match_block is a phantom, never-mounted
-        TD cell). Returns False — the caller then scrolls to the target
-        widget's own region via ``_scroll_pane_to_match_region`` — for
-        non-table targets or any lookup failure."""
+    def _match_table_for(self, target: Widget) -> DataTable[Any] | None:
+        """The match-bearing ``DataTable`` ``target`` is or wraps, else None.
+
+        ``target`` may be the DataTable itself or the ``FNDMarkdownTableDT``
+        wrapper (the match scroll resolves to the wrapper when the
+        first_match_block is a phantom, never-mounted TD cell). A table without
+        a ``_fnd_match_coord`` is treated as a plain widget (returns None) so it
+        scrolls to its own region."""
         from textual.widgets import DataTable
 
         from fnd.tui.widgets.markdown import FNDMarkdownTableDT
@@ -461,25 +488,36 @@ class StructuralScrollStrategy:
         elif isinstance(target, FNDMarkdownTableDT):
             table = next((c for c in target.query(DataTable)), None)
         else:
-            return False
+            return None
+        if table is None or getattr(table, "_fnd_match_coord", None) is None:
+            return None
+        return table
+
+    def _anchor_region(self, target: Widget, table: DataTable[Any] | None) -> Region | None:
+        """Screen-space region the scroll should land on.
+
+        For a plain widget that's its own ``region``. For a match inside a
+        table — one full-height DataTable with no per-cell widgets and no
+        internal scroll — it's the matched *cell's* region, so a match in a
+        lower row is actually revealed instead of the table top.
+
+        Returns ``None`` when ``target`` is a table whose cell region is not
+        resolvable yet (rows unmounted / not sized — ``_get_cell_region`` raises
+        or yields a zero-height region). The caller retries rather than
+        committing a scroll to the table top, which is the race that stranded
+        deep-table matches at the top after a cold mount."""
         if table is None:
-            return False
-        coord = getattr(table, "_fnd_match_coord", None)
-        if coord is None:
-            return False
+            return target.region
+        coord = table._fnd_match_coord  # pyright: ignore[reportAttributeAccessIssue]
         try:
             cell = table._get_cell_region(coord)  # pyright: ignore[reportAttributeAccessIssue]
-            # cell is relative to the table's content; map → screen (the table
-            # has no internal scroll, but honour its offset defensively) → the
-            # pane's scrollable-content space, which scroll_to_region expects.
-            screen = cell.translate(table.region.offset - table.scroll_offset)
-            cell_in_pane = screen.translate(
-                pane.scroll_offset - pane.scrollable_content_region.offset
-            )
         except Exception:
-            return False
-        self._scroll_pane_to_match_region(pane, cell_in_pane, margin, animate=animate)
-        return True
+            return None
+        if cell.height == 0:
+            return None
+        # cell is relative to the table's content; map → screen (the table has
+        # no internal scroll, but honour its offset defensively).
+        return cell.translate(table.region.offset - table.scroll_offset)
 
     def _fallback_match_target(self, chunk: FNDMarkdown) -> Widget:
         """Scan ``chunk``'s descendants for the first widget whose plain text
