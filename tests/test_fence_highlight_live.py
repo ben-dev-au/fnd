@@ -62,3 +62,41 @@ async def test_fence_highlights_only_the_matching_fence() -> None:
 
         # Non-matching fence: no highlight bleed.
         assert _highlighted_words(second) == []
+
+
+@pytest.mark.asyncio
+async def test_fence_highlights_subword_of_underscore_identifier() -> None:
+    """Regression: ``iterator`` inside ``recursive_directory_iterator`` must
+    highlight, like a standalone ``iterator`` does.
+
+    The ``en_stem`` analyzer splits on underscore, so ``iterator`` is an indexed
+    token of ``recursive_directory_iterator`` and a search for it finds the
+    chunk. The highlighter previously tokenised doc text with ``\\w+`` (keeps
+    underscore), saw one token that failed to stem-match, and left that one
+    occurrence unhighlighted while sibling plain matches lit up — the exact
+    "one code-block match isn't highlighted" field report. Both occurrences must
+    now highlight identically."""
+    source = (
+        "```cpp\n"
+        "for (const auto& e : fs::recursive_directory_iterator(root)) {\n"
+        "    use(e);  // plain iterator below\n"
+        "}\n"
+        "```"
+    )
+    md = FNDMarkdown(source, match_spec=MatchSpec.from_query("iterator"))
+    async with _Host(md).run_test():
+        await md.build_done.wait()
+        fence = next(iter(md.query(FNDMarkdownFence)))
+        content = fence._highlighted_code
+        plain = content.plain
+
+        # The sub-token inside the underscore identifier is highlighted.
+        sub = plain.index("iterator")  # first occurrence: inside the identifier
+        assert sub > plain.index("recursive_directory_"), "sanity: identifier case"
+        assert any(
+            s.start == sub and s.end == sub + len("iterator") and str(s.style) == HIGHLIGHT_STYLE
+            for s in (content.spans or ())
+        ), "iterator sub-token of recursive_directory_iterator not highlighted"
+
+        # And every 'iterator' occurrence highlights (the identifier + the comment).
+        assert plain.count("iterator") == _highlighted_words(content).count("iterator")

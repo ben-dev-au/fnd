@@ -33,6 +33,18 @@ import snowballstemmer
 from fnd.stopwords import STOPWORDS
 from fnd.synonyms import SynonymTable, expand
 
+# Canonical doc-text word scanner — the single source of truth for how every
+# match/highlight surface tokenises document text. ``en_stem`` (the F_BODY
+# analyzer) splits on EVERY non-alphanumeric char, INCLUDING underscore, so an
+# identifier like ``recursive_directory_iterator`` is indexed as three tokens
+# and a search for ``iterator`` finds it. A plain ``\w+`` keeps underscore, so
+# it would see one token that fails to stem-match ``iterator`` — the match is
+# found but goes unhighlighted. ``[^\W_]`` is "word char except underscore"
+# (Unicode letters/digits intact), the complement of the ``[\W_]+`` split
+# fnd/query_compile.py already uses to mirror the analyzer. Route all doc-text
+# scanning through this so highlight tokenisation can never drift from search.
+DOC_WORD_RE = re.compile(r"[^\W_]+")
+
 # A double-quoted run is a phrase (Tantivy phrase syntax). Single quotes are
 # left to ordinary term extraction (they carry collection names, apostrophes).
 _QUOTED_PHRASE = re.compile(r'"([^"]*)"')
@@ -79,7 +91,7 @@ def _phrase_word_lists(query: str) -> list[list[str]]:
     """Raw word lists for each quoted phrase of two or more words."""
     out: list[list[str]] = []
     for m in _QUOTED_PHRASE.finditer(query):
-        words = re.findall(r"\w+", m.group(1))
+        words = DOC_WORD_RE.findall(m.group(1))
         if len(words) >= 2:
             out.append(words)
     return out
@@ -283,7 +295,7 @@ class MatchSpec:
         proximity_groups: list[tuple[tuple[str, ...], int]] = []
         prox_words: list[str] = []
         for pm in _PROX_PHRASE.finditer(expanded_query):
-            pwords = re.findall(r"\w+", pm.group(1))
+            pwords = DOC_WORD_RE.findall(pm.group(1))
             pslop = int(pm.group(2))
             if len(pwords) >= 2 and pslop > 0:
                 proximity_groups.append((tuple(_stem(w) for w in pwords), pslop))
@@ -452,7 +464,7 @@ class MatchSpec:
             order.append(("phrase", "", 0))
         for kind, key in ordered_tokens if multicolour else []:
             if kind == "plain":
-                for w in re.findall(r"\w+", _MODIFIER_RE.sub(" ", key)):
+                for w in DOC_WORD_RE.findall(_MODIFIER_RE.sub(" ", key)):
                     if w.lower() in STOPWORDS:
                         continue
                     st = _stem(w)
@@ -544,7 +556,7 @@ def phrase_char_spans(text: str, spec: MatchSpec) -> list[tuple[int, int]]:
     phrases or none occur."""
     if not spec.phrases or not text:
         return []
-    bounds = [(m.start(), m.end()) for m in re.finditer(r"\w+", text)]
+    bounds = [(m.start(), m.end()) for m in DOC_WORD_RE.finditer(text)]
     stems = [_stem(text[s:e]) for s, e in bounds]
     raw: list[tuple[int, int]] = []
     for phrase in spec.phrases:

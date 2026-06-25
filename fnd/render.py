@@ -17,6 +17,7 @@ import snowballstemmer
 from rich.text import Text
 
 from fnd.extract.base import Block
+from fnd.matching import DOC_WORD_RE
 from fnd.stopwords import STOPWORDS as _HL_STOPWORDS
 
 if TYPE_CHECKING:
@@ -96,7 +97,7 @@ def text_has_match(text: str, term_stems: set[str]) -> bool:
     """
     if not term_stems or not text:
         return False
-    return any(_stem(m.group(0)) in term_stems for m in re.finditer(r"\w+", text))
+    return any(_stem(m.group(0)) in term_stems for m in DOC_WORD_RE.finditer(text))
 
 
 def text_has_any_match(text: str, spec: MatchSpec) -> bool:
@@ -108,7 +109,7 @@ def text_has_any_match(text: str, spec: MatchSpec) -> bool:
 
     if spec.is_empty or not text:
         return False
-    if any(word_matches(m.group(0), spec) for m in re.finditer(r"\w+", text)):
+    if any(word_matches(m.group(0), spec) for m in DOC_WORD_RE.finditer(text)):
         return True
     return bool(phrase_char_spans(text, spec))
 
@@ -141,7 +142,7 @@ def apply_stem_highlights(rendered: Text, term_stems: set[str]) -> bool:
         return False
     found = False
     plain = rendered.plain
-    for m in re.finditer(r"\w+", plain):
+    for m in DOC_WORD_RE.finditer(plain):
         if _stem(m.group(0)) in term_stems:
             rendered.stylize(HIGHLIGHT_STYLE, m.start(), m.end())
             found = True
@@ -206,7 +207,7 @@ def match_word_spans(plain: str, spec: MatchSpec) -> list[tuple[int, int, str]]:
     if spec.is_empty or not plain:
         return []
     out: list[tuple[int, int, str]] = []
-    tokens = list(re.finditer(r"\w+", plain))
+    tokens = list(DOC_WORD_RE.finditer(plain))
     # ``full`` holds the token indices that DO qualify; only proximity group
     # terms consult it, so plain queries get the undimmed runs unchanged.
     prox_stems, full, stems_by_token = _proximity_full_indices(tokens, spec)
@@ -332,7 +333,7 @@ def _highlight(text: str, terms: list[str]) -> str:
             return f"**{word}**"
         return word
 
-    return re.sub(r"\w+", _wrap, text)
+    return DOC_WORD_RE.sub(_wrap, text)
 
 
 def _terms_from_query(query: str, *, keep_stopwords: bool = False) -> list[str]:
@@ -356,13 +357,15 @@ def _terms_from_query(query: str, *, keep_stopwords: bool = False) -> list[str]:
     q = re.sub(r"[+\-()\"~*?]", " ", q)
     # Drop bare AND / OR / NOT.
     q = re.sub(r"\b(AND|OR|NOT)\b", " ", q)
-    # Tokenize the same way the highlighter splits doc text (``\w+``) so a
-    # term carrying adjacent punctuation ("3." / "Monitoring,") yields the
-    # bare word — its stem then matches the clean doc-word stem instead of
-    # silently failing. Stopwords are dropped: they carry ~zero IDF and
-    # highlighting every "and"/"in" doc-wide is noise (quoted phrases keep
-    # their stopwords via the separate phrase-span path).
-    words = re.findall(r"\w+", q)
+    # Tokenize the same way the highlighter splits doc text (``DOC_WORD_RE``,
+    # which mirrors the en_stem analyzer — splits on underscore too) so a term
+    # carrying adjacent punctuation ("3." / "Monitoring,") or an underscore
+    # ("recursive_directory_iterator") yields the bare sub-words — their stems
+    # then match the clean doc-word stems instead of silently failing.
+    # Stopwords are dropped: they carry ~zero IDF and highlighting every
+    # "and"/"in" doc-wide is noise (quoted phrases keep their stopwords via the
+    # separate phrase-span path).
+    words = DOC_WORD_RE.findall(q)
     if keep_stopwords:
         return words
     return [w for w in words if w.lower() not in _HL_STOPWORDS]
