@@ -55,6 +55,39 @@ async def test_settled_move_loads_immediately(built_index: Path, cfg_with_deboun
 
 
 @pytest.mark.asyncio
+async def test_scan_move_never_mounts_until_cleared(
+    built_index: Path, cfg_with_debounce: Config
+) -> None:
+    """Option/Alt + arrow scan: a scan move records the cursor but mounts
+    NOTHING — not even on a pause (no trailing timer is armed). The preview only
+    loads once scan mode is cleared (a normal key) and a normal move dispatches.
+    This is the "browse without mounting" behaviour; terminals can't report key
+    release, so a normal key is the portable stand-in for releasing Option."""
+    app = FNDApp(index_dir=built_index, config=cfg_with_debounce, initial_query="results")
+    async with app.run_test() as pilot:
+        await safe_pause(pilot)
+        render_calls: list[tuple[str, int]] = []
+        original = app._preview.render_full_doc
+
+        def counted(parent_id: str, *, focus_chunk_seq: int) -> None:
+            render_calls.append((parent_id, focus_chunk_seq))
+            original(parent_id, focus_chunk_seq=focus_chunk_seq)
+
+        app._preview.render_full_doc = counted  # type: ignore[method-assign]
+        app._preview.cancel_pending_load()  # settled
+        app._preview._scan_move = True
+        app._preview.schedule_load("p1", 0)
+        assert render_calls == [], "a scan move must not load"
+        # No timer is armed either, so a *pause* mid-scan can never mount. (This
+        # is the deterministic form of "even on a pause" — no sleep to flake on.)
+        assert app._preview.load_timer is None, "a scan move must not arm a load timer"
+        # A normal key clears scan mode; the next move loads immediately (leading).
+        app._preview._scan_move = False
+        app._preview.schedule_load("p2", 0)
+        assert render_calls == [("p2", 0)], "a deliberate move after scanning loads now"
+
+
+@pytest.mark.asyncio
 async def test_rapid_cursor_sweep_loads_leading_plus_final(
     built_index: Path, cfg_with_debounce: Config
 ) -> None:

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
+from textual.binding import Binding, BindingType
 from textual.widgets import Tree
 
 __all__ = ["ResultsTree"]
@@ -12,6 +13,13 @@ __all__ = ["ResultsTree"]
 class ResultsTree(Tree[dict[str, Any]]):
     """Results tree where expanded parents (file rows) are literally
     unselectable.
+
+    Also owns "scan mode": Option/Alt + ↑/↓ move the cursor WITHOUT loading the
+    preview (browse fast with no mount per row); a normal ↑/↓ ends scan mode so
+    the preview loads where you land, and Enter loads the highlighted row
+    (wired in the app). Handling this in the tree's own actions — rather than a
+    bubbled ``app.on_key`` — is reliable: the focused tree always runs them,
+    where a key the tree consumes may never reach the app.
 
     Earlier the rule was enforced after-the-fact by ``_on_tree_highlight``
     and ``_bounce_after_expand``: the cursor would land on the parent row
@@ -24,6 +32,34 @@ class ResultsTree(Tree[dict[str, Any]]):
     first child; pressing ↑ from a child moves directly to the row above
     the parent. No frames in between.
     """
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("alt+down", "scan_cursor_down", "Scan down", show=False),
+        Binding("alt+up", "scan_cursor_up", "Scan up", show=False),
+    ]
+
+    def _set_scan(self, scanning: bool) -> None:
+        preview = getattr(self.app, "_preview", None)
+        if preview is not None:
+            preview._scan_move = scanning
+
+    def action_cursor_down(self) -> None:
+        # A normal move ends scan mode so the preview loads where you land.
+        self._set_scan(False)
+        super().action_cursor_down()
+
+    def action_cursor_up(self) -> None:
+        self._set_scan(False)
+        super().action_cursor_up()
+
+    def action_scan_cursor_down(self) -> None:
+        # Option/Alt+Down: browse without loading the preview.
+        self._set_scan(True)
+        super().action_cursor_down()
+
+    def action_scan_cursor_up(self) -> None:
+        self._set_scan(True)
+        super().action_cursor_up()
 
     def validate_cursor_line(self, value: int) -> int:
         clamped = super().validate_cursor_line(value)
