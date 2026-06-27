@@ -135,7 +135,18 @@ class PreviewPresenter:
         if delay_ms <= 0:
             self.fire_pending_load()
             return
-        if self.load_timer is not None:
+        if self.load_timer is None:
+            # Leading edge: the cursor was settled, so load NOW — a deliberate
+            # single jump shouldn't wait out the window (that wait was ~150ms of
+            # every nav's perceived lag). Then open a coalescing window: a rapid
+            # arrow-sweep that follows lands in it and only its FINAL row loads
+            # (the trailing fire), not every row it passes. The inflight-target
+            # dedup in fire_pending_load keeps a same-tick park+dispatch pair
+            # (same target) from double-firing.
+            self.fire_pending_load()
+        else:
+            # Mid-sweep: a load is already coalescing. Restart the window so the
+            # trailing fire lands once the cursor finally settles.
             with contextlib.suppress(Exception):
                 self.load_timer.stop()
         self.load_timer = self._app.set_timer(

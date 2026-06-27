@@ -1,5 +1,9 @@
-"""Rapid cursor sweeps through the results tree should kick off at
-most one preview load — on the row the cursor finally lands on."""
+"""Leading-edge preview-load debounce.
+
+A deliberate (settled) cursor move loads the preview immediately; a rapid
+arrow-sweep that follows loads only the row it finally lands on. The leading
+fire removes ~150ms of perceived nav lag from every single jump (real-terminal
+measurement) while the trailing coalesce still spares mid-sweep rows."""
 
 from __future__ import annotations
 
@@ -29,10 +33,34 @@ def cfg_with_debounce() -> Config:
 
 
 @pytest.mark.asyncio
-async def test_rapid_cursor_sweep_dispatches_once(
+async def test_settled_move_loads_immediately(built_index: Path, cfg_with_debounce: Config) -> None:
+    """Leading edge: a deliberate (settled) cursor move loads NOW, not after the
+    debounce window. This is the fix for ~150ms of perceived nav lag on every
+    single jump (real-terminal measurement)."""
+    app = FNDApp(index_dir=built_index, config=cfg_with_debounce, initial_query="results")
+    async with app.run_test() as pilot:
+        await safe_pause(pilot)
+        render_calls: list[tuple[str, int]] = []
+        original = app._preview.render_full_doc
+
+        def counted(parent_id: str, *, focus_chunk_seq: int) -> None:
+            render_calls.append((parent_id, focus_chunk_seq))
+            original(parent_id, focus_chunk_seq=focus_chunk_seq)
+
+        app._preview.render_full_doc = counted  # type: ignore[method-assign]
+        app._preview.cancel_pending_load()  # settled — no pending window
+        app._preview.schedule_load("p1", 0)
+        # Fires synchronously, before any time passes (no wait_until / sleep).
+        assert render_calls == [("p1", 0)], "a settled move must load immediately"
+
+
+@pytest.mark.asyncio
+async def test_rapid_cursor_sweep_loads_leading_plus_final(
     built_index: Path, cfg_with_debounce: Config
 ) -> None:
-    """Several quick highlights only fire one ``_render_full_doc``."""
+    """Leading edge + trailing coalesce: the first (settled) highlight loads
+    immediately; a rapid sweep that follows loads only its FINAL row, not every
+    row it passes."""
     app = FNDApp(index_dir=built_index, config=cfg_with_debounce, initial_query="results")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
@@ -45,27 +73,24 @@ async def test_rapid_cursor_sweep_dispatches_once(
             original(parent_id, focus_chunk_seq=focus_chunk_seq)
 
         app._preview.render_full_doc = counted  # type: ignore[method-assign]
+        app._preview.cancel_pending_load()  # settled
 
-        # Schedule five highlights back-to-back. Only the last one
-        # should win once the timer fires.
+        # Five highlights back-to-back: leading fires p1 now; p2–p5 coalesce.
         app._preview.schedule_load("p1", 0)
         app._preview.schedule_load("p2", 0)
         app._preview.schedule_load("p3", 0)
         app._preview.schedule_load("p4", 0)
         app._preview.schedule_load("p5", 0)
-        assert render_calls == [], "no load should fire before the timer matures"
+        assert render_calls == [("p1", 0)], "leading edge loads the first row now"
 
-        # Wait past the 150 ms debounce — predicate-driven so a load
-        # spike that delays the timer past 300 ms doesn't fail.
+        # The sweep's final row lands once the window matures.
         await wait_until(
             pilot,
-            lambda: len(render_calls) >= 1,
+            lambda: len(render_calls) >= 2,
             timeout=15.0,
-            message="debounce timer never fired",
+            message="trailing debounce never fired the final row",
         )
-
-        assert len(render_calls) == 1, render_calls
-        assert render_calls[0][0] == "p5"
+        assert render_calls == [("p1", 0), ("p5", 0)], render_calls
 
 
 @pytest.mark.asyncio
@@ -146,13 +171,19 @@ async def test_return_to_cancelled_target_redispatches(
 async def test_query_change_cancels_pending_load(
     built_index: Path, cfg_with_debounce: Config
 ) -> None:
-    """A new query rebuilds the results tree; any in-flight debounce
-    target from the prior result set must not fire after rebuild."""
+    """A new query rebuilds the results tree; any pending (coalescing) debounce
+    target from the prior result set must not fire after the rebuild."""
     app = FNDApp(index_dir=built_index, config=cfg_with_debounce, initial_query="results")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
-        # Arm a debounced load that points at a parent_id we won't have
-        # any more after the rebuild.
+        # Don't actually load the stale parents — they have no real chunk data.
+        app._preview.render_full_doc = (  # type: ignore[method-assign]
+            lambda parent_id, *, focus_chunk_seq: None
+        )
+        app._preview.cancel_pending_load()
+        # First move leading-fires; the second coalesces into a PENDING trailing
+        # load pointing at a parent that won't survive the next query.
+        app._preview.schedule_load("stale-1", 0)
         app._preview.schedule_load("stale-parent-id", 0)
         assert app._preview.load_target == ("stale-parent-id", 0)
         # Run a fresh query: this calls _refresh_results_tree, which
