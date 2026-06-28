@@ -662,6 +662,7 @@ class FNDApp(App[None]):
         "results": (
             ("o", "Open"),
             ("z", "Reading View"),
+            ("⌥↑↓", "Skim"),
             ("Tab", "Search"),
         ),
         "preview": (
@@ -797,8 +798,10 @@ class FNDApp(App[None]):
         # suppressed the per-row load): end scan mode and load it now, so a user
         # can browse with Option then press Enter to mount exactly what they
         # landed on. (NodeSelected stays unbound from opening the file — see the
-        # note above.)
+        # note above.) Cancel any armed cooldown timer first so the load fires
+        # immediately (leading edge) rather than waiting out the debounce window.
         self._preview._scan_move = False
+        self._preview.cancel_pending_load()
         self._load_result_node(ev.node.data)
 
     def _load_result_node(self, data: Any) -> None:

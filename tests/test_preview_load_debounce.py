@@ -14,7 +14,7 @@ import pytest
 from fnd.config import Config, Defaults
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from tests._pilot_wait import safe_pause, wait_until
+from tests._pilot_wait import safe_pause, safe_press, wait_until
 
 
 @pytest.fixture
@@ -228,3 +228,41 @@ async def test_query_change_cancels_pending_load(
             timeout=15.0,
             message="pending load wasn't cancelled by query change",
         )
+
+
+@pytest.mark.asyncio
+async def test_scan_start_cancels_prior_cooldown_timer(
+    built_index: Path, cfg_with_debounce: Config
+) -> None:
+    """A scan move started during a prior normal nav's cooldown window cancels
+    that timer — otherwise the old timer fires and mounts the scanned row on a
+    pause, defeating scan mode (review finding)."""
+    app = FNDApp(index_dir=built_index, config=cfg_with_debounce, initial_query="results")
+    async with app.run_test() as pilot:
+        await safe_pause(pilot)
+        app._preview.cancel_pending_load()
+        # Normal nav: leading fire + an armed cooldown timer.
+        app._preview.schedule_load("p1", 0)
+        assert app._preview.load_timer is not None
+        # A scan move within that window must cancel the timer (no later mount).
+        app._preview._scan_move = True
+        app._preview.schedule_load("p2", 0)
+        assert app._preview.load_timer is None, "scan must cancel a prior cooldown timer"
+
+
+@pytest.mark.asyncio
+async def test_non_scan_key_clears_scan_mode(built_index: Path, cfg_with_debounce: Config) -> None:
+    """A non-Option key (End) ends scan mode so a later move loads — covers
+    home/end/pageup/pagedown that the cursor-action overrides don't intercept
+    (review finding). Without this a scan could leave the preview stuck."""
+    from fnd.tui.widgets.results_tree import ResultsTree
+
+    app = FNDApp(index_dir=built_index, config=cfg_with_debounce, initial_query="results")
+    async with app.run_test() as pilot:
+        await safe_pause(pilot)
+        app.query_one("#results_pane", ResultsTree).focus()
+        await safe_pause(pilot)
+        app._preview._scan_move = True
+        await safe_press(pilot, "end")
+        await safe_pause(pilot)
+        assert app._preview._scan_move is False, "a non-scan key must end scan mode"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
+from textual import events
 from textual.binding import Binding, BindingType
 from textual.widgets import Tree
 
@@ -39,9 +40,31 @@ class ResultsTree(Tree[dict[str, Any]]):
     ]
 
     def _set_scan(self, scanning: bool) -> None:
+        # Scan mode drives the PREVIEW, so only the results pane owns it.
+        # ResultsTree is also used for the Filters panel (app.py) — Option+arrow
+        # there must not flip the preview's scan flag and suppress a later load.
+        if self.id != "results_pane":
+            return
         preview = getattr(self.app, "_preview", None)
         if preview is not None:
             preview._scan_move = scanning
+
+    def on_key(self, event: events.Key) -> None:
+        # Any non-scan key ends scan mode — not just ↑/↓ but home/end/pageup/
+        # pagedown/typing too — so a later move always loads instead of being
+        # silently suppressed. on_key runs before the key's binding, so the
+        # cursor move that follows isn't treated as a scan.
+        if event.key not in ("alt+up", "alt+down"):
+            self._set_scan(False)
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        # Clicking a result is a deliberate selection, never a silent scan —
+        # otherwise mouse users could get stuck with the preview not updating.
+        self._set_scan(False)
+
+    def on_blur(self, event: events.Blur) -> None:
+        # Leaving the tree ends scan mode so it can't strand a later load.
+        self._set_scan(False)
 
     def action_cursor_down(self) -> None:
         # A normal move ends scan mode so the preview loads where you land.

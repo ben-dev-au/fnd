@@ -121,6 +121,14 @@ class PreviewPresenter:
             # schedule_load takes the leading-edge path below). Release detection
             # isn't available in the terminal, so "load on a normal key" is the
             # portable stand-in for "load when Option is released".
+            #
+            # Cancel any cooldown timer a *prior* normal nav left armed: a scan
+            # started within that window would otherwise have the old timer fire
+            # and mount the scanned row on pause, defeating scan mode.
+            if self.load_timer is not None:
+                with contextlib.suppress(Exception):
+                    self.load_timer.stop()
+                self.load_timer = None
             self.load_target = (parent_id, focus_chunk_seq)
             return
         # Preempt stale tail-mount on the previous file so the loop is
