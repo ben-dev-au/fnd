@@ -427,6 +427,29 @@ _KEYS_AX_MODAL: tuple[tuple[str, str, str, str], ...] = (
 )
 
 
+# Results-pane keys owned by ``ResultsTree`` widget bindings (not the action
+# registry), so they're hand-curated here and appended to the Results section.
+_KEYS_RESULTS_WIDGET: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "⌥ ↑ / ⌥ ↓",
+        "Skim (no preview load)",
+        "",
+        "Hold Option (Alt) and arrow through results to move the cursor WITHOUT "
+        "loading each preview — browse fast with no mount or lag per row. The "
+        "preview loads again on a normal ↑/↓ (the row you land on) or Enter (the "
+        "exact row you skimmed to). On Apple Terminal, enable Settings → "
+        "Profiles → Keys → Left Option key → Esc+ for Option+arrow to reach fnd.",
+    ),
+    (
+        "Enter",
+        "Load skimmed row",
+        "",
+        "Load the highlighted result into the preview — handy right after an "
+        "Option-skim to mount exactly the row you stopped on, without stepping.",
+    ),
+)
+
+
 # Mapping from an Action's primary context (first entry of
 # ``contexts``) to the section header it lands under in the
 # Keybindings screen. ``""`` (no contexts) → Global.
@@ -535,6 +558,12 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
                 action.description,
             )
         )
+
+    # Results-pane widget bindings (Option-skim, Enter-load) live on ResultsTree,
+    # not the registry — append them to the registry-derived Results section.
+    sections["Results pane"].extend(
+        _key_row(*row, section="results_widget") for row in _KEYS_RESULTS_WIDGET
+    )
 
     # Static widget bindings — append AFTER the registry-derived
     # sections in declaration order; reordering happens below.

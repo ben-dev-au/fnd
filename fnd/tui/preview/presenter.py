@@ -89,6 +89,11 @@ class PreviewPresenter:
 
         self.load_timer: _Any | None = None
         self.load_target: tuple[str, int] | None = None
+        # True while the cursor is moving via Option/Alt + arrow ("scan" mode):
+        # schedule_load skips its leading fire so fast browsing doesn't mount
+        # every row — the preview only loads once the sweep settles (trailing).
+        # Set by the app's alt-arrow handler, cleared on a load or a plain move.
+        self._scan_move: bool = False
         # The (parent_id, focus_chunk_seq) of the render currently in
         # flight, so redundant identical dispatches landing in the same
         # tick coalesce. Cleared when that render finishes settling.
@@ -108,6 +113,24 @@ class PreviewPresenter:
 
     def schedule_load(self, parent_id: str, focus_chunk_seq: int) -> None:
         """Debounce a cursor-move → preview-load; coalesces rapid arrow sweeps."""
+        if self._scan_move:
+            # Option/Alt+arrow scan: browse the results without mounting anything.
+            # Record where the cursor is but DON'T load and DON'T arm a timer — so
+            # even pausing mid-sweep never mounts. The preview loads only when the
+            # user presses a normal key (the app clears _scan_move, and the next
+            # schedule_load takes the leading-edge path below). Release detection
+            # isn't available in the terminal, so "load on a normal key" is the
+            # portable stand-in for "load when Option is released".
+            #
+            # Cancel any cooldown timer a *prior* normal nav left armed: a scan
+            # started within that window would otherwise have the old timer fire
+            # and mount the scanned row on pause, defeating scan mode.
+            if self.load_timer is not None:
+                with contextlib.suppress(Exception):
+                    self.load_timer.stop()
+                self.load_timer = None
+            self.load_target = (parent_id, focus_chunk_seq)
+            return
         # Preempt stale tail-mount on the previous file so the loop is
         # free during the debounce window.
         active_parent = self.active.parent_doc_id if self.active is not None else None
@@ -135,7 +158,17 @@ class PreviewPresenter:
         if delay_ms <= 0:
             self.fire_pending_load()
             return
-        if self.load_timer is not None:
+        if self.load_timer is None:
+            # Leading edge: the cursor was settled, so load NOW — a deliberate
+            # single jump shouldn't wait out the window (that wait was ~150ms of
+            # every nav's perceived lag). Then open a coalescing window so a rapid
+            # arrow-sweep that follows only loads its FINAL row (the trailing
+            # fire), not every row. The inflight-target dedup in fire_pending_load
+            # keeps a same-tick park+dispatch pair (same target) from double-firing.
+            self.fire_pending_load()
+        else:
+            # Mid-sweep: a load is already coalescing. Restart the window so the
+            # trailing fire lands once the cursor finally settles.
             with contextlib.suppress(Exception):
                 self.load_timer.stop()
         self.load_timer = self._app.set_timer(
@@ -176,6 +209,10 @@ class PreviewPresenter:
                 self.load_timer.stop()
             self.load_timer = None
         self.load_target = None
+        # A new query / reset also ends any scan sweep, so the post-query cursor
+        # park (and the next deliberate move) load normally instead of being
+        # silently suppressed as a scan move.
+        self._scan_move = False
 
     def render_full_doc(self, parent_id: str, *, focus_chunk_seq: int) -> None:
         """Render the full document for ``parent_id`` as one widget per

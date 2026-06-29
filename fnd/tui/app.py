@@ -662,6 +662,7 @@ class FNDApp(App[None]):
         "results": (
             ("o", "Open"),
             ("z", "Reading View"),
+            ("⌥↑↓", "Skim"),
             ("Tab", "Search"),
         ),
         "preview": (
@@ -789,7 +790,21 @@ class FNDApp(App[None]):
 
     @on(Tree.NodeHighlighted)
     def _on_tree_highlight(self, ev: Tree.NodeHighlighted[Any]) -> None:
-        data: Any = ev.node.data
+        self._load_result_node(ev.node.data)
+
+    @on(Tree.NodeSelected, "#results_pane")
+    def _on_results_selected(self, ev: Tree.NodeSelected[Any]) -> None:
+        # Enter loads the highlighted row even after an Option-scan (which
+        # suppressed the per-row load): end scan mode and load it now, so a user
+        # can browse with Option then press Enter to mount exactly what they
+        # landed on. (NodeSelected stays unbound from opening the file — see the
+        # note above.) Cancel any armed cooldown timer first so the load fires
+        # immediately (leading edge) rather than waiting out the debounce window.
+        self._preview._scan_move = False
+        self._preview.cancel_pending_load()
+        self._load_result_node(ev.node.data)
+
+    def _load_result_node(self, data: Any) -> None:
         if not isinstance(data, dict):
             return
         kind = data.get("kind")

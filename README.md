@@ -100,11 +100,17 @@ and the [query language](#search-how-to) works exactly as it does from the CLI.
 | Key       | What it does                                                                           |
 | --------- | -------------------------------------------------------------------------------------- |
 | `↑` / `↓` | Move the cursor up/down through results (vim's `k` / `j` also work).                   |
+| `⌥↑` / `⌥↓` | **Skim**: hold Option (Alt) and arrow to move through results *without* loading each preview — browse fast with no per-row mount/lag. The preview loads again on a normal `↑`/`↓` (the row you land on) or `Enter` (the exact row you skimmed to). |
+| `Enter`   | Load the highlighted result into the preview (handy right after an Option-skim).        |
 | `→`       | Expand the focused file to its matching sections; press again to drill into the first. |
 | `←`       | Collapse the focused node, or back out to its parent (lazygit-style).                  |
 | `Tab`     | Cycle focus between the query bar, the results tree, and the preview.                  |
 | `/`       | Jump back to the query bar to refine your search.                                      |
 | `↑` / `↓` | When the preview pane is focused, scroll the preview.                                  |
+
+> **Option-skim on Apple Terminal:** for `⌥↑` / `⌥↓` to reach fnd, enable
+> *Settings → Profiles → Keys → Left Option key → Esc+*. iTerm2 and most modern
+> terminals work without any change.
 
 ### Opening and acting on a result
 
