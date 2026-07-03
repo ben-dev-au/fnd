@@ -121,25 +121,35 @@ def _spans_have_full_match(spans: list[Span]) -> bool:
     return any(str(s.style) not in DIM_STYLES for s in spans)
 
 
+def _append_match_block(md: FNDMarkdown, block: MarkdownBlock, *, full: bool) -> None:
+    """Record a match-bearing block on ``md``: set the first-slot per tier
+    (first-write-wins) and append to the ordered nav list. First-write-wins
+    keeps ``first_match_block`` on the earliest full match; the ordered list
+    gives match-nav every stop. Dedup-guarded so a theme-driven fence rebuild
+    doesn't double-register."""
+    if full:
+        if md._first_match_block is None:
+            md._first_match_block = block
+        if block not in md._match_blocks:
+            md._match_blocks.append(block)
+    else:
+        if md._first_dim_match_block is None:
+            md._first_dim_match_block = block
+        if block not in md._dim_match_blocks:
+            md._dim_match_blocks.append(block)
+
+
 def _record_first_match(block: MarkdownBlock, spans: list[Span]) -> None:
-    """If this block contains the first highlighted match in the
-    document, register it on the parent ``FNDMarkdown`` so the preview
-    pane can scroll to it. First-write-wins per tier: a block with a full
-    (qualifying) match wins the primary slot; a block whose only matches
-    are dimmed proximity strays fills a fallback slot. ``first_match_block``
-    prefers the full slot, so a ``{N}``/``"a b"~N`` query lands on the real
-    co-occurrence, not an earlier lone-term hit (mirrors the flat path).
-    """
+    """Register ``block`` as a match stop on the parent ``FNDMarkdown`` (see
+    :func:`_append_match_block`). ``first_match_block`` prefers the full slot,
+    so a ``{N}``/``"a b"~N`` query lands on the real co-occurrence, not an
+    earlier lone-term hit (mirrors the flat path)."""
     if not spans:
         return
     md = block._markdown  # weakref unwrap
     if not isinstance(md, FNDMarkdown):
         return
-    if _spans_have_full_match(spans):
-        if md._first_match_block is None:
-            md._first_match_block = block
-    elif md._first_dim_match_block is None:
-        md._first_dim_match_block = block
+    _append_match_block(md, block, full=_spans_have_full_match(spans))
 
 
 def _apply_highlights_after_build(block: MarkdownBlock) -> None:
@@ -277,11 +287,7 @@ def _record_fence_anchor_if_matched(widget: FNDMarkdownFence, code: str) -> None
     md = widget._markdown
     if not isinstance(md, FNDMarkdown):
         return
-    if _spans_have_full_match(spans):
-        if md._first_match_block is None:
-            md._first_match_block = widget
-    elif md._first_dim_match_block is None:
-        md._first_dim_match_block = widget
+    _append_match_block(md, widget, full=_spans_have_full_match(spans))
 
 
 class FNDMarkdownFence(MarkdownFence):
@@ -448,16 +454,12 @@ class FNDMarkdownTableDT(MarkdownTable):
         if matches:
             match_coord, is_full = matches[0]
             dt._fnd_match_coord = Coordinate(*match_coord)  # type: ignore[attr-defined]
-            # Register self as parent's first_match_block — TH/TD widgets are
-            # bypassed so _record_first_match never fires. A full co-occurrence
-            # claims the primary slot; a dim-only table fills the fallback, so a
-            # later full match elsewhere still wins the scroll target.
+            # Register self as parent's match block — TH/TD widgets are
+            # bypassed so _record_first_match never fires. The table is one
+            # stop in match_blocks; nav expands it to its matching cells via
+            # _fnd_match_coords.
             if isinstance(md, FNDMarkdown):
-                if is_full:
-                    if md._first_match_block is None:
-                        md._first_match_block = self
-                elif md._first_dim_match_block is None:
-                    md._first_dim_match_block = self
+                _append_match_block(md, self, full=is_full)
         yield dt
 
     def _available_table_width(self) -> int:
@@ -736,6 +738,10 @@ class FNDMarkdown(Markdown):
         # ``{N}``/``"a b"~N`` query scrolls to the real co-occurrence.
         self._first_match_block: MarkdownBlock | None = None
         self._first_dim_match_block: MarkdownBlock | None = None
+        # Ordered match stops for intra-file nav: full-match blocks in build
+        # (document) order, dim-only ones collected separately as a fallback.
+        self._match_blocks: list[MarkdownBlock] = []
+        self._dim_match_blocks: list[MarkdownBlock] = []
         # Set by ``_on_mount`` after ``super()._on_mount`` (which awaits
         # ``Markdown.update``) returns. Lets the scroll path event-trigger
         # on build completion instead of polling.
@@ -755,6 +761,13 @@ class FNDMarkdown(Markdown):
         ``build_from_token`` (and the table block during ``compose``)."""
         return self._first_match_block or self._first_dim_match_block
 
+    @property
+    def match_blocks(self) -> list[MarkdownBlock]:
+        """Ordered match stops of this chunk for intra-file nav: the full-match
+        blocks in document order, or the dim-only ones when no full match
+        exists anywhere in the chunk (mirrors ``first_match_block``'s tiering)."""
+        return self._match_blocks or self._dim_match_blocks
+
     def update(self, markdown):  # type: ignore[no-untyped-def, override]
         # Textual's dispatcher walks the MRO and invokes every class's
         # _on_mount — overriding _on_mount and calling super() ran
@@ -769,6 +782,8 @@ class FNDMarkdown(Markdown):
         self.build_done.clear()
         self._first_match_block = None
         self._first_dim_match_block = None
+        self._match_blocks = []
+        self._dim_match_blocks = []
         self._build_gen += 1
         gen = self._build_gen
         aw = super().update(markdown)
