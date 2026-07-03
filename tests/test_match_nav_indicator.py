@@ -1,8 +1,6 @@
-"""The match-nav k/N indicator must be VISIBLE in the footer — i.e. within the
-footer widget's rendered width — not merely present in the (overflowing)
-content string. The footer line overflows a normal terminal, so an item
-appended at the end is clipped off-screen; the indicator is placed first in the
-contextual cluster to stay on screen.
+"""The match-nav k/N indicator lives on the preview pane's bottom border
+(``border_subtitle``) — where the matches are — so it reads as part of the
+preview and can't be clipped off the crowded global footer line.
 """
 
 from __future__ import annotations
@@ -11,12 +9,12 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from rich.cells import cell_len
-from textual.widgets import Static, Tree
+from textual.widgets import Tree
 
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from fnd.tui.preview_scrollbar import MatchAwareScroll
 from tests._pilot_wait import wait_until
 
 
@@ -46,25 +44,8 @@ def match_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
     return tmp_index_dir
 
 
-def _visible_footer(app: FNDApp) -> str:
-    """The footer text that actually fits within the footer widget's width."""
-    ft = app.query_one("#footer_hints", Static)
-    plain = ft.render().plain  # type: ignore[union-attr]
-    width = ft.size.width
-    out, acc = "", 0
-    for ch in plain:
-        w = cell_len(ch)
-        if acc + w > width:
-            break
-        out += ch
-        acc += w
-    return out
-
-
 @pytest.mark.asyncio
-async def test_match_indicator_is_within_visible_footer_width(
-    cfg: Config, match_index: Path
-) -> None:
+async def test_match_indicator_on_preview_bottom_border(cfg: Config, match_index: Path) -> None:
     app = FNDApp(index_dir=match_index, config=cfg, collection="notes", initial_query="CRC")
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
@@ -75,8 +56,12 @@ async def test_match_indicator_is_within_visible_footer_width(
             timeout=30.0,
             message="match-nav count never populated",
         )
-        # The indicator is on screen (within the footer's rendered width),
-        # not clipped past the right edge.
-        assert "match" in _visible_footer(app), (
-            f"indicator clipped off-screen; visible footer = {_visible_footer(app)!r}"
-        )
+        pane = app.query_one("#preview_pane", MatchAwareScroll)
+        subtitle = str(pane.border_subtitle or "")
+        assert "match" in subtitle, f"no indicator on preview border_subtitle: {subtitle!r}"
+        assert str(app._match_nav.count) in subtitle, f"count missing from indicator: {subtitle!r}"
+
+        # It clears in Reading View (which drops the border).
+        app.action_toggle_reading_mode()
+        await pilot.pause()
+        assert "match" not in str(app.query_one("#preview_pane").border_subtitle or "")

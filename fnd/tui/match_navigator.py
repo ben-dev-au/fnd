@@ -252,4 +252,4 @@ class MatchNavigator:
 
     def _notify(self) -> None:
         with contextlib.suppress(Exception):
-            self._app._refresh_footer_hints()
+            self._app._refresh_preview_match_indicator()

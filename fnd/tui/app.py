@@ -471,6 +471,7 @@ class FNDApp(App[None]):
             self.query_one("#results_pane", ResultsTree).focus()
         if location is not None:
             self.call_after_refresh(self._preview_scroll.scroll_to_location, location)
+        self._refresh_preview_match_indicator()
         self._refresh_footer_hints()
 
     def on_mount(self) -> None:
@@ -595,7 +596,24 @@ class FNDApp(App[None]):
             pane.border_title = self._preview_title(pane.region.width)
         except Exception:
             pass
+        self._refresh_preview_match_indicator()
         self._refresh_footer_hints()
+
+    def _refresh_preview_match_indicator(self) -> None:
+        """Show the match-nav ``k/N`` on the preview pane's BOTTOM border —
+        where the matches live — so it reads as part of the preview rather than
+        a global hint (and can't be clipped off the crowded footer line).
+        Cleared when the preview has no matches, or in Reading View (which drops
+        the border)."""
+        try:
+            pane = self.query_one("#preview_pane", MatchAwareScroll)
+        except Exception:
+            return
+        nav = getattr(self, "_match_nav", None)
+        if nav is not None and nav.count and not self._reading_mode:
+            pane.border_subtitle = f" match {nav.position or 1}/{nav.count} · n/b "
+        else:
+            pane.border_subtitle = ""
 
     def _dispatch_apps_notice(self, message: str) -> None:
         """Route a notice from fnd.apps through the right UI surface.
@@ -706,16 +724,6 @@ class FNDApp(App[None]):
         # the toggle key — surface the exit hint while it's active.
         if self._reading_mode and overlay_hint is None:
             contextual = (("z", "Reading View"), ("j/k", "Scroll"))
-
-        # Match-nav position indicator: shown whenever the current preview has
-        # matches and the results/preview pane is focused. Its 1-based k/N
-        # reports the stop last jumped to (or, before any jump, just the total).
-        # Placed FIRST in the contextual cluster so it renders right after the
-        # always-visible anchors — the footer line overflows a narrow terminal,
-        # so an item appended at the end is clipped off-screen.
-        nav = getattr(self, "_match_nav", None)
-        if nav is not None and nav.count and overlay_hint is None and ctx in ("results", "preview"):
-            contextual = (("n/b", f"match {nav.position or 1}/{nav.count}"), *contextual)
 
         with contextlib.suppress(Exception):
             self.query_one("#footer_hints", Static).update(
