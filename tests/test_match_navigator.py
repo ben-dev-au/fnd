@@ -33,10 +33,11 @@ def _nav(stops: list[int], vh: int = 20) -> MatchNavigator:
     nav._app = FakeApp()  # type: ignore[assignment]
     nav._last_target = None
     nav._margin = 4
+    nav._stops = stops  # cached stop list (footer count + nav)
     pane = FakePane(vh)
-    # Inject the pane + a fixed stop list so _go/count use them.
+    # Inject the pane + freeze _recompute so _go keeps the injected stops.
     nav._pane = lambda: pane  # type: ignore[assignment]
-    nav._stops = lambda _p: stops  # type: ignore[assignment]
+    nav._recompute = lambda _p: None  # type: ignore[assignment]
     return nav
 
 
