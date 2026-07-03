@@ -655,6 +655,61 @@ class StructuralScrollStrategy:
             self._host.call_after_refresh(self._restore_structural, seq, delta, retries - 1, vy)
 
 
+def stop_region_for_cell(table: DataTable[Any], coord: Any) -> Region | None:
+    """Screen-space region of a DataTable cell, or ``None`` if unresolved
+    (rows unmounted / not sized). Mirrors ``StructuralScrollStrategy.
+    _anchor_region``: the full-height table has no internal scroll, but honour
+    its offset defensively."""
+    try:
+        cell = table._get_cell_region(coord)  # pyright: ignore[reportAttributeAccessIssue]
+    except Exception:
+        return None
+    if cell.height == 0:
+        return None
+    return cell.translate(table.region.offset - table.scroll_offset)
+
+
+def enumerate_stop_regions(pane: VerticalScroll, spec: MatchSpec) -> list[Region]:
+    """Every match stop's screen-space region across the pane's mounted
+    chunks, sorted by content-space y. Tables expand to one region per matching
+    cell (``_fnd_match_coords``); ``FNDMarkdown`` chunks contribute one region
+    per match block; plain chunks contribute one region when their text matches.
+
+    Off-screen cells of a mounted table resolve fine — the table is one
+    full-height widget — so a big flashcards/glossary table is fully covered
+    once its chunk is mounted."""
+    from textual.widgets import DataTable
+
+    from fnd.tui.widgets.markdown import FNDMarkdown, FNDMarkdownTableDT
+
+    regions: list[Region] = []
+    if spec.is_empty:
+        return regions
+    for chunk in pane.children:
+        if isinstance(chunk, FNDMarkdown):
+            for block in chunk.match_blocks:
+                if isinstance(block, FNDMarkdownTableDT):
+                    dt = next((c for c in block.query(DataTable)), None)
+                    if dt is None:
+                        continue
+                    for coord in getattr(dt, "_fnd_match_coords", []):
+                        r = stop_region_for_cell(dt, coord)
+                        if r is not None:
+                            regions.append(r)
+                elif block.region.height > 0:
+                    regions.append(block.region)
+        elif getattr(chunk, "region", None) is not None and chunk.region.height > 0:
+            # Plain (pdf/txt) chunk: one stop per matching chunk widget.
+            from fnd.render import text_has_any_match
+
+            plain = getattr(getattr(chunk, "_content", None), "plain", None)
+            if plain and text_has_any_match(plain, spec):
+                regions.append(chunk.region)
+    # Content-space y so the order is stable regardless of the live scroll.
+    regions.sort(key=lambda r: r.y + pane.scroll_offset.y)
+    return regions
+
+
 class FlatHost(Protocol):
     """The slice of FNDApp the flat scroll strategy needs."""
 
