@@ -710,9 +710,12 @@ class FNDApp(App[None]):
         # Match-nav position indicator: shown whenever the current preview has
         # matches and the results/preview pane is focused. Its 1-based k/N
         # reports the stop last jumped to (or, before any jump, just the total).
+        # Placed FIRST in the contextual cluster so it renders right after the
+        # always-visible anchors — the footer line overflows a narrow terminal,
+        # so an item appended at the end is clipped off-screen.
         nav = getattr(self, "_match_nav", None)
         if nav is not None and nav.count and overlay_hint is None and ctx in ("results", "preview"):
-            contextual = (*contextual, ("n/b", f"match {nav.position or 1}/{nav.count}"))
+            contextual = (("n/b", f"match {nav.position or 1}/{nav.count}"), *contextual)
 
         with contextlib.suppress(Exception):
             self.query_one("#footer_hints", Static).update(
