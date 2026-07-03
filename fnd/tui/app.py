@@ -43,6 +43,7 @@ from fnd.matching import MatchSpec
 from fnd.query import FileGroup, Hit, Searcher
 from fnd.tui.actions import REGISTRY, Keymap, load_keymap
 from fnd.tui.indexer_service import IndexerService
+from fnd.tui.match_navigator import MatchNavigator
 from fnd.tui.preview.flat_view import FlatBufferView
 from fnd.tui.preview.lazy_mount import LazyMounter
 from fnd.tui.preview.prefetch import PrefetchEngine
@@ -376,6 +377,8 @@ class FNDApp(App[None]):
         # Prefetch warming pipeline (sink queue + drainer task started in
         # on_mount); see fnd/tui/preview/prefetch.py.
         self._prefetch = PrefetchEngine(self)
+        # Intra-file match navigation (n/b); see fnd/tui/match_navigator.py.
+        self._match_nav = MatchNavigator(self)
 
     def open_progress(self, phase: str = "", *, total: int = 1) -> ProgressSession:
         """Open a new ProgressSession. Use as a context manager."""
@@ -703,6 +706,13 @@ class FNDApp(App[None]):
         # the toggle key — surface the exit hint while it's active.
         if self._reading_mode and overlay_hint is None:
             contextual = (("z", "Reading View"), ("j/k", "Scroll"))
+
+        # Match-nav position indicator: shown whenever the current preview has
+        # matches and the results/preview pane is focused. Its 1-based k/N
+        # reports the stop last jumped to (or, before any jump, just the total).
+        nav = getattr(self, "_match_nav", None)
+        if nav is not None and nav.count and overlay_hint is None and ctx in ("results", "preview"):
+            contextual = (*contextual, ("n/b", f"match {nav.position or 1}/{nav.count}"))
 
         with contextlib.suppress(Exception):
             self.query_one("#footer_hints", Static).update(
@@ -1188,6 +1198,17 @@ class FNDApp(App[None]):
 
     def action_toggle_fuzzy(self) -> None:
         self._search.toggle_fuzzy()
+
+    def action_nav_next_match(self) -> None:
+        # Reading View is pure scroll-nav — no result-driven match jumps there.
+        if self._reading_mode:
+            return
+        self._match_nav.next()
+
+    def action_nav_prev_match(self) -> None:
+        if self._reading_mode:
+            return
+        self._match_nav.prev()
 
     def action_focus_results_pane(self) -> None:
         """Single-key teleport from anywhere → results tree."""

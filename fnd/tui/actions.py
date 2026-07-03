@@ -158,6 +158,25 @@ REGISTRY: tuple[Action, ...] = (
         show_in_footer=False,
     ),
     Action(
+        id="nav_next_match",
+        description="Jump to the next match in the preview (hops by viewport, "
+        "so a screenful of matches advances in one press).",
+        default_key="n",
+        command="next-match",
+        footer_label="Next match",
+        contexts=("results", "preview"),
+        show_in_footer=False,  # surfaced via the k/N indicator instead
+    ),
+    Action(
+        id="nav_prev_match",
+        description="Jump to the previous match in the preview.",
+        default_key="b",
+        command="prev-match",
+        footer_label="Prev match",
+        contexts=("results", "preview"),
+        show_in_footer=False,
+    ),
+    Action(
         id="focus_filters_panel",
         description="Focus the filters panel.",
         default_key="f",
