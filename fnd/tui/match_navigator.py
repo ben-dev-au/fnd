@@ -156,11 +156,15 @@ class MatchNavigator:
         # Flag this as a controller-owned scroll so the scroll watcher doesn't
         # treat it as a user scroll (which would clear the burst memory we just
         # set). Mirrors StructuralScrollStrategy's reconcile-scroll guard.
+        # ``immediate`` (not animated) so the scroll commits synchronously
+        # inside the reconcile window — an animated scroll's watcher trips fire
+        # after ``end_reconcile_scroll``, outside the guard, and would then be
+        # mistaken for a user scroll.
         preview = getattr(self._app, "_preview", None)
         if preview is not None:
             preview.begin_reconcile_scroll()
         try:
-            pane.scroll_to_region(region, top=True, animate=True)
+            pane.scroll_to_region(region, top=True, animate=False, immediate=True)
         finally:
             if preview is not None:
                 preview.end_reconcile_scroll()

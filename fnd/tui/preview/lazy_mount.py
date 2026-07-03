@@ -84,6 +84,12 @@ class LazyMounter:
             and not self._app._preview.reconciling
         ):
             self._app._preview_scroll.release()
+        # A genuine user scroll also drops the match-nav burst memory, so the
+        # next n/b is computed from the on-screen position rather than resuming
+        # from the previous jump. Excludes the nav's own (reconcile-guarded)
+        # scroll, which commits immediately inside the reconcile window.
+        if user_initiated and not self._app._preview.reconciling:
+            self._app._match_nav.on_manual_scroll()
         if self.check_timer is not None:
             with contextlib.suppress(Exception):
                 self.check_timer.stop()  # type: ignore[attr-defined]

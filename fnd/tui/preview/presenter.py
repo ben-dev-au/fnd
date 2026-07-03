@@ -1689,6 +1689,10 @@ class PreviewPresenter:
         lines`` weights by each chunk's line count instead. On large
         markdown the lazy-mounted track spans only part of the file, so
         this stays behind the in-development toggle."""
+        # Rebuild intra-file match-nav stops from the now-mounted chunks
+        # (deferred a refresh so cell/block regions are laid out first). Runs
+        # regardless of the scrollbar-marker toggle below.
+        self._app.call_after_refresh(self._app._match_nav.rebuild)
         try:
             pane = self._app.query_one("#preview_pane", MatchAwareScroll)
         except Exception:

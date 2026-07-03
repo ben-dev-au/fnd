@@ -267,6 +267,9 @@ class SearchController:
         self._app._preview.match_targets = {}
         self._app._preview.parent_id = None
         self._app._preview.hide_progress_bar()
+        # Drop stale match-nav stops + the k/N indicator; the next preview mount
+        # rebuilds them (refresh_match_scrollbar).
+        self._app._match_nav.rebuild()
         self._app._results.refresh()
         # Defer prefetch start so the top result's user-side render gets the
         # main thread to itself for the first ~half-second. Without the
