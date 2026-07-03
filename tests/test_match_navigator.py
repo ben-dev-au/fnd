@@ -1,5 +1,6 @@
 """MatchNavigator: viewport-hop stepping, wrap, and burst/manual-scroll
-memory, driven through a fake pane so the logic tests without a running app."""
+memory, driven through injected stops + a fake pane so the logic tests
+without a running app."""
 
 from __future__ import annotations
 
@@ -30,10 +31,12 @@ class FakeApp:
 def _nav(stops: list[int], vh: int = 20) -> MatchNavigator:
     nav = MatchNavigator.__new__(MatchNavigator)  # bypass app wiring
     nav._app = FakeApp()  # type: ignore[assignment]
-    nav._pane = FakePane(vh)  # type: ignore[assignment]
-    nav._stops = stops
     nav._last_target = None
     nav._margin = 4
+    pane = FakePane(vh)
+    # Inject the pane + a fixed stop list so _go/count use them.
+    nav._pane = lambda: pane  # type: ignore[assignment]
+    nav._stops = lambda _p: stops  # type: ignore[assignment]
     return nav
 
 
@@ -51,7 +54,7 @@ def test_next_advances_by_viewport_and_wraps() -> None:
 
 def test_prev_and_manual_scroll_reset() -> None:
     nav = _nav([5, 8, 40, 45, 90])
-    nav._pane.scroll_offset = Offset(0, 80)  # type: ignore[attr-defined]
+    nav._pane().scroll_offset = Offset(0, 80)  # type: ignore[attr-defined]
     nav.prev()
     assert nav._last_target == 2
     nav.on_manual_scroll()

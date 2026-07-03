@@ -76,60 +76,45 @@ def prev_stop_index(
 class MatchNavigator:
     """Owns intra-file match navigation for the live preview pane.
 
-    Stops are stored as **content-space** tops (stable across scrolling) —
-    screen-space regions go stale the moment the pane scrolls. ``next``/``prev``
-    pick a stop by viewport geometry and scroll the pane straight to it,
+    Stops are enumerated FRESH on every ``count`` / ``next`` / ``prev`` — a
+    snapshot goes stale as the lazy-mounted preview background-fills and
+    reflows (the reported bug: n did nothing because the snapshot was captured
+    empty, before a deep table laid out). Each read re-derives the mounted
+    match stops as content-space tops (stable across scrolling within a settled
+    layout); ``next``/``prev`` pick one by viewport geometry and scroll to it,
     reusing the enumerator's exact cell/block region math.
     """
 
     def __init__(self, app: FNDApp) -> None:
         self._app = app
-        self._pane: VerticalScroll | None = None
-        self._stops: list[int] = []
         self._last_target: int | None = None
         self._margin = 4
-        # Bumped per rebuild() so a superseded retry chain self-cancels.
-        self._rebuild_gen = 0
+        # Bumped per rebuild() so a superseded footer-refresh tick self-cancels.
+        self._refresh_gen = 0
 
-    def rebuild(self) -> None:
-        """Re-enumerate the current preview's match stops as content-space
-        tops. Called when a preview finishes mounting or the query changes;
-        clears the burst memory and refreshes the footer indicator.
-
-        Retries across refreshes while layout is still settling — a table's
-        cell regions only size after the reveal scroll commits — so the k/N
-        indicator appears once the preview is ready rather than reading 0."""
-        self._rebuild_gen += 1
-        self._last_target = None
-        self._attempt_rebuild(self._rebuild_gen, retries=15)
-
-    def _attempt_rebuild(self, gen: int, retries: int) -> None:
-        if gen != self._rebuild_gen:
-            return  # superseded by a newer rebuild
+    def _pane(self) -> VerticalScroll | None:
         from textual.containers import VerticalScroll
 
+        try:
+            return self._app.query_one("#preview_pane", VerticalScroll)
+        except Exception:
+            return None
+
+    def _stops(self, pane: VerticalScroll) -> list[int]:
+        """Currently-mounted match stops as content-space tops, ascending."""
         from fnd.tui.preview_scroll import enumerate_stop_regions
 
-        try:
-            pane = self._app.query_one("#preview_pane", VerticalScroll)
-        except Exception:
-            self._pane, self._stops = None, []
-            self._notify()
-            return
-        self._pane = pane
         spec = self._app._effective_match_spec
-        regions = [] if spec.is_empty else enumerate_stop_regions(pane, spec)
+        if spec.is_empty:
+            return []
         base = pane.scrollable_content_region.offset.y
         oy = pane.scroll_offset.y
-        self._stops = sorted(r.y - base + oy for r in regions)
-        self._notify()
-        # Non-empty query but nothing resolved yet → layout still settling; retry.
-        if not self._stops and not spec.is_empty and retries > 0:
-            self._app.call_after_refresh(lambda: self._attempt_rebuild(gen, retries - 1))
+        return sorted(r.y - base + oy for r in enumerate_stop_regions(pane, spec))
 
     @property
     def count(self) -> int:
-        return len(self._stops)
+        pane = self._pane()
+        return len(self._stops(pane)) if pane is not None else 0
 
     @property
     def position(self) -> int | None:
@@ -142,6 +127,31 @@ class MatchNavigator:
         the on-screen position, never resuming from the previous jump."""
         self._last_target = None
 
+    def rebuild(self) -> None:
+        """Called when a preview mounts or the query changes: drop the burst
+        memory and refresh the footer indicator, re-refreshing across frames
+        while the preview is still mounting/settling so the k/N count appears
+        once the (possibly deep) match stops finish laying out."""
+        self._refresh_gen += 1
+        self._last_target = None
+        self._tick(self._refresh_gen)
+
+    def _tick(self, gen: int, retries: int = 40) -> None:
+        if gen != self._refresh_gen:
+            return  # superseded by a newer rebuild
+        self._notify()
+        if retries > 0 and self._loading():
+            self._app.call_after_refresh(lambda: self._tick(gen, retries - 1))
+
+    def _loading(self) -> bool:
+        """The preview is still mounting or its scroll hasn't settled, so more
+        match stops may still appear (keep refreshing the indicator)."""
+        scroll = getattr(self._app, "_preview_scroll", None)
+        if scroll is not None and scroll.is_settling:
+            return True
+        active = getattr(getattr(self._app, "_preview", None), "active", None)
+        return active is not None and not active.is_complete
+
     def next(self) -> None:
         self._go(forward=True)
 
@@ -149,25 +159,26 @@ class MatchNavigator:
         self._go(forward=False)
 
     def _go(self, *, forward: bool) -> None:
-        if self._pane is None or not self._stops:
-            return
-        scroll_y = self._pane.scroll_offset.y
-        vh = self._pane.scrollable_content_region.height
-        chooser = next_stop_index if forward else prev_stop_index
-        k = chooser(self._stops, scroll_y, vh, self._last_target, self._margin)
-        self._last_target = k
-        self._scroll_to_stop(k, vh)
-        self._notify()
-
-    def _scroll_to_stop(self, k: int, vh: int) -> None:
-        from textual.geometry import Region
-
-        pane = self._pane
+        pane = self._pane()
         if pane is None:
             return
+        stops = self._stops(pane)  # fresh — never a stale snapshot
+        if not stops:
+            return
+        scroll_y = pane.scroll_offset.y
+        vh = pane.scrollable_content_region.height
+        chooser = next_stop_index if forward else prev_stop_index
+        k = chooser(stops, scroll_y, vh, self._last_target, self._margin)
+        self._last_target = k
+        self._scroll_to_stop(pane, stops[k], vh)
+        self._notify()
+
+    def _scroll_to_stop(self, pane: VerticalScroll, top_y: int, vh: int) -> None:
+        from textual.geometry import Region
+
         # Drop the match ~a quarter down the viewport for context above it.
         margin = int(vh * 0.25)
-        region = Region(0, max(0, self._stops[k] - margin), 1, vh)
+        region = Region(0, max(0, top_y - margin), 1, vh)
         # Flag this as a controller-owned scroll so the scroll watcher doesn't
         # treat it as a user scroll (which would clear the burst memory we just
         # set). Mirrors StructuralScrollStrategy's reconcile-scroll guard.
