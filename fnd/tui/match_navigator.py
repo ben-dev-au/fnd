@@ -88,16 +88,28 @@ class MatchNavigator:
         self._stops: list[int] = []
         self._last_target: int | None = None
         self._margin = 4
+        # Bumped per rebuild() so a superseded retry chain self-cancels.
+        self._rebuild_gen = 0
 
     def rebuild(self) -> None:
         """Re-enumerate the current preview's match stops as content-space
         tops. Called when a preview finishes mounting or the query changes;
-        clears the burst memory and refreshes the footer indicator."""
+        clears the burst memory and refreshes the footer indicator.
+
+        Retries across refreshes while layout is still settling — a table's
+        cell regions only size after the reveal scroll commits — so the k/N
+        indicator appears once the preview is ready rather than reading 0."""
+        self._rebuild_gen += 1
+        self._last_target = None
+        self._attempt_rebuild(self._rebuild_gen, retries=15)
+
+    def _attempt_rebuild(self, gen: int, retries: int) -> None:
+        if gen != self._rebuild_gen:
+            return  # superseded by a newer rebuild
         from textual.containers import VerticalScroll
 
         from fnd.tui.preview_scroll import enumerate_stop_regions
 
-        self._last_target = None
         try:
             pane = self._app.query_one("#preview_pane", VerticalScroll)
         except Exception:
@@ -111,6 +123,9 @@ class MatchNavigator:
         oy = pane.scroll_offset.y
         self._stops = sorted(r.y - base + oy for r in regions)
         self._notify()
+        # Non-empty query but nothing resolved yet → layout still settling; retry.
+        if not self._stops and not spec.is_empty and retries > 0:
+            self._app.call_after_refresh(lambda: self._attempt_rebuild(gen, retries - 1))
 
     @property
     def count(self) -> int:
