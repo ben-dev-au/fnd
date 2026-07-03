@@ -76,28 +76,29 @@ def prev_stop_index(
 class MatchNavigator:
     """Owns intra-file match navigation for the live preview pane.
 
-    Two concerns, split so each stays correct AND cheap:
+    Count and navigation deliberately use DIFFERENT data so each stays correct,
+    cheap, AND free of side effects on unrelated scroll timing:
 
-    * **Navigation** (``next``/``prev``) re-enumerates the mounted match stops
-      FRESH — a snapshot goes stale as the lazy-mounted preview background-fills
-      and reflows (the reported bug: n did nothing because the snapshot was
-      captured empty, before a deep table laid out).
-    * **The k/N footer count** reads a CACHED ``_stops`` — enumerating on every
-      footer refresh would walk the preview subtree on every focus change (a
-      perf contract the pane deliberately avoids). The cache is refreshed only
-      on navigation and by a post-mount settle tick, never on a focus change.
-
-    Stops are content-space tops (stable across scrolling within a settled
-    layout); ``next``/``prev`` pick one by viewport geometry and scroll to it,
-    reusing the enumerator's exact cell/block region math.
+    * **The k/N footer count** is derived from match DATA — ``_fnd_match_coords``
+      on the mounted tables + each chunk's ``match_blocks`` — which are plain
+      list attributes set at compose time. Counting them never reads a region,
+      so it never forces layout, so it can't perturb the delicate cold-nav
+      scroll-settle window (region reads did — measured to stall the landing).
+      The count is cached; the footer reads the cache, so a focus change never
+      re-walks the preview subtree (a perf contract the pane keeps).
+    * **Navigation** (``next``/``prev``) enumerates the match REGIONS fresh on
+      the keypress — a snapshot goes stale as the lazy-mounted preview reflows
+      (the reported bug: n did nothing because the snapshot was captured empty
+      before a deep table laid out). Region reads here are fine: they happen on
+      a deliberate keypress, never during a cold-nav settle.
     """
 
     def __init__(self, app: FNDApp) -> None:
         self._app = app
-        self._stops: list[int] = []  # cached content-space tops (footer count)
+        self._count = 0  # cached data-derived match count (footer indicator)
         self._last_target: int | None = None
         self._margin = 4
-        # Bumped per rebuild() so a superseded settle tick self-cancels.
+        # Bumped per rebuild() so a superseded count tick self-cancels.
         self._refresh_gen = 0
 
     def _pane(self) -> VerticalScroll | None:
@@ -108,29 +109,60 @@ class MatchNavigator:
         except Exception:
             return None
 
-    def _recompute(self, pane: VerticalScroll) -> None:
-        """Refresh the cached stops from the live layout. Walks the preview
-        subtree (via the enumerator's ``pane.query``), so only call it on
-        navigation or during a mount tick — NEVER on a focus change."""
+    def _count_stops(self, pane: VerticalScroll) -> int:
+        """Number of match stops from DATA only — no region reads, so no layout
+        is forced. Mirrors ``enumerate_stop_regions``' stop set: one per matching
+        table cell, one per non-table match block, one per matching plain line."""
+        from textual.widgets import DataTable
+
+        from fnd.render import text_has_any_match
+        from fnd.tui.widgets.markdown import (
+            FNDMarkdown,
+            FNDMarkdownTableDT,
+            FNDMarkdownTD,
+            FNDMarkdownTH,
+        )
+
+        spec = self._app._effective_match_spec
+        if spec.is_empty:
+            return 0
+        n = 0
+        for md in pane.query(FNDMarkdown):
+            for dt in md.query(DataTable):
+                n += len(getattr(dt, "_fnd_match_coords", []))
+            for block in md.match_blocks:
+                if isinstance(block, FNDMarkdownTableDT | FNDMarkdownTD | FNDMarkdownTH):
+                    continue
+                n += 1
+        for line in pane.query("Static.chunk-line"):
+            txt = getattr(line, "fnd_text", None)
+            if txt and text_has_any_match(txt, spec):
+                n += 1
+        return n
+
+    def _region_stops(self, pane: VerticalScroll) -> list[int]:
+        """Match stops as content-space tops (reads regions — call only on a
+        deliberate navigation keypress, never during a cold-nav settle)."""
         from fnd.tui.preview_scroll import enumerate_stop_regions
 
         spec = self._app._effective_match_spec
         if spec.is_empty:
-            self._stops = []
-            return
+            return []
         base = pane.scrollable_content_region.offset.y
         oy = pane.scroll_offset.y
-        self._stops = sorted(r.y - base + oy for r in enumerate_stop_regions(pane, spec))
+        return sorted(r.y - base + oy for r in enumerate_stop_regions(pane, spec))
 
     @property
     def count(self) -> int:
-        return len(self._stops)  # cached — cheap, no subtree walk
+        return self._count  # cached — cheap, no subtree walk
 
     @property
     def position(self) -> int | None:
-        """1-based index of the stop last jumped to, or ``None`` before any
-        jump (or after a manual scroll)."""
-        return None if self._last_target is None else self._last_target + 1
+        """1-based index of the stop last jumped to (clamped to the count), or
+        ``None`` before any jump (or after a manual scroll)."""
+        if self._last_target is None:
+            return None
+        return min(self._last_target + 1, self._count) if self._count else self._last_target + 1
 
     def on_manual_scroll(self) -> None:
         """Drop the burst memory so the next ``n``/``b`` is computed purely from
@@ -139,38 +171,40 @@ class MatchNavigator:
 
     def rebuild(self) -> None:
         """Called when a preview mounts or the query changes: drop the burst
-        memory and re-derive the cached count, re-ticking across frames while
-        the preview is still mounting/settling (or the count is still growing)
-        so the k/N indicator appears once the deep match stops finish laying
-        out — then goes quiet so focus changes never re-walk the subtree."""
+        memory and re-derive the cached count. Two phases so nothing touches the
+        preview subtree during the cold-nav scroll-settle window."""
         self._refresh_gen += 1
         self._last_target = None
-        self._tick(self._refresh_gen)
+        self._await_mount(self._refresh_gen, retries=60)
 
-    def _tick(self, gen: int, retries: int = 60) -> None:
+    def _await_mount(self, gen: int, retries: int) -> None:
+        """Phase 1: BARE poll for mount completion — no query, no region reads,
+        nothing that touches the preview subtree — so the delicate cold-nav
+        settle window is untouched (any per-frame subtree work there stalls the
+        landing). Just wait for is_complete, then count."""
         if gen != self._refresh_gen:
             return  # superseded by a newer rebuild
-        prev = len(self._stops)
-        pane = self._pane()
-        if pane is not None:
-            self._recompute(pane)
-        else:
-            self._stops = []
-        self._notify()
-        # Keep ticking while the preview is still settling OR the count is still
-        # changing (cells size after mount completes); stop once stable + idle
-        # so no work leaks into steady-state focus changes.
-        if retries > 0 and (self._loading() or len(self._stops) != prev):
-            self._app.call_after_refresh(lambda: self._tick(gen, retries - 1))
-
-    def _loading(self) -> bool:
-        """The preview is still mounting or its scroll hasn't settled, so more
-        match stops may still appear (keep refreshing the indicator)."""
-        scroll = getattr(self._app, "_preview_scroll", None)
-        if scroll is not None and scroll.is_settling:
-            return True
         active = getattr(getattr(self._app, "_preview", None), "active", None)
-        return active is not None and not active.is_complete
+        if active is not None and not active.is_complete and retries > 0:
+            self._app.call_after_refresh(lambda: self._await_mount(gen, retries - 1))
+            return
+        self._count_tick(gen, retries=3)
+
+    def _count_tick(self, gen: int, retries: int) -> None:
+        """Phase 2: the mount is complete — derive the DATA count (no region
+        reads; match data is set at compose time, which is done by is_complete).
+        Kept to a couple of passes (measured safe; many post-mount subtree walks
+        are not) to catch a chunk that composes on the very next frame."""
+        if gen != self._refresh_gen:
+            return
+        prev = self._count
+        pane = self._pane()
+        self._count = 0 if pane is None else self._count_stops(pane)
+        self._notify()
+        # Two guaranteed passes (catch a 0→N compose on the next frame), then
+        # stop unless still changing.
+        if retries > 0 and (retries > 1 or self._count != prev):
+            self._app.call_after_refresh(lambda: self._count_tick(gen, retries - 1))
 
     def next(self) -> None:
         self._go(forward=True)
@@ -182,15 +216,16 @@ class MatchNavigator:
         pane = self._pane()
         if pane is None:
             return
-        self._recompute(pane)  # fresh for navigation — never a stale snapshot
-        if not self._stops:
+        stops = self._region_stops(pane)  # fresh — never a stale snapshot
+        if not stops:
             return
         scroll_y = pane.scroll_offset.y
         vh = pane.scrollable_content_region.height
         chooser = next_stop_index if forward else prev_stop_index
-        k = chooser(self._stops, scroll_y, vh, self._last_target, self._margin)
+        k = chooser(stops, scroll_y, vh, self._last_target, self._margin)
         self._last_target = k
-        self._scroll_to_stop(pane, self._stops[k], vh)
+        self._count = len(stops)  # keep the indicator in sync with what nav sees
+        self._scroll_to_stop(pane, stops[k], vh)
         self._notify()
 
     def _scroll_to_stop(self, pane: VerticalScroll, top_y: int, vh: int) -> None:
