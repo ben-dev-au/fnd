@@ -58,6 +58,8 @@ __all__ = [
     "_HeadingMarkerMixin",
     "_build_match_spans",
     "_compute_table_col_widths",
+    "_find_first_match_coord_in_table",
+    "_find_match_coords_in_table",
     "_legacy_blocks_to_md",
     "_record_first_match",
 ]
@@ -439,9 +441,12 @@ class FNDMarkdownTableDT(MarkdownTable):
             dt.add_row(*row, height=None)
         md = self._markdown
         spec = getattr(md, "match_spec", None) or MatchSpec()
-        found = _find_first_match_coord_in_table(headers, rows, spec)
-        if found is not None:
-            match_coord, is_full = found
+        matches = _find_match_coords_in_table(headers, rows, spec)
+        # Full-match cells (dim proximity strays skipped) so match-nav hops
+        # only between genuine hits; the first match stays the scroll target.
+        dt._fnd_match_coords = [Coordinate(*rc) for rc, full in matches if full]  # type: ignore[attr-defined]
+        if matches:
+            match_coord, is_full = matches[0]
             dt._fnd_match_coord = Coordinate(*match_coord)  # type: ignore[attr-defined]
             # Register self as parent's first_match_block — TH/TD widgets are
             # bypassed so _record_first_match never fires. A full co-occurrence
@@ -584,47 +589,36 @@ def _compute_table_col_widths(
     return widths
 
 
-def _find_first_match_coord_in_table(
+def _find_match_coords_in_table(
     headers: list[Any], rows: list[list[Any]], spec: MatchSpec
-) -> tuple[tuple[int, int], bool] | None:
-    """Return ``((row, col), is_full)`` for the first cell that matches, where
-    ``is_full`` is True when the cell carries a real (qualifying) match rather
-    than a dimmed proximity stray. ``None`` when no cell matches.
+) -> list[tuple[tuple[int, int], bool]]:
+    """Every matching cell as ``((row, col), is_full)``, full matches first.
 
     A cell matches iff ``text_has_any_match`` does — a word match OR a
-    quoted-phrase span, the same gate the highlight overlay applies — so the
-    coordinate always points at a cell that is actually highlighted (quoted
-    phrases included).
+    quoted-phrase span, the same gate the highlight overlay applies — so each
+    coordinate points at a cell that is actually highlighted (quoted phrases
+    included).
     (Checking the Content's ``spans`` instead is wrong: that set also
     carries the markdown styling spans — inline code, emphasis, links —
-    so the first *styled* cell wins over the first *matched* one, parking
-    the scroll near the table top while the real match sits rows below.)
+    so a merely *styled* cell would slip in over a *matched* one.)
     ``text_has_any_match`` short-circuits on the first matching word and
     skips the per-char alignment / Span allocation that building the full
     highlight spans here would waste on every cell of a large table.
 
     For a proximity query (``{N}``/``NEAR/N``/``"a b"~N``) a cell can match
-    only via a dimmed out-of-window stray; we then prefer the first cell with
-    a *full* (in-window) co-occurrence and fall back to a dimmed cell only if
-    none exists — so the scroll lands on the genuine match, mirroring the flat
-    and block paths. Plain queries keep the cheaper any-match scan unchanged.
+    only via a dimmed out-of-window stray; full (in-window) cells sort ahead
+    of dim-only ones so the scroll target and first nav stop land on the
+    genuine co-occurrence, mirroring the flat and block paths. Plain queries
+    never dim, so every hit is full.
 
-    Header hits map to row 0 col c as a best-effort approximation since
-    the DataTable cursor doesn't address headers directly.
+    Header hits map to row 0 col c as a best-effort approximation since the
+    DataTable cursor doesn't address headers directly.
     """
     from fnd.render import text_has_any_match, text_has_full_match
 
     if spec.is_empty:
-        return None
-    # Single pass with a cheap gate: ``text_has_any_match`` short-circuits on the
-    # first matching word, so a non-matching cell never pays for the heavier
-    # proximity-aware ``text_has_full_match`` (which stems every token). Only a
-    # cell that already matched is checked for a full co-occurrence. Return the
-    # first full match immediately; remember the first dimmed-only stray and fall
-    # back to it only if no full match exists. Plain queries never dim, so the
-    # full check is skipped entirely and the any-match hit is always full.
+        return []
     prox = bool(spec.proximity_groups)
-    first_dim: tuple[tuple[int, int], bool] | None = None
 
     def _tier(plain: str) -> bool | None:
         """``None`` no match · ``True`` full (qualifying) · ``False`` dim-only."""
@@ -632,20 +626,29 @@ def _find_first_match_coord_in_table(
             return None
         return (not prox) or text_has_full_match(plain, spec)
 
+    out: list[tuple[tuple[int, int], bool]] = []
     for col, h in enumerate(headers):
         tier = _tier(getattr(h, "plain", "") or "")
-        if tier:
-            return (0, col), True
-        if tier is False and first_dim is None:
-            first_dim = (0, col), False
+        if tier is not None:
+            out.append(((0, col), bool(tier)))
     for r_idx, row in enumerate(rows):
         for c_idx, cell in enumerate(row):
             tier = _tier(getattr(cell, "plain", "") or "")
-            if tier:
-                return (r_idx, c_idx), True
-            if tier is False and first_dim is None:
-                first_dim = (r_idx, c_idx), False
-    return first_dim
+            if tier is not None:
+                out.append(((r_idx, c_idx), bool(tier)))
+    # Full matches first (stable within tier) so the single scroll target and
+    # the first nav stop prefer a real co-occurrence over a dim-only stray.
+    out.sort(key=lambda t: not t[1])
+    return out
+
+
+def _find_first_match_coord_in_table(
+    headers: list[Any], rows: list[list[Any]], spec: MatchSpec
+) -> tuple[tuple[int, int], bool] | None:
+    """First matching cell (full preferred), or ``None``. Thin wrapper over
+    :func:`_find_match_coords_in_table` kept for the single-target callers."""
+    matches = _find_match_coords_in_table(headers, rows, spec)
+    return matches[0] if matches else None
 
 
 class FNDMarkdown(Markdown):
