@@ -611,7 +611,7 @@ class FNDApp(App[None]):
             return
         nav = getattr(self, "_match_nav", None)
         if nav is not None and nav.count and not self._reading_mode:
-            pane.border_subtitle = f" match {nav.position or 1}/{nav.count} · n/b "
+            pane.border_subtitle = f" match {nav.position or 1}/{nav.count} "
         else:
             pane.border_subtitle = ""
 
@@ -724,6 +724,14 @@ class FNDApp(App[None]):
         # the toggle key — surface the exit hint while it's active.
         if self._reading_mode and overlay_hint is None:
             contextual = (("z", "Reading View"), ("j/k", "Scroll"))
+
+        # Match navigation key hint — shown in the keybinding area (like every
+        # other key) whenever the current preview has matches. The k/N COUNT
+        # itself lives on the preview's border, not here. Placed first so it
+        # isn't clipped off the crowded footer line.
+        nav = getattr(self, "_match_nav", None)
+        if nav is not None and nav.count and overlay_hint is None and ctx in ("results", "preview"):
+            contextual = (("n/b", "Matches"), *contextual)
 
         with contextlib.suppress(Exception):
             self.query_one("#footer_hints", Static).update(

@@ -251,5 +251,8 @@ class MatchNavigator:
                 preview.end_reconcile_scroll()
 
     def _notify(self) -> None:
+        # Count → preview border; n/b key hint → footer keybinding area.
         with contextlib.suppress(Exception):
             self._app._refresh_preview_match_indicator()
+        with contextlib.suppress(Exception):
+            self._app._refresh_footer_hints()

@@ -22,9 +22,12 @@ class FakePane:
 
 
 class FakeApp:
-    """Minimal stand-in: no `_preview` (skips reconcile), no-op indicator."""
+    """Minimal stand-in: no `_preview` (skips reconcile), no-op UI refreshers."""
 
     def _refresh_preview_match_indicator(self) -> None:
+        pass
+
+    def _refresh_footer_hints(self) -> None:
         pass
 
 
