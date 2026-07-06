@@ -893,6 +893,12 @@ class PreviewPresenter:
             outgoing.add_class("-hidden")
         self.outgoing = None
         container.remove_class("-pre-reveal")
+        # The new result is now positioned — re-measure the ▲/▼ view markers.
+        # This is the authoritative switch event: it fires even when the reveal
+        # scroll doesn't move (which the scroll-watcher trigger would miss,
+        # leaving the previous result's markers stale).
+        with contextlib.suppress(Exception):
+            self._app._match_nav.on_result_revealed()
 
     def finalize_pre_reveal(self, container: PreviewContainer, focus_chunk_seq: int) -> None:
         """Lift ``-pre-reveal`` once focused chunk's compose is ready, then scroll."""

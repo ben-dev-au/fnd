@@ -90,6 +90,10 @@ class LazyMounter:
         # scroll, which commits immediately inside the reconcile window.
         if user_initiated and not self._app._preview.reconciling:
             self._app._match_nav.on_manual_scroll()
+        # Any scroll — a user wheel/key, a reveal, or a warm-nav result switch —
+        # can move matches across the fold, so re-measure the ▲/▼ view markers.
+        # Settle-gated inside, so it never reads regions mid cold-nav settle.
+        self._app._match_nav.on_preview_scrolled()
         if self.check_timer is not None:
             with contextlib.suppress(Exception):
                 self.check_timer.stop()  # type: ignore[attr-defined]

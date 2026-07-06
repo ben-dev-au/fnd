@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 from textual.containers import VerticalScroll
@@ -43,12 +44,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     return load(cfg_path)
 
 
-@pytest.fixture
-def flashcards_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
-    """A multi-section file (several headings/paragraphs, so the preview mounts
-    as multiple chunks and reflows) ending in a Q&A table taller than a test
-    viewport, with CRC in card 32's answer and card 47's question."""
-    a = tmp_path / "notes"
+def _table_rows() -> str:
     rows = "".join(
         f"| {i} | question {i} filler filler | answer {i} filler filler |\n" for i in range(1, 32)
     )
@@ -57,19 +53,46 @@ def flashcards_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
         f"| {i} | question {i} filler filler | answer {i} filler filler |\n" for i in range(33, 47)
     )
     rows += "| 47 | What is the Ethernet CRC field | Cyclic Redundancy Check field |\n"
+    return rows
+
+
+@pytest.fixture
+def flashcards_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
+    """A multi-section file with a CRC match in the *Overview* paragraph AND two
+    in the later flashcards table — i.e. matches in DIFFERENT results. Used to
+    prove n stays within the current result and doesn't cross into another."""
+    a = tmp_path / "notes"
     body = (
         "# Networking Notes\n\n"
         "## Overview\n\nThe frame check uses a CRC value for integrity.\n\n"
         "## Detail\n\nSome unrelated prose about switches and routers here.\n\n"
         "## More Detail\n\nMore unrelated prose about addressing and subnets.\n\n"
-        "## Study Flashcards\n\n| # | Q | A |\n| --- | --- | --- |\n" + rows
+        "## Study Flashcards\n\n| # | Q | A |\n| --- | --- | --- |\n" + _table_rows()
     )
     _write(a / "Cards.md", body)
     build_index(roots=[a], index_dir=tmp_index_dir, collection="notes")
     return tmp_index_dir
 
 
-def _cell_visible(pane: VerticalScroll, dt: DataTable, coord: Coordinate) -> bool:
+@pytest.fixture
+def table_result_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
+    """Same multi-section file, but only the flashcards table matches — so the
+    table IS the loaded result (the reported scenario). Card 32 is revealed on
+    load; card 47's cell sits below the fold within the same result."""
+    a = tmp_path / "notes"
+    body = (
+        "# Networking Notes\n\n"
+        "## Overview\n\nThe frame check uses a checksum value for integrity.\n\n"
+        "## Detail\n\nSome unrelated prose about switches and routers here.\n\n"
+        "## More Detail\n\nMore unrelated prose about addressing and subnets.\n\n"
+        "## Study Flashcards\n\n| # | Q | A |\n| --- | --- | --- |\n" + _table_rows()
+    )
+    _write(a / "Cards.md", body)
+    build_index(roots=[a], index_dir=tmp_index_dir, collection="notes")
+    return tmp_index_dir
+
+
+def _cell_visible(pane: VerticalScroll, dt: DataTable[Any], coord: Coordinate) -> bool:
     """True if the table cell at ``coord`` is within the pane's visible area."""
     try:
         cell = dt._get_cell_region(coord)  # type: ignore[attr-defined]
@@ -83,20 +106,47 @@ def _cell_visible(pane: VerticalScroll, dt: DataTable, coord: Coordinate) -> boo
 
 
 @pytest.mark.asyncio
-async def test_n_reaches_second_table_match_below_the_fold(
-    cfg: Config, flashcards_index: Path
+async def test_n_reveals_second_table_match_below_the_fold(
+    cfg: Config, table_result_index: Path
 ) -> None:
-    app = FNDApp(
-        index_dir=flashcards_index,
-        config=cfg,
-        collection="notes",
-        initial_query="CRC",
-    )
+    """When the table IS the current result, n reveals its off-screen second
+    match cell — the reported bug, at the geometry level (cell truly visible)."""
+    app = FNDApp(index_dir=table_result_index, config=cfg, collection="notes", initial_query="CRC")
     async with app.run_test(size=(110, 24)) as pilot:
         await pilot.pause()
         app.query_one("#results_pane", Tree).focus()
-        # The preview settles and the navigator sees every CRC match (the intro
-        # sentence + both table cells).
+        await wait_until(
+            pilot,
+            lambda: app._match_nav.count >= 2,
+            timeout=30.0,
+            message="match-nav did not enumerate the table matches after settle",
+        )
+        pane = app.query_one("#preview_pane", VerticalScroll)
+        dt = next(t for t in pane.query(DataTable) if getattr(t, "_fnd_match_coords", []))
+        card47 = Coordinate(46, 1)
+
+        # Card 47 starts below the fold — unreachable without navigation.
+        assert not _cell_visible(pane, dt, card47), "card 47 unexpectedly already visible"
+
+        for _ in range(app._match_nav.count + 1):
+            if _cell_visible(pane, dt, card47):
+                break
+            app.action_nav_next_match()
+            await pilot.pause()
+            await pilot.pause()
+        assert _cell_visible(pane, dt, card47), "n never revealed card 47's match cell"
+
+
+@pytest.mark.asyncio
+async def test_n_stays_within_the_current_result(cfg: Config, flashcards_index: Path) -> None:
+    """n reveals hidden matches of the CURRENT result only — it must not cross
+    into another result (the table), which is the results-pane arrows' job."""
+    app = FNDApp(index_dir=flashcards_index, config=cfg, collection="notes", initial_query="CRC")
+    async with app.run_test(size=(110, 24)) as pilot:
+        await pilot.pause()
+        app.query_one("#results_pane", Tree).focus()
+        # The loaded result is the Overview paragraph (its lone CRC); the table's
+        # card 47 lives in a different result.
         await wait_until(
             pilot,
             lambda: app._match_nav.count >= 3,
@@ -107,14 +157,13 @@ async def test_n_reaches_second_table_match_below_the_fold(
         dt = next(t for t in pane.query(DataTable) if getattr(t, "_fnd_match_coords", []))
         card47 = Coordinate(46, 1)
 
-        # Card 47 starts below the fold — unreachable without navigation.
-        assert not _cell_visible(pane, dt, card47), "card 47 unexpectedly already visible"
-
-        # Press n until it comes into view (a few hops through the earlier matches).
-        for _ in range(app._match_nav.count + 1):
-            if _cell_visible(pane, dt, card47):
-                break
+        assert not _cell_visible(pane, dt, card47)
+        # Hammer n well past this result's own matches; it must never scroll the
+        # table's card 47 into view.
+        for _ in range(app._match_nav.count + 3):
             app.action_nav_next_match()
             await pilot.pause()
             await pilot.pause()
-        assert _cell_visible(pane, dt, card47), "n never revealed card 47's match cell"
+            assert not _cell_visible(pane, dt, card47), (
+                "n crossed out of the current result into another result's match"
+            )

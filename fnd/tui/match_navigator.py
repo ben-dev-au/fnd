@@ -1,9 +1,11 @@
-"""Intra-file preview match navigation (n / b).
+"""Within-result preview match navigation (n / b).
 
-Steps between the match stops of the currently-mounted preview, hopping by
-viewport so an off-screen match in the same file is reachable without manual
-scrolling. The geometry (which stop is next/prev) is pure and unit-tested;
-region resolution + scrolling live on :class:`MatchNavigator` below.
+The results-pane arrows step between results; within a result whose chunk is
+taller than the viewport they skip straight past matches below the fold. This
+module hops between those hidden matches by viewport — scoped to the current
+result — and surfaces ``▲a ▼b`` view counts so the user knows they exist. The
+geometry (next/prev stop, view bucketing) is pure and unit-tested; region
+resolution + scrolling live on :class:`MatchNavigator` below.
 """
 
 from __future__ import annotations
@@ -27,6 +29,33 @@ def _ref_top(ys: list[int], scroll_y: int, last_target: int | None, margin: int)
     if last_target is not None and 0 <= last_target < len(ys):
         return ys[last_target] - margin
     return scroll_y
+
+
+def _view_buckets(ys: list[int], vh: int) -> int:
+    """Number of viewport-sized screenfuls needed to cover ``ys`` (sorted) — a
+    greedy sweep: each screenful spans ``vh`` from the first match it reaches, so
+    matches within one viewport of each other count as one "view". This is the
+    count of ``n``/``b`` hops it takes to visit them all."""
+    views = 0
+    covered_to: int | None = None
+    for y in ys:
+        if covered_to is None or y >= covered_to:
+            views += 1
+            covered_to = y + vh
+    return views
+
+
+def offscreen_views(ys: list[int], top: int, bottom: int, vh: int) -> tuple[int, int]:
+    """``(matching views above the viewport, matching views below)`` — the
+    awareness signal behind the ``▲a ▼b`` border. ``ys`` are the current
+    result's match stops (content-space tops, sorted); ``[top, bottom)`` is the
+    viewport in the same space; ``vh`` is its height. A "view" is a screenful
+    that holds ≥1 off-screen match, so ``▼2`` means two more screenfuls of this
+    result lie below the fold. A stop exactly at ``bottom`` is below; one at
+    ``top`` is visible."""
+    above = [y for y in ys if y < top]
+    below = [y for y in ys if y >= bottom]
+    return _view_buckets(above, vh), _view_buckets(below, vh)
 
 
 def next_stop_index(
@@ -76,26 +105,47 @@ def prev_stop_index(
 class MatchNavigator:
     """Owns intra-file match navigation for the live preview pane.
 
-    Count and navigation deliberately use DIFFERENT data so each stays correct,
+    The three surfaces deliberately use DIFFERENT data so each stays correct,
     cheap, AND free of side effects on unrelated scroll timing:
 
-    * **The k/N footer count** is derived from match DATA — ``_fnd_match_coords``
-      on the mounted tables + each chunk's ``match_blocks`` — which are plain
-      list attributes set at compose time. Counting them never reads a region,
-      so it never forces layout, so it can't perturb the delicate cold-nav
-      scroll-settle window (region reads did — measured to stall the landing).
-      The count is cached; the footer reads the cache, so a focus change never
-      re-walks the preview subtree (a perf contract the pane keeps).
+    * **The footer-hint gate** (`count`) is derived from match DATA —
+      ``_fnd_match_coords`` on the mounted tables + each chunk's ``match_blocks``
+      — plain list attributes set at compose time. Counting them never reads a
+      region, so it never forces layout, so it can't perturb the delicate cold-
+      nav scroll-settle window (region reads did — measured to stall the
+      landing). It is cached; the footer reads the cache, so a focus change
+      never re-walks the preview subtree (a perf contract the pane keeps).
     * **Navigation** (``next``/``prev``) enumerates the match REGIONS fresh on
       the keypress — a snapshot goes stale as the lazy-mounted preview reflows
       (the reported bug: n did nothing because the snapshot was captured empty
       before a deep table laid out). Region reads here are fine: they happen on
       a deliberate keypress, never during a cold-nav settle.
+    * **The ▲a/▼b view arrows** answer the original awareness question — "does
+      the result I'm on have matches I can't see?" Users navigate *between*
+      results with the results-pane arrows, which skip straight past matches
+      lower down in the *same* chunk; the arrows count how many screenfuls
+      ("views") of the CURRENT result hold an off-screen match, above and below.
+      Everything here is scoped to the current chunk (``anchor.focus_chunk_seq``
+      and its widget extent) — never the whole file. The counts ARE region-
+      derived, but the read is deferred to settle-safe moments only (after the
+      mount settles, on a nav keypress, on a user scroll) and cached, so the
+      border refresh stays layout-free.
+
+    ``n``/``b`` are likewise scoped: they hop between the current result's
+    matching views, never crossing into another result (that stays the
+    results-pane's job).
     """
 
     def __init__(self, app: FNDApp) -> None:
         self._app = app
-        self._count = 0  # cached data-derived match count (footer indicator)
+        self._count = 0  # cached data-derived match count (footer-hint gate)
+        # Cached matching-view counts for the current result, relative to the
+        # viewport — the ▲a/▼b markers on the preview border. Region-derived
+        # (unlike _count) but only re-measured at settle-safe moments (see
+        # _measure_after_settle); the border reads the cache, never the regions.
+        self._above = 0
+        self._below = 0
+        self._measure_pending = False
         self._last_target: int | None = None
         self._margin = 4
         # Bumped per rebuild() so a superseded count tick self-cancels.
@@ -152,9 +202,77 @@ class MatchNavigator:
         oy = pane.scroll_offset.y
         return sorted(r.y - base + oy for r in enumerate_stop_regions(pane, spec))
 
+    def _current_chunk_extent(self, pane: VerticalScroll) -> tuple[int, int] | None:
+        """Content-space ``[top, bottom)`` of the CURRENT result's chunk — the
+        one the results-pane selection revealed (``anchor.focus_chunk_seq``).
+        ``bottom`` is the next mounted chunk's top (so it works whether the
+        chunk widget is the full ``FNDMarkdown`` or just a plain chunk's first
+        line); the last chunk extends to the content bottom. ``None`` when the
+        current chunk can't be located (no anchor, or a flat preview with no
+        per-chunk widgets) — callers then skip the arrows rather than guess."""
+        ctrl = getattr(self._app, "_preview_scroll", None)
+        anchor = getattr(ctrl, "anchor", None)
+        preview = getattr(self._app, "_preview", None)
+        widgets: dict[int, object] = getattr(preview, "chunk_widgets", None) or {}
+        if anchor is None or not widgets:
+            return None
+        seq = anchor.focus_chunk_seq
+        cur = widgets.get(seq)
+        if cur is None:
+            return None
+        base = pane.scrollable_content_region.offset.y
+        oy = pane.scroll_offset.y
+
+        def ctop(w: object) -> int | None:
+            region = getattr(w, "region", None)
+            if region is None or region.height <= 0:
+                return None
+            return region.y - base + oy
+
+        top = ctop(cur)
+        if top is None:
+            return None
+        laters = [
+            y for s, w in widgets.items() if s > seq and (y := ctop(w)) is not None and y > top
+        ]
+        bottom = min(laters) if laters else max(top + 1, pane.virtual_size.height)
+        return top, bottom
+
+    def _chunk_stops(self, pane: VerticalScroll) -> list[int]:
+        """The current result's match stops (content-space tops). Falls back to
+        every mounted stop when the chunk extent is unknown (flat preview) so
+        ``n``/``b`` still work there, just unscoped."""
+        stops = self._region_stops(pane)
+        extent = self._current_chunk_extent(pane)
+        if extent is None:
+            return stops
+        top, bottom = extent
+        return [y for y in stops if top <= y < bottom]
+
+    def _offscreen_views(self, pane: VerticalScroll) -> tuple[int, int]:
+        """Matching views above / below the viewport, scoped to the current
+        result. ``(0, 0)`` when the chunk extent is unknown (no false signal on
+        flat previews). Reads regions — settle-safe callers only."""
+        extent = self._current_chunk_extent(pane)
+        if extent is None:
+            return 0, 0
+        lo, hi = extent
+        stops = [y for y in self._region_stops(pane) if lo <= y < hi]
+        top = pane.scroll_offset.y
+        vh = pane.scrollable_content_region.height
+        return offscreen_views(stops, top, top + vh, vh)
+
     @property
     def count(self) -> int:
         return self._count  # cached — cheap, no subtree walk
+
+    @property
+    def above(self) -> int:
+        return self._above  # cached — matching views above the viewport (this result)
+
+    @property
+    def below(self) -> int:
+        return self._below  # cached — matching views below the viewport (this result)
 
     @property
     def position(self) -> int | None:
@@ -166,8 +284,11 @@ class MatchNavigator:
 
     def on_manual_scroll(self) -> None:
         """Drop the burst memory so the next ``n``/``b`` is computed purely from
-        the on-screen position, never resuming from the previous jump."""
+        the on-screen position, never resuming from the previous jump. A user
+        scroll also moves matches across the fold, so re-measure the ▲/▼ markers
+        (coalesced + settle-gated via :meth:`on_preview_scrolled`)."""
         self._last_target = None
+        self.on_preview_scrolled()
 
     def rebuild(self) -> None:
         """Called when a preview mounts or the query changes: drop the burst
@@ -175,6 +296,9 @@ class MatchNavigator:
         preview subtree during the cold-nav scroll-settle window."""
         self._refresh_gen += 1
         self._last_target = None
+        # Drop stale arrows now (the border clears them this frame); real counts
+        # land once the mount settles (_measure_after_settle).
+        self._above = self._below = 0
         self._await_mount(self._refresh_gen, retries=60)
 
     def _await_mount(self, gen: int, retries: int) -> None:
@@ -205,6 +329,88 @@ class MatchNavigator:
         # stop unless still changing.
         if retries > 0 and (retries > 1 or self._count != prev):
             self._app.call_after_refresh(lambda: self._count_tick(gen, retries - 1))
+        else:
+            # Count is stable; now measure the off-screen arrows — but only once
+            # the nav scroll has provably landed (region reads mid-settle perturb
+            # the cold-nav landing).
+            self._measure_after_settle(gen, retries=30)
+
+    def _measure_after_settle(self, gen: int, retries: int, last_scroll: int | None = None) -> None:
+        """Wait until the reveal scroll has actually LANDED, then take ONE region
+        read to set the ▲/▼ markers. Two conditions must hold: the controller is
+        not settling (cold-nav gate) AND ``scroll_y`` has stopped moving — a warm
+        nav commits its reveal scroll without ever flipping ``is_settling``, so
+        the settle flag alone would measure against the pre-reveal viewport. Both
+        checks read only the scroll reactive (no layout), so the delicate settle
+        path stays untouched; the single region read happens only once landed."""
+        if gen != self._refresh_gen:
+            return
+        pane = self._pane()
+        cur_scroll = pane.scroll_offset.y if pane is not None else None
+        ctrl = getattr(self._app, "_preview_scroll", None)
+        settling = ctrl is not None and ctrl.is_settling
+        moving = last_scroll is None or cur_scroll != last_scroll
+        if retries > 0 and (settling or moving):
+            self._app.call_after_refresh(
+                lambda: self._measure_after_settle(gen, retries - 1, cur_scroll)
+            )
+            return
+        self._measure_offscreen()
+
+    def _measure_offscreen(self) -> None:
+        """Re-derive the cached ▲/▼ view counts (current result, above/below the
+        viewport) and refresh the border only when they changed. Reads regions —
+        call only when the scroll is settled (post-settle, a deliberate nav, or a
+        user scroll)."""
+        pane = self._pane()
+        above, below = (0, 0) if pane is None else self._offscreen_views(pane)
+        if (above, below) != (self._above, self._below):
+            self._above, self._below = above, below
+            self._notify()
+
+    def on_preview_scrolled(self) -> None:
+        """The preview scrolled (user wheel/key, a reveal, or a warm-nav result
+        switch). Re-measure the ▲/▼ markers once it lands. Coalesced + settle-
+        gated, so a scroll burst collapses to one region read and nothing reads
+        regions mid cold-nav settle."""
+        self._schedule_measure()
+
+    def on_result_revealed(self) -> None:
+        """A new result was positioned in the preview — the AUTHORITATIVE switch
+        event. The scroll watcher misses switches whose reveal doesn't move the
+        scroll (so the old result's markers would linger); this fires regardless.
+        Clear the old markers now, reset the burst memory (a new result is a
+        fresh nav), and re-measure once the reveal position settles."""
+        self._last_target = None
+        if (self._above, self._below) != (0, 0):
+            self._above = self._below = 0
+            self._notify()
+        self.on_preview_scrolled()
+
+    def _schedule_measure(self) -> None:
+        """Start a coalesced, settle-gated re-measure (idempotent while one is in
+        flight). The poll reads only the scroll reactive until the scroll lands;
+        the single region read happens at the end."""
+        if self._measure_pending:
+            return
+        self._measure_pending = True
+        self._settle_poll(retries=30, last_scroll=None)
+
+    def _settle_poll(self, retries: int, last_scroll: int | None) -> None:
+        """Wait for the scroll to stop moving and the controller to finish
+        settling, then re-measure. Same two-condition gate as
+        :meth:`_measure_after_settle` — a warm-nav reveal never flips
+        ``is_settling``, so scroll-stability is what catches it."""
+        pane = self._pane()
+        cur = pane.scroll_offset.y if pane is not None else None
+        ctrl = getattr(self._app, "_preview_scroll", None)
+        settling = ctrl is not None and ctrl.is_settling
+        moving = last_scroll is None or cur != last_scroll
+        if retries > 0 and (settling or moving):
+            self._app.call_after_refresh(lambda: self._settle_poll(retries - 1, cur))
+            return
+        self._measure_pending = False
+        self._measure_offscreen()
 
     def next(self) -> None:
         self._go(forward=True)
@@ -216,7 +422,10 @@ class MatchNavigator:
         pane = self._pane()
         if pane is None:
             return
-        stops = self._region_stops(pane)  # fresh — never a stale snapshot
+        # Scope to the CURRENT result's chunk so n/b reveal its hidden matches
+        # and stop at its boundaries — never wandering into the next result
+        # (that's the results-pane's job). Fresh each press — never a stale snap.
+        stops = self._chunk_stops(pane)
         if not stops:
             return
         scroll_y = pane.scroll_offset.y
@@ -224,9 +433,11 @@ class MatchNavigator:
         chooser = next_stop_index if forward else prev_stop_index
         k = chooser(stops, scroll_y, vh, self._last_target, self._margin)
         self._last_target = k
-        self._count = len(stops)  # keep the indicator in sync with what nav sees
         self._scroll_to_stop(pane, stops[k], vh)
-        self._notify()
+        # Re-measure the view arrows AFTER the scroll commits — reading regions
+        # synchronously here (before layout settles) yields an unresolved
+        # viewport. Coalesced; runs on the next refresh with the scroll applied.
+        self._schedule_measure()
 
     def _scroll_to_stop(self, pane: VerticalScroll, top_y: int, vh: int) -> None:
         from textual.geometry import Region

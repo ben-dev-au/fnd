@@ -600,18 +600,25 @@ class FNDApp(App[None]):
         self._refresh_footer_hints()
 
     def _refresh_preview_match_indicator(self) -> None:
-        """Show the match-nav ``k/N`` on the preview pane's BOTTOM border —
-        where the matches live — so it reads as part of the preview rather than
-        a global hint (and can't be clipped off the crowded footer line).
-        Cleared when the preview has no matches, or in Reading View (which drops
-        the border)."""
+        """Show ``▲a ▼b`` on the preview's BOTTOM border (in the active-pane
+        accent) counting how many screenfuls ("views") of the CURRENT result
+        hold a match above / below the viewport. The results-pane arrows step
+        between results and skip matches lower in the same chunk; this is the
+        signal that such hidden matches exist, so the user knows to press n/b.
+        Blank when the current result's matches all fit on screen, or in Reading
+        View (which drops the border)."""
         try:
             pane = self.query_one("#preview_pane", MatchAwareScroll)
         except Exception:
             return
         nav = getattr(self, "_match_nav", None)
-        if nav is not None and nav.count and not self._reading_mode:
-            pane.border_subtitle = f" match {nav.position or 1}/{nav.count} "
+        if nav is not None and not self._reading_mode and (nav.above or nav.below):
+            parts: list[str] = []
+            if nav.above:
+                parts.append(f"[$accent]▲{nav.above}[/]")
+            if nav.below:
+                parts.append(f"[$accent]▼{nav.below}[/]")
+            pane.border_subtitle = f" {'  '.join(parts)} "
         else:
             pane.border_subtitle = ""
 

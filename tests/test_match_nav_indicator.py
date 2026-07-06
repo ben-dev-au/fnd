@@ -1,9 +1,9 @@
 """Match navigation surfaces in two places, deliberately separate:
 
 * the ``n/b`` KEY hint lives in the footer keybinding area (like every key), and
-* the ``match k/N`` COUNT lives on the preview pane's bottom border
-  (``border_subtitle``) — where the matches are, and where it can't be clipped
-  off the crowded footer line.
+* the ``▲a ▼b`` off-screen VIEW markers live on the preview pane's bottom border
+  (``border_subtitle``) — but only when the current result has matches beyond
+  the viewport. A short result whose matches all fit on screen shows no markers.
 """
 
 from __future__ import annotations
@@ -64,7 +64,9 @@ def match_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_match_indicator_on_preview_bottom_border(cfg: Config, match_index: Path) -> None:
+async def test_footer_hint_shows_and_short_result_has_no_view_markers(
+    cfg: Config, match_index: Path
+) -> None:
     app = FNDApp(index_dir=match_index, config=cfg, collection="notes", initial_query="CRC")
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
@@ -75,18 +77,21 @@ async def test_match_indicator_on_preview_bottom_border(cfg: Config, match_index
             timeout=30.0,
             message="match-nav count never populated",
         )
-        # COUNT on the preview's bottom border.
+        # This result is a few lines — every match fits on screen, so the border
+        # carries no off-screen view markers (nothing hidden to announce).
         pane = app.query_one("#preview_pane", MatchAwareScroll)
         subtitle = str(pane.border_subtitle or "")
-        assert "match" in subtitle, f"no count on preview border_subtitle: {subtitle!r}"
-        assert str(app._match_nav.count) in subtitle, f"count missing from indicator: {subtitle!r}"
+        assert "▲" not in subtitle, f"unexpected ▲ marker when all matches on screen: {subtitle!r}"
+        assert "▼" not in subtitle, f"unexpected ▼ marker when all matches on screen: {subtitle!r}"
 
         # KEY hint in the footer keybinding area, and actually on screen.
         assert "n/b" in _visible_footer(app), (
             f"n/b key hint clipped/missing from footer: {_visible_footer(app)!r}"
         )
 
-        # Both clear in Reading View (border dropped; n/b inert there).
+        # Markers stay absent in Reading View (border dropped; n/b inert there).
         app.action_toggle_reading_mode()
         await pilot.pause()
-        assert "match" not in str(app.query_one("#preview_pane").border_subtitle or "")
+        rv_subtitle = str(app.query_one("#preview_pane").border_subtitle or "")
+        assert "▲" not in rv_subtitle
+        assert "▼" not in rv_subtitle
