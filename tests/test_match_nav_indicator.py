@@ -89,9 +89,13 @@ async def test_footer_hint_shows_and_short_result_has_no_view_markers(
             f"n/b key hint clipped/missing from footer: {_visible_footer(app)!r}"
         )
 
-        # Markers stay absent in Reading View (border dropped; n/b inert there).
+        # Reading View: markers gone (border dropped) AND the n/b footer hint
+        # gone too — the keys are inert there, so advertising them misleads.
         app.action_toggle_reading_mode()
         await pilot.pause()
         rv_subtitle = str(app.query_one("#preview_pane").border_subtitle or "")
         assert "▲" not in rv_subtitle
         assert "▼" not in rv_subtitle
+        assert "n/b" not in _visible_footer(app), (
+            f"n/b hint should be suppressed in Reading View: {_visible_footer(app)!r}"
+        )

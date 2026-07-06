@@ -40,7 +40,6 @@ def _nav(stops: list[int], vh: int = 20) -> MatchNavigator:
     nav = MatchNavigator.__new__(MatchNavigator)  # bypass app wiring
     nav._app = FakeApp()  # type: ignore[assignment]
     nav._last_target = None
-    nav._margin = 4
     nav._count = len(stops)
     nav._above = 0
     nav._below = 0
@@ -65,6 +64,18 @@ def test_next_advances_by_viewport_and_wraps() -> None:
     assert nav._last_target == 0  # wrap to first
     assert nav.count == 5
     assert nav.position == 1
+
+
+def test_burst_uses_viewport_derived_margin() -> None:
+    # On a 24-row pane the match lands int(24*0.25)=6 rows down, not the old
+    # fixed 4. After landing on stop 30 (viewport top 24, bottom 48), the next
+    # hop must reveal stop 49 — with the stale margin=4 the reference bottom
+    # would be 50 and it would skip 49 straight to 60.
+    nav = _nav([0, 30, 49, 60], vh=24)
+    nav.next()
+    assert nav._last_target == 1
+    nav.next()
+    assert nav._last_target == 2  # stop 49, not skipped to 60 (index 3)
 
 
 def test_prev_and_manual_scroll_reset() -> None:

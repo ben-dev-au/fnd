@@ -628,16 +628,29 @@ def _find_match_coords_in_table(
             return None
         return (not prox) or text_has_full_match(plain, spec)
 
-    out: list[tuple[tuple[int, int], bool]] = []
+    # Header hits and a first-data-row hit both map to ``(0, col)`` (the header
+    # has no cursor coordinate of its own), so a match in both would emit the
+    # coordinate twice — inflating the count and making n/b land on it twice.
+    # Merge by coordinate, keeping the strongest tier (full beats dim-only) and
+    # first-seen order (headers before rows).
+    tier_by_coord: dict[tuple[int, int], bool] = {}
+    order: list[tuple[int, int]] = []
     for col, h in enumerate(headers):
         tier = _tier(getattr(h, "plain", "") or "")
         if tier is not None:
-            out.append(((0, col), bool(tier)))
+            if (0, col) not in tier_by_coord:
+                order.append((0, col))
+            tier_by_coord[(0, col)] = tier_by_coord.get((0, col), False) or bool(tier)
     for r_idx, row in enumerate(rows):
         for c_idx, cell in enumerate(row):
             tier = _tier(getattr(cell, "plain", "") or "")
             if tier is not None:
-                out.append(((r_idx, c_idx), bool(tier)))
+                if (r_idx, c_idx) not in tier_by_coord:
+                    order.append((r_idx, c_idx))
+                tier_by_coord[(r_idx, c_idx)] = tier_by_coord.get((r_idx, c_idx), False) or bool(
+                    tier
+                )
+    out = [(coord, tier_by_coord[coord]) for coord in order]
     # Full matches first (stable within tier) so the single scroll target and
     # the first nav stop prefer a real co-occurrence over a dim-only stray.
     out.sort(key=lambda t: not t[1])

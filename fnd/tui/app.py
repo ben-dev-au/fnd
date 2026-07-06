@@ -735,9 +735,16 @@ class FNDApp(App[None]):
         # Match navigation key hint — shown in the keybinding area (like every
         # other key) whenever the current preview has matches. The k/N COUNT
         # itself lives on the preview's border, not here. Placed first so it
-        # isn't clipped off the crowded footer line.
+        # isn't clipped off the crowded footer line. Suppressed in Reading View,
+        # where n/b are inert (like the border markers).
         nav = getattr(self, "_match_nav", None)
-        if nav is not None and nav.count and overlay_hint is None and ctx in ("results", "preview"):
+        if (
+            nav is not None
+            and nav.count
+            and overlay_hint is None
+            and not self._reading_mode
+            and ctx in ("results", "preview")
+        ):
             contextual = (("n/b", "Matches"), *contextual)
 
         with contextlib.suppress(Exception):

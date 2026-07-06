@@ -14,9 +14,19 @@ import contextlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from textual.containers import VerticalScroll
 
     from fnd.tui.app import FNDApp
+
+
+def _landing_margin(vh: int) -> int:
+    """Rows a jumped-to match is dropped below the viewport top (a quarter down,
+    ≥1). The SAME value drives the actual scroll (``_scroll_to_stop``) and the
+    burst reference viewport (``_ref_top`` via the choosers) — they must agree or
+    a burst hop on a non-16-row pane picks the wrong stop."""
+    return max(1, int(vh * 0.25))
 
 
 def _ref_top(ys: list[int], scroll_y: int, last_target: int | None, margin: int) -> int:
@@ -36,6 +46,8 @@ def _view_buckets(ys: list[int], vh: int) -> int:
     greedy sweep: each screenful spans ``vh`` from the first match it reaches, so
     matches within one viewport of each other count as one "view". This is the
     count of ``n``/``b`` hops it takes to visit them all."""
+    if vh <= 0:
+        return 0  # unlaid-out / hidden pane — no meaningful screenful width
     views = 0
     covered_to: int | None = None
     for y in ys:
@@ -91,8 +103,9 @@ def prev_stop_index(
         return len(ys) - 1
     # Land on the TOP of that previous screenful (symmetry with next's hop),
     # not just the nearest stop above — so a screen with many matches is one
-    # press up, mirroring one press down.
-    window_top = ys[nearest_above] - (viewport_h - 2 * margin)
+    # press up, mirroring one press down. Clamp the window so a tiny viewport
+    # (viewport_h < 2*margin) doesn't invert it and break the grouping.
+    window_top = ys[nearest_above] - max(0, viewport_h - 2 * margin)
     target = nearest_above
     for i in range(nearest_above, -1, -1):
         if ys[i] >= window_top:
@@ -147,7 +160,6 @@ class MatchNavigator:
         self._below = 0
         self._measure_pending = False
         self._last_target: int | None = None
-        self._margin = 4
         # Bumped per rebuild() so a superseded count tick self-cancels.
         self._refresh_gen = 0
 
@@ -296,9 +308,12 @@ class MatchNavigator:
         preview subtree during the cold-nav scroll-settle window."""
         self._refresh_gen += 1
         self._last_target = None
-        # Drop stale arrows now (the border clears them this frame); real counts
-        # land once the mount settles (_measure_after_settle).
-        self._above = self._below = 0
+        # Drop stale arrows now and refresh the border this frame (real counts
+        # land once the mount settles, via _measure_after_settle). Without the
+        # notify the previous result's markers would linger until settle.
+        if (self._above, self._below) != (0, 0):
+            self._above = self._below = 0
+            self._notify()
         self._await_mount(self._refresh_gen, retries=60)
 
     def _await_mount(self, gen: int, retries: int) -> None:
@@ -335,27 +350,50 @@ class MatchNavigator:
             # the cold-nav landing).
             self._measure_after_settle(gen, retries=30)
 
-    def _measure_after_settle(self, gen: int, retries: int, last_scroll: int | None = None) -> None:
-        """Wait until the reveal scroll has actually LANDED, then take ONE region
-        read to set the ▲/▼ markers. Two conditions must hold: the controller is
-        not settling (cold-nav gate) AND ``scroll_y`` has stopped moving — a warm
-        nav commits its reveal scroll without ever flipping ``is_settling``, so
-        the settle flag alone would measure against the pre-reveal viewport. Both
-        checks read only the scroll reactive (no layout), so the delicate settle
-        path stays untouched; the single region read happens only once landed."""
-        if gen != self._refresh_gen:
+    def _poll_until_landed(
+        self,
+        retries: int,
+        last_scroll: int | None,
+        *,
+        is_valid: Callable[[], bool],
+        on_landed: Callable[[], None],
+    ) -> None:
+        """Reschedule until the reveal scroll has actually LANDED, then run
+        ``on_landed``. Two conditions must hold: the controller is not settling
+        (cold-nav gate) AND ``scroll_y`` has stopped moving — a warm nav commits
+        its reveal scroll without ever flipping ``is_settling``, so the settle
+        flag alone would measure against the pre-reveal viewport. Only the scroll
+        reactive is read while polling (no layout), so the delicate settle path
+        stays untouched; ``on_landed`` (the single region read) runs once landed.
+        ``is_valid`` lets a superseded poll self-cancel each tick."""
+        if not is_valid():
             return
         pane = self._pane()
-        cur_scroll = pane.scroll_offset.y if pane is not None else None
+        if pane is None:
+            on_landed()  # pane gone (teardown) — let on_landed settle/clear state
+            return
+        cur = pane.scroll_offset.y
         ctrl = getattr(self._app, "_preview_scroll", None)
         settling = ctrl is not None and ctrl.is_settling
-        moving = last_scroll is None or cur_scroll != last_scroll
+        moving = last_scroll is None or cur != last_scroll
         if retries > 0 and (settling or moving):
             self._app.call_after_refresh(
-                lambda: self._measure_after_settle(gen, retries - 1, cur_scroll)
+                lambda: self._poll_until_landed(
+                    retries - 1, cur, is_valid=is_valid, on_landed=on_landed
+                )
             )
             return
-        self._measure_offscreen()
+        on_landed()
+
+    def _measure_after_settle(self, gen: int, retries: int) -> None:
+        """Post-mount initial measure: land, then measure — self-cancelling if a
+        newer rebuild superseded this generation."""
+        self._poll_until_landed(
+            retries,
+            None,
+            is_valid=lambda: gen == self._refresh_gen,
+            on_landed=self._measure_offscreen,
+        )
 
     def _measure_offscreen(self) -> None:
         """Re-derive the cached ▲/▼ view counts (current result, above/below the
@@ -394,23 +432,12 @@ class MatchNavigator:
         if self._measure_pending:
             return
         self._measure_pending = True
-        self._settle_poll(retries=30, last_scroll=None)
 
-    def _settle_poll(self, retries: int, last_scroll: int | None) -> None:
-        """Wait for the scroll to stop moving and the controller to finish
-        settling, then re-measure. Same two-condition gate as
-        :meth:`_measure_after_settle` — a warm-nav reveal never flips
-        ``is_settling``, so scroll-stability is what catches it."""
-        pane = self._pane()
-        cur = pane.scroll_offset.y if pane is not None else None
-        ctrl = getattr(self._app, "_preview_scroll", None)
-        settling = ctrl is not None and ctrl.is_settling
-        moving = last_scroll is None or cur != last_scroll
-        if retries > 0 and (settling or moving):
-            self._app.call_after_refresh(lambda: self._settle_poll(retries - 1, cur))
-            return
-        self._measure_pending = False
-        self._measure_offscreen()
+        def _landed() -> None:
+            self._measure_pending = False
+            self._measure_offscreen()
+
+        self._poll_until_landed(30, None, is_valid=lambda: True, on_landed=_landed)
 
     def next(self) -> None:
         self._go(forward=True)
@@ -430,8 +457,13 @@ class MatchNavigator:
             return
         scroll_y = pane.scroll_offset.y
         vh = pane.scrollable_content_region.height
+        if vh <= 0:
+            return  # pane not laid out yet — nothing meaningful to hop within
+        # Same margin the actual scroll lands with, so the burst reference
+        # viewport (_ref_top) matches where a jump really put the last match.
+        margin = _landing_margin(vh)
         chooser = next_stop_index if forward else prev_stop_index
-        k = chooser(stops, scroll_y, vh, self._last_target, self._margin)
+        k = chooser(stops, scroll_y, vh, self._last_target, margin)
         self._last_target = k
         self._scroll_to_stop(pane, stops[k], vh)
         # Re-measure the view arrows AFTER the scroll commits — reading regions
@@ -442,8 +474,9 @@ class MatchNavigator:
     def _scroll_to_stop(self, pane: VerticalScroll, top_y: int, vh: int) -> None:
         from textual.geometry import Region
 
-        # Drop the match ~a quarter down the viewport for context above it.
-        margin = int(vh * 0.25)
+        # Drop the match ~a quarter down the viewport for context above it — the
+        # same margin _go feeds the choosers (via _landing_margin).
+        margin = _landing_margin(vh)
         region = Region(0, max(0, top_y - margin), 1, vh)
         # Flag this as a controller-owned scroll so the scroll watcher doesn't
         # treat it as a user scroll (which would clear the burst memory we just
