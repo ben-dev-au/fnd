@@ -43,6 +43,7 @@ from fnd.matching import MatchSpec
 from fnd.query import FileGroup, Hit, Searcher
 from fnd.tui.actions import REGISTRY, Keymap, load_keymap
 from fnd.tui.indexer_service import IndexerService
+from fnd.tui.match_navigator import MatchNavigator
 from fnd.tui.preview.flat_view import FlatBufferView
 from fnd.tui.preview.lazy_mount import LazyMounter
 from fnd.tui.preview.prefetch import PrefetchEngine
@@ -376,6 +377,8 @@ class FNDApp(App[None]):
         # Prefetch warming pipeline (sink queue + drainer task started in
         # on_mount); see fnd/tui/preview/prefetch.py.
         self._prefetch = PrefetchEngine(self)
+        # Intra-file match navigation (n/b); see fnd/tui/match_navigator.py.
+        self._match_nav = MatchNavigator(self)
 
     def open_progress(self, phase: str = "", *, total: int = 1) -> ProgressSession:
         """Open a new ProgressSession. Use as a context manager."""
@@ -468,6 +471,7 @@ class FNDApp(App[None]):
             self.query_one("#results_pane", ResultsTree).focus()
         if location is not None:
             self.call_after_refresh(self._preview_scroll.scroll_to_location, location)
+        self._refresh_preview_match_indicator()
         self._refresh_footer_hints()
 
     def on_mount(self) -> None:
@@ -592,7 +596,31 @@ class FNDApp(App[None]):
             pane.border_title = self._preview_title(pane.region.width)
         except Exception:
             pass
+        self._refresh_preview_match_indicator()
         self._refresh_footer_hints()
+
+    def _refresh_preview_match_indicator(self) -> None:
+        """Show ``▲a ▼b`` on the preview's BOTTOM border (in the active-pane
+        accent) counting how many screenfuls ("views") of the CURRENT result
+        hold a match above / below the viewport. The results-pane arrows step
+        between results and skip matches lower in the same chunk; this is the
+        signal that such hidden matches exist, so the user knows to press n/b.
+        Blank when the current result's matches all fit on screen, or in Reading
+        View (which drops the border)."""
+        try:
+            pane = self.query_one("#preview_pane", MatchAwareScroll)
+        except Exception:
+            return
+        nav = getattr(self, "_match_nav", None)
+        if nav is not None and not self._reading_mode and (nav.above or nav.below):
+            parts: list[str] = []
+            if nav.above:
+                parts.append(f"[$accent]▲{nav.above}[/]")
+            if nav.below:
+                parts.append(f"[$accent]▼{nav.below}[/]")
+            pane.border_subtitle = f" {'  '.join(parts)} "
+        else:
+            pane.border_subtitle = ""
 
     def _dispatch_apps_notice(self, message: str) -> None:
         """Route a notice from fnd.apps through the right UI surface.
@@ -703,6 +731,21 @@ class FNDApp(App[None]):
         # the toggle key — surface the exit hint while it's active.
         if self._reading_mode and overlay_hint is None:
             contextual = (("z", "Reading View"), ("j/k", "Scroll"))
+
+        # Match navigation key hint — shown in the keybinding area (like every
+        # other key) whenever the current preview has matches. The k/N COUNT
+        # itself lives on the preview's border, not here. Placed first so it
+        # isn't clipped off the crowded footer line. Suppressed in Reading View,
+        # where n/b are inert (like the border markers).
+        nav = getattr(self, "_match_nav", None)
+        if (
+            nav is not None
+            and nav.count
+            and overlay_hint is None
+            and not self._reading_mode
+            and ctx in ("results", "preview")
+        ):
+            contextual = (("n/b", "Matches"), *contextual)
 
         with contextlib.suppress(Exception):
             self.query_one("#footer_hints", Static).update(
@@ -1188,6 +1231,17 @@ class FNDApp(App[None]):
 
     def action_toggle_fuzzy(self) -> None:
         self._search.toggle_fuzzy()
+
+    def action_nav_next_match(self) -> None:
+        # Reading View is pure scroll-nav — no result-driven match jumps there.
+        if self._reading_mode:
+            return
+        self._match_nav.next()
+
+    def action_nav_prev_match(self) -> None:
+        if self._reading_mode:
+            return
+        self._match_nav.prev()
 
     def action_focus_results_pane(self) -> None:
         """Single-key teleport from anywhere → results tree."""

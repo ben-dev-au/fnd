@@ -58,6 +58,8 @@ __all__ = [
     "_HeadingMarkerMixin",
     "_build_match_spans",
     "_compute_table_col_widths",
+    "_find_first_match_coord_in_table",
+    "_find_match_coords_in_table",
     "_legacy_blocks_to_md",
     "_record_first_match",
 ]
@@ -119,25 +121,35 @@ def _spans_have_full_match(spans: list[Span]) -> bool:
     return any(str(s.style) not in DIM_STYLES for s in spans)
 
 
+def _append_match_block(md: FNDMarkdown, block: MarkdownBlock, *, full: bool) -> None:
+    """Record a match-bearing block on ``md``: set the first-slot per tier
+    (first-write-wins) and append to the ordered nav list. First-write-wins
+    keeps ``first_match_block`` on the earliest full match; the ordered list
+    gives match-nav every stop. Dedup-guarded so a theme-driven fence rebuild
+    doesn't double-register."""
+    if full:
+        if md._first_match_block is None:
+            md._first_match_block = block
+        if block not in md._match_blocks:
+            md._match_blocks.append(block)
+    else:
+        if md._first_dim_match_block is None:
+            md._first_dim_match_block = block
+        if block not in md._dim_match_blocks:
+            md._dim_match_blocks.append(block)
+
+
 def _record_first_match(block: MarkdownBlock, spans: list[Span]) -> None:
-    """If this block contains the first highlighted match in the
-    document, register it on the parent ``FNDMarkdown`` so the preview
-    pane can scroll to it. First-write-wins per tier: a block with a full
-    (qualifying) match wins the primary slot; a block whose only matches
-    are dimmed proximity strays fills a fallback slot. ``first_match_block``
-    prefers the full slot, so a ``{N}``/``"a b"~N`` query lands on the real
-    co-occurrence, not an earlier lone-term hit (mirrors the flat path).
-    """
+    """Register ``block`` as a match stop on the parent ``FNDMarkdown`` (see
+    :func:`_append_match_block`). ``first_match_block`` prefers the full slot,
+    so a ``{N}``/``"a b"~N`` query lands on the real co-occurrence, not an
+    earlier lone-term hit (mirrors the flat path)."""
     if not spans:
         return
     md = block._markdown  # weakref unwrap
     if not isinstance(md, FNDMarkdown):
         return
-    if _spans_have_full_match(spans):
-        if md._first_match_block is None:
-            md._first_match_block = block
-    elif md._first_dim_match_block is None:
-        md._first_dim_match_block = block
+    _append_match_block(md, block, full=_spans_have_full_match(spans))
 
 
 def _apply_highlights_after_build(block: MarkdownBlock) -> None:
@@ -275,11 +287,7 @@ def _record_fence_anchor_if_matched(widget: FNDMarkdownFence, code: str) -> None
     md = widget._markdown
     if not isinstance(md, FNDMarkdown):
         return
-    if _spans_have_full_match(spans):
-        if md._first_match_block is None:
-            md._first_match_block = widget
-    elif md._first_dim_match_block is None:
-        md._first_dim_match_block = widget
+    _append_match_block(md, widget, full=_spans_have_full_match(spans))
 
 
 class FNDMarkdownFence(MarkdownFence):
@@ -439,20 +447,19 @@ class FNDMarkdownTableDT(MarkdownTable):
             dt.add_row(*row, height=None)
         md = self._markdown
         spec = getattr(md, "match_spec", None) or MatchSpec()
-        found = _find_first_match_coord_in_table(headers, rows, spec)
-        if found is not None:
-            match_coord, is_full = found
+        matches = _find_match_coords_in_table(headers, rows, spec)
+        # Full-match cells (dim proximity strays skipped) so match-nav hops
+        # only between genuine hits; the first match stays the scroll target.
+        dt._fnd_match_coords = [Coordinate(*rc) for rc, full in matches if full]  # type: ignore[attr-defined]
+        if matches:
+            match_coord, is_full = matches[0]
             dt._fnd_match_coord = Coordinate(*match_coord)  # type: ignore[attr-defined]
-            # Register self as parent's first_match_block — TH/TD widgets are
-            # bypassed so _record_first_match never fires. A full co-occurrence
-            # claims the primary slot; a dim-only table fills the fallback, so a
-            # later full match elsewhere still wins the scroll target.
+            # Register self as parent's match block — TH/TD widgets are
+            # bypassed so _record_first_match never fires. The table is one
+            # stop in match_blocks; nav expands it to its matching cells via
+            # _fnd_match_coords.
             if isinstance(md, FNDMarkdown):
-                if is_full:
-                    if md._first_match_block is None:
-                        md._first_match_block = self
-                elif md._first_dim_match_block is None:
-                    md._first_dim_match_block = self
+                _append_match_block(md, self, full=is_full)
         yield dt
 
     def _available_table_width(self) -> int:
@@ -584,47 +591,36 @@ def _compute_table_col_widths(
     return widths
 
 
-def _find_first_match_coord_in_table(
+def _find_match_coords_in_table(
     headers: list[Any], rows: list[list[Any]], spec: MatchSpec
-) -> tuple[tuple[int, int], bool] | None:
-    """Return ``((row, col), is_full)`` for the first cell that matches, where
-    ``is_full`` is True when the cell carries a real (qualifying) match rather
-    than a dimmed proximity stray. ``None`` when no cell matches.
+) -> list[tuple[tuple[int, int], bool]]:
+    """Every matching cell as ``((row, col), is_full)``, full matches first.
 
     A cell matches iff ``text_has_any_match`` does — a word match OR a
-    quoted-phrase span, the same gate the highlight overlay applies — so the
-    coordinate always points at a cell that is actually highlighted (quoted
-    phrases included).
+    quoted-phrase span, the same gate the highlight overlay applies — so each
+    coordinate points at a cell that is actually highlighted (quoted phrases
+    included).
     (Checking the Content's ``spans`` instead is wrong: that set also
     carries the markdown styling spans — inline code, emphasis, links —
-    so the first *styled* cell wins over the first *matched* one, parking
-    the scroll near the table top while the real match sits rows below.)
+    so a merely *styled* cell would slip in over a *matched* one.)
     ``text_has_any_match`` short-circuits on the first matching word and
     skips the per-char alignment / Span allocation that building the full
     highlight spans here would waste on every cell of a large table.
 
     For a proximity query (``{N}``/``NEAR/N``/``"a b"~N``) a cell can match
-    only via a dimmed out-of-window stray; we then prefer the first cell with
-    a *full* (in-window) co-occurrence and fall back to a dimmed cell only if
-    none exists — so the scroll lands on the genuine match, mirroring the flat
-    and block paths. Plain queries keep the cheaper any-match scan unchanged.
+    only via a dimmed out-of-window stray; full (in-window) cells sort ahead
+    of dim-only ones so the scroll target and first nav stop land on the
+    genuine co-occurrence, mirroring the flat and block paths. Plain queries
+    never dim, so every hit is full.
 
-    Header hits map to row 0 col c as a best-effort approximation since
-    the DataTable cursor doesn't address headers directly.
+    Header hits map to row 0 col c as a best-effort approximation since the
+    DataTable cursor doesn't address headers directly.
     """
     from fnd.render import text_has_any_match, text_has_full_match
 
     if spec.is_empty:
-        return None
-    # Single pass with a cheap gate: ``text_has_any_match`` short-circuits on the
-    # first matching word, so a non-matching cell never pays for the heavier
-    # proximity-aware ``text_has_full_match`` (which stems every token). Only a
-    # cell that already matched is checked for a full co-occurrence. Return the
-    # first full match immediately; remember the first dimmed-only stray and fall
-    # back to it only if no full match exists. Plain queries never dim, so the
-    # full check is skipped entirely and the any-match hit is always full.
+        return []
     prox = bool(spec.proximity_groups)
-    first_dim: tuple[tuple[int, int], bool] | None = None
 
     def _tier(plain: str) -> bool | None:
         """``None`` no match · ``True`` full (qualifying) · ``False`` dim-only."""
@@ -632,20 +628,42 @@ def _find_first_match_coord_in_table(
             return None
         return (not prox) or text_has_full_match(plain, spec)
 
+    # Header hits and a first-data-row hit both map to ``(0, col)`` (the header
+    # has no cursor coordinate of its own), so a match in both would emit the
+    # coordinate twice — inflating the count and making n/b land on it twice.
+    # Merge by coordinate, keeping the strongest tier (full beats dim-only) and
+    # first-seen order (headers before rows).
+    tier_by_coord: dict[tuple[int, int], bool] = {}
+    order: list[tuple[int, int]] = []
     for col, h in enumerate(headers):
         tier = _tier(getattr(h, "plain", "") or "")
-        if tier:
-            return (0, col), True
-        if tier is False and first_dim is None:
-            first_dim = (0, col), False
+        if tier is not None:
+            if (0, col) not in tier_by_coord:
+                order.append((0, col))
+            tier_by_coord[(0, col)] = tier_by_coord.get((0, col), False) or bool(tier)
     for r_idx, row in enumerate(rows):
         for c_idx, cell in enumerate(row):
             tier = _tier(getattr(cell, "plain", "") or "")
-            if tier:
-                return (r_idx, c_idx), True
-            if tier is False and first_dim is None:
-                first_dim = (r_idx, c_idx), False
-    return first_dim
+            if tier is not None:
+                if (r_idx, c_idx) not in tier_by_coord:
+                    order.append((r_idx, c_idx))
+                tier_by_coord[(r_idx, c_idx)] = tier_by_coord.get((r_idx, c_idx), False) or bool(
+                    tier
+                )
+    out = [(coord, tier_by_coord[coord]) for coord in order]
+    # Full matches first (stable within tier) so the single scroll target and
+    # the first nav stop prefer a real co-occurrence over a dim-only stray.
+    out.sort(key=lambda t: not t[1])
+    return out
+
+
+def _find_first_match_coord_in_table(
+    headers: list[Any], rows: list[list[Any]], spec: MatchSpec
+) -> tuple[tuple[int, int], bool] | None:
+    """First matching cell (full preferred), or ``None``. Thin wrapper over
+    :func:`_find_match_coords_in_table` kept for the single-target callers."""
+    matches = _find_match_coords_in_table(headers, rows, spec)
+    return matches[0] if matches else None
 
 
 class FNDMarkdown(Markdown):
@@ -733,6 +751,10 @@ class FNDMarkdown(Markdown):
         # ``{N}``/``"a b"~N`` query scrolls to the real co-occurrence.
         self._first_match_block: MarkdownBlock | None = None
         self._first_dim_match_block: MarkdownBlock | None = None
+        # Ordered match stops for intra-file nav: full-match blocks in build
+        # (document) order, dim-only ones collected separately as a fallback.
+        self._match_blocks: list[MarkdownBlock] = []
+        self._dim_match_blocks: list[MarkdownBlock] = []
         # Set by ``_on_mount`` after ``super()._on_mount`` (which awaits
         # ``Markdown.update``) returns. Lets the scroll path event-trigger
         # on build completion instead of polling.
@@ -752,6 +774,13 @@ class FNDMarkdown(Markdown):
         ``build_from_token`` (and the table block during ``compose``)."""
         return self._first_match_block or self._first_dim_match_block
 
+    @property
+    def match_blocks(self) -> list[MarkdownBlock]:
+        """Ordered match stops of this chunk for intra-file nav: the full-match
+        blocks in document order, or the dim-only ones when no full match
+        exists anywhere in the chunk (mirrors ``first_match_block``'s tiering)."""
+        return self._match_blocks or self._dim_match_blocks
+
     def update(self, markdown):  # type: ignore[no-untyped-def, override]
         # Textual's dispatcher walks the MRO and invokes every class's
         # _on_mount — overriding _on_mount and calling super() ran
@@ -766,6 +795,8 @@ class FNDMarkdown(Markdown):
         self.build_done.clear()
         self._first_match_block = None
         self._first_dim_match_block = None
+        self._match_blocks = []
+        self._dim_match_blocks = []
         self._build_gen += 1
         gen = self._build_gen
         aw = super().update(markdown)

@@ -893,6 +893,12 @@ class PreviewPresenter:
             outgoing.add_class("-hidden")
         self.outgoing = None
         container.remove_class("-pre-reveal")
+        # The new result is now positioned — re-measure the ▲/▼ view markers.
+        # This is the authoritative switch event: it fires even when the reveal
+        # scroll doesn't move (which the scroll-watcher trigger would miss,
+        # leaving the previous result's markers stale).
+        with contextlib.suppress(Exception):
+            self._app._match_nav.on_result_revealed()
 
     def finalize_pre_reveal(self, container: PreviewContainer, focus_chunk_seq: int) -> None:
         """Lift ``-pre-reveal`` once focused chunk's compose is ready, then scroll."""
@@ -1689,6 +1695,10 @@ class PreviewPresenter:
         lines`` weights by each chunk's line count instead. On large
         markdown the lazy-mounted track spans only part of the file, so
         this stays behind the in-development toggle."""
+        # Rebuild intra-file match-nav stops from the now-mounted chunks
+        # (deferred a refresh so cell/block regions are laid out first). Runs
+        # regardless of the scrollbar-marker toggle below.
+        self._app.call_after_refresh(self._app._match_nav.rebuild)
         try:
             pane = self._app.query_one("#preview_pane", MatchAwareScroll)
         except Exception:
