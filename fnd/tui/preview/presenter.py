@@ -580,6 +580,11 @@ class PreviewPresenter:
             key = (cached.parent_doc_id, cached.query_signature)
             if self.preview_cache._cache.get(key) is cached:
                 del self.preview_cache._cache[key]
+            # Don't leave self.active dangling on the purged detached container
+            # through the async rebuild (line 563 above keeps it because a cached
+            # container is still in cached_containers) — a fresh one is coming.
+            if self.active is cached:
+                self.active = None
             self.diag_log(f"cache hit detached parent={parent_id[:8]} — rebuilding fresh")
             cached = None
         if cached is None:
@@ -896,8 +901,13 @@ class PreviewPresenter:
         both the active preview and detached."""
         if container is not self.active or getattr(container, "parent", None) is not None:
             return
-        with contextlib.suppress(Exception):
+        try:
             await self.preview_pane().mount(container)
+        except Exception as exc:
+            # Teardown race (app quitting) or an un-remountable widget: the reveal
+            # then no-ops on the still-detached container. Log the real outcome.
+            self.diag_log(f"finalize re-attach FAILED parent={container.parent_doc_id[:8]}: {exc}")
+            return
         self.diag_log(
             f"finalize re-attach parent={container.parent_doc_id[:8]} (was detached mid-mount)"
         )
@@ -1042,7 +1052,12 @@ class PreviewPresenter:
                 container, focus_chunk_seq, t0, expected_above_seqs=expected_above_seqs, path=path
             )
         finally:
-            if not reveal_scheduled:
+            # Only repair the container THIS finalize owns. On a supersede
+            # cancellation self.active is already the successor; revealing it
+            # here would lift its -pre-reveal before its own scroll settled (a
+            # content flash) and clear the successor's shared bar/latch. When a
+            # successor has taken over, its own finalize/watchdog reveals it.
+            if not reveal_scheduled and container is self.active:
                 self.reveal_active()
 
     async def _finalize_via_lock_body(

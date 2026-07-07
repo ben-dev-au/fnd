@@ -7,19 +7,9 @@ guard makes a superseded reveal a no-op."""
 
 from __future__ import annotations
 
+from tests._preview_fakes import FakeContainer as _FakeContainer
+
 # ── _reveal_preview staleness guard (PR #22 review #2/#3) ──
-
-
-class _FakeContainer:
-    def __init__(self) -> None:
-        self.classes: set[str] = set()
-        self.parent_doc_id = "fake0000"
-
-    def add_class(self, name: str) -> None:
-        self.classes.add(name)
-
-    def remove_class(self, name: str) -> None:
-        self.classes.discard(name)
 
 
 class _RevealHost:

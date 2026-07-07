@@ -25,6 +25,7 @@ from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.widgets.preview_container import PreviewContainer
 from tests._pilot_wait import safe_pause
+from tests._preview_fakes import FakeContainer as _FakeContainer
 
 
 @pytest.fixture
@@ -34,21 +35,6 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 
 # ── reveal_active invariant helper (pure, no app) ──────────────────────────
-
-
-class _FakeContainer:
-    def __init__(self) -> None:
-        self.classes: set[str] = set()
-        self.parent_doc_id = "fake0000"
-
-    def add_class(self, name: str) -> None:
-        self.classes.add(name)
-
-    def remove_class(self, name: str) -> None:
-        self.classes.discard(name)
-
-    def has_class(self, name: str) -> bool:
-        return name in self.classes
 
 
 class _Host:
@@ -182,6 +168,8 @@ async def test_watchdog_rearms_and_does_not_reveal_during_active_nav(
         )
         await pane.mount(first)
         preview.activate_container(first, pre_reveal=True)
+        first_timer = preview._reveal_watchdog
+        assert first_timer is not None, "activation must arm the watchdog"
         # Before the first watchdog would fire, a new nav activates a second
         # container — this must re-arm the timer onto the new active one.
         await asyncio.sleep(0.05)
@@ -192,6 +180,13 @@ async def test_watchdog_rearms_and_does_not_reveal_during_active_nav(
         )
         await pane.mount(second)
         preview.activate_container(second, pre_reveal=True)
+        # Prove the timer was actually re-armed (a new timer object), not left as
+        # the stale first one — otherwise this test would pass even if re-arming
+        # were broken, since some other path could still reveal `second`.
+        assert preview._reveal_watchdog is not None
+        assert preview._reveal_watchdog is not first_timer, (
+            "activating a new container must cancel the old watchdog and arm a new one"
+        )
         # The second container is now the active one; the watchdog fires for IT.
         await asyncio.sleep(0.2)
         await safe_pause(pilot)

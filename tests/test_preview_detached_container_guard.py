@@ -98,8 +98,8 @@ async def test_dispatch_purges_a_detached_cache_entry(built_index: Path) -> None
         await pilot.pause()
         active = preview.active
         assert active is not ghost
-        if active is not None:
-            assert active.parent is not None, "the rebuilt active preview must be attached"
+        assert active is not None, "the rebuild must produce a new active preview"
+        assert active.parent is not None, "the rebuilt active preview must be attached"
 
 
 @pytest.mark.asyncio
