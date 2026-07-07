@@ -110,6 +110,33 @@ class PreviewPresenter:
         # cancellation; the finally runs a tick later and would otherwise race
         # the reset and re-pollute it ("stuck mid-mount after a new query").
         self.reset_generation: int = 0
+        # Bounded-time reveal backstop timer (see _arm_reveal_watchdog). Re-armed
+        # on every pre-reveal activation; disarmed when the container is revealed.
+        self._reveal_watchdog: object | None = None
+
+    def _arm_reveal_watchdog(self) -> None:
+        """(Re)start the bounded-time reveal backstop for the active container.
+
+        The active container mounts invisible (``-pre-reveal``) and is revealed by
+        its finalize task once the layout settles. If that task is cancelled
+        before it reveals, or hangs awaiting chunks a cancelled mount never
+        mounted, the container would stay invisible. This timer guarantees the
+        invariant "an active container becomes visible within a bounded time":
+        when it fires, :meth:`reveal_active` reveals the still-invisible active
+        container. A fast finalize reveals first and calls :meth:`reveal` which
+        disarms this, so the common path never hits the timer (no flash)."""
+        self._cancel_reveal_watchdog()
+        self._reveal_watchdog = self._app.set_timer(
+            tuning.REVEAL_WATCHDOG_MS / 1000.0,
+            self.reveal_active,
+            name="preview-reveal-watchdog",
+        )
+
+    def _cancel_reveal_watchdog(self) -> None:
+        if self._reveal_watchdog is not None:
+            with contextlib.suppress(Exception):
+                self._reveal_watchdog.stop()  # type: ignore[attr-defined]
+            self._reveal_watchdog = None
 
     def schedule_load(self, parent_id: str, focus_chunk_seq: int) -> None:
         """Debounce a cursor-move → preview-load; coalesces rapid arrow sweeps."""
@@ -468,6 +495,7 @@ class PreviewPresenter:
         #       chunks; the worker only mounts the missing ones.
         if (
             self.active is not None
+            and getattr(self.active, "parent", None) is not None
             and self.active.parent_doc_id == parent_id
             and self.active.query_signature == query_sig
         ):
@@ -535,12 +563,37 @@ class PreviewPresenter:
                 stranded.remove()
         if self.active is not None and self.active not in cached_containers:
             self.active = None
-        # Adopt a still-in-flight prefetched container for this key so the
-        # cold branch resumes it; _mount_chunks_async cancels its prefetch
-        # task first to avoid concurrent-mount races.
+        # Adopt an idle prefetched container for this key so the cold branch
+        # resumes it; _mount_chunks_async cancels its prefetch task first to
+        # avoid concurrent-mount races.
         cached = self.preview_cache.get(parent_id, query_sig)
+        # A cached container that is no longer in the DOM is NOT a valid hit.
+        # Under rapid navigation, an eviction/sweep race (single-slot cache +
+        # concurrent prefetch/mount finallys) can detach the widget while its
+        # cache entry lingers. The warm/resume paths below would then activate +
+        # scroll a zero-region ghost and reveal a blank pane — the "preview blank
+        # until I select another result and come back" strand. Treat a detached
+        # entry as a miss: drop it and fall through to a fresh, ATTACHED mount.
+        # This is the single seam every cache hit is consumed at, so it closes
+        # the strand no matter which race detached the container.
+        if cached is not None and getattr(cached, "parent", None) is None:
+            key = (cached.parent_doc_id, cached.query_signature)
+            if self.preview_cache._cache.get(key) is cached:
+                del self.preview_cache._cache[key]
+            self.diag_log(f"cache hit detached parent={parent_id[:8]} — rebuilding fresh")
+            cached = None
         if cached is None:
             for c in self._app.query(PreviewContainer):
+                # Never adopt a PREFETCH-origin container (one that has a
+                # ``_prefetch_task``, live or done). Prefetch re-anchors on the
+                # cursor and continually mounts/evicts/removes its own containers
+                # for the hot file; adopting one for a user mount races that
+                # removal — the adopted widget is detached mid-mount and the
+                # finalize reveals a zero-region ghost (blank pane). Build a
+                # fresh, user-owned container instead, which prefetch won't touch
+                # (and eviction can't drop while it is the protected active one).
+                if getattr(c, "_prefetch_task", None) is not None:
+                    continue
                 if (
                     c.parent_doc_id == parent_id
                     and c.query_signature == query_sig
@@ -810,6 +863,13 @@ class PreviewPresenter:
         self.parent_id = container.parent_doc_id
         self.chunk_widgets = container.chunk_widgets
         self.match_targets = container.match_targets
+        # A container activated invisibly is on the clock: arm the bounded-time
+        # reveal backstop so a cancelled/hung finalize can't leave it stranded.
+        # A visible (non-pre-reveal) activation cancels any pending watchdog.
+        if pre_reveal:
+            self._arm_reveal_watchdog()
+        else:
+            self._cancel_reveal_watchdog()
         # Cache-hit paths return without _mount_chunks_async (which is
         # where _refresh_status normally fires at the end); refresh here
         # so the pane title swaps to the activated file immediately.
@@ -821,6 +881,26 @@ class PreviewPresenter:
 
     def preview_pane(self) -> VerticalScroll:
         return self._app.query_one("#preview_pane", VerticalScroll)
+
+    async def _reattach_active_if_detached(self, container: PreviewContainer) -> None:
+        """Re-mount ``container`` if it is still the active preview but a
+        concurrent prefetch/eviction race detached it from the DOM mid-mount.
+
+        The resume path can adopt a prefetch-mounted container that prefetch
+        churn then removes, and the single-slot cache can evict a container out
+        from under an in-flight mount. Either leaves ``self.active`` pointing at a
+        detached widget; revealing it would surface a blank pane. The widget's
+        chunk tree travels with it, so re-mounting the SAME instance restores the
+        built content. Called just before the finalize reveals, so the reveal
+        always lands on an attached container. A no-op unless the container is
+        both the active preview and detached."""
+        if container is not self.active or getattr(container, "parent", None) is not None:
+            return
+        with contextlib.suppress(Exception):
+            await self.preview_pane().mount(container)
+        self.diag_log(
+            f"finalize re-attach parent={container.parent_doc_id[:8]} (was detached mid-mount)"
+        )
 
     def effective_match_spec(self) -> MatchSpec:
         return self._app._effective_match_spec
@@ -893,12 +973,39 @@ class PreviewPresenter:
             outgoing.add_class("-hidden")
         self.outgoing = None
         container.remove_class("-pre-reveal")
+        # Revealed — the bounded-time backstop is no longer needed.
+        self._cancel_reveal_watchdog()
         # The new result is now positioned — re-measure the ▲/▼ view markers.
         # This is the authoritative switch event: it fires even when the reveal
         # scroll doesn't move (which the scroll-watcher trigger would miss,
         # leaving the previous result's markers stale).
         with contextlib.suppress(Exception):
             self._app._match_nav.on_result_revealed()
+
+    def reveal_active(self) -> None:
+        """Invariant backstop: the active container must not stay ``-pre-reveal``
+        (invisible) once its navigation has settled. Reveal is normally driven by
+        one specific finalize task, but rapid navigation can cut that task short
+        before it reveals — and the scroll-only resume path
+        (:meth:`_settled_instant_scroll`) never reveals at all. Either leaves the
+        active container built-but-invisible: the "preview blank until I select a
+        different result and come back" strand. Calling this whenever a
+        navigation settles closes every such gap, and also finishes the cut-short
+        finalize's bar/latch cleanup (below). A no-op only when nothing is active."""
+        container = self.active
+        if container is None:
+            return
+        if container.has_class("-pre-reveal"):
+            self.reveal(container)
+        # Whether we just revealed a cut-short mount or arrived here on a
+        # scroll-only Branch-A settle, the navigation has landed: nothing is
+        # loading for the active container. A cut-short or superseded mount can
+        # still leave the SHARED progress bar open (a prior mount opened it and
+        # the winning path never closed it) and the in-flight latch set. Finish
+        # the finalize's terminal cleanup so the bar can't stick ("mount stuck at
+        # 49%") and a re-select of the same result isn't deduped out.
+        self.hide_progress_bar()
+        self.inflight_target = None
 
     def finalize_pre_reveal(self, container: PreviewContainer, focus_chunk_seq: int) -> None:
         """Lift ``-pre-reveal`` once focused chunk's compose is ready, then scroll."""
@@ -920,6 +1027,33 @@ class PreviewPresenter:
         expected_above_seqs: list[int] | None = None,
         path: str = "cold_via_lock",
     ) -> None:
+        """Reveal-safe wrapper around :meth:`_finalize_via_lock_body`.
+
+        The body reveals by scheduling ``reconcile`` at its very end; if rapid
+        navigation CANCELS this task at any earlier await (build/settle wait), it
+        never gets there and the still-active container would stay ``-pre-reveal``
+        (invisible) — the strand. The ``finally`` backstop reveals the active
+        container in that cut-short case so it can't stay hidden. On the normal
+        path the body returns having scheduled the reveal, so the backstop is a
+        no-op (and never reveals early, preserving the no-flash-at-top scroll)."""
+        reveal_scheduled = False
+        try:
+            reveal_scheduled = await self._finalize_via_lock_body(
+                container, focus_chunk_seq, t0, expected_above_seqs=expected_above_seqs, path=path
+            )
+        finally:
+            if not reveal_scheduled:
+                self.reveal_active()
+
+    async def _finalize_via_lock_body(
+        self,
+        container: PreviewContainer,
+        focus_chunk_seq: int,
+        t0: float,
+        *,
+        expected_above_seqs: list[int] | None = None,
+        path: str = "cold_via_lock",
+    ) -> bool:
         """Wait for *every* chunk above the focus in the mounted window
         to finish building before revealing + scrolling. Awaiting only
         the focus chunk's ``build_done`` (the previous behaviour) let
@@ -927,7 +1061,8 @@ class PreviewPresenter:
         those grew, the focus chunk's virtual_y shifted and the user
         saw the correct match flash, then jump to an unrelated area.
         Waiting for the above-siblings means the focus chunk's
-        virtual_y is final at scroll time."""
+        virtual_y is final at scroll time. Returns True once the reveal has
+        been scheduled (so the wrapper's backstop knows it need not fire)."""
         import asyncio
         import time
 
@@ -1011,6 +1146,10 @@ class PreviewPresenter:
         def _reveal_when_landed() -> None:
             self.reveal(container)
 
+        # A prefetch/eviction race can detach the active container mid-mount;
+        # re-attach it (chunk tree intact) so the reveal lands on real geometry
+        # instead of a zero-region ghost (blank pane).
+        await self._reattach_active_if_detached(container)
         # Scroll while the container is still invisible (opacity:0), then reveal
         # once it lands — so the match never flashes at the file top first. The
         # layout is settled, so this is a single deterministic scroll.
@@ -1022,6 +1161,7 @@ class PreviewPresenter:
             f"finalize_via_lock done seq={focus_chunk_seq} path={path} "
             f"wait_ms={wait_ms:.1f} above_waited={len(above_widgets)}"
         )
+        return True
 
     def _do_finalize_pre_reveal(
         self,
@@ -1072,6 +1212,9 @@ class PreviewPresenter:
 
         async def _settled_reconcile() -> None:
             await self.await_settled()
+            # Re-attach if a race detached the active container mid-mount (see
+            # _reattach_active_if_detached) so the reveal isn't on a ghost.
+            await self._reattach_active_if_detached(container)
             self._app._preview_scroll.reconcile(_reveal_when_landed)
 
         # Cancel a prior settle-await on this container before replacing it — a
@@ -1269,7 +1412,11 @@ class PreviewPresenter:
         ]
         await self.await_match_settled(header, above)
         _perf.mark("click_to_display_end", parent_id=parent_id, path="already_active_scroll_only")
-        self._app._preview_scroll.reconcile()
+        # Reveal-on-settle: this resume path is taken for an already-mounted
+        # target, which is USUALLY already visible — but if a prior rapid-nav
+        # cancel left it ``-pre-reveal`` (invisible), scrolling alone would strand
+        # it. ``reveal_active`` lifts it once the scroll lands (no-op otherwise).
+        self._app._preview_scroll.reconcile(self.reveal_active)
 
     def bump_reset_generation(self) -> None:
         """Invalidate any in-flight mount. Call from every path that clears the
@@ -1594,6 +1741,23 @@ class PreviewPresenter:
                 # (held-visible-during-swap) reference for the next reveal.
                 if self.outgoing is container:
                     self.outgoing = None
+            elif container.parent is None:
+                # A newer, same-query navigation swept this container out of the
+                # DOM while this (now-cancelled) mount was in flight. Same-query
+                # nav doesn't bump reset_generation, so the ``superseded`` branch
+                # above doesn't catch it. Caching a detached container hands the
+                # next visit a cache-HIT on a widget that isn't in the tree — the
+                # warm path then activates + scrolls a zero-region ghost and
+                # reveals a blank pane ("blank until I select another result and
+                # come back"). Never cache it, and drop any dangling reference.
+                self.diag_log(
+                    f"mount finally: container detached "
+                    f"parent={container.parent_doc_id[:8]} — not caching"
+                )
+                if self.active is container:
+                    self.active = None
+                if self.outgoing is container:
+                    self.outgoing = None
             else:
                 # Cache the container even when the mount didn't run to
                 # completion. For monster files (1000+ page PDFs with
@@ -1604,10 +1768,10 @@ class PreviewPresenter:
                 # in ``_dispatch_preview_mount`` skips already-mounted
                 # indices so partial-cache hits paint the previously-
                 # mounted region instantly and continue the fill in the
-                # background. The container we just mounted IS the active one,
-                # so it's protected from its own eviction by definition (it just
-                # got moved to the MRU slot).
-                evicted = self.preview_cache.put(container, protect=container)
+                # background. ``protect=self.active`` is load-bearing, not
+                # defensive: a stale mount's late finally must never evict the
+                # container a newer nav re-activated (see PreviewCache.put).
+                evicted = self.preview_cache.put(container, protect=self.active)
                 for old in evicted:
                     with contextlib.suppress(Exception):
                         old.remove()

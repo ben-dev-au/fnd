@@ -13,6 +13,7 @@ from __future__ import annotations
 class _FakeContainer:
     def __init__(self) -> None:
         self.classes: set[str] = set()
+        self.parent_doc_id = "fake0000"
 
     def add_class(self, name: str) -> None:
         self.classes.add(name)
@@ -27,6 +28,9 @@ class _RevealHost:
     def __init__(self, active: object, outgoing: object) -> None:
         self.active = active
         self.outgoing = outgoing
+
+    def _cancel_reveal_watchdog(self) -> None:  # reveal disarms the watchdog
+        pass
 
 
 def _reveal(host: object, container: object) -> None:
