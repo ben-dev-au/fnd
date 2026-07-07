@@ -43,3 +43,14 @@ LAZY_MOUNT_BATCH = 3
 # Scroll-to-match leaves this fraction of the viewport above the match so
 # the user sees context before it, rather than pinning it to the top line.
 MATCH_CONTEXT_FRACTION = 0.25
+# Reveal watchdog: an active container mounts invisible (``-pre-reveal``) and is
+# revealed by its finalize task once the layout settles. Under rapid navigation
+# that task can be cancelled before it reveals, or hang for seconds awaiting
+# above-window chunks a cancelled mount never mounted — leaving the container
+# invisible ("preview blank until I select a different result and come back").
+# This is the bounded-time backstop: if a container is still ``-pre-reveal`` this
+# long after it became active, reveal it regardless. Set well above a normal
+# finalize (~150-700ms) so it rarely pre-empts the no-flash scroll, but far below
+# the finalize's own 8s internal timeouts so a hang can't show a multi-second
+# blank. Re-armed on every navigation; a fast finalize reveals first and disarms.
+REVEAL_WATCHDOG_MS = 1500

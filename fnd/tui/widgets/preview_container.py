@@ -126,9 +126,18 @@ class PreviewCache:
         *,
         protect: PreviewContainer | None = None,
     ) -> list[PreviewContainer]:
-        """Cache ``container`` and return any LRU-evicted containers
-        for the caller to remove. ``protect`` is skipped during eviction
-        so prefetch can't drop the currently-active preview."""
+        """Cache ``container`` and return any LRU-evicted containers for the
+        caller to remove. ``protect`` is skipped during eviction.
+
+        ``protect`` is load-bearing, not just tidy: a STALE mount — one an
+        overshoot-and-return navigation cancelled — runs its ``finally`` LATE,
+        after a newer navigation has already re-activated a *different*
+        container. With ``max_files == 1`` a put that protected only the entry
+        it was inserting would evict that newly-active container out of the DOM
+        while ``self.active`` still pointed at it — a detached-active blank pane
+        that never self-heals. Callers therefore pass ``protect=<active>`` so the
+        active preview is never the one evicted (the stale/incoming container is
+        evicted instead, keeping the cache at ``max_files``)."""
         if container.total_chunks < self.min_chunks:
             return []
         key = (container.parent_doc_id, container.query_signature)
