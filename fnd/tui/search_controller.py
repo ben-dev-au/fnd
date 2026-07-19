@@ -194,6 +194,8 @@ class SearchController:
                 filter_clauses.append(f"kind:({' '.join(sorted(self._app._scope.filter_kinds))})")
         if self._app._scope.filter_date and self._app._scope.filter_date != "any":
             filter_clauses.append(f"mtime:{self._app._scope.filter_date}")
+        if self._app._scope.filter_created and self._app._scope.filter_created != "any":
+            filter_clauses.append(f"created:{self._app._scope.filter_created}")
         # Collections are a HARD filter, passed as a list straight to the
         # query layer — never a ``c:`` prefix string. The prefix path rides
         # the soft query parser (ranks instead of restricting) and splits

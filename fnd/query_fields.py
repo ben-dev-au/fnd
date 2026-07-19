@@ -19,6 +19,7 @@ from fnd.schema import (
     F_AUTHOR,
     F_CHUNK_SEQ,
     F_COLLECTION,
+    F_CREATED,
     F_HEADING_PATH,
     F_KIND,
     F_MTIME,
@@ -74,6 +75,7 @@ REGISTRY: Final[dict[str, FieldSpec]] = {
     "slide": FieldSpec("slide", F_SLIDE, FieldValue.UINT, _coerce_uint),
     "chunk_seq": FieldSpec("chunk_seq", F_CHUNK_SEQ, FieldValue.UINT, _coerce_uint),
     "mtime": FieldSpec("mtime", F_MTIME, FieldValue.UINT, _coerce_mtime),
+    "created": FieldSpec("created", F_CREATED, FieldValue.UINT, _coerce_mtime),
 }
 
 # ``c:`` is the collection shorthand.
@@ -85,8 +87,8 @@ def resolve(name: str) -> FieldSpec | None:
     return REGISTRY.get(ALIASES.get(name, name))
 
 
-def mtime_token_range(token: str) -> tuple[int, int] | None:
-    """Map an ``mtime`` keyword (today/yesterday/week/month/year) to a
+def date_token_range(token: str) -> tuple[int, int] | None:
+    """Map an ``mtime``/``created`` keyword (today/yesterday/week/month/year) to a
     ``(low, high)`` unix range, or None if not a known token.
 
     ``today`` means "since UTC midnight today" (modified today), not "since this
@@ -99,3 +101,7 @@ def mtime_token_range(token: str) -> tuple[int, int] | None:
     if token == "today":  # noqa: S105 — keyword, not a secret
         return (now - now % 86_400, FAR_FUTURE)  # UTC midnight today
     return (now - _DATE_TOKEN_DAYS[token] * 86_400, FAR_FUTURE)
+
+
+# Kept for callers predating the rename; created: shares the same tokens.
+mtime_token_range = date_token_range

@@ -44,6 +44,7 @@ class UiState:
     # panel only carries scope-narrowing knobs.
     filter_kinds: list[str] = field(default_factory=list)
     filter_date: str = "any"
+    filter_created: str = "any"
 
 
 def load(path: Path | None = None) -> UiState:
@@ -65,6 +66,8 @@ def load(path: Path | None = None) -> UiState:
     filters = filters_raw if isinstance(filters_raw, dict) else {}
     raw_date = filters.get("date", "any")
     filter_date = raw_date if isinstance(raw_date, str) else "any"
+    raw_created = filters.get("created", "any")
+    filter_created = raw_created if isinstance(raw_created, str) else "any"
     return UiState(
         collections=[s for s in scope.get("collections", []) if isinstance(s, str)],
         sources=[s for s in scope.get("sources", []) if isinstance(s, str)],
@@ -77,6 +80,7 @@ def load(path: Path | None = None) -> UiState:
         ],
         filter_kinds=[s for s in filters.get("kinds", []) if isinstance(s, str)],
         filter_date=filter_date,
+        filter_created=filter_created,
     )
 
 
@@ -99,5 +103,6 @@ def save(state: UiState, path: Path | None = None) -> None:
     filters = tomlkit.table()
     filters["kinds"] = list(state.filter_kinds)
     filters["date"] = state.filter_date
+    filters["created"] = state.filter_created
     doc["filters"] = filters
     secure_write_text(p, tomlkit.dumps(doc), atomic=True)

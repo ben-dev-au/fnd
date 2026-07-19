@@ -20,7 +20,7 @@ from dataclasses import dataclass
 import tantivy
 from tantivy import FieldType, Query
 
-from fnd.query_fields import FieldSpec, FieldValue, mtime_token_range, resolve
+from fnd.query_fields import FieldSpec, FieldValue, date_token_range, resolve
 
 _BOOL_OPS = frozenset({"AND", "OR", "NOT"})
 # field:value head — value captured greedily (the tokenizer already kept any
@@ -103,8 +103,8 @@ def _uint_range(spec: FieldSpec, value: str, schema: tantivy.Schema) -> Query | 
             if op == "<":
                 return rng(None, n, inc_hi=False)
             return rng(None, n)  # <=
-        if spec.query_name == "mtime":
-            tok = mtime_token_range(value)
+        if spec.query_name in ("mtime", "created"):
+            tok = date_token_range(value)
             if tok is not None:
                 return rng(tok[0], tok[1])
         return rng(spec.coerce(value), spec.coerce(value))  # bare point: page:5

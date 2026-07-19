@@ -26,6 +26,7 @@ __all__ = ["ScopeController"]
 # to the values so the panel renders without further lookup tables.
 _FILTER_KINDS: tuple[str, ...] = ("pdf", "docx", "pptx", "md", "txt")
 _FILTER_DATES: tuple[str, ...] = ("any", "today", "week", "month", "year")
+_FILTER_CREATED: tuple[str, ...] = ("any", "today", "week", "month", "year")
 
 
 class _FullScope:
@@ -70,7 +71,7 @@ class ScopeController:
         # Prune unknown branch names so a renamed branch doesn't get
         # stuck "expanded" forever.
         self.expanded_filter_branches: set[str] = {
-            b for b in saved.expanded_filter_branches if b in ("kinds", "date")
+            b for b in saved.expanded_filter_branches if b in ("kinds", "date", "created")
         }
         # Scope — one provenance-carrying map (``selection``) is the
         # single source of truth; ``collections`` / ``active_sources``
@@ -86,10 +87,12 @@ class ScopeController:
             )
             self.filter_kinds: list[str] = []
             self.filter_date: str = "any"
+            self.filter_created: str = "any"
         else:
             self.selection = self._derive_selection(saved.collections, saved.sources)
             self.filter_kinds = list(saved.filter_kinds)
             self.filter_date = saved.filter_date or "any"
+            self.filter_created = saved.filter_created or "any"
 
     def _valid_collection_names(self, raw: str) -> list[str]:
         """Resolve a ``--collection`` value to real config collection names.
@@ -181,6 +184,7 @@ class ScopeController:
                 expanded_filter_branches=sorted(self.expanded_filter_branches),
                 filter_kinds=list(self.filter_kinds),
                 filter_date=self.filter_date,
+                filter_created=self.filter_created,
             )
         )
 
@@ -282,7 +286,7 @@ class ScopeController:
         for branch in tree.root.children:
             data = branch.data if isinstance(branch.data, dict) else {}
             cat = data.get("category")
-            if isinstance(cat, str) and cat in ("kinds", "date"):
+            if isinstance(cat, str) and cat in ("kinds", "date", "created"):
                 if branch.is_expanded:
                     self.expanded_filter_branches.add(cat)
                 else:
@@ -317,6 +321,19 @@ class ScopeController:
                 data={"kind": "filter_value", "category": "date", "value": d},
             )
 
+        created_summary = self.filter_created or "any"
+        created_node = tree.root.add(
+            _styled_parent_label(f"Created          ({created_summary})"),
+            data={"kind": "filter_category", "category": "created"},
+            expand="created" in self.expanded_filter_branches,
+        )
+        for c in _FILTER_CREATED:
+            marker = "●" if c == self.filter_created else "○"
+            created_node.add_leaf(
+                f"{marker}  {c}",
+                data={"kind": "filter_value", "category": "created", "value": c},
+            )
+
         # Header tracks whether anything is filtering; the dim default
         # keeps the panel quiet when no filters are active.
         active_bits: list[str] = []
@@ -324,6 +341,8 @@ class ScopeController:
             active_bits.append(f"{len(active_kinds)} kind{'s' if len(active_kinds) != 1 else ''}")
         if self.filter_date and self.filter_date != "any":
             active_bits.append(self.filter_date)
+        if self.filter_created and self.filter_created != "any":
+            active_bits.append(f"created {self.filter_created}")
         title = "Filters" if not active_bits else f"Filters — {', '.join(active_bits)}"
         tree.border_title = title
 
@@ -351,6 +370,8 @@ class ScopeController:
                 self.filter_kinds.append(value)
         elif category == "date":
             self.filter_date = value
+        elif category == "created":
+            self.filter_created = value
         else:
             return
         self.refresh_filters_panel()
@@ -541,7 +562,7 @@ class ScopeController:
         if data.get("kind") != "filter_category":
             return
         cat = str(data.get("category") or "")
-        if cat in ("kinds", "date") and cat not in self.expanded_filter_branches:
+        if cat in ("kinds", "date", "created") and cat not in self.expanded_filter_branches:
             self.expanded_filter_branches.add(cat)
             self.persist()
 
