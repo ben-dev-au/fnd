@@ -1972,7 +1972,9 @@ class PreviewPresenter:
         first_match: Static | None = None
         for line_text, has_match in pieces:
             line_w = Static(line_text, classes="chunk-line")
-            line_w.fnd_text = line_text  # type: ignore[attr-defined]
+            # Store the PLAIN string (not the rich Text) — the match-count /
+            # stop-region scans regex over ``fnd_text`` and re needs a str.
+            line_w.fnd_text = line_text.plain  # type: ignore[attr-defined]
             if has_match:
                 line_w.add_class("chunk-line-match")
             parent.mount(line_w, before=before)
