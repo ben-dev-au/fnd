@@ -371,6 +371,11 @@ class AppConfig(BaseModel):
 
 class Defaults(BaseModel):
     collection: str = "default"
+    # Which tag sources feed the Tags filter. Provenance is stored in
+    # separate index fields, so toggling a source is a query-time change
+    # and never needs a reindex. Sources this platform can't serve are
+    # dropped at runtime by fnd.tags.providers_for.
+    tag_sources: list[Literal["frontmatter", "os"]] = ["frontmatter", "os"]
     result_limit: int = 200
     preview_chunks: int = 5
     debounce_ms: int = 200
