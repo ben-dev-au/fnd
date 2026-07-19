@@ -1218,6 +1218,28 @@ class FNDApp(App[None]):
             return
         tree.move_cursor_to_line(node.line + 1)
 
+    @on(ResultsTree.ReopenRequested)
+    def _on_results_reopen_requested(self, ev: ResultsTree.ReopenRequested) -> None:
+        """A click on a collapsed-to-header panel reopens it and expands the
+        clicked result — the ``Right``-arrow reopen (``action_tree_smart_expand``)
+        for the mouse, surfacing the specific row the user pointed at rather
+        than toggling a node hidden behind the collapsed height."""
+        tree = ev.tree
+        if "collapsed" not in tree.classes:
+            return
+        tree.remove_class("collapsed")
+        if tree.id:
+            self._scope.collapsed_panels.discard(tree.id)
+            self._scope.persist()
+        node = ev.node
+        if node is None:
+            return
+        if node.allow_expand and not node.is_expanded:
+            node.expand()
+            self._move_cursor_to_first_child(tree, node)
+        else:
+            tree.move_cursor(node)
+
     @property
     def _effective_match_spec(self) -> MatchSpec:
         """The MatchSpec the renderers should consult. Falls back to an
