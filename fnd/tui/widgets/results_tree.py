@@ -6,7 +6,9 @@ from typing import Any, ClassVar
 
 from textual import events
 from textual.binding import Binding, BindingType
+from textual.message import Message
 from textual.widgets import Tree
+from textual.widgets.tree import TreeNode
 
 __all__ = ["ResultsTree"]
 
@@ -38,6 +40,37 @@ class ResultsTree(Tree[dict[str, Any]]):
         Binding("alt+down", "scan_cursor_down", "Scan down", show=False),
         Binding("alt+up", "scan_cursor_up", "Scan up", show=False),
     ]
+
+    class ReopenRequested(Message):
+        """Posted when the pane is clicked while collapsed-to-header. The app
+        reopens the panel (and expands the clicked node) — a toggle the user
+        can't see is useless, so the click should surface content instead."""
+
+        def __init__(self, tree: ResultsTree, node: TreeNode[Any] | None) -> None:
+            self.tree = tree
+            self.node = node
+            super().__init__()
+
+    def on_resize(self, _event: events.Resize) -> None:
+        # While collapsed-to-header the pane shows a single content row; keep
+        # the cursor (the file driving the preview) parked in it, else the
+        # strip snaps back to the top result. Fires when add-class shrinks the
+        # pane, so no post-collapse scroll timing to guess at.
+        if self.id == "results_pane" and "collapsed" in self.classes and self.cursor_line >= 0:
+            self.scroll_to_line(self.cursor_line, animate=False)
+
+    async def _on_click(self, event: events.Click) -> None:
+        # Collapsed-to-header: the only visible row is the selected file. A
+        # click there should reopen the pane (and expand that result), not
+        # toggle a node hidden behind the collapsed height.
+        if "collapsed" in self.classes:
+            meta = event.style.meta
+            line = meta.get("line")
+            node = self.get_node_at_line(line) if isinstance(line, int) else None
+            self.post_message(self.ReopenRequested(self, node))
+            event.stop()
+            return
+        await super()._on_click(event)
 
     def _set_scan(self, scanning: bool) -> None:
         # Scan mode drives the PREVIEW, so only the results pane owns it.
