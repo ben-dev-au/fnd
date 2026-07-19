@@ -112,6 +112,28 @@ def extract(path: Path) -> Iterator[Chunk]:
         raise ExtractError(str(path), f"{type(e).__name__}: {e}") from e
 
 
+def _blank_frontmatter(source: str) -> str:
+    """Replace a leading ``---`` frontmatter block with blank lines.
+
+    Frontmatter is metadata: it's parsed separately into meta_blob and tags.
+    Left in place, CommonMark reads it as thematic-break + paragraph + setext
+    heading, so ``tags: [recipe]`` lands in the searchable body and the fence
+    can be mistaken for a heading.
+
+    Blanked rather than removed so every downstream line number still matches
+    the file on disk — F_LINE feeds deep links like ``code -g {path}:{line}``.
+    """
+    if not source.startswith("---"):
+        return source
+    lines = source.splitlines(keepends=True)
+    if not lines or lines[0].rstrip() != "---":
+        return source
+    for i in range(1, len(lines)):
+        if lines[i].rstrip() in ("---", "..."):
+            return "\n" * (i + 1) + "".join(lines[i + 1 :])
+    return source  # unterminated fence: treat as content, don't eat the file
+
+
 def _extract_inner(path: Path) -> Iterator[Chunk]:
     try:
         source = path.read_text(encoding="utf-8")
@@ -119,6 +141,10 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
         raise ExtractError(str(path), f"not valid utf-8: {e}") from e
     if not source.strip():
         return
+
+    # Before both the parse and the line split, so neither the body nor the
+    # preview's body_md picks frontmatter up.
+    source = _blank_frontmatter(source)
 
     parent_id = _parent_id(path)
     times = read_file_times(path)

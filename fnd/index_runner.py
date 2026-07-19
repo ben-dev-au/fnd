@@ -28,7 +28,7 @@ import sys
 import tempfile
 import time
 import tomllib
-from collections.abc import AsyncIterator, Callable, Collection
+from collections.abc import AsyncIterator, Callable, Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Literal, cast
@@ -40,6 +40,7 @@ from fnd.cache import ExtractionCache
 from fnd.config import CollectionConfig
 from fnd.extract import ExtractError, extract
 from fnd.frontmatter import FrontmatterParseError, read_frontmatter_from_file
+from fnd.fsmeta import read_file_times
 from fnd.index import (
     _COMMIT_BATCH,
     _WRITER_HEAP,
@@ -49,6 +50,7 @@ from fnd.index import (
 )
 from fnd.meta_blob import encode as encode_meta_blob
 from fnd.schema import F_COLLECTION
+from fnd.tags import TagContext, providers_for, read_tags
 from fnd.walk import is_dataless, walk_sources
 
 EventKind = Literal[
@@ -272,25 +274,44 @@ def _enumerate_paths(config: CollectionConfig) -> list[tuple[Path, str]]:
     return out
 
 
+def _should_reprocess(
+    *, prior_mtime: int, prior_ctime: int, cur_mtime: int, cur_ctime: int
+) -> bool:
+    """Whether a file already in the index needs re-processing.
+
+    mtime catches content edits. ctime additionally catches metadata-only
+    edits — a Finder retag moves ctime alone, so an mtime-only check would
+    leave tags stale until the file's content happened to change.
+
+    ``prior_ctime`` of 0 means the stored doc predates the field (a v7 index
+    read during migration): treat it as "no information" rather than as a
+    change, so upgrading doesn't re-extract the entire corpus.
+    """
+    if cur_mtime != prior_mtime:
+        return True
+    return bool(prior_ctime) and cur_ctime != prior_ctime
+
+
 def _prior_indexed_state(
     searcher: Any, schema: Any, collection: str, parent_id: str
-) -> tuple[int | None, bool]:
-    """``(stored_mtime, has_textured)`` for this file's prior-committed
-    chunks in this collection, or ``(None, False)`` if absent.
+) -> tuple[int | None, int, bool]:
+    """``(stored_mtime, stored_inode_ctime, has_textured)`` for this file's
+    prior-committed chunks in this collection, or ``(None, 0, False)`` if absent.
 
-    All of a file's chunks share an mtime, so the first hit settles it;
-    ``has_textured`` scans a handful of chunks for a non-empty ``body_md``.
-    Used by the incremental skip to decide whether an unchanged file needs
-    any work this run.
+    All of a file's chunks share both timestamps, so the first hit settles
+    them; ``has_textured`` scans a handful of chunks for a non-empty
+    ``body_md``. Used by the incremental skip to decide whether an unchanged
+    file needs any work this run.
     """
     from fnd.index import _scoped_delete_query
-    from fnd.schema import F_BODY_MD, F_MTIME
+    from fnd.schema import F_BODY_MD, F_INODE_CTIME, F_MTIME
 
     try:
         result = searcher.search(_scoped_delete_query(schema, collection, parent_id), limit=16)
     except Exception:
-        return None, False
+        return None, 0, False
     mtime: int | None = None
+    inode_ctime = 0
     has_textured = False
     for _score, addr in result.hits:
         doc = searcher.doc(addr)
@@ -298,9 +319,13 @@ def _prior_indexed_state(
             mv = doc.get_first(F_MTIME)  # type: ignore[attr-defined]
             if mv is not None:
                 mtime = int(mv)
+            # Absent on v7 docs read mid-migration; 0 means "no information".
+            cv = doc.get_first(F_INODE_CTIME)  # type: ignore[attr-defined]
+            if cv is not None:
+                inode_ctime = int(cv)
         if doc.get_first(F_BODY_MD):  # type: ignore[attr-defined]
             has_textured = True
-    return mtime, has_textured
+    return mtime, inode_ctime, has_textured
 
 
 def _process_one_file(
@@ -316,6 +341,7 @@ def _process_one_file(
     skip_unchanged: bool = False,
     texturise_on: bool = True,
     wipe: bool = False,
+    tag_sources: Sequence[str] = ("frontmatter", "os"),
 ) -> tuple[int, bool, bool, str]:
     """Synchronous per-file work — extraction + write to Tantivy.
 
@@ -325,10 +351,12 @@ def _process_one_file(
     ``asyncio.to_thread`` so the caller's event loop stays responsive.
 
     When ``skip_unchanged`` and ``prior_searcher`` is given, a file already
-    in this collection's committed index with an unchanged mtime is skipped
-    entirely (no delete, no extraction) — returned as a cache hit so it
-    counts as already-indexed. The one exception is a flat PDF we could
-    newly texturise this run (``texturise_on`` and no prior ``body_md``).
+    in this collection's committed index with an unchanged mtime AND ctime
+    is skipped entirely (no delete, no extraction) — returned as a cache
+    hit so it counts as already-indexed. ctime is checked because a Finder
+    retag moves it without touching mtime. The one exception is a flat PDF
+    we could newly texturise this run (``texturise_on`` and no prior
+    ``body_md``).
     """
     # iCloud-offloaded placeholder: skip rather than triggering a sync
     # download that could blow the worker's stall budget.
@@ -341,29 +369,44 @@ def _process_one_file(
     # Incremental skip: an unchanged file already in this collection's
     # committed index needs no work this run.
     if skip_unchanged and prior_searcher is not None:
-        prior_mtime, prior_textured = _prior_indexed_state(
+        prior_mtime, prior_ctime, prior_textured = _prior_indexed_state(
             prior_searcher, schema, collection, parent_id
         )
         if prior_mtime is not None:
-            try:
-                cur_mtime = int(path.stat().st_mtime)
-            except OSError:
-                cur_mtime = prior_mtime
+            times = read_file_times(path)
+            # read_file_times zeroes on stat failure; fall back to the stored
+            # values so a transient error reads as "unchanged", not "changed".
+            cur_mtime = times.mtime or prior_mtime
+            cur_ctime = times.inode_changed or prior_ctime
             # Re-process only if changed, or if it's a flat PDF this run
             # could texturise — the one improvement an incremental pass
             # should still make.
             improvable = is_pdf and texturise_on and not prior_textured
-            if cur_mtime == prior_mtime and not improvable:
+            changed = _should_reprocess(
+                prior_mtime=prior_mtime,
+                prior_ctime=prior_ctime,
+                cur_mtime=cur_mtime,
+                cur_ctime=cur_ctime,
+            )
+            if not changed and not improvable:
                 return 0, True, prior_textured, ""
 
     meta_blob_bytes = b""
+    frontmatter: dict[str, object] | None = None
     if path.suffix.lower() == ".md":
         try:
-            fm = read_frontmatter_from_file(path)
+            frontmatter = read_frontmatter_from_file(path)
         except FrontmatterParseError:
-            fm = None
-        if fm:
-            meta_blob_bytes = encode_meta_blob(fm)
+            frontmatter = None
+        if frontmatter:
+            meta_blob_bytes = encode_meta_blob(frontmatter)
+
+    # Read once per file and stamped onto every chunk, like meta_blob.
+    # Reuses the frontmatter parsed just above rather than re-reading.
+    file_tags = read_tags(
+        TagContext(path=path, frontmatter=frontmatter),
+        providers_for(sys.platform, tag_sources),
+    )
 
     # Non-PDFs don't use the structured-extraction cache (their
     # extraction is already cheap), so cache.hits never increments
@@ -416,6 +459,7 @@ def _process_one_file(
                     collection=collection,
                     source_path=source_id,
                     meta_blob_bytes=meta_blob_bytes,
+                    tags=file_tags,
                 )
             )
             n_chunks += 1
@@ -461,8 +505,8 @@ async def run_indexer(
       "Process new files (index only)" action)
 
     ``skip_unchanged`` (default True) enables the incremental skip: a file
-    already in this collection's committed index with an unchanged mtime is
-    left untouched. The "Re-texturise outdated" action passes False so it
+    already in this collection's committed index with an unchanged mtime and
+    ctime is left untouched. The "Re-texturise outdated" action passes False so it
     can revisit unchanged files. ``force_fresh`` (default False) is the
     "Re-texturise outdated" opt-out from durable cache reuse — when True,
     ``extract()`` only reuses a current-signature entry and otherwise

@@ -39,6 +39,7 @@ from fnd.schema import (
     F_SOURCE_PATH,
     F_TITLE,
     SCHEMA_VERSION,
+    TAG_FIELD_BY_SOURCE,
     build_schema,
 )
 from fnd.struct import encode as encode_body_struct
@@ -125,6 +126,7 @@ def _doc_for_chunk(
     collection: str,
     source_path: str = "",
     meta_blob_bytes: bytes = b"",
+    tags: dict[str, frozenset[str]] | None = None,
 ) -> Document:
     doc = Document()
     doc.add_text(F_PARENT_ID, chunk.parent_id)
@@ -148,6 +150,14 @@ def _doc_for_chunk(
     doc.add_bytes(F_BODY_STRUCT, encode_body_struct(chunk.body_struct))
     doc.add_bytes(F_BODY_MD, chunk.body_md.encode("utf-8"))
     doc.add_bytes(F_META_BLOB, meta_blob_bytes)
+    # One field per provenance. Unknown source ids are skipped so a provider
+    # added in a newer build can't break an older writer.
+    for source, values in (tags or {}).items():
+        field_name = TAG_FIELD_BY_SOURCE.get(source)
+        if field_name is None:
+            continue
+        for value in sorted(values):
+            doc.add_text(field_name, value)
     return doc
 
 
