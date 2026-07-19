@@ -23,7 +23,9 @@ from fnd.schema import (
     F_BODY_STRUCT,
     F_CHUNK_SEQ,
     F_COLLECTION,
+    F_CREATED,
     F_HEADING_PATH,
+    F_INODE_CTIME,
     F_KIND,
     F_LINE,
     F_META_BLOB,
@@ -137,6 +139,8 @@ def _doc_for_chunk(
     doc.add_text(F_BODY, chunk.body)
     doc.add_text(F_PAGE_LABEL, chunk.page_label)
     doc.add_unsigned(F_MTIME, max(chunk.mtime, 0))
+    doc.add_unsigned(F_CREATED, max(chunk.created, 0))
+    doc.add_unsigned(F_INODE_CTIME, max(chunk.inode_changed, 0))
     doc.add_unsigned(F_PAGE, max(chunk.page, 0))
     doc.add_unsigned(F_SLIDE, max(chunk.slide, 0))
     doc.add_unsigned(F_LINE, max(chunk.line, 0))

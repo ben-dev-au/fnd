@@ -10,8 +10,11 @@ from __future__ import annotations
 from fnd import schema
 
 
-def test_schema_version_bumped_to_seven() -> None:
-    assert schema.SCHEMA_VERSION == 7
+def test_schema_version_at_or_past_seven() -> None:
+    """>= rather than ==: F_LINE landed in 7 and must survive later bumps.
+    Pinning the exact version made this test stale at the v8 bump without
+    catching anything the field assertions below don't already cover."""
+    assert schema.SCHEMA_VERSION >= 7
 
 
 def test_schema_exposes_f_line_constant() -> None:
