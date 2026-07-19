@@ -149,7 +149,7 @@ macos Terminal.app compatibility is variable depending on the terminals set font
 | `fnd <query>`                                   | Launch the TUI with `<query>` pre-filled.                                      |
 | `fnd -c <collection> <query>`                   | Launch the TUI scoped to a collection.                                         |
 | `fnd tui [query]`                               | Explicitly launch the TUI (optional seed query).                               |
-| `fnd search "<query>"`                          | Terminal search. Flags: `--limit`, `-c/--collection`, `--meta`, `--explain N`. |
+| `fnd search "<query>"`                          | Terminal search. Flags: `--limit`, `-c/--collection`, `--meta`, `--explain N`, plus the filters below. |
 | `fnd index <root>`                              | Ad-hoc index a single root into the default collection.                        |
 | `fnd collection list`                           | List configured collections and their sources.                                 |
 | `fnd collection add <name>`                     | Add (or extend) a collection in the config TOML.                               |
@@ -164,6 +164,33 @@ macos Terminal.app compatibility is variable depending on the terminals set font
 | `fnd extras uninstall <name>`                   | Remove an extra (indexed chunks remain).                                       |
 | `fnd cache status` / `info` / `prune` / `clear` | Manage the PDF extraction cache.                                               |
 | `fnd version`                                   | Print the fnd version.                                                         |
+
+### Search filters
+
+`fnd search` takes the same filters as the TUI's Filters pane:
+
+| Flag | Meaning |
+| --- | --- |
+| `--tag <name>` | Only files carrying this tag. Repeatable. |
+| `--not-tag <name>` | Exclude files carrying this tag. Repeatable. |
+| `--tag-match all\|any` | Combine multiple `--tag`s. Default `all`. |
+| `--created <window>` | Created within `today`/`yesterday`/`week`/`month`/`year`. |
+| `--modified <window>` | Modified within the same windows. |
+| `--kind <ext>` | Restrict to `pdf`/`docx`/`pptx`/`md`/`txt`. Repeatable. |
+
+```bash
+fnd search "risotto" --tag recipe --not-tag draft --created month
+```
+
+Tags come from Obsidian-style YAML frontmatter (`tags:`) and from macOS Finder
+tags. Nested tags work as a hierarchy — `--tag project` also matches
+`project/alpha`. Tag matching is case-insensitive, and a leading `#` is
+optional. Which sources are read is set by `defaults.tag_sources` in the config
+TOML; disabling one takes effect immediately, with no re-index.
+
+Created dates come from the filesystem's birth time, which macOS records but
+some Linux filesystems don't; files without one match only the default
+(unfiltered) window.
 
 ## Open with… apps
 

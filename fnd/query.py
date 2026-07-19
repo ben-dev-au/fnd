@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from tantivy import Index, Query, Schema
 
@@ -24,6 +24,10 @@ from fnd.extract.base import Block
 from fnd.query_errors import QuerySyntaxError
 from fnd.query_errors import QueryTooLargeError as QueryTooLargeError  # re-export (back-compat)
 from fnd.query_plan import enforce_query_bounds
+
+if TYPE_CHECKING:
+    from fnd.tag_query import TagFilter
+
 from fnd.schema import (
     DEFAULT_FIELD_BOOSTS,
     F_BODY_MD,
@@ -313,6 +317,7 @@ class Searcher:
         active_sources: list[str] | None = None,
         fuzzy_distance: int = 0,
         intent: str | None = None,
+        tag_filter: TagFilter | None = None,
     ) -> list[Hit]:
         import tantivy
 
@@ -327,6 +332,7 @@ class Searcher:
             build_schema,
         )
         from fnd.stopwords import strip_query_stopwords
+        from fnd.tag_query import compile_tag_filter
 
         enforce_query_bounds(query)
         schema = build_schema()
@@ -341,6 +347,11 @@ class Searcher:
         # phrases and explicit-syntax queries pass through untouched.
         content = strip_query_stopwords(preprocess(extracted.content))
         filters = list(extracted.filters)
+        # Tags are typed state, never query text — see fnd/tag_query.py.
+        if tag_filter is not None and not tag_filter.is_empty():
+            compiled_tags = compile_tag_filter(tag_filter, schema)
+            if compiled_tags is not None:
+                filters.append(compiled_tags)
         # Active collection (-c / settings) and source scope are hard filters.
         # ``collection`` accepts a single name (CLI ``-c``) or a list (the
         # TUI's multi-collection scope); a list becomes an OR over F_COLLECTION
@@ -464,6 +475,7 @@ class Searcher:
         active_sources: list[str] | None = None,
         fuzzy_distance: int = 0,
         intent: str | None = None,
+        tag_filter: TagFilter | None = None,
     ) -> list[Hit]:
         """Return at least ``target`` hits, applying the optional metadata
         filter post-Tantivy with oversample-and-retry."""
@@ -475,6 +487,7 @@ class Searcher:
                 active_sources=active_sources,
                 fuzzy_distance=fuzzy_distance,
                 intent=intent,
+                tag_filter=tag_filter,
             )
         from fnd.filter_dsl import compile_filter
 
@@ -489,6 +502,7 @@ class Searcher:
                 active_sources=active_sources,
                 fuzzy_distance=fuzzy_distance,
                 intent=intent,
+                tag_filter=tag_filter,
             )
             survivors = [h for h in raw if _passes_meta_filter(h, predicate)]
             if len(survivors) >= target:
@@ -511,6 +525,7 @@ class Searcher:
         active_sources: list[str] | None = None,
         fuzzy_distance: int = 0,
         intent: str | None = None,
+        tag_filter: TagFilter | None = None,
     ) -> list[Hit]:
         """Return one Hit per file (the file's best-scored chunk).
 
@@ -538,6 +553,7 @@ class Searcher:
                 metadata_filter=metadata_filter,
                 active_sources=active_sources,
                 intent=intent,
+                tag_filter=tag_filter,
             )
             return _dedup_by_file(fused, limit)
         raw = self._filtered_raw_hits(
@@ -548,6 +564,7 @@ class Searcher:
             active_sources=active_sources,
             fuzzy_distance=fuzzy_distance,
             intent=intent,
+            tag_filter=tag_filter,
         )
         if profile is not None:
             from fnd.rerank import RankingProfile, rerank_hits

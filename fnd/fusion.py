@@ -36,12 +36,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Final, Literal, overload
+from typing import TYPE_CHECKING, Final, Literal, overload
 
 from fnd.explain import FusionTrace, HitContribution, SubQueryTrace
 from fnd.query import Hit, Searcher
 from fnd.query_errors import QuerySyntaxError
 from fnd.synonyms import SynonymTable, expand
+
+if TYPE_CHECKING:
+    from fnd.tag_query import TagFilter
 
 # A field qualifier (``kind:pdf``, ``c:wine``) anywhere in the query — phrase
 # wrapping such a query would quote the qualifier and produce a junk phrase.
@@ -317,6 +320,7 @@ def fusion_search(
     active_sources: list[str] | None = ...,
     precomputed_lex_ranking: list[Hit] | None = ...,
     intent: str | None = ...,
+    tag_filter: TagFilter | None = ...,
     with_trace: Literal[False] = False,
 ) -> list[Hit]: ...
 
@@ -334,6 +338,7 @@ def fusion_search(
     active_sources: list[str] | None = ...,
     precomputed_lex_ranking: list[Hit] | None = ...,
     intent: str | None = ...,
+    tag_filter: TagFilter | None = ...,
     with_trace: Literal[True],
 ) -> tuple[list[Hit], FusionTrace]: ...
 
@@ -350,6 +355,7 @@ def fusion_search(
     active_sources: list[str] | None = None,
     precomputed_lex_ranking: list[Hit] | None = None,
     intent: str | None = None,
+    tag_filter: TagFilter | None = None,
     with_trace: bool = False,
 ) -> list[Hit] | tuple[list[Hit], FusionTrace]:
     """Run sub-queries in parallel and RRF-fuse the results.
@@ -402,6 +408,7 @@ def fusion_search(
             metadata_filter=metadata_filter,
             active_sources=active_sources,
             intent=intent,
+            tag_filter=tag_filter,
         )
 
     rankings: list[list[Hit]] = []
