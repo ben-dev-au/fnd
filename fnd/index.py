@@ -161,6 +161,38 @@ def _doc_for_chunk(
     return doc
 
 
+def read_file_metadata(
+    path: Path, *, tag_sources: Sequence[str] = ("frontmatter", "os")
+) -> tuple[bytes, dict[str, frozenset[str]]]:
+    """``(meta_blob_bytes, tags)`` for one file.
+
+    Shared by both index builders so an ad-hoc ``fnd index <root>`` and a
+    configured reindex capture identical metadata. Frontmatter is parsed once
+    and handed to the tag providers rather than re-read.
+    """
+    import sys as _sys
+
+    from fnd.frontmatter import FrontmatterParseError, read_frontmatter_from_file
+    from fnd.meta_blob import encode as encode_meta_blob
+    from fnd.tags import TagContext, providers_for, read_tags
+
+    meta_blob_bytes = b""
+    frontmatter: dict[str, object] | None = None
+    if path.suffix.lower() == ".md":
+        try:
+            frontmatter = read_frontmatter_from_file(path)
+        except FrontmatterParseError:
+            frontmatter = None
+        if frontmatter:
+            meta_blob_bytes = encode_meta_blob(frontmatter)
+
+    tags = read_tags(
+        TagContext(path=path, frontmatter=frontmatter),
+        providers_for(_sys.platform, tag_sources),
+    )
+    return meta_blob_bytes, tags
+
+
 def build_index(
     *,
     roots: Sequence[Path],
@@ -170,6 +202,7 @@ def build_index(
     excludes: list[str] | None = None,
     follow_symlinks: bool = False,
     rebuild: bool = False,
+    tag_sources: Sequence[str] = ("frontmatter", "os"),
 ) -> int:
     """Index supported files under ``roots`` into ``index_dir``.
 
@@ -204,9 +237,17 @@ def build_index(
         parent_id = _path_parent_id(path)
         _delete_q = _scoped_delete_query(index.schema, collection, parent_id)
         writer.delete_documents_by_query(_delete_q)
+        meta_blob_bytes, file_tags = read_file_metadata(path, tag_sources=tag_sources)
         try:
             for chunk in extract(path):
-                writer.add_document(_doc_for_chunk(chunk, collection=collection))
+                writer.add_document(
+                    _doc_for_chunk(
+                        chunk,
+                        collection=collection,
+                        meta_blob_bytes=meta_blob_bytes,
+                        tags=file_tags,
+                    )
+                )
                 written += 1
                 if written % _COMMIT_BATCH == 0:
                     writer.commit()

@@ -72,3 +72,47 @@ def test_unknown_provider_id_is_ignored(tmp_path: Path) -> None:
     )
     stored = _stored(_index_with(tmp_path, [doc]))
     assert set(stored.get_all(F_TAGS_FM)) == {"ok"}
+
+
+def test_build_index_writes_tags(tmp_path: Path) -> None:
+    """`fnd index <root>` uses build_index, not the config path. Tags must
+    land there too, or an ad-hoc index is silently untaggable."""
+    from fnd.index import build_index
+    from fnd.query import Searcher
+    from fnd.tag_query import TagFilter
+
+    root = tmp_path / "corpus"
+    root.mkdir()
+    (root / "a.md").write_text(
+        "---\ntags: [recipe, project/alpha]\n---\n\n# A\n\nsaffron\n", encoding="utf-8"
+    )
+    (root / "b.md").write_text("# B\n\nsaffron plain\n", encoding="utf-8")
+
+    index_dir = tmp_path / "idx"
+    build_index(roots=[root], index_dir=index_dir, collection="default")
+
+    searcher = Searcher(index_dir=index_dir)
+    hits = searcher.search(
+        "saffron", tag_filter=TagFilter(include={"frontmatter": frozenset({"recipe"})})
+    )
+    assert {Path(h.path).name for h in hits} == {"a.md"}
+
+
+def test_build_index_expands_nested_tags(tmp_path: Path) -> None:
+    from fnd.index import build_index
+    from fnd.query import Searcher
+    from fnd.tag_query import TagFilter
+
+    root = tmp_path / "corpus"
+    root.mkdir()
+    (root / "a.md").write_text(
+        "---\ntags: [project/alpha]\n---\n\n# A\n\nsaffron\n", encoding="utf-8"
+    )
+    index_dir = tmp_path / "idx"
+    build_index(roots=[root], index_dir=index_dir, collection="default")
+
+    searcher = Searcher(index_dir=index_dir)
+    hits = searcher.search(
+        "saffron", tag_filter=TagFilter(include={"frontmatter": frozenset({"project"})})
+    )
+    assert {Path(h.path).name for h in hits} == {"a.md"}

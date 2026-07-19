@@ -136,3 +136,51 @@ def test_is_empty_reports_no_selection() -> None:
     assert TagFilter().is_empty()
     assert TagFilter(include={"frontmatter": frozenset()}).is_empty()
     assert not TagFilter(include={"frontmatter": frozenset({"a"})}).is_empty()
+
+
+def test_same_tag_across_sources_is_or_not_and(tmp_path: Path) -> None:
+    """A tag fanned across sources means 'from either source'.
+
+    ANDing them would demand the same tag in frontmatter AND Finder, which
+    a real file essentially never satisfies — this is what `--tag x` with
+    both sources enabled compiles to.
+    """
+    index = _build(tmp_path)
+    q = compile_tag_filter(
+        TagFilter(
+            include={"frontmatter": frozenset({"recipe"}), "os": frozenset({"recipe"})},
+            match_all=True,
+        ),
+        build_schema(),
+    )
+    assert q is not None
+    # normal.md has it in frontmatter only; both.md in both.
+    assert _files(index, q) == {"normal.md", "both.md"}
+
+
+def test_distinct_tags_across_sources_still_and(tmp_path: Path) -> None:
+    """Grouping by value must not collapse genuinely different selections."""
+    index = _build(tmp_path)
+    q = compile_tag_filter(
+        TagFilter(
+            include={"frontmatter": frozenset({"recipe"}), "os": frozenset({"red"})},
+            match_all=True,
+        ),
+        build_schema(),
+    )
+    assert q is not None
+    # Only normal.md carries frontmatter 'recipe' AND Finder 'red'.
+    assert _files(index, q) == {"normal.md"}
+
+
+def test_exclude_across_sources_subtracts_either(tmp_path: Path) -> None:
+    index = _build(tmp_path)
+    q = compile_tag_filter(
+        TagFilter(exclude={"frontmatter": frozenset({"recipe"}), "os": frozenset({"recipe"})}),
+        build_schema(),
+    )
+    assert q is not None
+    got = _files(index, q)
+    assert "normal.md" not in got
+    assert "both.md" not in got
+    assert "spaced.md" in got

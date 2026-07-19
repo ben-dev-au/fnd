@@ -39,18 +39,34 @@ class TagFilter:
 
 
 def _terms(selection: dict[str, frozenset[str]], schema: tantivy.Schema) -> list[tantivy.Query]:
-    """One term query per (source, tag).
+    """One query per tag *value*, OR-ing across the sources it was selected in.
+
+    Grouping by value matters: ``--tag recipe`` with both sources enabled
+    fans out to {frontmatter: recipe, os: recipe}, and ANDing those would
+    demand the same tag in frontmatter *and* Finder — which a real file
+    essentially never satisfies. Distinct values stay separate, so
+    ``match_all`` still ANDs genuinely different selections.
 
     Unknown sources are skipped so a provider added in a newer build can't
-    break an older reader. Sorted for deterministic query shape.
+    break an older reader. Sorted for a deterministic query shape.
     """
-    out: list[tantivy.Query] = []
+    by_value: dict[str, list[str]] = {}
     for source in sorted(selection):
         field_name = TAG_FIELD_BY_SOURCE.get(source)
         if field_name is None:
             continue
         for value in sorted(selection[source]):
-            out.append(tantivy.Query.term_query(schema, field_name, value))
+            by_value.setdefault(value, []).append(field_name)
+
+    out: list[tantivy.Query] = []
+    for value in sorted(by_value):
+        fields = by_value[value]
+        terms = [tantivy.Query.term_query(schema, f, value) for f in fields]
+        out.append(
+            terms[0]
+            if len(terms) == 1
+            else tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in terms])
+        )
     return out
 
 

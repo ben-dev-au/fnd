@@ -39,7 +39,6 @@ from platformdirs import user_data_dir
 from fnd.cache import ExtractionCache
 from fnd.config import CollectionConfig
 from fnd.extract import ExtractError, extract
-from fnd.frontmatter import FrontmatterParseError, read_frontmatter_from_file
 from fnd.fsmeta import read_file_times
 from fnd.index import (
     _COMMIT_BATCH,
@@ -47,10 +46,9 @@ from fnd.index import (
     _doc_for_chunk,
     _ensure_index,
     _path_parent_id,
+    read_file_metadata,
 )
-from fnd.meta_blob import encode as encode_meta_blob
 from fnd.schema import F_COLLECTION
-from fnd.tags import TagContext, providers_for, read_tags
 from fnd.walk import is_dataless, walk_sources
 
 EventKind = Literal[
@@ -391,22 +389,9 @@ def _process_one_file(
             if not changed and not improvable:
                 return 0, True, prior_textured, ""
 
-    meta_blob_bytes = b""
-    frontmatter: dict[str, object] | None = None
-    if path.suffix.lower() == ".md":
-        try:
-            frontmatter = read_frontmatter_from_file(path)
-        except FrontmatterParseError:
-            frontmatter = None
-        if frontmatter:
-            meta_blob_bytes = encode_meta_blob(frontmatter)
-
-    # Read once per file and stamped onto every chunk, like meta_blob.
-    # Reuses the frontmatter parsed just above rather than re-reading.
-    file_tags = read_tags(
-        TagContext(path=path, frontmatter=frontmatter),
-        providers_for(sys.platform, tag_sources),
-    )
+    # Read once per file, stamped onto every chunk. Shared with build_index so
+    # an ad-hoc `fnd index <root>` captures the same metadata as a reindex.
+    meta_blob_bytes, file_tags = read_file_metadata(path, tag_sources=tag_sources)
 
     # Non-PDFs don't use the structured-extraction cache (their
     # extraction is already cheap), so cache.hits never increments
