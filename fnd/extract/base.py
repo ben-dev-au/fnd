@@ -76,3 +76,9 @@ class Chunk:
     title: str = ""
     author: str = ""
     chunk_seq: int = 0
+    # File timestamps, stamped by the extractor from fnd.fsmeta. ``created``
+    # is st_birthtime (0 off Darwin); ``inode_changed`` is st_ctime, which
+    # moves on metadata-only edits like a Finder retag and so drives the
+    # incremental freshness check that mtime alone would miss.
+    created: int = 0
+    inode_changed: int = 0

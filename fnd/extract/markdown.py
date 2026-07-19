@@ -21,6 +21,7 @@ from pathlib import Path
 from markdown_it import MarkdownIt
 
 from fnd.extract.base import Block, Chunk, ExtractError
+from fnd.fsmeta import FileTimes, read_file_times
 
 _md = MarkdownIt("commonmark")
 
@@ -51,7 +52,7 @@ def _flush_section(
     *,
     path: Path,
     parent_id: str,
-    mtime: int,
+    times: FileTimes,
     heading_stack: list[str],
     blocks: list[Block],
     body_text_parts: list[str],
@@ -72,7 +73,9 @@ def _flush_section(
     return Chunk(
         parent_id=parent_id,
         path=str(path),
-        mtime=mtime,
+        mtime=times.mtime,
+        created=times.created,
+        inode_changed=times.inode_changed,
         kind="md",
         body=body,
         body_struct=blocks.copy(),
@@ -118,7 +121,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
         return
 
     parent_id = _parent_id(path)
-    mtime = int(path.stat().st_mtime)
+    times = read_file_times(path)
     tokens = _md.parse(source)
     source_lines = source.splitlines()
     total_lines = len(source_lines)
@@ -145,7 +148,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
             chunk = _flush_section(
                 path=path,
                 parent_id=parent_id,
-                mtime=mtime,
+                times=times,
                 heading_stack=heading_stack,
                 blocks=blocks,
                 body_text_parts=body_parts,
@@ -219,7 +222,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
     chunk = _flush_section(
         path=path,
         parent_id=parent_id,
-        mtime=mtime,
+        times=times,
         heading_stack=heading_stack,
         blocks=blocks,
         body_text_parts=body_parts,

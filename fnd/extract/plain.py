@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from fnd.extract.base import Block, Chunk
+from fnd.fsmeta import read_file_times
 
 WINDOW_CHARS = 1000
 OVERLAP_CHARS = 200
@@ -25,7 +26,7 @@ def _make_parent_id(path: Path) -> str:
 def extract(path: Path) -> Iterator[Chunk]:
     text = path.read_text(encoding="utf-8", errors="replace")
     parent_id = _make_parent_id(path)
-    mtime = int(path.stat().st_mtime)
+    times = read_file_times(path)
 
     if not text.strip():
         return
@@ -45,7 +46,9 @@ def extract(path: Path) -> Iterator[Chunk]:
         yield Chunk(
             parent_id=parent_id,
             path=str(path),
-            mtime=mtime,
+            mtime=times.mtime,
+            created=times.created,
+            inode_changed=times.inode_changed,
             kind="txt",
             body=body,
             body_struct=[Block(kind="p", text=body)],

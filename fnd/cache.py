@@ -323,6 +323,10 @@ def _chunk_from_dict(d: dict[str, Any]) -> Chunk:
         body=d.get("body", ""),
         body_struct=blocks,
         body_md=d.get("body_md", ""),
+        # .get() not [] — the cache is durable and entries written before
+        # these fields existed must still load.
+        created=d.get("created", 0),
+        inode_changed=d.get("inode_changed", 0),
         page=d.get("page", 0),
         page_label=d.get("page_label", ""),
         slide=d.get("slide", 0),

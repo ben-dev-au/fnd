@@ -31,6 +31,7 @@ from docx.text.paragraph import Paragraph
 
 from fnd.extract._ooxml import reject_if_zip_bomb
 from fnd.extract.base import Block, Chunk, ExtractError
+from fnd.fsmeta import FileTimes, read_file_times
 
 _HEADING_LEVELS: dict[str, int] = {
     "Heading 1": 1,
@@ -169,7 +170,7 @@ def _flush(
     *,
     path: Path,
     parent_id: str,
-    mtime: int,
+    times: FileTimes,
     heading_stack: list[str],
     blocks: list[Block],
     body_parts: list[str],
@@ -185,7 +186,9 @@ def _flush(
     return Chunk(
         parent_id=parent_id,
         path=str(path),
-        mtime=mtime,
+        mtime=times.mtime,
+        created=times.created,
+        inode_changed=times.inode_changed,
         kind="docx",
         body=body,
         body_struct=blocks.copy(),
@@ -208,7 +211,7 @@ def _extract_inner(path: Path, parent_id: str) -> Iterator[Chunk]:
     parser crash during ``doc.iter_inner_content()`` would propagate
     raw and abort the index build."""
     try:
-        mtime = int(path.stat().st_mtime)
+        times = read_file_times(path)
         try:
             doc = Document(str(path))
         except PackageNotFoundError as e:
@@ -216,7 +219,7 @@ def _extract_inner(path: Path, parent_id: str) -> Iterator[Chunk]:
             # packages too — we can't reliably tell them apart, so the
             # umbrella message is the right shape.
             raise ExtractError(str(path), f"unreadable docx: {e}") from e
-        yield from _walk_docx_body(path=path, parent_id=parent_id, mtime=mtime, doc=doc)
+        yield from _walk_docx_body(path=path, parent_id=parent_id, times=times, doc=doc)
     except ExtractError:
         raise
     except Exception as e:
@@ -226,7 +229,7 @@ def _extract_inner(path: Path, parent_id: str) -> Iterator[Chunk]:
         raise ExtractError(str(path), f"{type(e).__name__}: {e}") from e
 
 
-def _walk_docx_body(*, path: Path, parent_id: str, mtime: int, doc: Any) -> Iterator[Chunk]:
+def _walk_docx_body(*, path: Path, parent_id: str, times: FileTimes, doc: Any) -> Iterator[Chunk]:
     heading_stack: list[str] = []
     blocks: list[Block] = []
     body_parts: list[str] = []
@@ -249,7 +252,7 @@ def _walk_docx_body(*, path: Path, parent_id: str, mtime: int, doc: Any) -> Iter
                 chunk = _flush(
                     path=path,
                     parent_id=parent_id,
-                    mtime=mtime,
+                    times=times,
                     heading_stack=heading_stack,
                     blocks=blocks,
                     body_parts=body_parts,
@@ -305,7 +308,7 @@ def _walk_docx_body(*, path: Path, parent_id: str, mtime: int, doc: Any) -> Iter
     chunk = _flush(
         path=path,
         parent_id=parent_id,
-        mtime=mtime,
+        times=times,
         heading_stack=heading_stack,
         blocks=blocks,
         body_parts=body_parts,
