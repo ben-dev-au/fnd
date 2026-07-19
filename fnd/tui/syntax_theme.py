@@ -184,7 +184,10 @@ def _build_spans(tokens: Sequence[_Tok], *, neutral_operators: bool = False) -> 
         elif token_type is Token.Punctuation and text in _CLOSERS:
             depth = max(0, depth - 1)
             style = _BRACKET_CYCLE[depth % len(_BRACKET_CYCLE)]
-        elif token_type is Token.Name:
+        elif token_type is Token.Name and index in compact_pos:
+            # Blank/whitespace Name tokens (some lexers, e.g. Perl, emit them)
+            # aren't in ``compact_pos`` — skip the positional heuristic and let
+            # them fall through to the parent-walk rather than KeyError.
             p = compact_pos[index]
             before = [(compact[q][1], compact[q][2]) for q in range(p - 1, max(p - 3, -1), -1)]
             after = [(compact[q][1], compact[q][2]) for q in range(p + 1, min(p + 3, len(compact)))]
