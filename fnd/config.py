@@ -904,6 +904,16 @@ fuzzy_enabled            = true
 # are exact-only. Default 3 matches the built-in AUTO heuristic;
 # raise to 4/5 to suppress fuzzy on common short words.
 fuzzy_min_term_chars     = 3      # 0-10
+# Which sources feed the Tags filter. "frontmatter" reads a note's YAML
+# `tags:`; "os" reads file tags set in the file manager (macOS Finder).
+# Removing one takes effect immediately — no re-index needed.
+tag_sources              = ["frontmatter", "os"]
+# Extra frontmatter fields to treat as tags, beyond `tags:`. Useful when
+# a vault keeps its taxonomy in named fields rather than free tags.
+# Values are grouped under the field name, so `Course: Algebra` becomes
+# the tag `course/algebra` and selecting `course` matches them all.
+# Matched case-insensitively. Changing this needs a re-index.
+# tag_frontmatter_keys   = ["Course", "Topic"]
 
 # A collection groups one or more source directories. The starter
 # collection points at ~/Documents; edit, add more [[sources]] tables,
