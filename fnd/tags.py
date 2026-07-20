@@ -88,16 +88,24 @@ class TagProvider(Protocol):
 
 
 def _collect(values: object, out: set[str]) -> None:
-    """Normalise and ancestor-expand into ``out``, bounded, ignoring junk."""
+    """Normalise and ancestor-expand into ``out``, bounded, ignoring junk.
+
+    Obsidian accepts ``tags: a, b`` as well as a YAML list, so a string is
+    split on commas. Without this, a real vault's ``tags: cheatsheets, python``
+    becomes the single unmatchable tag "cheatsheets, python".
+    """
     items = values if isinstance(values, list) else [values]
     for item in items:
         if len(out) >= MAX_TAGS_PER_FILE:
             return
         if not isinstance(item, (str, int, float, bool)):
             continue
-        tag = normalise_tag(str(item))
-        if tag:
-            out |= expand_ancestors(tag)
+        for part in str(item).split(","):
+            if len(out) >= MAX_TAGS_PER_FILE:
+                return
+            tag = normalise_tag(part)
+            if tag:
+                out |= expand_ancestors(tag)
 
 
 class FrontmatterTagProvider:

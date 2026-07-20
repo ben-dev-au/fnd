@@ -94,3 +94,32 @@ def test_provider_is_available_on_every_platform() -> None:
     assert p.available_on("darwin")
     assert p.available_on("win32")
     assert p.available_on("linux")
+
+
+def test_comma_separated_string_form_splits() -> None:
+    """Obsidian's inline form `tags: a, b` is two tags, not one literal.
+
+    Found against a real vault: `tags: cheatsheets, python` was stored as the
+    single tag "cheatsheets, python", so neither name matched.
+    """
+    got = FrontmatterTagProvider().read(_ctx({"tags": "cheatsheets, python"}))
+    assert got == frozenset({"cheatsheets", "python"})
+
+
+def test_comma_form_tolerates_padding_and_empties() -> None:
+    got = FrontmatterTagProvider().read(_ctx({"tags": " a ,, b , "}))
+    assert got == frozenset({"a", "b"})
+
+
+def test_comma_form_inside_a_list_item_splits_too() -> None:
+    got = FrontmatterTagProvider().read(_ctx({"tags": ["a, b", "c"]}))
+    assert got == frozenset({"a", "b", "c"})
+
+
+def test_single_string_without_comma_is_one_tag() -> None:
+    assert FrontmatterTagProvider().read(_ctx({"tags": "recipe"})) == frozenset({"recipe"})
+
+
+def test_comma_form_expands_ancestors() -> None:
+    got = FrontmatterTagProvider().read(_ctx({"tags": "project/alpha, solo"}))
+    assert got == frozenset({"project", "project/alpha", "solo"})
