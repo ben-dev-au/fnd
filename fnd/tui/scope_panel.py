@@ -358,6 +358,12 @@ class ScopeController:
             active_bits.append(self.filter_date)
         if self.filter_created and self.filter_created != "any":
             active_bits.append(f"created {self.filter_created}")
+        n_inc = sum(len(v) for v in self.tag_include.values())
+        n_exc = sum(len(v) for v in self.tag_exclude.values())
+        if n_inc:
+            active_bits.append(f"{n_inc} tag{'s' if n_inc != 1 else ''}")
+        if n_exc:
+            active_bits.append(f"−{n_exc} tag{'s' if n_exc != 1 else ''}")
         title = "Filters" if not active_bits else f"Filters — {', '.join(active_bits)}"
         tree.border_title = title
 

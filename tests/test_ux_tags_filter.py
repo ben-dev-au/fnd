@@ -266,3 +266,29 @@ async def test_category_headers_are_still_skipped_when_expanded(
         tree.cursor_line = line
         await pilot.pause()
         assert tree.cursor_node is not kinds
+
+
+@pytest.mark.asyncio
+async def test_border_title_reports_active_tags(cfg: Config, tagged_index: Path) -> None:
+    """The panel header must show tags are filtering, like kinds and dates do."""
+    app = FNDApp(index_dir=tagged_index, config=cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#filters_panel_tree", Tree)
+        assert tree.border_title == "Filters"
+
+        tags = _branch(tree, "Tags")
+        tags.expand()
+        fm = _descend(tags, "Frontmatter")
+        fm.expand()
+        await pilot.pause()
+        tree.select_node(_descend(fm, "recipe"))
+        await pilot.pause()
+        assert "1 tag" in str(tree.border_title)
+
+        # Second press moves it to excluded, which reads differently.
+        tags = _branch(tree, "Tags")
+        fm = _descend(tags, "Frontmatter")
+        tree.select_node(_descend(fm, "recipe"))
+        await pilot.pause()
+        assert "−1 tag" in str(tree.border_title)
