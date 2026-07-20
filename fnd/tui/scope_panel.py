@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from textual.widgets import Tree
 
-from fnd.tui.results_labels import _styled_parent_label
+from fnd.tui.results_labels import _styled_action_label, _styled_parent_label
 
 if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
@@ -316,9 +316,10 @@ class ScopeController:
 
         # A one-shot escape hatch, shown only when there's something to clear
         # so it never adds noise to a clean pane.
+        action_colour = self._action_colour()
         if self.has_active_filters:
             tree.root.add_leaf(
-                "✕  Clear all filters",
+                _styled_action_label("✕  Clear all filters", action_colour),
                 data={"kind": "filter_value", "category": "clear", "value": "clear"},
             )
 
@@ -385,6 +386,32 @@ class ScopeController:
             self._restore_cursor(tree, keep)
 
     # ── Clear all filters ─────────────────────────────────────────
+
+    def _action_colour(self) -> str:
+        """Control rows take the *inactive pane border* colour so they read as
+        interactive without competing with the focused-pane accent.
+
+        The border is ``round $primary 50%`` — primary at 50% opacity over the
+        app background — so a full-strength ``$primary`` label looks noticeably
+        brighter. Reproduce the same blend here. Resolved live so it tracks the
+        theme; empty string (plain text) if the app isn't mounted yet."""
+        try:
+            from textual.color import Color
+
+            variables = self._app.get_css_variables()
+            primary = variables.get("primary")
+            if not primary:
+                return ""
+            # Use the border's exact foreground: $primary 50% composited over
+            # the pane surface (confirmed #6F6199 on the default theme). Text
+            # glyphs and the border's box-drawing glyphs are both thin strokes,
+            # so the SAME foreground perceives identically — which is what makes
+            # the rows read as the inactive-border colour rather than
+            # a fresh, brighter purple.
+            base = variables.get("surface") or variables.get("background") or "#000000"
+            return Color.parse(base).blend(Color.parse(primary), 0.5).hex
+        except Exception:
+            return ""
 
     @property
     def has_active_filters(self) -> bool:
@@ -573,7 +600,7 @@ class ScopeController:
 
         mode = "all" if self.tag_match_all else "any"
         tags_node.add_leaf(
-            f"⇄  Match: {mode}",
+            _styled_action_label(f"⇄  Match: {mode}", self._action_colour()),
             data={"kind": "filter_value", "category": "tag_match", "value": "toggle"},
         )
         for source, counts in catalog.items():

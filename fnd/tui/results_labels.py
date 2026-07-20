@@ -17,6 +17,7 @@ __all__ = [
     "_score_bar",
     "_score_style",
     "_shorten",
+    "_styled_action_label",
     "_styled_parent_label",
     "_trim_redundant_heading",
 ]
@@ -82,6 +83,25 @@ def _styled_parent_label(label: Any) -> Any:
         styled.stylize("dim")
         return styled
     return Text(str(label), style="dim")
+
+
+def _styled_action_label(label: Any, colour: str) -> Any:
+    """Render a control row (Clear filters, Match mode) in ``colour``.
+
+    Actions sit between the dim category headers and a live selection: they
+    take the inactive-pane colour ($primary) so they read as interactive
+    without competing with the focused-pane accent. Falls back to plain text
+    if the theme colour is missing.
+    """
+    from rich.text import Text
+
+    style = colour or ""
+    if isinstance(label, Text):
+        styled = label.copy()
+        if style:
+            styled.stylize(style)
+        return styled
+    return Text(str(label), style=style)
 
 
 def _build_label(text: str, score: float, max_score: float) -> Any:
