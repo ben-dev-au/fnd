@@ -314,6 +314,14 @@ class ScopeController:
         tree.show_root = False
         tree.clear()
 
+        # A one-shot escape hatch, shown only when there's something to clear
+        # so it never adds noise to a clean pane.
+        if self.has_active_filters:
+            tree.root.add_leaf(
+                "✕  Clear all filters",
+                data={"kind": "filter_value", "category": "clear", "value": "clear"},
+            )
+
         active_kinds = set(self.filter_kinds)
         kind_summary = f"{len(active_kinds)} of {len(_FILTER_KINDS)}" if active_kinds else "any"
         kind_node = tree.root.add(
@@ -375,6 +383,42 @@ class ScopeController:
         tree.border_title = title
         if keep is not None:
             self._restore_cursor(tree, keep)
+
+    # ── Clear all filters ─────────────────────────────────────────
+
+    @property
+    def has_active_filters(self) -> bool:
+        """Whether any filter is narrowing results. Excludes collection/source
+        scope, which is not a filter, and the tag match mode, which is a mode."""
+        return bool(
+            self.filter_kinds
+            or (self.filter_date and self.filter_date != "any")
+            or (self.filter_created and self.filter_created != "any")
+            or any(self.tag_include.values())
+            or any(self.tag_exclude.values())
+        )
+
+    def clear_filters(self) -> None:
+        """Reset every filter to its default and re-run the active query.
+
+        Collections/sources are scope, not filters, so they are left alone —
+        clearing them would silently change what corpus is searched. The tag
+        match mode returns to its ``all`` default so the pane is fully reset.
+        A no-op when nothing is active, so a stray keypress can't thrash search.
+        """
+        if not self.has_active_filters and self.tag_match_all:
+            return
+        self.filter_kinds = []
+        self.filter_date = "any"
+        self.filter_created = "any"
+        self.tag_include = {}
+        self.tag_exclude = {}
+        self.tag_match_all = True
+        self.refresh_filters_panel()
+        self._app._refresh_status()
+        self.persist()
+        if self._app._search.current_query:
+            self._app._search.run(self._app._search.current_query)
 
     # ── Tags branch ───────────────────────────────────────────────
 
@@ -595,6 +639,9 @@ class ScopeController:
         category = str(data.get("category") or "")
         value = str(data.get("value") or "")
         if not category or not value:
+            return
+        if category == "clear":
+            self.clear_filters()
             return
         if category == "kinds":
             if value in self.filter_kinds:

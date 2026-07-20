@@ -1273,6 +1273,11 @@ class FNDApp(App[None]):
         """Single-key teleport from anywhere → preview pane."""
         self.query_one("#preview_pane").focus()
 
+    def action_clear_filters(self) -> None:
+        """Reset every active filter (file type, dates, tags) to default.
+        Collection/source scope is untouched. No-op when nothing is active."""
+        self._scope.clear_filters()
+
     def action_focus_filters_panel(self) -> None:
         """Single-key teleport from anywhere → filters sidebar panel."""
         self.query_one("#filters_panel_tree", Tree).focus()
