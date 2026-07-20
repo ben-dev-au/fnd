@@ -143,6 +143,11 @@ class FNDApp(App[None]):
     Screen { background: $surface; }
     #query_bar { height: 1; padding: 0 1; border: none; }
     #query_notice { height: auto; padding: 0 1; color: $warning; display: none; }
+    #clear_filters_bar {
+        height: 1; padding: 0 1; display: none;
+        color: $primary 50%; text-style: none;
+    }
+    #clear_filters_bar:hover { color: $accent; text-style: bold; }
     #footer_hints { dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted; }
     /* Lazygit-thin scrollbars: 1 cell wide, fully transparent track so
        only the thumb glyph shows against the screen background. The
@@ -403,6 +408,10 @@ class FNDApp(App[None]):
                 # Modified headers behave the same as file rows.
                 yield Tree("Collections", id="collections_panel_tree")
                 yield ResultsTree("Filters", id="filters_panel_tree")
+                # Pinned clear affordance — lives OUTSIDE the scrolling tree so
+                # it is always visible while a filter is active, never inserted
+                # above the viewport. Hidden until something is filtering.
+                yield Static("", id="clear_filters_bar")
             # Right column: preview pane only. The progress strip lives
             # at app level (below) so it can be shared by every long
             # operation (preview load, indexing, cache rebuild) without
@@ -1285,6 +1294,11 @@ class FNDApp(App[None]):
     def action_focus_collections_panel(self) -> None:
         """Single-key teleport from anywhere → collections sidebar panel."""
         self.query_one("#collections_panel_tree", Tree).focus()
+
+    @on(events.Click, "#clear_filters_bar")
+    def _on_clear_bar_click(self, event: events.Click) -> None:
+        event.stop()
+        self._scope.clear_filters()
 
     @on(Tree.NodeSelected, "#filters_panel_tree")
     def _on_filters_panel_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:

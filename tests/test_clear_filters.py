@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import textwrap
 from pathlib import Path
-from typing import Any
 
 import pytest
-from textual.widgets import Tree
-from textual.widgets.tree import TreeNode
 
 from fnd.config import Config, load
 from fnd.index import build_index
@@ -93,39 +90,8 @@ async def test_clear_filters_leaves_scope_untouched(cfg: Config, idx: Path) -> N
         assert dict(app._scope.selection) == before
 
 
-@pytest.mark.asyncio
-async def test_clear_row_appears_only_when_active(cfg: Config, idx: Path) -> None:
-    app = FNDApp(index_dir=idx, config=cfg)
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        tree = app.query_one("#filters_panel_tree", Tree)
-
-        def clear_row() -> TreeNode[Any] | None:
-            for n in tree.root.children:
-                if "Clear" in str(n.label):
-                    return n
-            return None
-
-        assert clear_row() is None
-        app._scope.filter_kinds = ["md"]
-        app._scope.refresh_filters_panel()
-        await pilot.pause()
-        assert clear_row() is not None
-
-
-@pytest.mark.asyncio
-async def test_clear_row_selection_clears(cfg: Config, idx: Path) -> None:
-    app = FNDApp(index_dir=idx, config=cfg)
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        _dirty(app)
-        app._scope.refresh_filters_panel()
-        await pilot.pause()
-        tree = app.query_one("#filters_panel_tree", Tree)
-        row = next(n for n in tree.root.children if "Clear" in str(n.label))
-        tree.select_node(row)
-        await pilot.pause()
-        assert app._scope.has_active_filters is False
+# The pinned Clear bar (visibility, click, no in-tree row) is covered by
+# tests/test_clear_bar.py; this module owns the controller reset + action.
 
 
 @pytest.mark.asyncio

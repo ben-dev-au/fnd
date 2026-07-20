@@ -67,28 +67,22 @@ def _find(tree: Tree[Any], needle: str) -> TreeNode[Any]:
 
 
 @pytest.mark.asyncio
-async def test_clear_and_match_rows_carry_the_primary_colour(cfg: Config, idx: Path) -> None:
+async def test_match_row_carries_the_action_colour(cfg: Config, idx: Path) -> None:
+    """The in-tree Match row takes the inactive-border colour. (Clear moved to
+    its own pinned bar, which gets the same colour straight from CSS.)"""
     app = FNDApp(index_dir=idx, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._scope.filter_kinds = ["md"]
-        app._scope.refresh_filters_panel()
-        await pilot.pause()
-
-        # The rows take the inactive-border colour: $primary at 50% over the
-        # background, not full-strength $primary (which looks brighter).
         expected = app._scope._action_colour().lower()
         assert expected, "no action colour resolved"
 
         tree = app.query_one("#filters_panel_tree", Tree)
-        # Expand Tags so the Match row exists.
         _find(tree, "Tags").expand()
         await pilot.pause()
 
-        for needle in ("Clear all filters", "Match:"):
-            label = _find(tree, needle).label
-            assert isinstance(label, Text)
-            assert expected in str(label.style).lower(), f"{needle!r} not in action colour"
+        label = _find(tree, "Match:").label
+        assert isinstance(label, Text)
+        assert expected in str(label.style).lower()
 
 
 @pytest.mark.asyncio

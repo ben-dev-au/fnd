@@ -316,13 +316,6 @@ class ScopeController:
 
         # A one-shot escape hatch, shown only when there's something to clear
         # so it never adds noise to a clean pane.
-        action_colour = self._action_colour()
-        if self.has_active_filters:
-            tree.root.add_leaf(
-                _styled_action_label("✕  Clear all filters", action_colour),
-                data={"kind": "filter_value", "category": "clear", "value": "clear"},
-            )
-
         active_kinds = set(self.filter_kinds)
         kind_summary = f"{len(active_kinds)} of {len(_FILTER_KINDS)}" if active_kinds else "any"
         kind_node = tree.root.add(
@@ -384,6 +377,7 @@ class ScopeController:
         tree.border_title = title
         if keep is not None:
             self._restore_cursor(tree, keep)
+        self._update_clear_bar()
 
     # ── Clear all filters ─────────────────────────────────────────
 
@@ -424,6 +418,21 @@ class ScopeController:
             or any(self.tag_include.values())
             or any(self.tag_exclude.values())
         )
+
+    def _update_clear_bar(self) -> None:
+        """Show/hide the pinned clear bar (below the tree) to match filter
+        state. Content carries the key hint so the affordance is discoverable
+        without hunting for the binding."""
+        from textual.widgets import Static
+
+        try:
+            bar = self._app.query_one("#clear_filters_bar", Static)
+        except Exception:
+            return
+        active = self.has_active_filters
+        bar.display = active
+        if active:
+            bar.update("✕  Clear all filters  (X)")
 
     def clear_filters(self) -> None:
         """Reset every filter to its default and re-run the active query.
@@ -666,9 +675,6 @@ class ScopeController:
         category = str(data.get("category") or "")
         value = str(data.get("value") or "")
         if not category or not value:
-            return
-        if category == "clear":
-            self.clear_filters()
             return
         if category == "kinds":
             if value in self.filter_kinds:
