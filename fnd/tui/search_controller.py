@@ -288,6 +288,10 @@ class SearchController:
         # rebuilds them (refresh_match_scrollbar).
         self._app._match_nav.rebuild()
         self._app._results.refresh()
+        # Tag counts describe the current result set, so they go stale the
+        # moment a query changes. Cheap (single aggregation, ~5 ms on a
+        # 72k-doc index) and the pane restores its own cursor.
+        self._app._scope.refresh_filters_panel()
         # Defer prefetch start so the top result's user-side render gets the
         # main thread to itself for the first ~half-second. Without the
         # delay, 10 parallel prefetch mount tasks starve the auto-load.

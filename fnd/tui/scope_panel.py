@@ -29,6 +29,8 @@ _FILTER_DATES: tuple[str, ...] = ("any", "today", "week", "month", "year")
 _FILTER_CREATED: tuple[str, ...] = ("any", "today", "week", "month", "year")
 # Provider ids are config keys; these are their pane labels.
 _TAG_SOURCE_LABELS: dict[str, str] = {"frontmatter": "Frontmatter", "os": "File tags"}
+# Width of Textual's branch expand arrow, so leaf markers line up with it.
+_LEAF_MARKER_PAD = "  "
 
 
 class _FullScope:
@@ -442,10 +444,35 @@ class ScopeController:
         touched = self.tag_include.get(source, set()) | self.tag_exclude.get(source, set())
         return "◐" if below & touched else "○"
 
-    def _add_tag_nodes(self, parent: Any, source: str, nodes: list[Any], depth: int) -> None:
+    def _add_tag_nodes(
+        self,
+        parent: Any,
+        source: str,
+        nodes: list[Any],
+        depth: int,
+        namespaces: frozenset[str] = frozenset(),
+    ) -> None:
+        """Render one level of the tag tree.
+
+        ``namespaces`` are values that came from a configured frontmatter KEY
+        (``Course``, ``Notes_Type``) rather than a tag the user wrote. They
+        name a field, not a tag, so they render as plain headers: no marker,
+        not selectable. Nested tag parents like ``project`` in
+        ``project/alpha`` stay selectable — that one IS a real tag.
+        """
         for node in nodes:
+            is_namespace = depth == 0 and node.value in namespaces
+            key = f"tags:{source}:{node.value}"
+            if is_namespace:
+                branch = parent.add(
+                    _styled_parent_label(f"{node.label}  ({node.files})"),
+                    data={"kind": "filter_category", "category": key},
+                    expand=key in self.expanded_filter_branches,
+                )
+                self._add_tag_nodes(branch, source, node.children, depth + 1, namespaces)
+                continue
+
             marker = self.tag_marker(source, node)
-            label = f"{marker}  {node.label}  ({node.files})"
             data = {
                 "kind": "filter_value",
                 "category": "tags",
@@ -453,16 +480,40 @@ class ScopeController:
                 "value": node.value,
             }
             if node.children:
-                key = f"tags:{source}:{node.value}"
-                branch = parent.add(label, data=data, expand=key in self.expanded_filter_branches)
-                self._add_tag_nodes(branch, source, node.children, depth + 1)
+                branch = parent.add(
+                    f"{marker}  {node.label}  ({node.files})",
+                    data=data,
+                    expand=key in self.expanded_filter_branches,
+                )
+                self._add_tag_nodes(branch, source, node.children, depth + 1, namespaces)
             else:
-                parent.add_leaf(label, data=data)
+                # Textual prefixes branch rows with a 2-cell expand arrow but
+                # leaves none on leaves, so a leaf's marker would sit two
+                # columns left of its branch siblings'. Pad to line them up.
+                parent.add_leaf(
+                    f"{_LEAF_MARKER_PAD}{marker}  {node.label}  ({node.files})", data=data
+                )
+
+    def _frontmatter_namespaces(self) -> frozenset[str]:
+        """Normalised tag values that are really frontmatter FIELD names.
+
+        Mirrors the namespacing fnd.tags applies at index time, so the pane
+        can tell ``course`` (a field) from ``project`` (a genuine tag).
+        """
+        cfg = self._app._config
+        if cfg is None:
+            return frozenset()
+        from fnd.tags import normalise_tag
+
+        return frozenset(
+            t for t in (normalise_tag(k) for k in cfg.defaults.tag_frontmatter_keys) if t
+        )
 
     def _render_tags_branch(self, tree: Tree[dict[str, object]]) -> None:
         from fnd.tag_catalog import build_tag_tree
 
         catalog = self.tag_catalog_for_scope()
+        namespaces = self._frontmatter_namespaces()
         n_selected = sum(len(v) for v in self.tag_include.values()) + sum(
             len(v) for v in self.tag_exclude.values()
         )
@@ -489,7 +540,7 @@ class ScopeController:
                 data={"kind": "filter_category", "category": f"tags:{source}"},
                 expand=f"tags:{source}" in self.expanded_filter_branches,
             )
-            self._add_tag_nodes(branch, source, build_tag_tree(counts), 0)
+            self._add_tag_nodes(branch, source, build_tag_tree(counts), 0, namespaces)
 
     def _cycle_tag(self, source: str, value: str) -> None:
         """``○ off → ● include → ⊘ exclude → off``."""

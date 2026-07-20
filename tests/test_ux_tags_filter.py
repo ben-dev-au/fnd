@@ -366,3 +366,111 @@ async def test_selecting_a_tag_does_not_hide_its_siblings(cfg: Config, tagged_in
         await pilot.pause()
         after = {t.value for t in app._scope.tag_catalog_for_scope()["frontmatter"]}
         assert after == before, "siblings vanished once a tag was selected"
+
+
+@pytest.fixture
+def cfg_with_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        textwrap.dedent("""
+            [defaults]
+            tag_frontmatter_keys = ["Course"]
+
+            [[collections.papers.sources]]
+            path = "/tmp/papers"
+        """),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+    return load(cfg_path)
+
+
+@pytest.fixture
+def keyed_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
+    root = tmp_path / "papers"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "a.md").write_text(
+        "---\ntags: [project/alpha, solo]\nCourse: Algebra\n---\n\n# A\n\nsaffron\n",
+        encoding="utf-8",
+    )
+    build_index(
+        roots=[root],
+        index_dir=tmp_index_dir,
+        collection="papers",
+        tag_frontmatter_keys=["Course"],
+    )
+    return tmp_index_dir
+
+
+@pytest.mark.asyncio
+async def test_frontmatter_key_namespace_is_not_selectable(
+    cfg_with_keys: Config, keyed_index: Path
+) -> None:
+    """`course` names a field, not a tag — pressing Enter must do nothing."""
+    app = FNDApp(index_dir=keyed_index, config=cfg_with_keys)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#filters_panel_tree", Tree)
+        tags = _branch(tree, "Tags")
+        tags.expand()
+        fm = _descend(tags, "Frontmatter")
+        fm.expand()
+        await pilot.pause()
+
+        course = _descend(fm, "course")
+        assert "○" not in str(course.label), "field header must carry no toggle marker"
+        tree.select_node(course)
+        await pilot.pause()
+        assert app._scope.tag_include == {}
+        assert app._scope.tag_exclude == {}
+
+        # Its child is a real, selectable tag.
+        course.expand()
+        await pilot.pause()
+        algebra = _descend(course, "algebra")
+        tree.select_node(algebra)
+        await pilot.pause()
+        assert "course/algebra" in app._scope.tag_include.get("frontmatter", set())
+
+
+@pytest.mark.asyncio
+async def test_real_nested_tag_parent_stays_selectable(
+    cfg_with_keys: Config, keyed_index: Path
+) -> None:
+    """`project` in `project/alpha` IS a tag the user wrote, unlike `course`."""
+    app = FNDApp(index_dir=keyed_index, config=cfg_with_keys)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#filters_panel_tree", Tree)
+        tags = _branch(tree, "Tags")
+        tags.expand()
+        fm = _descend(tags, "Frontmatter")
+        fm.expand()
+        await pilot.pause()
+        project = _descend(fm, "project")
+        assert "○" in str(project.label)
+        tree.select_node(project)
+        await pilot.pause()
+        assert "project" in app._scope.tag_include.get("frontmatter", set())
+
+
+@pytest.mark.asyncio
+async def test_leaf_markers_align_with_branch_markers(
+    cfg_with_keys: Config, keyed_index: Path
+) -> None:
+    """A leaf sibling of a branch must not sit two columns to its left."""
+    app = FNDApp(index_dir=keyed_index, config=cfg_with_keys)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#filters_panel_tree", Tree)
+        tags = _branch(tree, "Tags")
+        tags.expand()
+        fm = _descend(tags, "Frontmatter")
+        fm.expand()
+        await pilot.pause()
+        branch = _descend(fm, "project")  # has children
+        leaves = [c for c in fm.children if not c.children and "○" in str(c.label)]
+        assert leaves, "expected at least one leaf tag"
+        # Branch rows get Textual's 2-cell arrow; leaves pad to match.
+        assert str(leaves[0].label).startswith("  "), str(leaves[0].label)
+        assert not str(branch.label).startswith("  "), str(branch.label)
