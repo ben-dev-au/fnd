@@ -27,6 +27,8 @@ __all__ = ["ScopeController"]
 _FILTER_KINDS: tuple[str, ...] = ("pdf", "docx", "pptx", "md", "txt")
 _FILTER_DATES: tuple[str, ...] = ("any", "today", "week", "month", "year")
 _FILTER_CREATED: tuple[str, ...] = ("any", "today", "week", "month", "year")
+# Provider ids are config keys; these are their pane labels.
+_TAG_SOURCE_LABELS: dict[str, str] = {"frontmatter": "Frontmatter", "os": "File tags"}
 
 
 class _FullScope:
@@ -71,7 +73,9 @@ class ScopeController:
         # Prune unknown branch names so a renamed branch doesn't get
         # stuck "expanded" forever.
         self.expanded_filter_branches: set[str] = {
-            b for b in saved.expanded_filter_branches if b in ("kinds", "date", "created")
+            b
+            for b in saved.expanded_filter_branches
+            if b in ("kinds", "date", "created") or b == "tags" or b.startswith("tags:")
         }
         # Scope — one provenance-carrying map (``selection``) is the
         # single source of truth; ``collections`` / ``active_sources``
@@ -88,11 +92,17 @@ class ScopeController:
             self.filter_kinds: list[str] = []
             self.filter_date: str = "any"
             self.filter_created: str = "any"
+            self.tag_include: dict[str, set[str]] = {}
+            self.tag_exclude: dict[str, set[str]] = {}
+            self.tag_match_all: bool = True
         else:
             self.selection = self._derive_selection(saved.collections, saved.sources)
             self.filter_kinds = list(saved.filter_kinds)
             self.filter_date = saved.filter_date or "any"
             self.filter_created = saved.filter_created or "any"
+            self.tag_include = {k: set(v) for k, v in saved.tag_include.items()}
+            self.tag_exclude = {k: set(v) for k, v in saved.tag_exclude.items()}
+            self.tag_match_all = saved.tag_match_all
 
     def _valid_collection_names(self, raw: str) -> list[str]:
         """Resolve a ``--collection`` value to real config collection names.
@@ -185,6 +195,9 @@ class ScopeController:
                 filter_kinds=list(self.filter_kinds),
                 filter_date=self.filter_date,
                 filter_created=self.filter_created,
+                tag_include={k: sorted(v) for k, v in self.tag_include.items() if v},
+                tag_exclude={k: sorted(v) for k, v in self.tag_exclude.items() if v},
+                tag_match_all=self.tag_match_all,
             )
         )
 
@@ -334,6 +347,8 @@ class ScopeController:
                 data={"kind": "filter_value", "category": "created", "value": c},
             )
 
+        self._render_tags_branch(tree)
+
         # Header tracks whether anything is filtering; the dim default
         # keeps the panel quiet when no filters are active.
         active_bits: list[str] = []
@@ -345,6 +360,104 @@ class ScopeController:
             active_bits.append(f"created {self.filter_created}")
         title = "Filters" if not active_bits else f"Filters — {', '.join(active_bits)}"
         tree.border_title = title
+
+    # ── Tags branch ───────────────────────────────────────────────
+
+    def tag_catalog_for_scope(self) -> dict[str, list[Any]]:
+        """Tags present in the active collections, per source.
+
+        Returns empty lists when the index isn't open yet or the aggregation
+        fails — the pane must still render.
+        """
+        from fnd.tag_catalog import tag_catalog
+
+        searcher = getattr(self._app._search, "searcher", None)
+        index = getattr(searcher, "_index", None)
+        if index is None:
+            return {}
+        cfg = self._app._config
+        sources = list(cfg.defaults.tag_sources) if cfg else None
+        try:
+            return tag_catalog(index, collections=self.collections, sources=sources)
+        except Exception:
+            return {}
+
+    def tag_marker(self, source: str, node: Any) -> str:
+        """``●`` included, ``⊘`` excluded, ``◐`` a descendant is selected, ``○`` off.
+
+        Selecting a parent already covers its subtree (ancestors are expanded
+        at index time), so ``◐`` only ever means "something below me is
+        selected but I am not".
+        """
+        value = node.value
+        if value in self.tag_include.get(source, set()):
+            return "●"
+        if value in self.tag_exclude.get(source, set()):
+            return "⊘"
+        below = node.descendant_values() - {value}
+        touched = self.tag_include.get(source, set()) | self.tag_exclude.get(source, set())
+        return "◐" if below & touched else "○"
+
+    def _add_tag_nodes(self, parent: Any, source: str, nodes: list[Any], depth: int) -> None:
+        for node in nodes:
+            marker = self.tag_marker(source, node)
+            label = f"{marker}  {node.label}  ({node.files})"
+            data = {
+                "kind": "filter_value",
+                "category": "tags",
+                "source": source,
+                "value": node.value,
+            }
+            if node.children:
+                key = f"tags:{source}:{node.value}"
+                branch = parent.add(label, data=data, expand=key in self.expanded_filter_branches)
+                self._add_tag_nodes(branch, source, node.children, depth + 1)
+            else:
+                parent.add_leaf(label, data=data)
+
+    def _render_tags_branch(self, tree: Tree[dict[str, object]]) -> None:
+        from fnd.tag_catalog import build_tag_tree
+
+        catalog = self.tag_catalog_for_scope()
+        n_selected = sum(len(v) for v in self.tag_include.values()) + sum(
+            len(v) for v in self.tag_exclude.values()
+        )
+        n_available = sum(len(v) for v in catalog.values())
+        summary = f"{n_selected} of {n_available}" if n_available else "none indexed"
+        tags_node = tree.root.add(
+            _styled_parent_label(f"Tags             ({summary})"),
+            data={"kind": "filter_category", "category": "tags"},
+            expand="tags" in self.expanded_filter_branches,
+        )
+        if not n_available:
+            return
+
+        mode = "all" if self.tag_match_all else "any"
+        tags_node.add_leaf(
+            f"⇄  Match: {mode}",
+            data={"kind": "filter_value", "category": "tag_match", "value": "toggle"},
+        )
+        for source, counts in catalog.items():
+            if not counts:
+                continue
+            branch = tags_node.add(
+                _styled_parent_label(f"{_TAG_SOURCE_LABELS.get(source, source)}"),
+                data={"kind": "filter_category", "category": f"tags:{source}"},
+                expand=f"tags:{source}" in self.expanded_filter_branches,
+            )
+            self._add_tag_nodes(branch, source, build_tag_tree(counts), 0)
+
+    def _cycle_tag(self, source: str, value: str) -> None:
+        """``○ off → ● include → ⊘ exclude → off``."""
+        inc = self.tag_include.setdefault(source, set())
+        exc = self.tag_exclude.setdefault(source, set())
+        if value in inc:
+            inc.discard(value)
+            exc.add(value)
+        elif value in exc:
+            exc.discard(value)
+        else:
+            inc.add(value)
 
     def on_filters_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
         """Enter on a filter value toggles it.
@@ -372,6 +485,13 @@ class ScopeController:
             self.filter_date = value
         elif category == "created":
             self.filter_created = value
+        elif category == "tag_match":
+            self.tag_match_all = not self.tag_match_all
+        elif category == "tags":
+            source = str(data.get("source") or "")
+            if not source:
+                return
+            self._cycle_tag(source, value)
         else:
             return
         self.refresh_filters_panel()
@@ -557,20 +677,35 @@ class ScopeController:
             self.expanded_collections.discard(name)
             self.persist()
 
+    def _branch_key(self, data: dict[str, object]) -> str:
+        """Expand-state key for a filters-pane branch, or "" if it has none.
+
+        Nested tag rows are ``filter_value`` nodes (they are selectable tags
+        that also happen to have children), so keying on ``filter_category``
+        alone would silently drop their expand state.
+        """
+        kind = data.get("kind")
+        if kind == "filter_category":
+            return str(data.get("category") or "")
+        if kind == "filter_value" and data.get("category") == "tags":
+            return f"tags:{data.get('source')}:{data.get('value')}"
+        return ""
+
     def on_filter_branch_expanded(self, ev: Tree.NodeExpanded[dict[str, object]]) -> None:
         data = ev.node.data if isinstance(ev.node.data, dict) else {}
-        if data.get("kind") != "filter_category":
+        cat = self._branch_key(data)
+        if not cat:
             return
-        cat = str(data.get("category") or "")
-        if cat in ("kinds", "date", "created") and cat not in self.expanded_filter_branches:
+        known = cat in ("kinds", "date", "created") or cat == "tags" or cat.startswith("tags:")
+        if known and cat not in self.expanded_filter_branches:
             self.expanded_filter_branches.add(cat)
             self.persist()
 
     def on_filter_branch_collapsed(self, ev: Tree.NodeCollapsed[dict[str, object]]) -> None:
         data = ev.node.data if isinstance(ev.node.data, dict) else {}
-        if data.get("kind") != "filter_category":
+        cat = self._branch_key(data)
+        if not cat:
             return
-        cat = str(data.get("category") or "")
         if cat in self.expanded_filter_branches:
             self.expanded_filter_branches.discard(cat)
             self.persist()

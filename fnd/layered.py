@@ -20,7 +20,7 @@ Strong-signal bypass adapted from tobi/qmd (MIT) — see README.
 
 from __future__ import annotations
 
-from typing import Literal, overload
+from typing import TYPE_CHECKING, Literal, overload
 
 from fnd.cascade import cascade_search
 from fnd.explain import CascadeTrace, SearchTrace, StrongSignalTrace
@@ -31,6 +31,9 @@ from fnd.fusion import (
     normalize_bm25,
 )
 from fnd.query import FileGroup, Hit, Searcher, group_by_file
+
+if TYPE_CHECKING:
+    from fnd.tag_query import TagFilter
 from fnd.synonyms import SynonymTable
 
 
@@ -50,6 +53,7 @@ def search_layered(
     profile: object | None = ...,
     auto_fuzzy_enabled: bool = ...,
     min_term_chars: int = ...,
+    tag_filter: TagFilter | None = ...,
     with_trace: Literal[False] = False,
 ) -> list[FileGroup]: ...
 
@@ -70,6 +74,7 @@ def search_layered(
     profile: object | None = ...,
     auto_fuzzy_enabled: bool = ...,
     min_term_chars: int = ...,
+    tag_filter: TagFilter | None = ...,
     with_trace: Literal[True],
 ) -> tuple[list[FileGroup], SearchTrace]: ...
 
@@ -89,6 +94,7 @@ def search_layered(
     profile: object | None = None,
     auto_fuzzy_enabled: bool = True,
     min_term_chars: int = 0,
+    tag_filter: TagFilter | None = None,
     with_trace: bool = False,
 ) -> list[FileGroup] | tuple[list[FileGroup], SearchTrace]:
     """Run the regime-aware search and return ranked :class:`FileGroup`s.
@@ -113,6 +119,7 @@ def search_layered(
         metadata_filter=metadata_filter,
         active_sources=active_sources,
         intent=intent,
+        tag_filter=tag_filter,
     )
 
     # Step 2: strong-signal check. Disabled when intent is supplied —
@@ -137,6 +144,7 @@ def search_layered(
                 active_sources=active_sources,
                 precomputed_lex_ranking=probe,
                 intent=intent,
+                tag_filter=tag_filter,
                 with_trace=True,
             )
         else:
@@ -150,6 +158,7 @@ def search_layered(
                 active_sources=active_sources,
                 precomputed_lex_ranking=probe,
                 intent=intent,
+                tag_filter=tag_filter,
             )
 
         regime = "fusion"
@@ -165,6 +174,7 @@ def search_layered(
                     synonyms=synonyms,
                     metadata_filter=metadata_filter,
                     active_sources=active_sources,
+                    tag_filter=tag_filter,
                     intent=intent,
                     auto_fuzzy_enabled=auto_fuzzy_enabled,
                     min_term_chars=min_term_chars,
@@ -180,6 +190,7 @@ def search_layered(
                     synonyms=synonyms,
                     metadata_filter=metadata_filter,
                     active_sources=active_sources,
+                    tag_filter=tag_filter,
                     intent=intent,
                     auto_fuzzy_enabled=auto_fuzzy_enabled,
                     min_term_chars=min_term_chars,
