@@ -124,3 +124,36 @@ def test_limit_caps_each_source(tmp_path: Path) -> None:
     index = _index(tmp_path, rows)
     got = tag_catalog(index, collections=["vault"], limit=5)
     assert len(got["frontmatter"]) == 5
+
+
+def test_scoped_to_a_query(tmp_path: Path) -> None:
+    """Tags reflect the files matching the query, not the whole collection."""
+    index = _index(
+        tmp_path,
+        [
+            ("a.md", "vault", ["recipe"], [], 1),
+            ("b.md", "vault", ["travel"], [], 1),
+        ],
+    )
+    q = index.parse_query('"a.md"', ["parent_id"])
+    got = tag_catalog(index, collections=["vault"], query=q)
+    assert {t.value for t in got["frontmatter"]} == {"recipe"}
+
+
+def test_query_and_collection_scope_combine(tmp_path: Path) -> None:
+    index = _index(
+        tmp_path,
+        [
+            ("a.md", "vault", ["recipe"], [], 1),
+            ("a.md", "work", ["report"], [], 1),
+        ],
+    )
+    q = index.parse_query('"a.md"', ["parent_id"])
+    got = tag_catalog(index, collections=["vault"], query=q)
+    assert {t.value for t in got["frontmatter"]} == {"recipe"}
+
+
+def test_no_query_falls_back_to_collection_scope(tmp_path: Path) -> None:
+    index = _index(tmp_path, [("a.md", "vault", ["recipe"], [], 1)])
+    got = tag_catalog(index, collections=["vault"], query=None)
+    assert {t.value for t in got["frontmatter"]} == {"recipe"}

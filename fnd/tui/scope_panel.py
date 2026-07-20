@@ -304,6 +304,11 @@ class ScopeController:
                     self.expanded_filter_branches.add(cat)
                 else:
                     self.expanded_filter_branches.discard(cat)
+        # The rebuild below clears the tree, which resets the cursor to the
+        # top. Remember which row was selected so a toggle leaves the cursor
+        # on the tag the user just pressed rather than throwing them back to
+        # the first branch.
+        keep = self._row_key(tree.cursor_node.data) if tree.cursor_node is not None else None
         tree.show_root = False
         tree.clear()
 
@@ -366,6 +371,8 @@ class ScopeController:
             active_bits.append(f"−{n_exc} tag{'s' if n_exc != 1 else ''}")
         title = "Filters" if not active_bits else f"Filters — {', '.join(active_bits)}"
         tree.border_title = title
+        if keep is not None:
+            self._restore_cursor(tree, keep)
 
     # ── Tags branch ───────────────────────────────────────────────
 
@@ -384,9 +391,40 @@ class ScopeController:
         cfg = self._app._config
         sources = list(cfg.defaults.tag_sources) if cfg else None
         try:
-            return tag_catalog(index, collections=self.collections, sources=sources)
+            return tag_catalog(
+                index,
+                collections=self.collections,
+                sources=sources,
+                query=self._facet_query(index),
+            )
         except Exception:
             return {}
+
+    def _facet_query(self, index: Any) -> Any:
+        """Tantivy query narrowing the tag catalogue to the active search.
+
+        Deliberately built from the lexical text alone — NOT from the tag
+        selection. Facets computed over their own filter make every sibling
+        tag vanish the moment one is selected, stranding the user with no way
+        to switch without clearing first.
+
+        A cheap parse rather than the ranked pipeline: facets need membership,
+        not ordering. Returns None (whole collection scope) when no query is
+        active or the text can't be parsed, so the pane stays browsable.
+        """
+        raw = (self._app._search.current_query or "").strip()
+        if not raw:
+            return None
+        try:
+            from fnd.query_plan import QueryPlan
+            from fnd.schema import DEFAULT_SEARCH_FIELDS
+
+            lexical = QueryPlan.from_user_text(raw).lexical.strip()
+            if not lexical:
+                return None
+            return index.parse_query(lexical, DEFAULT_SEARCH_FIELDS)
+        except Exception:
+            return None
 
     def tag_marker(self, source: str, node: Any) -> str:
         """``●`` included, ``⊘`` excluded, ``◐`` a descendant is selected, ``○`` off.
@@ -464,6 +502,31 @@ class ScopeController:
             exc.discard(value)
         else:
             inc.add(value)
+
+    @staticmethod
+    def _row_key(data: object) -> tuple[str, ...] | None:
+        """Identity of a filters row that survives a rebuild.
+
+        Node objects are discarded by ``tree.clear()``, so the cursor is
+        restored by matching this key against the freshly-built rows.
+        """
+        if not isinstance(data, dict):
+            return None
+        return (
+            str(data.get("kind") or ""),
+            str(data.get("category") or ""),
+            str(data.get("source") or ""),
+            str(data.get("value") or ""),
+        )
+
+    def _restore_cursor(self, tree: Tree[dict[str, object]], keep: tuple[str, ...]) -> None:
+        """Put the cursor back on the row identified by ``keep``, if it still
+        exists. A tag can legitimately vanish (its last file left the result
+        set), in which case the cursor stays where the rebuild left it."""
+        for line, tree_line in enumerate(tree._tree_lines):
+            if self._row_key(tree_line.node.data) == keep:
+                tree.cursor_line = line
+                return
 
     def on_filters_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
         """Enter on a filter value toggles it.

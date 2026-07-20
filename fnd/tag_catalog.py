@@ -37,14 +37,29 @@ class TagCount:
     files: int
 
 
-def _scope_query(index: tantivy.Index, collections: Sequence[str]) -> tantivy.Query:
-    """Restrict the aggregation to the active collections (all if empty)."""
-    if not collections:
+def _scope_query(
+    index: tantivy.Index,
+    collections: Sequence[str],
+    query: tantivy.Query | None = None,
+) -> tantivy.Query:
+    """Restrict the aggregation to the active collections, and to ``query``
+    when a search is active. Empty collections means every collection."""
+    clauses: list[tuple[tantivy.Occur, tantivy.Query]] = []
+    if collections:
+        terms = [tantivy.Query.term_query(index.schema, F_COLLECTION, c) for c in collections]
+        col_q = (
+            terms[0]
+            if len(terms) == 1
+            else tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in terms])
+        )
+        clauses.append((tantivy.Occur.Must, col_q))
+    if query is not None:
+        clauses.append((tantivy.Occur.Must, query))
+    if not clauses:
         return tantivy.Query.all_query()
-    terms = [tantivy.Query.term_query(index.schema, F_COLLECTION, c) for c in collections]
-    if len(terms) == 1:
-        return terms[0]
-    return tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in terms])
+    if len(clauses) == 1:
+        return clauses[0][1]
+    return tantivy.Query.boolean_query(clauses)
 
 
 def tag_catalog(
@@ -52,12 +67,18 @@ def tag_catalog(
     *,
     collections: Sequence[str],
     sources: Sequence[str] | None = None,
+    query: tantivy.Query | None = None,
     limit: int = _DEFAULT_LIMIT,
 ) -> dict[str, list[TagCount]]:
     """``{source_id: [TagCount, ...]}`` for the tags present in ``collections``.
 
     Ordered by file count descending, then name, so the pane can show the
     most-used tags first. ``sources`` defaults to every known provider.
+
+    ``query`` narrows the catalogue to the files matching the active search, so
+    counts describe what the user is actually looking at. It must NOT include
+    the tag filter itself: computing facets over their own filter is what makes
+    sibling tags vanish the moment one is selected.
 
     A failed aggregation yields an empty list for that source rather than
     raising: an unreadable catalogue must not take the filters pane down.
@@ -89,7 +110,7 @@ def tag_catalog(
         }
     }
     try:
-        raw = index.searcher().aggregate(_scope_query(index, collections), agg)
+        raw = index.searcher().aggregate(_scope_query(index, collections, query), agg)
         file_buckets = raw["files"]["buckets"]
     except Exception:
         # An unreadable catalogue must not take the filters pane down.

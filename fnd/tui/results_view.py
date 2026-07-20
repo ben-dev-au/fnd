@@ -67,7 +67,13 @@ class ResultsView:
                 )
         self._app._refresh_status()
         if self._app._search.groups:
-            tree.focus()
+            # Don't yank focus out of a sidebar panel the user is driving.
+            # Toggling a filter re-runs the search, and stealing focus here
+            # threw the cursor onto the results tree mid-toggle, so the next
+            # key went to the wrong pane. Focus still follows a query the
+            # user submits from the query bar.
+            if not self._sidebar_has_focus():
+                tree.focus()
             # Park cursor on the first hit so the preview already shows the match.
             top_file = tree.root.children[0]
             if top_file.children:
@@ -80,6 +86,13 @@ class ResultsView:
                 top_group.parent_id,
                 top_hit.chunk_seq if top_hit else 0,
             )
+
+    _SIDEBAR_TREE_IDS = frozenset({"filters_panel_tree", "collections_panel_tree"})
+
+    def _sidebar_has_focus(self) -> bool:
+        """Whether the user is currently driving a sidebar panel."""
+        focused = self._app.focused
+        return focused is not None and focused.id in self._SIDEBAR_TREE_IDS
 
     @staticmethod
     def file_label_budget(tree: Tree[Any]) -> int:

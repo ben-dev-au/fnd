@@ -292,3 +292,77 @@ async def test_border_title_reports_active_tags(cfg: Config, tagged_index: Path)
         tree.select_node(_descend(fm, "recipe"))
         await pilot.pause()
         assert "−1 tag" in str(tree.border_title)
+
+
+@pytest.mark.asyncio
+async def test_toggling_a_tag_keeps_cursor_and_focus(cfg: Config, tagged_index: Path) -> None:
+    """Toggling must not throw the user into the results pane.
+
+    The pane rebuilds on every toggle (counts change), and the re-run search
+    used to grab focus — between them the cursor left the tag being pressed.
+    """
+    app = FNDApp(index_dir=tagged_index, config=cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._search.run("saffron")
+        await pilot.pause()
+
+        tree = app.query_one("#filters_panel_tree", Tree)
+        tags = _branch(tree, "Tags")
+        tags.expand()
+        fm = _descend(tags, "Frontmatter")
+        fm.expand()
+        await pilot.pause()
+
+        recipe = _descend(fm, "recipe")
+        line = next(i for i, ln in enumerate(tree._tree_lines) if ln.node is recipe)
+        tree.cursor_line = line
+        tree.focus()
+        await pilot.pause()
+
+        tree.select_node(tree.cursor_node)
+        await pilot.pause()
+
+        assert app.focused is not None
+        assert app.focused.id == "filters_panel_tree", "focus left the filters pane"
+        node = tree.cursor_node
+        assert node is not None
+        assert "recipe" in str(node.label), f"cursor moved to {node.label!r}"
+        assert "recipe" in app._scope.tag_include.get("frontmatter", set())
+
+
+@pytest.mark.asyncio
+async def test_tags_are_scoped_to_the_active_query(cfg: Config, tagged_index: Path) -> None:
+    """Counts describe what the user is looking at, not the whole collection."""
+    app = FNDApp(index_dir=tagged_index, config=cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # 'saffron' is in all three files; 'stock' only in risotto.md.
+        app._search.run("saffron")
+        await pilot.pause()
+        wide = {t.value for t in app._scope.tag_catalog_for_scope()["frontmatter"]}
+        assert {"recipe", "dinner", "project"} <= wide
+
+        app._search.run("stock")
+        await pilot.pause()
+        narrow = {t.value for t in app._scope.tag_catalog_for_scope()["frontmatter"]}
+        assert "dinner" in narrow
+        assert "project" not in narrow, "tags still reflect files outside the result set"
+
+
+@pytest.mark.asyncio
+async def test_selecting_a_tag_does_not_hide_its_siblings(cfg: Config, tagged_index: Path) -> None:
+    """The facet query must exclude the tag filter itself, or picking one tag
+    strands the user with no way to switch to another."""
+    app = FNDApp(index_dir=tagged_index, config=cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._search.run("saffron")
+        await pilot.pause()
+        before = {t.value for t in app._scope.tag_catalog_for_scope()["frontmatter"]}
+
+        app._scope.tag_include = {"frontmatter": {"recipe"}}
+        app._search.run("saffron")
+        await pilot.pause()
+        after = {t.value for t in app._scope.tag_catalog_for_scope()["frontmatter"]}
+        assert after == before, "siblings vanished once a tag was selected"
