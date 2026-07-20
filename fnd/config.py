@@ -376,6 +376,12 @@ class Defaults(BaseModel):
     # and never needs a reindex. Sources this platform can't serve are
     # dropped at runtime by fnd.tags.providers_for.
     tag_sources: list[Literal["frontmatter", "os"]] = ["frontmatter", "os"]
+    # Extra frontmatter keys to treat as tag sources, beyond tags:/tag:.
+    # Many vaults keep their real taxonomy in fields like Course: or
+    # Notes_Type:. Values are namespaced under the key (course/algebra) so
+    # they group in the pane and can't collide with a plain tag. Matched
+    # case-insensitively. Changing this needs a reindex.
+    tag_frontmatter_keys: list[str] = []
     result_limit: int = 200
     preview_chunks: int = 5
     debounce_ms: int = 200

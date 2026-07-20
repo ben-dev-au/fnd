@@ -162,7 +162,10 @@ def _doc_for_chunk(
 
 
 def read_file_metadata(
-    path: Path, *, tag_sources: Sequence[str] = ("frontmatter", "os")
+    path: Path,
+    *,
+    tag_sources: Sequence[str] = ("frontmatter", "os"),
+    frontmatter_keys: Sequence[str] = (),
 ) -> tuple[bytes, dict[str, frozenset[str]]]:
     """``(meta_blob_bytes, tags)`` for one file.
 
@@ -173,7 +176,6 @@ def read_file_metadata(
     import sys as _sys
 
     from fnd.frontmatter import FrontmatterParseError, read_frontmatter_from_file
-    from fnd.meta_blob import encode as encode_meta_blob
     from fnd.tags import TagContext, providers_for, read_tags
 
     meta_blob_bytes = b""
@@ -188,7 +190,7 @@ def read_file_metadata(
 
     tags = read_tags(
         TagContext(path=path, frontmatter=frontmatter),
-        providers_for(_sys.platform, tag_sources),
+        providers_for(_sys.platform, tag_sources, frontmatter_keys=frontmatter_keys),
     )
     return meta_blob_bytes, tags
 
@@ -203,6 +205,7 @@ def build_index(
     follow_symlinks: bool = False,
     rebuild: bool = False,
     tag_sources: Sequence[str] = ("frontmatter", "os"),
+    tag_frontmatter_keys: Sequence[str] = (),
 ) -> int:
     """Index supported files under ``roots`` into ``index_dir``.
 
@@ -237,7 +240,9 @@ def build_index(
         parent_id = _path_parent_id(path)
         _delete_q = _scoped_delete_query(index.schema, collection, parent_id)
         writer.delete_documents_by_query(_delete_q)
-        meta_blob_bytes, file_tags = read_file_metadata(path, tag_sources=tag_sources)
+        meta_blob_bytes, file_tags = read_file_metadata(
+            path, tag_sources=tag_sources, frontmatter_keys=tag_frontmatter_keys
+        )
         try:
             for chunk in extract(path):
                 writer.add_document(
@@ -265,6 +270,8 @@ def build_index_from_config(
     collection: str,
     index_dir: Path,
     rebuild: bool = False,
+    tag_sources: Sequence[str] = ("frontmatter", "os"),
+    tag_frontmatter_keys: Sequence[str] = (),
 ) -> int:
     """Build a collection from its :class:`CollectionConfig`.
 
@@ -275,10 +282,6 @@ def build_index_from_config(
     once per file and serialized into ``meta_blob`` on every chunk so the
     query-time post-filter (§5.5e-2) can decode + evaluate it.
     """
-    from fnd.frontmatter import (
-        FrontmatterParseError,
-        read_frontmatter_from_file,
-    )
     from fnd.walk import walk_sources
 
     index = _ensure_index(index_dir, force=rebuild)
@@ -293,14 +296,9 @@ def build_index_from_config(
     for source in config.sources:
         source_id = str(Path(source.path).expanduser().resolve())
         for path in walk_sources(sources=[source]):
-            meta_blob_bytes = b""
-            if path.suffix.lower() == ".md":
-                try:
-                    fm = read_frontmatter_from_file(path)
-                except FrontmatterParseError:
-                    fm = None
-                if fm:
-                    meta_blob_bytes = encode_meta_blob(fm)
+            meta_blob_bytes, file_tags = read_file_metadata(
+                path, tag_sources=tag_sources, frontmatter_keys=tag_frontmatter_keys
+            )
             parent_id = _path_parent_id(path)
             _delete_q = _scoped_delete_query(index.schema, collection, parent_id)
             writer.delete_documents_by_query(_delete_q)
@@ -312,6 +310,7 @@ def build_index_from_config(
                             collection=collection,
                             source_path=source_id,
                             meta_blob_bytes=meta_blob_bytes,
+                            tags=file_tags,
                         )
                     )
                     written += 1

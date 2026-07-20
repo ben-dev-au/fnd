@@ -498,6 +498,7 @@ def collection_reindex(
         collection=name,
         index_dir=default_index_dir(),
         rebuild=rebuild,
+        tag_sources=tuple(cfg.defaults.tag_sources),
     )
     typer.echo(f"indexed {written} chunks for collection {name}")
 

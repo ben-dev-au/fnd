@@ -116,3 +116,52 @@ def test_build_index_expands_nested_tags(tmp_path: Path) -> None:
         "saffron", tag_filter=TagFilter(include={"frontmatter": frozenset({"project"})})
     )
     assert {Path(h.path).name for h in hits} == {"a.md"}
+
+
+def test_build_index_from_config_writes_tags(tmp_path: Path) -> None:
+    """`fnd collection reindex` goes through build_index_from_config — a third
+    index path. It must write tags too, or a CLI reindex silently produces a
+    tagless collection."""
+    from fnd.config import CollectionConfig, SourceConfig
+    from fnd.index import build_index_from_config
+    from fnd.query import Searcher
+    from fnd.tag_query import TagFilter
+
+    root = tmp_path / "corpus"
+    root.mkdir()
+    (root / "a.md").write_text(
+        "---\ntags: [Exam, project/alpha]\n---\n\n# A\n\nsaffron\n", encoding="utf-8"
+    )
+    (root / "b.md").write_text("# B\n\nsaffron plain\n", encoding="utf-8")
+
+    cc = CollectionConfig(sources=[SourceConfig(path=root)])
+    index_dir = tmp_path / "idx"
+    build_index_from_config(config=cc, collection="DPC", index_dir=index_dir)
+
+    searcher = Searcher(index_dir=index_dir)
+    hits = searcher.search(
+        "saffron", tag_filter=TagFilter(include={"frontmatter": frozenset({"exam"})})
+    )
+    assert {Path(h.path).name for h in hits} == {"a.md"}
+
+
+def test_build_index_from_config_expands_nested_tags(tmp_path: Path) -> None:
+    from fnd.config import CollectionConfig, SourceConfig
+    from fnd.index import build_index_from_config
+    from fnd.query import Searcher
+    from fnd.tag_query import TagFilter
+
+    root = tmp_path / "corpus"
+    root.mkdir()
+    (root / "a.md").write_text(
+        "---\ntags: [project/alpha]\n---\n\n# A\n\nsaffron\n", encoding="utf-8"
+    )
+    cc = CollectionConfig(sources=[SourceConfig(path=root)])
+    index_dir = tmp_path / "idx"
+    build_index_from_config(config=cc, collection="DPC", index_dir=index_dir)
+
+    searcher = Searcher(index_dir=index_dir)
+    hits = searcher.search(
+        "saffron", tag_filter=TagFilter(include={"frontmatter": frozenset({"project"})})
+    )
+    assert {Path(h.path).name for h in hits} == {"a.md"}

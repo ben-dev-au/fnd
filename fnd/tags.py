@@ -11,6 +11,7 @@ import ctypes
 import ctypes.util
 import os
 import plistlib
+import re
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -108,10 +109,36 @@ def _collect(values: object, out: set[str]) -> None:
                 out |= expand_ancestors(tag)
 
 
+# Obsidian writes link-valued frontmatter as ``Course: "[[Name]]"``; the
+# brackets are link syntax, not part of the value.
+_WIKILINK_RE = re.compile(r"^\[\[(.*?)\]\]$")
+
+
+def _strip_wikilink(text: str) -> str:
+    m = _WIKILINK_RE.match(text.strip())
+    return m.group(1) if m else text
+
+
 class FrontmatterTagProvider:
-    """YAML frontmatter ``tags:`` / ``tag:``. Portable to every platform."""
+    """YAML frontmatter tags. Portable to every platform.
+
+    Reads ``tags:`` / ``tag:`` always. ``extra_keys`` opts additional
+    frontmatter keys in as tag sources — many vaults keep their real taxonomy
+    in fields like ``Course:`` or ``Notes_Type:`` rather than ``tags:``.
+
+    Extra-key values are namespaced under the key (``course/algebra``) so they
+    group under one parent in the pane, stay filterable as a whole via the
+    parent, and cannot collide with a same-named plain tag.
+    """
 
     id = "frontmatter"
+
+    def __init__(self, extra_keys: Sequence[str] = ()) -> None:
+        # Frontmatter keys are matched case-insensitively; tags:/tag: are
+        # handled by the plain path and must never be namespaced as well.
+        self._extra_keys = tuple(
+            k for k in (str(k).strip().casefold() for k in extra_keys) if k and k not in _TAG_KEYS
+        )
 
     def available_on(self, platform: str) -> bool:
         return True
@@ -124,6 +151,20 @@ class FrontmatterTagProvider:
         for key in _TAG_KEYS:
             if key in fm:
                 _collect(fm[key], out)
+        if self._extra_keys:
+            wanted = set(self._extra_keys)
+            for raw_key, raw_value in fm.items():
+                folded = str(raw_key).strip().casefold()
+                if folded not in wanted:
+                    continue
+                namespace = normalise_tag(folded)
+                values: set[str] = set()
+                _collect(raw_value, values)
+                for value in values:
+                    # _collect already ancestor-expanded; re-prefix each part.
+                    tag = normalise_tag(f"{namespace}/{_strip_wikilink(value)}")
+                    if tag:
+                        out |= expand_ancestors(tag)
         if len(out) > MAX_TAGS_PER_FILE:
             return frozenset(sorted(out)[:MAX_TAGS_PER_FILE])
         return frozenset(out)
@@ -212,14 +253,24 @@ TAG_PROVIDERS: dict[str, TagProvider] = {
 }
 
 
-def providers_for(platform: str, enabled: Sequence[str]) -> list[TagProvider]:
+def providers_for(
+    platform: str,
+    enabled: Sequence[str],
+    *,
+    frontmatter_keys: Sequence[str] = (),
+) -> list[TagProvider]:
     """Enabled providers this platform can actually serve.
 
     Unknown names are ignored rather than raising, so a config naming a source
     from a newer build degrades instead of breaking startup.
+    ``frontmatter_keys`` opts extra frontmatter fields in as tag sources.
     """
     out: list[TagProvider] = []
     for name in enabled:
+        if name == "frontmatter" and frontmatter_keys:
+            # Built per call rather than shared: the extra keys are config.
+            out.append(FrontmatterTagProvider(extra_keys=frontmatter_keys))
+            continue
         provider = TAG_PROVIDERS.get(name)
         if provider is not None and provider.available_on(platform):
             out.append(provider)

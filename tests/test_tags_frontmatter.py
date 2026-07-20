@@ -123,3 +123,58 @@ def test_single_string_without_comma_is_one_tag() -> None:
 def test_comma_form_expands_ancestors() -> None:
     got = FrontmatterTagProvider().read(_ctx({"tags": "project/alpha, solo"}))
     assert got == frozenset({"project", "project/alpha", "solo"})
+
+
+# ── custom frontmatter keys as tag sources ────────────────────────────
+
+
+def test_custom_keys_are_ignored_by_default() -> None:
+    """Only tags:/tag: unless the user opts a key in."""
+    got = FrontmatterTagProvider().read(_ctx({"Course": "Design Patterns"}))
+    assert got == frozenset()
+
+
+def test_custom_key_values_become_namespaced_tags() -> None:
+    """A vault's real taxonomy often lives in custom keys. Namespacing by key
+    keeps them grouped in the pane and avoids colliding with tags: values."""
+    provider = FrontmatterTagProvider(extra_keys=["Course", "Notes_Type"])
+    got = provider.read(_ctx({"Course": "Design Patterns", "Notes_Type": ["Assignment"]}))
+    assert got == frozenset(
+        {"course", "course/design patterns", "notes_type", "notes_type/assignment"}
+    )
+
+
+def test_custom_key_strips_obsidian_wikilinks() -> None:
+    """Obsidian writes `Course: "[[Design Patterns with C++]]"`."""
+    provider = FrontmatterTagProvider(extra_keys=["Course"])
+    got = provider.read(_ctx({"Course": "[[Design Patterns with C++]]"}))
+    assert "course/design patterns with c++" in got
+
+
+def test_custom_key_matching_is_case_insensitive() -> None:
+    provider = FrontmatterTagProvider(extra_keys=["course"])
+    assert "course/algebra" in provider.read(_ctx({"Course": "Algebra"}))
+
+
+def test_custom_key_handles_lists_and_commas() -> None:
+    provider = FrontmatterTagProvider(extra_keys=["Topic"])
+    got = provider.read(_ctx({"Topic": ["Trees, Graphs", "Sorting"]}))
+    assert got == frozenset({"topic", "topic/trees", "topic/graphs", "topic/sorting"})
+
+
+def test_empty_custom_key_contributes_nothing() -> None:
+    provider = FrontmatterTagProvider(extra_keys=["Topic"])
+    assert provider.read(_ctx({"Topic": [], "Module": "x"})) == frozenset()
+
+
+def test_custom_keys_coexist_with_plain_tags() -> None:
+    provider = FrontmatterTagProvider(extra_keys=["Course"])
+    got = provider.read(_ctx({"tags": ["exam"], "Course": "DPC"}))
+    assert "exam" in got
+    assert "course/dpc" in got
+
+
+def test_tags_key_cannot_be_double_counted_as_a_custom_key() -> None:
+    """Naming 'tags' as an extra key must not namespace the real tags."""
+    provider = FrontmatterTagProvider(extra_keys=["tags"])
+    assert provider.read(_ctx({"tags": ["exam"]})) == frozenset({"exam"})
