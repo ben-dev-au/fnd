@@ -4,12 +4,14 @@ Read straight from the index with a terms aggregation rather than kept in a
 sidecar, so the list can never drift from what is actually indexed.
 
 Counts are FILE counts, not document counts. A tantivy document is a chunk, so
-a 40-chunk PDF tagged ``report`` would otherwise report as 40; a ``cardinality``
-sub-aggregation over ``parent_id`` recovers the distinct-file number.
+a 40-chunk PDF tagged ``report`` would otherwise report as 40. The aggregation
+buckets by file and tallies tags within each, which is exact — see the note in
+:func:`tag_catalog` for why the cardinality approach was abandoned.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -21,6 +23,12 @@ __all__ = ["TagCount", "TagNode", "build_tag_tree", "tag_catalog"]
 
 # Enough to cover a large vault's tag vocabulary in one pass.
 _DEFAULT_LIMIT = 500
+# The catalogue buckets by file, so this caps how many FILES are inspected.
+# Beyond it a tag on only the excess files would be missed; sized well above
+# any realistic single-collection file count.
+_MAX_FILE_BUCKETS = 200_000
+# Per-file tag cap, matching fnd.tags.MAX_TAGS_PER_FILE.
+_MAX_TAGS_PER_FILE = 256
 
 
 @dataclass(slots=True, frozen=True)
@@ -54,33 +62,50 @@ def tag_catalog(
     A failed aggregation yields an empty list for that source rather than
     raising: an unreadable catalogue must not take the filters pane down.
     """
-    wanted = list(sources) if sources is not None else list(TAG_FIELD_BY_SOURCE)
-    scope = _scope_query(index, collections)
-    searcher = index.searcher()
+    wanted = [
+        s
+        for s in (sources if sources is not None else TAG_FIELD_BY_SOURCE)
+        if s in TAG_FIELD_BY_SOURCE
+    ]
+    out: dict[str, list[TagCount]] = {s: [] for s in wanted}
+    if not wanted:
+        return out
 
-    out: dict[str, list[TagCount]] = {}
-    for source in wanted:
-        field_name = TAG_FIELD_BY_SOURCE.get(source)
-        if field_name is None:
-            continue
-        agg = {
-            "tags": {
-                "terms": {"field": field_name, "size": limit},
-                "aggs": {"files": {"cardinality": {"field": F_PARENT_ID}}},
-            }
+    # Bucket by FILE, then by tag within each file, and count the file buckets
+    # each tag appears in. The obvious shape (bucket by tag, cardinality over
+    # parent_id) silently returns 0 for some buckets — measured on a real
+    # corpus, `exam` had 34 chunks and a cardinality of 0.0 — which would hide
+    # real tags behind a "(0)" count. This inversion is exact and, measured on
+    # the same corpus, faster.
+    agg: dict[str, object] = {
+        "files": {
+            "terms": {"field": F_PARENT_ID, "size": _MAX_FILE_BUCKETS},
+            "aggs": {
+                source: {
+                    "terms": {"field": TAG_FIELD_BY_SOURCE[source], "size": _MAX_TAGS_PER_FILE}
+                }
+                for source in wanted
+            },
         }
-        try:
-            raw = searcher.aggregate(scope, agg)
-            buckets = raw["tags"]["buckets"]
-        except Exception:
-            out[source] = []
-            continue
-        # cardinality is HyperLogLog, so the value arrives as a float; it is
-        # exact at realistic tag sizes and drifts ~1% only across thousands
-        # of files.
-        counts = [TagCount(value=str(b["key"]), files=round(b["files"]["value"])) for b in buckets]
-        # Tantivy orders by doc (chunk) count; re-sort on the file count we
-        # actually display, so the pane's order matches its numbers.
+    }
+    try:
+        raw = index.searcher().aggregate(_scope_query(index, collections), agg)
+        file_buckets = raw["files"]["buckets"]
+    except Exception:
+        # An unreadable catalogue must not take the filters pane down.
+        return out
+
+    tallies: dict[str, Counter[str]] = {s: Counter() for s in wanted}
+    for file_bucket in file_buckets:
+        for source in wanted:
+            sub = file_bucket.get(source)
+            if not sub:
+                continue
+            for tag_bucket in sub["buckets"]:
+                tallies[source][str(tag_bucket["key"])] += 1
+
+    for source, tally in tallies.items():
+        counts = [TagCount(value=v, files=n) for v, n in tally.items()]
         counts.sort(key=lambda t: (-t.files, t.value))
         out[source] = counts[:limit]
     return out
