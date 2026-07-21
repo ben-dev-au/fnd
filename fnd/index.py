@@ -23,7 +23,9 @@ from fnd.schema import (
     F_BODY_STRUCT,
     F_CHUNK_SEQ,
     F_COLLECTION,
+    F_CREATED,
     F_HEADING_PATH,
+    F_INODE_CTIME,
     F_KIND,
     F_LINE,
     F_META_BLOB,
@@ -37,6 +39,7 @@ from fnd.schema import (
     F_SOURCE_PATH,
     F_TITLE,
     SCHEMA_VERSION,
+    TAG_FIELD_BY_SOURCE,
     build_schema,
 )
 from fnd.struct import encode as encode_body_struct
@@ -123,6 +126,7 @@ def _doc_for_chunk(
     collection: str,
     source_path: str = "",
     meta_blob_bytes: bytes = b"",
+    tags: dict[str, frozenset[str]] | None = None,
 ) -> Document:
     doc = Document()
     doc.add_text(F_PARENT_ID, chunk.parent_id)
@@ -137,6 +141,8 @@ def _doc_for_chunk(
     doc.add_text(F_BODY, chunk.body)
     doc.add_text(F_PAGE_LABEL, chunk.page_label)
     doc.add_unsigned(F_MTIME, max(chunk.mtime, 0))
+    doc.add_unsigned(F_CREATED, max(chunk.created, 0))
+    doc.add_unsigned(F_INODE_CTIME, max(chunk.inode_changed, 0))
     doc.add_unsigned(F_PAGE, max(chunk.page, 0))
     doc.add_unsigned(F_SLIDE, max(chunk.slide, 0))
     doc.add_unsigned(F_LINE, max(chunk.line, 0))
@@ -144,7 +150,49 @@ def _doc_for_chunk(
     doc.add_bytes(F_BODY_STRUCT, encode_body_struct(chunk.body_struct))
     doc.add_bytes(F_BODY_MD, chunk.body_md.encode("utf-8"))
     doc.add_bytes(F_META_BLOB, meta_blob_bytes)
+    # One field per provenance. Unknown source ids are skipped so a provider
+    # added in a newer build can't break an older writer.
+    for source, values in (tags or {}).items():
+        field_name = TAG_FIELD_BY_SOURCE.get(source)
+        if field_name is None:
+            continue
+        for value in sorted(values):
+            doc.add_text(field_name, value)
     return doc
+
+
+def read_file_metadata(
+    path: Path,
+    *,
+    tag_sources: Sequence[str] = ("frontmatter", "os"),
+    frontmatter_keys: Sequence[str] = (),
+) -> tuple[bytes, dict[str, frozenset[str]]]:
+    """``(meta_blob_bytes, tags)`` for one file.
+
+    Shared by both index builders so an ad-hoc ``fnd index <root>`` and a
+    configured reindex capture identical metadata. Frontmatter is parsed once
+    and handed to the tag providers rather than re-read.
+    """
+    import sys as _sys
+
+    from fnd.frontmatter import FrontmatterParseError, read_frontmatter_from_file
+    from fnd.tags import TagContext, providers_for, read_tags
+
+    meta_blob_bytes = b""
+    frontmatter: dict[str, object] | None = None
+    if path.suffix.lower() == ".md":
+        try:
+            frontmatter = read_frontmatter_from_file(path)
+        except FrontmatterParseError:
+            frontmatter = None
+        if frontmatter:
+            meta_blob_bytes = encode_meta_blob(frontmatter)
+
+    tags = read_tags(
+        TagContext(path=path, frontmatter=frontmatter),
+        providers_for(_sys.platform, tag_sources, frontmatter_keys=frontmatter_keys),
+    )
+    return meta_blob_bytes, tags
 
 
 def build_index(
@@ -156,6 +204,8 @@ def build_index(
     excludes: list[str] | None = None,
     follow_symlinks: bool = False,
     rebuild: bool = False,
+    tag_sources: Sequence[str] = ("frontmatter", "os"),
+    tag_frontmatter_keys: Sequence[str] = (),
 ) -> int:
     """Index supported files under ``roots`` into ``index_dir``.
 
@@ -190,9 +240,19 @@ def build_index(
         parent_id = _path_parent_id(path)
         _delete_q = _scoped_delete_query(index.schema, collection, parent_id)
         writer.delete_documents_by_query(_delete_q)
+        meta_blob_bytes, file_tags = read_file_metadata(
+            path, tag_sources=tag_sources, frontmatter_keys=tag_frontmatter_keys
+        )
         try:
             for chunk in extract(path):
-                writer.add_document(_doc_for_chunk(chunk, collection=collection))
+                writer.add_document(
+                    _doc_for_chunk(
+                        chunk,
+                        collection=collection,
+                        meta_blob_bytes=meta_blob_bytes,
+                        tags=file_tags,
+                    )
+                )
                 written += 1
                 if written % _COMMIT_BATCH == 0:
                     writer.commit()
@@ -210,6 +270,8 @@ def build_index_from_config(
     collection: str,
     index_dir: Path,
     rebuild: bool = False,
+    tag_sources: Sequence[str] = ("frontmatter", "os"),
+    tag_frontmatter_keys: Sequence[str] = (),
 ) -> int:
     """Build a collection from its :class:`CollectionConfig`.
 
@@ -220,10 +282,6 @@ def build_index_from_config(
     once per file and serialized into ``meta_blob`` on every chunk so the
     query-time post-filter (§5.5e-2) can decode + evaluate it.
     """
-    from fnd.frontmatter import (
-        FrontmatterParseError,
-        read_frontmatter_from_file,
-    )
     from fnd.walk import walk_sources
 
     index = _ensure_index(index_dir, force=rebuild)
@@ -238,14 +296,9 @@ def build_index_from_config(
     for source in config.sources:
         source_id = str(Path(source.path).expanduser().resolve())
         for path in walk_sources(sources=[source]):
-            meta_blob_bytes = b""
-            if path.suffix.lower() == ".md":
-                try:
-                    fm = read_frontmatter_from_file(path)
-                except FrontmatterParseError:
-                    fm = None
-                if fm:
-                    meta_blob_bytes = encode_meta_blob(fm)
+            meta_blob_bytes, file_tags = read_file_metadata(
+                path, tag_sources=tag_sources, frontmatter_keys=tag_frontmatter_keys
+            )
             parent_id = _path_parent_id(path)
             _delete_q = _scoped_delete_query(index.schema, collection, parent_id)
             writer.delete_documents_by_query(_delete_q)
@@ -257,6 +310,7 @@ def build_index_from_config(
                             collection=collection,
                             source_path=source_id,
                             meta_blob_bytes=meta_blob_bytes,
+                            tags=file_tags,
                         )
                     )
                     written += 1

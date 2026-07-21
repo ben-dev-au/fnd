@@ -72,8 +72,8 @@ async def test_filters_panel_header_shows_state(
     app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
-        tree = app.query_one("#filters_panel_tree", Tree)
-        title = str(tree.border_title or "")
+        pane = app.query_one("#filters_pane")
+        title = str(pane.border_title or "")
         # No filters active → title says "Filters" with no qualifier.
         assert title.startswith("Filters"), title
 

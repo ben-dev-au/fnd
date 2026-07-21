@@ -106,6 +106,17 @@ class ResultsTree(Tree[dict[str, Any]]):
 
     def action_cursor_up(self) -> None:
         self._set_scan(False)
+        # In the filters pane, Up from the top row focuses the docked clear bar
+        # above the tree (when shown), so the bar is keyboard-reachable like any
+        # row. Everywhere else this is a normal cursor move.
+        if self.id == "filters_panel_tree" and int(self.cursor_line) <= 0:
+            try:
+                bar = self.app.query_one("#clear_filters_bar")
+            except Exception:
+                bar = None
+            if bar is not None and bar.display:
+                bar.focus()
+                return
         super().action_cursor_up()
 
     def action_scan_cursor_down(self) -> None:
@@ -116,6 +127,17 @@ class ResultsTree(Tree[dict[str, Any]]):
     def action_scan_cursor_up(self) -> None:
         self._set_scan(True)
         super().action_cursor_up()
+
+    def _is_selectable_when_expanded(self, node: Any) -> bool:
+        """Whether an expanded parent should still accept the cursor.
+
+        Default False, which keeps the historic behaviour: results and
+        filter-category headers are dead rows when open, so the cursor skips
+        past them rather than parking where Enter does nothing. Rows that
+        carry their own selectable payload override this.
+        """
+        data = node.data if isinstance(node.data, dict) else None
+        return bool(data) and data.get("kind") == "filter_value"
 
     def validate_cursor_line(self, value: int) -> int:
         clamped = super().validate_cursor_line(value)
@@ -136,6 +158,12 @@ class ResultsTree(Tree[dict[str, Any]]):
             if node is self.root:
                 return target
             if not (node.children and node.is_expanded):
+                return target
+            # An expanded parent that is itself selectable stays reachable.
+            # Nested tag rows are real, selectable tags that happen to have
+            # children; skipping them would make Enter unable to ever toggle
+            # a tag whose subtree is open.
+            if self._is_selectable_when_expanded(node):
                 return target
             next_target = target + direction
             if next_target < 0 or next_target > last:

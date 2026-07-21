@@ -614,6 +614,23 @@ def _setting_writer(path: str) -> Callable[[FNDApp, Any], None]:
     return _set
 
 
+def _coerce_str_list(raw: str) -> list[str]:
+    """Comma-separated text -> list. Empty input clears the list."""
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _get_str_list_default(field_name: str) -> Callable[[FNDApp], str]:
+    """Render a list-valued default as the comma-separated text the row edits."""
+
+    def getter(app: FNDApp) -> str:
+        cfg = app._config
+        if cfg is None:
+            return ""
+        return ", ".join(getattr(cfg.defaults, field_name, []) or [])
+
+    return getter
+
+
 def _get_int_default(field_name: str, fallback: int) -> Callable[[FNDApp], str]:
     def _g(app: FNDApp) -> str:
         cfg = app._config  # type: ignore[attr-defined]
@@ -1637,6 +1654,40 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
             toggle_setter=lambda app, v: _setting_writer("defaults.indexer_auto_resume")(app, v),
             setting_path="defaults.indexer_auto_resume",
             keywords=("auto", "resume", "indexer", "interrupted", "launch", "reindex"),
+        ),
+        header("Tags", level=2),
+        MenuItem(
+            id="indexing.tag_sources",
+            label="Tag sources",
+            description=(
+                "Which sources feed the Tags filter, comma-separated. "
+                "'frontmatter' reads a note's YAML tags:; 'os' reads macOS "
+                "Finder tags. Leave empty to turn tag filtering off. "
+                "Toggling a source takes effect immediately — no reindex."
+            ),
+            kind=KIND_SCALAR,
+            setting_path="defaults.tag_sources",
+            hint="frontmatter, os",
+            coerce=_coerce_str_list,
+            value_getter=_get_str_list_default("tag_sources"),
+            keywords=("tag", "tags", "frontmatter", "finder", "source"),
+        ),
+        MenuItem(
+            id="indexing.tag_frontmatter_keys",
+            label="Extra frontmatter tag keys",
+            description=(
+                "Frontmatter fields to treat as tags beyond tags:, "
+                "comma-separated — e.g. Course, Notes_Type, Topic. Values are "
+                "grouped under the key in the Tags pane (course/algebra), so "
+                "they never collide with a plain tag. Matched "
+                "case-insensitively. Needs a reindex to take effect."
+            ),
+            kind=KIND_SCALAR,
+            setting_path="defaults.tag_frontmatter_keys",
+            hint="Course, Notes_Type, Topic",
+            coerce=_coerce_str_list,
+            value_getter=_get_str_list_default("tag_frontmatter_keys"),
+            keywords=("tag", "tags", "frontmatter", "key", "course", "custom"),
         ),
     )
 

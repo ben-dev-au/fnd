@@ -24,13 +24,16 @@ TUI shows exact matches above fuzzy ones above synonym ones.
 from __future__ import annotations
 
 import re
-from typing import Literal, overload
+from typing import TYPE_CHECKING, Literal, overload
 
 import tantivy
 
 from fnd.explain import CascadePassTrace, CascadeTrace
 from fnd.matching import auto_fuzzy_distance
 from fnd.query import Hit, Searcher
+
+if TYPE_CHECKING:
+    from fnd.tag_query import TagFilter
 from fnd.query_resolvers import fuzzy_stem as _fuzzy_stem
 from fnd.query_resolvers import fuzzy_variants as _fuzzy_term_variants
 from fnd.schema import F_BODY, F_META_BLOB, F_PAGE_LABEL, F_PARENT_ID, build_schema
@@ -112,6 +115,7 @@ def _fuzzy_pass(
     intent: str | None = None,
     auto_fuzzy_enabled: bool = True,
     min_term_chars: int = 0,
+    tag_filter: TagFilter | None = None,
 ) -> list[Hit]:
     """Build a Boolean query of fuzzy term queries over the body field,
     AND-combined so all query terms must fuzzy-match.
@@ -214,6 +218,16 @@ def _fuzzy_pass(
 
     for filt in extract_filters(query, schema, searcher._index).filters:
         subqueries.append((tantivy.Occur.Must, tantivy.Query.const_score_query(filt, 0.0)))
+    # Tags are typed state rather than query text, so extract_filters can't
+    # see them; without this the fuzzy pass re-admits tag-excluded files.
+    if tag_filter is not None and not tag_filter.is_empty():
+        from fnd.tag_query import compile_tag_filter
+
+        compiled_tags = compile_tag_filter(tag_filter, schema)
+        if compiled_tags is not None:
+            subqueries.append(
+                (tantivy.Occur.Must, tantivy.Query.const_score_query(compiled_tags, 0.0))
+            )
     bq = tantivy.Query.boolean_query(subqueries)
     # Pin one searcher generation for the whole search→doc sequence so a
     # concurrent reload() can't swap it between the search and materialisation
@@ -287,6 +301,7 @@ def cascade_search(
     intent: str | None = ...,
     auto_fuzzy_enabled: bool = ...,
     min_term_chars: int = ...,
+    tag_filter: TagFilter | None = ...,
     with_trace: Literal[False] = False,
 ) -> list[Hit]: ...
 
@@ -305,6 +320,7 @@ def cascade_search(
     intent: str | None = ...,
     auto_fuzzy_enabled: bool = ...,
     min_term_chars: int = ...,
+    tag_filter: TagFilter | None = ...,
     with_trace: Literal[True],
 ) -> tuple[list[Hit], CascadeTrace]: ...
 
@@ -322,6 +338,7 @@ def cascade_search(
     intent: str | None = None,
     auto_fuzzy_enabled: bool = True,
     min_term_chars: int = 0,
+    tag_filter: TagFilter | None = None,
     with_trace: bool = False,
 ) -> list[Hit] | tuple[list[Hit], CascadeTrace]:
     """Run literal → fuzzy → synonym passes until ``threshold`` hits found.
@@ -384,6 +401,7 @@ def cascade_search(
         metadata_filter=metadata_filter,
         active_sources=active_sources,
         intent=intent,
+        tag_filter=tag_filter,
     )
     new_count = _ingest(raw, 0)
     if with_trace:
@@ -417,6 +435,7 @@ def cascade_search(
             intent=intent,
             auto_fuzzy_enabled=auto_fuzzy_enabled,
             min_term_chars=min_term_chars,
+            tag_filter=tag_filter,
         )
     )
     fuzzy_raw = _apply_metadata_filter(fuzzy_raw, metadata_filter)
@@ -449,6 +468,7 @@ def cascade_search(
                 metadata_filter=metadata_filter,
                 active_sources=active_sources,
                 intent=intent,
+                tag_filter=tag_filter,
             )
             new_count = _ingest(raw, 2)
             if with_trace:

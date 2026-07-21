@@ -44,6 +44,12 @@ class UiState:
     # panel only carries scope-narrowing knobs.
     filter_kinds: list[str] = field(default_factory=list)
     filter_date: str = "any"
+    filter_created: str = "any"
+    # Tag selections, keyed by provider id. ``tag_match_all`` applies to
+    # includes only; excludes always subtract.
+    tag_include: dict[str, list[str]] = field(default_factory=dict)
+    tag_exclude: dict[str, list[str]] = field(default_factory=dict)
+    tag_match_all: bool = True
 
 
 def load(path: Path | None = None) -> UiState:
@@ -65,6 +71,20 @@ def load(path: Path | None = None) -> UiState:
     filters = filters_raw if isinstance(filters_raw, dict) else {}
     raw_date = filters.get("date", "any")
     filter_date = raw_date if isinstance(raw_date, str) else "any"
+    raw_created = filters.get("created", "any")
+    filter_created = raw_created if isinstance(raw_created, str) else "any"
+
+    def _tag_map(key: str) -> dict[str, list[str]]:
+        raw = filters.get(key, {})
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(k): [t for t in v if isinstance(t, str)]
+            for k, v in raw.items()
+            if isinstance(v, list)
+        }
+
+    raw_match_all = filters.get("tag_match_all", True)
     return UiState(
         collections=[s for s in scope.get("collections", []) if isinstance(s, str)],
         sources=[s for s in scope.get("sources", []) if isinstance(s, str)],
@@ -77,6 +97,10 @@ def load(path: Path | None = None) -> UiState:
         ],
         filter_kinds=[s for s in filters.get("kinds", []) if isinstance(s, str)],
         filter_date=filter_date,
+        filter_created=filter_created,
+        tag_include=_tag_map("tag_include"),
+        tag_exclude=_tag_map("tag_exclude"),
+        tag_match_all=raw_match_all if isinstance(raw_match_all, bool) else True,
     )
 
 
@@ -99,5 +123,13 @@ def save(state: UiState, path: Path | None = None) -> None:
     filters = tomlkit.table()
     filters["kinds"] = list(state.filter_kinds)
     filters["date"] = state.filter_date
+    filters["created"] = state.filter_created
+    # tomlkit can't serialise an empty sub-table cleanly inside a table, so
+    # only write the maps when they carry something.
+    if state.tag_include:
+        filters["tag_include"] = {k: list(v) for k, v in state.tag_include.items()}
+    if state.tag_exclude:
+        filters["tag_exclude"] = {k: list(v) for k, v in state.tag_exclude.items()}
+    filters["tag_match_all"] = state.tag_match_all
     doc["filters"] = filters
     secure_write_text(p, tomlkit.dumps(doc), atomic=True)

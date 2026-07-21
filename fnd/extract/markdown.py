@@ -21,6 +21,7 @@ from pathlib import Path
 from markdown_it import MarkdownIt
 
 from fnd.extract.base import Block, Chunk, ExtractError
+from fnd.fsmeta import FileTimes, read_file_times
 
 _md = MarkdownIt("commonmark")
 
@@ -51,7 +52,7 @@ def _flush_section(
     *,
     path: Path,
     parent_id: str,
-    mtime: int,
+    times: FileTimes,
     heading_stack: list[str],
     blocks: list[Block],
     body_text_parts: list[str],
@@ -72,7 +73,9 @@ def _flush_section(
     return Chunk(
         parent_id=parent_id,
         path=str(path),
-        mtime=mtime,
+        mtime=times.mtime,
+        created=times.created,
+        inode_changed=times.inode_changed,
         kind="md",
         body=body,
         body_struct=blocks.copy(),
@@ -109,6 +112,31 @@ def extract(path: Path) -> Iterator[Chunk]:
         raise ExtractError(str(path), f"{type(e).__name__}: {e}") from e
 
 
+def _blank_frontmatter(source: str) -> str:
+    """Replace a leading ``---`` frontmatter block with blank lines.
+
+    Frontmatter is metadata: it's parsed separately into meta_blob and tags.
+    Left in place, CommonMark reads it as thematic-break + paragraph + setext
+    heading, so ``tags: [recipe]`` lands in the searchable body and the fence
+    can be mistaken for a heading.
+
+    Blanked rather than removed so every downstream line number still matches
+    the file on disk — F_LINE feeds deep links like ``code -g {path}:{line}``.
+    """
+    if not source.startswith("---"):
+        return source
+    lines = source.splitlines(keepends=True)
+    if not lines or lines[0].rstrip() != "---":
+        return source
+    # Preserve the file's own line ending so blanking doesn't introduce mixed
+    # endings when the body below keeps its original CRLF.
+    ending = "\r\n" if lines[0].endswith("\r\n") else "\n"
+    for i in range(1, len(lines)):
+        if lines[i].rstrip() in ("---", "..."):
+            return ending * (i + 1) + "".join(lines[i + 1 :])
+    return source  # unterminated fence: treat as content, don't eat the file
+
+
 def _extract_inner(path: Path) -> Iterator[Chunk]:
     try:
         source = path.read_text(encoding="utf-8")
@@ -117,8 +145,12 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
     if not source.strip():
         return
 
+    # Before both the parse and the line split, so neither the body nor the
+    # preview's body_md picks frontmatter up.
+    source = _blank_frontmatter(source)
+
     parent_id = _parent_id(path)
-    mtime = int(path.stat().st_mtime)
+    times = read_file_times(path)
     tokens = _md.parse(source)
     source_lines = source.splitlines()
     total_lines = len(source_lines)
@@ -145,7 +177,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
             chunk = _flush_section(
                 path=path,
                 parent_id=parent_id,
-                mtime=mtime,
+                times=times,
                 heading_stack=heading_stack,
                 blocks=blocks,
                 body_text_parts=body_parts,
@@ -219,7 +251,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
     chunk = _flush_section(
         path=path,
         parent_id=parent_id,
-        mtime=mtime,
+        times=times,
         heading_stack=heading_stack,
         blocks=blocks,
         body_text_parts=body_parts,

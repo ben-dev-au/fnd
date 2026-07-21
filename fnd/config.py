@@ -371,6 +371,19 @@ class AppConfig(BaseModel):
 
 class Defaults(BaseModel):
     collection: str = "default"
+    # Which tag sources feed the Tags filter. Provenance is stored in
+    # separate index fields, so *removing* a source takes effect immediately
+    # (its field just stops being queried). *Re-adding* a previously removed
+    # source needs a reindex — incremental indexing skips unchanged files, so
+    # its tag field stays empty for anything indexed while it was off. Sources
+    # this platform can't serve are dropped at runtime by fnd.tags.providers_for.
+    tag_sources: list[Literal["frontmatter", "os"]] = ["frontmatter", "os"]
+    # Extra frontmatter keys to treat as tag sources, beyond tags:/tag:.
+    # Many vaults keep their real taxonomy in fields like Course: or
+    # Notes_Type:. Values are namespaced under the key (course/algebra) so
+    # they group in the pane and can't collide with a plain tag. Matched
+    # case-insensitively. Changing this needs a reindex.
+    tag_frontmatter_keys: list[str] = []
     result_limit: int = 200
     preview_chunks: int = 5
     debounce_ms: int = 200
@@ -893,6 +906,16 @@ fuzzy_enabled            = true
 # are exact-only. Default 3 matches the built-in AUTO heuristic;
 # raise to 4/5 to suppress fuzzy on common short words.
 fuzzy_min_term_chars     = 3      # 0-10
+# Which sources feed the Tags filter. "frontmatter" reads a note's YAML
+# `tags:`; "os" reads file tags set in the file manager (macOS Finder).
+# Removing one takes effect immediately — no re-index needed.
+tag_sources              = ["frontmatter", "os"]
+# Extra frontmatter fields to treat as tags, beyond `tags:`. Useful when
+# a vault keeps its taxonomy in named fields rather than free tags.
+# Values are grouped under the field name, so `Course: Algebra` becomes
+# the tag `course/algebra` and selecting `course` matches them all.
+# Matched case-insensitively. Changing this needs a re-index.
+# tag_frontmatter_keys   = ["Course", "Topic"]
 
 # A collection groups one or more source directories. The starter
 # collection points at ~/Documents; edit, add more [[sources]] tables,

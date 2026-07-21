@@ -93,18 +93,18 @@ def _expand_collection_shorthand(q: str) -> str:
 
 
 def _expand_date_token(q: str) -> str:
-    """Translate ``mtime:today``/``yesterday``/``week``/``month``/``year``."""
+    """Translate ``mtime:``/``created:`` today/yesterday/week/month/year."""
 
     def repl(match: re.Match[str]) -> str:
-        token = match.group(1)
+        field, token = match.group(1), match.group(2)
         if token not in _DATE_TOKEN_DAYS:
             return match.group(0)
         days = _DATE_TOKEN_DAYS[token]
         now = _now_ts()
         low = now - days * 86_400
-        return f"mtime:[{low} TO {FAR_FUTURE}]"
+        return f"{field}:[{low} TO {FAR_FUTURE}]"
 
-    return re.sub(r"\bmtime:([a-z]+)\b", repl, q)
+    return re.sub(r"\b(mtime|created):([a-z]+)\b", repl, q)
 
 
 def _expand_numeric_compare(q: str) -> str:

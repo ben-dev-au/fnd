@@ -37,7 +37,10 @@ from tantivy import Schema, SchemaBuilder
 # Bump on any field-shape change; indexer refuses to open a stale index.
 # v7 (2026-05-19): added F_LINE for MD / TXT line-locator deep links via
 # user app templates like `code -g {path}:{line}:1`.
-SCHEMA_VERSION: Final[int] = 7
+# v8 (2026-07-19): added F_CREATED (birthtime) + F_INODE_CTIME (metadata
+# freshness) and the two tag fields. Tags are split by provenance so
+# toggling a source in config is a query-time change, not a reindex.
+SCHEMA_VERSION: Final[int] = 8
 
 # Field-name constants so callers don't sprinkle string literals.
 F_PARENT_ID: Final = "parent_id"
@@ -46,6 +49,17 @@ F_SOURCE_PATH: Final = "source_path"
 F_PATH: Final = "path"
 F_PATH_TOKENS: Final = "path_tokens"
 F_MTIME: Final = "mtime"
+# st_birthtime. 0 = unknown (non-Darwin, or stat failure), which falls
+# outside every range query, so such files match only the "any" bucket.
+F_CREATED: Final = "created"
+# st_ctime. Bookkeeping only, never queried: a Finder retag moves ctime
+# but not mtime, so the incremental skip needs both to notice it.
+F_INODE_CTIME: Final = "inode_ctime"
+# Tags, one field per provenance. Multi-valued, raw tokenizer (values
+# contain "/" and spaces). Kept out of DEFAULT_SEARCH_FIELDS so a bare
+# keyword search doesn't match on them.
+F_TAGS_FM: Final = "tags_fm"
+F_TAGS_OS: Final = "tags_os"
 F_KIND: Final = "kind"
 F_PAGE: Final = "page"
 F_PAGE_LABEL: Final = "page_label"
@@ -62,6 +76,15 @@ F_BODY_STRUCT: Final = "body_struct"
 F_BODY_MD: Final = "body_md"
 F_META_BLOB: Final = "meta_blob"
 F_CHUNK_SEQ: Final = "chunk_seq"
+
+# Tag provider id -> field. Defined once here because both the writer
+# (fnd/index.py) and the reader (fnd/tag_query.py) need it and they must
+# never disagree. Unknown ids are ignored by both, so a provider added in
+# a newer build can't break an older reader.
+TAG_FIELD_BY_SOURCE: Final[dict[str, str]] = {
+    "frontmatter": F_TAGS_FM,
+    "os": F_TAGS_OS,
+}
 
 # Default search fields when the query has no explicit field qualifier.
 DEFAULT_SEARCH_FIELDS: Final[list[str]] = [F_BODY, F_TITLE, F_HEADING_PATH, F_PATH_TOKENS]
@@ -98,8 +121,16 @@ def build_schema() -> Schema:
     # Body uses Snowball English stemmer for query-stemming.
     sb.add_text_field(F_BODY, stored=False, tokenizer_name="en_stem")
 
+    # Tags: raw tokenizer so "project/alpha" and "two words" stay single
+    # exact terms. fast=True powers the Tags pane's terms aggregation.
+    sb.add_text_field(F_TAGS_FM, stored=True, fast=True, tokenizer_name="raw")
+    sb.add_text_field(F_TAGS_OS, stored=True, fast=True, tokenizer_name="raw")
+
     # Numeric fast fields.
     sb.add_unsigned_field(F_MTIME, stored=True, indexed=True, fast=True)
+    sb.add_unsigned_field(F_CREATED, stored=True, indexed=True, fast=True)
+    # Stored-only: read back by the incremental skip, never queried.
+    sb.add_unsigned_field(F_INODE_CTIME, stored=True, indexed=False, fast=False)
     sb.add_unsigned_field(F_PAGE, stored=True, indexed=True, fast=True)
     sb.add_unsigned_field(F_SLIDE, stored=True, indexed=True, fast=True)
     sb.add_unsigned_field(F_LINE, stored=True, indexed=True, fast=True)

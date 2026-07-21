@@ -50,6 +50,7 @@ from fnd.extract.recovery import (
     PageRecoveryPipeline,
     ProductionLayoutTier,
 )
+from fnd.fsmeta import read_file_times
 
 # Lazy availability of the pdf-structure extra (`pymupdf4llm`). Computed
 # at module load — cheap; just a spec lookup. The actual import happens
@@ -925,14 +926,16 @@ def extract(
         # routes chunks to the right Tantivy parent_id.
         parent_id_now = _parent_id(path)
         path_str_now = str(path)
-        try:
-            mtime_now = int(path.stat().st_mtime)
-        except OSError:
-            mtime_now = cached[0].mtime if cached else 0
+        times_now = read_file_times(path)
+        # read_file_times reports 0 for a vanished file; fall back to the
+        # cached value rather than stamping a bogus epoch timestamp.
+        mtime_now = times_now.mtime or (cached[0].mtime if cached else 0)
         for chunk in cached:
             chunk.parent_id = parent_id_now
             chunk.path = path_str_now
             chunk.mtime = mtime_now
+            chunk.created = times_now.created
+            chunk.inode_changed = times_now.inode_changed
             yield _fold_own_heading(chunk)
         return
 
@@ -1016,7 +1019,7 @@ def _extract_inner(  # pyright: ignore[reportUnusedFunction]
     on_page: Callable[[int], None] | None = None,
 ) -> Iterator[Chunk]:
     parent_id = _parent_id(path)
-    mtime = int(path.stat().st_mtime)
+    times = read_file_times(path)
 
     try:
         doc = pymupdf.open(str(path))
@@ -1155,7 +1158,9 @@ def _extract_inner(  # pyright: ignore[reportUnusedFunction]
                 yield Chunk(
                     parent_id=parent_id,
                     path=str(path),
-                    mtime=mtime,
+                    mtime=times.mtime,
+                    created=times.created,
+                    inode_changed=times.inode_changed,
                     kind="pdf",
                     body=sec["body"],
                     body_struct=sec["blocks"],

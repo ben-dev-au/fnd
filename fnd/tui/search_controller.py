@@ -20,6 +20,7 @@ from fnd.rerank import RankingProfile, profile_from_config
 if TYPE_CHECKING:
     from fnd.explain import SearchTrace
     from fnd.synonyms import SynonymTable
+    from fnd.tag_query import TagFilter
     from fnd.tui.app import FNDApp
 
 __all__ = ["SearchController"]
@@ -194,6 +195,21 @@ class SearchController:
                 filter_clauses.append(f"kind:({' '.join(sorted(self._app._scope.filter_kinds))})")
         if self._app._scope.filter_date and self._app._scope.filter_date != "any":
             filter_clauses.append(f"mtime:{self._app._scope.filter_date}")
+        if self._app._scope.filter_created and self._app._scope.filter_created != "any":
+            filter_clauses.append(f"created:{self._app._scope.filter_created}")
+
+        # Tags never ride the prefix string — see fnd/tag_query.py. They are
+        # typed state, passed down beside the collection scope.
+        from fnd.tag_query import TagFilter
+
+        scope = self._app._scope
+        tag_filter: TagFilter | None = None
+        if any(scope.tag_include.values()) or any(scope.tag_exclude.values()):
+            tag_filter = TagFilter(
+                include={k: frozenset(v) for k, v in scope.tag_include.items() if v},
+                exclude={k: frozenset(v) for k, v in scope.tag_exclude.items() if v},
+                match_all=scope.tag_match_all,
+            )
         # Collections are a HARD filter, passed as a list straight to the
         # query layer — never a ``c:`` prefix string. The prefix path rides
         # the soft query parser (ranks instead of restricting) and splits
@@ -215,6 +231,7 @@ class SearchController:
                 collection=collection_scope,
                 metadata_filter=metadata_filter,
                 active_sources=list(self._app._scope.active_sources) or None,
+                tag_filter=tag_filter,
             )
         except (QueryError, FilterError) as e:
             self._show_query_notice(e)
@@ -271,6 +288,10 @@ class SearchController:
         # rebuilds them (refresh_match_scrollbar).
         self._app._match_nav.rebuild()
         self._app._results.refresh()
+        # Tag counts describe the current result set, so they go stale the
+        # moment a query changes. Cheap (single aggregation, ~5 ms on a
+        # 72k-doc index) and the pane restores its own cursor.
+        self._app._scope.refresh_filters_panel()
         # Defer prefetch start so the top result's user-side render gets the
         # main thread to itself for the first ~half-second. Without the
         # delay, 10 parallel prefetch mount tasks starve the auto-load.
@@ -315,6 +336,7 @@ class SearchController:
         collection: str | list[str] | None,
         metadata_filter: str | None,
         active_sources: list[str] | None,
+        tag_filter: TagFilter | None = None,
     ) -> list[FileGroup]:
         """Master plan §9c + §9d wiring + UX-pass-4 §1 strong-signal regime.
 
@@ -345,6 +367,7 @@ class SearchController:
             synonyms=self.synonyms,
             metadata_filter=metadata_filter,
             active_sources=active_sources,
+            tag_filter=tag_filter,
             intent=self.intent,
             profile=self.ranking_profile,
             auto_fuzzy_enabled=defaults.fuzzy_enabled if defaults else True,

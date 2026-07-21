@@ -98,9 +98,17 @@ def index(
 ) -> None:
     """Index documents under ROOT (ad-hoc, single-root). For configured
     collections use ``fnd collection reindex <name>``."""
+    from fnd.config import load
     from fnd.index import build_index
 
-    written = build_index(roots=[root], index_dir=default_index_dir(), collection=collection)
+    defaults = load().defaults
+    written = build_index(
+        roots=[root],
+        index_dir=default_index_dir(),
+        collection=collection,
+        tag_sources=tuple(defaults.tag_sources),
+        tag_frontmatter_keys=tuple(defaults.tag_frontmatter_keys),
+    )
     typer.echo(f"indexed {written} chunks under {root} → collection {collection}")
 
 
@@ -166,6 +174,22 @@ def search(
     meta: str | None = typer.Option(
         None, "--meta", help="Inline metadata-filter DSL (md hits only)."
     ),
+    tag: list[str] = typer.Option([], "--tag", help="Only files carrying this tag. Repeatable."),
+    not_tag: list[str] = typer.Option(
+        [], "--not-tag", help="Exclude files carrying this tag. Repeatable."
+    ),
+    tag_match: str = typer.Option(
+        "all", "--tag-match", help="Combine --tag with 'all' (default) or 'any'."
+    ),
+    created: str | None = typer.Option(
+        None, "--created", help="Created within: today/yesterday/week/month/year."
+    ),
+    modified: str | None = typer.Option(
+        None, "--modified", help="Modified within: today/yesterday/week/month/year."
+    ),
+    kind: list[str] = typer.Option(
+        [], "--kind", help="Restrict to a file kind (pdf/docx/pptx/md/txt). Repeatable."
+    ),
     explain: int | None = typer.Option(
         None,
         "--explain",
@@ -190,10 +214,50 @@ def search(
     from fnd.migrate import prompt_and_rebuild_or_exit
     from fnd.query import Hit, Searcher
     from fnd.query_errors import QuerySyntaxError, QueryTooLargeError
+    from fnd.query_fields import date_token_range
     from fnd.query_plan import QueryPlan
+    from fnd.tag_query import TagFilter
+    from fnd.tags import normalise_tag, providers_for
+
+    if tag_match not in ("all", "any"):
+        typer.echo(f"--tag-match must be 'all' or 'any', not {tag_match!r}", err=True)
+        raise typer.Exit(1)
+
+    # Validated here so a typo fails loudly instead of silently surviving as
+    # an unmatched literal in the query string.
+    prefix_clauses: list[str] = []
+    for flag, field_name, value in (
+        ("--created", "created", created),
+        ("--modified", "mtime", modified),
+    ):
+        if value is None:
+            continue
+        if date_token_range(value) is None:
+            typer.echo(f"{flag}: unknown date token {value!r}", err=True)
+            raise typer.Exit(1)
+        prefix_clauses.append(f"{field_name}:{value}")
+    prefix_clauses.extend(f"kind:{k}" for k in kind)
+    if prefix_clauses:
+        query = f"{' '.join(prefix_clauses)} {query}".strip()
 
     cfg = load()
     prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg)
+
+    # Tags never enter the query string — see fnd/tag_query.py. They are
+    # normalised the same way indexed tags were, then passed as typed state.
+    tag_filter = None
+    if tag or not_tag:
+        sources = [p.id for p in providers_for(sys.platform, cfg.defaults.tag_sources)]
+
+        def _selection(raw: list[str]) -> dict[str, frozenset[str]]:
+            values = frozenset(t for t in (normalise_tag(r) for r in raw) if t)
+            return dict.fromkeys(sources, values) if values else {}
+
+        tag_filter = TagFilter(
+            include=_selection(tag),
+            exclude=_selection(not_tag),
+            match_all=tag_match == "all",
+        )
 
     searcher = Searcher(index_dir=default_index_dir())
     try:
@@ -204,7 +268,11 @@ def search(
         metadata_filter = plan.metadata_filter or meta
         if explain is None:
             hits = searcher.search(
-                lexical, limit=limit, collection=collection, metadata_filter=metadata_filter
+                lexical,
+                limit=limit,
+                collection=collection,
+                metadata_filter=metadata_filter,
+                tag_filter=tag_filter,
             )
             for hit in hits:
                 _print_hit(hit)
@@ -438,6 +506,8 @@ def collection_reindex(
         collection=name,
         index_dir=default_index_dir(),
         rebuild=rebuild,
+        tag_sources=tuple(cfg.defaults.tag_sources),
+        tag_frontmatter_keys=tuple(cfg.defaults.tag_frontmatter_keys),
     )
     typer.echo(f"indexed {written} chunks for collection {name}")
 

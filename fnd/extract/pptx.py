@@ -22,6 +22,7 @@ from pptx.slide import Slide
 
 from fnd.extract._ooxml import reject_if_zip_bomb
 from fnd.extract.base import Block, Chunk, ExtractError
+from fnd.fsmeta import read_file_times
 
 
 def _parent_id(path: Path) -> str:
@@ -155,7 +156,7 @@ def extract(path: Path) -> Iterator[Chunk]:
 
 def _extract_inner(path: Path) -> Iterator[Chunk]:
     parent_id = _parent_id(path)
-    mtime = int(path.stat().st_mtime)
+    times = read_file_times(path)
     try:
         prs = Presentation(str(path))
     except PackageNotFoundError as e:
@@ -220,7 +221,9 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
         yield Chunk(
             parent_id=parent_id,
             path=str(path),
-            mtime=mtime,
+            mtime=times.mtime,
+            created=times.created,
+            inode_changed=times.inode_changed,
             kind="pptx",
             body=body,
             body_struct=blocks,

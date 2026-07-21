@@ -125,7 +125,8 @@ async def test_saved_collapse_state_is_restored_at_startup(
         ctree = app.query_one("#collections_panel_tree", Tree)
         ftree = app.query_one("#filters_panel_tree", Tree)
         assert "collapsed" in ctree.classes
-        assert "collapsed" in ftree.classes
+        # Filters collapse lives on the #filters_pane container now.
+        assert "collapsed" in app.query_one("#filters_pane").classes
         for n in ctree.root.children:
             if isinstance(n.data, dict) and n.data.get("name") == "alpha":
                 assert n.is_expanded
@@ -229,7 +230,8 @@ async def test_collapse_state_survives_collection_cli_flag(
     async with app.run_test() as pilot:
         await settle(pilot)
         ctree = app.query_one("#collections_panel_tree", Tree)
-        ftree = app.query_one("#filters_panel_tree", Tree)
+        # Filters collapse now lives on the #filters_pane container.
+        fpane = app.query_one("#filters_pane")
         # Scope override took effect.
         assert app._scope.collections == ["default"]
         # Panel layout was restored from disk — wait for the saved
@@ -241,11 +243,12 @@ async def test_collapse_state_survives_collection_cli_flag(
             pilot,
             lambda: (
                 "collapsed" in ctree.classes
-                and "collapsed" in ftree.classes
+                and "collapsed" in fpane.classes
                 and "alpha" in app._scope.expanded_collections
                 and "kinds" in app._scope.expanded_filter_branches
             ),
             timeout=30.0,
             message="saved sidebar state not fully restored",
         )
-        assert app._scope.collapsed_panels == {"collections_panel_tree", "filters_panel_tree"}
+        # The old filters_panel_tree id migrates to the container.
+        assert app._scope.collapsed_panels == {"collections_panel_tree", "filters_pane"}

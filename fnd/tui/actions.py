@@ -185,6 +185,16 @@ REGISTRY: tuple[Action, ...] = (
         show_in_footer=False,
     ),
     Action(
+        id="clear_filters",
+        description="Clear every active filter (file type, dates, tags). "
+        "Leaves the collection/source scope alone.",
+        default_key="X",
+        command="clear-filters",
+        footer_label="Clear filters",
+        contexts=("results", "filters"),
+        show_in_footer=False,
+    ),
+    Action(
         id="focus_collections_panel",
         description="Focus the collections panel.",
         default_key="c",

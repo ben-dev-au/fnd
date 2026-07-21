@@ -30,6 +30,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.scrollbar import ScrollBar
+from textual.widget import Widget
 from textual.widgets import (
     Input,
     Static,
@@ -63,6 +64,8 @@ from fnd.tui.results_labels import (
 from fnd.tui.results_view import ResultsView
 from fnd.tui.scope_panel import ScopeController
 from fnd.tui.search_controller import SearchController
+from fnd.tui.sidebar_layout import Panel, allocate
+from fnd.tui.widgets.clear_bar import ClearFiltersBar
 from fnd.tui.widgets.preview_container import (
     _HitWithQuery,
 )
@@ -143,6 +146,7 @@ class FNDApp(App[None]):
     Screen { background: $surface; }
     #query_bar { height: 1; padding: 0 1; border: none; }
     #query_notice { height: auto; padding: 0 1; color: $warning; display: none; }
+
     #footer_hints { dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted; }
     /* Lazygit-thin scrollbars: 1 cell wide, fully transparent track so
        only the thumb glyph shows against the screen background. The
@@ -212,20 +216,33 @@ class FNDApp(App[None]):
        return. ``on_descendant_focus`` drives the class; nothing clears it on
        blur. Mirrors the preview pane below. */
     #results_pane.-focused { border: round $accent; }
+    /* height is driven at runtime by the dynamic allocator (_reflow_sidebar /
+       sidebar_layout.py); the `auto` here is only the pre-reflow default. No
+       max-height cap — the allocator, not CSS, decides each panel's share. */
     #collections_panel_tree {
         width: 100%; height: auto;
-        max-height: 50%;
         border: round $primary 50%;
         overflow-x: hidden;
     }
     #collections_panel_tree.-focused { border: round $accent; }
-    #filters_panel_tree {
+    #filters_pane {
         width: 100%; height: auto;
-        max-height: 50%;
         border: round $primary 50%;
         overflow-x: hidden;
     }
-    #filters_panel_tree.-focused { border: round $accent; }
+    #filters_pane.-focused { border: round $accent; }
+    /* 1fr (not auto) so the tree fills the container and SCROLLS internally;
+       auto grows to full content height and is merely clipped, stranding the
+       cursor off-screen. */
+    #filters_panel_tree { width: 100%; height: 1fr; border: none; overflow-x: hidden; }
+    /* Docked at the top so it floats above the scrolling tree, always in view
+       while a filter is active; hidden otherwise. */
+    #clear_filters_bar {
+        dock: top; height: 1; padding: 0 1; display: none;
+        color: $primary 50%;
+    }
+    #clear_filters_bar:hover { color: $accent; text-style: bold; }
+    #clear_filters_bar:focus { color: $accent; text-style: bold; background: $accent 15%; }
     /* Section collapse-to-header: Left at the panel root shrinks the
        whole panel down to its border-title strip. ``overflow: hidden``
        suppresses any rogue scrollbar that would otherwise sneak past
@@ -243,7 +260,7 @@ class FNDApp(App[None]):
         scrollbar-size-horizontal: 0;
     }
     #collections_panel_tree.collapsed,
-    #filters_panel_tree.collapsed {
+    #filters_pane.collapsed {
         height: 2;
         overflow: hidden;
         scrollbar-size-vertical: 0;
@@ -339,6 +356,11 @@ class FNDApp(App[None]):
         # owns mouse capture (off while reading so the terminal handles
         # drag-select, right-click Copy, ⌘C, macOS Speak-selection).
         self._reading_mode: bool = False
+        # Dynamic sidebar height allocation: last-applied heights (or the
+        # sentinel "collapsed") per panel, so a reflow only re-styles panels
+        # whose share actually changed. Guards against relayout thrash.
+        self._sidebar_height_cache: dict[str, object] = {}
+        self._reflow_pending: bool = False
         self._search.ranking_profile = self._search.resolve_profile()
         # Structural preview core (caches, active/outgoing containers,
         # debounced load + mount/reveal/settle pipeline); see
@@ -402,7 +424,13 @@ class FNDApp(App[None]):
                 # the skip-expanded-parent subclass so File-type /
                 # Modified headers behave the same as file rows.
                 yield Tree("Collections", id="collections_panel_tree")
-                yield ResultsTree("Filters", id="filters_panel_tree")
+                # The filters tree lives inside a bordered container so a clear
+                # affordance can dock at the top and stay in view whatever the
+                # tag list's scroll. The container wears the border / title /
+                # collapse state the bare tree used to.
+                with Vertical(id="filters_pane"):
+                    yield ClearFiltersBar("", id="clear_filters_bar")
+                    yield ResultsTree("Filters", id="filters_panel_tree")
             # Right column: preview pane only. The progress strip lives
             # at app level (below) so it can be shared by every long
             # operation (preview load, indexing, cache rebuild) without
@@ -598,6 +626,8 @@ class FNDApp(App[None]):
             pass
         self._refresh_preview_match_indicator()
         self._refresh_footer_hints()
+        # A new result set changes how many rows the results pane wants.
+        self._reflow_sidebar()
 
     def _refresh_preview_match_indicator(self) -> None:
         """Show ``▲a ▼b`` on the preview's BOTTOM border (in the active-pane
@@ -662,7 +692,7 @@ class FNDApp(App[None]):
                 return "results"
             if wid == "collections_panel_tree":
                 return "collections"
-            if wid == "filters_panel_tree":
+            if wid in ("filters_panel_tree", "clear_filters_bar"):
                 return "filters"
             if wid == "preview_pane":
                 return "preview"
@@ -757,7 +787,7 @@ class FNDApp(App[None]):
     _FOCUS_BORDER_PANES: ClassVar[dict[str, str]] = {
         "results": "#results_pane",
         "collections": "#collections_panel_tree",
-        "filters": "#filters_panel_tree",
+        "filters": "#filters_pane",
         "preview": "#preview_pane",
     }
 
@@ -805,13 +835,21 @@ class FNDApp(App[None]):
         if event.key not in ("up", "down"):
             return
         tree = self._focused_tree()
-        if tree is None or "collapsed" not in tree.classes:
+        if tree is None or "collapsed" not in self._panel_frame(tree).classes:
             return
         try:
             column = self.query_one("#results_column", Vertical)
         except Exception:
             return
-        panes = [w for w in column.children if isinstance(w, Tree)]
+        # The filters tree is wrapped in #filters_pane, so it isn't a direct
+        # child Tree; descend into non-Tree children to reach it, keeping
+        # column order so the Up/Down sweep still visits every panel.
+        panes: list[Tree[Any]] = []
+        for child in column.children:
+            if isinstance(child, Tree):
+                panes.append(child)
+            else:
+                panes.extend(child.query(Tree).results())
         if tree not in panes:
             return
         delta = 1 if event.key == "down" else -1
@@ -830,6 +868,8 @@ class FNDApp(App[None]):
         """Re-fit elided filenames to the new pane widths. Deferred to after
         layout so the panes report their settled geometry."""
         self.call_after_refresh(self._results.refit_after_resize)
+        # A taller/shorter column changes every panel's fair share.
+        self._reflow_sidebar()
 
     @on(Tree.NodeHighlighted)
     def _on_tree_highlight(self, ev: Tree.NodeHighlighted[Any]) -> None:
@@ -1130,6 +1170,92 @@ class FNDApp(App[None]):
             return self.query_one("#filters_panel_tree", Tree)
         return None
 
+    def _panel_frame(self, tree: Tree[Any]) -> Widget:
+        """The bordered / collapsible widget for ``tree``. The filters tree is
+        wrapped in ``#filters_pane`` (which carries the border, title and
+        collapse state); every other tree is its own frame."""
+        if tree.id == "filters_panel_tree":
+            with contextlib.suppress(NoMatches):
+                return self.query_one("#filters_pane", Vertical)
+        return tree
+
+    def _reflow_sidebar(self) -> None:
+        """Recompute the sidebar panels' heights from live content demand.
+
+        Coalesced to one pass per frame, so it's safe (and cheap) to call from
+        any change that alters what the panels want to show — a new result set,
+        a rebuilt filter/collection list, a section expanding or collapsing, a
+        panel collapsing to its header, or a terminal resize. That breadth is
+        the point: the split stays responsive to every one of those the way a
+        static CSS rule can't. See :mod:`fnd.tui.sidebar_layout`."""
+        if self._reflow_pending or not self.screen_stack:
+            return
+        self._reflow_pending = True
+        self.call_after_refresh(self._do_reflow_sidebar)
+
+    def _do_reflow_sidebar(self) -> None:
+        self._reflow_pending = False
+        if not self.screen_stack:
+            return
+        try:
+            column = self.query_one("#results_column", Vertical)
+            results = self.query_one("#results_pane", Tree)
+            collections = self.query_one("#collections_panel_tree", Tree)
+            filters_pane = self.query_one("#filters_pane", Vertical)
+            filters_tree = self.query_one("#filters_panel_tree", Tree)
+            clear_bar = self.query_one("#clear_filters_bar", Widget)
+        except NoMatches:
+            return
+        avail = column.content_region.height
+        if avail <= 0:
+            return  # not laid out yet; a later trigger will reflow
+        bar_rows = 1 if clear_bar.display else 0
+        # demand = visible content rows + chrome (borders, and the docked clear
+        # bar for the filters pane). virtual_size tracks the tree's expanded
+        # rows, so it shrinks/grows as sections fold.
+        specs: list[tuple[Widget, Panel]] = [
+            (
+                results,
+                Panel(
+                    "results_pane",
+                    int(results.virtual_size.height) + 2,
+                    "collapsed" in results.classes,
+                    3,
+                ),
+            ),
+            (
+                collections,
+                Panel(
+                    "collections_panel_tree",
+                    int(collections.virtual_size.height) + 2,
+                    "collapsed" in collections.classes,
+                    2,
+                ),
+            ),
+            (
+                filters_pane,
+                Panel(
+                    "filters_pane",
+                    int(filters_tree.virtual_size.height) + 2 + bar_rows,
+                    "collapsed" in filters_pane.classes,
+                    2,
+                ),
+            ),
+        ]
+        heights = allocate(avail, [spec for _, spec in specs])
+        for widget, spec in specs:
+            if spec.collapsed:
+                # The .collapsed CSS rule owns the header height; drop any stale
+                # inline height so it takes effect (and reads back cleanly).
+                if self._sidebar_height_cache.get(spec.key) != "collapsed":
+                    widget.styles.height = None
+                    self._sidebar_height_cache[spec.key] = "collapsed"
+            else:
+                target = heights[spec.key]
+                if self._sidebar_height_cache.get(spec.key) != target:
+                    widget.styles.height = target
+                    self._sidebar_height_cache[spec.key] = target
+
     def action_tree_smart_collapse(self) -> None:
         """Lazygit-style ``left``-arrow handling for any focused tree.
 
@@ -1147,7 +1273,8 @@ class FNDApp(App[None]):
         tree = self._focused_tree()
         if tree is None:
             return
-        if "collapsed" in tree.classes:
+        frame = self._panel_frame(tree)
+        if "collapsed" in frame.classes:
             return
         node = tree.cursor_node
         if node is None:
@@ -1158,10 +1285,11 @@ class FNDApp(App[None]):
             if parent is None or parent is tree.root:
                 # Top of the tree, already collapsed — collapse the
                 # entire panel to its header strip.
-                if tree.id:
-                    tree.add_class("collapsed")
-                    self._scope.collapsed_panels.add(tree.id)
+                if frame.id:
+                    frame.add_class("collapsed")
+                    self._scope.collapsed_panels.add(frame.id)
                     self._scope.persist()
+                    self._reflow_sidebar()  # a header-strip panel frees its rows
                 return
             parent.collapse()
             tree.move_cursor(parent)
@@ -1185,11 +1313,13 @@ class FNDApp(App[None]):
         tree = self._focused_tree()
         if tree is None:
             return
-        if "collapsed" in tree.classes:
-            tree.remove_class("collapsed")
-            if tree.id:
-                self._scope.collapsed_panels.discard(tree.id)
+        frame = self._panel_frame(tree)
+        if "collapsed" in frame.classes:
+            frame.remove_class("collapsed")
+            if frame.id:
+                self._scope.collapsed_panels.discard(frame.id)
                 self._scope.persist()
+            self._reflow_sidebar()  # a re-opened panel reclaims its share
             return
         node = tree.cursor_node
         if node is None or not node.children:
@@ -1225,12 +1355,11 @@ class FNDApp(App[None]):
         for the mouse, surfacing the specific row the user pointed at rather
         than toggling a node hidden behind the collapsed height."""
         tree = ev.tree
-        if "collapsed" not in tree.classes:
+        # The collapse state lives on the panel frame — the tree itself for the
+        # results/collections panels, but the #filters_pane wrapper for the
+        # filters tree — so resolve it the same way the keyboard reopen does.
+        if not self._reopen_panel_frame(tree):
             return
-        tree.remove_class("collapsed")
-        if tree.id:
-            self._scope.collapsed_panels.discard(tree.id)
-            self._scope.persist()
         node = ev.node
         if node is None:
             return
@@ -1239,6 +1368,30 @@ class FNDApp(App[None]):
             self._move_cursor_to_first_child(tree, node)
         else:
             tree.move_cursor(node)
+
+    def _reopen_panel_frame(self, tree: Tree[Any]) -> bool:
+        """Un-collapse ``tree``'s panel frame if it is collapsed-to-header.
+        Returns whether a reopen actually happened."""
+        frame = self._panel_frame(tree)
+        if "collapsed" not in frame.classes:
+            return False
+        frame.remove_class("collapsed")
+        if frame.id:
+            self._scope.collapsed_panels.discard(frame.id)
+            self._scope.persist()
+        self._reflow_sidebar()  # reclaim the reopened panel's share
+        return True
+
+    @on(events.Click, "#filters_pane")
+    def _on_filters_pane_click(self, event: events.Click) -> None:
+        """Click-to-reopen for the filters pane. Its tree is wrapped in
+        #filters_pane, so at header height the tree has zero height and never
+        sees the click (unlike results/collections, whose collapse class sits on
+        the tree itself). Catch it on the container and reopen the frame."""
+        filters_tree = self.query_one("#filters_panel_tree", Tree)
+        if self._reopen_panel_frame(filters_tree):
+            event.stop()
+            filters_tree.focus()
 
     @property
     def _effective_match_spec(self) -> MatchSpec:
@@ -1273,6 +1426,11 @@ class FNDApp(App[None]):
         """Single-key teleport from anywhere → preview pane."""
         self.query_one("#preview_pane").focus()
 
+    def action_clear_filters(self) -> None:
+        """Reset every active filter (file type, dates, tags) to default.
+        Collection/source scope is untouched. No-op when nothing is active."""
+        self._scope.clear_filters()
+
     def action_focus_filters_panel(self) -> None:
         """Single-key teleport from anywhere → filters sidebar panel."""
         self.query_one("#filters_panel_tree", Tree).focus()
@@ -1280,6 +1438,11 @@ class FNDApp(App[None]):
     def action_focus_collections_panel(self) -> None:
         """Single-key teleport from anywhere → collections sidebar panel."""
         self.query_one("#collections_panel_tree", Tree).focus()
+
+    @on(events.Click, "#clear_filters_bar")
+    def _on_clear_bar_click(self, event: events.Click) -> None:
+        event.stop()
+        self._scope.clear_filters()
 
     @on(Tree.NodeSelected, "#filters_panel_tree")
     def _on_filters_panel_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
@@ -1304,6 +1467,22 @@ class FNDApp(App[None]):
     @on(Tree.NodeCollapsed, "#filters_panel_tree")
     def _on_filter_branch_collapsed(self, ev: Tree.NodeCollapsed[dict[str, object]]) -> None:
         self._scope.on_filter_branch_collapsed(ev)
+
+    # A section (branch) folding open or closed in any sidebar tree changes how
+    # many rows that panel wants — reflow so the shares track it live.
+    _SIDEBAR_TREE_IDS: ClassVar[frozenset[str]] = frozenset(
+        {"results_pane", "collections_panel_tree", "filters_panel_tree"}
+    )
+
+    @on(Tree.NodeExpanded)
+    def _reflow_on_node_expanded(self, ev: Tree.NodeExpanded[Any]) -> None:
+        if ev.node.tree.id in self._SIDEBAR_TREE_IDS:
+            self._reflow_sidebar()
+
+    @on(Tree.NodeCollapsed)
+    def _reflow_on_node_collapsed(self, ev: Tree.NodeCollapsed[Any]) -> None:
+        if ev.node.tree.id in self._SIDEBAR_TREE_IDS:
+            self._reflow_sidebar()
 
     def action_dismiss_overlay(self) -> None:
         """Close any remaining in-app overlay (explain, multi DSL).
