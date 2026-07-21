@@ -288,6 +288,8 @@ class ScopeController:
                         },
                     )
         tree.border_title = self._panel_title(names)
+        # The collections list changed length — reflow the sidebar heights.
+        self._app._reflow_sidebar()
 
     # ── Filters panel (UX-F) ──────────────────────────────────────
 
@@ -390,6 +392,9 @@ class ScopeController:
         if keep is not None:
             self._restore_cursor(tree, keep)
         self._update_clear_bar()
+        # The rebuilt tag list (and the clear bar showing/hiding) changed the
+        # filters pane's row demand — reflow the sidebar heights.
+        self._app._reflow_sidebar()
 
     # ── Clear all filters ─────────────────────────────────────────
 

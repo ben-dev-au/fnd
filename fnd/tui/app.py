@@ -64,6 +64,7 @@ from fnd.tui.results_labels import (
 from fnd.tui.results_view import ResultsView
 from fnd.tui.scope_panel import ScopeController
 from fnd.tui.search_controller import SearchController
+from fnd.tui.sidebar_layout import Panel, allocate
 from fnd.tui.widgets.clear_bar import ClearFiltersBar
 from fnd.tui.widgets.preview_container import (
     _HitWithQuery,
@@ -215,16 +216,17 @@ class FNDApp(App[None]):
        return. ``on_descendant_focus`` drives the class; nothing clears it on
        blur. Mirrors the preview pane below. */
     #results_pane.-focused { border: round $accent; }
+    /* height is driven at runtime by the dynamic allocator (_reflow_sidebar /
+       sidebar_layout.py); the `auto` here is only the pre-reflow default. No
+       max-height cap — the allocator, not CSS, decides each panel's share. */
     #collections_panel_tree {
         width: 100%; height: auto;
-        max-height: 50%;
         border: round $primary 50%;
         overflow-x: hidden;
     }
     #collections_panel_tree.-focused { border: round $accent; }
     #filters_pane {
         width: 100%; height: auto;
-        max-height: 50%;
         border: round $primary 50%;
         overflow-x: hidden;
     }
@@ -354,6 +356,11 @@ class FNDApp(App[None]):
         # owns mouse capture (off while reading so the terminal handles
         # drag-select, right-click Copy, ⌘C, macOS Speak-selection).
         self._reading_mode: bool = False
+        # Dynamic sidebar height allocation: last-applied heights (or the
+        # sentinel "collapsed") per panel, so a reflow only re-styles panels
+        # whose share actually changed. Guards against relayout thrash.
+        self._sidebar_height_cache: dict[str, object] = {}
+        self._reflow_pending: bool = False
         self._search.ranking_profile = self._search.resolve_profile()
         # Structural preview core (caches, active/outgoing containers,
         # debounced load + mount/reveal/settle pipeline); see
@@ -619,6 +626,8 @@ class FNDApp(App[None]):
             pass
         self._refresh_preview_match_indicator()
         self._refresh_footer_hints()
+        # A new result set changes how many rows the results pane wants.
+        self._reflow_sidebar()
 
     def _refresh_preview_match_indicator(self) -> None:
         """Show ``▲a ▼b`` on the preview's BOTTOM border (in the active-pane
@@ -859,6 +868,8 @@ class FNDApp(App[None]):
         """Re-fit elided filenames to the new pane widths. Deferred to after
         layout so the panes report their settled geometry."""
         self.call_after_refresh(self._results.refit_after_resize)
+        # A taller/shorter column changes every panel's fair share.
+        self._reflow_sidebar()
 
     @on(Tree.NodeHighlighted)
     def _on_tree_highlight(self, ev: Tree.NodeHighlighted[Any]) -> None:
@@ -1168,6 +1179,83 @@ class FNDApp(App[None]):
                 return self.query_one("#filters_pane", Vertical)
         return tree
 
+    def _reflow_sidebar(self) -> None:
+        """Recompute the sidebar panels' heights from live content demand.
+
+        Coalesced to one pass per frame, so it's safe (and cheap) to call from
+        any change that alters what the panels want to show — a new result set,
+        a rebuilt filter/collection list, a section expanding or collapsing, a
+        panel collapsing to its header, or a terminal resize. That breadth is
+        the point: the split stays responsive to every one of those the way a
+        static CSS rule can't. See :mod:`fnd.tui.sidebar_layout`."""
+        if self._reflow_pending or not self.screen_stack:
+            return
+        self._reflow_pending = True
+        self.call_after_refresh(self._do_reflow_sidebar)
+
+    def _do_reflow_sidebar(self) -> None:
+        self._reflow_pending = False
+        if not self.screen_stack:
+            return
+        try:
+            column = self.query_one("#results_column", Vertical)
+            results = self.query_one("#results_pane", Tree)
+            collections = self.query_one("#collections_panel_tree", Tree)
+            filters_pane = self.query_one("#filters_pane", Vertical)
+            filters_tree = self.query_one("#filters_panel_tree", Tree)
+            clear_bar = self.query_one("#clear_filters_bar", Widget)
+        except NoMatches:
+            return
+        avail = column.content_region.height
+        if avail <= 0:
+            return  # not laid out yet; a later trigger will reflow
+        bar_rows = 1 if clear_bar.display else 0
+        # demand = visible content rows + chrome (borders, and the docked clear
+        # bar for the filters pane). virtual_size tracks the tree's expanded
+        # rows, so it shrinks/grows as sections fold.
+        specs: list[tuple[Widget, Panel]] = [
+            (
+                results,
+                Panel(
+                    "results_pane",
+                    int(results.virtual_size.height) + 2,
+                    "collapsed" in results.classes,
+                    3,
+                ),
+            ),
+            (
+                collections,
+                Panel(
+                    "collections_panel_tree",
+                    int(collections.virtual_size.height) + 2,
+                    "collapsed" in collections.classes,
+                    2,
+                ),
+            ),
+            (
+                filters_pane,
+                Panel(
+                    "filters_pane",
+                    int(filters_tree.virtual_size.height) + 2 + bar_rows,
+                    "collapsed" in filters_pane.classes,
+                    2,
+                ),
+            ),
+        ]
+        heights = allocate(avail, [spec for _, spec in specs])
+        for widget, spec in specs:
+            if spec.collapsed:
+                # The .collapsed CSS rule owns the header height; drop any stale
+                # inline height so it takes effect (and reads back cleanly).
+                if self._sidebar_height_cache.get(spec.key) != "collapsed":
+                    widget.styles.height = None
+                    self._sidebar_height_cache[spec.key] = "collapsed"
+            else:
+                target = heights[spec.key]
+                if self._sidebar_height_cache.get(spec.key) != target:
+                    widget.styles.height = target
+                    self._sidebar_height_cache[spec.key] = target
+
     def action_tree_smart_collapse(self) -> None:
         """Lazygit-style ``left``-arrow handling for any focused tree.
 
@@ -1201,6 +1289,7 @@ class FNDApp(App[None]):
                     frame.add_class("collapsed")
                     self._scope.collapsed_panels.add(frame.id)
                     self._scope.persist()
+                    self._reflow_sidebar()  # a header-strip panel frees its rows
                 return
             parent.collapse()
             tree.move_cursor(parent)
@@ -1230,6 +1319,7 @@ class FNDApp(App[None]):
             if frame.id:
                 self._scope.collapsed_panels.discard(frame.id)
                 self._scope.persist()
+            self._reflow_sidebar()  # a re-opened panel reclaims its share
             return
         node = tree.cursor_node
         if node is None or not node.children:
@@ -1271,6 +1361,7 @@ class FNDApp(App[None]):
         if tree.id:
             self._scope.collapsed_panels.discard(tree.id)
             self._scope.persist()
+        self._reflow_sidebar()  # reclaim the reopened panel's share
         node = ev.node
         if node is None:
             return
@@ -1354,6 +1445,22 @@ class FNDApp(App[None]):
     @on(Tree.NodeCollapsed, "#filters_panel_tree")
     def _on_filter_branch_collapsed(self, ev: Tree.NodeCollapsed[dict[str, object]]) -> None:
         self._scope.on_filter_branch_collapsed(ev)
+
+    # A section (branch) folding open or closed in any sidebar tree changes how
+    # many rows that panel wants — reflow so the shares track it live.
+    _SIDEBAR_TREE_IDS: ClassVar[frozenset[str]] = frozenset(
+        {"results_pane", "collections_panel_tree", "filters_panel_tree"}
+    )
+
+    @on(Tree.NodeExpanded)
+    def _reflow_on_node_expanded(self, ev: Tree.NodeExpanded[Any]) -> None:
+        if ev.node.tree.id in self._SIDEBAR_TREE_IDS:
+            self._reflow_sidebar()
+
+    @on(Tree.NodeCollapsed)
+    def _reflow_on_node_collapsed(self, ev: Tree.NodeCollapsed[Any]) -> None:
+        if ev.node.tree.id in self._SIDEBAR_TREE_IDS:
+            self._reflow_sidebar()
 
     def action_dismiss_overlay(self) -> None:
         """Close any remaining in-app overlay (explain, multi DSL).
