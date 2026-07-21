@@ -832,7 +832,15 @@ class FNDApp(App[None]):
             column = self.query_one("#results_column", Vertical)
         except Exception:
             return
-        panes = [w for w in column.children if isinstance(w, Tree)]
+        # The filters tree is wrapped in #filters_pane, so it isn't a direct
+        # child Tree; descend into non-Tree children to reach it, keeping
+        # column order so the Up/Down sweep still visits every panel.
+        panes: list[Tree[Any]] = []
+        for child in column.children:
+            if isinstance(child, Tree):
+                panes.append(child)
+            else:
+                panes.extend(child.query(Tree).results())
         if tree not in panes:
             return
         delta = 1 if event.key == "down" else -1
