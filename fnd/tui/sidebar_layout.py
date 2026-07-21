@@ -140,15 +140,20 @@ def _split_by_demand(secondaries: list[Panel], room: int, demand: dict[str, int]
 
 
 def _proportional(secondaries: list[Panel], room: int, demand: dict[str, int]) -> dict[str, int]:
-    """Fallback when ``room`` can't cover even the per-panel floors: hand out
-    the little there is in proportion to demand, at least one row each."""
+    """Fallback when ``room`` can't cover even the per-panel floors: apportion
+    what little there is by demand (largest-remainder), so the total is exactly
+    ``room``. When there are more panels than rows the smallest-demand panels
+    get nothing — a 3-row sidebar can't show three panels — rather than the
+    column being over-allocated (a floor of 1 each would sum past ``room``)."""
+    if room <= 0:
+        return {s.key: 0 for s in secondaries}
     total = sum(demand[s.key] for s in secondaries) or 1
-    heights = {s.key: max(1, room * demand[s.key] // total) for s in secondaries}
-    over = sum(heights.values()) - room
-    for s in secondaries:
-        if over <= 0:
+    heights = {s.key: room * demand[s.key] // total for s in secondaries}
+    leftover = room - sum(heights.values())
+    # Hand the rounding remainder out to the largest fractional shares first.
+    for s in sorted(secondaries, key=lambda s: (room * demand[s.key]) % total, reverse=True):
+        if leftover <= 0:
             break
-        take = min(heights[s.key] - 1, over)
-        heights[s.key] -= take
-        over -= take
+        heights[s.key] += 1
+        leftover -= 1
     return heights

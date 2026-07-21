@@ -121,18 +121,20 @@ def _tokenize(s: str) -> list[tuple[str, str]]:
             flush()
             i += 1
             continue
-        if ch == "[" and buf and buf[-1] == ":":
-            # ``field:[lo TO hi]`` — a range. The ``TO`` and its surrounding
-            # spaces are part of the range syntax, so keep the whole bracket
-            # run as one atom (the leaf is handed to parse_query, which
-            # understands ranges). Without this the space inside the brackets
-            # would flush a truncated ``field:[lo`` leaf that fails to parse.
+        if ch in "[{" and buf and buf[-1] == ":":
+            # ``field:[lo TO hi]`` (inclusive) or ``field:{lo TO hi}``
+            # (exclusive) — a range. The ``TO`` and its surrounding spaces are
+            # part of the range syntax, so keep the whole bracket/brace run as
+            # one atom (the leaf is handed to parse_query, which understands
+            # ranges). Ranges may mix delimiters (``[lo TO hi}``), so close on
+            # either ``]`` or ``}``. Without this the space inside would flush a
+            # truncated ``field:[lo`` leaf that fails to parse.
             buf.append(ch)
             j = i + 1
-            while j < n and s[j] != "]":
+            while j < n and s[j] not in "]}":
                 buf.append(s[j])
                 j += 1
-            if j < n:  # include the closing bracket
+            if j < n:  # include the closing delimiter
                 buf.append(s[j])
                 j += 1
             i = j

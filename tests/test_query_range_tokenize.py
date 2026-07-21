@@ -43,6 +43,22 @@ def test_parenthesised_range_stays_intact() -> None:
     assert "mtime:[100 TO 200]" in _atoms(node)
 
 
+def test_exclusive_brace_range_stays_one_atom() -> None:
+    # Tantivy exclusive ranges use braces; they split on the inner space the
+    # same way inclusive `[...]` did before the fix.
+    node = parse_query_ast("mtime:{100 TO 200} AND tree")
+    atoms = _atoms(node)
+    assert "mtime:{100 TO 200}" in atoms
+    assert not any(a in ("TO", "mtime:{100", "200}") for a in atoms)
+
+
+def test_mixed_delimiter_range_stays_one_atom() -> None:
+    # Half-open ranges mix delimiters (`[lo TO hi}`); the tokenizer must close
+    # on whichever bracket/brace ends the range.
+    assert "mtime:[100 TO 200}" in _atoms(parse_query_ast("mtime:[100 TO 200} AND tree"))
+    assert "mtime:{100 TO 200]" in _atoms(parse_query_ast("mtime:{100 TO 200] AND tree"))
+
+
 def _index(tmp_path: Path) -> Path:
     from fnd.schema import SCHEMA_VERSION
 

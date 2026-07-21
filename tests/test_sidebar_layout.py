@@ -91,13 +91,23 @@ def test_tiny_terminal_still_gives_priority_the_majority() -> None:
 
 def test_never_over_allocates_the_column() -> None:
     # Fuzz a spread of demands/sizes; the allocation must never exceed avail.
-    for avail in (10, 16, 24, 45, 60):
+    # Includes tiny columns (1-9 rows) where a naive per-panel floor of 1 would
+    # over-allocate — the case CodeRabbit caught that the >=10 sweep missed.
+    for avail in (1, 2, 3, 5, 7, 9, 10, 16, 24, 45, 60):
         for r in (1, 5, 30, 200):
             for c in (1, 4, 40):
                 for f in (1, 4, 40):
                     h = allocate(avail, _panels(r, c, f))
                     assert sum(h.values()) <= avail, (avail, r, c, f, h)
                     assert all(v >= 0 for v in h.values())
+
+
+def test_tiny_column_stays_within_budget_with_all_expanded() -> None:
+    # avail=3, three hungry panels: a floor of 1 each would sum to 3+ for the
+    # secondaries alone and blow the budget. The total must still fit.
+    for avail in (1, 2, 3, 4):
+        h = allocate(avail, _panels(5, 40, 40))
+        assert sum(h.values()) <= avail, (avail, h)
 
 
 def test_second_panel_takes_priority_slack_when_results_collapsed() -> None:
