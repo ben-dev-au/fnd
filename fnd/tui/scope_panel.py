@@ -8,6 +8,7 @@ the scope back through the app's accessors.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -683,6 +684,14 @@ class ScopeController:
         for line, tree_line in enumerate(tree._tree_lines):
             if self._row_key(tree_line.node.data) == keep:
                 tree.cursor_line = line
+                # Setting cursor_line alone doesn't re-scroll, so when the clear
+                # bar appears above it (shrinking the tree by a row) the restored
+                # cursor can sit one row out of view. Scroll it back — DEFERRED
+                # to after the refresh, because the bar's show/hide resizes the
+                # tree on the next layout pass, after this runs; scrolling now
+                # would target the pre-resize height and still clip the row.
+                with contextlib.suppress(Exception):
+                    self._app.call_after_refresh(tree.scroll_to_line, line, animate=False)
                 return
 
     def on_filters_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
