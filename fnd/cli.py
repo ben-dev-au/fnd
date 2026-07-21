@@ -98,9 +98,17 @@ def index(
 ) -> None:
     """Index documents under ROOT (ad-hoc, single-root). For configured
     collections use ``fnd collection reindex <name>``."""
+    from fnd.config import load
     from fnd.index import build_index
 
-    written = build_index(roots=[root], index_dir=default_index_dir(), collection=collection)
+    defaults = load().defaults
+    written = build_index(
+        roots=[root],
+        index_dir=default_index_dir(),
+        collection=collection,
+        tag_sources=tuple(defaults.tag_sources),
+        tag_frontmatter_keys=tuple(defaults.tag_frontmatter_keys),
+    )
     typer.echo(f"indexed {written} chunks under {root} → collection {collection}")
 
 
@@ -499,6 +507,7 @@ def collection_reindex(
         index_dir=default_index_dir(),
         rebuild=rebuild,
         tag_sources=tuple(cfg.defaults.tag_sources),
+        tag_frontmatter_keys=tuple(cfg.defaults.tag_frontmatter_keys),
     )
     typer.echo(f"indexed {written} chunks for collection {name}")
 

@@ -128,9 +128,12 @@ def _blank_frontmatter(source: str) -> str:
     lines = source.splitlines(keepends=True)
     if not lines or lines[0].rstrip() != "---":
         return source
+    # Preserve the file's own line ending so blanking doesn't introduce mixed
+    # endings when the body below keeps its original CRLF.
+    ending = "\r\n" if lines[0].endswith("\r\n") else "\n"
     for i in range(1, len(lines)):
         if lines[i].rstrip() in ("---", "..."):
-            return "\n" * (i + 1) + "".join(lines[i + 1 :])
+            return ending * (i + 1) + "".join(lines[i + 1 :])
     return source  # unterminated fence: treat as content, don't eat the file
 
 

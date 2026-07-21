@@ -24,7 +24,9 @@ def test_retag_moves_ctime_but_not_mtime_or_birthtime(tmp_path: Path) -> None:
     subprocess.run(["xattr", "-w", XATTR, "<plist></plist>", str(f)], check=True)
     after = f.stat()
     assert int(after.st_mtime) == int(before.st_mtime)
-    assert int(after.st_birthtime) == int(before.st_birthtime)
+    # st_birthtime is Darwin-only; getattr keeps pyright happy on Linux CI
+    # (this test is already skipped off Darwin).
+    assert int(getattr(after, "st_birthtime", 0)) == int(getattr(before, "st_birthtime", 0))
     assert int(after.st_ctime) > int(before.st_ctime)
 
 

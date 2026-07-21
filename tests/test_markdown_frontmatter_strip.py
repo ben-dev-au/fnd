@@ -66,3 +66,15 @@ def test_unterminated_fence_is_left_alone(tmp_path: Path) -> None:
     f.write_text("---\ntitle: dangling\n\n# Heading\n\nBody.\n", encoding="utf-8")
     body = " ".join(c.body for c in extract(f))
     assert "Body." in body
+
+
+def test_crlf_line_endings_not_mixed(tmp_path: Path) -> None:
+    """Blanking CRLF frontmatter must not leave the region with bare \\n
+    while the body keeps CRLF."""
+    f = tmp_path / "crlf.md"
+    f.write_bytes(b"---\r\ntags: [recipe]\r\n---\r\n\r\n# Heading\r\n\r\nBody text.\r\n")
+    chunks = list(extract(f))
+    body = " ".join(c.body for c in chunks)
+    assert "recipe" not in body
+    assert "Body text." in body
+    assert any("Heading" in c.heading_path for c in chunks)

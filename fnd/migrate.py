@@ -124,5 +124,12 @@ def prompt_and_rebuild_or_exit(
 
     for name, cc in sorted(config.collections.items()):
         typer.echo(f"Rebuilding collection {name}…")
-        n = build_index_from_config(config=cc, collection=name, index_dir=index_dir, rebuild=True)
+        n = build_index_from_config(
+            config=cc,
+            collection=name,
+            index_dir=index_dir,
+            rebuild=True,
+            tag_sources=tuple(config.defaults.tag_sources),
+            tag_frontmatter_keys=tuple(config.defaults.tag_frontmatter_keys),
+        )
         typer.echo(f"  {n} chunks indexed.")

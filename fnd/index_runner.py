@@ -340,6 +340,7 @@ def _process_one_file(
     texturise_on: bool = True,
     wipe: bool = False,
     tag_sources: Sequence[str] = ("frontmatter", "os"),
+    tag_frontmatter_keys: Sequence[str] = (),
 ) -> tuple[int, bool, bool, str]:
     """Synchronous per-file work — extraction + write to Tantivy.
 
@@ -391,7 +392,9 @@ def _process_one_file(
 
     # Read once per file, stamped onto every chunk. Shared with build_index so
     # an ad-hoc `fnd index <root>` captures the same metadata as a reindex.
-    meta_blob_bytes, file_tags = read_file_metadata(path, tag_sources=tag_sources)
+    meta_blob_bytes, file_tags = read_file_metadata(
+        path, tag_sources=tag_sources, frontmatter_keys=tag_frontmatter_keys
+    )
 
     # Non-PDFs don't use the structured-extraction cache (their
     # extraction is already cheap), so cache.hits never increments
@@ -527,6 +530,20 @@ async def run_indexer(
     prior_skip = _pdf._skip_structure_extraction
     _pdf.set_skip_structure_extraction(skip_structure)
     texturise_on = not skip_structure
+
+    # Tag settings come from the user's config, sourced here (the same
+    # internal-load pattern used for cache_at_index_time above) so every
+    # indexing path — including the TUI "Update index" modal that drives
+    # this runner — honours tag_sources / tag_frontmatter_keys rather than
+    # the bare defaults. Missing config falls back to the defaults.
+    tag_sources: Sequence[str] = ("frontmatter", "os")
+    tag_frontmatter_keys: Sequence[str] = ()
+    with contextlib.suppress(Exception):
+        from fnd.config import load as _load_config
+
+        _defaults = _load_config().defaults
+        tag_sources = tuple(_defaults.tag_sources)
+        tag_frontmatter_keys = tuple(_defaults.tag_frontmatter_keys)
 
     # Re-texturise-outdated opt-out from durable reuse (see extract()).
     prior_force_fresh = _pdf._force_fresh_texture
@@ -701,6 +718,8 @@ async def run_indexer(
                 skip_unchanged=skip_unchanged,
                 texturise_on=texturise_on,
                 wipe=force_fresh,
+                tag_sources=tag_sources,
+                tag_frontmatter_keys=tag_frontmatter_keys,
             )
             file_elapsed_ms = (time.perf_counter() - t_file) * 1000.0
             was_dataless = err.startswith("iCloud-offloaded") if err else False

@@ -178,3 +178,21 @@ def test_tags_key_cannot_be_double_counted_as_a_custom_key() -> None:
     """Naming 'tags' as an extra key must not namespace the real tags."""
     provider = FrontmatterTagProvider(extra_keys=["tags"])
     assert provider.read(_ctx({"tags": ["exam"]})) == frozenset({"exam"})
+
+
+def test_custom_key_wikilink_with_subfolder_path() -> None:
+    """`Course: "[[Notes/Algebra]]"` — the slash is inside the link, not a tag
+    separator. Stripping must happen before ancestor expansion, or a malformed
+    `course/[[notes` fragment leaks alongside the real tag."""
+    provider = FrontmatterTagProvider(extra_keys=["Course"])
+    got = provider.read(_ctx({"Course": "[[Notes/Algebra]]"}))
+    assert got == frozenset({"course", "course/notes", "course/notes/algebra"})
+    assert not any("[[" in t for t in got)
+
+
+def test_custom_key_wikilink_in_a_list() -> None:
+    provider = FrontmatterTagProvider(extra_keys=["Course"])
+    got = provider.read(_ctx({"Course": ["[[A/B]]", "Plain"]}))
+    assert "course/a/b" in got
+    assert "course/plain" in got
+    assert not any("[[" in t for t in got)

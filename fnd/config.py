@@ -372,9 +372,11 @@ class AppConfig(BaseModel):
 class Defaults(BaseModel):
     collection: str = "default"
     # Which tag sources feed the Tags filter. Provenance is stored in
-    # separate index fields, so toggling a source is a query-time change
-    # and never needs a reindex. Sources this platform can't serve are
-    # dropped at runtime by fnd.tags.providers_for.
+    # separate index fields, so *removing* a source takes effect immediately
+    # (its field just stops being queried). *Re-adding* a previously removed
+    # source needs a reindex — incremental indexing skips unchanged files, so
+    # its tag field stays empty for anything indexed while it was off. Sources
+    # this platform can't serve are dropped at runtime by fnd.tags.providers_for.
     tag_sources: list[Literal["frontmatter", "os"]] = ["frontmatter", "os"]
     # Extra frontmatter keys to treat as tag sources, beyond tags:/tag:.
     # Many vaults keep their real taxonomy in fields like Course: or

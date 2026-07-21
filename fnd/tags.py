@@ -158,11 +158,15 @@ class FrontmatterTagProvider:
                 if folded not in wanted:
                     continue
                 namespace = normalise_tag(folded)
+                # Strip Obsidian wikilink brackets BEFORE _collect splits on
+                # "/", or a subfolder link like "[[Notes/Algebra]]" is torn
+                # into a malformed "[[notes" fragment plus the real path.
+                raw_items = raw_value if isinstance(raw_value, list) else [raw_value]
+                stripped = [_strip_wikilink(v) if isinstance(v, str) else v for v in raw_items]
                 values: set[str] = set()
-                _collect(raw_value, values)
+                _collect(stripped, values)
                 for value in values:
-                    # _collect already ancestor-expanded; re-prefix each part.
-                    tag = normalise_tag(f"{namespace}/{_strip_wikilink(value)}")
+                    tag = normalise_tag(f"{namespace}/{value}")
                     if tag:
                         out |= expand_ancestors(tag)
         if len(out) > MAX_TAGS_PER_FILE:
@@ -180,9 +184,15 @@ _XATTR_USER_TAGS = b"com.apple.metadata:_kMDItemUserTags"
 
 def _load_getxattr() -> object | None:
     try:
-        libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+        lib = ctypes.util.find_library("c")
+        if not lib:
+            # CDLL(None) loads the running program, not libc — bail rather
+            # than resolve getxattr against the wrong image.
+            return None
+        libc = ctypes.CDLL(lib, use_errno=True)
         fn = libc.getxattr
-    except (OSError, AttributeError):
+    except Exception:
+        # Import-time; must never crash startup, whatever ctypes raises.
         return None
     fn.restype = ctypes.c_ssize_t
     fn.argtypes = [
