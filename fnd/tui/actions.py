@@ -203,6 +203,18 @@ REGISTRY: tuple[Action, ...] = (
         show_in_footer=False,
     ),
     Action(
+        id="copy_query_command",
+        description="Copy the current query and active filters to the clipboard "
+        "as a runnable `fnd` command, so the search can be saved and re-run.",
+        default_key="ctrl+y",
+        command="copy-command",
+        footer_label="Copy cmd",
+        show_in_footer=False,
+        # Textual's Input owns most plain keys; fire before it so the copy
+        # works while the query bar is focused (the common case).
+        priority=True,
+    ),
+    Action(
         id="toggle_highlights",
         description="Toggle search-term highlights in the preview pane "
         "(useful for distraction-free reading without re-running the search).",

@@ -4379,25 +4379,12 @@ class StillFlatDrillIn(Screen[None]):
         if not self._rows:
             return
         _col, path, _reason, _recorded_at = self._rows[self._cursor]
-        import platform
-        import subprocess
+        from fnd.tui.clipboard import copy_text
 
-        system = platform.system()
         try:
-            if system == "Darwin":
-                proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
-            elif system == "Windows":
-                proc = subprocess.Popen(["clip"], stdin=subprocess.PIPE)
-            else:
-                try:
-                    proc = subprocess.Popen(["wl-copy"], stdin=subprocess.PIPE)
-                except FileNotFoundError:
-                    proc = subprocess.Popen(
-                        ["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE
-                    )
-            proc.communicate(input=path.encode("utf-8"))
+            copy_text(path)
             self.notify(f"Copied: {path}", severity="information")
-        except (OSError, FileNotFoundError) as e:
+        except OSError as e:
             self.notify(f"Could not copy: {e}", severity="error")
 
     def action_back(self) -> None:

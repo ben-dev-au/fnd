@@ -40,6 +40,7 @@ from textual.widgets.tree import TreeNode
 
 from fnd import opener
 from fnd.config import Config, default_index_dir
+from fnd.launch_command import LaunchCommandSerializer, LaunchScope
 from fnd.matching import MatchSpec
 from fnd.query import FileGroup, Hit, Searcher
 from fnd.tui.actions import REGISTRY, Keymap, load_keymap
@@ -334,6 +335,7 @@ class FNDApp(App[None]):
         initial_query: str = "",
         keymap: Keymap | None = None,
         config: Config | None = None,
+        launch_filters: LaunchScope | None = None,
     ) -> None:
         super().__init__()
         self._index_dir = index_dir or default_index_dir()
@@ -350,7 +352,7 @@ class FNDApp(App[None]):
         self._config = config
         # Scope + sidebar panel state (collections / sources / filters and
         # the panel layout); reads ``_config`` for source-id resolution.
-        self._scope = ScopeController(self, collection=collection)
+        self._scope = ScopeController(self, collection=collection, launch_filters=launch_filters)
         # Reading mode: hide the sidebar so the preview fills the width for
         # clean text selection / distraction-free reading. Session-only;
         # owns mouse capture (off while reading so the terminal handles
@@ -1430,6 +1432,27 @@ class FNDApp(App[None]):
         """Reset every active filter (file type, dates, tags) to default.
         Collection/source scope is untouched. No-op when nothing is active."""
         self._scope.clear_filters()
+
+    def action_copy_query_command(self) -> None:
+        """Copy the current query + active filters to the clipboard as a
+        runnable ``fnd`` command, so the search can be saved and re-run."""
+        from fnd.tui.clipboard import copy_text
+
+        result = LaunchCommandSerializer(
+            self._scope.snapshot(self._search.current_query)
+        ).serialize()
+        if result.is_empty:
+            self.notify("Nothing to copy — type a query or set a filter first.", severity="warning")
+            return
+        try:
+            copy_text(result.command)
+        except OSError as e:
+            self.notify(f"Could not copy: {e}", severity="error")
+            return
+        message = "Copied command to clipboard"
+        if result.caveats:
+            message += f" ({'; '.join(result.caveats)})"
+        self.notify(message, timeout=3)
 
     def action_focus_filters_panel(self) -> None:
         """Single-key teleport from anywhere → filters sidebar panel."""

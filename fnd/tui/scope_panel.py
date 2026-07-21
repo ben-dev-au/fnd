@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from textual.widgets import Tree
 
+from fnd.launch_command import LaunchScope, SearchSnapshot
 from fnd.tui.results_labels import _styled_action_label, _styled_parent_label
 
 if TYPE_CHECKING:
@@ -60,7 +61,9 @@ class ScopeController:
     """Owns scope state (collections / sources / filters), the sidebar
     panel layout, and their persistence to the UI-state file."""
 
-    def __init__(self, app: FNDApp, *, collection: str | None) -> None:
+    def __init__(
+        self, app: FNDApp, *, collection: str | None, launch_filters: LaunchScope | None = None
+    ) -> None:
         self._app = app
         # Sidebar panel state — always loaded from disk so user-tuned
         # collapse / expand state survives the next launch, even when
@@ -88,17 +91,20 @@ class ScopeController:
             for b in saved.expanded_filter_branches
             if b in ("kinds", "date", "created") or b == "tags" or b.startswith("tags:")
         }
-        # Scope — one provenance-carrying map (``selection``) is the
-        # single source of truth; ``collections`` / ``active_sources``
-        # are derived views. Override when ``--collection`` was passed,
-        # otherwise reconstruct the map from the persisted flat scope.
-        if collection:
+        # Scope — one provenance-carrying map (``selection``) is the single
+        # source of truth; ``collections`` / ``active_sources`` are derived
+        # views. A launch-time override (``--collection`` and/or the filter
+        # flags — a search copied out of the app) takes scope + filters from
+        # the flags; otherwise reconstruct them from the persisted flat scope.
+        # Panel *layout* always loads from disk, so a flagged launch never
+        # discards the user's sidebar state.
+        if collection or launch_filters:
             # ``--collection`` is one Option string; accept a comma-separated
             # list and keep only names that exist in the config. Without this
             # a value like ``-c "SSD,SSD Exam"`` becomes a single phantom key
             # that no panel row can toggle yet still pins every search.
-            self.selection: dict[str, _FullScope | set[str]] = dict.fromkeys(
-                self._valid_collection_names(collection), FULL
+            self.selection: dict[str, _FullScope | set[str]] = (
+                dict.fromkeys(self._valid_collection_names(collection), FULL) if collection else {}
             )
             self.filter_kinds: list[str] = []
             self.filter_date: str = "any"
@@ -106,6 +112,8 @@ class ScopeController:
             self.tag_include: dict[str, set[str]] = {}
             self.tag_exclude: dict[str, set[str]] = {}
             self.tag_match_all: bool = True
+            if launch_filters:
+                self._seed_filters(launch_filters)
         else:
             self.selection = self._derive_selection(saved.collections, saved.sources)
             self.filter_kinds = list(saved.filter_kinds)
@@ -161,6 +169,36 @@ class ScopeController:
                 sel[name] = claimed
         return sel
 
+    def _tag_source_ids(self) -> list[str]:
+        """Provider ids for the configured tag sources — the keys tag
+        selections are stored under, shared with the CLI."""
+        import sys
+
+        from fnd.tags import providers_for
+
+        cfg = self._app._config
+        if cfg is None:
+            return []
+        return [p.id for p in providers_for(sys.platform, cfg.defaults.tag_sources)]
+
+    def _seed_filters(self, launch: LaunchScope) -> None:
+        """Apply a launch-time filter override onto the reset filter fields,
+        expanding bare tag flags into per-source sets exactly as the CLI
+        ``search`` command does (so the two paths agree)."""
+        from fnd.tags import source_tag_selection
+
+        self.filter_kinds = list(launch.kinds)
+        self.filter_date = launch.modified or "any"
+        self.filter_created = launch.created or "any"
+        sources = self._tag_source_ids()
+        self.tag_include = {
+            k: set(v) for k, v in source_tag_selection(launch.tags, sources).items()
+        }
+        self.tag_exclude = {
+            k: set(v) for k, v in source_tag_selection(launch.not_tags, sources).items()
+        }
+        self.tag_match_all = launch.tag_match_all
+
     @property
     def collections(self) -> list[str]:
         """Collections fully in scope (●) — the search collection-filter
@@ -182,6 +220,25 @@ class ScopeController:
                     seen.add(sid)
                     out.append(sid)
         return out
+
+    def snapshot(self, query: str) -> SearchSnapshot:
+        """Project the live scope into the read-only value object the command
+        serializer consumes — the one seam between scope state and
+        serialization, so neither reaches into the other."""
+        partial = tuple(
+            name for name, sel in self.selection.items() if isinstance(sel, set) and sel
+        )
+        return SearchSnapshot(
+            query=query,
+            full_collections=tuple(self.collections),
+            partial_collections=partial,
+            filter_kinds=tuple(self.filter_kinds),
+            filter_date=self.filter_date,
+            filter_created=self.filter_created,
+            tag_include={k: frozenset(v) for k, v in self.tag_include.items() if v},
+            tag_exclude={k: frozenset(v) for k, v in self.tag_exclude.items() if v},
+            tag_match_all=self.tag_match_all,
+        )
 
     def _source_active(self, collection: str, source_id: str) -> bool:
         """O(1) check: is this source row active under its collection?
@@ -378,8 +435,8 @@ class ScopeController:
             active_bits.append(self.filter_date)
         if self.filter_created and self.filter_created != "any":
             active_bits.append(f"created {self.filter_created}")
-        n_inc = sum(len(v) for v in self.tag_include.values())
-        n_exc = sum(len(v) for v in self.tag_exclude.values())
+        n_inc = len(self._distinct_tag_values(self.tag_include))
+        n_exc = len(self._distinct_tag_values(self.tag_exclude))
         if n_inc:
             active_bits.append(f"{n_inc} tag{'s' if n_inc != 1 else ''}")
         if n_exc:
@@ -424,6 +481,18 @@ class ScopeController:
         except Exception:
             return ""
 
+    @staticmethod
+    def _distinct_tag_values(by_source: dict[str, set[str]]) -> set[str]:
+        """Tag values across all sources, deduped. The search groups tags by
+        value — a value selected in several sources is a single OR-ed term
+        (see fnd.tag_query._terms) — so every filter count follows that view
+        rather than double-counting a value that fans across sources (e.g. a
+        copied ``--tag``, which carries no source and seeds into all of them)."""
+        values: set[str] = set()
+        for vals in by_source.values():
+            values |= vals
+        return values
+
     @property
     def active_filter_count(self) -> int:
         """How many individual filter selections are active — the number shown
@@ -432,8 +501,8 @@ class ScopeController:
             len(self.filter_kinds)
             + (1 if self.filter_date not in ("", "any") else 0)
             + (1 if self.filter_created not in ("", "any") else 0)
-            + sum(len(v) for v in self.tag_include.values())
-            + sum(len(v) for v in self.tag_exclude.values())
+            + len(self._distinct_tag_values(self.tag_include))
+            + len(self._distinct_tag_values(self.tag_exclude))
         )
 
     @property
@@ -626,8 +695,8 @@ class ScopeController:
 
         catalog = self.tag_catalog_for_scope()
         namespaces = self._frontmatter_namespaces()
-        n_selected = sum(len(v) for v in self.tag_include.values()) + sum(
-            len(v) for v in self.tag_exclude.values()
+        n_selected = len(self._distinct_tag_values(self.tag_include)) + len(
+            self._distinct_tag_values(self.tag_exclude)
         )
         n_available = sum(len(v) for v in catalog.values())
         summary = f"{n_selected} of {n_available}" if n_available else "none indexed"
