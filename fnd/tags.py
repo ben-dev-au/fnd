@@ -13,7 +13,7 @@ import os
 import plistlib
 import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -30,6 +30,7 @@ __all__ = [
     "normalise_tag",
     "providers_for",
     "read_tags",
+    "source_tag_selection",
 ]
 
 # Bounds. Tag values come from file content, so they are untrusted input.
@@ -50,6 +51,17 @@ def normalise_tag(raw: str) -> str:
         text = text[1:]
     text = " ".join(text.split())
     return text.casefold()[:MAX_TAG_LEN]
+
+
+def source_tag_selection(raw: Iterable[str], sources: Iterable[str]) -> dict[str, frozenset[str]]:
+    """Normalise raw tag tokens and attribute them to every tag source.
+
+    Launch flags carry bare tag values with no source, so the same normalised
+    set is claimed for each provider id. Empty tokens are dropped; an empty
+    result is ``{}`` (no filter).
+    """
+    values = frozenset(t for t in (normalise_tag(r) for r in raw) if t)
+    return dict.fromkeys(sources, values) if values else {}
 
 
 def expand_ancestors(tag: str) -> set[str]:

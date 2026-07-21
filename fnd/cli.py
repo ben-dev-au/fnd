@@ -20,6 +20,7 @@ from pathlib import Path
 import typer
 
 from fnd.config import default_config_path, default_index_dir
+from fnd.launch_command import LaunchScope
 
 _ROOT_HELP = """Fast, free, keyboard-driven document search for macOS.
 
@@ -112,6 +113,40 @@ def index(
     typer.echo(f"indexed {written} chunks under {root} → collection {collection}")
 
 
+def parse_filter_flags(
+    *,
+    created: str | None,
+    modified: str | None,
+    kind: list[str],
+    tag: list[str],
+    not_tag: list[str],
+    tag_match: str,
+) -> LaunchScope:
+    """Validate the shared search/launch filter flags into a ``LaunchScope``.
+
+    Exits (code 1) on a bad date token or tag-match mode so a typo fails
+    loudly instead of surviving as an unmatched literal in the query. Shared
+    by ``search`` and ``tui`` so the two command surfaces can't drift.
+    """
+    from fnd.query_fields import date_token_range
+
+    if tag_match not in ("all", "any"):
+        typer.echo(f"--tag-match must be 'all' or 'any', not {tag_match!r}", err=True)
+        raise typer.Exit(1)
+    for flag, value in (("--created", created), ("--modified", modified)):
+        if value is not None and date_token_range(value) is None:
+            typer.echo(f"{flag}: unknown date token {value!r}", err=True)
+            raise typer.Exit(1)
+    return LaunchScope(
+        created=created,
+        modified=modified,
+        kinds=tuple(kind),
+        tags=tuple(tag),
+        not_tags=tuple(not_tag),
+        tag_match_all=tag_match == "all",
+    )
+
+
 @app.command()
 def tui(
     query: list[str] = typer.Argument(
@@ -119,13 +154,37 @@ def tui(
     ),
     collection: str | None = typer.Option(None, "--collection", "-c"),
     query_opt: str = typer.Option("", "--query", "-q", hidden=True),
+    tag: list[str] = typer.Option([], "--tag", help="Only files carrying this tag. Repeatable."),
+    not_tag: list[str] = typer.Option(
+        [], "--not-tag", help="Exclude files carrying this tag. Repeatable."
+    ),
+    tag_match: str = typer.Option(
+        "all", "--tag-match", help="Combine --tag with 'all' (default) or 'any'."
+    ),
+    created: str | None = typer.Option(
+        None, "--created", help="Created within: today/yesterday/week/month/year."
+    ),
+    modified: str | None = typer.Option(
+        None, "--modified", help="Modified within: today/yesterday/week/month/year."
+    ),
+    kind: list[str] = typer.Option(
+        [], "--kind", help="Restrict to a file kind (pdf/docx/pptx/md/txt). Repeatable."
+    ),
 ) -> None:
-    """Launch the interactive TUI."""
+    """Launch the interactive TUI.
+
+    Accepts the same filter flags as ``search`` (``--tag``, ``--created``,
+    …) so a query copied out of the app relaunches with its filters applied.
+    """
     from fnd.config import default_config_path, load
     from fnd.migrate import prompt_and_rebuild_or_exit
     from fnd.tui import FNDApp
     from fnd.tui.config_recovery_screen import run_recovery
 
+    # Validate filter flags up front so a typo fails before we warm workers.
+    launch_filters = parse_filter_flags(
+        created=created, modified=modified, kind=kind, tag=tag, not_tag=not_tag, tag_match=tag_match
+    )
     initial_query = " ".join(query) if query else query_opt
 
     # Loop so the user can fix the config in-place and immediately retry.
@@ -161,7 +220,12 @@ def tui(
     # user regardless of how slowly they pace presses.
     from fnd.tui._sigint_kill_switch import kill_switch
 
-    fnd_app = FNDApp(collection=collection, initial_query=initial_query, config=cfg)
+    fnd_app = FNDApp(
+        collection=collection,
+        initial_query=initial_query,
+        config=cfg,
+        launch_filters=launch_filters or None,
+    )
     with kill_switch(fnd_app):
         fnd_app.run(mouse=True)
 
@@ -214,29 +278,20 @@ def search(
     from fnd.migrate import prompt_and_rebuild_or_exit
     from fnd.query import Hit, Searcher
     from fnd.query_errors import QuerySyntaxError, QueryTooLargeError
-    from fnd.query_fields import date_token_range
     from fnd.query_plan import QueryPlan
     from fnd.tag_query import TagFilter
-    from fnd.tags import normalise_tag, providers_for
+    from fnd.tags import providers_for, source_tag_selection
 
-    if tag_match not in ("all", "any"):
-        typer.echo(f"--tag-match must be 'all' or 'any', not {tag_match!r}", err=True)
-        raise typer.Exit(1)
-
-    # Validated here so a typo fails loudly instead of silently surviving as
-    # an unmatched literal in the query string.
+    # One validator shared with the `tui` command (fails on a bad token).
+    flags = parse_filter_flags(
+        created=created, modified=modified, kind=kind, tag=tag, not_tag=not_tag, tag_match=tag_match
+    )
     prefix_clauses: list[str] = []
-    for flag, field_name, value in (
-        ("--created", "created", created),
-        ("--modified", "mtime", modified),
-    ):
-        if value is None:
-            continue
-        if date_token_range(value) is None:
-            typer.echo(f"{flag}: unknown date token {value!r}", err=True)
-            raise typer.Exit(1)
-        prefix_clauses.append(f"{field_name}:{value}")
-    prefix_clauses.extend(f"kind:{k}" for k in kind)
+    if flags.created:
+        prefix_clauses.append(f"created:{flags.created}")
+    if flags.modified:
+        prefix_clauses.append(f"mtime:{flags.modified}")
+    prefix_clauses.extend(f"kind:{k}" for k in flags.kinds)
     if prefix_clauses:
         query = f"{' '.join(prefix_clauses)} {query}".strip()
 
@@ -246,17 +301,12 @@ def search(
     # Tags never enter the query string — see fnd/tag_query.py. They are
     # normalised the same way indexed tags were, then passed as typed state.
     tag_filter = None
-    if tag or not_tag:
+    if flags.tags or flags.not_tags:
         sources = [p.id for p in providers_for(sys.platform, cfg.defaults.tag_sources)]
-
-        def _selection(raw: list[str]) -> dict[str, frozenset[str]]:
-            values = frozenset(t for t in (normalise_tag(r) for r in raw) if t)
-            return dict.fromkeys(sources, values) if values else {}
-
         tag_filter = TagFilter(
-            include=_selection(tag),
-            exclude=_selection(not_tag),
-            match_all=tag_match == "all",
+            include=source_tag_selection(flags.tags, sources),
+            exclude=source_tag_selection(flags.not_tags, sources),
+            match_all=flags.tag_match_all,
         )
 
     searcher = Searcher(index_dir=default_index_dir())

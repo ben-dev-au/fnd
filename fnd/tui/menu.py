@@ -2641,6 +2641,24 @@ def _pseudo_scope_row() -> MenuItem:
     )
 
 
+def _pseudo_copy_command_row() -> MenuItem:
+    """A command row that copies the current search as a runnable `fnd`
+    command. Lives here (not a config setting) so it's reachable from the
+    palette; the same action is bound to a key in the Keybindings list."""
+    return MenuItem(
+        id="pseudo.copy_query_command",
+        label="Copy query as command",
+        description=(
+            "Copy the current query and active filters to the clipboard as a "
+            "runnable `fnd` command, so the search can be saved and re-run."
+        ),
+        kind=KIND_ACTION,
+        action_id="copy_query_command",
+        action_label="Copy",
+        keywords=("copy", "command", "clipboard", "cli", "share", "export", "query"),
+    )
+
+
 def walk_all_sections(app: FNDApp) -> Iterator[tuple[tuple[str, ...], MenuItem]]:
     """Yield ``(breadcrumb, leaf)`` pairs for every selectable item across
     every section. The basis for cross-section search.
@@ -2661,3 +2679,4 @@ def walk_all_sections(app: FNDApp) -> Iterator[tuple[tuple[str, ...], MenuItem]]
     # Pseudo-rows surface confusions in search without taking up real estate
     # in any sub-screen.
     yield (), _pseudo_scope_row()
+    yield (), _pseudo_copy_command_row()
