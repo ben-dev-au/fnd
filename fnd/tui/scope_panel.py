@@ -73,7 +73,12 @@ class ScopeController:
         from fnd.state import load as _load_state
 
         saved = _load_state()
-        self.collapsed_panels: set[str] = set(saved.collapsed_panels)
+        # The filters tree is now wrapped in the #filters_pane container, which
+        # carries the collapse state the bare tree used to. Migrate any persisted
+        # old id so a user who had filters collapsed keeps it collapsed.
+        self.collapsed_panels: set[str] = {
+            "filters_pane" if p == "filters_panel_tree" else p for p in saved.collapsed_panels
+        }
         self.expanded_collections: set[str] = set(saved.expanded_collections)
         # Prune unknown branch names so a renamed branch doesn't get
         # stuck "expanded" forever.
@@ -414,6 +419,18 @@ class ScopeController:
             return ""
 
     @property
+    def active_filter_count(self) -> int:
+        """How many individual filter selections are active — the number shown
+        on the Clear bar (kinds + date + created + each included/excluded tag)."""
+        return (
+            len(self.filter_kinds)
+            + (1 if self.filter_date not in ("", "any") else 0)
+            + (1 if self.filter_created not in ("", "any") else 0)
+            + sum(len(v) for v in self.tag_include.values())
+            + sum(len(v) for v in self.tag_exclude.values())
+        )
+
+    @property
     def has_active_filters(self) -> bool:
         """Whether any filter is narrowing results. Excludes collection/source
         scope, which is not a filter, and the tag match mode, which is a mode."""
@@ -439,7 +456,9 @@ class ScopeController:
         active = self.has_active_filters
         bar.display = active
         if active:
-            bar.update("✕  Clear all filters  (X)")
+            n = self.active_filter_count
+            plural = "" if n == 1 else "s"
+            bar.update(f"✕  Clear {n} filter{plural}")
 
     def clear_filters(self) -> None:
         """Reset every filter to its default and re-run the active query.

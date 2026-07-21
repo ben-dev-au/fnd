@@ -106,6 +106,17 @@ class ResultsTree(Tree[dict[str, Any]]):
 
     def action_cursor_up(self) -> None:
         self._set_scan(False)
+        # In the filters pane, Up from the top row focuses the docked clear bar
+        # above the tree (when shown), so the bar is keyboard-reachable like any
+        # row. Everywhere else this is a normal cursor move.
+        if self.id == "filters_panel_tree" and int(self.cursor_line) <= 0:
+            try:
+                bar = self.app.query_one("#clear_filters_bar")
+            except Exception:
+                bar = None
+            if bar is not None and bar.display:
+                bar.focus()
+                return
         super().action_cursor_up()
 
     def action_scan_cursor_down(self) -> None:

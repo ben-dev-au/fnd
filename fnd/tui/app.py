@@ -64,6 +64,7 @@ from fnd.tui.results_labels import (
 from fnd.tui.results_view import ResultsView
 from fnd.tui.scope_panel import ScopeController
 from fnd.tui.search_controller import SearchController
+from fnd.tui.widgets.clear_bar import ClearFiltersBar
 from fnd.tui.widgets.preview_container import (
     _HitWithQuery,
 )
@@ -239,6 +240,7 @@ class FNDApp(App[None]):
         color: $primary 50%;
     }
     #clear_filters_bar:hover { color: $accent; text-style: bold; }
+    #clear_filters_bar:focus { color: $accent; text-style: bold; background: $accent 15%; }
     /* Section collapse-to-header: Left at the panel root shrinks the
        whole panel down to its border-title strip. ``overflow: hidden``
        suppresses any rogue scrollbar that would otherwise sneak past
@@ -420,7 +422,7 @@ class FNDApp(App[None]):
                 # tag list's scroll. The container wears the border / title /
                 # collapse state the bare tree used to.
                 with Vertical(id="filters_pane"):
-                    yield Static("", id="clear_filters_bar")
+                    yield ClearFiltersBar("", id="clear_filters_bar")
                     yield ResultsTree("Filters", id="filters_panel_tree")
             # Right column: preview pane only. The progress strip lives
             # at app level (below) so it can be shared by every long
@@ -681,7 +683,7 @@ class FNDApp(App[None]):
                 return "results"
             if wid == "collections_panel_tree":
                 return "collections"
-            if wid == "filters_panel_tree":
+            if wid in ("filters_panel_tree", "clear_filters_bar"):
                 return "filters"
             if wid == "preview_pane":
                 return "preview"
