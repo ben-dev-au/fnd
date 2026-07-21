@@ -91,6 +91,12 @@ def test_special_characters_are_shell_quoted() -> None:
     assert cmd == "fnd 'a & b' -c 'my wine' --tag 'a'\"'\"'b'"
 
 
+def test_every_arg_kind_is_quoted() -> None:
+    # Centralised shlex.join quotes kinds/dates too, so an odd value can't
+    # silently split the pasted command.
+    assert _cmd(query="q", filter_kinds=("we ird",)) == "fnd q --kind 'we ird'"
+
+
 def test_full_command_ordering() -> None:
     assert (
         _cmd(

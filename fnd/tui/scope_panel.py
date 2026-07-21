@@ -488,10 +488,7 @@ class ScopeController:
         (see fnd.tag_query._terms) — so every filter count follows that view
         rather than double-counting a value that fans across sources (e.g. a
         copied ``--tag``, which carries no source and seeds into all of them)."""
-        values: set[str] = set()
-        for vals in by_source.values():
-            values |= vals
-        return values
+        return set[str]().union(*by_source.values())
 
     @property
     def active_filter_count(self) -> int:

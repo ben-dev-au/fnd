@@ -77,6 +77,9 @@ class LaunchCommandSerializer:
         self._caveats: list[str] = []
 
     def serialize(self) -> LaunchCommand:
+        # Builders return raw tokens; shlex.join quotes every one uniformly, so
+        # a value with a space (a spaced collection name, an odd kind) can't
+        # silently split the pasted command and no builder can forget to quote.
         args = [
             "fnd",
             *self._positional(),
@@ -85,11 +88,11 @@ class LaunchCommandSerializer:
             *self._kind_args(),
             *self._tag_args(),
         ]
-        return LaunchCommand(command=" ".join(args), caveats=self._caveats)
+        return LaunchCommand(command=shlex.join(args), caveats=self._caveats)
 
     def _positional(self) -> list[str]:
         query = self._s.query.strip()
-        return [shlex.quote(query)] if query else []
+        return [query] if query else []
 
     def _collection_args(self) -> list[str]:
         names = list(self._s.full_collections)
@@ -102,7 +105,7 @@ class LaunchCommandSerializer:
             return []
         if len(names) > 1 and any("," in n for n in names):
             self._caveats.append("a collection name contains a comma; -c may be ambiguous")
-        return ["-c", shlex.quote(",".join(names))]
+        return ["-c", ",".join(names)]
 
     def _date_args(self) -> list[str]:
         out: list[str] = []
@@ -123,9 +126,9 @@ class LaunchCommandSerializer:
         exclude = sorted(_flatten(self._s.tag_exclude))
         out: list[str] = []
         for value in include:
-            out += ["--tag", shlex.quote(value)]
+            out += ["--tag", value]
         for value in exclude:
-            out += ["--not-tag", shlex.quote(value)]
+            out += ["--not-tag", value]
         if include and not self._s.tag_match_all:
             out += ["--tag-match", "any"]
         return out
@@ -134,7 +137,4 @@ class LaunchCommandSerializer:
 def _flatten(by_source: Mapping[str, frozenset[str]]) -> set[str]:
     """Union of tag values across every source (the CLI has no per-source
     tag flag, so provenance collapses to one set)."""
-    out: set[str] = set()
-    for values in by_source.values():
-        out |= set(values)
-    return out
+    return set[str]().union(*by_source.values())

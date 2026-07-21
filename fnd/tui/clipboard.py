@@ -36,9 +36,10 @@ def clipboard_argv(system: str) -> list[str] | None:
 
 
 def _run_pipe(argv: list[str], data: bytes) -> int:
-    proc = subprocess.Popen(argv, stdin=subprocess.PIPE)
-    proc.communicate(input=data)
-    return proc.returncode or 0
+    # DEVNULL so a backend that chatters (xclip) can't bleed into the TUI's
+    # screen; run() manages the stdin pipe and waits for exit.
+    proc = subprocess.run(argv, input=data, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return proc.returncode
 
 
 def copy_text(
