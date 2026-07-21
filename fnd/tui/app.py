@@ -30,6 +30,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.scrollbar import ScrollBar
+from textual.widget import Widget
 from textual.widgets import (
     Input,
     Static,
@@ -143,11 +144,7 @@ class FNDApp(App[None]):
     Screen { background: $surface; }
     #query_bar { height: 1; padding: 0 1; border: none; }
     #query_notice { height: auto; padding: 0 1; color: $warning; display: none; }
-    #clear_filters_bar {
-        height: 1; padding: 0 1; display: none;
-        color: $primary 50%; text-style: none;
-    }
-    #clear_filters_bar:hover { color: $accent; text-style: bold; }
+
     #footer_hints { dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted; }
     /* Lazygit-thin scrollbars: 1 cell wide, fully transparent track so
        only the thumb glyph shows against the screen background. The
@@ -224,13 +221,24 @@ class FNDApp(App[None]):
         overflow-x: hidden;
     }
     #collections_panel_tree.-focused { border: round $accent; }
-    #filters_panel_tree {
+    #filters_pane {
         width: 100%; height: auto;
         max-height: 50%;
         border: round $primary 50%;
         overflow-x: hidden;
     }
-    #filters_panel_tree.-focused { border: round $accent; }
+    #filters_pane.-focused { border: round $accent; }
+    /* 1fr (not auto) so the tree fills the container and SCROLLS internally;
+       auto grows to full content height and is merely clipped, stranding the
+       cursor off-screen. */
+    #filters_panel_tree { width: 100%; height: 1fr; border: none; overflow-x: hidden; }
+    /* Docked at the top so it floats above the scrolling tree, always in view
+       while a filter is active; hidden otherwise. */
+    #clear_filters_bar {
+        dock: top; height: 1; padding: 0 1; display: none;
+        color: $primary 50%;
+    }
+    #clear_filters_bar:hover { color: $accent; text-style: bold; }
     /* Section collapse-to-header: Left at the panel root shrinks the
        whole panel down to its border-title strip. ``overflow: hidden``
        suppresses any rogue scrollbar that would otherwise sneak past
@@ -248,7 +256,7 @@ class FNDApp(App[None]):
         scrollbar-size-horizontal: 0;
     }
     #collections_panel_tree.collapsed,
-    #filters_panel_tree.collapsed {
+    #filters_pane.collapsed {
         height: 2;
         overflow: hidden;
         scrollbar-size-vertical: 0;
@@ -407,11 +415,13 @@ class FNDApp(App[None]):
                 # the skip-expanded-parent subclass so File-type /
                 # Modified headers behave the same as file rows.
                 yield Tree("Collections", id="collections_panel_tree")
-                yield ResultsTree("Filters", id="filters_panel_tree")
-                # Pinned clear affordance — lives OUTSIDE the scrolling tree so
-                # it is always visible while a filter is active, never inserted
-                # above the viewport. Hidden until something is filtering.
-                yield Static("", id="clear_filters_bar")
+                # The filters tree lives inside a bordered container so a clear
+                # affordance can dock at the top and stay in view whatever the
+                # tag list's scroll. The container wears the border / title /
+                # collapse state the bare tree used to.
+                with Vertical(id="filters_pane"):
+                    yield Static("", id="clear_filters_bar")
+                    yield ResultsTree("Filters", id="filters_panel_tree")
             # Right column: preview pane only. The progress strip lives
             # at app level (below) so it can be shared by every long
             # operation (preview load, indexing, cache rebuild) without
@@ -766,7 +776,7 @@ class FNDApp(App[None]):
     _FOCUS_BORDER_PANES: ClassVar[dict[str, str]] = {
         "results": "#results_pane",
         "collections": "#collections_panel_tree",
-        "filters": "#filters_panel_tree",
+        "filters": "#filters_pane",
         "preview": "#preview_pane",
     }
 
@@ -814,7 +824,7 @@ class FNDApp(App[None]):
         if event.key not in ("up", "down"):
             return
         tree = self._focused_tree()
-        if tree is None or "collapsed" not in tree.classes:
+        if tree is None or "collapsed" not in self._panel_frame(tree).classes:
             return
         try:
             column = self.query_one("#results_column", Vertical)
@@ -1139,6 +1149,15 @@ class FNDApp(App[None]):
             return self.query_one("#filters_panel_tree", Tree)
         return None
 
+    def _panel_frame(self, tree: Tree[Any]) -> Widget:
+        """The bordered / collapsible widget for ``tree``. The filters tree is
+        wrapped in ``#filters_pane`` (which carries the border, title and
+        collapse state); every other tree is its own frame."""
+        if tree.id == "filters_panel_tree":
+            with contextlib.suppress(NoMatches):
+                return self.query_one("#filters_pane", Vertical)
+        return tree
+
     def action_tree_smart_collapse(self) -> None:
         """Lazygit-style ``left``-arrow handling for any focused tree.
 
@@ -1156,7 +1175,8 @@ class FNDApp(App[None]):
         tree = self._focused_tree()
         if tree is None:
             return
-        if "collapsed" in tree.classes:
+        frame = self._panel_frame(tree)
+        if "collapsed" in frame.classes:
             return
         node = tree.cursor_node
         if node is None:
@@ -1167,9 +1187,9 @@ class FNDApp(App[None]):
             if parent is None or parent is tree.root:
                 # Top of the tree, already collapsed — collapse the
                 # entire panel to its header strip.
-                if tree.id:
-                    tree.add_class("collapsed")
-                    self._scope.collapsed_panels.add(tree.id)
+                if frame.id:
+                    frame.add_class("collapsed")
+                    self._scope.collapsed_panels.add(frame.id)
                     self._scope.persist()
                 return
             parent.collapse()
@@ -1194,10 +1214,11 @@ class FNDApp(App[None]):
         tree = self._focused_tree()
         if tree is None:
             return
-        if "collapsed" in tree.classes:
-            tree.remove_class("collapsed")
-            if tree.id:
-                self._scope.collapsed_panels.discard(tree.id)
+        frame = self._panel_frame(tree)
+        if "collapsed" in frame.classes:
+            frame.remove_class("collapsed")
+            if frame.id:
+                self._scope.collapsed_panels.discard(frame.id)
                 self._scope.persist()
             return
         node = tree.cursor_node

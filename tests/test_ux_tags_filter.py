@@ -275,7 +275,8 @@ async def test_border_title_reports_active_tags(cfg: Config, tagged_index: Path)
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#filters_panel_tree", Tree)
-        assert tree.border_title == "Filters"
+        pane = app.query_one("#filters_pane")
+        assert pane.border_title == "Filters"
 
         tags = _branch(tree, "Tags")
         tags.expand()
@@ -284,14 +285,14 @@ async def test_border_title_reports_active_tags(cfg: Config, tagged_index: Path)
         await pilot.pause()
         tree.select_node(_descend(fm, "recipe"))
         await pilot.pause()
-        assert "1 tag" in str(tree.border_title)
+        assert "1 tag" in str(pane.border_title)
 
         # Second press moves it to excluded, which reads differently.
         tags = _branch(tree, "Tags")
         fm = _descend(tags, "Frontmatter")
         tree.select_node(_descend(fm, "recipe"))
         await pilot.pause()
-        assert "−1 tag" in str(tree.border_title)
+        assert "−1 tag" in str(pane.border_title)
 
 
 @pytest.mark.asyncio

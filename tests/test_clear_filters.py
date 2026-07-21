@@ -90,7 +90,7 @@ async def test_clear_filters_leaves_scope_untouched(cfg: Config, idx: Path) -> N
         assert dict(app._scope.selection) == before
 
 
-# The pinned Clear bar (visibility, click, no in-tree row) is covered by
+# The pinned Clear bar (visibility, dock, click) is covered by
 # tests/test_clear_bar.py; this module owns the controller reset + action.
 
 

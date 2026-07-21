@@ -25,8 +25,11 @@ __all__ = ["ScopeController"]
 # a new value replaces the previous). The presentation labels live next
 # to the values so the panel renders without further lookup tables.
 _FILTER_KINDS: tuple[str, ...] = ("pdf", "docx", "pptx", "md", "txt")
-_FILTER_DATES: tuple[str, ...] = ("any", "today", "week", "month", "year")
-_FILTER_CREATED: tuple[str, ...] = ("any", "today", "week", "month", "year")
+# No "any" row: an unselected filter IS "any". Enter on a value toggles it
+# (select, or deselect back to "any" if already selected), consistent with
+# the File-type and Tags rows rather than making the user pick an "any" row.
+_FILTER_DATES: tuple[str, ...] = ("today", "week", "month", "year")
+_FILTER_CREATED: tuple[str, ...] = ("today", "week", "month", "year")
 # Provider ids are config keys; these are their pane labels.
 _TAG_SOURCE_LABELS: dict[str, str] = {"frontmatter": "Frontmatter", "os": "File tags"}
 # Width of Textual's branch expand arrow, so leaf markers line up with it.
@@ -374,7 +377,10 @@ class ScopeController:
         if n_exc:
             active_bits.append(f"−{n_exc} tag{'s' if n_exc != 1 else ''}")
         title = "Filters" if not active_bits else f"Filters — {', '.join(active_bits)}"
-        tree.border_title = title
+        try:
+            self._app.query_one("#filters_pane").border_title = title
+        except Exception:
+            tree.border_title = title  # pre-mount fallback
         if keep is not None:
             self._restore_cursor(tree, keep)
         self._update_clear_bar()
@@ -420,9 +426,10 @@ class ScopeController:
         )
 
     def _update_clear_bar(self) -> None:
-        """Show/hide the pinned clear bar (below the tree) to match filter
-        state. Content carries the key hint so the affordance is discoverable
-        without hunting for the binding."""
+        """Show/hide the pinned clear bar docked at the bottom of the filters
+        container, so it floats in view whatever the tag list's scroll. Content
+        carries the X hint. The bar is a real widget (clickable); X clears from
+        anywhere too."""
         from textual.widgets import Static
 
         try:
@@ -682,9 +689,9 @@ class ScopeController:
             else:
                 self.filter_kinds.append(value)
         elif category == "date":
-            self.filter_date = value
+            self.filter_date = "any" if self.filter_date == value else value
         elif category == "created":
-            self.filter_created = value
+            self.filter_created = "any" if self.filter_created == value else value
         elif category == "tag_match":
             self.tag_match_all = not self.tag_match_all
         elif category == "tags":

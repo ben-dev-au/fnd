@@ -1,4 +1,8 @@
-"""The pinned Clear-filters bar below the filters tree (never scrolls)."""
+"""The pinned Clear bar docked at the top of the filters pane container.
+
+It floats above the scrolling tree so it stays visible whatever the tag list's
+scroll — the reason a scrolling in-tree row was rejected.
+"""
 
 from __future__ import annotations
 
@@ -31,7 +35,11 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
 def idx(tmp_path: Path, tmp_index_dir: Path) -> Path:
     root = tmp_path / "papers"
     root.mkdir(parents=True, exist_ok=True)
-    (root / "a.md").write_text("---\ntags: [recipe]\n---\n\n# A\n\nsaffron\n", encoding="utf-8")
+    # Many tagged files so the tree scrolls — the case the pinned bar exists for.
+    for i in range(40):
+        (root / f"n{i}.md").write_text(
+            f"---\ntags: [t{i}]\n---\n\n# N{i}\n\nsaffron\n", encoding="utf-8"
+        )
     build_index(roots=[root], index_dir=tmp_index_dir, collection="papers")
     return tmp_index_dir
 
@@ -41,12 +49,11 @@ async def test_bar_hidden_when_no_filters(cfg: Config, idx: Path) -> None:
     app = FNDApp(index_dir=idx, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        bar = app.query_one("#clear_filters_bar", Static)
-        assert bar.display is False
+        assert app.query_one("#clear_filters_bar", Static).display is False
 
 
 @pytest.mark.asyncio
-async def test_bar_appears_when_a_filter_is_active(cfg: Config, idx: Path) -> None:
+async def test_bar_appears_when_active(cfg: Config, idx: Path) -> None:
     app = FNDApp(index_dir=idx, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -56,6 +63,41 @@ async def test_bar_appears_when_a_filter_is_active(cfg: Config, idx: Path) -> No
         bar = app.query_one("#clear_filters_bar", Static)
         assert bar.display is True
         assert "Clear all filters" in str(bar.render())
+
+
+@pytest.mark.asyncio
+async def test_bar_docks_at_top_inside_the_pane(cfg: Config, idx: Path) -> None:
+    """Inside the container's border, above the scrolling tree — so it floats
+    in view regardless of scroll."""
+    app = FNDApp(index_dir=idx, config=cfg)
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        app._scope.filter_kinds = ["md"]
+        app._scope.refresh_filters_panel()
+        await pilot.pause()
+        pane = app.query_one("#filters_pane")
+        bar = app.query_one("#clear_filters_bar", Static)
+        tree = app.query_one("#filters_panel_tree", Tree)
+        assert pane.region.y < bar.region.y <= pane.region.y + 2  # just inside top border
+        assert bar.region.y < tree.region.y  # above the tree
+
+
+@pytest.mark.asyncio
+async def test_bar_stays_visible_when_tree_scrolled(cfg: Config, idx: Path) -> None:
+    """The whole point: scroll deep into the tag list, bar is still shown."""
+    app = FNDApp(index_dir=idx, config=cfg)
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        app._scope.filter_kinds = ["md"]
+        app._scope.refresh_filters_panel()
+        await pilot.pause()
+        tree = app.query_one("#filters_panel_tree", Tree)
+        tags = next(n for n in tree.root.children if "Tags" in str(n.label))
+        tags.expand()
+        await pilot.pause()
+        tree.scroll_end(animate=False)
+        await pilot.pause()
+        assert app.query_one("#clear_filters_bar", Static).display is True
 
 
 @pytest.mark.asyncio
@@ -74,10 +116,10 @@ async def test_bar_hides_again_when_cleared(cfg: Config, idx: Path) -> None:
 @pytest.mark.asyncio
 async def test_clicking_the_bar_clears(cfg: Config, idx: Path) -> None:
     app = FNDApp(index_dir=idx, config=cfg)
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(100, 40)) as pilot:
         await pilot.pause()
         app._scope.filter_kinds = ["md"]
-        app._scope.tag_include = {"frontmatter": {"recipe"}}
+        app._scope.tag_include = {"frontmatter": {"t1"}}
         app._scope.refresh_filters_panel()
         await pilot.pause()
         await pilot.click("#clear_filters_bar")
@@ -88,8 +130,6 @@ async def test_clicking_the_bar_clears(cfg: Config, idx: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_no_clear_row_inside_the_tree(cfg: Config, idx: Path) -> None:
-    """The affordance is the pinned bar now, not an in-tree row that could be
-    inserted above the viewport."""
     app = FNDApp(index_dir=idx, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -98,3 +138,21 @@ async def test_no_clear_row_inside_the_tree(cfg: Config, idx: Path) -> None:
         await pilot.pause()
         tree = app.query_one("#filters_panel_tree", Tree)
         assert not any("Clear all filters" in str(n.label) for n in tree.root.children)
+
+
+@pytest.mark.asyncio
+async def test_filters_tree_has_bounded_height_so_it_scrolls(cfg: Config, idx: Path) -> None:
+    """Regression: the tree inside the container must be a bounded (1fr) height
+    so it SCROLLS. `height: auto` grew it to full content height and it was
+    merely clipped by the container, stranding the cursor off-screen. (Actual
+    scrolling can't be asserted headlessly — run_test doesn't resolve layout
+    heights — so this guards the exact style that broke; scroll behaviour itself
+    is verified in the tmux harness.)"""
+    app = FNDApp(index_dir=idx, config=cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#filters_panel_tree", Tree)
+        height = tree.styles.height
+        assert height is not None
+        assert not height.is_auto, "tree height is auto — it will clip instead of scroll"
+        assert height.unit.name == "FRACTION", f"expected 1fr, got {height}"

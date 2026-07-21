@@ -148,3 +148,27 @@ async def test_created_persists_across_restart(
     async with app2.run_test() as pilot2:
         await pilot2.pause()
         assert app2._scope.filter_created == "month"
+
+
+@pytest.mark.asyncio
+async def test_created_enter_toggles_off(cfg_one_collection: Config, mixed_index: Path) -> None:
+    """Enter on the selected value clears it back to 'any' — no separate 'any'
+    row to navigate to, matching every other filter toggle."""
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#filters_panel_tree", Tree)
+        branch = _branch(tree, "Created")
+        branch.expand()
+        await pilot.pause()
+        assert not any(" any" in str(c.label) for c in branch.children), "no 'any' row"
+
+        tree.select_node(next(c for c in branch.children if " week" in str(c.label)))
+        await pilot.pause()
+        assert app._scope.filter_created == "week"
+
+        # Second Enter on the same value toggles it off.
+        branch = _branch(tree, "Created")
+        tree.select_node(next(c for c in branch.children if " week" in str(c.label)))
+        await pilot.pause()
+        assert app._scope.filter_created == "any"
