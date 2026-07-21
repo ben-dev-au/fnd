@@ -1355,13 +1355,11 @@ class FNDApp(App[None]):
         for the mouse, surfacing the specific row the user pointed at rather
         than toggling a node hidden behind the collapsed height."""
         tree = ev.tree
-        if "collapsed" not in tree.classes:
+        # The collapse state lives on the panel frame — the tree itself for the
+        # results/collections panels, but the #filters_pane wrapper for the
+        # filters tree — so resolve it the same way the keyboard reopen does.
+        if not self._reopen_panel_frame(tree):
             return
-        tree.remove_class("collapsed")
-        if tree.id:
-            self._scope.collapsed_panels.discard(tree.id)
-            self._scope.persist()
-        self._reflow_sidebar()  # reclaim the reopened panel's share
         node = ev.node
         if node is None:
             return
@@ -1370,6 +1368,30 @@ class FNDApp(App[None]):
             self._move_cursor_to_first_child(tree, node)
         else:
             tree.move_cursor(node)
+
+    def _reopen_panel_frame(self, tree: Tree[Any]) -> bool:
+        """Un-collapse ``tree``'s panel frame if it is collapsed-to-header.
+        Returns whether a reopen actually happened."""
+        frame = self._panel_frame(tree)
+        if "collapsed" not in frame.classes:
+            return False
+        frame.remove_class("collapsed")
+        if frame.id:
+            self._scope.collapsed_panels.discard(frame.id)
+            self._scope.persist()
+        self._reflow_sidebar()  # reclaim the reopened panel's share
+        return True
+
+    @on(events.Click, "#filters_pane")
+    def _on_filters_pane_click(self, event: events.Click) -> None:
+        """Click-to-reopen for the filters pane. Its tree is wrapped in
+        #filters_pane, so at header height the tree has zero height and never
+        sees the click (unlike results/collections, whose collapse class sits on
+        the tree itself). Catch it on the container and reopen the frame."""
+        filters_tree = self.query_one("#filters_panel_tree", Tree)
+        if self._reopen_panel_frame(filters_tree):
+            event.stop()
+            filters_tree.focus()
 
     @property
     def _effective_match_spec(self) -> MatchSpec:
