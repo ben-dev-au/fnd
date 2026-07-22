@@ -98,17 +98,22 @@ handles      = ["pdf"]
 argv         = ["xreader", "--page-label={page}", "{path}"]
 ```
 
-### Adobe Acrobat / Edge (Windows)
+### Default PDF viewer (Windows)
 
-Open-only (no documented page locator). Point `system` at your default PDF app,
-or add an explicit block:
+Open-only (no page locator). `cmd /c start "" {path}` hands the file to whatever
+app Windows has registered for PDFs — that may be Acrobat, Edge, SumatraPDF, or
+something else, so the entry is named for what it does, not a specific app. For a
+page-jump-capable viewer, install SumatraPDF (a built-in — see the table above).
 
 ```toml
-[apps.acrobat]
-display_name = "Acrobat"
+[apps.default_pdf]
+display_name = "Default PDF viewer"
 handles      = ["pdf"]
 argv         = ["cmd", "/c", "start", "", "{path}"]
 ```
+
+To target a specific app, point `argv` at its executable, e.g.
+`["C:\\Program Files\\Adobe\\Acrobat DC\\Acrobat\\Acrobat.exe", "{path}"]`.
 
 ## Apps
 

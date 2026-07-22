@@ -122,6 +122,9 @@ def test_open_smart_falls_through_to_system_when_no_skim_no_ax(
     from fnd import apps as apps_mod
 
     apps_mod._reset_ax_cache()
+    # macOS no-Skim/no-AX path — pin the platform so a Linux/Windows box with a
+    # page-jump viewer installed doesn't auto-promote it and bypass the seam.
+    monkeypatch.setattr("sys.platform", "darwin")
     monkeypatch.setattr(opener, "_has_skim", lambda: False)
     monkeypatch.setattr(apps_mod, "_preview_app_exists", lambda: True)
     monkeypatch.setattr(apps_mod, "_probe_ax_trusted", lambda: False)

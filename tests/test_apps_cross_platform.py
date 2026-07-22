@@ -112,10 +112,22 @@ def test_obsidian_available_windows_via_localappdata(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(apps.shutil, "which", lambda _b: None)
     exe = tmp_path / "Obsidian" / "Obsidian.exe"
     exe.parent.mkdir(parents=True)
     exe.write_text("")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    assert apps._obsidian_app_exists() is True
+
+
+def test_obsidian_available_windows_via_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A portable/managed Obsidian on PATH is offered even without the default
+    per-user install directory present."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        apps.shutil, "which", lambda b: r"C:\Portable\Obsidian.exe" if b == "Obsidian" else None
+    )
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
     assert apps._obsidian_app_exists() is True
 
 
@@ -140,6 +152,25 @@ def test_open_smart_promotes_zathura_on_linux(
     f.touch()
     opener.open_smart(path=f, kind="pdf", page=7)
     assert captured == [["zathura", "--page", "7", str(f)]]
+
+
+def test_open_smart_promotes_sumatra_on_windows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No user pdf default on Windows → SumatraPDF (the only page-jump built-in
+    there) is promoted and page-jumps with its ``-page N`` locator."""
+    from fnd.config import Config
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("fnd.config.load", lambda *a, **kw: Config())
+    monkeypatch.setattr(apps, "_sumatra_exe", lambda: r"C:\Tools\SumatraPDF.exe")
+    monkeypatch.setattr(apps.shutil, "which", lambda _b: None)
+    captured = _capture_argv(monkeypatch)
+
+    f = tmp_path / "paper.pdf"
+    f.touch()
+    opener.open_smart(path=f, kind="pdf", page=7)
+    assert captured == [[r"C:\Tools\SumatraPDF.exe", "-page", "7", str(f)]]
 
 
 def test_open_smart_falls_through_to_system_when_no_viewer_on_linux(

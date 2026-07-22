@@ -130,6 +130,10 @@ def _obsidian_app_exists() -> bool:
             )
         )
     if sys.platform == "win32":
+        # A portable / managed install exposed on PATH, then the per-user
+        # default install location.
+        if shutil.which("Obsidian"):
+            return True
         local = os.environ.get("LOCALAPPDATA")
         return bool(local) and (Path(local) / "Obsidian" / "Obsidian.exe").is_file()
     # Linux: a native binary on PATH, or a Flatpak install.
