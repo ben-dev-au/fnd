@@ -75,11 +75,25 @@ def _safe_mtime(path: Path) -> float:
 
 # Windows rejects <>:"/\|?* in filenames; a cache key embeds an extractor
 # signature that can contain ``|`` (see fnd.extract.pdf.extractor_signature).
-# Map each illegal char to ``_`` there. The substitute is itself legal, so
-# re-sanitising a sanitised stem is a no-op — required because a glob→
-# entry_path round-trip feeds the on-disk stem back through here. macOS/Linux
-# keep the raw key so existing caches aren't orphaned.
-_WIN_ILLEGAL_STEM = str.maketrans(dict.fromkeys('<>:"/\\|?*', "_"))
+# Percent-encode each illegal char there. This is:
+#   * reversible & collision-free — each illegal char maps to a unique token,
+#     so distinct keys never alias (``a|b`` → ``a%7Cb`` ≠ ``a_b``);
+#   * idempotent — the ``%XX`` tokens contain no illegal char, so re-encoding a
+#     sanitised stem is a no-op, which the glob→entry_path round-trip relies on.
+# macOS/Linux keep the raw key so existing caches aren't orphaned.
+_WIN_ILLEGAL_STEM = str.maketrans(
+    {
+        "<": "%3C",
+        ">": "%3E",
+        ":": "%3A",
+        '"': "%22",
+        "/": "%2F",
+        "\\": "%5C",
+        "|": "%7C",
+        "?": "%3F",
+        "*": "%2A",
+    }
+)
 
 
 def _safe_stem(key: str) -> str:

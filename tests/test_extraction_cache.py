@@ -169,6 +169,17 @@ def test_entry_path_filename_is_windows_safe(
     assert cache.entry_path(cache.entry_path(key).stem) == cache.entry_path(key)
 
 
+def test_entry_path_sanitisation_is_collision_free(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Distinct keys must never alias to the same on-disk filename on Windows,
+    or one signature's chunks would silently overwrite another's for the same
+    content hash. ``a|b`` and ``a_b`` are the canonical near-miss."""
+    monkeypatch.setattr("sys.platform", "win32")
+    cache = ExtractionCache()
+    a = cache.entry_path("deadbeef--a|b")
+    b = cache.entry_path("deadbeef--a_b")
+    assert a != b, f"distinct signatures collided: {a.name} == {b.name}"
+
+
 def test_pipe_bearing_key_round_trips(tmp_path: Path) -> None:
     """put()/get() of a legacy ``|``-bearing key works on the host OS —
     on Windows only because entry_path sanitises the filename."""
