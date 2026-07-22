@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
 
 from fnd import opener
 
+# Skim is a macOS-only PDF viewer and its skim:/// deep-link is only ever built
+# on Darwin (open_smart gates the promotion behind sys.platform == "darwin").
+# The URL is an absolute-path scheme, so its shape is platform-specific — pin
+# these to macOS rather than reason about Windows drive-letter encoding.
+mac_only = pytest.mark.skipif(sys.platform != "darwin", reason="Skim is macOS-only")
 
+
+@mac_only
 def test_skim_url_simple(tmp_path: Path) -> None:
     f = tmp_path / "paper.pdf"
     f.touch()
@@ -18,6 +26,7 @@ def test_skim_url_simple(tmp_path: Path) -> None:
     assert str(f.resolve()) in urlsafe_unquote(url)
 
 
+@mac_only
 def test_skim_url_spaces_are_encoded(tmp_path: Path) -> None:
     f = tmp_path / "paper with spaces.pdf"
     f.touch()
@@ -26,6 +35,7 @@ def test_skim_url_spaces_are_encoded(tmp_path: Path) -> None:
     assert "#page=14" in url
 
 
+@mac_only
 def test_skim_url_ampersand_encoded(tmp_path: Path) -> None:
     f = tmp_path / "a & b.pdf"
     f.touch()
@@ -33,6 +43,7 @@ def test_skim_url_ampersand_encoded(tmp_path: Path) -> None:
     assert "%26" in url, url
 
 
+@mac_only
 def test_skim_url_unicode(tmp_path: Path) -> None:
     f = tmp_path / "résumé.pdf"
     f.touch()

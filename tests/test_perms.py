@@ -9,9 +9,19 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 from pathlib import Path
 
+import pytest
+
 from fnd._perms import secure_mkdir, secure_write_text
+
+# The 0o700/0o600 hardening is POSIX-only; os.chmod is a near no-op on Windows
+# (the user-profile data dir is already user-scoped there), so the mode-bit
+# assertions below don't apply. See fnd/_perms.py for the platform note.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX permission bits; chmod is a no-op on Windows"
+)
 
 
 def _mode(p: Path) -> int:
