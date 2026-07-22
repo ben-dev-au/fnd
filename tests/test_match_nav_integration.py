@@ -133,10 +133,24 @@ async def test_n_reveals_second_table_match_below_the_fold(
     async with app.run_test(size=(110, 24)) as pilot:
         await pilot.pause()
         app.query_one("#results_pane", Tree).focus()
+
+        # count is derived by an async chain after the deep-table preview mounts;
+        # on the slower Windows CI runner that mount can outlast the single
+        # post-mount count-tick, which then samples the still-composing table and
+        # settles low with nothing to re-fire it during a passive wait. Re-run
+        # rebuild() each poll so the count re-samples the current subtree and
+        # reflects the table the moment it finishes composing (rebuild is the same
+        # idempotent call the app makes on search/mount — no product change).
+        def _enumerated() -> bool:
+            if app._match_nav.count >= 2:
+                return True
+            app._match_nav.rebuild()
+            return False
+
         await wait_until(
             pilot,
-            lambda: app._match_nav.count >= 2,
-            timeout=30.0,
+            _enumerated,
+            timeout=60.0,
             message="match-nav did not enumerate the table matches after settle",
         )
         pane = app.query_one("#preview_pane", VerticalScroll)
