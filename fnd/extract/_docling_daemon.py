@@ -29,7 +29,8 @@ import sys
 import time
 from pathlib import Path
 
-_UV_TOOL_ROOT = Path.home() / ".local" / "share" / "uv" / "tools"
+from fnd import paths
+
 _HELPER_SCRIPT = Path(__file__).parent / "_docling_helper.py"
 
 
@@ -80,13 +81,14 @@ class DoclingDaemon:
         Returns "" on any failure — caller decides how to handle
         (typically: keep the pymupdf4llm output it already has).
 
-        The blocking stdout.readline() is wrapped in a select() with a
-        timeout so a docling wedge (image-rich tables hang its
+        The blocking stdout.readline() is bounded by a timeout (read in a
+        background thread) so a docling wedge (image-rich tables hang its
         TableFormer model) doesn't take down the whole worker via the
         120s stall detector. On timeout we kill the daemon so the next
         call gets a fresh one - docling state can be poisoned after a
         wedge and a soft re-request would just hang again."""
-        import select
+        import queue
+        import threading
 
         assert self._proc.stdin is not None
         assert self._proc.stdout is not None
@@ -96,15 +98,26 @@ class DoclingDaemon:
             self._proc.stdin.flush()
         except (BrokenPipeError, ValueError):
             return ""
-        ready, _, _ = select.select([self._proc.stdout], [], [], timeout_s)
-        if not ready:
-            # Docling didn't respond in time. Tear it down so the next
-            # page doesn't inherit the wedged state.
-            type(self).shutdown()
-            return ""
+        # Read the response with a timeout. ``select()`` only accepts sockets
+        # on Windows, so bound the blocking ``readline()`` with a throwaway
+        # daemon thread + a size-1 queue instead — portable across OSes.
+        result_q: queue.Queue[str | None] = queue.Queue(maxsize=1)
+        stdout = self._proc.stdout
+
+        def _read() -> None:
+            try:
+                result_q.put(stdout.readline())
+            except (BrokenPipeError, ValueError, OSError):
+                result_q.put(None)
+
+        threading.Thread(target=_read, daemon=True).start()
         try:
-            line = self._proc.stdout.readline()
-        except (BrokenPipeError, ValueError):
+            line = result_q.get(timeout=timeout_s)
+        except queue.Empty:
+            # Docling didn't respond in time. Tear it down so the next page
+            # doesn't inherit the wedged state; the reader thread is a daemon
+            # and unblocks when shutdown closes/kills the pipe.
+            type(self).shutdown()
             return ""
         if not line:
             return ""
@@ -117,10 +130,18 @@ class DoclingDaemon:
         return str(msg.get("md", ""))
 
 
+def _venv_python(venv_dir: Path) -> Path:
+    """Interpreter inside a venv: ``Scripts/python.exe`` on Windows,
+    ``bin/python`` elsewhere."""
+    if sys.platform == "win32":
+        return venv_dir / "Scripts" / "python.exe"
+    return venv_dir / "bin" / "python"
+
+
 def _docling_python() -> Path | None:
     if shutil.which("docling") is None:
         return None
-    candidate = _UV_TOOL_ROOT / "docling-slim" / "bin" / "python"
+    candidate = _venv_python(paths.uv_tool_root() / "docling-slim")
     if candidate.is_file() or candidate.is_symlink():
         return candidate
     return None

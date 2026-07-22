@@ -98,22 +98,23 @@ def test_missing_module_is_not_installed() -> None:
 def test_uv_tool_package_uses_uv_dir_not_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """For ``install_via='uv-tool'``, detection must look at
-    ``~/.local/share/uv/tools/<name>`` — NOT at PATH. A system-wide
-    binary with the same name (e.g. user already has a ``docling`` from
-    a separate Python install) must not register as fnd's install.
+    """For ``install_via='uv-tool'``, detection must look at uv's tool root
+    (``paths.uv_tool_root()/<name>``) — NOT at PATH. A system-wide binary
+    with the same name (e.g. user already has a ``docling`` from a separate
+    Python install) must not register as fnd's install.
 
-    Implementation: ``Path.home()`` is consulted at call time, so
-    monkeypatching ``Path.home`` redirects the lookup to ``tmp_path``."""
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    ``uv_tool_root`` is consulted at call time, so patching it redirects the
+    lookup to ``tmp_path`` regardless of the machine's real uv layout."""
+    tool_root = tmp_path / "uv-tools"
+    tool_root.mkdir()
+    monkeypatch.setattr("fnd.paths.uv_tool_root", lambda: tool_root)
     pkg = _make_uvtool_package("docling-slim[standard]", "docling")
 
     # No uv tool installed yet → not installed regardless of PATH.
     assert not is_package_installed(pkg)
 
     # Simulate uv tool install having created the tool dir.
-    tool_dir = tmp_path / ".local" / "share" / "uv" / "tools" / "docling-slim"
-    tool_dir.mkdir(parents=True)
+    (tool_root / "docling-slim").mkdir()
     assert is_package_installed(pkg)
 
 
@@ -123,7 +124,9 @@ def test_uv_tool_ignores_system_binary_on_path(
     """Even when ``shutil.which`` would resolve a system-wide binary,
     uv-tool detection must NOT use that — it'd misreport fnd's install
     state when the user has unrelated copies of the same CLI on PATH."""
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    tool_root = tmp_path / "uv-tools"
+    tool_root.mkdir()
+    monkeypatch.setattr("fnd.paths.uv_tool_root", lambda: tool_root)
     fake_bin = tmp_path / "fake_bin"
     fake_bin.mkdir()
     binary = fake_bin / "docling"
