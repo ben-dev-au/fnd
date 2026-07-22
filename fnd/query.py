@@ -150,7 +150,7 @@ def _open_index(index_dir: Path) -> Index:
     sidecar = index_dir / ".fnd-schema-version"
     if not sidecar.exists():
         raise FileNotFoundError(f"no fnd index at {index_dir}")
-    if sidecar.read_text().strip() != str(SCHEMA_VERSION):
+    if sidecar.read_text(encoding="utf-8").strip() != str(SCHEMA_VERSION):
         raise RuntimeError(
             f"index at {index_dir} schema version mismatch; rebuild with `fnd index --rebuild`"
         )

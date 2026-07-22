@@ -47,7 +47,7 @@ def check_schema_status(index_dir: Path) -> tuple[SchemaStatus, str | None]:
     sidecar = index_dir / _SIDECAR_NAME
     if not sidecar.exists():
         return SchemaStatus.EMPTY, None
-    text = sidecar.read_text().strip()
+    text = sidecar.read_text(encoding="utf-8").strip()
     if text != str(SCHEMA_VERSION):
         return SchemaStatus.STALE, text
     # Sidecar says current; verify Tantivy agrees.

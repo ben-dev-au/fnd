@@ -77,7 +77,7 @@ def _ensure_index(index_dir: Path, *, force: bool = False) -> Index:
     schema = build_schema()
     sidecar = index_dir / ".fnd-schema-version"
     if sidecar.exists():
-        existing = sidecar.read_text().strip()
+        existing = sidecar.read_text(encoding="utf-8").strip()
         if existing != str(SCHEMA_VERSION):
             if not force:
                 raise RuntimeError(
@@ -86,7 +86,7 @@ def _ensure_index(index_dir: Path, *, force: bool = False) -> Index:
                 )
             _wipe_index_dir(index_dir, sidecar)
     else:
-        sidecar.write_text(str(SCHEMA_VERSION))
+        sidecar.write_text(str(SCHEMA_VERSION), encoding="utf-8")
 
     try:
         return Index(schema, path=str(index_dir))
@@ -117,7 +117,7 @@ def _wipe_index_dir(index_dir: Path, sidecar: Path) -> None:
             shutil.rmtree(entry)
         else:
             entry.unlink()
-    sidecar.write_text(str(SCHEMA_VERSION))
+    sidecar.write_text(str(SCHEMA_VERSION), encoding="utf-8")
 
 
 def _doc_for_chunk(
