@@ -92,6 +92,28 @@ def test_open_path_returns_runner_code() -> None:
     assert lin.open_url("u") == 7
 
 
+def test_windows_open_returns_nonzero_when_startfile_raises() -> None:
+    """os.startfile raises OSError when the type has no handler; the launcher
+    must translate that to a non-zero code, not raise into a UI action."""
+
+    def boom(_target: str) -> None:
+        raise OSError("no application associated")
+
+    win = launcher.WindowsLauncher(startfile=boom, spawn=lambda _a: None)
+    assert win.open_path(Path(r"C:\x.pdf")) == launcher.LAUNCH_FAILED
+    assert win.open_url("obsidian://x") == launcher.LAUNCH_FAILED
+
+
+def test_run_returns_nonzero_for_missing_binary() -> None:
+    """The real _run swallows a missing-opener FileNotFoundError into a code."""
+    assert launcher._run(["___fnd_no_such_binary___"]) == launcher.LAUNCH_FAILED
+
+
+def test_spawn_swallows_missing_binary() -> None:
+    """The real _spawn is fire-and-forget: a missing binary must not raise."""
+    launcher._spawn(["___fnd_no_such_binary___"])  # must not raise
+
+
 @pytest.mark.parametrize(
     ("system", "cls"),
     [

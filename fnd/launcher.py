@@ -19,6 +19,7 @@ is fire-and-forget so the TUI never stalls on file-manager launch latency.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import os
 import platform
@@ -32,18 +33,29 @@ Runner = Callable[[list[str]], int]
 Spawner = Callable[[list[str]], None]
 StartFile = Callable[[str], None]
 
+# Non-zero code returned when a launch can't even start (missing opener binary,
+# no OS handler for the type). The API contract is return-code-only — a UI
+# action handler must never have to catch an exception from an open/reveal.
+LAUNCH_FAILED = 127
+
 
 def _run(argv: list[str]) -> int:
     """Blocking launch; DEVNULL so a chatty opener (xdg-open) can't bleed
-    into the TUI's screen."""
-    return subprocess.run(
-        argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
-    ).returncode
+    into the TUI's screen. A missing opener binary returns ``LAUNCH_FAILED``
+    rather than raising ``FileNotFoundError`` into the caller."""
+    try:
+        return subprocess.run(
+            argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
+        ).returncode
+    except OSError:
+        return LAUNCH_FAILED
 
 
 def _spawn(argv: list[str]) -> None:
-    """Non-blocking launch, output discarded."""
-    subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    """Non-blocking launch, output discarded. Fire-and-forget: a missing binary
+    is swallowed so a failed reveal never raises into the TUI."""
+    with contextlib.suppress(OSError):
+        subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 @runtime_checkable
@@ -124,22 +136,24 @@ class WindowsLauncher:
         self._startfile = startfile
         self._spawn = spawn
 
-    def _start(self, target: str) -> None:
+    def _start(self, target: str) -> int:
         startfile = self._startfile
         if startfile is None:
             # os.startfile exists only on Windows; WindowsLauncher runs there
             # in production (tests inject a fake), so this attribute access is
             # safe despite type-checkers flagging it off-Windows.
             startfile = os.startfile  # type: ignore[attr-defined]
-        startfile(target)  # raises OSError on failure
+        try:
+            startfile(target)  # raises OSError when the type has no handler
+        except OSError:
+            return LAUNCH_FAILED
+        return 0
 
     def open_path(self, path: Path) -> int:
-        self._start(str(path))
-        return 0
+        return self._start(str(path))
 
     def open_url(self, url: str) -> int:
-        self._start(url)
-        return 0
+        return self._start(url)
 
     def reveal(self, path: Path) -> None:
         # explorer returns exit code 1 even on success; fire-and-forget.
