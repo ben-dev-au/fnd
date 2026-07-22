@@ -11,13 +11,17 @@ permissions:
 
 jobs:
   test:
-    name: pytest (full suite, serial)
-    # macOS so the path resolution (platformdirs uses
-    # ``~/Library/Application Support/fnd`` here) matches what users
-    # actually run. Free tier on public repos; private repos use the
-    # 10x multiplier so keep an eye on the minutes budget while the
-    # repo is still private.
-    runs-on: macos-14
+    name: pytest (${{ matrix.os }})
+    # Cross-platform matrix: the same suite runs on all three supported
+    # OSes so platform-specific path/launcher/stat behaviour is exercised
+    # on the real thing. ``fail-fast: false`` so one OS going red still
+    # reports the others. Free tier on public repos; private repos use the
+    # 10x multiplier so keep an eye on the minutes budget.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
