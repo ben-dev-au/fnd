@@ -30,7 +30,7 @@ def _bootstrap_index(tmp_path: Path) -> tuple[Path, Path]:
     cfg_path.write_text(
         textwrap.dedent(f"""
             [[collections.notes.sources]]
-            path = "{notes}"
+            path = "{notes.as_posix()}"
         """),
         encoding="utf-8",
     )

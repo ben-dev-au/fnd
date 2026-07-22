@@ -37,7 +37,7 @@ def multi_result_app(
     cfg_path.write_text(
         textwrap.dedent(f"""
             [[collections.notes.sources]]
-            path = "{docs}"
+            path = "{docs.as_posix()}"
         """),
         encoding="utf-8",
     )

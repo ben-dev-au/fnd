@@ -33,7 +33,7 @@ def stale_corpus(tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.Monkey
     cfg_path.write_text(
         textwrap.dedent(f"""
             [[collections.notes.sources]]
-            path = "{notes}"
+            path = "{notes.as_posix()}"
             includes = ["**/*.md"]
         """),
         encoding="utf-8",

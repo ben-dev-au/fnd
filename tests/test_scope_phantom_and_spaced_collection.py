@@ -47,11 +47,11 @@ def two_collection_index(tmp_path: Path) -> tuple[Path, Config]:
     cfg_path.write_text(
         textwrap.dedent(f"""
             [[collections.Plain.sources]]
-            path = "{plain}"
+            path = "{plain.as_posix()}"
             [[collections."Spaced Coll".sources]]
-            path = "{spaced}"
+            path = "{spaced.as_posix()}"
             [[collections.Third.sources]]
-            path = "{third}"
+            path = "{third.as_posix()}"
         """),
         encoding="utf-8",
     )
