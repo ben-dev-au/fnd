@@ -22,6 +22,30 @@ import pytest
 from fnd import apps
 from fnd.apps import OpenRequest, build_registry, load_user_apps, resolve_app
 
+
+def _capture_url_dispatch(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """Capture ``["open", url]`` for each URL a handler hands to the launcher's
+    open-url seam. The ``"open"`` element is a stable marker for "dispatched as
+    a URL" — independent of the per-OS opener command (``open`` / ``xdg-open`` /
+    ``os.startfile``) — so URL-construction assertions read the same on every
+    platform in the CI matrix."""
+    captured: list[list[str]] = []
+    monkeypatch.setattr(apps.launcher, "open_url", lambda url: captured.append(["open", url]) or 0)
+    return captured
+
+
+def _capture_argv(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """Capture the argv the mac-only handlers (``open -a`` / ``osascript``) run
+    directly via ``subprocess.run``."""
+    captured: list[list[str]] = []
+    monkeypatch.setattr(
+        apps.subprocess,
+        "run",
+        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
+    )
+    return captured
+
+
 # ── Built-in registry shape ────────────────────────────────────────────────
 
 
@@ -214,13 +238,7 @@ def test_user_app_handler_dispatches_via_subprocess_run(
 def test_user_url_app_dispatches_through_open(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: list[list[str]] = []
-
-    def fake_run(argv: list[str], **kwargs: Any) -> Any:
-        captured.append(list(argv))
-        return type("R", (), {"returncode": 0})()
-
-    monkeypatch.setattr(apps.subprocess, "run", fake_run)
+    captured = _capture_url_dispatch(monkeypatch)
     cfg = {
         "deeplink": {
             "display_name": "Deeplink",
@@ -265,12 +283,7 @@ def test_ax_trusted_false_triggers_preview_fallback(
     notifications: list[str] = []
     monkeypatch.setattr(apps, "_emit_notice", lambda msg: notifications.append(msg))
 
-    captured: list[list[str]] = []
-    monkeypatch.setattr(
-        apps.subprocess,
-        "run",
-        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
-    )
+    captured = _capture_argv(monkeypatch)
 
     req = OpenRequest(path=Path("/tmp/p.pdf"), kind="pdf", page=5)
     rc = apps.BUILTIN_APPS["preview"].handler(req)
@@ -299,12 +312,7 @@ def test_load_user_apps_rejects_unknown_handle_kind() -> None:
 def test_obsidian_handler_with_vault_uses_vault_form(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: list[list[str]] = []
-    monkeypatch.setattr(
-        apps.subprocess,
-        "run",
-        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
-    )
+    captured = _capture_url_dispatch(monkeypatch)
     req = OpenRequest(
         path=Path("/Users/me/Vault/note.md"),
         kind="md",
@@ -330,12 +338,7 @@ def test_obsidian_handler_without_vault_uses_path_form_not_system_fallback(
     delegating to ``open <path>`` (which would open the macOS default
     for that file kind — often VS Code for .md — and look like a
     silent app-swap to the user)."""
-    captured: list[list[str]] = []
-    monkeypatch.setattr(
-        apps.subprocess,
-        "run",
-        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
-    )
+    captured = _capture_url_dispatch(monkeypatch)
     req = OpenRequest(
         path=Path("/Users/me/elsewhere/note.md"),
         kind="md",
@@ -363,12 +366,7 @@ def test_obsidian_handler_converts_breadcrumb_to_chained_anchor(
     Obsidian opens the file but cannot find that heading and lands at
     the top. Regression test for the user-reported "Obsidian opened
     the file but not at the location"."""
-    captured: list[list[str]] = []
-    monkeypatch.setattr(
-        apps.subprocess,
-        "run",
-        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
-    )
+    captured = _capture_url_dispatch(monkeypatch)
     req = OpenRequest(
         path=Path("/Users/me/Vault/note.md"),
         kind="md",
@@ -436,12 +434,7 @@ def test_obsidian_handler_uses_advanced_uri_when_plugin_and_line_present(
     (vault / ".obsidian" / "plugins" / "obsidian-advanced-uri").mkdir(parents=True)
     (vault / "note.md").write_text("# x")
 
-    captured: list[list[str]] = []
-    monkeypatch.setattr(
-        apps.subprocess,
-        "run",
-        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
-    )
+    captured = _capture_url_dispatch(monkeypatch)
     req = OpenRequest(
         path=vault / "note.md",
         kind="md",
@@ -472,12 +465,7 @@ def test_obsidian_handler_falls_back_to_built_in_when_plugin_missing(
     vault = tmp_path / "Vault"
     (vault / ".obsidian").mkdir(parents=True)  # vault exists, no plugin
 
-    captured: list[list[str]] = []
-    monkeypatch.setattr(
-        apps.subprocess,
-        "run",
-        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
-    )
+    captured = _capture_url_dispatch(monkeypatch)
     req = OpenRequest(
         path=vault / "note.md",
         kind="md",
@@ -561,12 +549,7 @@ def test_obsidian_advanced_uri_uses_resolved_match_line_not_chunk_line(
         "more text\n"
     )
 
-    captured: list[list[str]] = []
-    monkeypatch.setattr(
-        apps.subprocess,
-        "run",
-        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
-    )
+    captured = _capture_url_dispatch(monkeypatch)
     req = OpenRequest(
         path=note,
         kind="md",
@@ -591,12 +574,7 @@ def test_obsidian_handler_uses_built_in_when_line_zero(
     vault = tmp_path / "Vault"
     (vault / ".obsidian" / "plugins" / "obsidian-advanced-uri").mkdir(parents=True)
 
-    captured: list[list[str]] = []
-    monkeypatch.setattr(
-        apps.subprocess,
-        "run",
-        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
-    )
+    captured = _capture_url_dispatch(monkeypatch)
     req = OpenRequest(
         path=vault / "note.md",
         kind="md",
@@ -620,12 +598,7 @@ def test_pdf_expert_uses_open_dash_a_not_url_scheme(
     undocumented. Handler must use ``open -a 'PDF Expert' <path>``
     which always opens the file; page-jump isn't supported but the
     file opens reliably."""
-    captured: list[list[str]] = []
-    monkeypatch.setattr(
-        apps.subprocess,
-        "run",
-        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
-    )
+    captured = _capture_argv(monkeypatch)
     req = OpenRequest(path=Path("/tmp/paper.pdf"), kind="pdf", page=7)
     apps.BUILTIN_APPS["pdf_expert"].handler(req)
     assert captured == [["open", "-a", "PDF Expert", "/tmp/paper.pdf"]], captured

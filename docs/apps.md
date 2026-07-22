@@ -2,8 +2,11 @@
 
 Config blocks for adding third-party apps to fnd's "Open with…" menu. Paste a
 block into your `config.toml` (`fnd config path` prints the location) and the app
-appears in the `O` picker. Built-in apps (Skim, Preview, Obsidian, VS Code, PDF
-Expert, System Default) ship in `fnd/apps.py` and need no entry here.
+appears in the `O` picker. Built-in apps ship in `fnd/apps.py` and need no entry
+here: **Skim, Preview, PDF Expert** (macOS), **Zathura, Okular** (Linux),
+**SumatraPDF** (Windows), plus the cross-platform **Obsidian, VS Code, System
+Default**. Each is offered only where it's installed (auto-detected per OS), so
+the picker stays relevant on every machine.
 
 Contributions welcome: add your app's block under [Apps](#apps) in a PR.
 
@@ -58,6 +61,54 @@ Optional `notes`: short freeform description, not shown to users today.
 User TOML never reaches a shell: `argv` is passed as a list to `subprocess.run`,
 and `url` is passed as a single argv element to `open`. The `_pct` variables
 percent-encode every byte outside `A-Za-z0-9._~-`.
+
+## Platform notes
+
+fnd provides the *mechanism* — a data-driven registry plus the `[apps.<id>]`
+config block — and ships a small, well-tested set of built-ins per OS. Anything
+else is a paste-in config you own; good ones are welcome as a PR to the
+catalogue below so other users on your platform get them too.
+
+**Page-jump** works wherever the viewer exposes a page locator. The built-ins
+that page-jump: Skim (`skim://…#page=N`) and Preview (macOS), Zathura and Okular
+(`--page N`, Linux), SumatraPDF (`-page N`, Windows). Others open at the top of
+the file. When no explicit `[app_defaults].pdf` is set, fnd auto-promotes the
+first installed page-jump viewer for your OS; set `[app_defaults]` to override.
+
+### Evince (Linux)
+
+GNOME's document viewer. The example opens at the top; Evince's page CLI is
+version-dependent, so page-jump is left out of the paste-in block.
+
+```toml
+[apps.evince]
+display_name = "Evince"
+handles      = ["pdf"]
+argv         = ["evince", "{path}"]
+```
+
+### Xreader / Atril (Linux)
+
+Cinnamon / MATE forks of Evince. Both accept `--page-label`:
+
+```toml
+[apps.xreader]
+display_name = "Xreader"
+handles      = ["pdf"]
+argv         = ["xreader", "--page-label={page}", "{path}"]
+```
+
+### Adobe Acrobat / Edge (Windows)
+
+Open-only (no documented page locator). Point `system` at your default PDF app,
+or add an explicit block:
+
+```toml
+[apps.acrobat]
+display_name = "Acrobat"
+handles      = ["pdf"]
+argv         = ["cmd", "/c", "start", "", "{path}"]
+```
 
 ## Apps
 

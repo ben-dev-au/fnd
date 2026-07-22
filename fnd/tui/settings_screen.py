@@ -4319,25 +4319,15 @@ class StillFlatDrillIn(Screen[None]):
             self.notify(f"Could not start retry for {col}: {e}", severity="error")
 
     def action_reveal(self) -> None:
-        """Open the OS file browser with the row's PDF selected.
-
-        macOS: ``open -R <path>`` selects the file in Finder.
-        Linux: best-effort ``xdg-open`` on the parent directory.
-        Windows: ``explorer /select``."""
+        """Reveal the row's PDF in the platform file manager (selected where
+        supported), via the OS launcher seam."""
         if not self._rows:
             return
         _col, path, _reason, _recorded_at = self._rows[self._cursor]
-        import platform
-        import subprocess
+        from fnd import launcher
 
-        system = platform.system()
         try:
-            if system == "Darwin":
-                subprocess.Popen(["open", "-R", path])
-            elif system == "Windows":
-                subprocess.Popen(["explorer", "/select,", path])
-            else:
-                subprocess.Popen(["xdg-open", str(Path(path).parent)])
+            launcher.reveal(Path(path))
         except OSError as e:
             self.notify(f"Could not reveal: {e}", severity="error")
 

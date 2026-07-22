@@ -31,6 +31,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+from fnd import launcher
+
 # ── Data model ──────────────────────────────────────────────────────────────
 
 
@@ -113,17 +115,56 @@ def _pdf_expert_app_exists() -> bool:
 
 
 def _obsidian_app_exists() -> bool:
+    """Obsidian presence, per-OS. The ``obsidian://`` URL scheme is what the
+    handler actually uses (registered by the desktop app on every platform);
+    this probe only decides whether to *offer* Obsidian in the picker."""
+    import os
+    import sys
+
+    if sys.platform == "darwin":
+        return any(
+            p.exists()
+            for p in (
+                Path("/Applications/Obsidian.app"),
+                Path.home() / "Applications" / "Obsidian.app",
+            )
+        )
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA")
+        return bool(local) and (Path(local) / "Obsidian" / "Obsidian.exe").is_file()
+    # Linux: a native binary on PATH, or a Flatpak install.
+    if shutil.which("obsidian"):
+        return True
     return any(
         p.exists()
         for p in (
-            Path("/Applications/Obsidian.app"),
-            Path.home() / "Applications" / "Obsidian.app",
+            Path.home() / ".local/share/flatpak/exports/bin/md.obsidian.Obsidian",
+            Path("/var/lib/flatpak/exports/bin/md.obsidian.Obsidian"),
         )
     )
 
 
 def _vscode_cli_exists() -> bool:
     return shutil.which("code") is not None
+
+
+def _sumatra_exe() -> str | None:
+    """Resolve the SumatraPDF executable on Windows: PATH first, then the
+    standard per-machine / per-user install locations (Sumatra is frequently
+    not on PATH)."""
+    import os
+
+    found = shutil.which("SumatraPDF") or shutil.which("SumatraPDF.exe")
+    if found:
+        return found
+    for env in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        base = os.environ.get(env)
+        if not base:
+            continue
+        candidate = Path(base) / "SumatraPDF" / "SumatraPDF.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return None
 
 
 # ── Accessibility probe (cached) ──────────────────────────────────────────
@@ -144,7 +185,14 @@ def _reset_ax_cache() -> None:  # pyright: ignore[reportUnusedFunction]
 def _probe_ax_trusted() -> bool:
     """Real AX probe — runs a no-op System Events osascript. Treats a
     non-zero exit code as "not trusted". Slow (~150-300 ms), so the result
-    is cached for the lifetime of the process via :func:`ax_trusted`."""
+    is cached for the lifetime of the process via :func:`ax_trusted`.
+
+    AppleScript/Accessibility is macOS-only; off Darwin there is nothing to
+    trust and no ``osascript`` to probe, so short-circuit to False."""
+    import sys
+
+    if sys.platform != "darwin":
+        return False
     try:
         proc = subprocess.run(
             ["osascript", "-e", _AX_PROBE_SCRIPT],
@@ -287,7 +335,7 @@ def _render_url(template: str, req: OpenRequest) -> str:
 
 
 def _handle_system(req: OpenRequest) -> int:
-    return subprocess.run(["open", str(req.path)], check=False).returncode
+    return launcher.open_path(req.path)
 
 
 def _handle_skim(req: OpenRequest) -> int:
@@ -557,13 +605,42 @@ def _handle_obsidian(req: OpenRequest) -> int:
         if req.heading_path:
             path_str = f"{path_str}#{_heading_path_to_anchor(req.heading_path)}"
         url = f"obsidian://open?path={urllib.parse.quote(path_str, safe=_PCT_SAFE)}"
-    return subprocess.run(["open", url], check=False).returncode
+    return launcher.open_url(url)
 
 
 def _handle_vscode(req: OpenRequest) -> int:
     """``code -g <path>:<line>:1`` when ``line`` is known; ``code <path>``
     otherwise. Same handler used for md / txt / fallback."""
     argv = ["code", "-g", f"{req.path}:{req.line}:1"] if req.line > 0 else ["code", str(req.path)]
+    return subprocess.run(argv, check=False).returncode
+
+
+def _handle_zathura(req: OpenRequest) -> int:
+    """``zathura --page N <path>`` — page-jump on Linux (``--page`` is 1-based)."""
+    argv = (
+        ["zathura", "--page", str(req.page), str(req.path)]
+        if req.page > 0
+        else ["zathura", str(req.path)]
+    )
+    return subprocess.run(argv, check=False).returncode
+
+
+def _handle_okular(req: OpenRequest) -> int:
+    """``okular --page N <path>`` — page-jump on Linux/KDE (``--page`` is 1-based)."""
+    argv = (
+        ["okular", "--page", str(req.page), str(req.path)]
+        if req.page > 0
+        else ["okular", str(req.path)]
+    )
+    return subprocess.run(argv, check=False).returncode
+
+
+def _handle_sumatra(req: OpenRequest) -> int:
+    """``SumatraPDF.exe -page N <path>`` — page-jump on Windows."""
+    exe = _sumatra_exe()
+    if exe is None:  # available() gates this; defensive fall-through only
+        return launcher.open_path(req.path)
+    argv = [exe, "-page", str(req.page), str(req.path)] if req.page > 0 else [exe, str(req.path)]
     return subprocess.run(argv, check=False).returncode
 
 
@@ -628,6 +705,37 @@ BUILTIN_APPS: Final[dict[str, App]] = {
         available=lambda: _vscode_cli_exists(),
         positional=True,
         notes="`code -g <path>:<line>:1`; requires the `code` CLI in PATH.",
+    ),
+    # Cross-platform PDF viewers — each self-gates via ``available`` (a
+    # ``which`` / install-path probe), so it appears only on the OS where it
+    # is installed. Registering them all in one table keeps the registry
+    # OS-agnostic; the probes do the filtering.
+    "zathura": App(
+        id="zathura",
+        display_name="Zathura",
+        handles=("pdf",),
+        handler=_handle_zathura,
+        available=lambda: shutil.which("zathura") is not None,
+        positional=True,
+        notes="zathura --page N <path>; page-jump (Linux).",
+    ),
+    "okular": App(
+        id="okular",
+        display_name="Okular",
+        handles=("pdf",),
+        handler=_handle_okular,
+        available=lambda: shutil.which("okular") is not None,
+        positional=True,
+        notes="okular --page N <path>; page-jump (Linux/KDE).",
+    ),
+    "sumatra": App(
+        id="sumatra",
+        display_name="SumatraPDF",
+        handles=("pdf",),
+        handler=_handle_sumatra,
+        available=lambda: _sumatra_exe() is not None,
+        positional=True,
+        notes="SumatraPDF.exe -page N <path>; page-jump (Windows).",
     ),
 }
 
@@ -740,7 +848,7 @@ def _make_user_handler(spec: _UserAppSpec) -> Callable[[OpenRequest], int]:
 
     def _run_url(req: OpenRequest) -> int:
         url = _render_url(url_template, req)
-        return subprocess.run(["open", url], check=False).returncode
+        return launcher.open_url(url)
 
     return _run_url
 

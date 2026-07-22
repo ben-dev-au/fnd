@@ -117,15 +117,13 @@ def test_open_smart_falls_through_to_system_when_no_skim_no_ax(
 
     captured: list[list[str]] = []
     monkeypatch.setattr(
-        apps_mod.subprocess,
-        "run",
-        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
+        apps_mod.launcher, "open_path", lambda p: captured.append(["open", str(p)]) or 0
     )
 
     f = tmp_path / "paper.pdf"
     f.touch()
     opener.open_smart(path=f, kind="pdf", page=5)
-    # System fallback uses plain ``open <path>``.
+    # System fallback opens via the OS default (captured at the launcher seam).
     assert captured == [["open", str(f)]], f"got {captured}"
 
 
@@ -146,9 +144,7 @@ def test_open_smart_user_override_wins_over_auto_promote(
 
     captured: list[list[str]] = []
     monkeypatch.setattr(
-        apps_mod.subprocess,
-        "run",
-        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
+        apps_mod.launcher, "open_path", lambda p: captured.append(["open", str(p)]) or 0
     )
 
     f = tmp_path / "paper.pdf"
