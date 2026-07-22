@@ -22,7 +22,11 @@ jobs:
       matrix:
         os: [macos-14, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # Windows is materially slower (spawn-based multiprocessing + slower file
+    # I/O and tmp cleanup), so give the matrix headroom beyond the ~28 min the
+    # macOS/Linux runs take; otherwise the Windows job is killed mid-suite
+    # before pytest can report which tests failed.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
