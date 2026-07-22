@@ -152,6 +152,32 @@ def test_entry_path_shards_by_hash_prefix(tmp_path: Path) -> None:
     assert p_ab.parent != p_cd.parent
 
 
+def test_entry_path_filename_is_windows_safe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cache key can embed an extractor signature containing ``|`` (and
+    other chars Windows forbids in filenames). On Windows the on-disk name
+    must be sanitised so ``os.replace`` doesn't raise WinError 123."""
+    monkeypatch.setattr("sys.platform", "win32")
+    cache = ExtractionCache(root=tmp_path)
+    key = cache.build_key(
+        content_sha256="ab" * 32, extractor_signature="pymupdf4llm-1.27|docling|cfg-x"
+    )
+    name = cache.entry_path(key).name
+    assert not (set(name) & set('<>:"/\\|?*')), f"illegal chars in {name!r}"
+    # Idempotent across a glob→entry_path round-trip (get() re-sanitises stems).
+    assert cache.entry_path(cache.entry_path(key).stem) == cache.entry_path(key)
+
+
+def test_pipe_bearing_key_round_trips(tmp_path: Path) -> None:
+    """put()/get() of a legacy ``|``-bearing key works on the host OS —
+    on Windows only because entry_path sanitises the filename."""
+    cache = ExtractionCache(root=tmp_path)
+    key = "deadbeef--pymupdf4llm-1.0|cfg-abc"
+    cache.put(key, [_make_chunk(0)])
+    assert cache.get(key) is not None
+
+
 def test_total_size_and_entry_count(tmp_path: Path) -> None:
     """Status helpers report cache footprint for `fnd cache status`."""
     cache = ExtractionCache(root=tmp_path)

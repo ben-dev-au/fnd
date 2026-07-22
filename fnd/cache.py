@@ -26,6 +26,7 @@ import contextlib
 import hashlib
 import json
 import os
+import sys
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
@@ -72,6 +73,22 @@ def _safe_mtime(path: Path) -> float:
         return 0.0
 
 
+# Windows rejects <>:"/\|?* in filenames; a cache key embeds an extractor
+# signature that can contain ``|`` (see fnd.extract.pdf.extractor_signature).
+# Map each illegal char to ``_`` there. The substitute is itself legal, so
+# re-sanitising a sanitised stem is a no-op — required because a glob→
+# entry_path round-trip feeds the on-disk stem back through here. macOS/Linux
+# keep the raw key so existing caches aren't orphaned.
+_WIN_ILLEGAL_STEM = str.maketrans(dict.fromkeys('<>:"/\\|?*', "_"))
+
+
+def _safe_stem(key: str) -> str:
+    """Filename-safe form of a cache key on Windows; identity elsewhere."""
+    if sys.platform == "win32":
+        return key.translate(_WIN_ILLEGAL_STEM)
+    return key
+
+
 class PdfStructureCache:
     """File-backed cache of structured-PDF chunks.
 
@@ -107,9 +124,10 @@ class PdfStructureCache:
 
     def entry_path(self, key: str) -> Path:
         """Where a given key's blob would live on disk."""
-        # First 2 hex chars of the sha256 prefix = 256 shards.
+        # First 2 hex chars of the sha256 prefix = 256 shards (always hex, so
+        # filename-safe; only the signature tail can carry illegal chars).
         shard = key[:2]
-        return self.root / shard / f"{key}.json"
+        return self.root / shard / f"{_safe_stem(key)}.json"
 
     def get(self, key: str) -> list[Chunk] | None:
         """Return the cached chunks for `key`, or None on miss / corrupt.
