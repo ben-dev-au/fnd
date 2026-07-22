@@ -34,8 +34,8 @@ from pathlib import Path
 from typing import Any, Final, Literal, cast
 
 import tomli_w
-from platformdirs import user_data_dir
 
+from fnd import paths
 from fnd.cache import ExtractionCache
 from fnd.config import CollectionConfig
 from fnd.extract import ExtractError, extract
@@ -172,7 +172,7 @@ class IndexState:
 
 def state_file_for(collection: str) -> Path:
     """Where the in-flight state for ``collection`` lives."""
-    return Path(user_data_dir("fnd")) / "reindex" / f"{collection}.state.toml"
+    return paths.reindex_state_path(collection)
 
 
 def load_state(state_path: Path) -> IndexState | None:

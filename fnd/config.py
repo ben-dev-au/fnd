@@ -19,14 +19,11 @@ import tomllib
 from pathlib import Path
 from typing import Any, Literal
 
-from platformdirs import user_data_dir
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from fnd.paths import app_data_dir  # re-exported: many modules import it from here
+
 _APP_NAME = "fnd"
-
-
-def app_data_dir() -> Path:
-    return Path(user_data_dir(_APP_NAME, appauthor=False))
 
 
 def default_index_dir() -> Path:
@@ -148,6 +145,9 @@ DEFAULT_JUNK_DIRS: frozenset[str] = frozenset(
         ".DocumentRevisions-V100",
         ".TemporaryItems",
         ".AppleDouble",
+        # Windows system clutter
+        "$RECYCLE.BIN",
+        "System Volume Information",
     }
 )
 
@@ -169,7 +169,7 @@ INDEXER_FILETYPES: dict[str, str] = {
 EXCLUDES_PRESETS: dict[str, dict[str, Any]] = {
     "hidden": {
         "label": "Hidden / system",
-        "globs": ["**/.*", "**/.DS_Store", "**/.git/**"],
+        "globs": ["**/.*", "**/.DS_Store", "**/Thumbs.db", "**/desktop.ini", "**/.git/**"],
         "default": True,
     },
     "node_modules": {

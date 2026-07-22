@@ -19,17 +19,15 @@ from __future__ import annotations
 import contextlib
 from pathlib import Path
 
-from platformdirs import user_cache_dir
-
-_SEEN_DIRNAME = "seen"
+from fnd import paths
 
 
 def _seen_root() -> Path:
-    # Computed per call (not cached) so test fixtures that monkeypatch
-    # ``user_cache_dir`` or set ``XDG_CACHE_HOME`` see isolation
-    # immediately - a cached path would bleed across tests and cause
-    # spurious "already indexed" results on unrelated content.
-    return Path(user_cache_dir("fnd")) / _SEEN_DIRNAME
+    # Kept as a function (not a cached constant) so test fixtures that
+    # monkeypatch ``_seen_root`` see isolation immediately - a cached path
+    # would bleed across tests and cause spurious "already indexed"
+    # results on unrelated content.
+    return paths.seen_dir()
 
 
 def _marker_path(sha: str) -> Path:

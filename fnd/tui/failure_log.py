@@ -21,13 +21,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import tomli_w
-from platformdirs import user_data_dir
+
+from fnd import paths
 
 _TTL_DAYS = 30
 
 
 def _log_path() -> Path:
-    return Path(user_data_dir("fnd")) / "indexer_failures.toml"
+    return paths.failure_log_path()
 
 
 @dataclass(slots=True, frozen=True)

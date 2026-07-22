@@ -31,8 +31,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from platformdirs import user_cache_dir
-
+from fnd import paths
 from fnd.extract.base import Block, Chunk
 
 CACHE_SCHEMA_VERSION = 1
@@ -47,7 +46,7 @@ def default_cache_dir() -> Path:
 
     On first launch where the legacy ``extraction/`` directory exists,
     rename it to ``pdf-structure/`` so users don't lose their cache."""
-    root = Path(user_cache_dir("fnd"))
+    root = paths.app_cache_dir()
     new_dir = root / _CACHE_DIRNAME
     legacy = root / _LEGACY_CACHE_DIRNAME
     if legacy.exists() and not new_dir.exists():
