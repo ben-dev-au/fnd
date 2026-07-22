@@ -184,7 +184,13 @@ async def test_return_to_cancelled_target_redispatches(
 
         app._preview.inflight_target = ("target", 0)
         app._preview.mount_task = _LiveTask()
-        app._preview.active = types.SimpleNamespace(parent_doc_id="onscreen")  # type: ignore[assignment]
+        # A genuinely on-screen container carries neither -pre-reveal nor -hidden;
+        # has_class must answer False. Windows' ProactorEventLoop orders the mount
+        # so the reveal reads this stub as `prior`, where the SelectorEventLoop on
+        # macOS/Linux short-circuits before has_class — so the stub needs it.
+        app._preview.active = types.SimpleNamespace(  # type: ignore[assignment]
+            parent_doc_id="onscreen", has_class=lambda _cls: False
+        )
 
         # Overshoot to a neighbour (cancels the in-flight "target" mount) …
         app._preview.schedule_load("neighbour", 0)

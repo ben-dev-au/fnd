@@ -31,29 +31,34 @@ def _capture_argv(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 # ── Handler argv construction ────────────────────────────────────────────
 
 
+# The handlers stringify the path via str(req.path), which yields backslashes
+# on the Windows CI runner — assert against str(p), not a POSIX literal.
+_PDF = Path("/d/a.pdf")
+
+
 def test_zathura_handler_page_jump_argv(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _capture_argv(monkeypatch)
-    apps.BUILTIN_APPS["zathura"].handler(OpenRequest(path=Path("/d/a.pdf"), kind="pdf", page=3))
-    assert captured == [["zathura", "--page", "3", "/d/a.pdf"]]
+    apps.BUILTIN_APPS["zathura"].handler(OpenRequest(path=_PDF, kind="pdf", page=3))
+    assert captured == [["zathura", "--page", "3", str(_PDF)]]
 
 
 def test_zathura_handler_no_page_opens_plain(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _capture_argv(monkeypatch)
-    apps.BUILTIN_APPS["zathura"].handler(OpenRequest(path=Path("/d/a.pdf"), kind="pdf", page=0))
-    assert captured == [["zathura", "/d/a.pdf"]]
+    apps.BUILTIN_APPS["zathura"].handler(OpenRequest(path=_PDF, kind="pdf", page=0))
+    assert captured == [["zathura", str(_PDF)]]
 
 
 def test_okular_handler_page_jump_argv(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _capture_argv(monkeypatch)
-    apps.BUILTIN_APPS["okular"].handler(OpenRequest(path=Path("/d/a.pdf"), kind="pdf", page=12))
-    assert captured == [["okular", "--page", "12", "/d/a.pdf"]]
+    apps.BUILTIN_APPS["okular"].handler(OpenRequest(path=_PDF, kind="pdf", page=12))
+    assert captured == [["okular", "--page", "12", str(_PDF)]]
 
 
 def test_sumatra_handler_uses_resolved_exe(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(apps, "_sumatra_exe", lambda: r"C:\Tools\SumatraPDF.exe")
     captured = _capture_argv(monkeypatch)
-    apps.BUILTIN_APPS["sumatra"].handler(OpenRequest(path=Path("/d/a.pdf"), kind="pdf", page=5))
-    assert captured == [[r"C:\Tools\SumatraPDF.exe", "-page", "5", "/d/a.pdf"]]
+    apps.BUILTIN_APPS["sumatra"].handler(OpenRequest(path=_PDF, kind="pdf", page=5))
+    assert captured == [[r"C:\Tools\SumatraPDF.exe", "-page", "5", str(_PDF)]]
 
 
 # ── Availability probes ──────────────────────────────────────────────────

@@ -17,6 +17,13 @@ def _make_md(p: Path, content: str) -> None:
     p.write_text(content, encoding="utf-8")
 
 
+def _posix(path: str) -> str:
+    """Stored path in forward-slash form so ``/``-based suffix/substring
+    assertions are separator-agnostic — the index stores native paths, which
+    use backslashes on Windows."""
+    return Path(path).as_posix()
+
+
 @pytest.fixture
 def shaped_corpus(tmp_path: Path) -> Path:
     """Build a synthetic corpus with subdirectories so we can test glob rules.
@@ -52,7 +59,7 @@ def test_excludes_drop_subdir_of_included_root(shaped_corpus: Path, tmp_index_di
     )
     assert written > 0
     hits = Searcher(index_dir=tmp_index_dir).search("keepable", limit=10)
-    paths = [h.path for h in hits]
+    paths = [_posix(h.path) for h in hits]
     assert any(p.endswith("keep/wanted.md") for p in paths), f"missing wanted.md in {paths}"
     assert not any("drafts/" in p for p in paths), f"drafts leaked: {paths}"
     assert not any("archive/" in p for p in paths), f"archive leaked: {paths}"
@@ -90,8 +97,10 @@ def test_collection_field_scopes_query(
     s = Searcher(index_dir=tmp_index_dir)
     papers_hits = s.search("keepable", collection="papers", limit=10)
     notes_hits = s.search("keepable", collection="notes", limit=10)
-    assert all("keep/wanted.md" in h.path for h in papers_hits), [h.path for h in papers_hits]
-    assert all("other/note.md" in h.path for h in notes_hits), [h.path for h in notes_hits]
+    assert all("keep/wanted.md" in _posix(h.path) for h in papers_hits), [
+        h.path for h in papers_hits
+    ]
+    assert all("other/note.md" in _posix(h.path) for h in notes_hits), [h.path for h in notes_hits]
 
 
 def test_per_collection_rebuild_does_not_disturb_others(
@@ -119,7 +128,7 @@ def test_per_collection_rebuild_does_not_disturb_others(
     s = Searcher(index_dir=tmp_index_dir)
     notes_hits = s.search("stable phrase", collection="notes", limit=5)
     assert notes_hits, "rebuild of papers should not have affected notes"
-    assert any(h.path.endswith("other/stable.md") for h in notes_hits)
+    assert any(_posix(h.path).endswith("other/stable.md") for h in notes_hits)
 
 
 def test_build_index_from_config_round_trips(shaped_corpus: Path, tmp_index_dir: Path) -> None:
@@ -131,7 +140,7 @@ def test_build_index_from_config_round_trips(shaped_corpus: Path, tmp_index_dir:
     written = build_index_from_config(config=cfg, collection="papers", index_dir=tmp_index_dir)
     assert written > 0
     hits = Searcher(index_dir=tmp_index_dir).search("keepable", limit=10)
-    paths = [h.path for h in hits]
+    paths = [_posix(h.path) for h in hits]
     assert any("keep/wanted.md" in p for p in paths)
     assert not any("drafts/" in p for p in paths)
 

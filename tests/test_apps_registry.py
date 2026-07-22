@@ -141,16 +141,19 @@ def test_resolve_ignores_unknown_app_ids_in_per_source_fields() -> None:
 
 
 def test_render_argv_substitutes_per_token() -> None:
-    req = OpenRequest(path=Path("/tmp/a b.md"), kind="md", line=42, page=0, query="hello world")
+    # {path} renders as str(req.path) → backslashes on the Windows CI runner.
+    p = Path("/tmp/a b.md")
+    req = OpenRequest(path=p, kind="md", line=42, page=0, query="hello world")
     out = apps._render_argv(["code", "-g", "{path}:{line}:1"], req)
-    assert out == ["code", "-g", "/tmp/a b.md:42:1"]
+    assert out == ["code", "-g", f"{p}:42:1"]
 
 
 def test_render_argv_omits_line_segment_when_line_zero() -> None:
-    req = OpenRequest(path=Path("/tmp/a.txt"), kind="txt", line=0)
+    p = Path("/tmp/a.txt")
+    req = OpenRequest(path=p, kind="txt", line=0)
     out = apps._render_argv(["code", "-g", "{path}:{line}:1"], req)
     # No useful line locator → drop the locator argument entirely.
-    assert out == ["code", "/tmp/a.txt"]
+    assert out == ["code", str(p)]
 
 
 def test_render_url_percent_encodes_path_and_query() -> None:
@@ -232,7 +235,7 @@ def test_user_app_handler_dispatches_via_subprocess_run(
     req = OpenRequest(path=Path("/tmp/x.md"), kind="md")
     rc = app.handler(req)
     assert rc == 0
-    assert captured == [["toy", "-f", "/tmp/x.md"]]
+    assert captured == [["toy", "-f", str(req.path)]]
 
 
 def test_user_url_app_dispatches_through_open(
@@ -288,7 +291,7 @@ def test_ax_trusted_false_triggers_preview_fallback(
     req = OpenRequest(path=Path("/tmp/p.pdf"), kind="pdf", page=5)
     rc = apps.BUILTIN_APPS["preview"].handler(req)
     assert rc == 0
-    assert captured == [["open", "-a", "Preview", "/tmp/p.pdf"]]
+    assert captured == [["open", "-a", "Preview", str(req.path)]]
     assert len(notifications) >= 1
     assert "Accessibility" in notifications[0] or "accessibility" in notifications[0]
 
@@ -601,7 +604,7 @@ def test_pdf_expert_uses_open_dash_a_not_url_scheme(
     captured = _capture_argv(monkeypatch)
     req = OpenRequest(path=Path("/tmp/paper.pdf"), kind="pdf", page=7)
     apps.BUILTIN_APPS["pdf_expert"].handler(req)
-    assert captured == [["open", "-a", "PDF Expert", "/tmp/paper.pdf"]], captured
+    assert captured == [["open", "-a", "PDF Expert", str(req.path)]], captured
 
 
 def test_heading_path_to_anchor_strips_empty_segments() -> None:

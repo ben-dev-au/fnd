@@ -51,10 +51,14 @@ def test_write_preserves_user_comments(tmp_path: Path) -> None:
     text = cfg_path.read_text(encoding="utf-8")
     assert "# I love this config." in text
     assert "# important note" in text
-    # papers collection still present
+    # papers collection still present (a verbatim forward-slash literal in the
+    # pre-written config — preserved as-is by tomlkit on every OS)
     assert "/tmp/papers" in text
-    # notes collection added
-    assert "/tmp/notes" in text
+    # notes collection added — assert via reload, not a POSIX-literal substring:
+    # a Path("/tmp/notes") stringifies with backslashes on Windows and tomlkit
+    # escapes them in the written TOML.
+    reloaded = load(cfg_path)
+    assert Path("/tmp/notes") in [s.path for s in reloaded.collection("notes").sources]
 
 
 def test_write_replaces_existing_collection(tmp_path: Path) -> None:

@@ -36,19 +36,23 @@ class _Spy:
 def test_mac_launcher_uses_open() -> None:
     spy = _Spy()
     mac = launcher.MacLauncher(run=spy.run, spawn=spy.spawn)
-    mac.open_path(Path("/docs/a.pdf"))
+    p = Path("/docs/a.pdf")
+    mac.open_path(p)
     mac.open_url("skim:///x#page=3")
-    mac.reveal(Path("/docs/a.pdf"))
-    assert spy.runs == [["open", "/docs/a.pdf"], ["open", "skim:///x#page=3"]]
-    assert spy.spawns == [["open", "-R", "/docs/a.pdf"]]
+    mac.reveal(p)
+    # str(p) not a POSIX literal: the launcher stringifies via str(path), which
+    # yields backslashes on the Windows CI runner.
+    assert spy.runs == [["open", str(p)], ["open", "skim:///x#page=3"]]
+    assert spy.spawns == [["open", "-R", str(p)]]
 
 
 def test_linux_launcher_uses_xdg_open() -> None:
     spy = _Spy()
     lin = launcher.LinuxLauncher(run=spy.run, spawn=spy.spawn, which=lambda _b: None)
-    lin.open_path(Path("/docs/a.pdf"))
+    p = Path("/docs/a.pdf")
+    lin.open_path(p)
     lin.open_url("obsidian://open?path=/x")
-    assert spy.runs == [["xdg-open", "/docs/a.pdf"], ["xdg-open", "obsidian://open?path=/x"]]
+    assert spy.runs == [["xdg-open", str(p)], ["xdg-open", "obsidian://open?path=/x"]]
 
 
 def test_linux_reveal_selects_when_file_manager_present() -> None:
@@ -58,8 +62,9 @@ def test_linux_reveal_selects_when_file_manager_present() -> None:
         spawn=spy.spawn,
         which=lambda b: "/usr/bin/nautilus" if b == "nautilus" else None,
     )
-    lin.reveal(Path("/docs/sub/a.pdf"))
-    assert spy.spawns == [["nautilus", "--select", "/docs/sub/a.pdf"]]
+    p = Path("/docs/sub/a.pdf")
+    lin.reveal(p)
+    assert spy.spawns == [["nautilus", "--select", str(p)]]
 
 
 def test_linux_reveal_falls_back_to_parent_dir() -> None:

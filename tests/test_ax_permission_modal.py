@@ -142,7 +142,7 @@ def test_preview_handler_emits_ax_notice_when_blocked(
         req = apps.OpenRequest(path=Path("/tmp/file.pdf"), kind="pdf", page=12)
         rc = apps.BUILTIN_APPS["preview"].handler(req)
         assert rc == 0
-        assert captured_run == [["open", "-a", "Preview", "/tmp/file.pdf"]]
+        assert captured_run == [["open", "-a", "Preview", str(req.path)]]
         assert len(notices) == 1
         assert "Accessibility" in notices[0]
     finally:
