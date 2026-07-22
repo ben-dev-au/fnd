@@ -177,9 +177,12 @@ def _relative_to(target: Path, root: Path | None) -> str:
     if root is None:
         return ""
     try:
-        return str(target.expanduser().resolve().relative_to(Path(root).expanduser().resolve()))
+        rel = target.expanduser().resolve().relative_to(Path(root).expanduser().resolve())
     except (ValueError, OSError):
         return ""
+    # as_posix(): Obsidian's URI wants forward slashes; str() would emit
+    # backslashes on Windows and break the deep link.
+    return rel.as_posix()
 
 
 # ── Diagnostics for the TUI status bar ──────────────────────────────────────
