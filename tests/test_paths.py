@@ -9,6 +9,8 @@ in two different roots on Windows, invisibly on macOS/Linux).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from fnd import paths
@@ -93,6 +95,21 @@ def test_uv_tool_root_falls_back_when_uv_absent(monkeypatch: pytest.MonkeyPatch)
     root = paths.uv_tool_root()
     assert root.name == "tools"
     assert "uv" in root.parts
+
+
+def test_uv_tool_root_honours_xdg_data_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The POSIX fallback must respect $XDG_DATA_HOME (uv does), not hardcode
+    ~/.local/share."""
+
+    def boom(*_a: object, **_k: object) -> object:
+        raise FileNotFoundError("uv not found")
+
+    monkeypatch.setattr("fnd.paths.subprocess.run", boom)
+    monkeypatch.setattr("fnd.paths.sys.platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    assert paths.uv_tool_root() == tmp_path / "xdg" / "uv" / "tools"
 
 
 def test_helpers_create_nothing() -> None:

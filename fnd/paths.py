@@ -109,4 +109,7 @@ def uv_tool_root() -> Path:
         base = os.environ.get("APPDATA")
         if base:
             return Path(base) / "uv" / "tools"
-    return Path.home() / ".local" / "share" / "uv" / "tools"
+    # POSIX: honour XDG_DATA_HOME (uv does) before the ~/.local/share default.
+    xdg = os.environ.get("XDG_DATA_HOME")
+    data_home = Path(xdg) if xdg else Path.home() / ".local" / "share"
+    return data_home / "uv" / "tools"
