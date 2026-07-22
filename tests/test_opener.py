@@ -74,6 +74,9 @@ def test_open_smart_auto_promotes_preview_when_no_skim_and_ax_granted(
     from fnd import apps as apps_mod
 
     apps_mod._reset_ax_cache()
+    # Skim/Preview auto-promotion is macOS-only; pin the platform so this
+    # mac-dispatch path is exercised deterministically on any CI runner.
+    monkeypatch.setattr("sys.platform", "darwin")
     monkeypatch.setattr(opener, "_has_skim", lambda: False)
     monkeypatch.setattr(apps_mod, "_preview_app_exists", lambda: True)
     monkeypatch.setattr(apps_mod, "_probe_ax_trusted", lambda: True)

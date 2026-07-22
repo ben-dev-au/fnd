@@ -75,6 +75,9 @@ def test_open_smart_dispatches_to_url_for_adversarial_filename(
     assert not hasattr(opener, "open_pdf_via_applescript")
 
     f = tmp_path / 'evil"newline.pdf'
+    # Skim auto-promotion is macOS-only; pin the platform so this mac-dispatch
+    # path runs on any CI runner.
+    monkeypatch.setattr("sys.platform", "darwin")
     monkeypatch.setattr(opener, "_has_skim", lambda: True)
     # Isolate from the user's real config — without this the test routes
     # through whichever ``[app_defaults]`` the developer happens to have set.
