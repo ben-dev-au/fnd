@@ -121,10 +121,10 @@ def test_open_smart_passes_vault_through_to_request(
     md_file.write_text("# Hi\n")
 
     captured: list[list[str]] = []
+    # Capture at the launcher's open-url seam (OS-independent) rather than the
+    # per-OS opener command, so these URL assertions read the same on every OS.
     monkeypatch.setattr(
-        apps_mod.subprocess,
-        "run",
-        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
+        apps_mod.launcher, "open_url", lambda url: captured.append(["open", url]) or 0
     )
     monkeypatch.setattr(apps_mod, "_obsidian_app_exists", lambda: True)
     # Make config loading return a minimal Config that defaults md→obsidian.

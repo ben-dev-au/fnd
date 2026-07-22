@@ -29,6 +29,27 @@ from fnd.config import (
 )
 
 
+@pytest.mark.parametrize("name", ["CON", "con", "PRN", "nul", "COM1", "LPT9", "aux.notes"])
+def test_windows_reserved_device_names_rejected_on_win32(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A collection named after a Windows device (CON, PRN, …) can't own a
+    ``<name>.state.toml`` there — reject it on Windows (case-insensitive, and
+    for the stem before the first dot)."""
+    monkeypatch.setattr("sys.platform", "win32")
+    with pytest.raises(InvalidCollectionNameError, match="reserved device name"):
+        validate_collection_name(name)
+
+
+@pytest.mark.parametrize("name", ["CON", "aux", "console", "communications"])
+def test_reserved_names_allowed_off_windows(name: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Off Windows the device names are ordinary; an existing macOS/Linux config
+    with such a name keeps validating. 'console'/'communications' aren't reserved
+    on any OS (only the exact stem matches)."""
+    monkeypatch.setattr("sys.platform", "darwin")
+    assert validate_collection_name(name) == name
+
+
 @pytest.mark.parametrize(
     "good",
     [

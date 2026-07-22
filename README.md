@@ -3,15 +3,17 @@
 [![CI](https://github.com/ben-dev-au/fnd/actions/workflows/ci.yml/badge.svg)](https://github.com/ben-dev-au/fnd/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
-[![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](#requirements)
+[![Platform: macOS | Linux | Windows](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#requirements)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/ben.dev.au)
 
-Fast, free, keyboard-driven document search for macOS. Indexes PDF, DOCX, PPTX,
-MD, and TXT across multiple named collections, with strong BM25 ranking, in-file
-navigation, an "Open with…" launcher, and a lazygit-style TUI.
+Fast, free, keyboard-driven document search for macOS, Linux, and Windows.
+Indexes PDF, DOCX, PPTX, MD, and TXT across multiple named collections, with
+strong BM25 ranking, in-file navigation, an "Open with…" launcher, and a
+lazygit-style TUI.
 
-> **macOS only, for now.** fnd relies on macOS file APIs and the `open` URL
-> handler. Linux/Windows aren't supported yet.
+> **Cross-platform.** Runs on macOS, Linux, and Windows. Core search, indexing,
+> preview, and the "Open with…" launcher work everywhere; a few integrations are
+> OS-specific and degrade gracefully — see [Platform support](#platform-support).
 
 ## Status
 
@@ -19,14 +21,15 @@ Core features are complete and stable. Now in a refinement period: finding, fixi
 
 ## Requirements
 
-- macOS (Apple Silicon or Intel)
+- macOS (Apple Silicon or Intel), Linux, or Windows.
 - Nothing else to set up. Each install option below brings Python 3.13 with it.
+- A modern terminal is recommended (see [Terminal compatibility](#terminal-compatibility)).
 
 ## Install
 
 Pick one of the options below. They install the same tool, so you only need one.
 
-### Option 1: Homebrew
+### Option 1: Homebrew (macOS)
 
 ```sh
 brew install ben-dev-au/tap/fnd
@@ -36,7 +39,7 @@ brew install ben-dev-au/tap/fnd
 once, then run the line above. Apple Silicon installs a prebuilt binary; Intel
 builds from source, which takes a few minutes.
 
-### Option 2: uv or pipx
+### Option 2: uv or pipx (macOS, Linux, Windows)
 
 ```sh
 uv tool install fndr        # or:  pipx install fndr
@@ -75,6 +78,30 @@ Releases carry build provenance; see [`SECURITY.md`](SECURITY.md) to verify a do
   auto-resume on interrupted reindexes.
 - **Local and private**: no network, no telemetry. The index lives on your
   machine; state is hardened to `0o700`.
+
+## Platform support
+
+fnd runs on **macOS, Linux, and Windows**. Everything core — search, indexing,
+the TUI, syntax-highlighted preview, in-file navigation, and the "Open with…"
+launcher — works identically on all three. A few OS integrations differ; where
+an equivalent doesn't exist, fnd degrades gracefully rather than erroring.
+
+| Capability | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| Search · indexing · TUI · preview | ✓ | ✓ | ✓ |
+| Open in app / **Open with…** | ✓ | ✓ | ✓ |
+| Reveal in file manager | Finder | file-manager `--select` → folder | Explorer `/select` |
+| PDF page-jump on `o` | Skim, Preview | Zathura, Okular | SumatraPDF |
+| Structured PDF extra (docling) | ✓ | ✓ | ✓ |
+| Created-date filter | ✓ (birth time) | best-effort (statx) | ✓ (creation time) |
+| Finder tag filtering | ✓ | — | — |
+
+Built-in PDF viewers are auto-detected — the "Open with…" picker lists only the
+ones actually installed. On Linux/Windows, point `[app_defaults].pdf` at your
+preferred viewer, or add any app with a small `[apps.<id>]` block (see
+[`docs/apps.md`](docs/apps.md)). **Frontmatter tags** (`tags:` in YAML) work on
+every OS; only macOS **Finder tags** are macOS-only. Install with `uv`/`pipx` on
+any OS; Homebrew is macOS-only.
 
 ## Quick start
 
@@ -131,15 +158,14 @@ open / edit / toggle the focused row, `/` to filter rows by label, and `Esc` or
 
 ### Terminal compatibility
 
-A modern terminal is required for optimal formatting. e.g.:
+A modern terminal is required for optimal formatting. For example:
 
-- iTerm2
-- Ghostty
-- Kitty
-- Wezterm
-- etc
-
-macos Terminal.app compatibility is variable depending on the terminals set font, Menlo is better than some, a modern terminal is strongly suggested however.
+- **macOS**: iTerm2, Ghostty, Kitty, WezTerm. Terminal.app works but its
+  formatting varies by font (Menlo is a reasonable default); a modern terminal
+  is strongly suggested.
+- **Linux**: Kitty, WezTerm, Alacritty, GNOME Terminal, or Konsole all work well.
+- **Windows**: **Windows Terminal** (bundled with Windows 11) or WezTerm. The
+  legacy `conhost.exe` console renders box-drawing and colours poorly.
 
 ## Command reference
 
@@ -182,23 +208,25 @@ macos Terminal.app compatibility is variable depending on the terminals set font
 fnd search "risotto" --tag recipe --not-tag draft --created month
 ```
 
-Tags come from Obsidian-style YAML frontmatter (`tags:`) and from macOS Finder
-tags. Nested tags work as a hierarchy — `--tag project` also matches
+Tags come from Obsidian-style YAML frontmatter (`tags:`) and, on macOS, from
+Finder tags. Nested tags work as a hierarchy — `--tag project` also matches
 `project/alpha`. Tag matching is case-insensitive, and a leading `#` is
 optional. Which sources are read is set by `defaults.tag_sources` in the config
 TOML; disabling one takes effect immediately, with no re-index.
 
-Created dates come from the filesystem's birth time, which macOS records but
-some Linux filesystems don't; files without one match only the default
-(unfiltered) window.
+Created dates come from the filesystem's creation time — macOS birth time,
+Windows creation time, and statx-capable Linux filesystems (e.g. ext4). Files
+without one match only the default (unfiltered) window.
 
 ## Open with… apps
 
 In the TUI, `o` opens a hit in its resolved app and `O` opens the **Open with…**
-picker. Built-in handlers ship for **Preview, Skim, Obsidian, VS Code, PDF
-Expert, and System Default**; where the app and file type allow it, fnd jumps to
-the matching page, slide, line, or heading. Set a per-file-type default with
-`[app_defaults]`, or a per-source app, in your config.
+picker. Built-in handlers ship per OS — **Skim, Preview, PDF Expert** (macOS),
+**Zathura, Okular** (Linux), **SumatraPDF** (Windows), plus cross-platform
+**Obsidian, VS Code, System Default** — and each is offered only where it's
+installed. Where the app and file type allow it, fnd jumps to the matching page,
+slide, line, or heading. Set a per-file-type default with `[app_defaults]`, or a
+per-source app, in your config.
 
 You can add your own apps with a small `[apps.<id>]` block in your config; see
 the catalogue and schema in [`docs/apps.md`](docs/apps.md). User templates are passed
@@ -249,10 +277,12 @@ freely.
 
 ## Configuration
 
-The config lives at `~/Library/Application Support/fnd/config.toml` (run
-`fnd config path` to confirm; fnd also reads `~/.config/fnd/config.toml` if you
-keep it there). `fnd config show` prints the effective merged config;
-`fnd config validate` checks it before you rely on it.
+The config lives in your platform's app-data directory (run `fnd config path` to
+see the exact location): `~/Library/Application Support/fnd/` (macOS),
+`~/.local/share/fnd/` (Linux), or `%LOCALAPPDATA%\fnd\` (Windows). fnd also reads
+`~/.config/fnd/config.toml` on any OS if you keep it there. `fnd config show`
+prints the effective merged config; `fnd config validate` checks it before you
+rely on it.
 
 Each collection is one or more `[[collections.<name>.sources]]` tables. A
 minimal, annotated config:
@@ -275,8 +305,9 @@ path               = "~/Notes"
 includes           = ["**/*.md"]
 frontmatter_filter = "Status == 'published'"   # markdown sources only; see Search how-to
 
-# Default app per file type for the `o` shortcut.
-# Built-in ids: system, preview, skim, pdf_expert, obsidian, vscode.
+# Default app per file type for the `o` shortcut. Built-in ids:
+# system, obsidian, vscode (all OSes); skim, preview, pdf_expert (macOS);
+# zathura, okular (Linux); sumatra (Windows).
 [app_defaults]
 pdf = "skim"
 md  = "obsidian"
@@ -299,8 +330,8 @@ Settings UI) to apply it.
 
 PDFs render as flat extracted text by default. The opt-in `pdf-structure` extra
 adds headings, lists, tables, bold/italic, and recovered image-rendered tables.
-It is installed via [uv](https://docs.astral.sh/uv/) (`brew install uv` if you
-don't have it).
+It is installed via [uv](https://docs.astral.sh/uv/) (see the uv docs for the
+one-line installer on your OS).
 
 In the TUI: **Settings → Indexing → Status / Install…** shows current state,
 disk impact (`~900 MB`), and a tight disclosure before any download. Install
@@ -333,8 +364,10 @@ reindexes only re-process changed files.
 
 ### Cache
 
-Extracted chunks are content-addressed at `~/Library/Caches/fnd/extraction/`.
-Shared across collections: the same file in two collections is extracted once.
+Extracted chunks are content-addressed in fnd's cache directory —
+`~/Library/Caches/fnd/pdf-structure/` on macOS, the platform cache dir elsewhere
+(`fnd cache info` prints it). Shared across collections: the same file in two
+collections is extracted once.
 
 In the TUI: **Settings → Indexing → Cache size** shows entries + disk;
 **Cache maintenance…** drills to Prune stale (recoverable) and Clear
@@ -345,8 +378,7 @@ From the CLI: `fnd cache status / info / prune / clear`.
 ### Auto-resume on launch
 
 A Ctrl+C, sleep, terminal close, or fnd quit during reindex leaves the cache and
-a state file at
-`~/Library/Application Support/fnd/reindex/<collection>.state.toml`.
+a state file in fnd's data directory at `reindex/<collection>.state.toml`.
 
 Reopen the TUI and indexing auto-resumes silently in the background.
 Already-cached files return in milliseconds, so resume effectively starts where

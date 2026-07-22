@@ -35,10 +35,13 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 
 def _find_parent_id(searcher: Searcher, path_suffix: str) -> str:
-    """Pick the parent_id of a file in the fixture corpus by path suffix."""
+    """Pick the parent_id of a file in the fixture corpus by path suffix.
+
+    Compares in POSIX form so the ``/``-delimited suffix matches the index's
+    native-separator paths on Windows too."""
     hits = searcher.search("blue penguin sandwich", limit=5)
     for h in hits:
-        if h.path.endswith(path_suffix):
+        if Path(h.path).as_posix().endswith(path_suffix):
             return h.parent_id
     raise AssertionError(f"no hit for suffix {path_suffix!r}")
 

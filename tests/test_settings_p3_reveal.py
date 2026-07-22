@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="asserts the macOS `open -R` reveal; cross-platform reveal is covered by test_launcher.py",
+)
 def test_reveal_runs_open_r_on_macos(tmp_path: Path) -> None:
     """Spec: Reveal-in-Finder — uses `open -R <path>` on macOS."""
     from fnd import opener

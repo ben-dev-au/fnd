@@ -102,6 +102,7 @@ def test_open_smart_routes_to_url_when_query_present(
 
     f = tmp_path / "doc.pdf"
     f.touch()
+    monkeypatch.setattr("sys.platform", "darwin")  # Skim auto-promote is macOS-only
     monkeypatch.setattr(opener, "_has_skim", lambda: True)
     # Isolate from the developer's real config — without this the resolver
     # routes through whichever [app_defaults] they have set (eg. `preview`)
@@ -128,6 +129,7 @@ def test_open_smart_uses_url_when_query_blank(
 
     f = tmp_path / "doc.pdf"
     f.touch()
+    monkeypatch.setattr("sys.platform", "darwin")  # Skim auto-promote is macOS-only
     monkeypatch.setattr(opener, "_has_skim", lambda: True)
     monkeypatch.setattr("fnd.config.load", lambda *a, **kw: Config())
     calls: list[dict[str, Any]] = []

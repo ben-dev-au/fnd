@@ -48,7 +48,7 @@ def min_app(tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
     cfg_path.write_text(
         textwrap.dedent(f"""
             [[collections.notes.sources]]
-            path = "{docs}"
+            path = "{docs.as_posix()}"
         """),
         encoding="utf-8",
     )

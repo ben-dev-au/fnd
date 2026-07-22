@@ -532,7 +532,7 @@ class FNDApp(App[None]):
                 # Mark done only on a clean pass; a partial promotion retries
                 # next launch rather than stranding entries as "outdated".
                 if _failed == 0:
-                    _sentinel.write_text(texture_signature())
+                    _sentinel.write_text(texture_signature(), encoding="utf-8")
 
         # Route fnd.apps notices through an in-app modal for AX issues, and
         # through Textual.notify for everything else. Without this hook, the
@@ -906,8 +906,16 @@ class FNDApp(App[None]):
     # write these names on the app; the property pairs keep that
     # surface stable while the presenter owns the state.
 
+    def _diag_log_path(self) -> str:
+        """Opt-in preview-perf diagnostic log, in the OS temp dir. Gated by
+        _FND_PREVIEW_DIAG=1; production code paths never write here."""
+        import os
+        import tempfile
+
+        return os.path.join(tempfile.gettempdir(), "fnd-preview-diag.log")
+
     def _diag_log(self, msg: str) -> None:
-        # _FND_PREVIEW_DIAG=1 appends to /tmp/fnd-preview-diag.log.
+        # _FND_PREVIEW_DIAG=1 appends to <tempdir>/fnd-preview-diag.log.
         # Investigation-only; remove once findings recorded.
         import os
         import time as _time
@@ -915,12 +923,7 @@ class FNDApp(App[None]):
         if not os.environ.get("_FND_PREVIEW_DIAG"):
             return
         try:
-            # Hardcoded /tmp path is intentional: opt-in dev
-            # instrumentation gated by FND_PREVIEW_DIAG=1, slated for
-            # removal once the preview-perf investigation closes (see
-            # docs/PREVIEW_DOM_PLAN.md). Production code paths do not
-            # touch /tmp.
-            with open("/tmp/fnd-preview-diag.log", "a") as f:  # noqa: S108
+            with open(self._diag_log_path(), "a", encoding="utf-8") as f:
                 f.write(f"[{_time.monotonic():.3f}] {msg}\n")
         except Exception:
             pass
@@ -955,14 +958,14 @@ class FNDApp(App[None]):
                 f"flat parent_id={getattr(flat, 'parent_doc_id', '?')} "
                 f"lines={len(getattr(flat, 'lines', []) or [])}"
             )
+        log_path = self._diag_log_path()
         try:
-            # See _diag_log above for the /tmp rationale.
-            with open("/tmp/fnd-preview-diag.log", "a") as f:  # noqa: S108
+            with open(log_path, "a", encoding="utf-8") as f:
                 f.write("\n".join(lines) + "\n")
         except Exception:
             pass
         self.notify(
-            "Dumped preview widget tree → /tmp/fnd-preview-diag.log",
+            f"Dumped preview widget tree → {log_path}",
             timeout=2,
         )
 

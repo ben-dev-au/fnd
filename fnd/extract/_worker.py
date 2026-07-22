@@ -19,7 +19,6 @@ import atexit
 import faulthandler
 import multiprocessing as mp
 import os
-import signal
 import threading
 import time
 from collections.abc import Callable
@@ -37,7 +36,7 @@ def _trace(msg: str) -> None:
     if not _trace_path:
         return
     try:
-        with open(_trace_path, "a") as f:
+        with open(_trace_path, "a", encoding="utf-8") as f:
             f.write(f"[{os.getpid()}] {msg}\n")
     except OSError:
         pass
@@ -155,17 +154,19 @@ def shutdown_pool() -> None:
 
 
 def _kill_pool_workers(pool: ProcessPoolExecutor) -> None:
-    """SIGKILL every running worker. The pool raises BrokenProcessPool
+    """Force-kill every running worker. The pool raises BrokenProcessPool
     on the in-flight future when it notices the death."""
     # ProcessPoolExecutor does not expose its workers via public API.
     # The internal dict is stable across Python 3.7+ and the cost of
     # a quirky look-up is much smaller than the cost of writing our
     # own pool. ``getattr`` with default keeps the call site safe if
-    # the attribute name ever changes upstream.
+    # the attribute name ever changes upstream. ``Process.kill`` is
+    # cross-platform (SIGKILL on POSIX, TerminateProcess on Windows) —
+    # ``os.kill(pid, SIGKILL)`` would raise/no-op on Windows.
     procs = getattr(pool, "_processes", {}) or {}
     for proc in list(procs.values()):
-        with _suppress(ProcessLookupError, PermissionError, AttributeError):
-            os.kill(proc.pid, signal.SIGKILL)
+        with _suppress(ProcessLookupError, PermissionError, AttributeError, ValueError):
+            proc.kill()
 
 
 def _suppress(*excs: type[BaseException]) -> Any:
@@ -203,9 +204,9 @@ def _redirect_native_stderr_to_log() -> None:
     otherwise flood the parent tmux pane on top of the IndexerScreen
     modal during every PDF-heavy reindex."""
     try:
-        from platformdirs import user_cache_dir
+        from fnd import paths
 
-        log_dir = os.path.join(user_cache_dir("fnd"), "worker-logs")
+        log_dir = str(paths.worker_logs_dir())
         os.makedirs(log_dir, exist_ok=True)
         log_path = os.path.join(log_dir, "extractor-stderr.log")
         log_fd = os.open(log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)

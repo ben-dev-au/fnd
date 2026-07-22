@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from fnd import paths
+
 InstallVia = Literal["pip-extra", "uv-tool"]
 
 
@@ -152,7 +154,7 @@ def is_package_installed(pkg: Package) -> bool:
         # tool root specifically.
         if pkg.install_via == "uv-tool":
             tool_name = pkg.spec.split("[", 1)[0]
-            tool_root = Path.home() / ".local" / "share" / "uv" / "tools" / tool_name
+            tool_root = paths.uv_tool_root() / tool_name
             return tool_root.exists()
         return shutil.which(name) is not None
     return False
@@ -186,8 +188,8 @@ def actual_disk_mb(extra: Extra) -> int:
     total = 0
     for c in extra.cache_dirs:
         total += _du_mb(c)
-    # For uv-tool installs, walk ~/.local/share/uv/tools/<pkg>
-    tool_root = Path.home() / ".local" / "share" / "uv" / "tools"
+    # For uv-tool installs, walk uv's tool root (uv tool dir)/<pkg>
+    tool_root = paths.uv_tool_root()
     for pkg in extra.packages:
         if pkg.install_via == "uv-tool":
             tool_name = pkg.spec.split("[", 1)[0]

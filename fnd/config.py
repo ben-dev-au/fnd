@@ -15,18 +15,16 @@ Phase 5.5e-1 adds :class:`SourceConfig` + multi-source collections + the
 from __future__ import annotations
 
 import re
+import sys
 import tomllib
 from pathlib import Path
 from typing import Any, Literal
 
-from platformdirs import user_data_dir
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from fnd.paths import app_data_dir  # re-exported: many modules import it from here
+
 _APP_NAME = "fnd"
-
-
-def app_data_dir() -> Path:
-    return Path(user_data_dir(_APP_NAME, appauthor=False))
 
 
 def default_index_dir() -> Path:
@@ -148,6 +146,9 @@ DEFAULT_JUNK_DIRS: frozenset[str] = frozenset(
         ".DocumentRevisions-V100",
         ".TemporaryItems",
         ".AppleDouble",
+        # Windows system clutter
+        "$RECYCLE.BIN",
+        "System Volume Information",
     }
 )
 
@@ -169,7 +170,7 @@ INDEXER_FILETYPES: dict[str, str] = {
 EXCLUDES_PRESETS: dict[str, dict[str, Any]] = {
     "hidden": {
         "label": "Hidden / system",
-        "globs": ["**/.*", "**/.DS_Store", "**/.git/**"],
+        "globs": ["**/.*", "**/.DS_Store", "**/Thumbs.db", "**/desktop.ini", "**/.git/**"],
         "default": True,
     },
     "node_modules": {
@@ -566,6 +567,14 @@ _COLLECTION_NAME_FORBIDDEN: frozenset[str] = (
     | frozenset({chr(0x7F)})
 )
 
+# Windows reserved device names — unusable as a filename stem, so a collection
+# so named can't own a ``<name>.state.toml``. Checked case-insensitively.
+_WIN_RESERVED_NAMES: frozenset[str] = (
+    frozenset({"CON", "PRN", "AUX", "NUL"})
+    | frozenset(f"COM{i}" for i in range(1, 10))
+    | frozenset(f"LPT{i}" for i in range(1, 10))
+)
+
 
 class InvalidCollectionNameError(ValueError):
     """Raised when a collection name fails :func:`validate_collection_name`."""
@@ -610,6 +619,15 @@ def validate_collection_name(name: str) -> str:
         shown = ", ".join(sorted(repr(c) for c in bad))
         raise InvalidCollectionNameError(
             f"collection name {name!r} contains forbidden character(s): {shown}"
+        )
+    # Windows reserves device names (CON, PRN, …) for ANY file whose stem —
+    # the part before the first dot — matches, so ``CON`` → ``CON.state.toml``
+    # can't be created. Reject only on Windows so an existing macOS/Linux config
+    # with such a name keeps loading; it fails clearly if that config is opened
+    # on Windows rather than dying on an opaque file-creation error.
+    if sys.platform == "win32" and name.split(".", 1)[0].upper() in _WIN_RESERVED_NAMES:
+        raise InvalidCollectionNameError(
+            f"collection name {name!r} is a reserved device name on Windows"
         )
     return name
 

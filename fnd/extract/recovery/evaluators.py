@@ -11,10 +11,25 @@ from pathlib import Path
 
 _ALPHA_TOKEN_RE = re.compile(r"[A-Za-z]{3,}")
 
+
 # System word list used to judge OCR legibility. Suffix-stemming catches
 # inflected forms a bare dictionary misses (which would false-flag clean
 # prose as garbled).
-_SYSTEM_DICT = Path("/usr/share/dict/words")
+def _find_system_dict() -> Path:
+    """First installed Unix word list (macOS/Linux/BSD locations). Windows
+    ships none — the caller then abstains from the legibility heuristic
+    rather than failing."""
+    for candidate in (
+        Path("/usr/share/dict/words"),
+        Path("/usr/share/dict/web2"),
+        Path("/usr/dict/words"),
+    ):
+        if candidate.exists():
+            return candidate
+    return Path("/usr/share/dict/words")  # canonical miss → .open() → abstain
+
+
+_SYSTEM_DICT = _find_system_dict()
 _LEGR_SUFFIXES = (
     "s",
     "es",

@@ -78,7 +78,10 @@ def test_promote_only_current_engine_entries(tmp_path: Path) -> None:
     assert migrated == 1
     assert failed == 0
     assert cache.get(f"{cur}--tex-v1") is not None
-    assert (tmp_path / old[:2] / f"{old}--pymupdf4llm-1.20|cfg-OLDHASH.json").exists()
+    # The genuinely-older entry is left in place — check via get() (which
+    # round-trips through entry_path) so the assertion is filename-encoding
+    # agnostic (Windows sanitises the ``|`` in the on-disk name).
+    assert cache.get(f"{old}--pymupdf4llm-1.20|cfg-OLDHASH") is not None
     # Idempotent.
     assert cache.promote_current_engine_entries(
         current_sig="tex-v1", current_cfg_marker="cfg-CURHASH"

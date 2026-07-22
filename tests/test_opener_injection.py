@@ -9,6 +9,7 @@ byte percent-encodes. These tests pin that behaviour.
 
 from __future__ import annotations
 
+import sys
 import urllib.parse
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,13 @@ import pytest
 
 from fnd import opener
 
+# Skim is macOS-only; its skim:/// deep-link (and the NUL/adversarial-filename
+# hardening around it) is only built on Darwin. Windows also differs at the path
+# layer — resolve() does not reject an embedded NUL the way POSIX does.
+mac_only = pytest.mark.skipif(sys.platform != "darwin", reason="Skim is macOS-only")
 
+
+@mac_only
 @pytest.mark.parametrize(
     "evil_name",
     [
@@ -57,6 +64,7 @@ def test_skim_url_neutralises_adversarial_filenames(tmp_path: Path, evil_name: s
     assert decoded == str(f.resolve())
 
 
+@mac_only
 def test_skim_url_rejects_nul_byte_via_path_resolution(tmp_path: Path) -> None:
     """NUL in a Path raises before ``skim_url`` ever runs — Python's path
     layer refuses to embed it, which is the right outcome (NUL would
@@ -75,6 +83,9 @@ def test_open_smart_dispatches_to_url_for_adversarial_filename(
     assert not hasattr(opener, "open_pdf_via_applescript")
 
     f = tmp_path / 'evil"newline.pdf'
+    # Skim auto-promotion is macOS-only; pin the platform so this mac-dispatch
+    # path runs on any CI runner.
+    monkeypatch.setattr("sys.platform", "darwin")
     monkeypatch.setattr(opener, "_has_skim", lambda: True)
     # Isolate from the user's real config — without this the test routes
     # through whichever ``[app_defaults]`` the developer happens to have set.

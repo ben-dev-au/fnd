@@ -288,7 +288,10 @@ async def test_saved_scope_desync_repaired_on_launch(
     shared-source bug above) must read as FULL at launch: a full
     collection is config-relative, so it covers every current source
     and the marker reads ● regardless of the stale ``sources`` list."""
-    notes_id = str((Path(__file__).parent / "fixtures" / "notes").resolve())
+    # as_posix(): this path is embedded in a double-quoted TOML string; a native
+    # Windows path (backslashes) would parse as invalid escapes and the scope
+    # loader would swallow the error and hand back an empty scope.
+    notes_id = (Path(__file__).parent / "fixtures" / "notes").resolve().as_posix()
     isolated_ui_state.parent.mkdir(parents=True, exist_ok=True)
     isolated_ui_state.write_text(
         f'[scope]\ncollections = ["AAA"]\nsources = ["{notes_id}"]\n'

@@ -8,18 +8,20 @@ build-backend = "hatchling.build"
 # [tool.hatch.build.targets.wheel] and [project.scripts]).
 name = "fndr"
 version = "0.0.4"
-description = "Fast, free, keyboard-driven document search for macOS"
+description = "Fast, free, keyboard-driven document search for macOS, Linux, and Windows"
 readme = "README.md"
 requires-python = ">=3.13"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Ben Davidson" }]
-keywords = ["search", "cli", "tui", "full-text-search", "pdf", "bm25", "tantivy", "macos"]
+keywords = ["search", "cli", "tui", "full-text-search", "pdf", "bm25", "tantivy", "cross-platform"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: End Users/Desktop",
     "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3.13",
     "Topic :: Utilities",
     "Topic :: Text Processing :: Indexing",

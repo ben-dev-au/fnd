@@ -40,7 +40,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from platformdirs import user_data_dir
+from fnd import paths
 
 # Fall-back per-PDF cost (seconds) when no same-signature runs have
 # been recorded yet. Conservative; users with fast machines see this
@@ -72,7 +72,7 @@ class ThroughputRecord:
 def _state_path() -> Path:
     """File where throughput records persist. Per-user, not per-venv,
     so the calibration follows you across virtualenv recreations."""
-    return Path(user_data_dir("fnd")) / "indexer_throughput.jsonl"
+    return paths.throughput_log_path()
 
 
 def _current_signature() -> str:

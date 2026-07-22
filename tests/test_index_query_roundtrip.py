@@ -26,7 +26,7 @@ def test_pdf_anchor_attributes_to_correct_page(built_index: Path) -> None:
 
     assert hits, "expected at least one hit for the unique anchor phrase"
     top = hits[0]
-    assert top.path.endswith("papers/test.pdf"), f"top hit was {top.path}"
+    assert Path(top.path).as_posix().endswith("papers/test.pdf"), f"top hit was {top.path}"
     assert top.page == 7, f"expected page 7, got {top.page}"
 
 
@@ -35,7 +35,7 @@ def test_md_anchor_attributes_to_correct_section(built_index: Path) -> None:
 
     assert hits
     top = hits[0]
-    assert top.path.endswith("notes/index.md")
+    assert Path(top.path).as_posix().endswith("notes/index.md")
     assert "Sampling" in top.heading_path, f"expected Sampling in {top.heading_path!r}"
 
 
@@ -44,7 +44,7 @@ def test_txt_anchor_attributes_to_correct_file(built_index: Path) -> None:
 
     assert hits
     top = hits[0]
-    assert top.path.endswith("plain/short.txt")
+    assert Path(top.path).as_posix().endswith("plain/short.txt")
 
 
 def test_unrelated_query_does_not_return_anchor(built_index: Path) -> None:

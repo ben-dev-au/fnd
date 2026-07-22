@@ -235,7 +235,10 @@ def _scandir_walk(
                 rel = entry_path.relative_to(root)
             except ValueError:
                 continue
-            rel_str = str(rel)
+            # ``as_posix`` (not ``str``) so include/exclude globs — which are
+            # always ``/``-delimited — match on Windows, where ``str(Path)``
+            # would yield backslash separators and never match.
+            rel_str = rel.as_posix()
 
             # Hidden-file filter mirrors the historical post-rglob check
             # for the file itself; descent-time prune already dropped

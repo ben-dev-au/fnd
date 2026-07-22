@@ -16,13 +16,13 @@ import contextlib
 from pathlib import Path
 from typing import Any
 
-from platformdirs import user_data_dir
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
+from fnd import paths
 from fnd.config import CollectionConfig
 from fnd.walk import walk_sources
 
@@ -36,7 +36,7 @@ from fnd.walk import walk_sources
 
 
 def _marker_path() -> Path:
-    return Path(user_data_dir("fnd")) / "first_reindex_warning_seen"
+    return paths.first_reindex_marker_path()
 
 
 def has_been_seen() -> bool:

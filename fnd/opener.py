@@ -12,10 +12,12 @@
 from __future__ import annotations
 
 import shlex
-import subprocess
+import sys
 import urllib.parse
 from pathlib import Path
 from typing import Any, Final, Literal
+
+from fnd import launcher
 
 OpenStrategy = Literal["url", "default"]
 
@@ -53,17 +55,18 @@ def open_pdf_via_url(path: Path, page: int, *, search: str = "") -> int:
     """Open the Skim URL via ``open``. The URL form supports ``&search=`` so
     the match is highlighted on the page; AppleScript does not."""
     url = skim_url(path, page, search=search)
-    return subprocess.run(["open", url], check=False).returncode
+    return launcher.open_url(url)
 
 
 def open_default(path: Path) -> int:
-    """``open <path>`` — LaunchServices picks the default app for the type."""
-    return subprocess.run(["open", str(path)], check=False).returncode
+    """Open ``path`` in the OS default app for its type (via the launcher)."""
+    return launcher.open_path(path)
 
 
 def reveal_in_finder(path: Path) -> int:
-    """``open -R <path>`` — reveal in Finder, no app launch."""
-    return subprocess.run(["open", "-R", str(path)], check=False).returncode
+    """Reveal ``path`` in the platform file manager, no app launch."""
+    launcher.reveal(path)
+    return 0
 
 
 def open_smart(
@@ -114,10 +117,20 @@ def open_smart(
     # Any explicit ``app_defaults.pdf = "..."`` in the user config wins
     # over this auto-promotion.
     if "pdf" not in app_defaults:
-        if _has_skim():
-            app_defaults["pdf"] = "skim"
-        elif apps_mod.BUILTIN_APPS["preview"].available() and apps_mod.ax_trusted():
-            app_defaults["pdf"] = "preview"
+        if sys.platform == "darwin":
+            if _has_skim():
+                app_defaults["pdf"] = "skim"
+            elif apps_mod.BUILTIN_APPS["preview"].available() and apps_mod.ax_trusted():
+                app_defaults["pdf"] = "preview"
+        else:
+            # Linux / Windows: promote the first available page-jump viewer.
+            # Each id self-gates by OS via ``available`` (zathura/okular on
+            # Linux, sumatra on Windows), so one order serves both.
+            for pdf_id in ("zathura", "okular", "sumatra"):
+                candidate = registry.get(pdf_id)
+                if candidate is not None and candidate.available():
+                    app_defaults["pdf"] = pdf_id
+                    break
 
     app_params: dict[str, str] = {}
     if source is not None:
@@ -164,9 +177,12 @@ def _relative_to(target: Path, root: Path | None) -> str:
     if root is None:
         return ""
     try:
-        return str(target.expanduser().resolve().relative_to(Path(root).expanduser().resolve()))
+        rel = target.expanduser().resolve().relative_to(Path(root).expanduser().resolve())
     except (ValueError, OSError):
         return ""
+    # as_posix(): Obsidian's URI wants forward slashes; str() would emit
+    # backslashes on Windows and break the deep link.
+    return rel.as_posix()
 
 
 # ── Diagnostics for the TUI status bar ──────────────────────────────────────
@@ -180,18 +196,8 @@ def explain_open(*, kind: str, page: int, pdf_strategy: OpenStrategy) -> str:
 
 
 def reveal(path: Path | str) -> None:
-    """Reveal ``path`` in Finder (selected) via macOS `open -R`.
-
-    Fire-and-forget — uses Popen so the TUI doesn't block on Finder's
-    launch latency. On non-macOS platforms this is a no-op for now (the
-    project targets macOS per pyproject).
-    """
-    import platform
-
-    if platform.system() != "Darwin":
-        return
-    subprocess.Popen(
-        ["open", "-R", str(path)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    """Reveal ``path`` in the platform file manager, selecting it where
+    supported. Fire-and-forget so the TUI doesn't block on launch latency;
+    delegates to the OS launcher (macOS ``open -R`` · Windows
+    ``explorer /select,`` · Linux file-manager ``--select`` → folder)."""
+    launcher.reveal(path)

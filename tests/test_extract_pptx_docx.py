@@ -21,7 +21,7 @@ def test_pptx_anchor_attributes_to_correct_slide(built_index: Path) -> None:
 
     assert hits, "expected at least one hit"
     top = hits[0]
-    assert top.path.endswith("slides/deck.pptx")
+    assert Path(top.path).as_posix().endswith("slides/deck.pptx")
     assert top.slide == 4, f"expected slide 4, got {top.slide}"
 
 
@@ -30,7 +30,7 @@ def test_docx_anchor_attributes_to_correct_section(built_index: Path) -> None:
 
     assert hits
     top = hits[0]
-    assert top.path.endswith("docs/methods.docx")
+    assert Path(top.path).as_posix().endswith("docs/methods.docx")
     assert "Sampling" in top.heading_path, f"got heading_path={top.heading_path!r}"
 
 
@@ -39,4 +39,4 @@ def test_pptx_speaker_notes_are_indexed(built_index: Path) -> None:
     hits = Searcher(index_dir=built_index).search("differentiating tool", limit=5)
     assert hits
     top = hits[0]
-    assert top.path.endswith("slides/deck.pptx")
+    assert Path(top.path).as_posix().endswith("slides/deck.pptx")

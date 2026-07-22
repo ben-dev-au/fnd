@@ -42,6 +42,23 @@ def test_spaced_name_round_trips_through_toml(
     assert name in loaded.collections
 
 
+def test_backslash_path_round_trips_through_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Windows source path (backslashes) must survive the config
+    write→read round-trip. tomlkit escapes ``\\`` in the basic string, so
+    ``tomllib.loads`` doesn't choke on an invalid escape (WinError-class
+    regression: a raw ``path = "C:\\Users\\..."`` fails to parse)."""
+    cfg = tmp_path / "config.toml"
+    win_path = Path(r"C:\Users\runneradmin\AppData\Local\Temp\notes")
+    write_collection_source(
+        config_path=cfg, collection_name="notes", source=SourceConfig(path=win_path)
+    )
+    assert r"\\Users\\" in cfg.read_text(encoding="utf-8")  # escaped, not raw
+    loaded = load(cfg)  # would raise TOMLDecodeError if unescaped
+    assert loaded.collections["notes"].sources[0].path == win_path
+
+
 def test_state_file_path_handles_spaced_name() -> None:
     """The state file is per-collection; spaces in the name flow through
     to the filename. macOS / Linux accept spaces in filenames; the only

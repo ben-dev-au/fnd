@@ -16,15 +16,13 @@ from __future__ import annotations
 import contextlib
 from pathlib import Path
 
-from platformdirs import user_data_dir
-
-_DISMISSED_DIRNAME = "dismissed"
+from fnd import paths
 
 
 def _dismissed_root() -> Path:
     # Read on every call so test fixtures that monkeypatch
-    # ``user_data_dir`` see isolation immediately.
-    return Path(user_data_dir("fnd")) / _DISMISSED_DIRNAME
+    # ``_dismissed_root`` see isolation immediately.
+    return paths.dismissed_dir()
 
 
 def _marker_path(sha: str) -> Path:

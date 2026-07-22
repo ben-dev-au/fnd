@@ -42,11 +42,11 @@ def cfg(fixtures_dir: Path, tmp_path: Path) -> Config:
     cfg_path.write_text(
         textwrap.dedent(f"""
             [[collections.default.sources]]
-            path = "{fixtures_dir}"
+            path = "{fixtures_dir.as_posix()}"
             [[collections.alpha.sources]]
-            path = "{tmp_path / "alpha"}"
+            path = "{(tmp_path / "alpha").as_posix()}"
             [[collections.beta.sources]]
-            path = "{tmp_path / "beta"}"
+            path = "{(tmp_path / "beta").as_posix()}"
         """),
         encoding="utf-8",
     )

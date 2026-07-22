@@ -26,13 +26,13 @@ import contextlib
 import hashlib
 import json
 import os
+import sys
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from platformdirs import user_cache_dir
-
+from fnd import paths
 from fnd.extract.base import Block, Chunk
 
 CACHE_SCHEMA_VERSION = 1
@@ -47,7 +47,7 @@ def default_cache_dir() -> Path:
 
     On first launch where the legacy ``extraction/`` directory exists,
     rename it to ``pdf-structure/`` so users don't lose their cache."""
-    root = Path(user_cache_dir("fnd"))
+    root = paths.app_cache_dir()
     new_dir = root / _CACHE_DIRNAME
     legacy = root / _LEGACY_CACHE_DIRNAME
     if legacy.exists() and not new_dir.exists():
@@ -71,6 +71,36 @@ def _safe_mtime(path: Path) -> float:
         return path.stat().st_mtime
     except OSError:
         return 0.0
+
+
+# Windows rejects <>:"/\|?* in filenames; a cache key embeds an extractor
+# signature that can contain ``|`` (see fnd.extract.pdf.extractor_signature).
+# Percent-encode each illegal char there. This is:
+#   * reversible & collision-free — each illegal char maps to a unique token,
+#     so distinct keys never alias (``a|b`` → ``a%7Cb`` ≠ ``a_b``);
+#   * idempotent — the ``%XX`` tokens contain no illegal char, so re-encoding a
+#     sanitised stem is a no-op, which the glob→entry_path round-trip relies on.
+# macOS/Linux keep the raw key so existing caches aren't orphaned.
+_WIN_ILLEGAL_STEM = str.maketrans(
+    {
+        "<": "%3C",
+        ">": "%3E",
+        ":": "%3A",
+        '"': "%22",
+        "/": "%2F",
+        "\\": "%5C",
+        "|": "%7C",
+        "?": "%3F",
+        "*": "%2A",
+    }
+)
+
+
+def _safe_stem(key: str) -> str:
+    """Filename-safe form of a cache key on Windows; identity elsewhere."""
+    if sys.platform == "win32":
+        return key.translate(_WIN_ILLEGAL_STEM)
+    return key
 
 
 class PdfStructureCache:
@@ -108,9 +138,10 @@ class PdfStructureCache:
 
     def entry_path(self, key: str) -> Path:
         """Where a given key's blob would live on disk."""
-        # First 2 hex chars of the sha256 prefix = 256 shards.
+        # First 2 hex chars of the sha256 prefix = 256 shards (always hex, so
+        # filename-safe; only the signature tail can carry illegal chars).
         shard = key[:2]
-        return self.root / shard / f"{key}.json"
+        return self.root / shard / f"{_safe_stem(key)}.json"
 
     def get(self, key: str) -> list[Chunk] | None:
         """Return the cached chunks for `key`, or None on miss / corrupt.

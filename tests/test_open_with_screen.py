@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 from textual.app import App
@@ -105,8 +104,21 @@ def _isolate_ax(  # pyright: ignore[reportUnusedFunction]
     apps.set_notice_sink(None)
 
 
-def _fake_run(captured: list[list[str]]) -> Any:
-    return lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})()
+def _capture_launches(monkeypatch: pytest.MonkeyPatch, captured: list[list[str]]) -> None:
+    """Capture every launch into ``captured``, whichever seam a handler uses:
+    the mac-only subprocess handlers (``open -a`` / ``osascript``) AND the
+    cross-platform launcher (``open_url`` / ``open_path``). URL/path opens are
+    recorded as ``["open", target]`` so assertions read the same on every
+    platform in the CI matrix."""
+    monkeypatch.setattr(
+        apps.subprocess,
+        "run",
+        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
+    )
+    monkeypatch.setattr(apps.launcher, "open_url", lambda url: captured.append(["open", url]) or 0)
+    monkeypatch.setattr(
+        apps.launcher, "open_path", lambda p: captured.append(["open", str(p)]) or 0
+    )
 
 
 @pytest.mark.asyncio
@@ -116,7 +128,7 @@ async def test_modal_shows_pdf_apps_and_enter_fires_default(
     monkeypatch.setattr(apps, "_skim_app_exists", lambda: True)
     monkeypatch.setattr(apps, "_preview_app_exists", lambda: True)
     captured: list[list[str]] = []
-    monkeypatch.setattr(apps.subprocess, "run", _fake_run(captured))
+    _capture_launches(monkeypatch, captured)
 
     pdf = tmp_path / "doc.pdf"
     pdf.touch()
@@ -154,7 +166,7 @@ async def test_modal_letter_shortcut_fires_specific_app(
     monkeypatch.setattr(apps, "_skim_app_exists", lambda: True)
     monkeypatch.setattr(apps, "_preview_app_exists", lambda: True)
     captured: list[list[str]] = []
-    monkeypatch.setattr(apps.subprocess, "run", _fake_run(captured))
+    _capture_launches(monkeypatch, captured)
 
     pdf = tmp_path / "doc.pdf"
     pdf.touch()
@@ -189,7 +201,7 @@ async def test_modal_escape_dismisses_without_firing(
 ) -> None:
     monkeypatch.setattr(apps, "_skim_app_exists", lambda: True)
     captured: list[list[str]] = []
-    monkeypatch.setattr(apps.subprocess, "run", _fake_run(captured))
+    _capture_launches(monkeypatch, captured)
 
     pdf = tmp_path / "doc.pdf"
     pdf.touch()
@@ -223,7 +235,7 @@ async def test_modal_arrow_keys_move_cursor_and_enter_fires_highlighted(
     monkeypatch.setattr(apps, "_skim_app_exists", lambda: True)
     monkeypatch.setattr(apps, "_preview_app_exists", lambda: True)
     captured: list[list[str]] = []
-    monkeypatch.setattr(apps.subprocess, "run", _fake_run(captured))
+    _capture_launches(monkeypatch, captured)
 
     pdf = tmp_path / "doc.pdf"
     pdf.touch()
@@ -264,7 +276,7 @@ async def test_modal_md_hit_lists_obsidian_when_vault_known(
     vault from app_params, and dispatches via obsidian:// URL."""
     monkeypatch.setattr(apps, "_obsidian_app_exists", lambda: True)
     captured: list[list[str]] = []
-    monkeypatch.setattr(apps.subprocess, "run", _fake_run(captured))
+    _capture_launches(monkeypatch, captured)
 
     md = tmp_path / "vault" / "note.md"
     md.parent.mkdir()

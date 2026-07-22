@@ -444,6 +444,25 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
 
         rtree.focus()
         await safe_pause(pilot)
+
+        # Latch the settling-entry deterministically: arm() is what flips
+        # is_settling True (armed & not settled), so record when the controller
+        # arms for the TARGET rather than polling for the transient is_settling.
+        # Under heavy CI load a single safe_pause can block longer than the 0.4s
+        # injected settling window, so sampling is_settling at poll boundaries
+        # intermittently misses it (the documented macOS flake); the latch can't.
+        armed_for_target = False
+        ctrl = app._preview_scroll
+        _orig_arm = ctrl.arm
+
+        def _latching_arm(anchor: object) -> None:
+            nonlocal armed_for_target
+            if getattr(anchor, "parent_id", None) == target_group.parent_id:
+                armed_for_target = True
+            _orig_arm(anchor)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(ctrl, "arm", _latching_arm)
+
         # Arm the delay now — only the target navigation's landing lags.
         delay_target_landing = True
         rtree.move_cursor(rtree.root.children[1])
@@ -451,17 +470,11 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
         # Phase 1: prove the delayed-finalize path actually armed — the nav must
         # enter the settling state on the target before we wait for it to clear,
         # so a swap-in of the prefetched container can't satisfy phase 2 without
-        # the controller ever settling. Reliable here because the injected 0.4s
-        # delay holds the settling window wide open (we deliberately do NOT do
-        # this in the realistic-load test, where the fast landing can close the
-        # window inside one poll interval).
+        # the controller ever settling. Gate on the latch (not a live is_settling
+        # read) so a load spike that closes the window between polls can't fail us.
         await wait_until(
             pilot,
-            lambda: (
-                app._preview.active is not None
-                and app._preview.active.parent_doc_id == target_group.parent_id
-                and app._preview_scroll.is_settling
-            ),
+            lambda: armed_for_target,
             timeout=20.0,
             message="cold-nav target never entered settling",
         )

@@ -12,7 +12,13 @@ Mac" assumption.
 ``secure_mkdir`` walks the chain from the app data root down to the
 requested leaf, chmod-ing each segment we own. We deliberately do not
 touch anything *above* the app data root (e.g. ``~/Library/Application
-Support`` itself is OS-owned and should keep 0o755)."""
+Support`` itself is OS-owned and should keep 0o755).
+
+Platform note: POSIX modes are only meaningful on macOS/Linux. On Windows
+``os.chmod`` merely toggles the read-only bit (the 0o700/0o600 modes are a
+no-op there), so this hardening is a POSIX-only guarantee — but the Windows
+per-user profile root (``%LOCALAPPDATA%``) is already ACL-scoped to its
+owner, which provides the equivalent protection."""
 
 from __future__ import annotations
 

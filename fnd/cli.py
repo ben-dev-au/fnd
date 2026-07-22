@@ -71,13 +71,6 @@ def _rewrite_default_command(argv: list[str]) -> list[str]:
 
 def main() -> None:
     """Console-script entry point: rewrite argv, then dispatch to Typer."""
-    if sys.platform != "darwin":
-        print(
-            "fnd targets macOS only for now — it relies on macOS file APIs and the "
-            "`open` URL handler. Linux/Windows support isn't available yet.",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
     app(args=_rewrite_default_command(sys.argv[1:]))
 
 

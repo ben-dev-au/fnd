@@ -130,7 +130,9 @@ def _build_doc(tmp_path: Path, tmp_index_dir: Path, n_sections: int) -> tuple[Co
     (notes / "doc.md").write_text("\n".join(lines), encoding="utf-8")
     build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
     cfg_path = tmp_path / "config.toml"
-    cfg_path.write_text(f'[[collections.notes.sources]]\npath = "{notes}"\n', encoding="utf-8")
+    cfg_path.write_text(
+        f'[[collections.notes.sources]]\npath = "{notes.as_posix()}"\n', encoding="utf-8"
+    )
     return load(cfg_path), Path(tmp_index_dir)
 
 
@@ -238,7 +240,9 @@ async def test_reading_view_scroll_step_is_larger(tmp_path: Path, tmp_index_dir:
     (notes / "doc.md").write_text("\n".join(lines), encoding="utf-8")
     build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
     cfg_path = tmp_path / "config.toml"
-    cfg_path.write_text(f'[[collections.notes.sources]]\npath = "{notes}"\n', encoding="utf-8")
+    cfg_path.write_text(
+        f'[[collections.notes.sources]]\npath = "{notes.as_posix()}"\n', encoding="utf-8"
+    )
 
     from fnd.tui.preview_scrollbar import MatchAwareScroll
 

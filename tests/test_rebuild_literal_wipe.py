@@ -49,7 +49,7 @@ def test_cache_forget_content_removes_all_signatures(tmp_path: Path) -> None:
 def test_seen_log_forget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import fnd.seen_log as sl
 
-    monkeypatch.setattr(sl, "user_cache_dir", lambda _app: str(tmp_path))
+    monkeypatch.setattr(sl, "_seen_root", lambda: tmp_path)
     sl.mark_seen("deadbeef")
     assert sl.has_seen("deadbeef") is True
     sl.forget("deadbeef")

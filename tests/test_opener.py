@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
 
 from fnd import opener
 
+# Skim is a macOS-only PDF viewer and its skim:/// deep-link is only ever built
+# on Darwin (open_smart gates the promotion behind sys.platform == "darwin").
+# The URL is an absolute-path scheme, so its shape is platform-specific — pin
+# these to macOS rather than reason about Windows drive-letter encoding.
+mac_only = pytest.mark.skipif(sys.platform != "darwin", reason="Skim is macOS-only")
 
+
+@mac_only
 def test_skim_url_simple(tmp_path: Path) -> None:
     f = tmp_path / "paper.pdf"
     f.touch()
@@ -18,6 +26,7 @@ def test_skim_url_simple(tmp_path: Path) -> None:
     assert str(f.resolve()) in urlsafe_unquote(url)
 
 
+@mac_only
 def test_skim_url_spaces_are_encoded(tmp_path: Path) -> None:
     f = tmp_path / "paper with spaces.pdf"
     f.touch()
@@ -26,6 +35,7 @@ def test_skim_url_spaces_are_encoded(tmp_path: Path) -> None:
     assert "#page=14" in url
 
 
+@mac_only
 def test_skim_url_ampersand_encoded(tmp_path: Path) -> None:
     f = tmp_path / "a & b.pdf"
     f.touch()
@@ -33,6 +43,7 @@ def test_skim_url_ampersand_encoded(tmp_path: Path) -> None:
     assert "%26" in url, url
 
 
+@mac_only
 def test_skim_url_unicode(tmp_path: Path) -> None:
     f = tmp_path / "résumé.pdf"
     f.touch()
@@ -74,6 +85,9 @@ def test_open_smart_auto_promotes_preview_when_no_skim_and_ax_granted(
     from fnd import apps as apps_mod
 
     apps_mod._reset_ax_cache()
+    # Skim/Preview auto-promotion is macOS-only; pin the platform so this
+    # mac-dispatch path is exercised deterministically on any CI runner.
+    monkeypatch.setattr("sys.platform", "darwin")
     monkeypatch.setattr(opener, "_has_skim", lambda: False)
     monkeypatch.setattr(apps_mod, "_preview_app_exists", lambda: True)
     monkeypatch.setattr(apps_mod, "_probe_ax_trusted", lambda: True)
@@ -108,6 +122,9 @@ def test_open_smart_falls_through_to_system_when_no_skim_no_ax(
     from fnd import apps as apps_mod
 
     apps_mod._reset_ax_cache()
+    # macOS no-Skim/no-AX path — pin the platform so a Linux/Windows box with a
+    # page-jump viewer installed doesn't auto-promote it and bypass the seam.
+    monkeypatch.setattr("sys.platform", "darwin")
     monkeypatch.setattr(opener, "_has_skim", lambda: False)
     monkeypatch.setattr(apps_mod, "_preview_app_exists", lambda: True)
     monkeypatch.setattr(apps_mod, "_probe_ax_trusted", lambda: False)
@@ -117,15 +134,13 @@ def test_open_smart_falls_through_to_system_when_no_skim_no_ax(
 
     captured: list[list[str]] = []
     monkeypatch.setattr(
-        apps_mod.subprocess,
-        "run",
-        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
+        apps_mod.launcher, "open_path", lambda p: captured.append(["open", str(p)]) or 0
     )
 
     f = tmp_path / "paper.pdf"
     f.touch()
     opener.open_smart(path=f, kind="pdf", page=5)
-    # System fallback uses plain ``open <path>``.
+    # System fallback opens via the OS default (captured at the launcher seam).
     assert captured == [["open", str(f)]], f"got {captured}"
 
 
@@ -146,9 +161,7 @@ def test_open_smart_user_override_wins_over_auto_promote(
 
     captured: list[list[str]] = []
     monkeypatch.setattr(
-        apps_mod.subprocess,
-        "run",
-        lambda argv, **kw: captured.append(list(argv)) or type("R", (), {"returncode": 0})(),
+        apps_mod.launcher, "open_path", lambda p: captured.append(["open", str(p)]) or 0
     )
 
     f = tmp_path / "paper.pdf"
