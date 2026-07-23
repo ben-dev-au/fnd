@@ -69,12 +69,6 @@ class ScopeController:
         # Kind ids present in scope (for pruning the file-type filter). None =
         # not yet computed / unknown → show all. Recomputed on each panel refresh.
         self._present_kinds: set[str] | None = None
-        # Guard against Textual dispatching a single filter *click*'s select
-        # action twice (a framework quirk — a click posts NodeSelected twice in
-        # one message batch, which would toggle on then off = no effect). The
-        # flag is cleared on the next refresh, so distinct clicks still work and
-        # keyboard Enter (one NodeSelected) is unaffected.
-        self._filter_select_busy: bool = False
         # Sidebar panel state — always loaded from disk so user-tuned
         # collapse / expand state survives the next launch, even when
         # ``--collection`` is passed. The CLI flag overrides search
@@ -571,10 +565,6 @@ class ScopeController:
         if self._app._search.current_query:
             self._app._search.run(self._app._search.current_query)
 
-    def _clear_filter_select_busy(self) -> None:
-        """Release the click-dedupe guard (scheduled after each toggle)."""
-        self._filter_select_busy = False
-
     # ── Clear all filters ─────────────────────────────────────────
 
     def _action_colour(self) -> str:
@@ -897,14 +887,12 @@ class ScopeController:
           ``any`` clears the filter.
         - Selecting a category row is a no-op; expand/collapse is the
           tree's native behaviour for those.
+
+        Fires exactly once per click: the results tree no longer re-invokes the
+        base ``Tree._on_click`` (which the MRO already dispatches on its own),
+        so a click posts a single ``NodeSelected`` — see
+        ``ResultsTree._on_click``.
         """
-        # A single mouse click posts NodeSelected twice in one batch (Textual
-        # quirk); ignore the duplicate so a click toggles once. Cleared on the
-        # next refresh so distinct clicks and keyboard Enter still work.
-        if self._filter_select_busy:
-            return
-        self._filter_select_busy = True
-        self._app.call_after_refresh(self._clear_filter_select_busy)
         data = ev.node.data or {}
         kind = data.get("kind")
         # A File-type category row toggles all its member kinds at once —

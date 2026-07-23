@@ -60,6 +60,15 @@ class ResultsTree(Tree[dict[str, Any]]):
             self.scroll_to_line(self.cursor_line, animate=False)
 
     async def _on_click(self, event: events.Click) -> None:
+        # DO NOT call super()._on_click here. Textual's message pump dispatches
+        # a click to EVERY ``_on_click`` found while walking the MRO by naming
+        # convention (message_pump._get_dispatch_methods), so the base
+        # ``Tree._on_click`` already runs for us. Calling super as well runs it
+        # a second time — one physical click then toggles a node twice
+        # (expand+collapse = nothing happens, e.g. clicking an expand arrow) or
+        # posts ``NodeSelected`` twice (a leaf toggles on then off). Overriding
+        # to ADD behaviour is fine; just never re-invoke the base handler.
+        #
         # Collapsed-to-header: the only visible row is the selected file. A
         # click there should reopen the pane (and expand that result), not
         # toggle a node hidden behind the collapsed height.
@@ -70,7 +79,8 @@ class ResultsTree(Tree[dict[str, Any]]):
             self.post_message(self.ReopenRequested(self, node))
             event.stop()
             return
-        await super()._on_click(event)
+        # Otherwise fall through: the base Tree._on_click, dispatched separately
+        # via the MRO, handles the normal toggle/select exactly once.
 
     def _set_scan(self, scanning: bool) -> None:
         # Scan mode drives the PREVIEW, so only the results pane owns it.
@@ -131,15 +141,22 @@ class ResultsTree(Tree[dict[str, Any]]):
     def _is_selectable_when_expanded(self, node: Any) -> bool:
         """Whether an expanded parent should still accept the cursor.
 
-        Default False, which keeps the historic behaviour: results and
-        filter-category headers are dead rows when open, so the cursor skips
-        past them rather than parking where Enter does nothing. Rows that
-        carry their own selectable payload override this: ``filter_value`` tag
-        rows, and ``kind_category`` file-type rows (their Enter toggles the
-        whole category, so the cursor — and a mouse click — must land on them).
+        Default False: results file rows are dead when open, so the cursor
+        skips past them rather than parking where Enter does nothing. The
+        filters pane is the opposite — every row there *does* something on
+        Enter/click, so all its parent kinds stay selectable while expanded:
+        ``filter_category`` section headers (Enter/click collapses them),
+        ``kind_category`` file-type rows (toggle the whole category) and
+        ``filter_value`` tag rows (toggle the tag). Keeping headers selectable
+        also stops a click on an *expanded* header from drifting the cursor
+        down onto — and toggling — its first child.
         """
         data = node.data if isinstance(node.data, dict) else None
-        return bool(data) and data.get("kind") in ("filter_value", "kind_category")
+        return bool(data) and data.get("kind") in (
+            "filter_value",
+            "kind_category",
+            "filter_category",
+        )
 
     def validate_cursor_line(self, value: int) -> int:
         clamped = super().validate_cursor_line(value)

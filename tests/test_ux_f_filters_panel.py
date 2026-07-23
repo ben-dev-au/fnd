@@ -18,6 +18,7 @@ from textual.widgets import Tree
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from fnd.tui.widgets.results_tree import ResultsTree
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -108,6 +109,64 @@ async def test_kind_toggle_is_multi_select(cfg_one_collection: Config, mixed_ind
         tree.select_node(leaf("txt"))
         await pilot.pause()
         assert sorted(app._scope.filter_kinds) == ["md", "txt"]
+
+
+@pytest.mark.asyncio
+async def test_single_click_toggles_kind_leaf_once(
+    cfg_one_collection: Config, mixed_index: Path
+) -> None:
+    """One physical mouse click toggles a file-type leaf exactly once.
+
+    Regression: ``ResultsTree._on_click`` used to call ``super()._on_click``,
+    but Textual ALSO dispatches the base ``Tree._on_click`` while walking the
+    MRO — so a single click ran the handler twice, toggling on then off (net
+    nothing). This drives a real click (MouseDown/Up/Click) through the pump.
+    """
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#filters_panel_tree", ResultsTree)
+        kind_node = next(c for c in tree.root.children if "File type" in str(c.label))
+        kind_node.expand()
+        await pilot.pause()
+        cat = next(c for c in kind_node.children if c.children)
+        cat.expand()
+        await pilot.pause()
+        leaf = cat.children[0]
+        value = str((leaf.data or {})["value"])
+        tree.focus()
+
+        # Leaves carry no expand arrow, so any column on the row selects it.
+        await pilot.click(tree, offset=(12, leaf.line))
+        await pilot.pause()
+        assert value in app._scope.filter_kinds, "one click should toggle the kind ON"
+
+        await pilot.click(tree, offset=(12, leaf.line))
+        await pilot.pause()
+        assert value not in app._scope.filter_kinds, "next click should toggle it OFF"
+
+
+@pytest.mark.asyncio
+async def test_single_click_on_header_arrow_expands_once(
+    cfg_one_collection: Config, mixed_index: Path
+) -> None:
+    """Clicking a collapsed section header's expand arrow opens it — once.
+
+    Same double-dispatch root cause seen from the *toggle* branch: two
+    ``_toggle_node`` calls per click meant expand+collapse = a dead arrow.
+    """
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#filters_panel_tree", ResultsTree)
+        kind_node = next(c for c in tree.root.children if "File type" in str(c.label))
+        assert not kind_node.is_expanded
+        tree.focus()
+
+        # x=0 lands on the toggle triangle for a top-level node.
+        await pilot.click(tree, offset=(0, kind_node.line))
+        await pilot.pause()
+        assert kind_node.is_expanded, "clicking the arrow once should expand the header"
 
 
 @pytest.mark.asyncio
