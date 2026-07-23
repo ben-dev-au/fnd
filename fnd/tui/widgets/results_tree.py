@@ -59,6 +59,33 @@ class ResultsTree(Tree[dict[str, Any]]):
         if self.id == "results_pane" and "collapsed" in self.classes and self.cursor_line >= 0:
             self.scroll_to_line(self.cursor_line, animate=False)
 
+    def _toggle_node(self, node: Any) -> None:
+        # Collapsing a node with the cursor somewhere inside its subtree would
+        # otherwise strand the cursor: Textual keeps the cursor *line index*
+        # across the rebuild, so it lands on whatever row slides up into that
+        # line (the section below the one just collapsed). Follow the cursor up
+        # onto the node being collapsed instead — that's the row the user is
+        # acting on. Captured before the collapse so the check is reliable.
+        follow = (
+            node.is_expanded
+            and self.cursor_node is not None
+            and self.cursor_node is not node
+            and self._is_ancestor(node, self.cursor_node)
+        )
+        super()._toggle_node(node)
+        if follow:
+            self.move_cursor(node)
+
+    @staticmethod
+    def _is_ancestor(ancestor: Any, node: Any) -> bool:
+        """True if ``ancestor`` is a (strict) ancestor of ``node``."""
+        cur = node.parent
+        while cur is not None:
+            if cur is ancestor:
+                return True
+            cur = cur.parent
+        return False
+
     async def _on_click(self, event: events.Click) -> None:
         # DO NOT call super()._on_click here. Textual's message pump dispatches
         # a click to EVERY ``_on_click`` found while walking the MRO by naming

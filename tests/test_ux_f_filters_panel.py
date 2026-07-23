@@ -170,6 +170,38 @@ async def test_single_click_on_header_arrow_expands_once(
 
 
 @pytest.mark.asyncio
+async def test_collapsing_header_follows_cursor_up_from_a_child(
+    cfg_one_collection: Config, mixed_index: Path
+) -> None:
+    """Collapsing File type (arrow click) with the cursor on a descendant lands
+    the cursor ON the header, not on whatever row slides up into that line.
+
+    Regression: Textual keeps the cursor *line index* across a collapse, so it
+    stranded on the section *below* the one collapsed. ResultsTree._toggle_node
+    now follows the cursor up onto the node being collapsed.
+    """
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#filters_panel_tree", ResultsTree)
+        ftype = next(c for c in tree.root.children if "File type" in str(c.label))
+        ftype.expand()
+        await pilot.pause()
+        cat = next(c for c in ftype.children if c.children)
+        cat.expand()
+        await pilot.pause()
+        tree.focus()
+        tree.move_cursor(cat.children[0])  # cursor on a deep kind leaf
+        await pilot.pause()
+        assert tree.cursor_node is cat.children[0]
+
+        tree._toggle_node(ftype)  # exactly the mouse arrow-collapse path
+        await pilot.pause()
+        assert not ftype.is_expanded
+        assert tree.cursor_node is ftype, "cursor should follow up onto the collapsed header"
+
+
+@pytest.mark.asyncio
 async def test_date_toggle_is_single_select(cfg_one_collection: Config, mixed_index: Path) -> None:
     """Selecting a date option replaces the previous selection."""
     app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
