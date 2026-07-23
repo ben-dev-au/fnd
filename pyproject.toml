@@ -37,6 +37,10 @@ dependencies = [
     "pymupdf~=1.27",
     "python-pptx~=1.0",
     "python-docx~=1.2",
+    # EPUB / HTML / ODF extraction: zip container + XHTML/content.xml parsing.
+    # Already resolved transitively via python-docx/python-pptx; declared
+    # directly here because fnd/extract/{epub,web,odf}.py import it.
+    "lxml~=6.1",
     "markdown-it-py~=4.0",
     "textual~=8.0",
     "rich~=15.0",
@@ -94,6 +98,9 @@ dev = [
     # distinguish that flake from a real regression.
     "pytest-rerunfailures>=14",
     "hypothesis>=6.110",
+    # Type stubs for lxml (used by the epub/web/odf extractors) so pyright
+    # strict can check the etree/html element APIs.
+    "lxml-stubs>=0.5",
     "pre-commit>=3.8",
     "pyte>=0.8.2",
     # pytest-testmon: pre-commit only re-runs tests whose imported

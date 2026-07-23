@@ -15,9 +15,12 @@ its entire collection.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
 
-Kind = Literal["pdf", "pptx", "docx", "md", "txt"]
+# A fine-grained file-type id (one per format, e.g. "pdf", "python", "epub").
+# The authoritative set lives in ``fnd.kinds.KIND_SPECS``; this is a plain ``str``
+# rather than a Literal because the registry is large and grows per file type.
+# A registry-consistency test asserts every emitted id is registered.
+Kind = str
 
 
 class ExtractError(Exception):

@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from fnd import launcher
+from fnd.kinds import ALL_KIND_IDS, CATEGORY_IDS, KIND_BY_ID
 
 # ── Data model ──────────────────────────────────────────────────────────────
 
@@ -71,11 +72,20 @@ class App:
     notes: str = ""
 
 
-# Whitelist of file kinds an app may declare in its ``handles``. Keeps user
-# TOML from registering arbitrary handlers for arbitrary string keys.
+# Whitelist of handles an app may declare. An app can target a fine-grained
+# kind id ("pdf", "python"), a whole category ("code", "documents"), the "*"
+# wildcard, or the legacy "markdown" alias (kept so existing configs and the
+# built-in obsidian/vscode apps keep validating). Derived from the registry so
+# new kinds/categories are accepted automatically.
 ALLOWED_HANDLES: Final[frozenset[str]] = frozenset(
-    {"md", "markdown", "txt", "pdf", "pptx", "docx", "*"}
+    set(ALL_KIND_IDS) | set(CATEGORY_IDS) | {"*", "markdown"}
 )
+
+
+def _category_of(kind: str) -> str | None:
+    spec = KIND_BY_ID.get(kind)
+    return spec.category if spec is not None else None
+
 
 # App ids must be safe for use as Pydantic dict keys and as TOML table keys.
 APP_ID_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
@@ -902,25 +912,29 @@ def resolve_app(
 ) -> App:
     """Walk the lookup hierarchy and return the resolved app.
 
-    1. ``source.app_for[kind]`` if set, if the id exists in registry.
-    2. ``source.app`` if set, if it exists, and if ``kind in app.handles``.
-    3. ``app_defaults[kind]`` if set and the id exists.
+    1. ``source.app_for[kind]`` (then the kind's category) if the id exists.
+    2. ``source.app`` if set, it exists, and it handles the kind, its
+       category, or ``*``.
+    3. ``app_defaults[kind]`` (then the kind's category) if the id exists.
     4. ``registry["system"]``.
 
-    Unknown ids at any layer are silently skipped (treated as absent) so a
-    typo in a single source's config doesn't block the open entirely.
+    A fine-grained kind id always takes precedence over its category, so a
+    per-``.py`` override wins over a blanket ``code`` default. Unknown ids at
+    any layer are silently skipped (treated as absent) so a typo in a single
+    source's config doesn't block the open entirely.
     """
+    category = _category_of(kind)
     if source is not None:
         per_source_for = getattr(source, "app_for", None) or {}
-        chosen_id = per_source_for.get(kind)
+        chosen_id = per_source_for.get(kind) or (category and per_source_for.get(category))
         if chosen_id and chosen_id in registry:
             return registry[chosen_id]
         per_source_app = getattr(source, "app", None)
         if per_source_app and per_source_app in registry:
             app = registry[per_source_app]
-            if kind in app.handles or "*" in app.handles:
+            if kind in app.handles or (category and category in app.handles) or "*" in app.handles:
                 return app
-    default_id = app_defaults.get(kind)
+    default_id = app_defaults.get(kind) or (category and app_defaults.get(category))
     if default_id and default_id in registry:
         return registry[default_id]
     return registry["system"]

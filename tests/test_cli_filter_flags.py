@@ -85,8 +85,17 @@ def test_modified_flag_becomes_a_query_token(captured: dict[str, Any]) -> None:
 
 def test_kind_flag_is_repeatable(captured: dict[str, Any]) -> None:
     runner.invoke(app, ["search", "notes", "--kind", "pdf", "--kind", "md"])
-    assert "kind:pdf" in captured["query"]
-    assert "kind:md" in captured["query"]
+    # Multiple --kind collapse into ONE OR-group so results match ANY of the
+    # kinds; separate kind: clauses would AND and match nothing.
+    assert "kind:(pdf md)" in captured["query"]
+
+
+def test_kind_category_flag_expands_to_members(captured: dict[str, Any]) -> None:
+    runner.invoke(app, ["search", "notes", "--kind", "code"])
+    # A category id expands to an OR-group over its member kinds.
+    assert "kind:(" in captured["query"]
+    assert "python" in captured["query"]
+    assert "cpp" in captured["query"]
 
 
 def test_no_flags_passes_no_tag_filter(captured: dict[str, Any]) -> None:

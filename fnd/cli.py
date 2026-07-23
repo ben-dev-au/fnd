@@ -20,6 +20,7 @@ from pathlib import Path
 import typer
 
 from fnd.config import default_config_path, default_index_dir
+from fnd.kinds import KINDS_IN_CATEGORY
 from fnd.launch_command import LaunchScope
 
 _ROOT_HELP = """Fast, free, keyboard-driven document search for macOS.
@@ -161,7 +162,9 @@ def tui(
         None, "--modified", help="Modified within: today/yesterday/week/month/year."
     ),
     kind: list[str] = typer.Option(
-        [], "--kind", help="Restrict to a file kind (pdf/docx/pptx/md/txt). Repeatable."
+        [],
+        "--kind",
+        help="Restrict to a file kind or category (e.g. pdf, python, code, ebooks). Repeatable.",
     ),
 ) -> None:
     """Launch the interactive TUI.
@@ -245,7 +248,9 @@ def search(
         None, "--modified", help="Modified within: today/yesterday/week/month/year."
     ),
     kind: list[str] = typer.Option(
-        [], "--kind", help="Restrict to a file kind (pdf/docx/pptx/md/txt). Repeatable."
+        [],
+        "--kind",
+        help="Restrict to a file kind or category (e.g. pdf, python, code, ebooks). Repeatable.",
     ),
     explain: int | None = typer.Option(
         None,
@@ -284,7 +289,19 @@ def search(
         prefix_clauses.append(f"created:{flags.created}")
     if flags.modified:
         prefix_clauses.append(f"mtime:{flags.modified}")
-    prefix_clauses.extend(f"kind:{k}" for k in flags.kinds)
+    # --kind accepts fine-grained kind ids and/or category ids; categories
+    # expand to their member kinds. All values collapse into ONE kind:(a b …)
+    # OR-group (F_KIND stores fine-grained ids) so multiple --kind flags match
+    # ANY of the kinds — matching the TUI. Emitting one clause per flag would
+    # AND them and match nothing (a chunk has a single kind).
+    kind_values: list[str] = []
+    for k in flags.kinds:
+        kind_values.extend(KINDS_IN_CATEGORY.get(k, (k,)))
+    kind_values = list(dict.fromkeys(kind_values))  # de-dupe, keep order
+    if kind_values:
+        prefix_clauses.append(
+            f"kind:{kind_values[0]}" if len(kind_values) == 1 else f"kind:({' '.join(kind_values)})"
+        )
     if prefix_clauses:
         query = f"{' '.join(prefix_clauses)} {query}".strip()
 

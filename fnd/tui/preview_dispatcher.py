@@ -22,15 +22,16 @@ from __future__ import annotations
 
 from typing import Literal
 
+from fnd.kinds import MARKDOWN_RENDERED_KINDS
 from fnd.query import FileChunk
 
-# Kinds whose extractor can emit a Markdown serialisation in
-# ``body_md``; these route through the structural Markdown widget when
-# the chunk actually has ``body_md`` populated. PDF is included because
-# the optional ``pdf-structure`` extra populates ``body_md`` on PDF
-# chunks; without that extra ``body_md`` stays empty and the predicate
-# below keeps PDFs on the flat path automatically.
-_MARKDOWN_RENDERED_KINDS: frozenset[str] = frozenset({"md", "docx", "pptx", "pdf"})
+# Kinds whose extractor can emit a Markdown serialisation in ``body_md``;
+# these route through the structural Markdown widget when the chunk actually
+# has ``body_md`` populated (see the ``bool(c.body_md)`` guard below). Derived
+# from the central registry — PDF is included because the optional
+# ``pdf-structure`` extra populates ``body_md`` on PDF chunks; without it
+# ``body_md`` stays empty and the predicate keeps PDFs on the flat path.
+_MARKDOWN_RENDERED_KINDS: frozenset[str] = MARKDOWN_RENDERED_KINDS
 
 PreviewMode = Literal["flat", "structural"]
 

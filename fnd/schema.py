@@ -13,7 +13,7 @@ collection        text     raw       yes     yes   collection scoping
 path              text     raw       yes     no    filesystem path (display + open)
 path_tokens       text     default   no      no    tokenized for path matching
 mtime             u64      yes       yes     yes   incremental skip + recency boost
-kind              text     raw       yes     yes   ``pdf`` / ``pptx`` / ``docx`` / ``md`` / ``txt``
+kind              text     raw       yes     yes   fine-grained file-type id (see fnd.kinds.KIND_SPECS)
 page              u64      yes       yes     yes   PDF page index (1-based); 0 = N/A
 page_label        text     raw       yes     no    printed page label (e.g. "292" or "iv"); "" if N/A
 slide             u64      yes       yes     yes   1-based; 0 = N/A
@@ -40,7 +40,10 @@ from tantivy import Schema, SchemaBuilder
 # v8 (2026-07-19): added F_CREATED (birthtime) + F_INODE_CTIME (metadata
 # freshness) and the two tag fields. Tags are split by provenance so
 # toggling a source in config is a query-time change, not a reindex.
-SCHEMA_VERSION: Final[int] = 8
+# v9 (2026-07-23): fine-grained kinds + new suffixes (epub, html, ipynb, odf,
+# per-language code, data/config). No field or schema-shape change — the bump
+# forces a reindex so existing collections pick up the newly-supported files.
+SCHEMA_VERSION: Final[int] = 9
 
 # Field-name constants so callers don't sprinkle string literals.
 F_PARENT_ID: Final = "parent_id"
