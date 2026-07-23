@@ -125,6 +125,19 @@ def test_make_snippet_falls_back_when_no_intent_match() -> None:
     assert "performance" in snippet.lower()
 
 
+def test_make_snippet_sanitises_tabs_and_control_chars_at_source() -> None:
+    """Extracted PDF body text carries tabs (exercise numbering: ``5.\\tExplain``)
+    and stray controls. A snippet is a single-line display string, so the source
+    must strip them — the CLI and every label consumer inherit clean text."""
+    from fnd.query import _make_snippet
+
+    body = "of null. 5.\tExplain what is wrong\x07 with the hash table strategy"
+    snippet = _make_snippet(body, "hash table")
+    assert "\t" not in snippet
+    assert "\x07" not in snippet
+    assert "5. Explain what is wrong" in snippet
+
+
 def test_intent_in_multi_input_disables_bypass(cfg: Config, unambiguous_index: Path) -> None:
     """End-to-end: parse_multi_input → search_layered with intent →
     regime is NOT strong-signal."""

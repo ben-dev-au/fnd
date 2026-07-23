@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Final
 
 from tantivy import Index, Query, Schema
 
+from fnd.display_text import sanitise_display_text
 from fnd.extract.base import Block
 from fnd.query_errors import QuerySyntaxError
 from fnd.query_errors import QueryTooLargeError as QueryTooLargeError  # re-export (back-compat)
@@ -197,7 +198,7 @@ def _make_snippet(
     # the window on the wrong lone term (the bug behind "result doesn't match").
     terms = list(dict.fromkeys(t for t in _terms_from_query(query) if t in lower))
     if not terms:
-        return body_text[:ctx].strip()
+        return sanitise_display_text(body_text[:ctx]).strip()
 
     half = ctx // 2
     intent_tokens = [t for t in (intent or "").lower().split() if len(t) >= 3]
@@ -219,7 +220,7 @@ def _make_snippet(
 
     start_idx = max(0, best_pos - half)
     end_idx = min(len(body_text), best_pos + half)
-    return body_text[start_idx:end_idx].replace("\n", " ").strip()
+    return sanitise_display_text(body_text[start_idx:end_idx]).strip()
 
 
 def _passes_meta_filter(hit: Hit, predicate: object) -> bool:
