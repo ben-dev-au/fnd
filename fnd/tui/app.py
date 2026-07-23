@@ -239,7 +239,9 @@ class FNDApp(App[None]):
     /* Docked at the top so it floats above the scrolling tree, always in view
        while a filter is active; hidden otherwise. */
     #clear_filters_bar {
-        dock: top; height: 1; padding: 0 1; display: none;
+        /* visibility (not display) so the row is always reserved — the bar
+           appearing on the first active filter must not shove the tree down. */
+        dock: top; height: 1; padding: 0 1; visibility: hidden;
         color: $primary 50%;
     }
     #clear_filters_bar:hover { color: $accent; text-style: bold; }
@@ -571,9 +573,13 @@ class FNDApp(App[None]):
         ftree = self.query_one("#filters_panel_tree", Tree)
         ftree.show_root = False
         ftree.guide_depth = 2
-        # Filters parents (File type / Modified) are no-ops on Enter — skip
-        # past them when expanded.
+        # Filters parents (Modified / Created / Tags headers) are no-ops on
+        # Enter — skip past them when expanded. File-type *category* rows are
+        # exempt: they toggle, so they stay selectable (see ResultsTree).
         ftree._skip_expanded_parents = True  # type: ignore[attr-defined]
+        # Enter must TOGGLE only, never auto-expand the category (left/right do
+        # expand/collapse via action_tree_smart_expand/collapse). Matches ctree.
+        ftree.auto_expand = False
         self._scope.refresh_filters_panel()
         # Restore persisted panel collapse-to-header.
 
@@ -1472,6 +1478,7 @@ class FNDApp(App[None]):
 
     @on(Tree.NodeSelected, "#filters_panel_tree")
     def _on_filters_panel_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
+        ev.stop()
         self._scope.on_filters_selected(ev)
 
     @on(Tree.NodeSelected, "#collections_panel_tree")

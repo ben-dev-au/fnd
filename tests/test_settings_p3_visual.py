@@ -11,11 +11,16 @@ def test_indexer_filetypes_exposed_and_complete() -> None:
     """Spec: Add Collection wizard › Includes — file types come from a
     single source of truth, not hardcoded in two places."""
     from fnd.config import INDEXER_FILETYPES
+    from fnd.kinds import ALL_KIND_IDS
 
-    # Map of extension -> human label. Order is the order the picker shows.
-    assert tuple(INDEXER_FILETYPES) == ("md", "pdf", "docx", "pptx", "txt")
-    assert INDEXER_FILETYPES["md"] == "Markdown (.md)"
+    # Kind id -> human label, derived from the single registry source of truth.
+    assert tuple(INDEXER_FILETYPES) == tuple(ALL_KIND_IDS)
+    # The original document kinds are still present with descriptive labels…
+    assert INDEXER_FILETYPES["md"] == "Markdown (.md/.markdown)"
     assert INDEXER_FILETYPES["pdf"] == "PDF (.pdf)"
+    # …and the broadened set now includes the new families.
+    for kind_id in ("epub", "python", "csv", "html", "ipynb", "odt"):
+        assert kind_id in INDEXER_FILETYPES
 
 
 def test_f3_no_longer_in_keymap() -> None:

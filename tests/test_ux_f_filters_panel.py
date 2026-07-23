@@ -85,19 +85,29 @@ async def test_kind_toggle_is_multi_select(cfg_one_collection: Config, mixed_ind
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#filters_panel_tree", Tree)
-        # Expand the File type category and select two children.
+        # File type is now nested category → type; expand it and every category.
         kind_node = next(c for c in tree.root.children if "File type" in str(c.label))
         kind_node.expand()
         await pilot.pause()
-        # Toggle pdf and md by walking the tree to those leaves.
-        pdf_leaf = next(c for c in kind_node.children if " pdf" in str(c.label))
-        md_leaf = next(c for c in kind_node.children if " md" in str(c.label))
+        for cat in kind_node.children:
+            cat.expand()
+        await pilot.pause()
+
+        def leaf(value: str) -> object:
+            for cat in kind_node.children:
+                for lf in cat.children:
+                    if (lf.data or {}).get("value") == value:
+                        return lf
+            raise AssertionError(f"no type leaf for {value!r}")
+
+        # The filter is pruned to kinds present in scope (md + txt here), so
+        # toggle two of those; both stay selected (multi-select).
         tree.focus()
-        tree.select_node(pdf_leaf)
+        tree.select_node(leaf("md"))
         await pilot.pause()
-        tree.select_node(md_leaf)
+        tree.select_node(leaf("txt"))
         await pilot.pause()
-        assert sorted(app._scope.filter_kinds) == ["md", "pdf"]
+        assert sorted(app._scope.filter_kinds) == ["md", "txt"]
 
 
 @pytest.mark.asyncio
@@ -201,21 +211,114 @@ async def test_filters_persist_across_restart(
 
 
 @pytest.mark.asyncio
-async def test_active_kind_marked_in_label(cfg_one_collection: Config, mixed_index: Path) -> None:
-    """Selected file-type leaves show the ● marker; unselected show ○."""
+async def test_enter_on_filetype_leaf_keeps_cursor(
+    cfg_one_collection: Config, mixed_index: Path
+) -> None:
+    """Bug: toggling a file-type filter with Enter used to rebuild the tree and
+    drift the cursor a row down. It now repaints in place — cursor stays put."""
     app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._scope.filter_kinds = ["pdf"]
+        tree = app.query_one("#filters_panel_tree", Tree)
+        kind_node = next(c for c in tree.root.children if "File type" in str(c.label))
+        kind_node.expand()
+        await pilot.pause()
+        cat = kind_node.children[0]
+        cat.expand()
+        await pilot.pause()
+        md_leaf = next(lf for lf in cat.children if (lf.data or {}).get("value") == "md")
+        tree.focus()
+        tree.move_cursor(md_leaf)
+        await pilot.pause()
+        line_before = tree.cursor_line
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "md" in app._scope.filter_kinds
+        assert tree.cursor_line == line_before, "cursor must not jump after a toggle"
+        assert "●" in str(md_leaf.label), "marker must repaint in place"
+
+
+@pytest.mark.asyncio
+async def test_enter_on_category_toggles_without_expanding(
+    cfg_one_collection: Config, mixed_index: Path
+) -> None:
+    """Bug: Enter on a file-type category also expanded/collapsed it. Now Enter
+    only toggles; expand/collapse is left/right (auto_expand is off)."""
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#filters_panel_tree", Tree)
+        kind_node = next(c for c in tree.root.children if "File type" in str(c.label))
+        kind_node.expand()
+        await pilot.pause()
+        cat = kind_node.children[0]
+        cat.expand()
+        await pilot.pause()
+        tree.focus()
+        tree.move_cursor(cat)
+        await pilot.pause()
+        was_expanded = cat.is_expanded
+        await pilot.press("enter")
+        await pilot.pause()
+        assert cat.is_expanded == was_expanded, "Enter must not change expand state"
+        # And it did toggle the category's members on.
+        assert app._scope.filter_kinds, "Enter on a category should select its members"
+
+
+@pytest.mark.asyncio
+async def test_filetype_filter_pruned_to_present_kinds(
+    cfg_one_collection: Config, mixed_index: Path
+) -> None:
+    """The file-type filter only offers kinds present in scope (md + txt here);
+    absent kinds/categories (pdf, code, …) are omitted — like the Tags filter."""
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Ensure a search has run so the present-kind aggregation is computed.
+        app._search.run("glimmer")
+        await pilot.pause()
         app._scope.refresh_filters_panel()
         await pilot.pause()
         tree = app.query_one("#filters_panel_tree", Tree)
         kind_node = next(c for c in tree.root.children if "File type" in str(c.label))
         kind_node.expand()
         await pilot.pause()
-        for leaf in kind_node.children:
-            label = str(leaf.label)
-            if " pdf" in label:
-                assert "●" in label, f"active pdf should be marked: {label!r}"
-            else:
-                assert "○" in label, f"inactive should show ○: {label!r}"
+        shown_kinds: set[str] = set()
+        for cat in kind_node.children:
+            cat.expand()
+        await pilot.pause()
+        for cat in kind_node.children:
+            for leaf in cat.children:
+                shown_kinds.add(str((leaf.data or {}).get("value")))
+        assert shown_kinds == {"md", "txt"}, f"only present kinds should show: {shown_kinds}"
+
+
+@pytest.mark.asyncio
+async def test_active_kind_marked_in_label(cfg_one_collection: Config, mixed_index: Path) -> None:
+    """Selected file-type leaves show the ● marker; unselected show ○."""
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # md is present in the corpus, so it survives pruning and can be marked.
+        app._scope.filter_kinds = ["md"]
+        app._scope.refresh_filters_panel()
+        await pilot.pause()
+        tree = app.query_one("#filters_panel_tree", Tree)
+        kind_node = next(c for c in tree.root.children if "File type" in str(c.label))
+        kind_node.expand()
+        await pilot.pause()
+        for cat in kind_node.children:
+            cat.expand()
+        await pilot.pause()
+        # Check the type leaves: only md is active (●); every other type ○.
+        seen_md = False
+        for cat in kind_node.children:
+            for leaf in cat.children:
+                value = (leaf.data or {}).get("value")
+                label = str(leaf.label)
+                if value == "md":
+                    seen_md = True
+                    assert "●" in label, f"active md should be marked: {label!r}"
+                else:
+                    assert "○" in label, f"inactive should show ○: {label!r}"
+        assert seen_md, "md leaf should be present (it's in the corpus)"

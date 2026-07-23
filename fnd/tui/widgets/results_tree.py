@@ -114,7 +114,7 @@ class ResultsTree(Tree[dict[str, Any]]):
                 bar = self.app.query_one("#clear_filters_bar")
             except Exception:
                 bar = None
-            if bar is not None and bar.display:
+            if bar is not None and bar.visible:
                 bar.focus()
                 return
         super().action_cursor_up()
@@ -134,10 +134,12 @@ class ResultsTree(Tree[dict[str, Any]]):
         Default False, which keeps the historic behaviour: results and
         filter-category headers are dead rows when open, so the cursor skips
         past them rather than parking where Enter does nothing. Rows that
-        carry their own selectable payload override this.
+        carry their own selectable payload override this: ``filter_value`` tag
+        rows, and ``kind_category`` file-type rows (their Enter toggles the
+        whole category, so the cursor — and a mouse click — must land on them).
         """
         data = node.data if isinstance(node.data, dict) else None
-        return bool(data) and data.get("kind") == "filter_value"
+        return bool(data) and data.get("kind") in ("filter_value", "kind_category")
 
     def validate_cursor_line(self, value: int) -> int:
         clamped = super().validate_cursor_line(value)

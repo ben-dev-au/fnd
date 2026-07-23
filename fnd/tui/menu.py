@@ -118,6 +118,8 @@ class MenuItem:
     # PICKER
     multi: bool = False
     choices_provider: Callable[[FNDApp], list[ChoiceOption]] | None = None
+    # TREE_PICKER: category→item model for the nested ToggleTree picker.
+    groups_provider: Callable[[FNDApp], list[Any]] | None = None
     picker_getter: Callable[[FNDApp], Any] | None = None
     picker_setter: Callable[[FNDApp, Any], None] | None = None
 
