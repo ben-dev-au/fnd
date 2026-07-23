@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from fnd.display_text import sanitise_display_text
+
 if TYPE_CHECKING:
     from fnd.query import FileGroup, Hit
 
@@ -114,6 +116,11 @@ def _build_label(text: str, score: float, max_score: float) -> Any:
     """
     from rich.text import Text
 
+    # Last-line-of-defence sanitise so a raw ``\t`` (or other control char) from
+    # any source — snippet, heading crumb, filename — can never over-run the row
+    # and corrupt the pane border. Snippets are already cleaned at their source
+    # (fnd.query._make_snippet); this covers the locator/filename paths too.
+    text = sanitise_display_text(text)
     label = Text()
     if max_score > 0 and score > 0:
         label.append(f"{score:5.2f}", style=_score_style(score, max_score))

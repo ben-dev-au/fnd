@@ -76,6 +76,32 @@ def test_format_hit_label_uses_chunk_locator_when_heading_redundant() -> None:
     assert "Templates" not in plain.split("strategy")[0], plain
 
 
+def test_hit_label_replaces_tab_so_pane_border_cannot_break() -> None:
+    """A snippet carrying a raw TAB (common in extracted PDF body text, e.g.
+    ``5.\\tExplain ...``) must not reach the results-row label verbatim: a
+    terminal expands ``\\t`` to the next tab stop while Rich measures it as
+    zero cells, so the row over-runs its content region and corrupts the pane's
+    right border. Every whitespace char in a label must be a plain space."""
+    h = Hit(
+        score=1.0,
+        parent_id="x",
+        path="/x/Koffman.pdf",
+        kind="pdf",
+        page=344,
+        slide=0,
+        heading_path="",
+        title="Koffman",
+        snippet="of null. 5.\tExplain what is wrong",
+        page_label="344",
+        chunk_seq=0,
+    )
+    plain = _format_hit_label(h, max_score=1.0).plain
+    assert "\t" not in plain, plain
+    # The tab collapses to a single space, so the text reads cleanly and the
+    # rendered width matches the measured width (no zero-width surprise).
+    assert "5. Explain" in plain, plain
+
+
 def _write_md(p: Path, body: str) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(body, encoding="utf-8")
