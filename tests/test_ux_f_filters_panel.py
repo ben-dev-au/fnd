@@ -202,6 +202,47 @@ async def test_collapsing_header_follows_cursor_up_from_a_child(
 
 
 @pytest.mark.asyncio
+async def test_rapid_kind_toggles_coalesce_to_one_search(
+    cfg_one_collection: Config, mixed_index: Path
+) -> None:
+    """A burst of file-type toggles debounces to a SINGLE re-search.
+
+    Regression/perf: file-type is multi-select, so users toggle several kinds
+    in a row. Running the full synchronous search pipeline once per toggle
+    stalled the event loop N times and made subsequent nav feel laggy. The
+    commit is debounced so the burst collapses to one search.
+    """
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection, initial_query="glimmer")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        calls = {"n": 0}
+        orig = app._search.run
+
+        def counting_run(q: str) -> None:
+            calls["n"] += 1
+            return orig(q)
+
+        app._search.run = counting_run  # type: ignore[method-assign]
+
+        tree = app.query_one("#filters_panel_tree", ResultsTree)
+        ftype = next(c for c in tree.root.children if "File type" in str(c.label))
+        ftype.expand()
+        await pilot.pause()
+        for cat in ftype.children:
+            cat.expand()
+        await pilot.pause()
+        leaves = [lf for c in ftype.children for lf in c.children if not lf.children]
+        assert len(leaves) >= 2, "need at least two kind leaves for a burst"
+        tree.focus()
+        for lf in leaves[:3]:
+            tree.select_node(lf)
+            await pilot.pause()  # minimal — shorter than the 0.12s debounce window
+        assert calls["n"] == 0, "no search should fire mid-burst (debounced)"
+        await pilot.pause(0.25)  # let the debounce fire
+        assert calls["n"] == 1, f"burst should coalesce to one search, got {calls['n']}"
+
+
+@pytest.mark.asyncio
 async def test_date_toggle_is_single_select(cfg_one_collection: Config, mixed_index: Path) -> None:
     """Selecting a date option replaces the previous selection."""
     app = FNDApp(index_dir=mixed_index, config=cfg_one_collection)

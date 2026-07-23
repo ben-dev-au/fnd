@@ -19,6 +19,8 @@ from fnd.launch_command import LaunchScope, SearchSnapshot
 from fnd.tui.results_labels import _styled_action_label, _styled_parent_label
 
 if TYPE_CHECKING:
+    from textual.timer import Timer
+
     from fnd.tui.app import FNDApp
 
 __all__ = ["ScopeController"]
@@ -69,6 +71,9 @@ class ScopeController:
         # Kind ids present in scope (for pruning the file-type filter). None =
         # not yet computed / unknown → show all. Recomputed on each panel refresh.
         self._present_kinds: set[str] | None = None
+        # Debounce handle for the re-search after a filter toggle (see
+        # _commit_filter_change) so a burst of multi-select toggles coalesces.
+        self._filter_search_timer: Timer | None = None
         # Sidebar panel state — always loaded from disk so user-tuned
         # collapse / expand state survives the next launch, even when
         # ``--collection`` is passed. The CLI flag overrides search
@@ -559,11 +564,29 @@ class ScopeController:
                 return
 
     def _commit_filter_change(self) -> None:
-        """Shared tail after any filter toggle: status, persist, re-run search."""
+        """Shared tail after any filter toggle: status, persist, re-run search.
+
+        The re-search is DEBOUNCED. File-type is a multi-select filter, so the
+        user commonly toggles several kinds in a burst; running the full
+        (synchronous) search pipeline on every single toggle stalled the event
+        loop N times and made subsequent navigation feel laggy. Coalescing to
+        one search after the burst keeps the UI responsive. Status + persist
+        stay immediate (cheap, and the marker must update at once)."""
         self._app._refresh_status()
         self.persist()
-        if self._app._search.current_query:
-            self._app._search.run(self._app._search.current_query)
+        if not self._app._search.current_query:
+            return
+        if self._filter_search_timer is not None:
+            self._filter_search_timer.stop()
+        self._filter_search_timer = self._app.set_timer(
+            0.12, self._run_filter_search, name="filter-search-debounce"
+        )
+
+    def _run_filter_search(self) -> None:
+        self._filter_search_timer = None
+        query = self._app._search.current_query
+        if query:
+            self._app._search.run(query)
 
     # ── Clear all filters ─────────────────────────────────────────
 
