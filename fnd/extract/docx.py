@@ -85,6 +85,13 @@ def _paragraph_md(para: Paragraph) -> str:
     return "".join(parts)
 
 
+def _ilvl_depth(numpr: Any) -> int:
+    """List depth from a ``w:numPr`` element's ``w:ilvl/@w:val`` (0 if absent)."""
+    ilvl = numpr.find(qn("w:ilvl"))
+    val = ilvl.get(qn("w:val")) if ilvl is not None else None
+    return int(val) if val is not None else 0
+
+
 def _list_info(para: Paragraph) -> tuple[str, int] | None:
     """Detect whether ``para`` is a list item; return ``(prefix, depth)``
     or ``None``.
@@ -121,16 +128,12 @@ def _list_info(para: Paragraph) -> tuple[str, int] | None:
         numpr = ppr.find(qn("w:numPr"))
         if numpr is None:
             return None
-        ilvl = numpr.find(qn("w:ilvl"))
-        depth = int(ilvl.get(qn("w:val"))) if ilvl is not None else 0
-        return ("- ", depth)
+        return ("- ", _ilvl_depth(numpr))
     ppr = para._element.find(qn("w:pPr"))
     if ppr is not None:
         numpr = ppr.find(qn("w:numPr"))
         if numpr is not None:
-            ilvl = numpr.find(qn("w:ilvl"))
-            depth = int(ilvl.get(qn("w:val"))) if ilvl is not None else 0
-            return ("- ", depth)
+            return ("- ", _ilvl_depth(numpr))
     return None
 
 

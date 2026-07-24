@@ -59,6 +59,7 @@ from fnd.tui.menu import (
     walk_all_sections,
 )
 from fnd.tui.widgets import DetailStrip
+from fnd.tui.widgets.toggle_tree import ToggleGroup, ToggleItem, ToggleTree
 
 if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
@@ -1431,7 +1432,9 @@ class SettingsScreen(Screen[None]):
             self._refresh_hint_bar()
             return
         if item.kind == KIND_PICKER:
-            self.app.push_screen(PickerScreen(item))
+            self.app.push_screen(
+                TreePickerScreen(item) if item.groups_provider is not None else PickerScreen(item)
+            )
             return
         if item.kind == KIND_EXTERNAL:
             if item.external is not None:
@@ -1682,31 +1685,114 @@ class PickerScreen(Screen[None]):
             self.notify(_summarize(e), severity="error", title="Save failed")
 
 
+def _includes_groups() -> list[ToggleGroup]:
+    """Category → kind model for the Includes nested picker (all registry
+    kinds, since a source can index any supported type)."""
+    from fnd.kinds import CATEGORIES, KIND_BY_ID, KINDS_IN_CATEGORY
+
+    groups: list[ToggleGroup] = []
+    for cat in CATEGORIES:
+        items = tuple(
+            ToggleItem(k, f"{KIND_BY_ID[k].label} ({'/'.join(KIND_BY_ID[k].suffixes)})")
+            for k in KINDS_IN_CATEGORY[cat.id]
+        )
+        if items:
+            groups.append(ToggleGroup(cat.id, cat.label, items))
+    return groups
+
+
+class TreePickerScreen(Screen[None]):
+    """Nested category→item multi-select for a picker item that supplies a
+    ``groups_provider``. Reuses the shared :class:`ToggleTree`, so it toggles,
+    cascades, and repaints exactly like the file-type filter. Esc commits."""
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape", "back", "Back", show=False),
+    ]
+
+    CSS = """
+    TreePickerScreen { background: $surface; }
+    TreePickerScreen > #settings_box {
+        height: 1fr; border: round $primary 50%; padding: 0 1;
+    }
+    TreePickerScreen > #settings_box:focus-within { border: round $accent; }
+    TreePickerScreen > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(self, item: MenuItem) -> None:
+        super().__init__()
+        self._item = item
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings_box") as box:
+            box.border_title = self._item.label
+            yield ToggleTree(id="tree_picker")
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        app: FNDApp = self.app  # type: ignore[assignment]
+        groups = list(self._item.groups_provider(app)) if self._item.groups_provider else []
+        current = self._item.picker_getter(app) if self._item.picker_getter else []
+        selected = set(current) if isinstance(current, list | tuple | set) else set()
+        tree = self.query_one("#tree_picker", ToggleTree)
+        tree.set_model(groups, selected, expanded={g.id for g in groups})
+        tree.focus()
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(app, (("⏎/Space", "Toggle"), ("←/→", "Collapse/Expand"), ("Esc", "Save")))
+        )
+
+    @on(ToggleTree.SelectionChanged)
+    def _on_changed(self, ev: ToggleTree.SelectionChanged) -> None:
+        # Commit live so the row summary updates as the user toggles.
+        self._commit(ev.selected)
+
+    def action_back(self) -> None:
+        self._commit(self.query_one("#tree_picker", ToggleTree).selected)
+        self.app.pop_screen()
+
+    def _commit(self, values: frozenset[str]) -> None:
+        if self._item.picker_setter is None:
+            return
+        try:
+            self._item.picker_setter(self.app, sorted(values))  # type: ignore[arg-type]
+        except Exception as e:
+            self.notify(_summarize(e), severity="error", title="Save failed")
+
+
 # ── Collection-form screens (rebuilt from CollectionsScreen) ────────
 
 
+def _kinds_to_include_globs(kind_ids: list[str]) -> list[str]:
+    """Expand selected kind ids to include globs for all their suffixes."""
+    from fnd.kinds import KIND_BY_ID
+
+    globs: list[str] = []
+    for kid in kind_ids:
+        spec = KIND_BY_ID.get(kid)
+        if spec is not None:
+            globs.extend(f"**/*{sfx}" for sfx in spec.suffixes)
+    return globs
+
+
 def _split_includes_globs(globs: list[str]) -> tuple[list[str], str]:
-    """Map a list of includes globs back to ``(ext_keys, custom_blob)``.
+    """Map includes globs back to ``(kind_ids, custom_blob)``.
 
-    A glob is recognised as a preset extension iff it has the canonical
-    ``**/*.<ext>`` shape; anything else falls through to the custom blob
-    (comma-joined) so the user keeps their original pattern verbatim.
+    A kind is recognised as selected iff any of its suffix globs (``**/*<sfx>``)
+    is present; those globs are then consumed. Whatever remains becomes the
+    comma-joined custom blob so the user keeps their original patterns verbatim.
     """
-    from fnd.config import INDEXER_FILETYPES
+    from fnd.kinds import KIND_SPECS
 
-    exts: list[str] = []
-    leftover: list[str] = []
-    for g in globs:
-        matched_ext: str | None = None
-        for ext in INDEXER_FILETYPES:
-            if g == f"**/*.{ext}":
-                matched_ext = ext
-                break
-        if matched_ext is not None:
-            exts.append(matched_ext)
-        else:
-            leftover.append(g)
-    return exts, ", ".join(leftover)
+    remaining = list(globs)
+    kinds: list[str] = []
+    for spec in KIND_SPECS:
+        kglobs = [f"**/*{sfx}" for sfx in spec.suffixes]
+        if any(g in remaining for g in kglobs):
+            kinds.append(spec.id)
+            remaining = [g for g in remaining if g not in kglobs]
+    return kinds, ", ".join(remaining)
 
 
 def _split_excludes_globs(globs: list[str]) -> tuple[list[str], str]:
@@ -1872,7 +1958,7 @@ class SourceFormScreen(Screen[None]):
         self.query_one(SettingsList).set_items(self._build_field_items())
 
     def _build_field_items(self) -> list[MenuItem]:
-        from fnd.config import EXCLUDES_PRESETS, INDEXER_FILETYPES
+        from fnd.config import EXCLUDES_PRESETS
 
         return [
             self._field_item("path", "Path", hint="path or ~/path"),
@@ -1881,17 +1967,7 @@ class SourceFormScreen(Screen[None]):
                 label="Includes",
                 kind=KIND_PICKER,
                 multi=True,
-                choices_provider=lambda _app: [
-                    *(
-                        ChoiceOption(value=ext, label=label)
-                        for ext, label in INDEXER_FILETYPES.items()
-                    ),
-                    ChoiceOption(
-                        value="__custom__",
-                        label="Custom glob…",
-                        description="Add a free-form glob pattern (e.g. `**/*.org`).",
-                    ),
-                ],
+                groups_provider=lambda _app: _includes_groups(),
                 picker_getter=lambda _app: self._includes_picker_state(),
                 picker_setter=lambda _app, vs: self._set_includes(vs),
             ),
@@ -2010,10 +2086,12 @@ class SourceFormScreen(Screen[None]):
         self.query_one(SettingsList).refresh_values()
 
     def _includes_picker_state(self) -> list[str]:
-        state = list(self._fields["includes"])
-        if str(self._fields.get("includes_custom") or "").strip():
-            state.append("__custom__")
-        return state
+        # Nested tree picker seed: current kinds, or ALL kinds when empty so a
+        # new source opens with every type selected (empty includes = index all).
+        from fnd.kinds import ALL_KIND_IDS
+
+        inc = list(self._fields["includes"])
+        return inc if inc else list(ALL_KIND_IDS)
 
     def _excludes_picker_state(self) -> list[str]:
         state = list(self._fields["excludes_presets"])
@@ -2022,13 +2100,13 @@ class SourceFormScreen(Screen[None]):
         return state
 
     def _set_includes(self, values: list[str]) -> None:
-        picked = list(values)
-        wants_custom = "__custom__" in picked
-        self._fields["includes"] = [v for v in picked if v != "__custom__"]
-        if wants_custom and not str(self._fields.get("includes_custom") or "").strip():
-            self._prompt_custom("includes_custom", "Includes custom glob")
-        elif not wants_custom:
-            self._fields["includes_custom"] = ""
+        # Tree picker commit: store the selected kind ids. All selected → store
+        # empty (= index every supported type, and auto-pick up future types).
+        # Any existing custom-glob value is preserved untouched.
+        from fnd.kinds import ALL_KIND_IDS
+
+        picked = [v for v in values if v in set(ALL_KIND_IDS)]
+        self._fields["includes"] = [] if set(picked) >= set(ALL_KIND_IDS) else picked
         self.query_one(SettingsList).refresh_values()
 
     def _set_excludes(self, values: list[str]) -> None:
@@ -2078,7 +2156,9 @@ class SourceFormScreen(Screen[None]):
     def _on_field_activated(self, ev: SettingsList.Activated) -> None:
         item = ev.item
         if item.kind == KIND_PICKER:
-            self.app.push_screen(PickerScreen(item))
+            self.app.push_screen(
+                TreePickerScreen(item) if item.groups_provider is not None else PickerScreen(item)
+            )
         elif item.kind == KIND_SCALAR:
             current = self._fields.get(item.id.split(".", 1)[-1], "")
             if item.id == "form.filter":
@@ -2210,7 +2290,7 @@ class SourceFormScreen(Screen[None]):
             self._show_error(f"Path does not exist: {path}")
             return
         # Reassemble globs from picker-driven fields.
-        includes_globs: list[str] = [f"**/*.{ext}" for ext in self._fields["includes"]]
+        includes_globs: list[str] = _kinds_to_include_globs(list(self._fields["includes"]))
         for g in str(self._fields.get("includes_custom") or "").split(","):
             g = g.strip()
             if g:
@@ -2414,7 +2494,7 @@ class AddCollectionWizard(Screen[None]):
         self.query_one(SettingsList).set_items(self._build_field_items())
 
     def _build_field_items(self) -> list[MenuItem]:
-        from fnd.config import EXCLUDES_PRESETS, INDEXER_FILETYPES
+        from fnd.config import EXCLUDES_PRESETS
 
         return [
             MenuItem(
@@ -2434,17 +2514,7 @@ class AddCollectionWizard(Screen[None]):
                 label="Includes",
                 kind=KIND_PICKER,
                 multi=True,
-                choices_provider=lambda _app: [
-                    *(
-                        ChoiceOption(value=ext, label=label)
-                        for ext, label in INDEXER_FILETYPES.items()
-                    ),
-                    ChoiceOption(
-                        value="__custom__",
-                        label="Custom glob…",
-                        description="Add a free-form glob pattern (e.g. `**/*.org`).",
-                    ),
-                ],
+                groups_provider=lambda _app: _includes_groups(),
                 picker_getter=lambda _app: self._includes_picker_state(),
                 picker_setter=lambda _app, vs: self._set_includes(vs),
             ),
@@ -2488,7 +2558,8 @@ class AddCollectionWizard(Screen[None]):
         ]
 
     def _summarize_includes(self) -> str:
-        return f"{len(self._fields['includes'])} types"
+        n = len(self._fields["includes"])
+        return "all types" if n == 0 else f"{n} type{'s' if n != 1 else ''}"
 
     def _summarize_excludes(self) -> str:
         return f"{len(self._fields['excludes_presets'])} presets"
@@ -2511,13 +2582,12 @@ class AddCollectionWizard(Screen[None]):
         return f"{text}   ✗ col {err.column}"
 
     def _includes_picker_state(self) -> list[str]:
-        """What the Includes picker should show as pre-selected — the
-        extension list, plus the `__custom__` sentinel when a custom
-        value is set so the user sees the toggle as ticked."""
-        state = list(self._fields["includes"])
-        if str(self._fields.get("includes_custom") or "").strip():
-            state.append("__custom__")
-        return state
+        """Nested tree picker seed: current kinds, or ALL kinds when empty so a
+        new source opens with every type selected (empty includes = index all)."""
+        from fnd.kinds import ALL_KIND_IDS
+
+        inc = list(self._fields["includes"])
+        return inc if inc else list(ALL_KIND_IDS)
 
     def _excludes_picker_state(self) -> list[str]:
         state = list(self._fields["excludes_presets"])
@@ -2526,19 +2596,13 @@ class AddCollectionWizard(Screen[None]):
         return state
 
     def _set_includes(self, values: list[str]) -> None:
-        """Splits the picker output into preset extensions vs the custom
-        sentinel. When `__custom__` is in the selection we leave the
-        existing ``includes_custom`` value (or trigger a follow-up edit
-        bar) so the user can type their glob."""
-        picked = list(values)
-        wants_custom = "__custom__" in picked
-        exts = [v for v in picked if v != "__custom__"]
-        self._fields["includes"] = exts
-        if wants_custom and not str(self._fields.get("includes_custom") or "").strip():
-            # Open an EditBar to prompt for the custom glob value.
-            self._prompt_custom("includes_custom", "Includes custom glob")
-        elif not wants_custom:
-            self._fields["includes_custom"] = ""
+        """Tree picker commit: store selected kind ids. All selected → store
+        empty (= index every supported type, future-proof). Preserves any
+        existing custom-glob value untouched."""
+        from fnd.kinds import ALL_KIND_IDS
+
+        picked = [v for v in values if v in set(ALL_KIND_IDS)]
+        self._fields["includes"] = [] if set(picked) >= set(ALL_KIND_IDS) else picked
         self.query_one(SettingsList).refresh_values()
 
     def _set_excludes_presets(self, values: list[str]) -> None:
@@ -2567,7 +2631,9 @@ class AddCollectionWizard(Screen[None]):
     def _on_field_activated(self, ev: SettingsList.Activated) -> None:
         item = ev.item
         if item.kind == KIND_PICKER:
-            self.app.push_screen(PickerScreen(item))
+            self.app.push_screen(
+                TreePickerScreen(item) if item.groups_provider is not None else PickerScreen(item)
+            )
         elif item.kind == KIND_SCALAR:
             field_key = item.id.split(".", 1)[-1]
             current = self._fields.get(field_key, "")
@@ -2690,7 +2756,7 @@ class AddCollectionWizard(Screen[None]):
             self._show_error(f"Path does not exist: {p}")
             return
 
-        includes_globs: list[str] = [f"**/*.{ext}" for ext in self._fields["includes"]]
+        includes_globs: list[str] = _kinds_to_include_globs(list(self._fields["includes"]))
         includes_custom = str(self._fields.get("includes_custom") or "")
         for g in includes_custom.split(","):
             g = g.strip()

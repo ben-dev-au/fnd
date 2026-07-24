@@ -1,6 +1,6 @@
 """Build the test-fixture corpus.
 
-Run with ``uv run python -m tests.fixtures._build``. Outputs are committed so the
+Run with ``uv run python -m tests.build_fixtures``. Outputs are committed so the
 contract is reproducible without running this script — but running it must produce
 byte-identical content (no timestamps in PDF metadata, no random ordering).
 
@@ -19,7 +19,9 @@ from docx import Document as DocxDocument
 from pptx import Presentation
 from pptx.util import Inches, Pt
 
-FIXTURES = Path(__file__).parent
+# The builder lives in tests/ (not inside the indexed corpus, so it isn't
+# picked up now that .py is an indexed type); outputs go to tests/fixtures/.
+FIXTURES = Path(__file__).parent / "fixtures"
 
 # (path, page-or-section, content) — anchor phrases must be unique across the corpus.
 # The generator inserts them so the test layer knows where to find them.

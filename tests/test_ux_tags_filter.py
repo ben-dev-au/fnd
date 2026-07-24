@@ -251,10 +251,14 @@ async def test_expanded_tag_parent_is_reachable_by_cursor(cfg: Config, tagged_in
 
 
 @pytest.mark.asyncio
-async def test_category_headers_are_still_skipped_when_expanded(
-    cfg: Config, tagged_index: Path
-) -> None:
-    """The predicate must not over-correct: File type is a dead row."""
+async def test_expanded_section_header_stays_under_cursor(cfg: Config, tagged_index: Path) -> None:
+    """An expanded section header (File type) is reachable, not skipped.
+
+    It was once treated as a dead row, but Enter/click on a section header now
+    collapses the section — so the cursor must be able to land on it. Skipping
+    it also caused a *click* on an expanded header to drift the cursor down
+    onto (and toggle) its first child instead of collapsing the header.
+    """
     app = FNDApp(index_dir=tagged_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -265,7 +269,12 @@ async def test_category_headers_are_still_skipped_when_expanded(
         line = next(i for i, ln in enumerate(tree._tree_lines) if ln.node is kinds)
         tree.cursor_line = line
         await pilot.pause()
-        assert tree.cursor_node is not kinds
+        # The cursor stays on the header (no drift onto its first child)...
+        assert tree.cursor_node is kinds
+        # ...and selecting it collapses the section.
+        tree.select_node(kinds)
+        await pilot.pause()
+        assert not kinds.is_expanded
 
 
 @pytest.mark.asyncio

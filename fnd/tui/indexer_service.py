@@ -443,5 +443,8 @@ class IndexerService:
             self._app._search.searcher = Searcher(index_dir=self._app._index_dir)
         except (FileNotFoundError, RuntimeError, ValueError):
             self._app._search.searcher = None
+        # A rebuild may have added a new file-type kind — drop the present-kinds
+        # cache so the file-type filter recomputes on the next panel refresh.
+        self._app._scope.invalidate_present_kinds_cache()
         if self._app._search.current_query:
             self._app._search.run(self._app._search.current_query)

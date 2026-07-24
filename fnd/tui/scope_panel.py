@@ -14,19 +14,22 @@ from typing import TYPE_CHECKING, Any
 
 from textual.widgets import Tree
 
+from fnd.kinds import CATEGORIES, CATEGORY_BY_ID, KIND_BY_ID, KINDS_IN_CATEGORY
 from fnd.launch_command import LaunchScope, SearchSnapshot
 from fnd.tui.results_labels import _styled_action_label, _styled_parent_label
 
 if TYPE_CHECKING:
+    from textual.timer import Timer
+
     from fnd.tui.app import FNDApp
 
 __all__ = ["ScopeController"]
 
 # Phase F filters: panel layout. ``kinds`` is multi-select (each value
-# toggles independently); ``date`` is a radio (single-select; selecting
-# a new value replaces the previous). The presentation labels live next
-# to the values so the panel renders without further lookup tables.
-_FILTER_KINDS: tuple[str, ...] = ("pdf", "docx", "pptx", "md", "txt")
+# toggles independently) and nested category → type (mirroring the
+# Collections tree tri-state); ``date`` is a radio (single-select). The
+# file-type universe and its category grouping come from the central
+# registry (fnd.kinds) so the panel tracks new file types automatically.
 # No "any" row: an unselected filter IS "any". Enter on a value toggles it
 # (select, or deselect back to "any" if already selected), consistent with
 # the File-type and Tags rows rather than making the user pick an "any" row.
@@ -65,6 +68,18 @@ class ScopeController:
         self, app: FNDApp, *, collection: str | None, launch_filters: LaunchScope | None = None
     ) -> None:
         self._app = app
+        # Kind ids present in scope (for pruning the file-type filter). None =
+        # not yet computed / unknown → show all. Recomputed on each panel refresh.
+        self._present_kinds: set[str] | None = None
+        # Cache of the present-kinds aggregation, keyed by the full active scope
+        # (full collections, active sources), so it runs once per scope change
+        # instead of on every search.
+        self._present_kinds_cache: (
+            tuple[tuple[frozenset[str], frozenset[str]], set[str] | None] | None
+        ) = None
+        # Debounce handle for the re-search after a filter toggle (see
+        # _commit_filter_change) so a burst of multi-select toggles coalesces.
+        self._filter_search_timer: Timer | None = None
         # Sidebar panel state — always loaded from disk so user-tuned
         # collapse / expand state survives the next launch, even when
         # ``--collection`` is passed. The CLI flag overrides search
@@ -89,7 +104,10 @@ class ScopeController:
         self.expanded_filter_branches: set[str] = {
             b
             for b in saved.expanded_filter_branches
-            if b in ("kinds", "date", "created") or b == "tags" or b.startswith("tags:")
+            if b in ("kinds", "date", "created")
+            or b == "tags"
+            or b.startswith("tags:")
+            or b.startswith("kinds:")  # per-category File-type sub-branches
         }
         # Scope — one provenance-carrying map (``selection``) is the single
         # source of truth; ``collections`` / ``active_sources`` are derived
@@ -350,6 +368,78 @@ class ScopeController:
 
     # ── Filters panel (UX-F) ──────────────────────────────────────
 
+    def _present_kinds_for_scope(self) -> set[str] | None:
+        """Kind ids present in the active collections, or ``None`` when the
+        index isn't open / the aggregation fails (caller then shows all kinds).
+
+        Scoped to the COLLECTIONS, not the current search text (unlike the Tags
+        filter): a file-type list shouldn't churn as the user types, and the set
+        only changes when the collection selection changes. So the result is
+        CACHED per collection set — the aggregation runs once per scope change
+        instead of on every search (which ran on every filter toggle), keeping
+        the re-search cheap."""
+        from fnd.kind_catalog import present_kinds
+
+        searcher = getattr(self._app._search, "searcher", None)
+        index = getattr(searcher, "_index", None)
+        if index is None:
+            return None
+        # Key by the FULL active scope — full collections AND the active sources
+        # of partially-selected collections — so a source toggle recomputes and
+        # the filter never reveals kinds from unselected sources of the same
+        # collection.
+        key = (frozenset(self.collections), frozenset(self.active_sources))
+        cached = self._present_kinds_cache
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        result = present_kinds(
+            index, collections=self.collections, source_paths=self.active_sources
+        )
+        self._present_kinds_cache = (key, result)
+        return result
+
+    def invalidate_present_kinds_cache(self) -> None:
+        """Drop the cached present-kinds set. Called after a reindex: the cache
+        is keyed only by collection set, so a rebuild that adds a previously
+        unseen kind would otherwise stay hidden until the scope changes."""
+        self._present_kinds_cache = None
+
+    def _visible_members(self, category_id: str) -> tuple[str, ...]:
+        """Member kinds of a category, pruned to those present in scope. With
+        no present-set known (``None``), every registry member is visible.
+
+        An ACTIVE kind stays visible even if it isn't present in the current
+        scope (e.g. selected via ``--kind`` or left over after the scope
+        narrowed): otherwise it would keep filtering searches with no row to
+        clear it and no count in the summary."""
+        members = KINDS_IN_CATEGORY.get(category_id, ())
+        present = self._present_kinds
+        if present is None:
+            return members
+        active = set(self.filter_kinds)
+        return tuple(k for k in members if k in present or k in active)
+
+    def _kind_category_marker(self, category_id: str) -> str:
+        """Tri-state marker for a File-type category row: ● all (visible)
+        members selected · ◐ some · ○ none. Empty ``filter_kinds`` means "any",
+        so every category reads ○ (the parent summary shows "any")."""
+        members = self._visible_members(category_id)
+        active = set(self.filter_kinds)
+        n = sum(1 for k in members if k in active)
+        if n == 0:
+            return "○"
+        return "●" if n == len(members) else "◐"
+
+    def _toggle_kind_category(self, category_id: str) -> None:
+        """Toggle a whole File-type category: if every visible member is
+        already selected, clear them all; otherwise select all visible members."""
+        members = self._visible_members(category_id)
+        active = set(self.filter_kinds)
+        if members and all(m in active for m in members):
+            self.filter_kinds = [k for k in self.filter_kinds if k not in members]
+        else:
+            self.filter_kinds.extend(m for m in members if m not in active)
+
     def refresh_filters_panel(self) -> None:
         """Repopulate the Filters panel.
 
@@ -382,21 +472,39 @@ class ScopeController:
         tree.show_root = False
         tree.clear()
 
-        # A one-shot escape hatch, shown only when there's something to clear
-        # so it never adds noise to a clean pane.
+        # Prune the file-type filter to kinds actually present in scope, like
+        # the Tags filter (None = couldn't determine → show all).
+        self._present_kinds = self._present_kinds_for_scope()
         active_kinds = set(self.filter_kinds)
-        kind_summary = f"{len(active_kinds)} of {len(_FILTER_KINDS)}" if active_kinds else "any"
+        visible = [k for cat in CATEGORIES for k in self._visible_members(cat.id)]
+        n_active = len(active_kinds.intersection(visible))
+        kind_summary = f"{n_active} of {len(visible)}" if n_active else "any"
         kind_node = tree.root.add(
             _styled_parent_label(f"File type        ({kind_summary})"),
             data={"kind": "filter_category", "category": "kinds"},
             expand="kinds" in self.expanded_filter_branches,
         )
-        for k in _FILTER_KINDS:
-            marker = "●" if k in active_kinds else "○"
-            kind_node.add_leaf(
-                f"{marker}  {k}",
-                data={"kind": "filter_value", "category": "kinds", "value": k},
+        # Nested category → type, tri-state like the Collections tree: a
+        # category row toggles all its member kinds; each kind toggles
+        # individually; the category marker reflects mixed state. Categories
+        # with no present members are omitted entirely.
+        for cat in CATEGORIES:
+            members = self._visible_members(cat.id)
+            if not members:
+                continue
+            cat_node = kind_node.add(
+                f"{self._kind_category_marker(cat.id)}  {cat.label}",
+                data={"kind": "kind_category", "category": "kinds", "value": cat.id},
+                expand=f"kinds:{cat.id}" in self.expanded_filter_branches,
             )
+            for k in members:
+                marker = "●" if k in active_kinds else "○"
+                cat_node.add_leaf(
+                    # Pad so the kind marker indents past the category's arrow
+                    # (matching the Tags leaves), instead of aligning with it.
+                    f"{_LEAF_MARKER_PAD * 2}{marker}  {KIND_BY_ID[k].label}",
+                    data={"kind": "filter_value", "category": "kinds", "value": k},
+                )
 
         date_summary = self.filter_date or "any"
         date_node = tree.root.add(
@@ -426,11 +534,18 @@ class ScopeController:
 
         self._render_tags_branch(tree)
 
-        # Header tracks whether anything is filtering; the dim default
-        # keeps the panel quiet when no filters are active.
+        if keep is not None:
+            self._restore_cursor(tree, keep)
+        self._update_filters_chrome()
+
+    def _update_filters_chrome(self) -> None:
+        """Pane border title + clear bar + sidebar reflow. Shared by the full
+        filters rebuild and the in-place file-type repaint so both keep the
+        header, the clear-bar visibility, and the pane sizing in sync."""
         active_bits: list[str] = []
-        if active_kinds:
-            active_bits.append(f"{len(active_kinds)} kind{'s' if len(active_kinds) != 1 else ''}")
+        n_kinds = len(self.filter_kinds)
+        if n_kinds:
+            active_bits.append(f"{n_kinds} kind{'s' if n_kinds != 1 else ''}")
         if self.filter_date and self.filter_date != "any":
             active_bits.append(self.filter_date)
         if self.filter_created and self.filter_created != "any":
@@ -445,13 +560,68 @@ class ScopeController:
         try:
             self._app.query_one("#filters_pane").border_title = title
         except Exception:
-            tree.border_title = title  # pre-mount fallback
-        if keep is not None:
-            self._restore_cursor(tree, keep)
+            with contextlib.suppress(Exception):
+                self._app.query_one("#filters_panel_tree", Tree).border_title = title
         self._update_clear_bar()
-        # The rebuilt tag list (and the clear bar showing/hiding) changed the
-        # filters pane's row demand — reflow the sidebar heights.
+        # Clear-bar showing/hiding (and a rebuilt tag list) change the pane's
+        # row demand — reflow the sidebar heights.
         self._app._reflow_sidebar()
+
+    # ── File-type in-place repaint (no rebuild → cursor never jumps) ───────
+
+    def _filetype_summary_label(self) -> Any:
+        active = set(self.filter_kinds)
+        visible = [k for cat in CATEGORIES for k in self._visible_members(cat.id)]
+        n = len(active.intersection(visible))
+        summary = f"{n} of {len(visible)}" if n else "any"
+        return _styled_parent_label(f"File type        ({summary})")
+
+    def _repaint_filetype_leaf(self, leaf: Any) -> None:
+        kid = str((leaf.data or {}).get("value") or "")
+        marker = "●" if kid in set(self.filter_kinds) else "○"
+        leaf.set_label(f"{_LEAF_MARKER_PAD * 2}{marker}  {KIND_BY_ID[kid].label}")
+
+    def _repaint_filetype_category(self, cat_node: Any) -> None:
+        cat_id = str((cat_node.data or {}).get("value") or "")
+        cat_node.set_label(f"{self._kind_category_marker(cat_id)}  {CATEGORY_BY_ID[cat_id].label}")
+        for child in cat_node.children:
+            self._repaint_filetype_leaf(child)
+
+    def _repaint_filetype_summary(self) -> None:
+        try:
+            tree = self._app.query_one("#filters_panel_tree", Tree)
+        except Exception:
+            return
+        for node in tree.root.children:
+            data = node.data if isinstance(node.data, dict) else {}
+            if data.get("kind") == "filter_category" and data.get("category") == "kinds":
+                node.set_label(self._filetype_summary_label())
+                return
+
+    def _commit_filter_change(self) -> None:
+        """Shared tail after any filter toggle: status, persist, re-run search.
+
+        The re-search is DEBOUNCED. File-type is a multi-select filter, so the
+        user commonly toggles several kinds in a burst; running the full
+        (synchronous) search pipeline on every single toggle stalled the event
+        loop N times and made subsequent navigation feel laggy. Coalescing to
+        one search after the burst keeps the UI responsive. Status + persist
+        stay immediate (cheap, and the marker must update at once)."""
+        self._app._refresh_status()
+        self.persist()
+        if not self._app._search.current_query:
+            return
+        if self._filter_search_timer is not None:
+            self._filter_search_timer.stop()
+        self._filter_search_timer = self._app.set_timer(
+            0.12, self._run_filter_search, name="filter-search-debounce"
+        )
+
+    def _run_filter_search(self) -> None:
+        self._filter_search_timer = None
+        query = self._app._search.current_query
+        if query:
+            self._app._search.run(query)
 
     # ── Clear all filters ─────────────────────────────────────────
 
@@ -526,7 +696,9 @@ class ScopeController:
         except Exception:
             return
         active = self.has_active_filters
-        bar.display = active
+        # Toggle visibility, not display: the row stays reserved so showing the
+        # bar never shifts the tree content down.
+        bar.visible = active
         if active:
             n = self.active_filter_count
             plural = "" if n == 1 else "s"
@@ -773,21 +945,57 @@ class ScopeController:
           ``any`` clears the filter.
         - Selecting a category row is a no-op; expand/collapse is the
           tree's native behaviour for those.
+
+        Fires exactly once per click: the results tree no longer re-invokes the
+        base ``Tree._on_click`` (which the MRO already dispatches on its own),
+        so a click posts a single ``NodeSelected`` — see
+        ``ResultsTree._on_click``.
         """
         data = ev.node.data or {}
         kind = data.get("kind")
+        # A File-type category row toggles all its member kinds at once —
+        # repaint the category + its leaves + the summary IN PLACE (never a
+        # tree rebuild, so the cursor stays exactly where it was).
+        if kind == "kind_category":
+            cat_id = str(data.get("value") or "")
+            if not cat_id:
+                return
+            self._toggle_kind_category(cat_id)
+            self._repaint_filetype_category(ev.node)
+            self._repaint_filetype_summary()
+            self._update_filters_chrome()
+            self._commit_filter_change()
+            return
+        # A non-togglable section header (File type / Modified / Created / Tags)
+        # has nothing to toggle — a click or Enter expands/collapses it instead.
+        if kind == "filter_category":
+            if ev.node.allow_expand:
+                ev.node.toggle()
+            return
         if kind != "filter_value":
             return
         category = str(data.get("category") or "")
         value = str(data.get("value") or "")
         if not category or not value:
             return
+        # File-type leaf: toggle it and repaint the leaf's category + summary
+        # in place (no rebuild → no cursor jump).
         if category == "kinds":
             if value in self.filter_kinds:
                 self.filter_kinds.remove(value)
             else:
                 self.filter_kinds.append(value)
-        elif category == "date":
+            if ev.node.parent is not None:
+                self._repaint_filetype_category(ev.node.parent)
+            else:
+                self._repaint_filetype_leaf(ev.node)
+            self._repaint_filetype_summary()
+            self._update_filters_chrome()
+            self._commit_filter_change()
+            return
+        # Date / Created / Tags keep the full rebuild (radio/cycle semantics,
+        # far less frequent, and not subject to the file-type cursor-jump).
+        if category == "date":
             self.filter_date = "any" if self.filter_date == value else value
         elif category == "created":
             self.filter_created = "any" if self.filter_created == value else value
@@ -801,10 +1009,7 @@ class ScopeController:
         else:
             return
         self.refresh_filters_panel()
-        self._app._refresh_status()
-        self.persist()
-        if self._app._search.current_query:
-            self._app._search.run(self._app._search.current_query)
+        self._commit_filter_change()
 
     def on_collections_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
         """Enter on a collection node toggles the whole collection's scope
@@ -993,6 +1198,8 @@ class ScopeController:
         kind = data.get("kind")
         if kind == "filter_category":
             return str(data.get("category") or "")
+        if kind == "kind_category":  # File-type category sub-branch
+            return f"kinds:{data.get('value')}"
         if kind == "filter_value" and data.get("category") == "tags":
             return f"tags:{data.get('source')}:{data.get('value')}"
         return ""
@@ -1002,7 +1209,12 @@ class ScopeController:
         cat = self._branch_key(data)
         if not cat:
             return
-        known = cat in ("kinds", "date", "created") or cat == "tags" or cat.startswith("tags:")
+        known = (
+            cat in ("kinds", "date", "created")
+            or cat == "tags"
+            or cat.startswith("tags:")
+            or cat.startswith("kinds:")
+        )
         if known and cat not in self.expanded_filter_branches:
             self.expanded_filter_branches.add(cat)
             self.persist()

@@ -73,12 +73,15 @@ async def test_add_collection_pushes_wizard_with_expected_fields(built_index: Pa
 
 @pytest.mark.asyncio
 async def test_includes_field_opens_filetypes_picker(built_index: Path) -> None:
-    """Spec: Wizard › Includes — multi-select of indexer-supported types."""
+    """Wizard › Includes opens the nested ToggleTree picker, pre-selected to
+    ALL types (a new source indexes every supported type by default)."""
+    from fnd.kinds import ALL_KIND_IDS
     from fnd.tui.settings_screen import (
         AddCollectionWizard,
-        PickerScreen,
         SettingsList,
+        TreePickerScreen,
     )
+    from fnd.tui.widgets.toggle_tree import ToggleTree
 
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
@@ -88,18 +91,13 @@ async def test_includes_field_opens_filetypes_picker(built_index: Path) -> None:
         wiz = app.screen
         assert isinstance(wiz, AddCollectionWizard)
         lst = wiz.query_one(SettingsList)
-        # Move cursor to the Includes row.
         inc_idx = next(i for i, it in enumerate(lst._items) if it.id == "wiz.includes")
         lst.cursor_index = inc_idx
         await pilot.press("enter")
         await pilot.pause()
-        assert isinstance(app.screen, PickerScreen)
-        # The picker shows the indexer-supported types.
-        from fnd.config import INDEXER_FILETYPES
-
-        choice_values = [c.value for c in app.screen._choices]
-        # Every indexer-supported extension appears, plus the custom escape hatch.
-        assert set(INDEXER_FILETYPES.keys()) <= set(choice_values)
+        assert isinstance(app.screen, TreePickerScreen)
+        tree = app.screen.query_one("#tree_picker", ToggleTree)
+        assert tree.selected == frozenset(ALL_KIND_IDS)
 
 
 @pytest.mark.asyncio
@@ -257,31 +255,22 @@ async def test_esc_discards_wizard_with_no_side_effects(
 
 
 @pytest.mark.asyncio
-async def test_includes_picker_includes_custom_entry(built_index: Path) -> None:
-    """Spec: Wizard › Includes — `Custom glob…` escape hatch."""
+async def test_includes_tree_picker_preserves_custom_glob(built_index: Path) -> None:
+    """The nested Includes picker edits kinds only; an existing custom-glob
+    include is preserved untouched when it commits."""
     from fnd.tui import FNDApp
-    from fnd.tui.settings_screen import (
-        AddCollectionWizard,
-        PickerScreen,
-        SettingsList,
-    )
+    from fnd.tui.settings_screen import AddCollectionWizard
 
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.push_screen(AddCollectionWizard())
+        wiz = AddCollectionWizard()
+        app.push_screen(wiz)
         await pilot.pause()
-        wiz = app.screen
-        assert isinstance(wiz, AddCollectionWizard)
-        lst = wiz.query_one(SettingsList)
-        idx = next(i for i, it in enumerate(lst._items) if it.id == "wiz.includes")
-        lst.cursor_index = idx
-        await pilot.press("enter")
-        await pilot.pause()
-        picker = app.screen
-        assert isinstance(picker, PickerScreen)
-        values = [c.value for c in picker._choices]
-        assert "__custom__" in values, f"expected `__custom__` choice; got {values}"
+        wiz._fields["includes_custom"] = "**/*.org"
+        wiz._set_includes(["md", "txt"])
+        assert wiz._fields["includes"] == ["md", "txt"]
+        assert wiz._fields["includes_custom"] == "**/*.org"
 
 
 @pytest.mark.asyncio
@@ -313,15 +302,12 @@ async def test_excludes_picker_includes_custom_entry(built_index: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_includes_with_custom_sentinel_strips_and_prompts(
-    built_index: Path,
-) -> None:
-    """Setting includes via the picker with `__custom__` selected strips
-    the sentinel from `_fields["includes"]` and opens the EditBar."""
-    from textual.widgets import Input
-
+async def test_set_includes_stores_kinds_all_maps_to_empty(built_index: Path) -> None:
+    """_set_includes stores a selected-kind subset explicitly, and maps the
+    all-selected case to an empty list (= index every supported type)."""
+    from fnd.kinds import ALL_KIND_IDS
     from fnd.tui import FNDApp
-    from fnd.tui.settings_screen import AddCollectionWizard, EditBar
+    from fnd.tui.settings_screen import AddCollectionWizard
 
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
@@ -329,19 +315,10 @@ async def test_set_includes_with_custom_sentinel_strips_and_prompts(
         wiz = AddCollectionWizard()
         app.push_screen(wiz)
         await pilot.pause()
-        # Simulate the picker committing `md` plus the custom sentinel.
-        wiz._set_includes(["md", "__custom__"])
-        await pilot.pause()
-        # Sentinel filtered out of the regular extensions list.
-        assert wiz._fields["includes"] == ["md"]
-        # Edit bar opened to prompt for the custom value.
-        bar = wiz.query_one(EditBar)
-        assert "-hidden" not in bar.classes
-        # Submit a custom glob; it lands in includes_custom.
-        bar.query_one("#editor_input", Input).value = "**/*.org"
-        await pilot.press("enter")
-        await pilot.pause()
-        assert wiz._fields["includes_custom"] == "**/*.org"
+        wiz._set_includes(["md", "txt"])
+        assert wiz._fields["includes"] == ["md", "txt"]
+        wiz._set_includes(list(ALL_KIND_IDS))
+        assert wiz._fields["includes"] == []
 
 
 @pytest.mark.asyncio
@@ -357,10 +334,11 @@ async def test_source_form_uses_picker_for_includes(
     )
     from fnd.tui import FNDApp
     from fnd.tui.settings_screen import (
-        PickerScreen,
         SettingsList,
         SourceFormScreen,
+        TreePickerScreen,
     )
+    from fnd.tui.widgets.toggle_tree import ToggleTree
 
     cfg_path = tmp_path / "config.toml"
     monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
@@ -393,10 +371,11 @@ async def test_source_form_uses_picker_for_includes(
         await pilot.press("enter")
         await pilot.pause()
         picker = app.screen
-        assert isinstance(picker, PickerScreen)
+        assert isinstance(picker, TreePickerScreen)
+        tree = picker.query_one("#tree_picker", ToggleTree)
         # md and pdf pre-selected from the existing globs.
-        assert "md" in picker._selected
-        assert "pdf" in picker._selected
+        assert "md" in tree.selected
+        assert "pdf" in tree.selected
 
 
 @pytest.mark.asyncio

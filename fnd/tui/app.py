@@ -239,7 +239,9 @@ class FNDApp(App[None]):
     /* Docked at the top so it floats above the scrolling tree, always in view
        while a filter is active; hidden otherwise. */
     #clear_filters_bar {
-        dock: top; height: 1; padding: 0 1; display: none;
+        /* visibility (not display) so the row is always reserved — the bar
+           appearing on the first active filter must not shove the tree down. */
+        dock: top; height: 1; padding: 0 1; visibility: hidden;
         color: $primary 50%;
     }
     #clear_filters_bar:hover { color: $accent; text-style: bold; }
@@ -571,9 +573,13 @@ class FNDApp(App[None]):
         ftree = self.query_one("#filters_panel_tree", Tree)
         ftree.show_root = False
         ftree.guide_depth = 2
-        # Filters parents (File type / Modified) are no-ops on Enter — skip
-        # past them when expanded.
+        # Filters parents (Modified / Created / Tags headers) are no-ops on
+        # Enter — skip past them when expanded. File-type *category* rows are
+        # exempt: they toggle, so they stay selectable (see ResultsTree).
         ftree._skip_expanded_parents = True  # type: ignore[attr-defined]
+        # Enter must TOGGLE only, never auto-expand the category (left/right do
+        # expand/collapse via action_tree_smart_expand/collapse). Matches ctree.
+        ftree.auto_expand = False
         self._scope.refresh_filters_panel()
         # Restore persisted panel collapse-to-header.
 
@@ -1184,7 +1190,7 @@ class FNDApp(App[None]):
                 return self.query_one("#filters_pane", Vertical)
         return tree
 
-    def _reflow_sidebar(self) -> None:
+    def _reflow_sidebar(self, *, immediate: bool = False) -> None:
         """Recompute the sidebar panels' heights from live content demand.
 
         Coalesced to one pass per frame, so it's safe (and cheap) to call from
@@ -1192,8 +1198,24 @@ class FNDApp(App[None]):
         a rebuilt filter/collection list, a section expanding or collapsing, a
         panel collapsing to its header, or a terminal resize. That breadth is
         the point: the split stays responsive to every one of those the way a
-        static CSS rule can't. See :mod:`fnd.tui.sidebar_layout`."""
-        if self._reflow_pending or not self.screen_stack:
+        static CSS rule can't. See :mod:`fnd.tui.sidebar_layout`.
+
+        ``immediate`` runs the reallocation NOW, in the same message handler as
+        the change, rather than after the next refresh. Use it when a panel
+        toggles its ``collapsed`` class: deferring the reflow leaves the panel
+        drawn at its old (taller) inline height for one frame — visible as a
+        container with side walls but no bottom edge — before it snaps to the
+        header box. Doing it inline clears the stale height in the same frame,
+        so the collapse/expand is a single clean step. Content-demand reflows
+        (new results, section folds) still defer, since their new
+        ``virtual_size`` only settles after a refresh."""
+        if not self.screen_stack:
+            return
+        if immediate:
+            self._reflow_pending = False
+            self._do_reflow_sidebar()
+            return
+        if self._reflow_pending:
             return
         self._reflow_pending = True
         self.call_after_refresh(self._do_reflow_sidebar)
@@ -1294,7 +1316,7 @@ class FNDApp(App[None]):
                     frame.add_class("collapsed")
                     self._scope.collapsed_panels.add(frame.id)
                     self._scope.persist()
-                    self._reflow_sidebar()  # a header-strip panel frees its rows
+                    self._reflow_sidebar(immediate=True)  # collapse in one frame
                 return
             parent.collapse()
             tree.move_cursor(parent)
@@ -1324,7 +1346,7 @@ class FNDApp(App[None]):
             if frame.id:
                 self._scope.collapsed_panels.discard(frame.id)
                 self._scope.persist()
-            self._reflow_sidebar()  # a re-opened panel reclaims its share
+            self._reflow_sidebar(immediate=True)  # expand in one frame
             return
         node = tree.cursor_node
         if node is None or not node.children:
@@ -1334,6 +1356,31 @@ class FNDApp(App[None]):
         if not node.is_expanded:
             node.expand()
         self._move_cursor_to_first_child(tree, node)
+
+    def action_tree_expand_all_children(self) -> None:
+        """Expand the focused node and reveal its whole subtree — the node plus
+        every descendant. Works in every focusable sidebar tree (results,
+        collections, filters)."""
+        tree = self._focused_tree()
+        if tree is None:
+            return
+        node = tree.cursor_node
+        if node is not None and node.children:
+            node.expand_all()
+
+    def action_tree_collapse_all_children(self) -> None:
+        """Collapse the focused node's *children* (each child and its subtree),
+        leaving the node itself open. Only the descendants fold away — the row
+        you're on stays put, so this tidies a deep subtree without backing out
+        of it (use the plain Left arrow to collapse the node itself)."""
+        tree = self._focused_tree()
+        if tree is None:
+            return
+        node = tree.cursor_node
+        if node is None:
+            return
+        for child in node.children:
+            child.collapse_all()
 
     @staticmethod
     def _move_cursor_to_first_child(tree: Tree[Any], node: TreeNode[Any]) -> None:
@@ -1384,7 +1431,7 @@ class FNDApp(App[None]):
         if frame.id:
             self._scope.collapsed_panels.discard(frame.id)
             self._scope.persist()
-        self._reflow_sidebar()  # reclaim the reopened panel's share
+        self._reflow_sidebar(immediate=True)  # reopen in one frame
         return True
 
     @on(events.Click, "#filters_pane")
@@ -1472,6 +1519,7 @@ class FNDApp(App[None]):
 
     @on(Tree.NodeSelected, "#filters_panel_tree")
     def _on_filters_panel_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
+        ev.stop()
         self._scope.on_filters_selected(ev)
 
     @on(Tree.NodeSelected, "#collections_panel_tree")

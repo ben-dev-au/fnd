@@ -11,23 +11,14 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from fnd.extract.base import Chunk, ExtractError
+from fnd.kinds import SUFFIX_TO_MODULE, supported_suffixes
 
 __all__ = ["Chunk", "ExtractError", "extract", "supported_suffixes"]
 
-# Map suffix → extractor module attribute name. Lazily imported to keep
-# startup time small (pymupdf is the heaviest dep).
-_DISPATCH: dict[str, str] = {
-    ".txt": "plain",
-    ".md": "markdown",
-    ".markdown": "markdown",
-    ".pdf": "pdf",
-    ".pptx": "pptx",
-    ".docx": "docx",
-}
-
-
-def supported_suffixes() -> frozenset[str]:
-    return frozenset(_DISPATCH)
+# Suffix → extractor module, derived from the central registry (fnd.kinds).
+# Modules are lazily imported below to keep startup time small (pymupdf is the
+# heaviest dep). ``supported_suffixes`` is re-exported from the registry.
+_DISPATCH: dict[str, str] = SUFFIX_TO_MODULE
 
 
 def extract(path: Path, **kwargs: object) -> Iterator[Chunk]:

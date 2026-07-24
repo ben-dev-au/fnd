@@ -49,7 +49,12 @@ async def test_bar_hidden_when_no_filters(cfg: Config, idx: Path) -> None:
     app = FNDApp(index_dir=idx, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app.query_one("#clear_filters_bar", Static).display is False
+        bar = app.query_one("#clear_filters_bar", Static)
+        # Not shown when idle...
+        assert bar.visible is False
+        # ...but its row stays reserved (display, which drives the sidebar
+        # reflow's bar_rows) so the first active filter doesn't shove the tree.
+        assert bar.display is True
 
 
 @pytest.mark.asyncio
@@ -61,7 +66,7 @@ async def test_bar_appears_when_active(cfg: Config, idx: Path) -> None:
         app._scope.refresh_filters_panel()
         await pilot.pause()
         bar = app.query_one("#clear_filters_bar", Static)
-        assert bar.display is True
+        assert bar.visible is True
         assert "Clear" in str(bar.render())
 
 
@@ -97,7 +102,7 @@ async def test_bar_stays_visible_when_tree_scrolled(cfg: Config, idx: Path) -> N
         await pilot.pause()
         tree.scroll_end(animate=False)
         await pilot.pause()
-        assert app.query_one("#clear_filters_bar", Static).display is True
+        assert app.query_one("#clear_filters_bar", Static).visible is True
 
 
 @pytest.mark.asyncio
@@ -110,7 +115,7 @@ async def test_bar_hides_again_when_cleared(cfg: Config, idx: Path) -> None:
         await pilot.pause()
         app._scope.clear_filters()
         await pilot.pause()
-        assert app.query_one("#clear_filters_bar", Static).display is False
+        assert app.query_one("#clear_filters_bar", Static).visible is False
 
 
 @pytest.mark.asyncio
@@ -125,7 +130,7 @@ async def test_clicking_the_bar_clears(cfg: Config, idx: Path) -> None:
         await pilot.click("#clear_filters_bar")
         await pilot.pause()
         assert app._scope.has_active_filters is False
-        assert app.query_one("#clear_filters_bar", Static).display is False
+        assert app.query_one("#clear_filters_bar", Static).visible is False
 
 
 @pytest.mark.asyncio
@@ -210,7 +215,7 @@ async def test_bar_is_keyboard_selectable_from_the_tree_top(cfg: Config, idx: Pa
         await pilot.press("enter")  # activate the selected bar
         await pilot.pause()
         assert app._scope.has_active_filters is False
-        assert app.query_one("#clear_filters_bar", Static).display is False
+        assert app.query_one("#clear_filters_bar", Static).visible is False
         # Focus returned to the tree, not stranded on the vanished bar.
         assert app.focused is app.query_one("#filters_panel_tree", Tree)
 

@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from fnd.kinds import ALL_KIND_IDS, CATEGORY_IDS, KIND_SPECS
 from fnd.paths import app_data_dir  # re-exported: many modules import it from here
 
 _APP_NAME = "fnd"
@@ -153,15 +154,12 @@ DEFAULT_JUNK_DIRS: frozenset[str] = frozenset(
 )
 
 
-# Indexer-supported file types in display order. Used by the Add Source /
-# Add Collection wizards to render the Includes multi-select. Keep this in
-# sync with the kinds the extractor pipeline handles.
+# Indexer-supported file types, keyed by fine-grained kind id → display label,
+# derived from the central registry (fnd.kinds). Used by the Add Source / Add
+# Collection wizards' Includes multi-select. The wizard groups these by
+# category and expands a selected kind to globs for all its suffixes.
 INDEXER_FILETYPES: dict[str, str] = {
-    "md": "Markdown (.md)",
-    "pdf": "PDF (.pdf)",
-    "docx": "Word (.docx)",
-    "pptx": "PowerPoint (.pptx)",
-    "txt": "Plain text (.txt)",
+    spec.id: f"{spec.label} ({'/'.join(spec.suffixes)})" for spec in KIND_SPECS
 }
 
 # Exclude presets for the Add Collection wizard's Excludes multi-select. Each
@@ -357,11 +355,11 @@ class AppConfig(BaseModel):
     @field_validator("handles")
     @classmethod
     def _validate_handles(cls, v: list[str]) -> list[str]:
-        # Mirror fnd.apps.ALLOWED_HANDLES. Duplicated here so the config
-        # layer doesn't depend on importing apps.py at load time (apps.py
-        # imports from opener which used to import config — keeping the
-        # dependency one-way).
-        allowed = {"md", "markdown", "txt", "pdf", "pptx", "docx", "*"}
+        # Same allow-list as fnd.apps.ALLOWED_HANDLES, derived from the central
+        # registry here rather than importing apps.py at config-load time
+        # (apps.py imports opener which imports config — the dependency stays
+        # one-way; fnd.kinds imports nothing from fnd so it's cycle-safe).
+        allowed = set(ALL_KIND_IDS) | set(CATEGORY_IDS) | {"*", "markdown"}
         for h in v:
             if h not in allowed:
                 raise ValueError(f"unknown handle kind {h!r}; allowed: {sorted(allowed)}")

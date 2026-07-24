@@ -24,7 +24,10 @@ def two_pdf_index(fixtures_dir: Path, tmp_index_dir: Path, tmp_path: Path) -> Pa
     extra = tmp_path / "papers" / "second.pdf"
     extra.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(fixtures_dir / "papers" / "test.pdf", extra)
-    build_index(roots=[fixtures_dir, tmp_path], index_dir=tmp_index_dir, collection="default")
+    # Index the clone's dir, not all of tmp_path: the isolation fixtures drop
+    # fnd's own caches (pdf-structure-cache/*.json) under tmp_path, which would
+    # otherwise be indexed now that .json is a supported type.
+    build_index(roots=[fixtures_dir, extra.parent], index_dir=tmp_index_dir, collection="default")
     return tmp_index_dir
 
 

@@ -169,6 +169,16 @@ def walk(
         )
 
 
+# Mirrors fnd.migrate._SIDECAR_NAME; kept local so this low-level walker
+# doesn't import the higher-level migrate module (which would cycle via index).
+_INDEX_SIDECAR = ".fnd-schema-version"
+
+
+def _is_index_dir(path: str) -> bool:
+    """True if ``path`` is an fnd index directory (carries the sidecar)."""
+    return os.path.exists(os.path.join(path, _INDEX_SIDECAR))
+
+
 def _scandir_walk(
     *,
     root: Path,
@@ -186,7 +196,10 @@ def _scandir_walk(
     relied on the filesystem's ordering, which is good enough for the
     indexer but causes flaky tests when the order leaks into assertions.
     """
-    stack: list[Path] = [root]
+    # An index directory used directly as a scan root would otherwise have its
+    # internals (Tantivy meta.json, the schema sidecar, …) yielded — the
+    # per-child guard below only catches index dirs *nested* under the root.
+    stack: list[Path] = [] if _is_index_dir(str(root)) else [root]
     while stack:
         current = stack.pop()
         try:
@@ -208,6 +221,12 @@ def _scandir_walk(
                 if not follow_symlinks and is_symlink:
                     continue
                 if name in skip_dirs:
+                    continue
+                # Never descend into an fnd index directory (identified by its
+                # schema-version sidecar) — otherwise the walker would index
+                # fnd's own internals (e.g. the Tantivy meta.json) when an
+                # index lives inside a scanned corpus.
+                if _is_index_dir(entry.path):
                     continue
                 # Hidden directories pruned by default. Skipping at
                 # descent saves walking gigabytes of e.g. ``.git`` on

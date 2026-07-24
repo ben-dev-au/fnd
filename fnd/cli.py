@@ -20,6 +20,7 @@ from pathlib import Path
 import typer
 
 from fnd.config import default_config_path, default_index_dir
+from fnd.kinds import KINDS_IN_CATEGORY
 from fnd.launch_command import LaunchScope
 
 _ROOT_HELP = """Fast, free, keyboard-driven document search for macOS.
@@ -130,10 +131,17 @@ def parse_filter_flags(
         if value is not None and date_token_range(value) is None:
             typer.echo(f"{flag}: unknown date token {value!r}", err=True)
             raise typer.Exit(1)
+    # Expand category ids (e.g. "code" → its member language kinds) and de-dupe,
+    # so BOTH `search` and `tui` seed the index-compatible fine-grained ids —
+    # F_KIND never stores a category, so a raw ``kind:code`` clause matches
+    # nothing. Centralised here so the two command surfaces can't drift.
+    kind_values: list[str] = []
+    for k in kind:
+        kind_values.extend(KINDS_IN_CATEGORY.get(k, (k,)))
     return LaunchScope(
         created=created,
         modified=modified,
-        kinds=tuple(kind),
+        kinds=tuple(dict.fromkeys(kind_values)),
         tags=tuple(tag),
         not_tags=tuple(not_tag),
         tag_match_all=tag_match == "all",
@@ -161,7 +169,9 @@ def tui(
         None, "--modified", help="Modified within: today/yesterday/week/month/year."
     ),
     kind: list[str] = typer.Option(
-        [], "--kind", help="Restrict to a file kind (pdf/docx/pptx/md/txt). Repeatable."
+        [],
+        "--kind",
+        help="Restrict to a file kind or category (e.g. pdf, python, code, ebooks). Repeatable.",
     ),
 ) -> None:
     """Launch the interactive TUI.
@@ -245,7 +255,9 @@ def search(
         None, "--modified", help="Modified within: today/yesterday/week/month/year."
     ),
     kind: list[str] = typer.Option(
-        [], "--kind", help="Restrict to a file kind (pdf/docx/pptx/md/txt). Repeatable."
+        [],
+        "--kind",
+        help="Restrict to a file kind or category (e.g. pdf, python, code, ebooks). Repeatable.",
     ),
     explain: int | None = typer.Option(
         None,
@@ -284,7 +296,14 @@ def search(
         prefix_clauses.append(f"created:{flags.created}")
     if flags.modified:
         prefix_clauses.append(f"mtime:{flags.modified}")
-    prefix_clauses.extend(f"kind:{k}" for k in flags.kinds)
+    # ``flags.kinds`` is already category-expanded + de-duped by
+    # parse_filter_flags. All values collapse into ONE kind:(a b …) OR-group
+    # (F_KIND stores fine-grained ids) so multiple --kind flags match ANY of the
+    # kinds — matching the TUI. Emitting one clause per flag would AND them and
+    # match nothing (a chunk has a single kind).
+    if flags.kinds:
+        kv = list(flags.kinds)
+        prefix_clauses.append(f"kind:{kv[0]}" if len(kv) == 1 else f"kind:({' '.join(kv)})")
     if prefix_clauses:
         query = f"{' '.join(prefix_clauses)} {query}".strip()
 

@@ -18,6 +18,8 @@ from fnd.query import FileGroup, Hit, Searcher
 from fnd.rerank import RankingProfile, profile_from_config
 
 if TYPE_CHECKING:
+    from textual.timer import Timer
+
     from fnd.explain import SearchTrace
     from fnd.synonyms import SynonymTable
     from fnd.tag_query import TagFilter
@@ -88,6 +90,13 @@ class SearchController:
         # the user submits a :multi block.
         self.intent: str | None = None
         self.groups: list[FileGroup] = []
+        # Handle for the deferred prefetch timer so each new search cancels the
+        # previous one instead of stacking. A burst of searches (e.g. toggling
+        # several file-type filters) would otherwise queue a prefetch-of-10 per
+        # search — dozens of background preview mounts congesting the event loop
+        # and making every subsequent nav feel laggy. Only the latest search's
+        # top results are worth prefetching, so keep just the last timer alive.
+        self._prefetch_timer: Timer | None = None
         # Most-recent SearchTrace, populated on every _run_query so the
         # :explain overlay (UX-pass-4 §2) can dump it as JSON. None until
         # the first search runs.
@@ -295,7 +304,13 @@ class SearchController:
         # Defer prefetch start so the top result's user-side render gets the
         # main thread to itself for the first ~half-second. Without the
         # delay, 10 parallel prefetch mount tasks starve the auto-load.
-        self._app.set_timer(0.5, self._app._prefetch.prefetch_top_results, name="prefetch-defer")
+        # Cancel the prior deferred prefetch first: a burst of searches must not
+        # stack N prefetch-of-10 batches (only the latest result set matters).
+        if self._prefetch_timer is not None:
+            self._prefetch_timer.stop()
+        self._prefetch_timer = self._app.set_timer(
+            0.5, self._app._prefetch.prefetch_top_results, name="prefetch-defer"
+        )
 
     def _show_query_notice(self, err: Exception) -> None:
         """Render a calm, practical line below the query bar for a malformed
