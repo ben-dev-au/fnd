@@ -14,7 +14,7 @@ from collections.abc import Sequence
 
 import tantivy
 
-from fnd.schema import F_COLLECTION, F_KIND
+from fnd.schema import F_COLLECTION, F_KIND, F_SOURCE_PATH
 
 __all__ = ["present_kinds"]
 
@@ -22,24 +22,27 @@ __all__ = ["present_kinds"]
 _MAX_KINDS = 256
 
 
+def _or_terms(index: tantivy.Index, field: str, values: Sequence[str]) -> tantivy.Query:
+    terms = [tantivy.Query.term_query(index.schema, field, v) for v in values]
+    if len(terms) == 1:
+        return terms[0]
+    return tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in terms])
+
+
 def _scope_query(
     index: tantivy.Index,
     collections: Sequence[str],
-    query: tantivy.Query | None = None,
+    source_paths: Sequence[str],
 ) -> tantivy.Query:
-    """Restrict the aggregation to the active collections (all if empty) and to
-    ``query`` when a search is active. Mirrors ``tag_catalog._scope_query``."""
+    """Restrict the aggregation to the active scope — full collections (by
+    ``F_COLLECTION``) plus the active sources of partially-selected collections
+    (by ``F_SOURCE_PATH``), ANDed together exactly like the search's hard scope
+    filters (see ``query._raw_hits``). Empty scope aggregates the whole index."""
     clauses: list[tuple[tantivy.Occur, tantivy.Query]] = []
     if collections:
-        terms = [tantivy.Query.term_query(index.schema, F_COLLECTION, c) for c in collections]
-        col_q = (
-            terms[0]
-            if len(terms) == 1
-            else tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in terms])
-        )
-        clauses.append((tantivy.Occur.Must, col_q))
-    if query is not None:
-        clauses.append((tantivy.Occur.Must, query))
+        clauses.append((tantivy.Occur.Must, _or_terms(index, F_COLLECTION, collections)))
+    if source_paths:
+        clauses.append((tantivy.Occur.Must, _or_terms(index, F_SOURCE_PATH, source_paths)))
     if not clauses:
         return tantivy.Query.all_query()
     if len(clauses) == 1:
@@ -51,9 +54,13 @@ def present_kinds(
     index: tantivy.Index,
     *,
     collections: Sequence[str],
-    query: tantivy.Query | None = None,
+    source_paths: Sequence[str] = (),
 ) -> set[str] | None:
-    """Kind ids present in ``collections`` (every collection if empty).
+    """Kind ids present in the active scope (whole index if scope is empty).
+
+    ``collections`` are fully-selected collections; ``source_paths`` are the
+    active sources of partially-selected collections — matching the search's
+    scope so the file-type filter never reveals kinds from unselected sources.
 
     Returns ``None`` when the aggregation cannot be computed, so the caller can
     fall back to showing all kinds rather than an empty filter. An empty set
@@ -61,7 +68,7 @@ def present_kinds(
     """
     agg: dict[str, object] = {"kinds": {"terms": {"field": F_KIND, "size": _MAX_KINDS}}}
     try:
-        raw = index.searcher().aggregate(_scope_query(index, collections, query), agg)
+        raw = index.searcher().aggregate(_scope_query(index, collections, source_paths), agg)
         return {str(bucket["key"]) for bucket in raw["kinds"]["buckets"]}
     except Exception:
         return None

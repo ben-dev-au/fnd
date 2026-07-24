@@ -71,9 +71,12 @@ class ScopeController:
         # Kind ids present in scope (for pruning the file-type filter). None =
         # not yet computed / unknown → show all. Recomputed on each panel refresh.
         self._present_kinds: set[str] | None = None
-        # Cache of the present-kinds aggregation, keyed by the active collection
-        # set, so it runs once per scope change instead of on every search.
-        self._present_kinds_cache: tuple[frozenset[str], set[str] | None] | None = None
+        # Cache of the present-kinds aggregation, keyed by the full active scope
+        # (full collections, active sources), so it runs once per scope change
+        # instead of on every search.
+        self._present_kinds_cache: (
+            tuple[tuple[frozenset[str], frozenset[str]], set[str] | None] | None
+        ) = None
         # Debounce handle for the re-search after a filter toggle (see
         # _commit_filter_change) so a burst of multi-select toggles coalesces.
         self._filter_search_timer: Timer | None = None
@@ -381,11 +384,17 @@ class ScopeController:
         index = getattr(searcher, "_index", None)
         if index is None:
             return None
-        key = frozenset(self.collections)
+        # Key by the FULL active scope — full collections AND the active sources
+        # of partially-selected collections — so a source toggle recomputes and
+        # the filter never reveals kinds from unselected sources of the same
+        # collection.
+        key = (frozenset(self.collections), frozenset(self.active_sources))
         cached = self._present_kinds_cache
         if cached is not None and cached[0] == key:
             return cached[1]
-        result = present_kinds(index, collections=self.collections)
+        result = present_kinds(
+            index, collections=self.collections, source_paths=self.active_sources
+        )
         self._present_kinds_cache = (key, result)
         return result
 
@@ -397,12 +406,18 @@ class ScopeController:
 
     def _visible_members(self, category_id: str) -> tuple[str, ...]:
         """Member kinds of a category, pruned to those present in scope. With
-        no present-set known (``None``), every registry member is visible."""
+        no present-set known (``None``), every registry member is visible.
+
+        An ACTIVE kind stays visible even if it isn't present in the current
+        scope (e.g. selected via ``--kind`` or left over after the scope
+        narrowed): otherwise it would keep filtering searches with no row to
+        clear it and no count in the summary."""
         members = KINDS_IN_CATEGORY.get(category_id, ())
         present = self._present_kinds
         if present is None:
             return members
-        return tuple(k for k in members if k in present)
+        active = set(self.filter_kinds)
+        return tuple(k for k in members if k in present or k in active)
 
     def _kind_category_marker(self, category_id: str) -> str:
         """Tri-state marker for a File-type category row: ● all (visible)

@@ -56,3 +56,20 @@ def test_individual_type_survives_category_partial() -> None:
     sc._toggle_kind_category("code")
     assert "cpp" in sc.filter_kinds
     assert sc._kind_category_marker("code") == "●"
+
+
+def test_active_kind_stays_visible_even_when_not_present() -> None:
+    """An active kind absent from the current scope's present-set still gets a
+    row (so it's removable + counted), instead of silently filtering searches
+    with no way to clear it."""
+    sc = _controller()
+    members = list(KINDS_IN_CATEGORY["code"])
+    absent = members[1]  # active but NOT present in scope
+    sc._present_kinds = {members[0]}  # only the first member is present
+    sc.filter_kinds = [absent]
+
+    visible = sc._visible_members("code")
+    assert members[0] in visible  # present member
+    assert absent in visible, "active kind must stay visible even if not present"
+    # ...and it's counted (marker reflects the active selection, not "none").
+    assert sc._kind_category_marker("code") in ("◐", "●")
