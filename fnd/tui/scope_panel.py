@@ -389,6 +389,12 @@ class ScopeController:
         self._present_kinds_cache = (key, result)
         return result
 
+    def invalidate_present_kinds_cache(self) -> None:
+        """Drop the cached present-kinds set. Called after a reindex: the cache
+        is keyed only by collection set, so a rebuild that adds a previously
+        unseen kind would otherwise stay hidden until the scope changes."""
+        self._present_kinds_cache = None
+
     def _visible_members(self, category_id: str) -> tuple[str, ...]:
         """Member kinds of a category, pruned to those present in scope. With
         no present-set known (``None``), every registry member is visible."""

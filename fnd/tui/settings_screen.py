@@ -1764,28 +1764,6 @@ class TreePickerScreen(Screen[None]):
 # ── Collection-form screens (rebuilt from CollectionsScreen) ────────
 
 
-def _includes_choices() -> list[ChoiceOption]:
-    """Includes multi-select options: every registry kind, labelled with its
-    category (so the flat list reads grouped), plus a custom-glob sentinel."""
-    from fnd.kinds import CATEGORY_BY_ID, KIND_SPECS
-
-    out = [
-        ChoiceOption(
-            value=spec.id,
-            label=f"{CATEGORY_BY_ID[spec.category].label} · {spec.label} ({'/'.join(spec.suffixes)})",
-        )
-        for spec in KIND_SPECS
-    ]
-    out.append(
-        ChoiceOption(
-            value="__custom__",
-            label="Custom glob…",
-            description="Add a free-form glob pattern (e.g. `**/*.org`).",
-        )
-    )
-    return out
-
-
 def _kinds_to_include_globs(kind_ids: list[str]) -> list[str]:
     """Expand selected kind ids to include globs for all their suffixes."""
     from fnd.kinds import KIND_BY_ID
@@ -1989,7 +1967,6 @@ class SourceFormScreen(Screen[None]):
                 label="Includes",
                 kind=KIND_PICKER,
                 multi=True,
-                choices_provider=lambda _app: _includes_choices(),
                 groups_provider=lambda _app: _includes_groups(),
                 picker_getter=lambda _app: self._includes_picker_state(),
                 picker_setter=lambda _app, vs: self._set_includes(vs),
@@ -2537,7 +2514,6 @@ class AddCollectionWizard(Screen[None]):
                 label="Includes",
                 kind=KIND_PICKER,
                 multi=True,
-                choices_provider=lambda _app: _includes_choices(),
                 groups_provider=lambda _app: _includes_groups(),
                 picker_getter=lambda _app: self._includes_picker_state(),
                 picker_setter=lambda _app, vs: self._set_includes(vs),

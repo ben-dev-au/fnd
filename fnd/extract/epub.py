@@ -26,6 +26,7 @@ from lxml import etree
 from fnd.extract._html import parse, walk_html
 from fnd.extract._ooxml import reject_if_zip_bomb
 from fnd.extract._sectioner import HeadingSectioner
+from fnd.extract._xml import parse_xml
 from fnd.extract.base import Chunk, ExtractError
 from fnd.fsmeta import read_file_times
 from fnd.kinds import kind_for_suffix
@@ -65,7 +66,7 @@ def extract(path: Path) -> Iterator[Chunk]:
 
 
 def _opf_path(zf: zipfile.ZipFile) -> str:
-    container = etree.fromstring(zf.read("META-INF/container.xml"))
+    container = parse_xml(zf.read("META-INF/container.xml"))
     rootfile = _find_local(container, "rootfile")
     full_path = rootfile.get("full-path") if rootfile is not None else None
     if not full_path:
@@ -80,7 +81,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
 
     with zipfile.ZipFile(path) as zf:
         opf_path = _opf_path(zf)
-        opf = etree.fromstring(zf.read(opf_path))
+        opf = parse_xml(zf.read(opf_path))
         opf_dir = posixpath.dirname(opf_path)
 
         title = _first_text(opf, "title")

@@ -196,7 +196,10 @@ def _scandir_walk(
     relied on the filesystem's ordering, which is good enough for the
     indexer but causes flaky tests when the order leaks into assertions.
     """
-    stack: list[Path] = [root]
+    # An index directory used directly as a scan root would otherwise have its
+    # internals (Tantivy meta.json, the schema sidecar, …) yielded — the
+    # per-child guard below only catches index dirs *nested* under the root.
+    stack: list[Path] = [] if _is_index_dir(str(root)) else [root]
     while stack:
         current = stack.pop()
         try:

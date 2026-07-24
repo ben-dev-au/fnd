@@ -49,7 +49,12 @@ async def test_bar_hidden_when_no_filters(cfg: Config, idx: Path) -> None:
     app = FNDApp(index_dir=idx, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app.query_one("#clear_filters_bar", Static).visible is False
+        bar = app.query_one("#clear_filters_bar", Static)
+        # Not shown when idle...
+        assert bar.visible is False
+        # ...but its row stays reserved (display, which drives the sidebar
+        # reflow's bar_rows) so the first active filter doesn't shove the tree.
+        assert bar.display is True
 
 
 @pytest.mark.asyncio

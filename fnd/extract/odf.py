@@ -24,6 +24,7 @@ from lxml import etree
 from fnd.extract._ooxml import reject_if_zip_bomb
 from fnd.extract._sectioner import HeadingSectioner
 from fnd.extract._tables import gfm_table
+from fnd.extract._xml import parse_xml
 from fnd.extract.base import Block, Chunk, ExtractError
 from fnd.fsmeta import FileTimes, read_file_times
 from fnd.kinds import kind_for_suffix
@@ -75,7 +76,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
 
     with zipfile.ZipFile(path) as zf:
         try:
-            content = etree.fromstring(zf.read("content.xml"))
+            content = parse_xml(zf.read("content.xml"))
         except KeyError as e:
             raise ExtractError(str(path), "odf: no content.xml") from e
         title, author = _read_meta(zf)
@@ -90,7 +91,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
 
 def _read_meta(zf: zipfile.ZipFile) -> tuple[str, str]:
     try:
-        meta = etree.fromstring(zf.read("meta.xml"))
+        meta = parse_xml(zf.read("meta.xml"))
     except (KeyError, etree.XMLSyntaxError):
         return "", ""
     title_el = _find_local(meta, "title")

@@ -8,20 +8,22 @@ real ``extract()`` dispatch, so these also exercise the registry wiring.
 from __future__ import annotations
 
 import zipfile
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
 
 from fnd.extract import ExtractError, extract
+from fnd.extract.base import Chunk
 
 ANCHOR = "blue penguin sandwich"
 
 
-def _kinds(chunks) -> set[str]:
+def _kinds(chunks: Iterable[Chunk]) -> set[str]:
     return {c.kind for c in chunks}
 
 
-def _anchor_chunk(chunks):
+def _anchor_chunk(chunks: Iterable[Chunk]) -> Chunk:
     return next(c for c in chunks if ANCHOR in c.body)
 
 
@@ -104,6 +106,33 @@ def test_web_html_structure(tmp_path: Path) -> None:
     assert c.title == "Page"
     assert c.heading_path == "Doc"
     assert c.body_md.startswith("# Doc")
+
+
+def test_web_html_preserves_link_urls(tmp_path: Path) -> None:
+    """<a href> keeps its URL as a markdown link (so it stays searchable)."""
+    p = tmp_path / "links.html"
+    p.write_text(
+        f'<html><body><h1>H</h1><p>See <a href="https://example.com/x">{ANCHOR}</a>.</p>'
+        f"</body></html>",
+        encoding="utf-8",
+    )
+    c = _anchor_chunk(extract(p))
+    assert f"[{ANCHOR}](https://example.com/x)" in c.body_md
+
+
+def test_parse_xml_disables_entity_expansion() -> None:
+    """The hardened XML parser used for untrusted EPUB/ODF must not expand
+    entities (billion-laughs / XXE)."""
+    from lxml import etree
+
+    from fnd.extract._xml import parse_xml
+
+    xml = b'<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "SECRETPAYLOAD">]><r>&a;</r>'
+    root = parse_xml(xml)
+    assert root.text != "SECRETPAYLOAD"
+    assert b"SECRETPAYLOAD" not in etree.tostring(root)
+    # Sanity: the default parser WOULD have expanded it (proves the test bites).
+    assert etree.fromstring(xml).text == "SECRETPAYLOAD"
 
 
 # ── epub ──────────────────────────────────────────────────────────────────

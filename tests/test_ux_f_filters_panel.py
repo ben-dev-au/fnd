@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 from textual.widgets import Tree
+from textual.widgets.tree import TreeNode
 
 from fnd.config import Config, load
 from fnd.index import build_index
@@ -94,7 +96,7 @@ async def test_kind_toggle_is_multi_select(cfg_one_collection: Config, mixed_ind
             cat.expand()
         await pilot.pause()
 
-        def leaf(value: str) -> object:
+        def leaf(value: str) -> TreeNode[Any]:
             for cat in kind_node.children:
                 for lf in cat.children:
                     if (lf.data or {}).get("value") == value:
@@ -265,7 +267,8 @@ async def test_expand_all_and_collapse_children(
         await pilot.pause()
         cats = list(ftype.children)
         assert cats, "File type should have category children"
-        assert ftype.is_expanded and all(c.is_expanded for c in cats), "expand-all failed"
+        assert ftype.is_expanded, "expand-all should expand the node"
+        assert all(c.is_expanded for c in cats), "expand-all should expand every category"
 
         await pilot.press(f"{mod}+left")
         await pilot.pause()

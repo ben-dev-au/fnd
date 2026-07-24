@@ -68,6 +68,12 @@ def _inline_md(el: HtmlElement) -> str:
             parts.append(" ")
         elif tag in _SKIP:
             pass
+        elif tag == "a":
+            # Preserve the URL as a markdown link so it stays searchable and
+            # visible in the preview; bare anchors fall back to their text.
+            inner = _inline_md(child)
+            href = child.get("href")
+            parts.append(f"[{inner}]({href})" if href and inner.strip() else inner)
         else:
             inner = _inline_md(child)
             wrap = _WRAP.get(tag)
