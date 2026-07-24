@@ -71,6 +71,9 @@ class ScopeController:
         # Kind ids present in scope (for pruning the file-type filter). None =
         # not yet computed / unknown → show all. Recomputed on each panel refresh.
         self._present_kinds: set[str] | None = None
+        # Cache of the present-kinds aggregation, keyed by the active collection
+        # set, so it runs once per scope change instead of on every search.
+        self._present_kinds_cache: tuple[frozenset[str], set[str] | None] | None = None
         # Debounce handle for the re-search after a filter toggle (see
         # _commit_filter_change) so a burst of multi-select toggles coalesces.
         self._filter_search_timer: Timer | None = None
@@ -365,15 +368,26 @@ class ScopeController:
     def _present_kinds_for_scope(self) -> set[str] | None:
         """Kind ids present in the active collections, or ``None`` when the
         index isn't open / the aggregation fails (caller then shows all kinds).
-        Mirrors :meth:`tag_catalog_for_scope` so the file-type filter, like the
-        Tags filter, only offers what is actually indexed."""
+
+        Scoped to the COLLECTIONS, not the current search text (unlike the Tags
+        filter): a file-type list shouldn't churn as the user types, and the set
+        only changes when the collection selection changes. So the result is
+        CACHED per collection set — the aggregation runs once per scope change
+        instead of on every search (which ran on every filter toggle), keeping
+        the re-search cheap."""
         from fnd.kind_catalog import present_kinds
 
         searcher = getattr(self._app._search, "searcher", None)
         index = getattr(searcher, "_index", None)
         if index is None:
             return None
-        return present_kinds(index, collections=self.collections, query=self._facet_query(index))
+        key = frozenset(self.collections)
+        cached = self._present_kinds_cache
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        result = present_kinds(index, collections=self.collections)
+        self._present_kinds_cache = (key, result)
+        return result
 
     def _visible_members(self, category_id: str) -> tuple[str, ...]:
         """Member kinds of a category, pruned to those present in scope. With

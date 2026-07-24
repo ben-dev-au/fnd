@@ -1190,7 +1190,7 @@ class FNDApp(App[None]):
                 return self.query_one("#filters_pane", Vertical)
         return tree
 
-    def _reflow_sidebar(self) -> None:
+    def _reflow_sidebar(self, *, immediate: bool = False) -> None:
         """Recompute the sidebar panels' heights from live content demand.
 
         Coalesced to one pass per frame, so it's safe (and cheap) to call from
@@ -1198,8 +1198,24 @@ class FNDApp(App[None]):
         a rebuilt filter/collection list, a section expanding or collapsing, a
         panel collapsing to its header, or a terminal resize. That breadth is
         the point: the split stays responsive to every one of those the way a
-        static CSS rule can't. See :mod:`fnd.tui.sidebar_layout`."""
-        if self._reflow_pending or not self.screen_stack:
+        static CSS rule can't. See :mod:`fnd.tui.sidebar_layout`.
+
+        ``immediate`` runs the reallocation NOW, in the same message handler as
+        the change, rather than after the next refresh. Use it when a panel
+        toggles its ``collapsed`` class: deferring the reflow leaves the panel
+        drawn at its old (taller) inline height for one frame — visible as a
+        container with side walls but no bottom edge — before it snaps to the
+        header box. Doing it inline clears the stale height in the same frame,
+        so the collapse/expand is a single clean step. Content-demand reflows
+        (new results, section folds) still defer, since their new
+        ``virtual_size`` only settles after a refresh."""
+        if not self.screen_stack:
+            return
+        if immediate:
+            self._reflow_pending = False
+            self._do_reflow_sidebar()
+            return
+        if self._reflow_pending:
             return
         self._reflow_pending = True
         self.call_after_refresh(self._do_reflow_sidebar)
@@ -1300,7 +1316,7 @@ class FNDApp(App[None]):
                     frame.add_class("collapsed")
                     self._scope.collapsed_panels.add(frame.id)
                     self._scope.persist()
-                    self._reflow_sidebar()  # a header-strip panel frees its rows
+                    self._reflow_sidebar(immediate=True)  # collapse in one frame
                 return
             parent.collapse()
             tree.move_cursor(parent)
@@ -1330,7 +1346,7 @@ class FNDApp(App[None]):
             if frame.id:
                 self._scope.collapsed_panels.discard(frame.id)
                 self._scope.persist()
-            self._reflow_sidebar()  # a re-opened panel reclaims its share
+            self._reflow_sidebar(immediate=True)  # expand in one frame
             return
         node = tree.cursor_node
         if node is None or not node.children:
@@ -1390,7 +1406,7 @@ class FNDApp(App[None]):
         if frame.id:
             self._scope.collapsed_panels.discard(frame.id)
             self._scope.persist()
-        self._reflow_sidebar()  # reclaim the reopened panel's share
+        self._reflow_sidebar(immediate=True)  # reopen in one frame
         return True
 
     @on(events.Click, "#filters_pane")

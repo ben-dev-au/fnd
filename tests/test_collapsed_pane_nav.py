@@ -29,6 +29,34 @@ async def _collapse_all(app: FNDApp) -> None:
 
 
 @pytest.mark.asyncio
+async def test_pane_collapse_reflows_synchronously(built_index: Path) -> None:
+    """Collapsing a panel reallocates the sidebar heights in the SAME frame,
+    not after the next refresh. A deferred reflow left the panel drawn at its
+    old (taller) inline height for one frame — a container with side walls but
+    no bottom edge — before snapping to the header box (the flicker).
+    """
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        ftree = app.query_one("#filters_panel_tree", Tree)
+        ftype = ftree.root.children[0]  # File type (top-level)
+        if ftype.is_expanded:
+            ftype.collapse()
+        await pilot.pause()  # drain the node-collapse reflow
+        ftree.focus()
+        ftree.cursor_line = 0  # cursor on the collapsed top-level node
+        await pilot.pause()  # drain any focus-driven reflow
+        frame = app._panel_frame(ftree)
+        assert "collapsed" not in frame.classes
+        assert app._reflow_pending is False
+
+        app.action_tree_smart_collapse()  # collapses the whole pane
+        # Checked synchronously (no pause): the reflow must already have run.
+        assert "collapsed" in frame.classes
+        assert app._reflow_pending is False, "pane collapse must reflow synchronously"
+
+
+@pytest.mark.asyncio
 async def test_up_departs_the_collapsed_filters_pane(built_index: Path) -> None:
     """The literal bug report: with the filters pane collapsed, Up moves focus
     to the previous panel (Collections) instead of doing nothing."""
