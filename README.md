@@ -131,6 +131,8 @@ and the [query language](#search-how-to) works exactly as it does from the CLI.
 | `Enter`   | Load the highlighted result into the preview (handy right after an Option-skim).        |
 | `→`       | Expand the focused file to its matching sections; press again to drill into the first. |
 | `←`       | Collapse the focused node, or back out to its parent (lazygit-style).                  |
+| `Ctrl→` / `⌥→` | **Expand all**: expand the focused node *and its whole subtree* (results, collections and filters trees). |
+| `Ctrl←` / `⌥←` | **Collapse children**: fold away every descendant, keeping the node itself open. |
 | `Tab`     | Cycle focus between the query bar, the results tree, and the preview.                  |
 | `/`       | Jump back to the query bar to refine your search.                                      |
 | `↑` / `↓` | When the preview pane is focused, scroll the preview.                                  |
@@ -138,6 +140,13 @@ and the [query language](#search-how-to) works exactly as it does from the CLI.
 > **Option-skim on Apple Terminal:** for `⌥↑` / `⌥↓` to reach fnd, enable
 > *Settings → Profiles → Keys → Left Option key → Esc+*. iTerm2 and most modern
 > terminals work without any change.
+>
+> **Expand/collapse-all — Ctrl or Option?** These are bound to *both* `Ctrl` and
+> `Alt`+arrow, because a single physical combo reaches the app under different
+> names per terminal. On macOS, `⌃←`/`⌃→` are usually captured by Mission
+> Control ("Move a space"), so use **`⌥←`/`⌥→`** — your terminal forwards it as
+> whichever of the two the app has bound. On Windows/Linux, `Ctrl`+arrow works
+> directly.
 
 ### Opening and acting on a result
 

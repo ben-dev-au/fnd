@@ -275,14 +275,25 @@ _KEY_PRETTY: dict[str, str] = {
 }
 
 
+_MOD_PRETTY: dict[str, str] = {"ctrl": "Ctrl", "shift": "Shift", "alt": "Alt", "cmd": "Cmd"}
+
+
 def _pretty_key(key: str) -> str:
+    # A comma-separated ``default_key`` lists alternatives (same action, more
+    # than one key) — render each and join them.
+    if "," in key:
+        return " / ".join(_pretty_key(k.strip()) for k in key.split(",") if k.strip())
     if key in _KEY_PRETTY:
         return _KEY_PRETTY[key]
-    # ctrl+x → Ctrl+X; lone letters stay literal.
-    parts = [
-        p.capitalize() if p in {"ctrl", "shift", "alt", "cmd"} else p.upper()
-        for p in key.split("+")
-    ]
+    # ctrl+right → Ctrl+→; lone letters stay literal.
+    parts: list[str] = []
+    for p in key.split("+"):
+        if p in _MOD_PRETTY:
+            parts.append(_MOD_PRETTY[p])
+        elif p in _KEY_PRETTY:  # arrow / named keys keep their glyph
+            parts.append(_KEY_PRETTY[p])
+        else:
+            parts.append(p.upper())
     return "+".join(parts) if len(parts) > 1 else key
 
 

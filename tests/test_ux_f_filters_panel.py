@@ -242,6 +242,38 @@ async def test_rapid_kind_toggles_coalesce_to_one_search(
         assert calls["n"] == 1, f"burst should coalesce to one search, got {calls['n']}"
 
 
+@pytest.mark.parametrize("mod", ["ctrl", "alt"])
+@pytest.mark.asyncio
+async def test_expand_all_and_collapse_children(
+    cfg_one_collection: Config, mixed_index: Path, mod: str
+) -> None:
+    """Expand-all reveals the whole subtree; collapse folds only the children,
+    keeping the node itself open. Bound to BOTH ``ctrl+arrow`` and ``alt+arrow``
+    so Option+arrow fires it whichever name the terminal delivers (a natural-
+    editing remap sends ``ctrl+right``; a Kitty-protocol terminal sends
+    ``alt+right``)."""
+    app = FNDApp(index_dir=mixed_index, config=cfg_one_collection, initial_query="glimmer")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#filters_panel_tree", ResultsTree)
+        ftype = next(c for c in tree.root.children if "File type" in str(c.label))
+        tree.focus()
+        tree.cursor_line = 0  # cursor on the File type header
+        await pilot.pause()
+
+        await pilot.press(f"{mod}+right")
+        await pilot.pause()
+        cats = list(ftype.children)
+        assert cats, "File type should have category children"
+        assert ftype.is_expanded and all(c.is_expanded for c in cats), "expand-all failed"
+
+        await pilot.press(f"{mod}+left")
+        await pilot.pause()
+        # The node stays open; only its descendants collapse.
+        assert ftype.is_expanded, "collapse-children must NOT collapse the node itself"
+        assert not any(c.is_expanded for c in ftype.children), "descendants should collapse"
+
+
 @pytest.mark.asyncio
 async def test_date_toggle_is_single_select(cfg_one_collection: Config, mixed_index: Path) -> None:
     """Selecting a date option replaces the previous selection."""

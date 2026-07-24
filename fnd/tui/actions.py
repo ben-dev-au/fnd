@@ -90,6 +90,27 @@ REGISTRY: tuple[Action, ...] = (
         show_in_footer=False,
     ),
     Action(
+        id="tree_expand_all_children",
+        description="Expand the focused node and its whole subtree — the node "
+        "plus every descendant. Ctrl+Right / Option(Alt)+Right, whichever your "
+        "terminal delivers.",
+        default_key="ctrl+right,alt+right",
+        command="expand-all",
+        footer_label="Expand all",
+        contexts=("filters", "collections", "results"),
+        show_in_footer=False,
+    ),
+    Action(
+        id="tree_collapse_all_children",
+        description="Collapse the focused node's children — every descendant "
+        "folds away but the node itself stays open. Ctrl+Left / Option(Alt)+Left.",
+        default_key="ctrl+left,alt+left",
+        command="collapse-all",
+        footer_label="Collapse children",
+        contexts=("filters", "collections", "results"),
+        show_in_footer=False,
+    ),
+    Action(
         id="open_at_locator",
         description="Open the focused result at its page / heading / line in "
         "the resolved app (per-source override → app_defaults → auto-promote "
@@ -313,7 +334,18 @@ def load_keymap(path: Path | None = None) -> Keymap:
 
     Unknown action ids in the user file are dropped silently (the validator
     surfaces them via :func:`validate_keymap`)."""
-    bindings: dict[str, str] = {a.default_key: a.id for a in REGISTRY if a.default_key}
+    # ``default_key`` may list several keys, comma-separated, so one action can
+    # bind more than one — needed because a single physical combo reaches the
+    # app under different key names depending on the terminal (e.g. Option+Right
+    # arrives as ``ctrl+right`` under a natural-text-editing remap but as
+    # ``alt+right`` on a Kitty-keyboard-protocol terminal).
+    bindings: dict[str, str] = {}
+    for a in REGISTRY:
+        if not a.default_key:
+            continue
+        for key in (k.strip() for k in a.default_key.split(",")):
+            if key:
+                bindings[key] = a.id
 
     p = path if path is not None else keybindings_path()
     if p.exists():

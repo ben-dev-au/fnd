@@ -1357,6 +1357,31 @@ class FNDApp(App[None]):
             node.expand()
         self._move_cursor_to_first_child(tree, node)
 
+    def action_tree_expand_all_children(self) -> None:
+        """Expand the focused node and reveal its whole subtree — the node plus
+        every descendant. Works in every focusable sidebar tree (results,
+        collections, filters)."""
+        tree = self._focused_tree()
+        if tree is None:
+            return
+        node = tree.cursor_node
+        if node is not None and node.children:
+            node.expand_all()
+
+    def action_tree_collapse_all_children(self) -> None:
+        """Collapse the focused node's *children* (each child and its subtree),
+        leaving the node itself open. Only the descendants fold away — the row
+        you're on stays put, so this tidies a deep subtree without backing out
+        of it (use the plain Left arrow to collapse the node itself)."""
+        tree = self._focused_tree()
+        if tree is None:
+            return
+        node = tree.cursor_node
+        if node is None:
+            return
+        for child in node.children:
+            child.collapse_all()
+
     @staticmethod
     def _move_cursor_to_first_child(tree: Tree[Any], node: TreeNode[Any]) -> None:
         """Drop the cursor onto ``node``'s first child, robust against a
