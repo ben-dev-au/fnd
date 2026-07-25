@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from textual.pilot import Pilot
 from textual.widgets import Tree
 from textual.widgets.tree import TreeNode
 
@@ -28,6 +29,25 @@ from tests._pilot_wait import wait_until
 def _write_md(p: Path, body: str) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(body, encoding="utf-8")
+
+
+async def _click_row(
+    pilot: Pilot[None], tree: ResultsTree, node: TreeNode[Any], column: int
+) -> None:
+    """Click ``node``'s row at ``column``.
+
+    ``TreeNode.line`` is -1 until the tree has built its lines, so reading it
+    too early clicks at y=-1 — a row ABOVE the widget, where the event never
+    reaches the node. That failure is unrecoverable by waiting afterwards (the
+    click already went somewhere else), so gate on the node being displayed and
+    read the line at click time.
+    """
+    await wait_until(
+        pilot,
+        lambda: node.line >= 0,
+        message=f"tree never gave {str(node.label)!r} a display line",
+    )
+    await pilot.click(tree, offset=(column, node.line))
 
 
 @pytest.fixture
@@ -141,13 +161,19 @@ async def test_single_click_toggles_kind_leaf_once(
         tree.focus()
 
         # Leaves carry no expand arrow, so any column on the row selects it.
-        await pilot.click(tree, offset=(12, leaf.line))
-        await pilot.pause()
-        assert value in app._scope.filter_kinds, "one click should toggle the kind ON"
+        await _click_row(pilot, tree, leaf, 12)
+        await wait_until(
+            pilot,
+            lambda: value in app._scope.filter_kinds,
+            message="one click should toggle the kind ON",
+        )
 
-        await pilot.click(tree, offset=(12, leaf.line))
-        await pilot.pause()
-        assert value not in app._scope.filter_kinds, "next click should toggle it OFF"
+        await _click_row(pilot, tree, leaf, 12)
+        await wait_until(
+            pilot,
+            lambda: value not in app._scope.filter_kinds,
+            message="next click should toggle it OFF",
+        )
 
 
 @pytest.mark.asyncio
@@ -168,9 +194,7 @@ async def test_single_click_on_header_arrow_expands_once(
         tree.focus()
 
         # x=0 lands on the toggle triangle for a top-level node.
-        await pilot.click(tree, offset=(0, kind_node.line))
-        # Gate on the state, not on one tick: the click's message round-trip
-        # does not always complete within a single pause on a loaded runner.
+        await _click_row(pilot, tree, kind_node, 0)
         await wait_until(
             pilot,
             lambda: kind_node.is_expanded,
