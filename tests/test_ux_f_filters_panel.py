@@ -34,20 +34,36 @@ def _write_md(p: Path, body: str) -> None:
 async def _click_row(
     pilot: Pilot[None], tree: ResultsTree, node: TreeNode[Any], column: int
 ) -> None:
-    """Click ``node``'s row at ``column``.
+    """Click ``node``'s row at ``column``, on the row it actually occupies.
 
-    ``TreeNode.line`` is -1 until the tree has built its lines, so reading it
-    too early clicks at y=-1 — a row ABOVE the widget, where the event never
-    reaches the node. That failure is unrecoverable by waiting afterwards (the
-    click already went somewhere else), so gate on the node being displayed and
-    read the line at click time.
+    Three things must hold before a coordinate click can land, and a miss is
+    silent — ``Pilot.click`` computes ``widget.region.offset + offset`` and
+    happily delivers the event to whatever else is painted there, so the only
+    symptom is the assertion that follows timing out much later.
+
+    1. The node must be displayed: ``TreeNode.line`` is -1 until the tree has
+       built its lines, and y=-1 lands a row ABOVE the widget.
+    2. It must be scrolled into view. ``line`` counts the tree's *virtual*
+       lines while the click offset is *viewport*-relative, so the two diverge
+       by ``scroll_offset.y`` — expanding a couple of levels is enough to push
+       a leaf out of a short sidebar pane and send the click to the wrong row.
+    3. The click must be verified. ``click()`` returns whether the event landed
+       on the target widget; asserting it turns a miss into an immediate, named
+       failure instead of a ten-second wait on a predicate that never flips.
     """
     await wait_until(
         pilot,
         lambda: node.line >= 0,
         message=f"tree never gave {str(node.label)!r} a display line",
     )
-    await pilot.click(tree, offset=(column, node.line))
+    tree.scroll_to_node(node, animate=False)
+    await pilot.pause()
+    y = node.line - int(tree.scroll_offset.y)
+    landed = await pilot.click(tree, offset=(column, y))
+    assert landed, (
+        f"click at (column={column}, y={y}) missed the tree for {str(node.label)!r} "
+        f"(line={node.line}, scroll_y={tree.scroll_offset.y}, size={tree.size})"
+    )
 
 
 @pytest.fixture
