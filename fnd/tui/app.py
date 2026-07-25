@@ -38,7 +38,7 @@ from textual.widgets import (
 )
 from textual.widgets.tree import TreeNode
 
-from fnd import opener
+from fnd import opener, os_labels
 from fnd.config import Config, default_index_dir
 from fnd.launch_command import LaunchCommandSerializer, LaunchScope
 from fnd.matching import MatchSpec
@@ -87,12 +87,14 @@ _uses_markdown_renderer = uses_markdown_renderer
 
 def _short_label(action_id: str) -> str:
     """Footer-hint label for an action — uses Action.footer_label when set,
-    otherwise falls back to the first word of the description."""
+    otherwise falls back to the first word of the description. Localised
+    because this also becomes the Textual ``Binding`` description, which no
+    longer passes through the hint-bar renderer."""
     for a in REGISTRY:
         if a.id == action_id:
             if a.footer_label:
-                return a.footer_label
-            return a.description.split(".")[0].split(" ")[0].rstrip(",")
+                return os_labels.localise(a.footer_label)
+            return os_labels.localise(a.description).split(".")[0].split(" ")[0].rstrip(",")
     return action_id
 
 
@@ -130,6 +132,11 @@ def render_hint_bar(
         for i, (key, label) in enumerate(pairs):
             if i:
                 out.append_text(sep)
+            # Both clusters run through localise so a hint table can hold
+            # ``{alt_key}`` and render ⌥ on macOS, Alt elsewhere — the footer
+            # and the Keybindings page then can't disagree.
+            key = os_labels.localise(key)
+            label = os_labels.localise(label)
             out.append_text(Text.from_markup(f"[reverse] {key} [/] {label}"))
         return out
 
@@ -728,7 +735,7 @@ class FNDApp(App[None]):
         "results": (
             ("o", "Open"),
             ("z", "Reading View"),
-            ("⌥↑↓", "Skim"),
+            ("{alt_key}↑↓", "Skim"),
             ("Tab", "Search"),
         ),
         "preview": (
@@ -1079,6 +1086,19 @@ class FNDApp(App[None]):
             return
         _, hit = target
         opener.open_default(Path(hit.path))
+
+    def action_reveal_in_file_manager(self) -> None:
+        """Show the focused result in the platform file manager, no app launch.
+        Fire-and-forget via the launcher seam (macOS ``open -R`` · Windows
+        ``explorer /select,`` · Linux file-manager ``--select``)."""
+        tree = self.query_one("#results_pane", Tree)
+        if tree.cursor_node is None:
+            return
+        target = self._results.target_for_node(tree.cursor_node)
+        if target is None:
+            return
+        _, hit = target
+        opener.reveal(Path(hit.path))
 
     def action_open_with_menu(self) -> None:
         """Show the 'Open with…' modal for the focused hit.

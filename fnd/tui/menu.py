@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from fnd import os_labels
+
 if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
 
@@ -125,7 +127,7 @@ class MenuItem:
 
     # EXTERNAL
     external: Callable[[FNDApp], None] | None = None
-    # When True, the row launches an OS-level app ($EDITOR, Finder, etc.)
+    # When True, the row launches an OS-level app ($EDITOR, file manager, etc.)
     # rather than pushing an internal Settings screen. Render leading
     # `↗` glyph; trailing slot carries the path (not a drill arrow).
     external_app: bool = False
@@ -275,9 +277,6 @@ _KEY_PRETTY: dict[str, str] = {
 }
 
 
-_MOD_PRETTY: dict[str, str] = {"ctrl": "Ctrl", "shift": "Shift", "alt": "Alt", "cmd": "Cmd"}
-
-
 def _pretty_key(key: str) -> str:
     # A comma-separated ``default_key`` lists alternatives (same action, more
     # than one key) — render each and join them.
@@ -285,11 +284,13 @@ def _pretty_key(key: str) -> str:
         return " / ".join(_pretty_key(k.strip()) for k in key.split(",") if k.strip())
     if key in _KEY_PRETTY:
         return _KEY_PRETTY[key]
-    # ctrl+right → Ctrl+→; lone letters stay literal.
+    # ctrl+right → Ctrl+→; lone letters stay literal. Modifier spelling comes
+    # from ``os_labels`` so alt renders ⌥ on macOS and Alt elsewhere.
     parts: list[str] = []
     for p in key.split("+"):
-        if p in _MOD_PRETTY:
-            parts.append(_MOD_PRETTY[p])
+        modifier = os_labels.modifier_label(p)
+        if modifier is not None:
+            parts.append(modifier)
         elif p in _KEY_PRETTY:  # arrow / named keys keep their glyph
             parts.append(_KEY_PRETTY[p])
         else:
@@ -346,9 +347,10 @@ _KEYS_SETTINGS: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "Shift+Enter",
-        "Reveal in Finder",
+        os_labels.REVEAL_LABEL,
         "",
-        "On file-pointing rows (config.toml, keybindings.toml, source paths) opens Finder with that file selected. No-op on other rows.",
+        f"On file-pointing rows (config.toml, keybindings.toml, source paths) opens "
+        f"{os_labels.FILE_MANAGER} with that file selected. No-op on other rows.",
     ),
     (
         "Esc",
@@ -442,25 +444,36 @@ _KEYS_AX_MODAL: tuple[tuple[str, str, str, str], ...] = (
 
 # Results-pane keys owned by ``ResultsTree`` widget bindings (not the action
 # registry), so they're hand-curated here and appended to the Results section.
-_KEYS_RESULTS_WIDGET: tuple[tuple[str, str, str, str], ...] = (
-    (
-        "⌥ ↑ / ⌥ ↓",
-        "Skim (no preview load)",
-        "",
-        "Hold Option (Alt) and arrow through results to move the cursor WITHOUT "
-        "loading each preview — browse fast with no mount or lag per row. The "
-        "preview loads again on a normal ↑/↓ (the row you land on) or Enter (the "
-        "exact row you skimmed to). On Apple Terminal, enable Settings → "
-        "Profiles → Keys → Left Option key → Esc+ for Option+arrow to reach fnd.",
-    ),
-    (
-        "Enter",
-        "Load skimmed row",
-        "",
-        "Load the highlighted result into the preview — handy right after an "
-        "Option-skim to mount exactly the row you stopped on, without stepping.",
-    ),
-)
+# A function, not a constant: the Apple-Terminal workaround is conditional
+# content (a Terminal.app setting), not a word substitution.
+def _keys_results_widget() -> tuple[tuple[str, str, str, str], ...]:
+    skim_hint = (
+        f"Hold {os_labels.ALT_WORD} and arrow through results to move the cursor "
+        "WITHOUT loading each preview — browse fast with no mount or lag per row. "
+        "The preview loads again on a normal ↑/↓ (the row you land on) or Enter "
+        "(the exact row you skimmed to)."
+    )
+    if os_labels.is_macos():
+        skim_hint += (
+            " On Apple Terminal, enable Settings → Profiles → Keys → Left Option "
+            "key → Esc+ for Option+arrow to reach fnd."
+        )
+    return (
+        (
+            f"{os_labels.ALT_KEY} ↑ / {os_labels.ALT_KEY} ↓",
+            "Skim (no preview load)",
+            "",
+            skim_hint,
+        ),
+        (
+            "Enter",
+            "Load skimmed row",
+            "",
+            f"Load the highlighted result into the preview — handy right after an "
+            f"{os_labels.ALT_WORD}-skim to mount exactly the row you stopped on, "
+            f"without stepping.",
+        ),
+    )
 
 
 # Mapping from an Action's primary context (first entry of
@@ -505,11 +518,18 @@ def _key_row(
     with's "Cancel"); without it, both would collapse to ``key.cancel``
     and the second mount would shadow the first.
     """
+    # Slug the row id from the *un*localised key/label so ids stay identical on
+    # every OS — "⌥ ↑" and "Alt ↑" must not mint two different ids for one row.
     item_id = f"key.{action_id}" if action_id else "key." + _slug(section, key, label)
+    # Single localise seam for the whole cheat sheet: registry-derived rows and
+    # the static widget tables both land here, so neither can drift into
+    # hardcoded macOS vocabulary. ``key`` is localised too — the skim row's
+    # modifier lives in the key column.
+    key = os_labels.localise(key)
     return MenuItem(
         id=item_id,
-        label=label,
-        description=description,
+        label=os_labels.localise(label),
+        description=os_labels.localise(description),
         kind=KIND_ACTION,
         action_id=action_id,
         key=key,
@@ -575,7 +595,7 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
     # Results-pane widget bindings (Option-skim, Enter-load) live on ResultsTree,
     # not the registry — append them to the registry-derived Results section.
     sections["Results pane"].extend(
-        _key_row(*row, section="results_widget") for row in _KEYS_RESULTS_WIDGET
+        _key_row(*row, section="results_widget") for row in _keys_results_widget()
     )
 
     # Static widget bindings — append AFTER the registry-derived
@@ -585,9 +605,13 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
     sections["Settings menu"] = [_key_row(*row, section="settings") for row in _KEYS_SETTINGS]
     sections["Source form"] = [_key_row(*row, section="source_form") for row in _KEYS_SOURCE_FORM]
     sections["Open with… modal"] = [_key_row(*row, section="open_with") for row in _KEYS_OPEN_WITH]
-    sections["Accessibility prompt"] = [
-        _key_row(*row, section="ax_modal") for row in _KEYS_AX_MODAL
-    ]
+    # AX permission gates the macOS Preview AppleScript page-jump, so the modal
+    # can never surface on Linux/Windows — listing its keys there would point
+    # users at a System Settings pane their OS doesn't have.
+    if os_labels.is_macos():
+        sections["Accessibility prompt"] = [
+            _key_row(*row, section="ax_modal") for row in _KEYS_AX_MODAL
+        ]
 
     # Display order: Global first; then hint section (if set and not
     # Global); then everything else in declaration order; empty
@@ -967,6 +991,11 @@ def _choices_apps_for_kind(app: FNDApp, kind: str) -> list[ChoiceOption]:
         if kind not in app_def.handles and "*" not in app_def.handles:
             continue
         if not app_def.available():
+            continue
+        # `reveal` acts on the file without opening it — offering it here would
+        # let a default silently stop `o` from opening this kind. It stays in
+        # the Open-with picker, which is a one-shot choice.
+        if not app_def.selectable_default:
             continue
         out.append(
             ChoiceOption(
@@ -1675,7 +1704,9 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
             description=(
                 "Which sources feed the Tags filter, comma-separated. "
                 "'frontmatter' reads a note's YAML tags:; 'os' reads macOS "
-                "Finder tags. Leave empty to turn tag filtering off. "
+                "Finder tags"
+                + ("" if os_labels.is_macos() else " (macOS only — inert here)")
+                + ". Leave empty to turn tag filtering off. "
                 "Toggling a source takes effect immediately — no reindex."
             ),
             kind=KIND_SCALAR,
@@ -2571,7 +2602,10 @@ def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
         MenuItem(
             id="root.open_config_file",
             label="Config file",
-            description="Open config.toml in $EDITOR; reload on save. Shift+⏎ reveals in Finder.",
+            description=(
+                "Open config.toml in $EDITOR; reload on save. Shift+⏎ reveals in "
+                f"{os_labels.file_manager_phrase()}."
+            ),
             kind=KIND_EXTERNAL,
             external=_open_config_file_action,
             value_getter=_summary_config_path,
@@ -2581,7 +2615,10 @@ def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
         MenuItem(
             id="root.open_keybindings_file",
             label="Keybindings file",
-            description="Open keybindings.toml in $EDITOR. Shift+⏎ reveals in Finder.",
+            description=(
+                "Open keybindings.toml in $EDITOR. Shift+⏎ reveals in "
+                f"{os_labels.file_manager_phrase()}."
+            ),
             kind=KIND_EXTERNAL,
             external=_open_keybindings_file_action,
             value_getter=_summary_keybindings_path,

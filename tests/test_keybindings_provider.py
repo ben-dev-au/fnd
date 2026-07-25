@@ -12,6 +12,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import cast
 
+from fnd import os_labels
 from fnd.tui import FNDApp
 from fnd.tui.actions import REGISTRY
 from fnd.tui.menu import MenuItem, _provider_keybindings
@@ -59,8 +60,9 @@ def test_pretty_key_substitutions_are_applied() -> None:
 
 
 def test_static_sections_present() -> None:
-    """Widget bindings outside the action registry (Settings menu,
-    source form, Open-with modal, AX modal) are listed too."""
+    """Widget bindings outside the action registry (Settings menu, source form,
+    Open-with modal) are listed too. The AX-modal section is macOS-only — see
+    ``tests/test_keybindings_os_vocabulary.py`` for its per-platform gate."""
     items = _provider_keybindings(_fake_app())
     headers = _headers(items)
     for needed in (
@@ -68,9 +70,10 @@ def test_static_sections_present() -> None:
         "Settings menu",
         "Source form",
         "Open with… modal",
-        "Accessibility prompt",
     ):
         assert needed in headers, f"missing section: {needed}"
+    if os_labels.is_macos():
+        assert "Accessibility prompt" in headers, headers
 
 
 def test_source_form_section_lists_ctrl_d_and_ctrl_s() -> None:
