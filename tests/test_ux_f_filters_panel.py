@@ -20,7 +20,9 @@ from textual.widgets.tree import TreeNode
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from fnd.tui.scope_panel import ScopeController
 from fnd.tui.widgets.results_tree import ResultsTree
+from tests._pilot_wait import wait_until
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -167,8 +169,13 @@ async def test_single_click_on_header_arrow_expands_once(
 
         # x=0 lands on the toggle triangle for a top-level node.
         await pilot.click(tree, offset=(0, kind_node.line))
-        await pilot.pause()
-        assert kind_node.is_expanded, "clicking the arrow once should expand the header"
+        # Gate on the state, not on one tick: the click's message round-trip
+        # does not always complete within a single pause on a loaded runner.
+        await wait_until(
+            pilot,
+            lambda: kind_node.is_expanded,
+            message="clicking the arrow once should expand the header",
+        )
 
 
 @pytest.mark.asyncio
@@ -205,7 +212,7 @@ async def test_collapsing_header_follows_cursor_up_from_a_child(
 
 @pytest.mark.asyncio
 async def test_rapid_kind_toggles_coalesce_to_one_search(
-    cfg_one_collection: Config, mixed_index: Path
+    cfg_one_collection: Config, mixed_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A burst of file-type toggles debounces to a SINGLE re-search.
 
@@ -213,7 +220,15 @@ async def test_rapid_kind_toggles_coalesce_to_one_search(
     in a row. Running the full synchronous search pipeline once per toggle
     stalled the event loop N times and made subsequent nav feel laggy. The
     commit is debounced so the burst collapses to one search.
+
+    Widen the debounce window rather than racing it: the mid-burst assertion
+    used to hold only if three ``pilot.pause()`` round-trips finished inside
+    0.12 s of wall-clock, which a loaded runner does not guarantee — the timer
+    then fired legitimately and the test failed on *correct* behaviour. With
+    the window pinned open the burst cannot leak a search, and the coalesced
+    one is flushed by hand instead of by sleeping.
     """
+    monkeypatch.setattr(ScopeController, "FILTER_SEARCH_DEBOUNCE", 30.0)
     app = FNDApp(index_dir=mixed_index, config=cfg_one_collection, initial_query="glimmer")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -238,9 +253,12 @@ async def test_rapid_kind_toggles_coalesce_to_one_search(
         tree.focus()
         for lf in leaves[:3]:
             tree.select_node(lf)
-            await pilot.pause()  # minimal — shorter than the 0.12s debounce window
+            await pilot.pause()
         assert calls["n"] == 0, "no search should fire mid-burst (debounced)"
-        await pilot.pause(0.25)  # let the debounce fire
+        assert app._scope._filter_search_timer is not None, "burst left no debounce pending"
+        # Fire the pending debounce directly — deterministic, and it asserts the
+        # same thing sleeping past the window did: the burst coalesced to one.
+        app._scope._run_filter_search()
         assert calls["n"] == 1, f"burst should coalesce to one search, got {calls['n']}"
 
 

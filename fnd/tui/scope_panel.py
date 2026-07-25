@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import contextlib
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from textual.widgets import Tree
 
@@ -63,6 +63,11 @@ FULL = _FullScope()
 class ScopeController:
     """Owns scope state (collections / sources / filters), the sidebar
     panel layout, and their persistence to the UI-state file."""
+
+    # Debounce window for the post-toggle re-search (see _commit_filter_change).
+    # Named rather than inline so a test can widen it and assert the coalescing
+    # without racing the wall clock on a loaded runner.
+    FILTER_SEARCH_DEBOUNCE: ClassVar[float] = 0.12
 
     def __init__(
         self, app: FNDApp, *, collection: str | None, launch_filters: LaunchScope | None = None
@@ -614,7 +619,7 @@ class ScopeController:
         if self._filter_search_timer is not None:
             self._filter_search_timer.stop()
         self._filter_search_timer = self._app.set_timer(
-            0.12, self._run_filter_search, name="filter-search-debounce"
+            self.FILTER_SEARCH_DEBOUNCE, self._run_filter_search, name="filter-search-debounce"
         )
 
     def _run_filter_search(self) -> None:
