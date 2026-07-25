@@ -10,8 +10,8 @@ Fast, free, keyboard-driven document search for macOS, Linux*, and Windows*.
 Indexes PDF, DOCX, PPTX, MD and 60 different file types, with strong BM25 ranking,
 in-file navigation, an "Open with…" launcher, and a lazygit-style TUI.
 
-> **Cross-platform.** Runs on macOS, (Linux, and Windows support is more recent and
-> less tested, consider it an early beta release on those platforms). Core search, indexing,
+> **Cross-platform.** Runs on macOS; Linux and Windows support is more recent and
+> less tested, so consider it an early beta release on those platforms. Core search, indexing,
 > preview, and the "Open with…" launcher work everywhere; a few integrations are
 > OS-specific and degrade gracefully — see [Platform support](#platform-support).
 
@@ -154,7 +154,7 @@ and the [query language](#search-how-to) works exactly as it does from the CLI.
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `o`            | Open the hit in its resolved app, jumping to the matching page / slide / line / heading.                                                                                           |
 | `O`            | **Open with…**: a picker of every app that handles this file type. Use `↑↓` then `Enter`, or press the letter shown next to an app; `Esc` cancels.                                 |
-| `R`            | **Reveal**: show the file in your file manager (Finder on macOS, File Explorer on Windows) with it selected, without opening it. Also available as the last row of the `O` picker. |
+| `R`            | **Reveal**: show the file in your file manager (Finder on macOS, File Explorer on Windows) with it selected, without opening it — also on the last row of the `O` picker. |
 | `Space`        | Quick Look the file.                                                                                                                                                               |
 | `:`            | Open the **Settings & Commands** menu: every setting and action in one searchable, full-screen list.                                                                               |
 | `?`            | Keybindings cheat sheet (press again to dismiss).                                                                                                                                  |
