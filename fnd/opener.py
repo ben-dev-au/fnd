@@ -63,12 +63,6 @@ def open_default(path: Path) -> int:
     return launcher.open_path(path)
 
 
-def reveal_in_finder(path: Path) -> int:
-    """Reveal ``path`` in the platform file manager, no app launch."""
-    launcher.reveal(path)
-    return 0
-
-
 def open_smart(
     *,
     path: Path,

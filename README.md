@@ -6,12 +6,12 @@
 [![Platform: macOS | Linux | Windows](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#requirements)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/ben.dev.au)
 
-Fast, free, keyboard-driven document search for macOS, Linux, and Windows.
-Indexes PDF, DOCX, PPTX, MD, and TXT across multiple named collections, with
-strong BM25 ranking, in-file navigation, an "Open with…" launcher, and a
-lazygit-style TUI.
+Fast, free, keyboard-driven document search for macOS, Linux*, and Windows*.
+Indexes PDF, DOCX, PPTX, MD and 60 different file types, with strong BM25 ranking,
+in-file navigation, an "Open with…" launcher, and a lazygit-style TUI.
 
-> **Cross-platform.** Runs on macOS, Linux, and Windows. Core search, indexing,
+> **Cross-platform.** Runs on macOS; Linux and Windows support is more recent and
+> less tested, so consider it an early beta release on those platforms. Core search, indexing,
 > preview, and the "Open with…" launcher work everywhere; a few integrations are
 > OS-specific and degrade gracefully — see [Platform support](#platform-support).
 
@@ -86,15 +86,15 @@ the TUI, syntax-highlighted preview, in-file navigation, and the "Open with…"
 launcher — works identically on all three. A few OS integrations differ; where
 an equivalent doesn't exist, fnd degrades gracefully rather than erroring.
 
-| Capability | macOS | Linux | Windows |
-| --- | --- | --- | --- |
-| Search · indexing · TUI · preview | ✓ | ✓ | ✓ |
-| Open in app / **Open with…** | ✓ | ✓ | ✓ |
-| Reveal in file manager | Finder | file-manager `--select` → folder | Explorer `/select` |
-| PDF page-jump on `o` | Skim, Preview | Zathura, Okular | SumatraPDF |
-| Structured PDF extra (docling) | ✓ | ✓ | ✓ |
-| Created-date filter | ✓ (birth time) | best-effort (statx) | ✓ (creation time) |
-| Finder tag filtering | ✓ | — | — |
+| Capability                        | macOS          | Linux                            | Windows            |
+| --------------------------------- | -------------- | -------------------------------- | ------------------ |
+| Search · indexing · TUI · preview | ✓              | ✓                                | ✓                  |
+| Open in app / **Open with…**      | ✓              | ✓                                | ✓                  |
+| Reveal in file manager (`R`)      | Finder         | file-manager `--select` → folder | Explorer `/select` |
+| PDF page-jump on `o`              | Skim, Preview  | Zathura, Okular                  | SumatraPDF         |
+| Structured PDF extra (docling)    | ✓              | ✓                                | ✓                  |
+| Created-date filter               | ✓ (birth time) | best-effort (statx)              | ✓ (creation time)  |
+| Finder tag filtering              | ✓              | —                                | —                  |
 
 Built-in PDF viewers are auto-detected — the "Open with…" picker lists only the
 ones actually installed. On Linux/Windows, point `[app_defaults].pdf` at your
@@ -124,24 +124,24 @@ and the [query language](#search-how-to) works exactly as it does from the CLI.
 
 ### Moving around with the keyboard
 
-| Key       | What it does                                                                           |
-| --------- | -------------------------------------------------------------------------------------- |
-| `↑` / `↓` | Move the cursor up/down through results (vim's `k` / `j` also work).                   |
-| `⌥↑` / `⌥↓` | **Skim**: hold Option (Alt) and arrow to move through results *without* loading each preview — browse fast with no per-row mount/lag. The preview loads again on a normal `↑`/`↓` (the row you land on) or `Enter` (the exact row you skimmed to). |
-| `Enter`   | Load the highlighted result into the preview (handy right after an Option-skim).        |
-| `→`       | Expand the focused file to its matching sections; press again to drill into the first. |
-| `←`       | Collapse the focused node, or back out to its parent (lazygit-style).                  |
-| `Ctrl→` / `⌥→` | **Expand all**: expand the focused node *and its whole subtree* (results, collections and filters trees). |
-| `Ctrl←` / `⌥←` | **Collapse children**: fold away every descendant, keeping the node itself open. |
-| `Tab`     | Cycle focus between the query bar, the results tree, and the preview.                  |
-| `/`       | Jump back to the query bar to refine your search.                                      |
-| `↑` / `↓` | When the preview pane is focused, scroll the preview.                                  |
+| Key            | What it does                                                                                                                                                                                                                                       |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `↑` / `↓`      | Move the cursor up/down through results (vim's `k` / `j` also work).                                                                                                                                                                               |
+| `⌥↑` / `⌥↓`    | **Skim**: hold Option (Alt) and arrow to move through results _without_ loading each preview — browse fast with no per-row mount/lag. The preview loads again on a normal `↑`/`↓` (the row you land on) or `Enter` (the exact row you skimmed to). |
+| `Enter`        | Load the highlighted result into the preview (handy right after an Option-skim).                                                                                                                                                                   |
+| `→`            | Expand the focused file to its matching sections; press again to drill into the first.                                                                                                                                                             |
+| `←`            | Collapse the focused node, or back out to its parent (lazygit-style).                                                                                                                                                                              |
+| `Ctrl→` / `⌥→` | **Expand all**: expand the focused node _and its whole subtree_ (results, collections and filters trees).                                                                                                                                          |
+| `Ctrl←` / `⌥←` | **Collapse children**: fold away every descendant, keeping the node itself open.                                                                                                                                                                   |
+| `Tab`          | Cycle focus between the query bar, the results tree, and the preview.                                                                                                                                                                              |
+| `/`            | Jump back to the query bar to refine your search.                                                                                                                                                                                                  |
+| `↑` / `↓`      | When the preview pane is focused, scroll the preview.                                                                                                                                                                                              |
 
 > **Option-skim on Apple Terminal:** for `⌥↑` / `⌥↓` to reach fnd, enable
-> *Settings → Profiles → Keys → Left Option key → Esc+*. iTerm2 and most modern
+> _Settings → Profiles → Keys → Left Option key → Esc+_. iTerm2 and most modern
 > terminals work without any change.
 >
-> **Expand/collapse-all — Ctrl or Option?** These are bound to *both* `Ctrl` and
+> **Expand/collapse-all — Ctrl or Option?** These are bound to _both_ `Ctrl` and
 > `Alt`+arrow, because a single physical combo reaches the app under different
 > names per terminal. On macOS, `⌃←`/`⌃→` are usually captured by Mission
 > Control ("Move a space"), so use **`⌥←`/`⌥→`** — your terminal forwards it as
@@ -150,16 +150,17 @@ and the [query language](#search-how-to) works exactly as it does from the CLI.
 
 ### Opening and acting on a result
 
-| Key            | What it does                                                                                                                                       |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `o`            | Open the hit in its resolved app, jumping to the matching page / slide / line / heading.                                                           |
-| `O`            | **Open with…**: a picker of every app that handles this file type. Use `↑↓` then `Enter`, or press the letter shown next to an app; `Esc` cancels. |
-| `Space`        | Quick Look the file.                                                                                                                               |
-| `:`            | Open the **Settings & Commands** menu: every setting and action in one searchable, full-screen list.                                               |
-| `?`            | Keybindings cheat sheet (press again to dismiss).                                                                                                  |
-| `Ctrl+F`       | Toggle auto-fuzzy matching (persists to your config).                                                                                              |
-| `h`            | Toggle search-term highlighting in the preview.                                                                                                    |
-| `q` / `Ctrl+C` | Quit. `Esc` backs out of any overlay or nested screen.                                                                                             |
+| Key            | What it does                                                                                                                                                                       |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `o`            | Open the hit in its resolved app, jumping to the matching page / slide / line / heading.                                                                                           |
+| `O`            | **Open with…**: a picker of every app that handles this file type. Use `↑↓` then `Enter`, or press the letter shown next to an app; `Esc` cancels.                                 |
+| `R`            | **Reveal**: show the file in your file manager (Finder on macOS, File Explorer on Windows) with it selected, without opening it — also on the last row of the `O` picker. |
+| `Space`        | Quick Look the file.                                                                                                                                                               |
+| `:`            | Open the **Settings & Commands** menu: every setting and action in one searchable, full-screen list.                                                                               |
+| `?`            | Keybindings cheat sheet (press again to dismiss).                                                                                                                                  |
+| `Ctrl+F`       | Toggle auto-fuzzy matching (persists to your config).                                                                                                                              |
+| `h`            | Toggle search-term highlighting in the preview.                                                                                                                                    |
+| `q` / `Ctrl+C` | Quit. `Esc` backs out of any overlay or nested screen.                                                                                                                             |
 
 Inside the Settings menu (`:`) navigate with `↑↓` (or `j`/`k`), press `Enter` to
 open / edit / toggle the focused row, `/` to filter rows by label, and `Esc` or
@@ -178,40 +179,40 @@ A modern terminal is required for optimal formatting. For example:
 
 ## Command reference
 
-| Command                                         | What it does                                                                   |
-| ----------------------------------------------- | ------------------------------------------------------------------------------ |
-| `fnd`                                           | Launch the interactive TUI.                                                    |
-| `fnd <query>`                                   | Launch the TUI with `<query>` pre-filled.                                      |
-| `fnd -c <collection> <query>`                   | Launch the TUI scoped to a collection.                                         |
-| `fnd tui [query]`                               | Explicitly launch the TUI (optional seed query).                               |
+| Command                                         | What it does                                                                                           |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `fnd`                                           | Launch the interactive TUI.                                                                            |
+| `fnd <query>`                                   | Launch the TUI with `<query>` pre-filled.                                                              |
+| `fnd -c <collection> <query>`                   | Launch the TUI scoped to a collection.                                                                 |
+| `fnd tui [query]`                               | Explicitly launch the TUI (optional seed query).                                                       |
 | `fnd search "<query>"`                          | Terminal search. Flags: `--limit`, `-c/--collection`, `--meta`, `--explain N`, plus the filters below. |
-| `fnd index <root>`                              | Ad-hoc index a single root into the default collection.                        |
-| `fnd collection list`                           | List configured collections and their sources.                                 |
-| `fnd collection add <name>`                     | Add (or extend) a collection in the config TOML.                               |
-| `fnd collection reindex <name>`                 | Index or re-index a configured collection (`--rebuild` to start fresh).        |
-| `fnd config show`                               | Print the effective merged config as JSON.                                     |
-| `fnd config path`                               | Print the path to the config TOML.                                             |
-| `fnd config edit`                               | Open the config TOML in `$EDITOR` (creates a template if missing).             |
-| `fnd config validate`                           | Validate the config TOML.                                                      |
-| `fnd extras list`                               | List optional extras and their installed status.                               |
-| `fnd extras status`                             | Show installed extras with disk usage.                                         |
-| `fnd extras install <name>`                     | Install an extra after a disk-impact disclosure prompt.                        |
-| `fnd extras uninstall <name>`                   | Remove an extra (indexed chunks remain).                                       |
-| `fnd cache status` / `info` / `prune` / `clear` | Manage the PDF extraction cache.                                               |
-| `fnd version`                                   | Print the fnd version.                                                         |
+| `fnd index <root>`                              | Ad-hoc index a single root into the default collection.                                                |
+| `fnd collection list`                           | List configured collections and their sources.                                                         |
+| `fnd collection add <name>`                     | Add (or extend) a collection in the config TOML.                                                       |
+| `fnd collection reindex <name>`                 | Index or re-index a configured collection (`--rebuild` to start fresh).                                |
+| `fnd config show`                               | Print the effective merged config as JSON.                                                             |
+| `fnd config path`                               | Print the path to the config TOML.                                                                     |
+| `fnd config edit`                               | Open the config TOML in `$EDITOR` (creates a template if missing).                                     |
+| `fnd config validate`                           | Validate the config TOML.                                                                              |
+| `fnd extras list`                               | List optional extras and their installed status.                                                       |
+| `fnd extras status`                             | Show installed extras with disk usage.                                                                 |
+| `fnd extras install <name>`                     | Install an extra after a disk-impact disclosure prompt.                                                |
+| `fnd extras uninstall <name>`                   | Remove an extra (indexed chunks remain).                                                               |
+| `fnd cache status` / `info` / `prune` / `clear` | Manage the PDF extraction cache.                                                                       |
+| `fnd version`                                   | Print the fnd version.                                                                                 |
 
 ### Search filters
 
 `fnd search` takes the same filters as the TUI's Filters pane:
 
-| Flag | Meaning |
-| --- | --- |
-| `--tag <name>` | Only files carrying this tag. Repeatable. |
-| `--not-tag <name>` | Exclude files carrying this tag. Repeatable. |
-| `--tag-match all\|any` | Combine multiple `--tag`s. Default `all`. |
-| `--created <window>` | Created within `today`/`yesterday`/`week`/`month`/`year`. |
-| `--modified <window>` | Modified within the same windows. |
-| `--kind <ext>` | Restrict to `pdf`/`docx`/`pptx`/`md`/`txt`. Repeatable. |
+| Flag                   | Meaning                                                   |
+| ---------------------- | --------------------------------------------------------- |
+| `--tag <name>`         | Only files carrying this tag. Repeatable.                 |
+| `--not-tag <name>`     | Exclude files carrying this tag. Repeatable.              |
+| `--tag-match all\|any` | Combine multiple `--tag`s. Default `all`.                 |
+| `--created <window>`   | Created within `today`/`yesterday`/`week`/`month`/`year`. |
+| `--modified <window>`  | Modified within the same windows.                         |
+| `--kind <ext>`         | Restrict to `pdf`/`docx`/`pptx`/`md`/`txt`. Repeatable.   |
 
 ```bash
 fnd search "risotto" --tag recipe --not-tag draft --created month
@@ -404,24 +405,24 @@ markdown frontmatter filters. They compose freely.
 
 ### The basics
 
-| You type                      | What it does                                                                                                                                                           |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| You type                      | What it does                                                                               |
+| ----------------------------- | ------------------------------------------------------------------------------------------ |
 | `entropy`                     | One term. Searches body, title, headings, and filename. Stemmed (`entropy` = `entropies`). |
-| `cross entropy loss`          | Several terms, ranked. Docs matching more terms rank higher; all-term docs reach the top.   |
-| `cross AND entropy`           | Require both terms.                                                                          |
-| `"cross entropy loss"`        | Exact phrase, in order. Also matches `cross-entropy loss`.                                   |
-| `cross OR entropy`            | Either term.                                                                                |
-| `entropy NOT regression`      | Has `entropy`, excludes `regression`.                                                       |
-| `+rust -python`               | `+` require, `-` exclude (shorthand for `AND` / `NOT`).                                      |
-| `(loss OR cost) AND function` | Group with parentheses, to any depth.                                                       |
+| `cross entropy loss`          | Several terms, ranked. Docs matching more terms rank higher; all-term docs reach the top.  |
+| `cross AND entropy`           | Require both terms.                                                                        |
+| `"cross entropy loss"`        | Exact phrase, in order. Also matches `cross-entropy loss`.                                 |
+| `cross OR entropy`            | Either term.                                                                               |
+| `entropy NOT regression`      | Has `entropy`, excludes `regression`.                                                      |
+| `+rust -python`               | `+` require, `-` exclude (shorthand for `AND` / `NOT`).                                    |
+| `(loss OR cost) AND function` | Group with parentheses, to any depth.                                                      |
 
 ### Phrases
 
 Quoting is the biggest precision win — quote any common phrase:
 
-| You type              | Matches                                                       |
-| --------------------- | ------------------------------------------------------------- |
-| `man in the middle`   | The four words anywhere in a chunk. Noisy.                    |
+| You type              | Matches                                                              |
+| --------------------- | -------------------------------------------------------------------- |
+| `man in the middle`   | The four words anywhere in a chunk. Noisy.                           |
 | `"man in the middle"` | The four words together, in order. Also matches `man-in-the-middle`. |
 
 ### Proximity
@@ -448,10 +449,10 @@ Find terms near each other, in any order — `{N}` and `NEAR/N` are equivalent:
 Suffix `~1` or `~2` to allow that many edits per term — an adjacent transposition
 (`ir` ↔ `ri`) counts as one edit:
 
-| You type         | Matches                                            |
-| ---------------- | -------------------------------------------------- |
-| `mitochondira~1` | `mitochondria`, `mitochondrial`, etc.              |
-| `kubernates~2`   | `kubernetes` and near spellings.                   |
+| You type         | Matches                               |
+| ---------------- | ------------------------------------- |
+| `mitochondira~1` | `mitochondria`, `mitochondrial`, etc. |
+| `kubernates~2`   | `kubernetes` and near spellings.      |
 
 Works on a single term or alongside others (`powerhouse mitochondira~1`). Use
 sparingly on short terms: `cat~2` matches almost everything.
@@ -461,15 +462,15 @@ sparingly on short terms: `cat~2` matches almost everything.
 A field qualifier is a hard filter: it narrows the result set (it does not just
 boost), so you can combine it with search terms to constrain them.
 
-| You type                       | What it does                                                       |
-| ------------------------------ | ------------------------------------------------------------------ |
-| `title:transformer`            | Only documents whose title contains `transformer`.                 |
-| `heading_path:"chapter 4"`     | Only sections under that heading path.                             |
-| `author:dijkstra`              | Only documents with that author metadata.                          |
-| `kind:pdf`                     | Only a file type (`pdf`, `docx`, `pptx`, `md`, `txt`).             |
-| `path_tokens:thesis`           | Only paths containing `thesis`.                                    |
-| `title:(rust OR golang)`       | Group alternatives within one field.                              |
-| `has:author`                   | Only documents that have a non-empty `author` field.              |
+| You type                   | What it does                                           |
+| -------------------------- | ------------------------------------------------------ |
+| `title:transformer`        | Only documents whose title contains `transformer`.     |
+| `heading_path:"chapter 4"` | Only sections under that heading path.                 |
+| `author:dijkstra`          | Only documents with that author metadata.              |
+| `kind:pdf`                 | Only a file type (`pdf`, `docx`, `pptx`, `md`, `txt`). |
+| `path_tokens:thesis`       | Only paths containing `thesis`.                        |
+| `title:(rust OR golang)`   | Group alternatives within one field.                   |
+| `has:author`               | Only documents that have a non-empty `author` field.   |
 
 Combine with terms to constrain them — `kind:pdf "diffusion model"` finds the
 phrase in **PDFs only**.
@@ -523,14 +524,14 @@ Filter markdown notes by their YAML frontmatter with a `[…]` predicate.
 **String values use single quotes**; double quotes mark a field name with
 spaces (`"Due Date"`):
 
-| You type                                       | What it does                                          |
-| ---------------------------------------------- | ----------------------------------------------------- |
-| `mitm [Course == 'Security Foundations']`      | Notes where the `Course` field equals that value.     |
+| You type                                                | What it does                                          |
+| ------------------------------------------------------- | ----------------------------------------------------- |
+| `mitm [Course == 'Security Foundations']`               | Notes where the `Course` field equals that value.     |
 | `[Notes_Type == 'Lecture' OR Notes_Type == 'Tutorial']` | Either value (there are no list literals — use `OR`). |
-| `entropy [Course == 'ML' AND Year >= 2024]`    | Compound predicate.                                   |
-| `['urgent' in Tags]`                           | `urgent` is an element of the `Tags` list.            |
-| `[Course ~~ 'Design *']`                       | Glob-match a string value.                            |
-| `["Due Date" < 2026-01-01]`                    | A field name with a space, double-quoted.             |
+| `entropy [Course == 'ML' AND Year >= 2024]`             | Compound predicate.                                   |
+| `['urgent' in Tags]`                                    | `urgent` is an element of the `Tags` list.            |
+| `[Course ~~ 'Design *']`                                | Glob-match a string value.                            |
+| `["Due Date" < 2026-01-01]`                             | A field name with a space, double-quoted.             |
 
 Supported operators: `==` `!=` `<` `<=` `>` `>=` `~~` (glob, string fields),
 `in` / `not in` (membership in a list field), `AND`, `OR`, `NOT`, parentheses.

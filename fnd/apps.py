@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from fnd import launcher
+from fnd import launcher, os_labels
 from fnd.kinds import ALL_KIND_IDS, CATEGORY_IDS, KIND_BY_ID
 
 # ── Data model ──────────────────────────────────────────────────────────────
@@ -70,6 +70,10 @@ class App:
     available: Callable[[], bool]
     positional: bool
     notes: str = ""
+    # False for entries that act on the file without opening it (``reveal``).
+    # They belong in the Open-with picker but not in the default-app pickers —
+    # choosing one as a kind's default would stop `o` opening that kind at all.
+    selectable_default: bool = True
 
 
 # Whitelist of handles an app may declare. An app can target a fine-grained
@@ -350,6 +354,13 @@ def _render_url(template: str, req: OpenRequest) -> str:
 
 def _handle_system(req: OpenRequest) -> int:
     return launcher.open_path(req.path)
+
+
+def _handle_reveal(req: OpenRequest) -> int:
+    """Show the file in the platform file manager instead of opening it.
+    Fire-and-forget at the launcher seam, so there is no code to report."""
+    launcher.reveal(req.path)
+    return 0
 
 
 def _handle_skim(req: OpenRequest) -> int:
@@ -750,6 +761,20 @@ BUILTIN_APPS: Final[dict[str, App]] = {
         available=lambda: _sumatra_exe() is not None,
         positional=True,
         notes="SumatraPDF.exe -page N <path>; page-jump (Windows).",
+    ),
+    # Last so the picker lists the apps that actually open the file first.
+    # Resolved eagerly rather than via an ``os_labels`` placeholder: unlike help
+    # text, ``display_name`` feeds logic — ``letter_shortcuts`` derives the
+    # picker's access key from its first free letter.
+    "reveal": App(
+        id="reveal",
+        display_name=os_labels.reveal_label(),
+        handles=("*",),
+        handler=_handle_reveal,
+        available=lambda: True,
+        positional=False,
+        notes=f"Selects the file in {os_labels.file_manager_phrase()} without opening it.",
+        selectable_default=False,
     ),
 }
 

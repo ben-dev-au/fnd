@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._pilot_wait import wait_until
+
 
 def test_indexer_filetypes_exposed_and_complete() -> None:
     """Spec: Add Collection wizard › Includes — file types come from a
@@ -217,12 +219,22 @@ async def test_detail_strip_updates_on_cursor_move(built_index: Path) -> None:
         assert isinstance(screen, SettingsScreen)
         strip = screen.query_one(DetailStrip)
         # Cursor at index 0 (Preferences). Strip shows Preferences description.
-        assert "Preferences" in strip._description or "preferences" in strip._description.lower()
+        # Gate on the strip's content rather than a fixed tick count: it fills
+        # from a Highlighted message, whose round-trip can outlast a single
+        # pause on a loaded runner (the strip then reads empty, not wrong).
+        await wait_until(
+            pilot,
+            lambda: "preferences" in strip._description.lower(),
+            message="DetailStrip never showed the Preferences description",
+        )
         # Move cursor to Collections.
         lst = screen.query_one(SettingsList)
         lst.action_move(1)
-        await pilot.pause()
-        assert "Collections" in strip._description or "collection" in strip._description.lower()
+        await wait_until(
+            pilot,
+            lambda: "collection" in strip._description.lower(),
+            message="DetailStrip never updated to the Collections description",
+        )
 
 
 @pytest.mark.asyncio

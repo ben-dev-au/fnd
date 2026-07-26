@@ -21,6 +21,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from fnd import os_labels
 from fnd.config import app_data_dir
 
 
@@ -92,8 +93,8 @@ REGISTRY: tuple[Action, ...] = (
     Action(
         id="tree_expand_all_children",
         description="Expand the focused node and its whole subtree — the node "
-        "plus every descendant. Ctrl+Right / Option(Alt)+Right, whichever your "
-        "terminal delivers.",
+        f"plus every descendant. Ctrl+Right / {os_labels.ALT_WORD}+Right, whichever "
+        "your terminal delivers.",
         default_key="ctrl+right,alt+right",
         command="expand-all",
         footer_label="Expand all",
@@ -103,7 +104,7 @@ REGISTRY: tuple[Action, ...] = (
     Action(
         id="tree_collapse_all_children",
         description="Collapse the focused node's children — every descendant "
-        "folds away but the node itself stays open. Ctrl+Left / Option(Alt)+Left.",
+        f"folds away but the node itself stays open. Ctrl+Left / {os_labels.ALT_WORD}+Left.",
         default_key="ctrl+left,alt+left",
         command="collapse-all",
         footer_label="Collapse children",
@@ -145,6 +146,19 @@ REGISTRY: tuple[Action, ...] = (
         footer_label="System default",
         contexts=("results", "preview"),
         show_in_footer=False,
+    ),
+    Action(
+        id="reveal_in_file_manager",
+        description=(
+            f"Show the focused result in {os_labels.FILE_MANAGER} — selects the file "
+            "in place without opening it, so it can be moved, renamed, or checked "
+            "against its neighbours."
+        ),
+        default_key="R",
+        command="reveal",
+        footer_label=os_labels.REVEAL_LABEL,
+        contexts=("results", "preview"),
+        show_in_footer=False,  # discoverable via help (`?`) and `O`
     ),
     Action(
         id="show_help",

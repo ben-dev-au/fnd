@@ -14,18 +14,56 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from textual.pilot import Pilot
 from textual.widgets import Tree
 from textual.widgets.tree import TreeNode
 
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from fnd.tui.scope_panel import ScopeController
 from fnd.tui.widgets.results_tree import ResultsTree
+from tests._pilot_wait import wait_until
 
 
 def _write_md(p: Path, body: str) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(body, encoding="utf-8")
+
+
+async def _click_row(
+    pilot: Pilot[None], tree: ResultsTree, node: TreeNode[Any], column: int
+) -> None:
+    """Click ``node``'s row at ``column``, on the row it actually occupies.
+
+    Three things must hold before a coordinate click can land, and a miss is
+    silent — ``Pilot.click`` computes ``widget.region.offset + offset`` and
+    happily delivers the event to whatever else is painted there, so the only
+    symptom is the assertion that follows timing out much later.
+
+    1. The node must be displayed: ``TreeNode.line`` is -1 until the tree has
+       built its lines, and y=-1 lands a row ABOVE the widget.
+    2. It must be scrolled into view. ``line`` counts the tree's *virtual*
+       lines while the click offset is *viewport*-relative, so the two diverge
+       by ``scroll_offset.y`` — expanding a couple of levels is enough to push
+       a leaf out of a short sidebar pane and send the click to the wrong row.
+    3. The click must be verified. ``click()`` returns whether the event landed
+       on the target widget; asserting it turns a miss into an immediate, named
+       failure instead of a ten-second wait on a predicate that never flips.
+    """
+    await wait_until(
+        pilot,
+        lambda: node.line >= 0,
+        message=f"tree never gave {str(node.label)!r} a display line",
+    )
+    tree.scroll_to_node(node, animate=False)
+    await pilot.pause()
+    y = node.line - int(tree.scroll_offset.y)
+    landed = await pilot.click(tree, offset=(column, y))
+    assert landed, (
+        f"click at (column={column}, y={y}) missed the tree for {str(node.label)!r} "
+        f"(line={node.line}, scroll_y={tree.scroll_offset.y}, size={tree.size})"
+    )
 
 
 @pytest.fixture
@@ -139,13 +177,19 @@ async def test_single_click_toggles_kind_leaf_once(
         tree.focus()
 
         # Leaves carry no expand arrow, so any column on the row selects it.
-        await pilot.click(tree, offset=(12, leaf.line))
-        await pilot.pause()
-        assert value in app._scope.filter_kinds, "one click should toggle the kind ON"
+        await _click_row(pilot, tree, leaf, 12)
+        await wait_until(
+            pilot,
+            lambda: value in app._scope.filter_kinds,
+            message="one click should toggle the kind ON",
+        )
 
-        await pilot.click(tree, offset=(12, leaf.line))
-        await pilot.pause()
-        assert value not in app._scope.filter_kinds, "next click should toggle it OFF"
+        await _click_row(pilot, tree, leaf, 12)
+        await wait_until(
+            pilot,
+            lambda: value not in app._scope.filter_kinds,
+            message="next click should toggle it OFF",
+        )
 
 
 @pytest.mark.asyncio
@@ -166,9 +210,12 @@ async def test_single_click_on_header_arrow_expands_once(
         tree.focus()
 
         # x=0 lands on the toggle triangle for a top-level node.
-        await pilot.click(tree, offset=(0, kind_node.line))
-        await pilot.pause()
-        assert kind_node.is_expanded, "clicking the arrow once should expand the header"
+        await _click_row(pilot, tree, kind_node, 0)
+        await wait_until(
+            pilot,
+            lambda: kind_node.is_expanded,
+            message="clicking the arrow once should expand the header",
+        )
 
 
 @pytest.mark.asyncio
@@ -205,7 +252,7 @@ async def test_collapsing_header_follows_cursor_up_from_a_child(
 
 @pytest.mark.asyncio
 async def test_rapid_kind_toggles_coalesce_to_one_search(
-    cfg_one_collection: Config, mixed_index: Path
+    cfg_one_collection: Config, mixed_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A burst of file-type toggles debounces to a SINGLE re-search.
 
@@ -213,7 +260,15 @@ async def test_rapid_kind_toggles_coalesce_to_one_search(
     in a row. Running the full synchronous search pipeline once per toggle
     stalled the event loop N times and made subsequent nav feel laggy. The
     commit is debounced so the burst collapses to one search.
+
+    Widen the debounce window rather than racing it: the mid-burst assertion
+    used to hold only if three ``pilot.pause()`` round-trips finished inside
+    0.12 s of wall-clock, which a loaded runner does not guarantee — the timer
+    then fired legitimately and the test failed on *correct* behaviour. With
+    the window pinned open the burst cannot leak a search, and the coalesced
+    one is flushed by hand instead of by sleeping.
     """
+    monkeypatch.setattr(ScopeController, "FILTER_SEARCH_DEBOUNCE", 30.0)
     app = FNDApp(index_dir=mixed_index, config=cfg_one_collection, initial_query="glimmer")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -238,9 +293,12 @@ async def test_rapid_kind_toggles_coalesce_to_one_search(
         tree.focus()
         for lf in leaves[:3]:
             tree.select_node(lf)
-            await pilot.pause()  # minimal — shorter than the 0.12s debounce window
+            await pilot.pause()
         assert calls["n"] == 0, "no search should fire mid-burst (debounced)"
-        await pilot.pause(0.25)  # let the debounce fire
+        assert app._scope._filter_search_timer is not None, "burst left no debounce pending"
+        # Fire the pending debounce directly — deterministic, and it asserts the
+        # same thing sleeping past the window did: the burst coalesced to one.
+        app._scope._run_filter_search()
         assert calls["n"] == 1, f"burst should coalesce to one search, got {calls['n']}"
 
 

@@ -664,7 +664,7 @@ class SettingsList(Widget, can_focus=True):
         # scalars / toggles / actions / leaf rows.
         Binding("enter", "activate", show=False),
         Binding("right", "drill", show=False),
-        # Shift+Enter = reveal in Finder (file-capable rows only).
+        # Shift+Enter = reveal in the file manager (file-capable rows only).
         Binding("shift+enter", "reveal", show=False),
         # Numeric jumps stay as a hidden affordance.
         *(Binding(str(n), f"jump({n})", show=False) for n in range(1, 10)),
@@ -968,8 +968,8 @@ class SettingsList(Widget, can_focus=True):
                 return
 
     def action_reveal(self) -> None:
-        """Shift+Enter on a reveal-capable row triggers Finder reveal of
-        the underlying file. Capability is keyed off well-known row ids."""
+        """Shift+Enter on a reveal-capable row shows the underlying file in the
+        platform file manager. Capability is keyed off well-known row ids."""
         if not (0 <= self.cursor_index < len(self._items)):
             return
         item = self._items[self.cursor_index]
@@ -2051,6 +2051,10 @@ class SourceFormScreen(Screen[None]):
             # a machine that doesn't have Skim and only fail at open
             # time. ``system`` is always available so it stays.
             if not app.available():
+                continue
+            # `reveal` never opens the file, so it can't stand in as a
+            # source's app — see ``App.selectable_default``.
+            if not app.selectable_default:
                 continue
             handles = ",".join(app.handles)
             # ``app.notes`` carries the per-app advisory ("install plugin X
