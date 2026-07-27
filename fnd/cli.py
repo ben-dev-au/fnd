@@ -19,7 +19,7 @@ from pathlib import Path
 
 import typer
 
-from fnd.config import default_config_path, default_index_dir
+from fnd.config import default_config_path, default_index_dir, is_all_collections
 from fnd.kinds import KINDS_IN_CATEGORY
 from fnd.launch_command import LaunchScope
 
@@ -153,7 +153,9 @@ def tui(
     query: list[str] = typer.Argument(
         default_factory=list, help="Initial query to seed the TUI.", show_default=False
     ),
-    collection: str | None = typer.Option(None, "--collection", "-c"),
+    collection: str | None = typer.Option(
+        None, "--collection", "-c", help="Collection to open, or 'all' for every collection."
+    ),
     query_opt: str = typer.Option("", "--query", "-q", hidden=True),
     tag: list[str] = typer.Option([], "--tag", help="Only files carrying this tag. Repeatable."),
     not_tag: list[str] = typer.Option(
@@ -237,7 +239,9 @@ def tui(
 def search(
     query: str,
     limit: int = 10,
-    collection: str | None = typer.Option(None, "--collection", "-c"),
+    collection: str | None = typer.Option(
+        None, "--collection", "-c", help="Collection to search, or 'all' for every collection."
+    ),
     meta: str | None = typer.Option(
         None, "--meta", help="Inline metadata-filter DSL (md hits only)."
     ),
@@ -309,6 +313,11 @@ def search(
 
     cfg = load()
     prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg)
+
+    # ``-c all`` is the quick "search everything" spelling; an unscoped
+    # search is exactly what ``collection=None`` already means downstream.
+    if is_all_collections(collection, known=set(cfg.collections)):
+        collection = None
 
     # Tags never enter the query string — see fnd/tag_query.py. They are
     # normalised the same way indexed tags were, then passed as typed state.
@@ -476,11 +485,17 @@ def collection_list() -> None:
     from fnd.config import load
 
     cfg = load()
+    # ``defaults.collection`` may be the ``all`` pseudo-name, in which case
+    # every collection is starred rather than none of them.
+    want = cfg.defaults.collection
+    default_names = (
+        set(cfg.collections) if is_all_collections(want, known=set(cfg.collections)) else {want}
+    )
     if not cfg.collections:
         typer.echo("(no collections configured — run `fnd config edit`)")
         return
     for name, c in sorted(cfg.collections.items()):
-        marker = " *" if name == cfg.defaults.collection else "  "
+        marker = " *" if name in default_names else "  "
         typer.echo(f"{marker} {name}: {len(c.sources)} source(s)")
 
 

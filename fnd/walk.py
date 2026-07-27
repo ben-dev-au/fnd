@@ -26,8 +26,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
-import sys
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -35,11 +34,6 @@ if TYPE_CHECKING:
     from fnd.config import SourceConfig
 
 from fnd.extract import supported_suffixes
-
-# macOS "Optimize Mac Storage" marker for an iCloud-offloaded placeholder.
-# stat(2)'s st_flags carries this bit when the file's contents have been
-# evicted from local disk; reading the file would synchronously download it.
-_SF_DATALESS = 0x40000000
 
 
 def _matches_any(globs: list[str], rel_str: str) -> bool:
@@ -96,20 +90,6 @@ def resolve_skip_dirs(defaults: object | None = None) -> frozenset[str]:
     if not extras:
         return DEFAULT_JUNK_DIRS
     return DEFAULT_JUNK_DIRS | frozenset(extras)
-
-
-def is_dataless(path: Path) -> bool:
-    """True if ``path`` is an iCloud-offloaded placeholder on macOS.
-
-    Reading the file would trigger a synchronous download. Detected via
-    the SF_DATALESS st_flag bit. Returns False off Darwin or on stat error."""
-    if sys.platform != "darwin":
-        return False
-    try:
-        st_flags = os.stat(path).st_flags
-    except OSError:
-        return False
-    return bool(st_flags & _SF_DATALESS)
 
 
 def walk(
@@ -276,6 +256,7 @@ def walk_sources(
     *,
     sources: list[SourceConfig],
     skip_dirs: frozenset[str] | None = None,
+    read_frontmatter: Callable[[Path], dict[str, object] | None] | None = None,
 ) -> Iterator[Path]:
     """Yield in-scope paths across every source.
 
@@ -288,6 +269,13 @@ def walk_sources(
     ``skip_dirs`` is forwarded to :func:`walk`. Indexer entry points
     resolve this from ``defaults.skip_junk_dirs`` + ``extra_junk_dirs``;
     callers that don't pass it inherit the built-in default set.
+
+    ``read_frontmatter`` overrides how a candidate's frontmatter is
+    obtained. Evaluating the filter means opening the file, which on a
+    cloud-backed folder blocks while the provider sends it; the indexer
+    substitutes a reader that reports and bounds that wait. Returning
+    ``None`` drops the file, so an override can also decline to fetch.
+    Defaults to a plain read.
     """
     from fnd.config import SourceConfig  # local import: avoid cycle
     from fnd.filter_dsl import compile_filter
@@ -295,6 +283,8 @@ def walk_sources(
         FrontmatterParseError,
         read_frontmatter_from_file,
     )
+
+    read = read_frontmatter or read_frontmatter_from_file
 
     for source in sources:
         assert isinstance(source, SourceConfig)
@@ -310,7 +300,7 @@ def walk_sources(
                 yield path
                 continue
             try:
-                fm = read_frontmatter_from_file(path) or {}
+                fm = read(path) or {}
             except FrontmatterParseError:
                 continue
             if predicate(fm):

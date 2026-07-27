@@ -34,6 +34,10 @@ class IndexerService:
         # `fnd collection reindex` invoked from the TUI / palette.
         self.task: asyncio.Task[None] | None = None
         self.cancel: asyncio.Event | None = None
+        # Live "stop fetching cloud-only files" opt-out for the current run.
+        # Owned here rather than per-collection so a chain keeps the choice
+        # once the user makes it; cleared when a fresh chain starts.
+        self.skip_cloud: asyncio.Event | None = None
         self.events: asyncio.Queue[Any] | None = None
         self.state: Any = None
         self.last_event: Any = None
@@ -130,9 +134,21 @@ class IndexerService:
                     chain_total = getattr(self, "chain_total", 1) or 1
                     chain_pending = getattr(self, "chain_remaining", None) or []
                     chain_index = max(1, chain_total - len(chain_pending))
+                    # Say so. Otherwise the user confirms Update all,
+                    # gets a modal titled with a DIFFERENT collection,
+                    # and reads the run they asked for as "did nothing".
+                    running = self.collection or collection
+                    if running != collection:
+                        with contextlib.suppress(Exception):
+                            self._app.notify(
+                                f"Already indexing '{running}' — "
+                                f"cancel it first to run this instead.",
+                                severity="warning",
+                                timeout=6,
+                            )
                     self._app.push_screen(
                         IndexerScreen(
-                            self.collection or collection,
+                            running,
                             chain_total=chain_total,
                             chain_index=chain_index,
                         )
@@ -204,6 +220,14 @@ class IndexerService:
         chain_active = bool(self.chain_remaining) or (self.chain_total or 1) > 1
         if not chain_active or self.events is None:
             self.events = asyncio.Queue()
+        # Same reuse rule for the cloud opt-out: a chain carries the user's
+        # choice across collections, a fresh run starts from "fetch".
+        if not chain_active or self.skip_cloud is None:
+            self.skip_cloud = asyncio.Event()
+            with contextlib.suppress(Exception):
+                from fnd.cloud_files import reset_wait
+
+                reset_wait()
         if not chain_active:
             # Fresh chain start: clear session-wide per-page counters
             # so this run reports its own avg from scratch.
@@ -225,6 +249,7 @@ class IndexerService:
                 texturise_override=texturise_override,
                 skip_unchanged=skip_unchanged,
                 force_fresh=force_fresh,
+                skip_cloud=self.skip_cloud,
                 run_seq=my_seq,
             )
         )
@@ -344,12 +369,19 @@ class IndexerService:
     def maybe_resume(self) -> None:
         """Auto-resume an interrupted background index on launch — only when
         the user has opted in (defaults.indexer_auto_resume, off by default)
-        AND the saved state is genuinely resumable. Indexing is heavy, so it
+        AND a saved state is genuinely resumable. Indexing is heavy, so it
         must never start unbidden; see index_runner.is_state_resumable for the
-        recent-and-real-collection guard that rejects leaked/stale state."""
+        recent-and-real-collection guard that rejects leaked/stale state.
+
+        Every collection's state file is considered, most recently touched
+        first, and the rest of the resumable ones are queued behind it as a
+        chain — an interrupted Update-all should pick up where it stopped,
+        not just its first collection. States that will never be resumable
+        (their collection is gone, or they're older than the resume window)
+        are deleted rather than left to accumulate forever."""
         import datetime as _dt
 
-        from fnd.index_runner import is_state_resumable, load_state, state_file_for
+        from fnd.index_runner import clear_state, is_state_resumable, saved_states
 
         try:
             from fnd.config import load as _load_config
@@ -357,25 +389,40 @@ class IndexerService:
             cfg = _load_config()
         except Exception:
             return
-        if not cfg.defaults.indexer_auto_resume:
+        known = set(cfg.collections)
+        now = _dt.datetime.now(tz=_dt.UTC)
+
+        resumable: list[Any] = []
+        for path, state in saved_states():
+            if is_state_resumable(state, known_collections=known, now=now):
+                resumable.append(state)
+            elif state.collection not in known or state.files_completed >= state.total_files:
+                # Dead weight: a collection that no longer exists, or a run
+                # that actually finished. Age alone isn't enough to delete —
+                # a stale-but-valid state is still the record of where a run
+                # got to, and a manual Update reads it.
+                with contextlib.suppress(Exception):
+                    clear_state(path)
+
+        # The opt-in gate is checked after the sweep so stale files get tidied
+        # either way; it only guards actually *starting* work.
+        if not cfg.defaults.indexer_auto_resume or not resumable:
             return
-        # Resume the default collection only for now — extending to named
-        # collections requires walking the reindex dir for *.state.toml.
-        state = load_state(state_file_for("default"))
-        if not is_state_resumable(
-            state, known_collections=set(cfg.collections), now=_dt.datetime.now(tz=_dt.UTC)
-        ):
-            return
-        assert state is not None  # narrowed by is_state_resumable
+
+        first, rest = resumable[0], resumable[1:]
         try:
             # Honour the app's configured index dir (every other start
             # path does); a test / CLI caller that built FNDApp with a
             # custom index_dir must resume into that dir, not the default.
+            self.chain_remaining = [s.collection for s in rest]
+            self.chain_total = len(resumable)
             self._app.start_indexer(
-                collection="default", index_dir=self._app._index_dir, open_modal=False
+                collection=first.collection, index_dir=self._app._index_dir, open_modal=False
             )
+            more = f" (+{len(rest)} queued)" if rest else ""
             self._app.notify(
-                f"Resuming indexing: {state.files_completed}/{state.total_files}",
+                f"Resuming indexing of {first.collection}: "
+                f"{first.files_completed}/{first.total_files}{more}",
                 timeout=5,
             )
         except Exception:

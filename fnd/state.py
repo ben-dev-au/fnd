@@ -50,6 +50,13 @@ class UiState:
     tag_include: dict[str, list[str]] = field(default_factory=dict)
     tag_exclude: dict[str, list[str]] = field(default_factory=dict)
     tag_match_all: bool = True
+    # True only when an on-disk state file was actually read. Not persisted —
+    # it distinguishes "this profile has never saved a scope" from "the user
+    # deliberately saved an empty one", which look identical in the fields
+    # above but mean opposite things when seeding a first-launch scope.
+    # ``compare=False``: this is provenance about where the object came from,
+    # not part of the state, so a save/load round-trip still compares equal.
+    saved: bool = field(default=False, compare=False)
 
 
 def load(path: Path | None = None) -> UiState:
@@ -63,6 +70,8 @@ def load(path: Path | None = None) -> UiState:
         raw = tomllib.loads(p.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError):
         return UiState()
+    # Past this point the file exists and parsed: whatever scope it carries
+    # (including none) is a deliberate saved state.
     scope_raw = raw.get("scope", {})
     panels_raw = raw.get("panels", {})
     filters_raw = raw.get("filters", {})
@@ -101,6 +110,7 @@ def load(path: Path | None = None) -> UiState:
         tag_include=_tag_map("tag_include"),
         tag_exclude=_tag_map("tag_exclude"),
         tag_match_all=raw_match_all if isinstance(raw_match_all, bool) else True,
+        saved=True,
     )
 
 

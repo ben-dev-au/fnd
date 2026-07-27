@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fnd import os_labels
+from fnd.config import ALL_COLLECTIONS, is_all_collections
 
 if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
@@ -686,14 +687,23 @@ def _get_float_default(field_name: str, fallback: float) -> Callable[[FNDApp], s
 
 def _get_default_collection(app: FNDApp) -> Any:
     cfg = app._config  # type: ignore[attr-defined]
-    return cfg.defaults.collection if cfg else ""
+    if cfg is None:
+        return ALL_COLLECTIONS
+    want = cfg.defaults.collection
+    # Normalise casing / an unknown name back onto a real choice so the
+    # picker always shows a row as selected.
+    if is_all_collections(want, known=set(cfg.collections)):
+        return ALL_COLLECTIONS
+    return want if want in cfg.collections else ALL_COLLECTIONS
 
 
 def _choices_collections(app: FNDApp) -> list[ChoiceOption]:
     cfg = app._config  # type: ignore[attr-defined]
+    choices = [ChoiceOption(value=ALL_COLLECTIONS, label="All collections")]
     if cfg is None:
-        return []
-    return [ChoiceOption(value=n, label=n) for n in sorted(cfg.collections)]
+        return choices
+    choices.extend(ChoiceOption(value=n, label=n) for n in sorted(cfg.collections))
+    return choices
 
 
 def _choices_ranking(app: FNDApp) -> list[ChoiceOption]:
@@ -921,12 +931,18 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
         MenuItem(
             id="pref.default_collection",
             label="Default collection",
-            description="Active collection when --collection is omitted.",
+            description=(
+                "Scope a fresh profile starts with — All collections, or one "
+                "named collection. Your sidebar selection is remembered and "
+                "wins once you've made one, so changing this only affects a "
+                "profile that has never saved a scope. Use `-c all` (or "
+                "`-c <name>`) to scope a single launch."
+            ),
             kind=KIND_PICKER,
             choices_provider=_choices_collections,
             picker_getter=_get_default_collection,
             picker_setter=_setting_writer("defaults.collection"),
-            keywords=("default", "collection"),
+            keywords=("default", "collection", "all", "scope"),
         ),
         header("Default app per filetype", level=2),
         *_filetype_default_app_items(),

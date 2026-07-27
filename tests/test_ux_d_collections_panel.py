@@ -70,7 +70,7 @@ async def test_collections_panel_mounts_below_results(
 
 @pytest.mark.asyncio
 async def test_enter_toggles_collection_scope(
-    cfg_two_collections: Config, two_collection_index: Path
+    cfg_two_collections: Config, two_collection_index: Path, saved_empty_scope: Path
 ) -> None:
     """Enter on a collection node in the panel should toggle its
     membership in the active search scope (per the user's explicit
@@ -96,7 +96,7 @@ async def test_enter_toggles_collection_scope(
 
 @pytest.mark.asyncio
 async def test_active_collection_marked_in_label(
-    cfg_two_collections: Config, two_collection_index: Path
+    cfg_two_collections: Config, two_collection_index: Path, saved_empty_scope: Path
 ) -> None:
     """Active collections should be visually marked in the tree label
     so the user can see at a glance which are in scope."""
@@ -116,7 +116,7 @@ async def test_active_collection_marked_in_label(
 
 @pytest.mark.asyncio
 async def test_panel_header_shows_active_count(
-    cfg_two_collections: Config, two_collection_index: Path
+    cfg_two_collections: Config, two_collection_index: Path, saved_empty_scope: Path
 ) -> None:
     """The X/Y active count lives in the tree's ``border_title`` (matches
     the results pane's styling). Originally this was a separate Static

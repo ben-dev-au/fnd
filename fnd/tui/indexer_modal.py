@@ -36,6 +36,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import OptionList, ProgressBar, Static, Tree
 
+from fnd.cloud_files import FetchWait
 from fnd.config import CollectionConfig
 from fnd.index_runner import IndexState, ProgressEvent, run_indexer
 
@@ -104,6 +105,27 @@ def _stuck_suffix() -> str:
     return f"   [yellow]· stuck {int(since)}s[/]"
 
 
+def _format_current_line(
+    *,
+    wait: FetchWait | None,
+    current_path: str,
+    stuck_suffix: str,
+) -> str:
+    """The modal's one-line "what is happening right now".
+
+    A cloud fetch blocks the worker that asked for it, so no progress event
+    can arrive while it runs. When one is in flight it takes the line and
+    names the provider, the file, and how long — that is the difference
+    between a legitimate download and an app the user reads as frozen.
+    """
+    if wait is not None:
+        return (
+            f"[dim]Fetching from {wait.provider}:[/] {_short_name(wait.path)}"
+            f"   [yellow]· waiting {int(wait.seconds_waiting())}s[/]"
+        )
+    return f"[dim]Current:[/] {_short_name(current_path)}{stuck_suffix}"
+
+
 def fmt_per_page(session_pages: int, session_page_seconds: float) -> str:
     """Render avg seconds per page from session counters, or '?'
     when no pages have completed yet (cache-only chain, non-PDFs,
@@ -122,6 +144,7 @@ class IndexerScreen(ModalScreen[None]):
     BINDINGS = [  # noqa: RUF012
         Binding("escape,b", "background", "Background", show=True),
         Binding("c", "cancel", "Cancel", show=True),
+        Binding("o", "skip_cloud", "Skip cloud-only", show=True),
         Binding("p", "pause", "Pause", show=True),
         Binding("f", "show_failed", "Flat PDFs", show=True),
     ]
@@ -335,6 +358,7 @@ class IndexerScreen(ModalScreen[None]):
         Hidden when no per-page snapshot is available (cache hit, non-
         PDF, or before the first page beat). Shown with progress when
         a PDF is mid-extraction."""
+        from fnd import cloud_files
         from fnd.tui import live_progress
 
         ev = app._indexer.last_event
@@ -345,10 +369,13 @@ class IndexerScreen(ModalScreen[None]):
             if app._indexer.state is not None
             else ""
         )
-        stuck_suffix = _stuck_suffix()
+        line = _format_current_line(
+            wait=cloud_files.current_wait(),
+            current_path=current_path,
+            stuck_suffix=_stuck_suffix(),
+        )
         with contextlib.suppress(Exception):
-            current = self.query_one("#indexer_current_file", Static)
-            current.update(f"[dim]Current:[/] {_short_name(current_path)}{stuck_suffix}")
+            self.query_one("#indexer_current_file", Static).update(line)
         _path, pages_done, pages_total, _start = live_progress.snapshot()
         try:
             label = self.query_one("#indexer_pages_label", Static)
@@ -555,7 +582,11 @@ class IndexerScreen(ModalScreen[None]):
 
         if ev.kind == "enumerating":
             self._refresh_title()
-            status.update("[dim]Scanning sources…[/]")
+            # Show the running count: a scan over a network share or a
+            # cloud-backed folder can take minutes, and a static
+            # "Scanning sources…" is indistinguishable from a hang.
+            scanned = f"   {ev.files_total} files" if ev.files_total else ""
+            status.update(f"[dim]Scanning sources…[/]{scanned}")
             bar.update(total=100, progress=0)
             current.update("")
             self._render_timing(ev.elapsed_s)
@@ -696,6 +727,25 @@ class IndexerScreen(ModalScreen[None]):
         with contextlib.suppress(Exception):
             self.query_one("#indexer_status", Static).update(
                 "[yellow]Cancelling…[/] waiting for current file to abort."
+            )
+
+    async def action_skip_cloud(self) -> None:
+        """Stop fetching cloud-only files for the rest of this run.
+
+        The compromise for a corpus that is mostly evicted: keep the run
+        going at local-disk speed and list what was left behind, without
+        having to cancel. Run-scoped — the next Update fetches again.
+        """
+        app = self._fnd_app()
+        skip = app._indexer.skip_cloud
+        if skip is None or skip.is_set():
+            return
+        skip.set()
+        with contextlib.suppress(Exception):
+            self.notify(
+                "Skipping cloud-only files for the rest of this run. "
+                "They'll be listed as not downloaded.",
+                timeout=6,
             )
 
     async def action_pause(self) -> None:
@@ -880,6 +930,7 @@ async def drive_indexer(
     texturise_override: bool | None = None,
     skip_unchanged: bool = True,
     force_fresh: bool = False,
+    skip_cloud: asyncio.Event | None = None,
     run_seq: int = 0,
 ) -> None:
     """Owns the async indexer for the app's lifetime of this run.
@@ -907,6 +958,7 @@ async def drive_indexer(
         texturise_override=texturise_override,
         skip_unchanged=skip_unchanged,
         force_fresh=force_fresh,
+        skip_cloud=skip_cloud,
     )
     final_event: Any = None
     try:
