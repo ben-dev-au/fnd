@@ -31,10 +31,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Final
+from typing import Final, Protocol
 
 __all__ = [
     "DEFAULT_FETCH_TIMEOUT_S",
+    "CloudFetchCancelledError",
     "CloudFetchError",
     "FetchWait",
     "Materialisation",
@@ -51,6 +52,17 @@ __all__ = [
 # user is watching a progress line that says so. Overridden by
 # ``defaults.cloud_fetch_timeout_s``.
 DEFAULT_FETCH_TIMEOUT_S: Final = 60.0
+
+# How often a blocked fetch checks for cancellation. Short enough that Cancel
+# feels immediate, long enough not to spin.
+_CANCEL_POLL_SECONDS: Final = 0.1
+
+
+class _CancelSignal(Protocol):
+    """Anything with ``is_set()`` — an ``asyncio.Event`` read from a worker
+    thread (a plain bool read, safe) or a ``threading.Event``."""
+
+    def is_set(self) -> bool: ...
 
 
 class Materialisation(StrEnum):
@@ -176,6 +188,14 @@ class CloudFetchError(TimeoutError):
     """A cloud fetch exceeded its deadline; treat the file as blocked."""
 
 
+class CloudFetchCancelledError(Exception):
+    """The run was cancelled while a fetch was still outstanding.
+
+    Deliberately *not* a :class:`CloudFetchError`: the file is not blocked
+    and must not be recorded as a failure. The run is ending.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class FetchWait:
     """The fetch currently blocking a worker, if any."""
@@ -206,12 +226,23 @@ def reset_wait() -> None:
         _wait = None
 
 
-def fetch[T](call: Callable[[], T], *, path: Path, timeout_s: float) -> T:
+def fetch[T](
+    call: Callable[[], T],
+    *,
+    path: Path,
+    timeout_s: float,
+    cancel: _CancelSignal | None = None,
+) -> T:
     """Run ``call`` — which will materialise ``path`` — under a deadline.
 
     Publishes a :class:`FetchWait` for the duration so the UI can name what
     it is waiting on, and raises :class:`CloudFetchError` if the provider has
     not delivered within ``timeout_s``.
+
+    ``cancel`` is polled while waiting, so a Cancel lands in well under a
+    second instead of being held for the remainder of the timeout by a
+    stalled provider. Raises :class:`CloudFetchCancelledError` when it fires —
+    the run is ending, so the file is not a failure.
 
     The worker is a throwaway daemon thread rather than a pooled one: a
     timed-out fetch is still blocked in the kernel and would otherwise hold
@@ -234,8 +265,19 @@ def fetch[T](call: Callable[[], T], *, path: Path, timeout_s: float) -> T:
         _wait = mine
     worker = threading.Thread(target=_run, daemon=True, name=f"fnd-fetch-{path.name}")
     worker.start()
-    worker.join(timeout_s)
+    deadline = time.monotonic() + timeout_s
+    cancelled = False
+    while worker.is_alive():
+        if cancel is not None and cancel.is_set():
+            cancelled = True
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        worker.join(min(_CANCEL_POLL_SECONDS, remaining))
     try:
+        if cancelled:
+            raise CloudFetchCancelledError(f"cancelled while fetching {path.name}")
         if worker.is_alive():
             raise CloudFetchError(
                 f"{provider_label(path)} did not deliver the file within {int(timeout_s)}s"

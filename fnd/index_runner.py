@@ -39,6 +39,7 @@ from fnd import paths
 from fnd.cache import ExtractionCache
 from fnd.cloud_files import (
     DEFAULT_FETCH_TIMEOUT_S,
+    CloudFetchCancelledError,
     CloudFetchError,
     is_placeholder,
     provider_label,
@@ -417,6 +418,10 @@ class CloudPolicy:
 
     timeout_s: float = DEFAULT_FETCH_TIMEOUT_S
     skip: asyncio.Event | None = None
+    # The run's cancel signal, polled while a fetch is blocked. Without it a
+    # stalled provider holds Cancel for the whole timeout — which would undo
+    # the responsiveness this change exists to deliver.
+    cancel: asyncio.Event | None = None
 
     def skipping(self) -> bool:
         return self.skip is not None and self.skip.is_set()
@@ -431,7 +436,7 @@ class CloudPolicy:
         """Run ``call`` under this policy's deadline, reporting the wait."""
         from fnd import cloud_files
 
-        return cloud_files.fetch(call, path=path, timeout_s=self.timeout_s)
+        return cloud_files.fetch(call, path=path, timeout_s=self.timeout_s, cancel=self.cancel)
 
     def materialise(self, path: Path) -> None:
         """Pull ``path`` down. Touching one byte is enough — both macOS
@@ -443,6 +448,15 @@ class CloudPolicy:
                 f.read(1)
 
         self.fetch(_touch, path)
+
+
+async def _process_file_task(fn: Any, /, **kwargs: Any) -> tuple[int, bool, bool, str]:
+    """Run one file's work off-loop.
+
+    A thin named seam over ``asyncio.to_thread`` so the call site can stay
+    readable while wrapped in the cancellation handler.
+    """
+    return cast("tuple[int, bool, bool, str]", await asyncio.to_thread(fn, **kwargs))
 
 
 def _process_one_file(
@@ -644,9 +658,6 @@ async def run_indexer(
     cache = ExtractionCache()
     from fnd.extract import pdf as _pdf
 
-    prior_singleton = _pdf._cache_singleton
-    _pdf._cache_singleton = cache
-
     # Run-scoped "Update cache at index time" toggle. When the user has
     # turned this off (battery-saver), extract() skips fresh structured
     # extraction on cache misses and skips cache writes — see
@@ -663,8 +674,6 @@ async def run_indexer(
 
             full_cfg = _load_config()
             skip_structure = not bool(full_cfg.defaults.cache_at_index_time)
-    prior_skip = _pdf._skip_structure_extraction
-    _pdf.set_skip_structure_extraction(skip_structure)
     texturise_on = not skip_structure
 
     # Tag settings come from the user's config, sourced here (the same
@@ -680,10 +689,6 @@ async def run_indexer(
         _defaults = _load_config().defaults
         tag_sources = tuple(_defaults.tag_sources)
         tag_frontmatter_keys = tuple(_defaults.tag_frontmatter_keys)
-
-    # Re-texturise-outdated opt-out from durable reuse (see extract()).
-    prior_force_fresh = _pdf._force_fresh_texture
-    _pdf.set_force_fresh_texture(force_fresh)
 
     # Clear any cancel beacon left over from a previous Cancel click
     # so a fresh run isn't aborted by stale state.
@@ -745,7 +750,7 @@ async def run_indexer(
         from fnd.config import load as _load_config
 
         timeout_s = float(_load_config().defaults.cloud_fetch_timeout_s)
-    policy = CloudPolicy(timeout_s=timeout_s, skip=skip_cloud)
+    policy = CloudPolicy(timeout_s=timeout_s, skip=skip_cloud, cancel=cancel)
     # Files the scan could not resolve. Recorded once the run starts so they
     # surface in the same failure list as extraction errors.
     scan_blocked: list[tuple[Path, str]] = []
@@ -767,6 +772,10 @@ async def run_indexer(
                 "dict[str, object] | None",
                 policy.fetch(lambda: read_frontmatter_from_file(path), path),
             )
+        except CloudFetchCancelledError:
+            # Not a blocked file — the run is ending. The pump checks cancel
+            # immediately after this slice and emits the terminal event.
+            return None
         except (CloudFetchError, OSError) as e:
             scan_blocked.append((path, policy.blocked_reason(path, e)))
             return None
@@ -878,7 +887,19 @@ async def run_indexer(
     if scan_blocked:
         save_state(state_path, state)
 
+    # Swap the process-wide extraction state in only now, immediately inside
+    # the try whose finally restores it. Setting it earlier left every
+    # scan-phase early return (cancel, scan error, setup failure) leaking the
+    # cache singleton and the structure/force-fresh modes into later runs and
+    # into the preview pipeline. Only extract(), below, reads any of it.
+    prior_singleton = _pdf._cache_singleton
+    prior_skip = _pdf._skip_structure_extraction
+    prior_force_fresh = _pdf._force_fresh_texture
     try:
+        _pdf._cache_singleton = cache
+        _pdf.set_skip_structure_extraction(skip_structure)
+        # Re-texturise-outdated opt-out from durable reuse (see extract()).
+        _pdf.set_force_fresh_texture(force_fresh)
         written = 0
         for path, source_id in paths:
             if cancel is not None and cancel.is_set():
@@ -913,23 +934,32 @@ async def run_indexer(
 
             hits_before = cache.hits
             t_file = time.perf_counter()
-            chunks_written, was_hit, has_textured, err = await asyncio.to_thread(
-                _process_one_file,
-                path=path,
-                source_id=source_id,
-                collection=collection,
-                writer=writer,
-                schema=index.schema,
-                cache_before_hits=hits_before,
-                cache=cache,
-                prior_searcher=prior_searcher,
-                skip_unchanged=skip_unchanged,
-                texturise_on=texturise_on,
-                wipe=force_fresh,
-                tag_sources=tag_sources,
-                tag_frontmatter_keys=tag_frontmatter_keys,
-                cloud_policy=policy,
-            )
+            try:
+                chunks_written, was_hit, has_textured, err = await _process_file_task(
+                    _process_one_file,
+                    path=path,
+                    source_id=source_id,
+                    collection=collection,
+                    writer=writer,
+                    schema=index.schema,
+                    cache_before_hits=hits_before,
+                    cache=cache,
+                    prior_searcher=prior_searcher,
+                    skip_unchanged=skip_unchanged,
+                    texturise_on=texturise_on,
+                    wipe=force_fresh,
+                    tag_sources=tag_sources,
+                    tag_frontmatter_keys=tag_frontmatter_keys,
+                    cloud_policy=policy,
+                )
+            except CloudFetchCancelledError:
+                # Cancel landed while this file's download was still
+                # outstanding. It is not a failure — commit what the run
+                # already wrote and end on the truthful terminal event.
+                with contextlib.suppress(Exception):
+                    writer.commit()
+                yield _emit("cancelled")
+                return
             file_elapsed_ms = (time.perf_counter() - t_file) * 1000.0
 
             if err:

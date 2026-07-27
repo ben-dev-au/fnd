@@ -272,3 +272,65 @@ async def test_scan_phase_blocks_are_counted_not_dropped(
     assert all("skipped for this run" in e for e in errors)
     assert done is not None
     assert done.failed_total == 2, "scan-blocked files not counted as failures"
+
+
+def test_fetch_aborts_promptly_when_the_run_is_cancelled(tmp_path: Path) -> None:
+    """A stalled provider must not hold Cancel for the whole timeout.
+
+    Without polling, `fetch` joined for `timeout_s` (60s by default), so a
+    Cancel pressed while a download was wedged sat unanswered for a minute —
+    undoing the responsiveness this change set exists to deliver.
+    """
+    target = tmp_path / "wedged.pdf"
+    target.write_bytes(b"x")
+    cancel = threading.Event()
+    entered = threading.Event()
+
+    def _never() -> str:
+        entered.set()
+        time.sleep(30.0)
+        return "never"
+
+    threading.Thread(target=lambda: (entered.wait(5.0), cancel.set())).start()
+    started = time.monotonic()
+    with pytest.raises(cloud_files.CloudFetchCancelledError):
+        cloud_files.fetch(_never, path=target, timeout_s=30.0, cancel=cancel)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 5.0, f"cancel took {elapsed:.1f}s — not polled during the join"
+    assert cloud_files.current_wait() is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_a_file_fetch_ends_the_run_without_a_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cancelled fetch is not a blocked file: the run ends on `cancelled`
+    and the file is not recorded as failed."""
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "cloud.md").write_text("# a\n\nbody\n", encoding="utf-8")
+
+    monkeypatch.setattr("fnd.index_runner.is_placeholder", lambda _p: True)
+    monkeypatch.setattr(
+        "fnd.index_runner.CloudPolicy.materialise",
+        lambda _self, path: (_ for _ in ()).throw(
+            cloud_files.CloudFetchCancelledError("cancelled while fetching")
+        ),
+    )
+
+    kinds: list[str] = []
+    errors: list[str] = []
+    async for ev in run_indexer(
+        config=CollectionConfig(sources=[SourceConfig(path=corpus)]),
+        collection="cloudy",
+        index_dir=tmp_path / "idx",
+        state_path=tmp_path / "state.toml",
+        cancel=asyncio.Event(),
+    ):
+        kinds.append(ev.kind)
+        if ev.kind == "file_error":
+            errors.append(ev.error)
+
+    assert kinds[-1] == "cancelled", kinds
+    assert errors == [], f"a cancelled fetch was misfiled as a failure: {errors}"
