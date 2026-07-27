@@ -49,11 +49,15 @@ A run has two phases, and both must stay answerable to the user:
   progress events over an `AsyncIterator` and atomic resume state
   written after every file.
 
-Cloud-only files are fetched rather than refused, so an Update produces
-a complete index. `CloudPolicy` bounds each fetch
-(`defaults.cloud_fetch_timeout_s`), publishes what it is waiting on so
-the wait reads as work rather than a hang, and carries the user's live
-"skip cloud-only files" opt-out for the rest of the run.
+By default, cloud-only files are fetched rather than refused, so an
+Update produces a complete index. `CloudPolicy` bounds each fetch
+(`defaults.cloud_fetch_timeout_s`) and publishes what it is waiting on,
+so the wait reads as work rather than a hang. It also carries the user's
+live "skip cloud-only files" opt-out; once that is set, the run trades
+completeness for speed and reports what it left behind. Either way a file
+is never dropped silently — one the scan couldn't resolve is counted and
+logged alongside extraction failures, even though it never reaches the
+per-file loop.
 
 **Query** (`fnd/query*.py`, `fnd/cascade.py`, `fnd/fusion.py`,
 `fnd/layered.py`). User text is validated (`query_plan`), parsed to a

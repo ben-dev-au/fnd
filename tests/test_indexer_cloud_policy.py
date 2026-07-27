@@ -11,6 +11,7 @@ the modal's "Skip cloud-only" action.
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -32,32 +33,42 @@ def _clear_wait() -> Any:  # pyright: ignore[reportUnusedFunction]
 
 
 def test_fetch_publishes_what_it_is_waiting_on(tmp_path: Path) -> None:
-    """The whole point: while a fetch blocks, something else can ask what
-    is being waited on and for how long."""
+    """The whole point: while a fetch is still blocked, another thread can
+    ask what is being waited on and for how long."""
     target = tmp_path / "notes.md"
     target.write_text("x", encoding="utf-8")
-    seen: list[cloud_files.FetchWait | None] = []
-    release = __import__("threading").Event()
 
-    def _slow() -> str:
-        seen.append(cloud_files.current_wait())
+    entered = threading.Event()
+    release = threading.Event()
+    observed: list[cloud_files.FetchWait | None] = []
+
+    def _blocked() -> str:
+        entered.set()
+        # Hold the fetch open until the observation below has happened, so
+        # the assertion is about a genuinely in-flight fetch rather than one
+        # that already returned.
         release.wait(5.0)
         return "done"
 
-    assert cloud_files.fetch(_slow_wrapper(_slow, release), path=target, timeout_s=5.0) == "done"
-    wait = seen[0]
-    assert wait is not None
+    watcher = threading.Thread(
+        target=lambda: (
+            entered.wait(5.0),
+            observed.append(cloud_files.current_wait()),
+            release.set(),
+        )
+    )
+    watcher.start()
+    try:
+        assert cloud_files.fetch(_blocked, path=target, timeout_s=5.0) == "done"
+    finally:
+        release.set()
+        watcher.join(5.0)
+
+    wait = observed[0]
+    assert wait is not None, "no record published while the fetch was blocked"
     assert wait.path == str(target)
     assert wait.provider  # a label, whatever the platform decided
     assert cloud_files.current_wait() is None, "wait record outlived the fetch"
-
-
-def _slow_wrapper(fn: Any, release: Any) -> Any:
-    def _run() -> Any:
-        release.set()
-        return fn()
-
-    return _run
 
 
 def test_fetch_that_never_arrives_raises(tmp_path: Path) -> None:
@@ -218,3 +229,46 @@ async def test_opt_out_does_not_flag_already_indexed_cloud_files(
     assert second is not None
     assert second.failed_total == 0, "unchanged file flagged despite needing no work"
     assert second.indexed_already_total == 1
+
+
+@pytest.mark.asyncio
+async def test_scan_phase_blocks_are_counted_not_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A candidate the *scan* could not resolve must still be reported.
+
+    Frontmatter-filter candidates are dropped from the walk when the fetch
+    is declined or fails, so they never reach the per-file loop. Without an
+    explicit flush they vanish silently — no count, no event, no log entry —
+    which is the exact failure mode this change exists to prevent.
+    """
+    corpus = tmp_path / "vault"
+    corpus.mkdir()
+    for name in ("a.md", "b.md"):
+        (corpus / name).write_text("---\nCourse: '[[CPL]]'\n---\n\nbody\n", encoding="utf-8")
+
+    monkeypatch.setattr("fnd.index_runner.is_placeholder", lambda _p: True)
+    skip = asyncio.Event()
+    skip.set()
+
+    source = SourceConfig(
+        path=corpus, includes=["**/*.md"], frontmatter_filter="Course == '[[CPL]]'"
+    )
+    errors: list[str] = []
+    done = None
+    async for ev in run_indexer(
+        config=CollectionConfig(sources=[source]),
+        collection="cloudy",
+        index_dir=tmp_path / "idx",
+        state_path=tmp_path / "state.toml",
+        skip_cloud=skip,
+    ):
+        if ev.kind == "file_error":
+            errors.append(ev.error)
+        if ev.kind == "done":
+            done = ev
+
+    assert len(errors) == 2, f"scan-blocked files went unreported: {errors}"
+    assert all("skipped for this run" in e for e in errors)
+    assert done is not None
+    assert done.failed_total == 2, "scan-blocked files not counted as failures"

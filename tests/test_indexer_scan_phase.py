@@ -15,6 +15,7 @@ file count. The user could neither see progress nor cancel.
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +59,12 @@ async def test_cancel_during_scan_stops_before_indexing(
     without waiting for the scan to finish."""
     (tmp_path / "only.md").write_text("x", encoding="utf-8")
 
-    slow_started = asyncio.Event()
+    # threading, not asyncio: this is set from inside the to_thread worker,
+    # and asyncio.Event.set() is not thread-safe. Under asyncio debug mode the
+    # loop's thread check raises inside the generator, which the runner turns
+    # into a scan error + cancelled — the test would then pass for the wrong
+    # reason.
+    slow_started = threading.Event()
 
     def slow_walk(*_a: Any, **_kw: Any) -> Any:
         # A source that yields one path then blocks, standing in for a
@@ -77,7 +83,7 @@ async def test_cancel_during_scan_stops_before_indexing(
     kinds: list[str] = []
 
     async def _cancel_soon() -> None:
-        await slow_started.wait()
+        await asyncio.to_thread(slow_started.wait, 5.0)
         cancel.set()
 
     task = asyncio.create_task(_cancel_soon())

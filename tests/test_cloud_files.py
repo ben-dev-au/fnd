@@ -17,13 +17,12 @@ from fnd.cloud_files import (
 
 
 def _fake_stat(**extras: int) -> Callable[..., SimpleNamespace]:
-    """A drop-in for ``os.stat`` reporting the given platform extras.
+    """A drop-in for the module's ``_stat`` reporting the given extras.
 
     A plain namespace rather than ``os.stat_result``: the real struct only
     materialises the extras its own platform defines, so a macOS test host
     silently drops ``st_file_attributes`` and the Windows cases would pass
-    for the wrong reason. The signature stays permissive because everything
-    in the process shares ``os.stat`` while the patch is live.
+    for the wrong reason.
     """
     result = SimpleNamespace(**extras)
 
@@ -42,13 +41,13 @@ def test_macos_dataless_flag_marks_a_placeholder(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("fnd.cloud_files.sys.platform", "darwin")
-    monkeypatch.setattr("fnd.cloud_files.os.stat", _fake_stat(st_flags=0x40000000))
+    monkeypatch.setattr("fnd.cloud_files._stat", _fake_stat(st_flags=0x40000000))
     assert materialisation(tmp_path / "x.md") is Materialisation.PLACEHOLDER
 
 
 def test_macos_local_file_is_local(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("fnd.cloud_files.sys.platform", "darwin")
-    monkeypatch.setattr("fnd.cloud_files.os.stat", _fake_stat(st_flags=0))
+    monkeypatch.setattr("fnd.cloud_files._stat", _fake_stat(st_flags=0))
     assert materialisation(tmp_path / "x.md") is Materialisation.LOCAL
 
 
@@ -58,7 +57,7 @@ def test_detection_is_independent_of_location(
     """An evicted file under ~/Documents is as dataless as one in the
     iCloud Drive folder — Desktop & Documents sync keeps ordinary paths."""
     monkeypatch.setattr("fnd.cloud_files.sys.platform", "darwin")
-    monkeypatch.setattr("fnd.cloud_files.os.stat", _fake_stat(st_flags=0x40000000))
+    monkeypatch.setattr("fnd.cloud_files._stat", _fake_stat(st_flags=0x40000000))
     for where in (
         Path.home() / "Documents" / "Uni" / "notes.md",
         Path.home() / "Library" / "Mobile Documents" / "vault" / "notes.md",
@@ -80,7 +79,7 @@ def test_windows_placeholder_attributes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, attrs: int, expected: Materialisation
 ) -> None:
     monkeypatch.setattr("fnd.cloud_files.sys.platform", "win32")
-    monkeypatch.setattr("fnd.cloud_files.os.stat", _fake_stat(st_file_attributes=attrs))
+    monkeypatch.setattr("fnd.cloud_files._stat", _fake_stat(st_file_attributes=attrs))
     assert materialisation(tmp_path / "x.md") is expected
 
 
@@ -88,7 +87,7 @@ def test_linux_reports_unknown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     """No common marker on Linux — say so rather than guessing, and treat
     it as local so nothing is skipped for a condition we can't detect."""
     monkeypatch.setattr("fnd.cloud_files.sys.platform", "linux")
-    monkeypatch.setattr("fnd.cloud_files.os.stat", _fake_stat())
+    monkeypatch.setattr("fnd.cloud_files._stat", _fake_stat())
     p = tmp_path / "x.md"
     assert materialisation(p) is Materialisation.UNKNOWN
     assert is_placeholder(p) is False

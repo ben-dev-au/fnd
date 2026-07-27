@@ -102,10 +102,8 @@ async def test_run_indexer_enumerating_yields_before_blocking_walk(
     from fnd import index_runner as ir
 
     real_enumerate = ir._enumerate_iter
-    call_log: list[float] = []
 
     def slow_enumerate(cfg, **kwargs):  # type: ignore[no-untyped-def]
-        call_log.append(_time.perf_counter())
         _time.sleep(0.15)  # blocks the worker thread, NOT the loop
         yield from real_enumerate(cfg, **kwargs)
 
@@ -141,7 +139,7 @@ async def test_run_indexer_enumerating_yields_before_blocking_walk(
         await tick_task
 
     assert first_event_at is not None
-    # The ticker had to fire while _enumerate_paths was sleeping; if the
+    # The ticker had to fire while _enumerate_iter was sleeping; if the
     # walk had run on the loop, all ticks would have bunched after it.
     ticks_during_walk = [t for t in other_ticks if first_event_at < t < first_event_at + 0.15]
     assert ticks_during_walk, "event loop was blocked during the walk hop"

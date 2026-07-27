@@ -98,7 +98,6 @@ class ProgressEvent:
     error: str = ""
     # Per-file classification (set on file_complete / file_error).
     is_pdf: bool = False
-    is_dataless: bool = False
     has_textured_chunk: bool = False
     # Running totals across the run; modal renders the Indexed +
     # Texturising lines from these.
@@ -865,6 +864,20 @@ async def run_indexer(
     save_state(state_path, state)
     yield _emit("started")
 
+    # Files the scan could not resolve never reach the per-file loop, so
+    # account for them here. Without this they vanish between "the folder
+    # holds 400 notes" and "the run processed 180" — the silent data loss
+    # this whole change exists to avoid.
+    for blocked_path, reason in scan_blocked:
+        state.failed += 1
+        with contextlib.suppress(Exception):
+            from fnd.tui.failure_log import record_failure
+
+            record_failure(collection=collection, path=str(blocked_path), reason=reason)
+        yield _emit("file_error", current_file=str(blocked_path), error=reason)
+    if scan_blocked:
+        save_state(state_path, state)
+
     try:
         written = 0
         for path, source_id in paths:
@@ -918,10 +931,6 @@ async def run_indexer(
                 cloud_policy=policy,
             )
             file_elapsed_ms = (time.perf_counter() - t_file) * 1000.0
-            # Classifies the failure bucket in the modal's drill-in: a file
-            # we couldn't get from the cloud is a different problem from a
-            # PDF whose extractor wedged.
-            was_dataless = bool(err) and ("skipped for this run" in err or "Could not fetch" in err)
 
             if err:
                 state.failed += 1
@@ -1006,7 +1015,6 @@ async def run_indexer(
                     file_elapsed_ms=file_elapsed_ms,
                     error=err,
                     is_pdf=is_pdf,
-                    is_dataless=was_dataless,
                 )
             else:
                 # A previously-failed file just succeeded; clear the
@@ -1034,7 +1042,6 @@ async def run_indexer(
                 cache_hit=was_hit,
                 is_pdf=is_pdf,
                 has_textured_chunk=has_textured,
-                is_dataless=was_dataless,
             )
 
         writer.commit()

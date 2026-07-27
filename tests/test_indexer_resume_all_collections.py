@@ -28,18 +28,38 @@ def _state(collection: str, *, done: int, total: int, age_hours: float = 0.5) ->
     )
 
 
+def _write_state_with_stamp(path: Path, state: IndexState, stamp: str) -> None:
+    """Persist ``state`` with an exact ``last_update``.
+
+    ``save_state`` overwrites the stamp with second-precision "now", so
+    writing three states in one test gives them all the same value and any
+    ordering trivially reads as sorted. Rewrite the field afterwards to get
+    distinct, asserted-on stamps."""
+    save_state(path, state)
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(state.last_update, stamp), encoding="utf-8"
+    )
+
+
 def test_saved_states_reads_every_collection_newest_first(tmp_path: Path) -> None:
-    for name, age in (("alpha", 3.0), ("beta", 0.5), ("gamma", 1.5)):
-        save_state(tmp_path / f"{name}.state.toml", _state(name, done=1, total=9, age_hours=age))
-    # save_state stamps last_update at write time, so write order decides
-    # recency here; assert the set and that ordering follows that stamp.
+    stamps = {
+        "alpha": "2026-07-20T09:00:00+00:00",
+        "beta": "2026-07-27T11:00:00+00:00",
+        "gamma": "2026-07-24T10:00:00+00:00",
+    }
+    # Deliberately written oldest-last so filename order (alpha, beta, gamma)
+    # can't be mistaken for recency order.
+    for name, stamp in stamps.items():
+        _write_state_with_stamp(
+            tmp_path / f"{name}.state.toml", _state(name, done=1, total=9), stamp
+        )
     from unittest.mock import patch
 
     with patch("fnd.index_runner.state_dir", return_value=tmp_path):
         states = saved_states()
-    assert {s.collection for _p, s in states} == {"alpha", "beta", "gamma"}
-    stamps = [s.last_update for _p, s in states]
-    assert stamps == sorted(stamps, reverse=True)
+
+    assert [s.collection for _p, s in states] == ["beta", "gamma", "alpha"]
+    assert [s.last_update for _p, s in states] == [stamps[n] for n in ("beta", "gamma", "alpha")]
 
 
 def test_saved_states_skips_unreadable_files(tmp_path: Path) -> None:

@@ -694,15 +694,26 @@ def _get_default_collection(app: FNDApp) -> Any:
     # picker always shows a row as selected.
     if is_all_collections(want, known=set(cfg.collections)):
         return ALL_COLLECTIONS
-    return want if want in cfg.collections else ALL_COLLECTIONS
+    if want in cfg.collections:
+        return want
+    # Unknown name: fall back to whichever row the choices list actually
+    # offers first, so the picker never highlights nothing.
+    choices = _choices_collections(app)
+    return choices[0].value if choices else ALL_COLLECTIONS
 
 
 def _choices_collections(app: FNDApp) -> list[ChoiceOption]:
     cfg = app._config  # type: ignore[attr-defined]
-    choices = [ChoiceOption(value=ALL_COLLECTIONS, label="All collections")]
     if cfg is None:
-        return choices
-    choices.extend(ChoiceOption(value=n, label=n) for n in sorted(cfg.collections))
+        return [ChoiceOption(value=ALL_COLLECTIONS, label="All collections")]
+    names = sorted(cfg.collections)
+    choices = [ChoiceOption(value=n, label=n) for n in names]
+    # A collection literally named ``all`` predates the pseudo-name and wins
+    # when the stored value is resolved. Offering the pseudo-choice too would
+    # put two rows on the same stored value, and picking "All collections"
+    # would silently select that one collection instead.
+    if not any(n.casefold() == ALL_COLLECTIONS for n in names):
+        choices.insert(0, ChoiceOption(value=ALL_COLLECTIONS, label="All collections"))
     return choices
 
 

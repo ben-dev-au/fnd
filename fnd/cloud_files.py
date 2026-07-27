@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import sys
 import threading
 import time
@@ -79,9 +80,21 @@ _WINDOWS_PLACEHOLDER_BITS: Final = (
     _FILE_ATTRIBUTE_OFFLINE | _FILE_ATTRIBUTE_RECALL_ON_OPEN | _FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
 )
 
+# Bound once so a test can swap the stat call without patching the shared
+# ``os`` module, which would hand a fake back to every caller in the
+# interpreter — pytest's own bookkeeping included.
+_stat = os.stat
+
+# Path separators, both spellings: a Windows path inspected on POSIX (or a
+# fixture carrying one) must still split into components.
+_SEP_RE: Final = re.compile(r"[/\\]")
+
 _GENERIC_PROVIDER: Final = "cloud storage"
 
-# Path fragments that identify a provider, longest-lived conventions first.
+# Provider names, matched against the START of a path component — never as
+# a bare substring, which made "box" claim ~/Documents/Inbox and Sandbox.
+# A prefix still catches the real spellings, which append an account:
+# "OneDrive-Personal", "OneDrive - Contoso", "GoogleDrive-user@host".
 # macOS mounts third-party FileProvider domains under ~/Library/CloudStorage;
 # Windows sync clients use a top-level folder named after the service.
 _PROVIDER_MARKERS: Final[tuple[tuple[str, str], ...]] = (
@@ -102,7 +115,7 @@ def materialisation(path: Path) -> Materialisation:
     is the very thing callers are trying to decide about.
     """
     try:
-        st = os.stat(path)
+        st = _stat(path)
     except OSError:
         # Missing / unreadable: not our question to answer. Callers get the
         # real error when they try to read it.
@@ -140,9 +153,9 @@ def provider_label(path: Path) -> str:
     Folders" sync, which leaves files at their ordinary paths) falls back
     to a generic label. Detection does not depend on this being right.
     """
-    haystack = str(path).casefold()
+    parts = _SEP_RE.split(str(path).casefold())
     for marker, label in _PROVIDER_MARKERS:
-        if marker in haystack:
+        if any(part.startswith(marker) for part in parts):
             return label
     # Desktop & Documents sync keeps the ordinary path, so on macOS an
     # otherwise-unattributed placeholder is iCloud far more often than not.
@@ -197,7 +210,7 @@ def fetch[T](call: Callable[[], T], *, path: Path, timeout_s: float) -> T:
     """Run ``call`` — which will materialise ``path`` — under a deadline.
 
     Publishes a :class:`FetchWait` for the duration so the UI can name what
-    it is waiting on, and raises :class:`FetchTimeout` if the provider has
+    it is waiting on, and raises :class:`CloudFetchError` if the provider has
     not delivered within ``timeout_s``.
 
     The worker is a throwaway daemon thread rather than a pooled one: a
@@ -216,8 +229,9 @@ def fetch[T](call: Callable[[], T], *, path: Path, timeout_s: float) -> T:
         except BaseException as e:
             failure.append(e)
 
+    mine = FetchWait(str(path), provider_label(path), time.monotonic())
     with _wait_lock:
-        _wait = FetchWait(str(path), provider_label(path), time.monotonic())
+        _wait = mine
     worker = threading.Thread(target=_run, daemon=True, name=f"fnd-fetch-{path.name}")
     worker.start()
     worker.join(timeout_s)
@@ -230,5 +244,9 @@ def fetch[T](call: Callable[[], T], *, path: Path, timeout_s: float) -> T:
             raise failure[0]
         return result[0]
     finally:
+        # Only retract our own record. The runner serialises fetches today,
+        # but if two ever overlap, clearing unconditionally would drop the
+        # "waiting on…" line for a fetch that is still blocked.
         with _wait_lock:
-            _wait = None
+            if _wait is mine:
+                _wait = None
