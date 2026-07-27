@@ -44,14 +44,25 @@ class FlatBufferView:
         # set_prebuilt_view and just scroll.
         self.installed_key: tuple[str, str] | None = None
 
-    def ensure_shared_buffer(self) -> LineBufferPreview:
-        """Lazy-mount the single hidden LineBufferPreview under #preview_pane."""
+    def ensure_shared_buffer(self) -> LineBufferPreview | None:
+        """Lazy-mount the single hidden LineBufferPreview under #preview_pane.
+
+        Returns None when there is no pane to mount into — the screen is
+        being torn down, or has not composed yet. This runs on the
+        ``preview-load`` worker, so raising here surfaces as a WorkerFailed
+        that takes the run down instead of a mount that quietly has nothing
+        to do. Mirrors ``MatchNavigator._pane`` and the guarded measurement
+        in ``presenter`` / ``prefetch``.
+        """
         import contextlib
 
         buf = self.shared_buffer
         if buf is not None and buf.parent is not None:
             return buf
-        pane = self._app.query_one("#preview_pane", VerticalScroll)
+        try:
+            pane = self._app.query_one("#preview_pane", VerticalScroll)
+        except Exception:
+            return None
         for w in list(pane.children):
             if isinstance(w, Static) and w.id == "placeholder":
                 with contextlib.suppress(Exception):

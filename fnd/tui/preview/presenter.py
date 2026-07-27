@@ -730,6 +730,10 @@ class PreviewPresenter:
             focus_chunk_seq = min(doc.fv.first_hit_line_in_chunk)
 
         buf = self._app._flat.ensure_shared_buffer()
+        if buf is None:
+            # No pane to mount into: the screen went away while this load
+            # was in flight. Nothing to show and nothing to fix.
+            return
         if self._app._flat.installed_key != cache_key:
             # New doc: install + synchronous no-flash scroll to the match.
             self._app._flat.install_doc(
