@@ -131,6 +131,22 @@ def isolated_ui_state(  # pyright: ignore[reportUnusedFunction]
     return p
 
 
+@pytest.fixture
+def saved_empty_scope(isolated_ui_state: Path) -> Path:
+    """Persist a deliberately-empty scope before the app starts.
+
+    A profile that has never saved a scope is seeded from
+    ``defaults.collection`` — all collections by default — so a test that
+    wants to start from "nothing selected" has to ask for it. Saving an
+    empty state says "the user unticked everything", which is a different
+    situation from "brand-new profile" and the one these tests mean.
+    """
+    from fnd.state import UiState, save
+
+    save(UiState(), path=isolated_ui_state)
+    return isolated_ui_state
+
+
 @pytest.fixture(autouse=True)
 def isolated_seen_log(  # pyright: ignore[reportUnusedFunction]
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -208,13 +224,14 @@ def isolated_indexer_resume_state(  # pyright: ignore[reportUnusedFunction]
     app auto-resume a "default" indexer the moment it launches — so any
     test that drives the indexer sees a spurious extra "default" run
     before its own collections. Redirect the lookup so tests never read
-    (or write) real resume state."""
+    (or write) real resume state.
+
+    Patch the *directory*, not ``state_file_for``: auto-resume sweeps the
+    whole dir and DELETES states it can never resume. With only the
+    per-collection lookup redirected, that sweep ran against the
+    developer's real resume state and destroyed it."""
     reindex_root = tmp_path / "reindex"
-
-    def _state_file(collection: str) -> Path:
-        return reindex_root / f"{collection}.state.toml"
-
-    monkeypatch.setattr("fnd.index_runner.state_file_for", _state_file)
+    monkeypatch.setattr("fnd.index_runner.state_dir", lambda: reindex_root)
     return reindex_root
 
 

@@ -11,20 +11,53 @@ extract  →  index  →  query  →  TUI
 ```
 
 **Extract** (`fnd/extract/`). Per-format extractors (`pdf`, `docx`,
-`pptx`, `markdown`, `plain`) convert documents into block/chunk
-structures. PDF extraction runs a tiered recovery pipeline
-(`extract/recovery/`): a chain of `ExtractionTier`s
-(`ProductionLayoutTier` → `LigatureRepairTier` → `InvisibleTextTier` →
-`FlatFallbackTier` → `DoclingTableTier`) folds each page through
-progressively more aggressive repairs, gated by injected quality
-evaluators (`CoverageEvaluator`, `LegibilityEvaluator`). Expensive PDF
-structure work is cached content-addressed in `fnd/cache.py`.
+`pptx`, `markdown`, `plain`, `epub`, `code`, `data`, `web`, `notebook`,
+`odf`) convert documents into block/chunk structures. PDF extraction
+runs a tiered recovery pipeline (`extract/recovery/`): a chain of
+`ExtractionTier`s (`ProductionLayoutTier` → `LigatureRepairTier` →
+`InvisibleTextTier` → `FlatFallbackTier` → `DoclingTableTier`) folds
+each page through progressively more aggressive repairs, gated by
+injected quality evaluators (`CoverageEvaluator`,
+`LegibilityEvaluator`). Expensive PDF structure work is cached
+content-addressed in `fnd/cache.py`, and runs in a subprocess so a
+wedged parse can't take the app with it.
+
+Which formats exist at all is *not* decided here. `fnd/kinds.py` is the
+single registry: one `KindSpec` per format binding a stable `id` (the
+stored `F_KIND` value), its suffixes, its extractor module, and the
+display `Category` it groups under. The walker, extraction dispatch,
+preview router, config/apps validation, CLI and Filters tree all derive
+their lookups from it, so a new file type is one row plus an extractor.
+Categories are a grouping concept for the UI only — never stored; a
+category filter expands to its member kind ids.
 
 **Index** (`fnd/index.py`, `fnd/index_runner.py`, `fnd/schema.py`,
 `fnd/walk.py`). `walk.py` resolves sources to files; `index_runner.py`
-is the async indexer (per-file extraction off-loop, progress events
-over an `AsyncIterator`, atomic resume state); `schema.py` is the
-single source of truth for Tantivy fields and the schema version.
+is the async indexer; `schema.py` is the single source of truth for
+Tantivy fields and the schema version (currently 9 — a bump requires a
+reindex, gated by the `.fnd-schema-version` sidecar).
+
+A run has two phases, and both must stay answerable to the user:
+
+- **Scan.** The walk is pumped in short time-boxed slices rather than
+  one opaque thread hop, so cancel is honoured mid-scan and each slice
+  emits an `enumerating` event carrying the running file count. This
+  matters because a scan is not always fast: a source with a
+  `frontmatter_filter` must open every candidate to evaluate it, and on
+  cloud-backed storage each open blocks on a download.
+- **Per-file.** Extraction runs off-loop in `asyncio.to_thread`, with
+  progress events over an `AsyncIterator` and atomic resume state
+  written after every file.
+
+By default, cloud-only files are fetched rather than refused, so an
+Update produces a complete index. `CloudPolicy` bounds each fetch
+(`defaults.cloud_fetch_timeout_s`) and publishes what it is waiting on,
+so the wait reads as work rather than a hang. It also carries the user's
+live "skip cloud-only files" opt-out; once that is set, the run trades
+completeness for speed and reports what it left behind. Either way a file
+is never dropped silently — one the scan couldn't resolve is counted and
+logged alongside extraction failures, even though it never reaches the
+per-file loop.
 
 **Query** (`fnd/query*.py`, `fnd/cascade.py`, `fnd/fusion.py`,
 `fnd/layered.py`). User text is validated (`query_plan`), parsed to a
@@ -35,6 +68,46 @@ for the CLI and TUI: it picks between the sequential widening cascade
 fusion (`fusion.py`), reranks via `rerank.py`, and emits a trace
 (`explain.py`). `matching.py` carries the `MatchSpec` that keeps
 highlight semantics identical to search semantics.
+
+Scope (which collections / sources are live) is owned by
+`ScopeController` and persisted to `state/scope.toml`. That saved
+selection is authoritative; `defaults.collection` — `all` by default, or
+a collection name — only seeds a profile that has never saved one, so the
+setting can never fight the sidebar. `-c` overrides scope for one launch,
+with `all` as the pseudo-name for every collection (a real collection of
+that name still wins, and new ones can't take it).
+
+**Filters** (`fnd/query_filters.py`, `fnd/filter_dsl.py`,
+`fnd/tags.py`, `fnd/tag_query.py`, `fnd/tag_catalog.py`,
+`fnd/fsmeta.py`, `fnd/kind_catalog.py`). Scope selections from the TUI
+panel and `--kind` / `--tag` / `--created` / `--modified` on the CLI
+compile to the same hard Tantivy filters that wrap the ranked query.
+Tags carry provenance in separate fields (`F_TAGS_FM` frontmatter,
+`F_TAGS_OS` Finder), so switching a source off takes effect without a
+reindex. `fsmeta.py` reads creation and change times per platform.
+
+## Platform seams
+
+Everything OS-specific lives behind four modules, so feature code never
+branches on `sys.platform`:
+
+| Seam | Question it answers |
+|---|---|
+| `fnd/paths.py` | Where do config, index, cache and state live? |
+| `fnd/launcher.py` | How do I open a path/URL, and reveal a file in the file manager? |
+| `fnd/os_labels.py` | What does this OS *call* things (Finder vs File Explorer, ⌥ vs Alt)? |
+| `fnd/cloud_files.py` | Are this file's bytes local, or will touching it pull them over the network? |
+
+Each resolves the platform in one place, and every branch is reachable
+from a test on any host: `launcher.py` takes its process runner (and
+Windows' `os.startfile`) as injected dependencies, `os_labels.py` stays
+deliberately uncached so a test can just repoint `platform.system`, and
+`cloud_files.py` reads the placeholder bit through `os.stat`. Deep-linking
+into a specific app is deliberately *not* a seam concern — that is
+per-app, owned by `fnd/apps.py` handlers and `fnd/opener.py` dispatch.
+
+macOS is the tested platform; the Linux and Windows arms of these seams
+are early beta (see the README).
 
 ## TUI composition
 
@@ -99,12 +172,22 @@ at call time.
 | `PreviewPresenter` | mount worker (`preview-load`, exclusive), debounce timer, in-flight coalescing latch | file switch / query change (`cancel_mount_task`, latch drop) |
 | `LazyMounter` | scroll-driven mount task + debounce timer | file switch / query change (`cancel`) |
 | `PrefetchEngine` | decode pool (`preview-prefetch`, exclusive), sink queue + drainer task | stale-query signature checks; user mount preempts |
-| `IndexerService` | reindex task, cancel `Event`, event `Queue`, run-generation counter | explicit cancel; a superseded run's teardown is gated by `run_seq` |
+| `IndexerService` | reindex task, cancel + skip-cloud `Event`s, event `Queue`, run-generation counter | explicit cancel; a superseded run's teardown is gated by `run_seq` |
+
+Auto-resume (`IndexerService.maybe_resume`, opt-in) considers every
+`*.state.toml`, resumes the most recent and chains the rest, and sweeps
+states that can never be resumed (collection deleted, run finished). It
+is the one path that starts indexing without the user asking, so the
+opt-in gate is checked immediately before starting — never before the
+sweep, which should tidy either way.
 
 Invariants: one scroll anchor at a time (arm → reconcile → release);
 a new query drops every preview cache and in-flight task before the
 search result lands; chain continuations re-enter through
-`app.start_indexer` and inherit the current run generation.
+`app.start_indexer` and inherit the current run generation. The event
+`Queue` and the skip-cloud `Event` are reused across a chain's steps —
+the modal's drain holds one queue reference, and a mid-chain opt-out
+should stay opted out — while a fresh run allocates both.
 
 ## Module map
 
@@ -112,16 +195,21 @@ search result lands; chain continuations re-enter through
 fnd/
 ├── cli.py              CLI commands
 ├── config.py           Pydantic config (collections, sources, defaults)
+├── kinds.py, kind_catalog.py    file-type registry + Filters grouping
 ├── extract/            per-format extraction + recovery tiers
-├── index*.py, walk.py  index building
+├── index*.py, walk.py, schema.py, migrate.py    index building + schema
 ├── query*.py           parse → validate → AST → compile
 ├── cascade.py, fusion.py, layered.py, rerank.py   search passes + ranking
-├── matching.py, render.py                          match semantics + rendering
+├── matching.py, render.py, display_text.py        match semantics + rendering
+├── tags.py, tag_query.py, tag_catalog.py, filter_dsl.py, fsmeta.py   filters
+├── paths.py, launcher.py, os_labels.py, cloud_files.py   platform seams
+├── apps.py, opener.py, launch_command.py          open-in-app + shareable commands
+├── cache.py, seen_log.py, texture_maintenance.py  extraction cache + upkeep
 └── tui/
     ├── app.py          FNDApp composition root
     ├── search_controller.py, results_view.py, scope_panel.py, indexer_service.py
     ├── preview/        presenter, flat_view, prefetch, lazy_mount, tuning
     ├── preview_scroll.py, preview_scrollbar.py, line_buffer.py
-    ├── widgets/        markdown, results_tree, preview_container, …
+    ├── widgets/        markdown, results_tree, preview_container, toggle_tree, …
     └── settings_screen.py, indexer_modal.py, menu.py   screens
 ```

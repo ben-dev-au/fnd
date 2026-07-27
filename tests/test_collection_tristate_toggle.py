@@ -44,7 +44,7 @@ def _first_collection_node(ctree: Tree[dict[str, object]]):
 
 @pytest.mark.asyncio
 async def test_toggling_collection_on_marks_all_sources(
-    built_index: Path, multi_source_config: Config, isolated_ui_state: Path
+    built_index: Path, multi_source_config: Config, isolated_ui_state: Path, saved_empty_scope: Path
 ) -> None:
     app = FNDApp(index_dir=built_index, config=multi_source_config)
     async with app.run_test() as pilot:
@@ -106,7 +106,7 @@ async def test_single_source_toggle_marks_collection_partial(
 
 @pytest.mark.asyncio
 async def test_all_sources_toggled_individually_marks_collection_full(
-    built_index: Path, multi_source_config: Config, isolated_ui_state: Path
+    built_index: Path, multi_source_config: Config, isolated_ui_state: Path, saved_empty_scope: Path
 ) -> None:
     app = FNDApp(index_dir=built_index, config=multi_source_config)
     async with app.run_test() as pilot:
@@ -134,7 +134,7 @@ async def test_all_sources_toggled_individually_marks_collection_full(
 
 @pytest.mark.asyncio
 async def test_toggle_collection_off_clears_sources(
-    built_index: Path, multi_source_config: Config, isolated_ui_state: Path
+    built_index: Path, multi_source_config: Config, isolated_ui_state: Path, saved_empty_scope: Path
 ) -> None:
     app = FNDApp(index_dir=built_index, config=multi_source_config)
     async with app.run_test() as pilot:
@@ -240,7 +240,10 @@ def shared_source_config(fixtures_dir: Path) -> Config:
 
 @pytest.mark.asyncio
 async def test_collection_off_keeps_shared_source_of_active_sibling(
-    built_index: Path, shared_source_config: Config, isolated_ui_state: Path
+    built_index: Path,
+    shared_source_config: Config,
+    isolated_ui_state: Path,
+    saved_empty_scope: Path,
 ) -> None:
     """Toggling a collection OFF must not deactivate a source it shares
     with a collection that is still fully on. Regression: turning CPL
@@ -321,7 +324,10 @@ def _source_node(
 
 @pytest.mark.asyncio
 async def test_collection_off_keeps_shared_source_of_partial_sibling(
-    built_index: Path, shared_source_config: Config, isolated_ui_state: Path
+    built_index: Path,
+    shared_source_config: Config,
+    isolated_ui_state: Path,
+    saved_empty_scope: Path,
 ) -> None:
     """#63: AAA full + BBB *partial* (only the shared vault on). Toggling
     AAA off must not strip the vault — BBB still claims it, so BBB stays

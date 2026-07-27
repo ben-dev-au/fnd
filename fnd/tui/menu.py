@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fnd import os_labels
+from fnd.config import ALL_COLLECTIONS, is_all_collections
 
 if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
@@ -686,14 +687,34 @@ def _get_float_default(field_name: str, fallback: float) -> Callable[[FNDApp], s
 
 def _get_default_collection(app: FNDApp) -> Any:
     cfg = app._config  # type: ignore[attr-defined]
-    return cfg.defaults.collection if cfg else ""
+    if cfg is None:
+        return ALL_COLLECTIONS
+    want = cfg.defaults.collection
+    # Normalise casing / an unknown name back onto a real choice so the
+    # picker always shows a row as selected.
+    if is_all_collections(want, known=set(cfg.collections)):
+        return ALL_COLLECTIONS
+    if want in cfg.collections:
+        return want
+    # Unknown name: fall back to whichever row the choices list actually
+    # offers first, so the picker never highlights nothing.
+    choices = _choices_collections(app)
+    return choices[0].value if choices else ALL_COLLECTIONS
 
 
 def _choices_collections(app: FNDApp) -> list[ChoiceOption]:
     cfg = app._config  # type: ignore[attr-defined]
     if cfg is None:
-        return []
-    return [ChoiceOption(value=n, label=n) for n in sorted(cfg.collections)]
+        return [ChoiceOption(value=ALL_COLLECTIONS, label="All collections")]
+    names = sorted(cfg.collections)
+    choices = [ChoiceOption(value=n, label=n) for n in names]
+    # A collection literally named ``all`` predates the pseudo-name and wins
+    # when the stored value is resolved. Offering the pseudo-choice too would
+    # put two rows on the same stored value, and picking "All collections"
+    # would silently select that one collection instead.
+    if not any(n.casefold() == ALL_COLLECTIONS for n in names):
+        choices.insert(0, ChoiceOption(value=ALL_COLLECTIONS, label="All collections"))
+    return choices
 
 
 def _choices_ranking(app: FNDApp) -> list[ChoiceOption]:
@@ -921,12 +942,18 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
         MenuItem(
             id="pref.default_collection",
             label="Default collection",
-            description="Active collection when --collection is omitted.",
+            description=(
+                "Scope a fresh profile starts with — All collections, or one "
+                "named collection. Your sidebar selection is remembered and "
+                "wins once you've made one, so changing this only affects a "
+                "profile that has never saved a scope. Use `-c all` (or "
+                "`-c <name>`) to scope a single launch."
+            ),
             kind=KIND_PICKER,
             choices_provider=_choices_collections,
             picker_getter=_get_default_collection,
             picker_setter=_setting_writer("defaults.collection"),
-            keywords=("default", "collection"),
+            keywords=("default", "collection", "all", "scope"),
         ),
         header("Default app per filetype", level=2),
         *_filetype_default_app_items(),

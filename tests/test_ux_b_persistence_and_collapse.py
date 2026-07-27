@@ -45,9 +45,17 @@ def two_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 @pytest.fixture
 def state_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Redirect the state-file lookup at a temp path so this test
-    doesn't trample the user's real ``scope.toml``."""
+    doesn't trample the user's real ``scope.toml``.
+
+    Seeded with an empty saved scope: a profile that has never saved one
+    starts from ``defaults.collection`` (all collections), and these
+    tests are about what a toggle *writes*, so they need a known
+    nothing-selected starting point."""
+    from fnd.state import UiState, save
+
     p = tmp_path / "state" / "scope.toml"
     monkeypatch.setattr("fnd.state._state_path", lambda: p)
+    save(UiState(), path=p)
     return p
 
 

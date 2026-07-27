@@ -17,8 +17,9 @@ from __future__ import annotations
 import re
 import sys
 import tomllib
+from collections.abc import Collection
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -192,6 +193,24 @@ EXCLUDES_PRESETS: dict[str, dict[str, Any]] = {
         "default": False,
     },
 }
+
+
+# Reserved pseudo-name meaning "every configured collection". Accepted by
+# ``--collection``/``-c`` and stored in ``defaults.collection``. Matched
+# case-insensitively so ``-c All`` works as readily as ``-c all``.
+ALL_COLLECTIONS: Final = "all"
+
+
+def is_all_collections(value: str | None, *, known: Collection[str] = ()) -> bool:
+    """Whether ``value`` is the all-collections pseudo-name.
+
+    A real collection literally named ``all`` wins, so configs written
+    before the name was reserved keep resolving to their own collection
+    rather than silently widening to everything.
+    """
+    if not value or value in known:
+        return False
+    return value.strip().casefold() == ALL_COLLECTIONS
 
 
 class SourceConfig(BaseModel):
@@ -369,7 +388,12 @@ class AppConfig(BaseModel):
 
 
 class Defaults(BaseModel):
-    collection: str = "default"
+    # Scope a fresh profile starts with, and the target when ``--collection``
+    # is omitted. ``"all"`` (the default) means every configured collection;
+    # otherwise a collection name. Only seeds scope when nothing has been
+    # remembered yet — once you tick collections in the sidebar, that
+    # selection persists and wins on later launches.
+    collection: str = ALL_COLLECTIONS
     # Which tag sources feed the Tags filter. Provenance is stored in
     # separate index fields, so *removing* a source takes effect immediately
     # (its field just stops being queried). *Re-adding* a previously removed
@@ -438,6 +462,12 @@ class Defaults(BaseModel):
     # but doesn't write new ones — fast flat-text refresh, useful on
     # battery or slow CPUs.
     cache_at_index_time: bool = True
+    # Seconds to wait for a sync provider (iCloud Drive, OneDrive, …) to
+    # deliver a cloud-only file before the indexer gives up on it and moves
+    # on. Indexing fetches such files by default so the index stays complete;
+    # this is the ceiling on any single one, so a wedged download can't hold
+    # up a whole run. Raise it on a slow link, lower it to fail fast.
+    cloud_fetch_timeout_s: int = 60
     # IN DEVELOPMENT — paint match-position markers on the preview
     # scrollbar track. Accurate on the flat path (PDF/txt) and small,
     # fully-mounted markdown; large markdown lazy-mounts a chunk window
@@ -626,6 +656,14 @@ def validate_collection_name(name: str) -> str:
     if sys.platform == "win32" and name.split(".", 1)[0].upper() in _WIN_RESERVED_NAMES:
         raise InvalidCollectionNameError(
             f"collection name {name!r} is a reserved device name on Windows"
+        )
+    # ``all`` is the pseudo-name for "every collection" in ``-c`` and in
+    # ``defaults.collection``; a real one would make those ambiguous. Only
+    # blocked at write time, so an older config that already has one loads.
+    if name.casefold() == ALL_COLLECTIONS:
+        raise InvalidCollectionNameError(
+            f"collection name {name!r} is reserved — it means 'every collection' in "
+            "`--collection` and `defaults.collection`"
         )
     return name
 
@@ -887,7 +925,7 @@ CONFIG_TEMPLATE = """\
 # UI-driven edits preserve your comments and formatting.
 
 [defaults]
-collection    = "default"     # Active collection when --collection is omitted.
+collection    = "all"         # Scope for a fresh profile: "all" or a collection name.
 result_limit  = 200           # Max results per query (1-1000).
 preview_chunks = 5            # Chunks rendered in the preview pane (1-50).
 debounce_ms   = 200           # Wait this many ms after the last keystroke (0-2000).

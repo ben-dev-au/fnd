@@ -3,25 +3,32 @@
 [![CI](https://github.com/ben-dev-au/fnd/actions/workflows/ci.yml/badge.svg)](https://github.com/ben-dev-au/fnd/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
-[![Platform: macOS | Linux | Windows](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#requirements)
+[![Platform: macOS | Linux (beta) | Windows (beta)](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20(beta)%20%7C%20Windows%20(beta)-lightgrey.svg)](#platform-support)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/ben.dev.au)
 
-Fast, free, keyboard-driven document search for macOS, Linux*, and Windows*.
-Indexes PDF, DOCX, PPTX, MD and 60 different file types, with strong BM25 ranking,
-in-file navigation, an "Open with…" launcher, and a lazygit-style TUI.
+Fast, free, keyboard-driven document search for macOS. Indexes PDF, DOCX, PPTX,
+MD and 60 different file types, with strong BM25 ranking, in-file navigation, an
+"Open with…" launcher, and a lazygit-style TUI.
 
-> **Cross-platform.** Runs on macOS; Linux and Windows support is more recent and
-> less tested, so consider it an early beta release on those platforms. Core search, indexing,
-> preview, and the "Open with…" launcher work everywhere; a few integrations are
-> OS-specific and degrade gracefully — see [Platform support](#platform-support).
+> **Linux and Windows are early beta — barely tested.** The code paths exist and
+> the automated suite runs against all three OSes in CI, but fnd is developed and
+> used daily on macOS only. Nobody has put real day-to-day use on the Linux
+> build, and the Windows build has had essentially none at all. Expect rough
+> edges, and please [open an issue](https://github.com/ben-dev-au/fnd/issues) when
+> you hit one. See [Platform support](#platform-support) for what that means in
+> practice.
 
 ## Status
 
-Core features are complete and stable. Now in a refinement period: finding, fixing, and polishing.
+On macOS, core features are complete and stable; the project is in a refinement
+period of finding, fixing, and polishing. On Linux and Windows, treat everything
+as unproven — see the note above.
 
 ## Requirements
 
-- macOS (Apple Silicon or Intel), Linux, or Windows.
+- **macOS** (Apple Silicon or Intel) — the supported, tested platform.
+- **Linux** or **Windows** — early beta, largely untested. See
+  [Platform support](#platform-support).
 - Nothing else to set up. Each install option below brings Python 3.13 with it.
 - A modern terminal is recommended (see [Terminal compatibility](#terminal-compatibility)).
 
@@ -39,7 +46,7 @@ brew install ben-dev-au/tap/fnd
 once, then run the line above. Apple Silicon installs a prebuilt binary; Intel
 builds from source, which takes a few minutes.
 
-### Option 2: uv or pipx (macOS, Linux, Windows)
+### Option 2: uv or pipx (macOS, or Linux / Windows in beta)
 
 ```sh
 uv tool install fndr        # or:  pipx install fndr
@@ -81,27 +88,44 @@ Releases carry build provenance; see [`SECURITY.md`](SECURITY.md) to verify a do
 
 ## Platform support
 
-fnd runs on **macOS, Linux, and Windows**. Everything core — search, indexing,
-the TUI, syntax-highlighted preview, in-file navigation, and the "Open with…"
-launcher — works identically on all three. A few OS integrations differ; where
-an equivalent doesn't exist, fnd degrades gracefully rather than erroring.
+**macOS is the supported platform.** It is where fnd is developed, run daily, and
+where every feature has been exercised by hand against a real corpus.
 
-| Capability                        | macOS          | Linux                            | Windows            |
+**Linux and Windows are early beta.** Platform-specific behaviour is isolated
+behind four seams — where files live, how to open and reveal them, what the OS
+calls things, and how cloud-backed files behave — and each has a Linux and
+Windows implementation. The automated suite runs on `macos-14`, `ubuntu-latest`
+and `windows-latest` in CI. That establishes the code runs; it does not establish
+that the app is pleasant, correct, or even usable in daily work on those OSes,
+because nobody has yet done that. Windows in particular has had almost no
+hands-on use.
+
+So read the table below as **what is implemented**, not as what is verified:
+
+| Capability                        | macOS          | Linux (beta)                     | Windows (beta)     |
 | --------------------------------- | -------------- | -------------------------------- | ------------------ |
+| Maturity                          | tested in use  | CI only                          | CI only            |
 | Search · indexing · TUI · preview | ✓              | ✓                                | ✓                  |
 | Open in app / **Open with…**      | ✓              | ✓                                | ✓                  |
 | Reveal in file manager (`R`)      | Finder         | file-manager `--select` → folder | Explorer `/select` |
 | PDF page-jump on `o`              | Skim, Preview  | Zathura, Okular                  | SumatraPDF         |
 | Structured PDF extra (docling)    | ✓              | ✓                                | ✓                  |
 | Created-date filter               | ✓ (birth time) | best-effort (statx)              | ✓ (creation time)  |
+| Cloud-only file handling          | iCloud Drive   | not detectable                   | OneDrive & co.     |
 | Finder tag filtering              | ✓              | —                                | —                  |
 
+Where an OS has no equivalent for something, fnd degrades rather than erroring.
 Built-in PDF viewers are auto-detected — the "Open with…" picker lists only the
 ones actually installed. On Linux/Windows, point `[app_defaults].pdf` at your
 preferred viewer, or add any app with a small `[apps.<id>]` block (see
-[`docs/apps.md`](docs/apps.md)). **Frontmatter tags** (`tags:` in YAML) work on
-every OS; only macOS **Finder tags** are macOS-only. Install with `uv`/`pipx` on
-any OS; Homebrew is macOS-only.
+[`docs/apps.md`](docs/apps.md)); the bundled Linux and Windows handlers are
+written from each app's documented CLI and have not been confirmed against a
+live install. **Frontmatter tags** (`tags:` in YAML) work on every OS; **Finder
+tags** are macOS-only. Install with `uv`/`pipx` on any OS; Homebrew is
+macOS-only.
+
+If you run fnd on Linux or Windows, reports are genuinely valuable — including
+"it worked fine", which is the datapoint the table is currently missing.
 
 ## Quick start
 
@@ -173,9 +197,11 @@ A modern terminal is required for optimal formatting. For example:
 - **macOS**: iTerm2, Ghostty, Kitty, WezTerm. Terminal.app works but its
   formatting varies by font (Menlo is a reasonable default); a modern terminal
   is strongly suggested.
-- **Linux**: Kitty, WezTerm, Alacritty, GNOME Terminal, or Konsole all work well.
+- **Linux**: Kitty, WezTerm, Alacritty, GNOME Terminal, or Konsole should all be
+  fine — expected to work, not yet confirmed.
 - **Windows**: **Windows Terminal** (bundled with Windows 11) or WezTerm. The
-  legacy `conhost.exe` console renders box-drawing and colours poorly.
+  legacy `conhost.exe` console renders box-drawing and colours poorly. Untested;
+  if the TUI looks wrong, the terminal is the first thing to change.
 
 ## Command reference
 
@@ -183,7 +209,7 @@ A modern terminal is required for optimal formatting. For example:
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `fnd`                                           | Launch the interactive TUI.                                                                            |
 | `fnd <query>`                                   | Launch the TUI with `<query>` pre-filled.                                                              |
-| `fnd -c <collection> <query>`                   | Launch the TUI scoped to a collection.                                                                 |
+| `fnd -c <collection> <query>`                   | Launch the TUI scoped to a collection (`-c all` for every collection).                                 |
 | `fnd tui [query]`                               | Explicitly launch the TUI (optional seed query).                                                       |
 | `fnd search "<query>"`                          | Terminal search. Flags: `--limit`, `-c/--collection`, `--meta`, `--explain N`, plus the filters below. |
 | `fnd index <root>`                              | Ad-hoc index a single root into the default collection.                                                |
@@ -226,15 +252,17 @@ TOML; disabling one takes effect immediately, with no re-index.
 
 Created dates come from the filesystem's creation time — macOS birth time,
 Windows creation time, and statx-capable Linux filesystems (e.g. ext4). Files
-without one match only the default (unfiltered) window.
+without one match only the default (unfiltered) window. Only the macOS path has
+been exercised against a real corpus.
 
 ## Open with… apps
 
 In the TUI, `o` opens a hit in its resolved app and `O` opens the **Open with…**
 picker. Built-in handlers ship per OS — **Skim, Preview, PDF Expert** (macOS),
-**Zathura, Okular** (Linux), **SumatraPDF** (Windows), plus cross-platform
-**Obsidian, VS Code, System Default** — and each is offered only where it's
-installed. Where the app and file type allow it, fnd jumps to the matching page,
+**Zathura, Okular** (Linux, beta), **SumatraPDF** (Windows, beta), plus
+cross-platform **Obsidian, VS Code, System Default** — and each is offered only
+where it's installed. The non-macOS handlers are written from each app's
+documented command line and have not been confirmed against a live install. Where the app and file type allow it, fnd jumps to the matching page,
 slide, line, or heading. Set a per-file-type default with `[app_defaults]`, or a
 per-source app, in your config.
 
@@ -247,9 +275,13 @@ to apps as argv lists (never a shell) or as percent-encoded URLs handed to
 
 A **collection** is a named group of source folders you search together; each
 **source** is a folder plus the include/exclude globs that decide which files in
-it get indexed. The `default` collection points at `~/Documents` out of the box.
-There are three ways to manage them, and they're interchangeable, because the UI
-writes the same config file you can edit by hand.
+it get indexed. Out of the box fnd searches **all** your collections; tick
+individual ones in the sidebar to narrow that, and the selection is remembered
+for next launch. `-c <name>` scopes a single launch, and `-c all` widens it back
+out again without touching what's remembered.
+
+There are three ways to manage collections, and they're interchangeable, because
+the UI writes the same config file you can edit by hand.
 
 ### From the TUI
 
@@ -299,7 +331,7 @@ minimal, annotated config:
 
 ```toml
 [defaults]
-collection    = "papers"   # active collection when -c is omitted
+collection    = "all"      # scope a fresh profile starts with: "all" or a name
 result_limit  = 200        # max results per query
 fuzzy_enabled = true       # auto-fuzzy in the cascade fallback (toggle with Ctrl+F)
 

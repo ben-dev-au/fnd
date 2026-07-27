@@ -8,6 +8,12 @@ here: **Skim, Preview, PDF Expert** (macOS), **Zathura, Okular** (Linux),
 Default**. Each is offered only where it's installed (auto-detected per OS), so
 the picker stays relevant on every machine.
 
+> **Linux and Windows entries are unverified.** They're written from each app's
+> documented command line and exercised only by unit tests — no one has yet
+> confirmed them against a live install. If one misbehaves (wrong page, window
+> doesn't focus, app not detected), that's a bug worth reporting, and the
+> `[apps.<id>]` override below is the workaround in the meantime.
+
 The picker's last row, **Reveal in <file manager>**, isn't an opener — it shows
 the file selected in Finder / File Explorer / your Linux file manager (also
 bound to `R`). Because it never opens the file, it's deliberately absent from

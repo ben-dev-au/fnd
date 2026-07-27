@@ -145,7 +145,7 @@ async def test_ctrl_y_fires_from_query_bar(
 
 @pytest.mark.asyncio
 async def test_nothing_to_copy_skips_clipboard(
-    cfg: Config, wine_index: Path, monkeypatch: pytest.MonkeyPatch
+    cfg: Config, wine_index: Path, monkeypatch: pytest.MonkeyPatch, saved_empty_scope: Path
 ) -> None:
     calls: list[str] = []
     monkeypatch.setattr("fnd.tui.clipboard.copy_text", lambda text: calls.append(text))

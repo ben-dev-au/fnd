@@ -28,7 +28,7 @@ import sys
 import tempfile
 import time
 import tomllib
-from collections.abc import AsyncIterator, Callable, Collection, Sequence
+from collections.abc import AsyncIterator, Callable, Collection, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Literal, cast
@@ -37,6 +37,13 @@ import tomli_w
 
 from fnd import paths
 from fnd.cache import ExtractionCache
+from fnd.cloud_files import (
+    DEFAULT_FETCH_TIMEOUT_S,
+    CloudFetchCancelledError,
+    CloudFetchError,
+    is_placeholder,
+    provider_label,
+)
 from fnd.config import CollectionConfig
 from fnd.extract import ExtractError, extract
 from fnd.fsmeta import read_file_times
@@ -49,7 +56,7 @@ from fnd.index import (
     read_file_metadata,
 )
 from fnd.schema import F_COLLECTION
-from fnd.walk import is_dataless, walk_sources
+from fnd.walk import walk_sources
 
 EventKind = Literal[
     "enumerating",
@@ -92,7 +99,6 @@ class ProgressEvent:
     error: str = ""
     # Per-file classification (set on file_complete / file_error).
     is_pdf: bool = False
-    is_dataless: bool = False
     has_textured_chunk: bool = False
     # Running totals across the run; modal renders the Indexed +
     # Texturising lines from these.
@@ -170,9 +176,43 @@ class IndexState:
         )
 
 
+def state_dir() -> Path:
+    """Directory holding every collection's resume state.
+
+    The single accessor for that location: :func:`state_file_for` and
+    :func:`saved_states` both go through it, so redirecting this one name
+    (as the test suite does) redirects every read *and* every delete.
+    Reaching past it to ``paths.reindex_state_dir`` would leave a code
+    path that still points at the user's real data under test.
+    """
+    return paths.reindex_state_dir()
+
+
 def state_file_for(collection: str) -> Path:
     """Where the in-flight state for ``collection`` lives."""
-    return paths.reindex_state_path(collection)
+    return state_dir() / f"{collection}.state.toml"
+
+
+def saved_states() -> list[tuple[Path, IndexState]]:
+    """Every readable resume state on disk, newest first.
+
+    Callers that want "is there anything to resume?" must ask this rather
+    than probing one well-known name — auto-resume used to look only for a
+    collection literally called ``default``, so an interrupted run of any
+    named collection was silently unresumable and its state file lived on
+    forever.
+    """
+    out: list[tuple[Path, IndexState]] = []
+    try:
+        candidates = sorted(state_dir().glob("*.state.toml"))
+    except OSError:
+        return out
+    for path in candidates:
+        state = load_state(path)
+        if state is not None:
+            out.append((path, state))
+    out.sort(key=lambda pair: pair[1].last_update or pair[1].started_at, reverse=True)
+    return out
 
 
 def load_state(state_path: Path) -> IndexState | None:
@@ -247,10 +287,17 @@ def is_state_resumable(
     return 0 <= age_hours <= max_age_hours
 
 
-def _enumerate_paths(config: CollectionConfig) -> list[tuple[Path, str]]:
-    """Eagerly walk all sources to count files for ETA + total bar.
+def _enumerate_iter(
+    config: CollectionConfig,
+    *,
+    read_frontmatter: Callable[[Path], dict[str, object] | None] | None = None,
+) -> Iterator[tuple[Path, str]]:
+    """Lazily walk all sources, yielding ``(path, source_id)`` pairs in
+    deterministic walk order.
 
-    Returns ``(path, source_id)`` pairs in deterministic walk order.
+    Lazy on purpose: the walk can be slow (network shares, a frontmatter
+    filter over a large vault), and the async runner pumps this in short
+    slices so the scan stays cancellable and can report a running count.
     Honours ``defaults.skip_junk_dirs`` + ``extra_junk_dirs`` so dev
     trees (``node_modules``, ``.venv``, …) are pruned at descent.
     """
@@ -261,15 +308,42 @@ def _enumerate_paths(config: CollectionConfig) -> list[tuple[Path, str]]:
         skip = resolve_skip_dirs(_load_config().defaults)
     except Exception:
         skip = resolve_skip_dirs(None)
-    out: list[tuple[Path, str]] = []
     for source in config.sources:
         try:
             source_id = str(Path(source.path).expanduser().resolve())
         except OSError:
             source_id = str(Path(source.path).expanduser())
-        for path in walk_sources(sources=[source], skip_dirs=skip):
-            out.append((path, source_id))
-    return out
+        for path in walk_sources(
+            sources=[source], skip_dirs=skip, read_frontmatter=read_frontmatter
+        ):
+            yield (path, source_id)
+
+
+# Scan pump granularity. A slice returns after whichever comes first, so
+# one pathological file (a multi-second iCloud materialisation) can't
+# hold the whole scan hostage between cancel checks.
+_SCAN_SLICE_SECONDS = 0.2
+_SCAN_SLICE_MAX_ITEMS = 500
+
+
+def _pump_walk(
+    walk_iter: Iterator[tuple[Path, str]],
+    *,
+    slice_seconds: float,
+    max_items: int,
+) -> tuple[list[tuple[Path, str]], bool]:
+    """Drain one time-boxed slice off ``walk_iter``.
+
+    Returns ``(batch, exhausted)``. Runs on a worker thread; the caller
+    re-enters between slices to check cancel and emit progress.
+    """
+    batch: list[tuple[Path, str]] = []
+    deadline = time.perf_counter() + slice_seconds
+    for item in walk_iter:
+        batch.append(item)
+        if len(batch) >= max_items or time.perf_counter() >= deadline:
+            return batch, False
+    return batch, True
 
 
 def _should_reprocess(
@@ -326,6 +400,65 @@ def _prior_indexed_state(
     return mtime, inode_ctime, has_textured
 
 
+@dataclass(slots=True)
+class CloudPolicy:
+    """How one run treats files whose bytes live only in the cloud.
+
+    The default is to fetch them: an Update should produce a complete
+    index, and a file the user can see in Finder/Explorer is a file they
+    expect to be searchable. Each fetch is bounded by ``timeout_s`` so one
+    wedged download can't hold up a run, and reported while it waits so
+    the pause reads as work rather than a hang.
+
+    ``skip`` is the live opt-out. The user flips it from the indexer modal
+    when the wait isn't worth it; from then on cloud-only files are listed
+    as skipped instead of fetched. Run-scoped by design — nothing is
+    persisted, so the next Update fetches again.
+    """
+
+    timeout_s: float = DEFAULT_FETCH_TIMEOUT_S
+    skip: asyncio.Event | None = None
+    # The run's cancel signal, polled while a fetch is blocked. Without it a
+    # stalled provider holds Cancel for the whole timeout — which would undo
+    # the responsiveness this change exists to deliver.
+    cancel: asyncio.Event | None = None
+
+    def skipping(self) -> bool:
+        return self.skip is not None and self.skip.is_set()
+
+    def skip_reason(self, path: Path) -> str:
+        return f"Only in {provider_label(path)} — skipped for this run"
+
+    def blocked_reason(self, path: Path, error: BaseException) -> str:
+        return f"Could not fetch from {provider_label(path)}: {error}"
+
+    def fetch(self, call: Callable[[], Any], path: Path) -> Any:
+        """Run ``call`` under this policy's deadline, reporting the wait."""
+        from fnd import cloud_files
+
+        return cloud_files.fetch(call, path=path, timeout_s=self.timeout_s, cancel=self.cancel)
+
+    def materialise(self, path: Path) -> None:
+        """Pull ``path`` down. Touching one byte is enough — both macOS
+        dataless files and Windows Cloud Files placeholders hydrate on
+        first data access."""
+
+        def _touch() -> None:
+            with path.open("rb") as f:
+                f.read(1)
+
+        self.fetch(_touch, path)
+
+
+async def _process_file_task(fn: Any, /, **kwargs: Any) -> tuple[int, bool, bool, str]:
+    """Run one file's work off-loop.
+
+    A thin named seam over ``asyncio.to_thread`` so the call site can stay
+    readable while wrapped in the cancellation handler.
+    """
+    return cast("tuple[int, bool, bool, str]", await asyncio.to_thread(fn, **kwargs))
+
+
 def _process_one_file(
     *,
     path: Path,
@@ -341,6 +474,7 @@ def _process_one_file(
     wipe: bool = False,
     tag_sources: Sequence[str] = ("frontmatter", "os"),
     tag_frontmatter_keys: Sequence[str] = (),
+    cloud_policy: CloudPolicy | None = None,
 ) -> tuple[int, bool, bool, str]:
     """Synchronous per-file work — extraction + write to Tantivy.
 
@@ -357,10 +491,12 @@ def _process_one_file(
     we could newly texturise this run (``texturise_on`` and no prior
     ``body_md``).
     """
-    # iCloud-offloaded placeholder: skip rather than triggering a sync
-    # download that could blow the worker's stall budget.
-    if is_dataless(path):
-        return 0, False, False, "iCloud-offloaded - download in Finder before indexing"
+    policy = cloud_policy or CloudPolicy()
+    # Cheap stat, and the answer gates the expensive part below. Whether we
+    # act on it is decided after the unchanged-skip: a cloud-only file that
+    # is already indexed and untouched needs nothing either way, and
+    # reporting it as skipped would be noise about work that wasn't due.
+    is_cloud_only = is_placeholder(path)
 
     is_pdf = path.suffix.lower() == ".pdf"
     parent_id = _path_parent_id(path)
@@ -389,6 +525,18 @@ def _process_one_file(
             )
             if not changed and not improvable:
                 return 0, True, prior_textured, ""
+
+    # The file survived the unchanged-skip, so it genuinely needs reading —
+    # which for a cloud-only file means a download. Do it here rather than
+    # letting extract() block on the first read, so the wait is bounded and
+    # announced instead of looking like a wedged extractor.
+    if is_cloud_only:
+        if policy.skipping():
+            return 0, False, False, policy.skip_reason(path)
+        try:
+            policy.materialise(path)
+        except (CloudFetchError, OSError) as e:
+            return 0, False, False, policy.blocked_reason(path, e)
 
     # Read once per file, stamped onto every chunk. Shared with build_index so
     # an ad-hoc `fnd index <root>` captures the same metadata as a reindex.
@@ -477,6 +625,8 @@ async def run_indexer(
     texturise_override: bool | None = None,
     skip_unchanged: bool = True,
     force_fresh: bool = False,
+    skip_cloud: asyncio.Event | None = None,
+    echo_skips: bool = False,
 ) -> AsyncIterator[ProgressEvent]:
     """Async generator yielding ProgressEvents as the index builds.
 
@@ -508,9 +658,6 @@ async def run_indexer(
     cache = ExtractionCache()
     from fnd.extract import pdf as _pdf
 
-    prior_singleton = _pdf._cache_singleton
-    _pdf._cache_singleton = cache
-
     # Run-scoped "Update cache at index time" toggle. When the user has
     # turned this off (battery-saver), extract() skips fresh structured
     # extraction on cache misses and skips cache writes — see
@@ -527,8 +674,6 @@ async def run_indexer(
 
             full_cfg = _load_config()
             skip_structure = not bool(full_cfg.defaults.cache_at_index_time)
-    prior_skip = _pdf._skip_structure_extraction
-    _pdf.set_skip_structure_extraction(skip_structure)
     texturise_on = not skip_structure
 
     # Tag settings come from the user's config, sourced here (the same
@@ -544,10 +689,6 @@ async def run_indexer(
         _defaults = _load_config().defaults
         tag_sources = tuple(_defaults.tag_sources)
         tag_frontmatter_keys = tuple(_defaults.tag_frontmatter_keys)
-
-    # Re-texturise-outdated opt-out from durable reuse (see extract()).
-    prior_force_fresh = _pdf._force_fresh_texture
-    _pdf.set_force_fresh_texture(force_fresh)
 
     # Clear any cancel beacon left over from a previous Cancel click
     # so a fresh run isn't aborted by stale state.
@@ -601,14 +742,78 @@ async def run_indexer(
             **extra,
         )
 
+    # Cloud-only files are fetched by default so the index stays complete;
+    # the policy bounds and reports each fetch, and carries the user's live
+    # "skip cloud-only files" opt-out for this run.
+    timeout_s = DEFAULT_FETCH_TIMEOUT_S
+    with contextlib.suppress(Exception):
+        from fnd.config import load as _load_config
+
+        timeout_s = float(_load_config().defaults.cloud_fetch_timeout_s)
+    policy = CloudPolicy(timeout_s=timeout_s, skip=skip_cloud, cancel=cancel)
+    # Files the scan could not resolve. Recorded once the run starts so they
+    # surface in the same failure list as extraction errors.
+    scan_blocked: list[tuple[Path, str]] = []
+
+    def _scan_frontmatter(path: Path) -> dict[str, object] | None:
+        """Frontmatter for a filter candidate, fetching it if it is
+        cloud-only. Returning None drops the file from the walk — used when
+        the user has opted out of fetching, or the provider never
+        delivered."""
+        from fnd.frontmatter import read_frontmatter_from_file
+
+        if not is_placeholder(path):
+            return read_frontmatter_from_file(path)
+        if policy.skipping():
+            scan_blocked.append((path, policy.skip_reason(path)))
+            return None
+        try:
+            return cast(
+                "dict[str, object] | None",
+                policy.fetch(lambda: read_frontmatter_from_file(path), path),
+            )
+        except CloudFetchCancelledError:
+            # Not a blocked file — the run is ending. The pump checks cancel
+            # immediately after this slice and emits the terminal event.
+            return None
+        except (CloudFetchError, OSError) as e:
+            scan_blocked.append((path, policy.blocked_reason(path, e)))
+            return None
+
     # Surface an immediate "enumerating" event so the modal mounts and
     # shows "Scanning sources…" while the synchronous filesystem walk
     # runs on a worker thread. Without this hop the event loop stays
     # blocked in scandir / stat / tantivy IO and the UI looks frozen.
     yield _emit("enumerating")
 
-    def _prepare() -> tuple[list[tuple[Path, str]], dict[str, int], int, int, Any, Any, Any]:
-        local_paths = _enumerate_paths(config)
+    # Pump the walk in short slices rather than one opaque to_thread hop.
+    # A scan over a network share or a cloud-backed vault can run for
+    # minutes; draining it in slices keeps cancel responsive and lets the
+    # modal show a growing file count instead of a static "Scanning
+    # sources…" the user reads as a hang.
+    walk_iter = _enumerate_iter(config, read_frontmatter=_scan_frontmatter)
+    while True:
+        try:
+            batch, exhausted = await asyncio.to_thread(
+                _pump_walk,
+                walk_iter,
+                slice_seconds=_SCAN_SLICE_SECONDS,
+                max_items=_SCAN_SLICE_MAX_ITEMS,
+            )
+        except Exception as e:
+            yield _emit("file_error", current_file="(scan)", error=f"Could not scan sources: {e}")
+            yield _emit("cancelled")
+            return
+        paths.extend(batch)
+        if cancel is not None and cancel.is_set():
+            yield _emit("cancelled")
+            return
+        yield _emit("enumerating")
+        if exhausted:
+            break
+
+    def _prepare() -> tuple[dict[str, int], int, int, Any, Any, Any]:
+        local_paths = paths
         local_sizes: dict[str, int] = {}
         for p, _src in local_paths:
             try:
@@ -631,7 +836,6 @@ async def run_indexer(
             with contextlib.suppress(Exception):
                 local_prior_searcher = local_index.searcher()
         return (
-            local_paths,
             local_sizes,
             local_pdfs_total,
             local_bytes_total,
@@ -642,7 +846,6 @@ async def run_indexer(
 
     try:
         (
-            paths,
             sizes,
             pdfs_total,
             bytes_total,
@@ -670,7 +873,33 @@ async def run_indexer(
     save_state(state_path, state)
     yield _emit("started")
 
+    # Files the scan could not resolve never reach the per-file loop, so
+    # account for them here. Without this they vanish between "the folder
+    # holds 400 notes" and "the run processed 180" — the silent data loss
+    # this whole change exists to avoid.
+    for blocked_path, reason in scan_blocked:
+        state.failed += 1
+        with contextlib.suppress(Exception):
+            from fnd.tui.failure_log import record_failure
+
+            record_failure(collection=collection, path=str(blocked_path), reason=reason)
+        yield _emit("file_error", current_file=str(blocked_path), error=reason)
+    if scan_blocked:
+        save_state(state_path, state)
+
+    # Swap the process-wide extraction state in only now, immediately inside
+    # the try whose finally restores it. Setting it earlier left every
+    # scan-phase early return (cancel, scan error, setup failure) leaking the
+    # cache singleton and the structure/force-fresh modes into later runs and
+    # into the preview pipeline. Only extract(), below, reads any of it.
+    prior_singleton = _pdf._cache_singleton
+    prior_skip = _pdf._skip_structure_extraction
+    prior_force_fresh = _pdf._force_fresh_texture
     try:
+        _pdf._cache_singleton = cache
+        _pdf.set_skip_structure_extraction(skip_structure)
+        # Re-texturise-outdated opt-out from durable reuse (see extract()).
+        _pdf.set_force_fresh_texture(force_fresh)
         written = 0
         for path, source_id in paths:
             if cancel is not None and cancel.is_set():
@@ -705,24 +934,33 @@ async def run_indexer(
 
             hits_before = cache.hits
             t_file = time.perf_counter()
-            chunks_written, was_hit, has_textured, err = await asyncio.to_thread(
-                _process_one_file,
-                path=path,
-                source_id=source_id,
-                collection=collection,
-                writer=writer,
-                schema=index.schema,
-                cache_before_hits=hits_before,
-                cache=cache,
-                prior_searcher=prior_searcher,
-                skip_unchanged=skip_unchanged,
-                texturise_on=texturise_on,
-                wipe=force_fresh,
-                tag_sources=tag_sources,
-                tag_frontmatter_keys=tag_frontmatter_keys,
-            )
+            try:
+                chunks_written, was_hit, has_textured, err = await _process_file_task(
+                    _process_one_file,
+                    path=path,
+                    source_id=source_id,
+                    collection=collection,
+                    writer=writer,
+                    schema=index.schema,
+                    cache_before_hits=hits_before,
+                    cache=cache,
+                    prior_searcher=prior_searcher,
+                    skip_unchanged=skip_unchanged,
+                    texturise_on=texturise_on,
+                    wipe=force_fresh,
+                    tag_sources=tag_sources,
+                    tag_frontmatter_keys=tag_frontmatter_keys,
+                    cloud_policy=policy,
+                )
+            except CloudFetchCancelledError:
+                # Cancel landed while this file's download was still
+                # outstanding. It is not a failure — commit what the run
+                # already wrote and end on the truthful terminal event.
+                with contextlib.suppress(Exception):
+                    writer.commit()
+                yield _emit("cancelled")
+                return
             file_elapsed_ms = (time.perf_counter() - t_file) * 1000.0
-            was_dataless = err.startswith("iCloud-offloaded") if err else False
 
             if err:
                 state.failed += 1
@@ -788,8 +1026,13 @@ async def run_indexer(
                         _p, _done, _total, _start = _lp_snapshot()
                         if _total > 0 and _done > 0 and _done < _total:
                             err = f"{err}  [last page beat: {_done}/{_total}]"
-                ts = dt.datetime.now(tz=dt.UTC).isoformat(timespec="seconds")
-                print(f"[fnd skip {ts}] {err}", file=sys.stderr)
+                # CLI only. Under the TUI, stderr is the terminal Textual is
+                # painting into, so a skip line lands as garbage across the
+                # rendered UI — and the same skip already reaches the user
+                # through the file_error event and the failure log below.
+                if echo_skips:
+                    ts = dt.datetime.now(tz=dt.UTC).isoformat(timespec="seconds")
+                    print(f"[fnd skip {ts}] {err}", file=sys.stderr)
                 # Persist the failure so the still-flat drill-in screen
                 # can show per-file reasons + retry buttons.
                 with contextlib.suppress(Exception):
@@ -802,7 +1045,6 @@ async def run_indexer(
                     file_elapsed_ms=file_elapsed_ms,
                     error=err,
                     is_pdf=is_pdf,
-                    is_dataless=was_dataless,
                 )
             else:
                 # A previously-failed file just succeeded; clear the
@@ -830,7 +1072,6 @@ async def run_indexer(
                 cache_hit=was_hit,
                 is_pdf=is_pdf,
                 has_textured_chunk=has_textured,
-                is_dataless=was_dataless,
             )
 
         writer.commit()
@@ -892,6 +1133,7 @@ def run_sync(
             collection=collection,
             index_dir=index_dir,
             rebuild=rebuild,
+            echo_skips=True,
         ):
             if progress_callback is not None:
                 progress_callback(ev)

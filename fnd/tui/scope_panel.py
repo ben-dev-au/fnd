@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from textual.widgets import Tree
 
+from fnd.config import is_all_collections
 from fnd.kinds import CATEGORIES, CATEGORY_BY_ID, KIND_BY_ID, KINDS_IN_CATEGORY
 from fnd.launch_command import LaunchScope, SearchSnapshot
 from fnd.tui.results_labels import _styled_action_label, _styled_parent_label
@@ -138,7 +139,11 @@ class ScopeController:
             if launch_filters:
                 self._seed_filters(launch_filters)
         else:
-            self.selection = self._derive_selection(saved.collections, saved.sources)
+            self.selection = (
+                self._derive_selection(saved.collections, saved.sources)
+                if saved.saved
+                else self._seed_from_defaults()
+            )
             self.filter_kinds = list(saved.filter_kinds)
             self.filter_date = saved.filter_date or "any"
             self.filter_created = saved.filter_created or "any"
@@ -146,17 +151,42 @@ class ScopeController:
             self.tag_exclude = {k: set(v) for k, v in saved.tag_exclude.items()}
             self.tag_match_all = saved.tag_match_all
 
+    def _seed_from_defaults(self) -> dict[str, _FullScope | set[str]]:
+        """Scope for a profile that has never saved one.
+
+        Reads ``defaults.collection``: ``all`` (the shipped default) ticks
+        every configured collection, a name ticks just that one. Only ever
+        consulted on a first launch — once a scope is saved, the user's
+        sidebar selection is the source of truth and this never fires again.
+        """
+        cfg = self._app._config
+        if cfg is None:
+            return {}
+        want = getattr(cfg.defaults, "collection", "") or ""
+        names = (
+            list(cfg.collections)
+            if is_all_collections(want, known=set(cfg.collections))
+            else [want]
+            if want in cfg.collections
+            else list(cfg.collections)
+        )
+        return dict.fromkeys(names, FULL)
+
     def _valid_collection_names(self, raw: str) -> list[str]:
         """Resolve a ``--collection`` value to real config collection names.
 
-        A whole-string match wins (so a config name that itself contains a
-        comma survives); otherwise the value is split on commas. Unknown
-        names are dropped. With no config loaded, the raw value is trusted.
+        ``all`` (any case) is the pseudo-name for every configured
+        collection. Otherwise a whole-string match wins (so a config name
+        that itself contains a comma survives), then the value is split on
+        commas. Unknown names are dropped. With no config loaded, the raw
+        value is trusted.
         """
         cfg = self._app._config
         known = set(cfg.collections) if cfg else None
         if known is None:
-            return [raw]
+            return [] if is_all_collections(raw) else [raw]
+        if is_all_collections(raw, known=known):
+            return list(cfg.collections) if cfg else []
         if raw in known:
             return [raw]
         return [n for n in (p.strip() for p in raw.split(",")) if n in known]

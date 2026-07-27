@@ -579,7 +579,7 @@ async def test_picker_toggle_preserves_cursor(fixtures_dir: Path, tmp_index_dir:
 
 @pytest.mark.asyncio
 async def test_collections_sidebar_toggle_preserves_cursor(
-    fixtures_dir: Path, tmp_index_dir: Path, tmp_path: Path
+    fixtures_dir: Path, tmp_index_dir: Path, tmp_path: Path, saved_empty_scope: Path
 ) -> None:
     """Regression: toggling a collection in the main app's sidebar tree
     must keep the cursor on the toggled row. The previous implementation
