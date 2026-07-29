@@ -303,8 +303,9 @@ Press `:` to open Settings, move to **Collections**, then:
 # Create a collection with one source (repeat --source for more folders)
 fnd collection add papers --source ~/Documents/Research
 
-# Narrow it with globs, or add a markdown frontmatter filter
+# Narrow it with globs, or a markdown frontmatter filter
 fnd collection add notes --source ~/Notes --include "**/*.md" --exclude "drafts/**"
+fnd collection add notes --source ~/Vault --filter "NOT ('private' in tags)"
 
 fnd collection list             # show what's configured
 fnd collection reindex papers   # build/update the index (--rebuild to start fresh)
@@ -345,7 +346,7 @@ follow_symlinks = false
 [[collections.papers.sources]]
 path               = "~/Notes"
 includes           = ["**/*.md"]
-frontmatter_filter = "Status == 'published'"   # markdown sources only; see Search how-to
+frontmatter_filter = "Status == 'published' AND NOT ('private' in tags)"  # md only
 
 # Default app per file type for the `o` shortcut. Built-in ids:
 # system, obsidian, vscode (all OSes); skim, preview, pdf_expert (macOS);
@@ -552,7 +553,8 @@ You rarely need `*`: search already matches word variants (`entropy` finds
 
 ### Markdown frontmatter filter
 
-Filter markdown notes by their YAML frontmatter with a `[…]` predicate.
+Filter markdown notes by their YAML frontmatter with a `[…]` predicate. The
+same expression is also a source's `frontmatter_filter` in the config.
 **String values use single quotes**; double quotes mark a field name with
 spaces (`"Due Date"`):
 
@@ -561,17 +563,24 @@ spaces (`"Due Date"`):
 | `mitm [Course == 'Security Foundations']`               | Notes where the `Course` field equals that value.     |
 | `[Notes_Type == 'Lecture' OR Notes_Type == 'Tutorial']` | Either value (there are no list literals — use `OR`). |
 | `entropy [Course == 'ML' AND Year >= 2024]`             | Compound predicate.                                   |
-| `['urgent' in Tags]`                                    | `urgent` is an element of the `Tags` list.            |
-| `[Course ~~ 'Design *']`                                | Glob-match a string value.                            |
+| `['urgent' in tags]`                                    | `urgent` is an element of the `tags` list.            |
+| `[NOT ('private' in tags)]`                             | Exclude a tag, **keeping notes that have no `tags:`**. |
+| `[Course ~~ 'Design *']`                                | Glob a string value (not the body-search `~N` fuzzy). |
 | `["Due Date" < 2026-01-01]`                             | A field name with a space, double-quoted.             |
 
-Supported operators: `==` `!=` `<` `<=` `>` `>=` `~~` (glob, string fields),
-`in` / `not in` (membership in a list field), `AND`, `OR`, `NOT`, parentheses.
-Values are single-quoted strings, numbers, ISO dates, or `true`/`false`/`null`.
-The filter applies only to markdown files; other kinds pass through unfiltered.
+Operators: `==` `!=` `<` `<=` `>` `>=` `~~` (glob, string fields), `in` /
+`not in` (list membership), `AND`, `OR`, `NOT`, parentheses. Values are
+single-quoted strings, numbers, ISO dates, or `true`/`false`/`null`. Only
+markdown is filtered; other kinds pass through.
 
-`~~` globs a frontmatter **string value** (`Course ~~ 'Design *'`) — it is not
-the body-search `~N` fuzzy operator.
+> **A missing field fails every comparison, including negative ones.** On a
+> note with no `tags:`, `['x' not in tags]` is *false*, so the note is dropped;
+> `[NOT ('x' in tags)]` is *true*, so it is kept. To exclude a tag without also
+> losing untagged notes, negate the whole test: `NOT (… in …)`. The same rule
+> makes `[Status != 'draft']` skip notes that have no `Status` at all.
+>
+> `in` needs a real YAML list. If some notes write `tags: private` as a bare
+> string, add `AND NOT (tags ~~ '*private*')` to catch them too.
 
 ### Composing: worked examples
 

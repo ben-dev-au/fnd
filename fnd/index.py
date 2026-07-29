@@ -11,7 +11,7 @@ import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
-from tantivy import Document, Index, Query, Schema
+from tantivy import Document, Index, IndexWriter, Query, Schema
 
 from fnd.config import CollectionConfig
 from fnd.extract import Chunk, ExtractError, extract
@@ -225,6 +225,7 @@ def build_index(
         writer.commit()
 
     written = 0
+    live_parent_ids: set[str] = set()
     paths: Iterable[Path] = walk(
         roots=roots,
         includes=includes,
@@ -238,6 +239,7 @@ def build_index(
         # Vault listed under several collection sources) keeps the
         # sibling collections' chunks intact.
         parent_id = _path_parent_id(path)
+        live_parent_ids.add(parent_id)
         _delete_q = _scoped_delete_query(index.schema, collection, parent_id)
         writer.delete_documents_by_query(_delete_q)
         meta_blob_bytes, file_tags = read_file_metadata(
@@ -260,6 +262,11 @@ def build_index(
             writer.delete_documents_by_query(_delete_q)
             print(f"[fnd skip {_skip_stamp()}] {err}", file=sys.stderr)
     writer.commit()
+    # See build_index_from_config: skip the prune when a root is missing, or
+    # an offline volume would read as "every file was deleted".
+    if not rebuild and sources_are_enumerable(Path(r) for r in roots):
+        prune_removed_files(index, writer, collection=collection, live_parent_ids=live_parent_ids)
+        writer.commit()
     writer.wait_merging_threads()
     return written
 
@@ -290,6 +297,7 @@ def build_index_from_config(
         writer.delete_documents(F_COLLECTION, collection)
         writer.commit()
     written = 0
+    live_parent_ids: set[str] = set()
     # Walk per-source so each chunk carries an identifier of which
     # source it came from — lets the search layer scope to a subset of
     # a collection's sources without re-indexing.
@@ -300,6 +308,7 @@ def build_index_from_config(
                 path, tag_sources=tag_sources, frontmatter_keys=tag_frontmatter_keys
             )
             parent_id = _path_parent_id(path)
+            live_parent_ids.add(parent_id)
             _delete_q = _scoped_delete_query(index.schema, collection, parent_id)
             writer.delete_documents_by_query(_delete_q)
             try:
@@ -323,6 +332,21 @@ def build_index_from_config(
                 writer.delete_documents_by_query(_delete_q)
                 print(f"[fnd skip {_skip_stamp()}] {err}", file=sys.stderr)
     writer.commit()
+    # Rebuild already wiped the collection, so nothing can be stale.
+    if not rebuild:
+        roots = [Path(s.path).expanduser() for s in config.sources]
+        if sources_are_enumerable(roots):
+            prune_removed_files(
+                index, writer, collection=collection, live_parent_ids=live_parent_ids
+            )
+            writer.commit()
+        else:
+            missing = ", ".join(str(r) for r in roots if not r.exists())
+            print(
+                f"[fnd skip {_skip_stamp()}] source unavailable ({missing}); "
+                f"kept existing chunks for collection {collection}",
+                file=sys.stderr,
+            )
     writer.wait_merging_threads()
     return written
 
@@ -332,6 +356,67 @@ def _path_parent_id(path: Path) -> str:
     import hashlib
 
     return hashlib.sha1(str(path.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()
+
+
+# Terms-aggregation bucket cap when enumerating a collection's indexed files.
+# Truncation fails safe: fewer buckets means a smaller stale set, so we
+# under-prune rather than delete something still live.
+_MAX_INDEXED_FILE_BUCKETS = 200_000
+
+
+def sources_are_enumerable(roots: Iterable[Path]) -> bool:
+    """True when every root exists, so an empty walk means "no files" rather
+    than "the volume went away".
+
+    :func:`fnd.walk.walk` yields nothing for a missing root instead of
+    raising, so an unguarded prune would erase a whole collection the first
+    time an external drive or an iCloud folder was offline. Callers must gate
+    :func:`prune_removed_files` on this.
+    """
+    return all(root.exists() for root in roots)
+
+
+def indexed_parent_ids(index: Index, collection: str) -> set[str]:
+    """Every distinct ``parent_id`` currently indexed under ``collection``.
+
+    Uses the fast-field terms aggregation rather than paging documents: one
+    bucket per file instead of one hit per chunk.
+    """
+    import tantivy as _tantivy
+
+    agg: dict[str, object] = {
+        "files": {"terms": {"field": F_PARENT_ID, "size": _MAX_INDEXED_FILE_BUCKETS}}
+    }
+    scope = _tantivy.Query.term_query(index.schema, F_COLLECTION, collection)
+    raw = index.searcher().aggregate(scope, agg)
+    return {str(b["key"]) for b in raw["files"]["buckets"]}
+
+
+def prune_removed_files(
+    index: Index,
+    writer: IndexWriter,
+    *,
+    collection: str,
+    live_parent_ids: set[str],
+) -> int:
+    """Delete ``collection``'s chunks for files it no longer contains.
+
+    A file leaves a collection by being deleted from disk, excluded by a new
+    glob, failing a ``frontmatter_filter``, or having its whole source dropped
+    from the config. Re-indexing only ever deleted-and-re-added the files it
+    walked, so in all four cases the old chunks lingered and kept turning up
+    in results.
+
+    ``live_parent_ids`` must be every file the walk yielded, including ones
+    skipped as unchanged and ones that failed to extract — anything missing
+    from it is treated as gone. Returns the number of files pruned. The
+    caller commits.
+    """
+    index.reload()
+    stale = indexed_parent_ids(index, collection) - live_parent_ids
+    for parent_id in stale:
+        writer.delete_documents_by_query(_scoped_delete_query(index.schema, collection, parent_id))
+    return len(stale)
 
 
 def _scoped_delete_query(schema: Schema, collection: str, parent_id: str) -> Query:

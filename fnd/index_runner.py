@@ -53,7 +53,9 @@ from fnd.index import (
     _doc_for_chunk,
     _ensure_index,
     _path_parent_id,
+    prune_removed_files,
     read_file_metadata,
+    sources_are_enumerable,
 )
 from fnd.schema import F_COLLECTION
 from fnd.walk import walk_sources
@@ -1074,6 +1076,18 @@ async def run_indexer(
                 has_textured_chunk=has_textured,
             )
 
+        # Every file the scan found counts as live — including ones the
+        # incremental skip left untouched and ones that were unreadable —
+        # so only files that genuinely left the collection get pruned.
+        # Skipped on cancel, where the partial walk would read as mass
+        # deletion, and on a missing root (offline volume, same trap).
+        if not rebuild and not (cancel is not None and cancel.is_set()):
+            live_parent_ids = {_path_parent_id(p) for p, _src in paths}
+            live_parent_ids.update(_path_parent_id(p) for p, _reason in scan_blocked)
+            if sources_are_enumerable(Path(s.path).expanduser() for s in config.sources):
+                prune_removed_files(
+                    index, writer, collection=collection, live_parent_ids=live_parent_ids
+                )
         writer.commit()
         writer.wait_merging_threads()
     finally:
