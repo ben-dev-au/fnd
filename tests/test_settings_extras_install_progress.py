@@ -154,8 +154,17 @@ async def test_cancel_stops_subprocess(built_index: Path, cfg: Config) -> None:
 
 @pytest.mark.asyncio
 async def test_double_start_reattaches(built_index: Path, cfg: Config) -> None:
+    """A second start while one is in flight re-attaches instead of re-running.
+
+    Uses the long-sleep-then-cancel shape of ``test_cancel_stops_subprocess``
+    rather than a short sleep. The old ``sleep 0.5`` raced the pauses below:
+    on a loaded runner it exited first, so the second call correctly started a
+    fresh run and returned True. That failed as ``assert True is False`` on
+    Linux CI while macOS and Windows passed — the test's premise had lapsed,
+    not the behaviour under test.
+    """
     sleep = shutil.which("sleep") or "/bin/sleep"
-    cmds = [[sleep, "0.5"]]
+    cmds = [[sleep, "30"]]
 
     from fnd.tui.extras_install_progress import (
         ExtrasInstallProgressScreen,
@@ -167,16 +176,28 @@ async def test_double_start_reattaches(built_index: Path, cfg: Config) -> None:
         await pilot.pause()
         ok1 = start_extras_install(app, cmds=cmds, action_label="Install")
         assert ok1 is True
-        await pilot.pause()
+        # Gate on the spawn event, not a fixed pause.
+        await wait_until(
+            pilot,
+            lambda: app._extras_proc is not None,
+            timeout=5.0,
+            message="extras subprocess never spawned",
+        )
         await pilot.press("escape")
         await pilot.pause()
-        # Second call while task is still alive.
+        # State the premise the next assertion depends on, so a lapsed window
+        # fails here with a clear message instead of as "assert True is False".
+        assert app._extras_task is not None
+        assert not app._extras_task.done(), "first run finished before the second start"
+
         ok2 = start_extras_install(app, cmds=cmds, action_label="Install")
         assert ok2 is False
         await pilot.pause()
         assert isinstance(app.screen, ExtrasInstallProgressScreen)
-        assert app._extras_task is not None
-        await asyncio.wait_for(app._extras_task, timeout=3.0)
+
+        # Cancel rather than waiting out the sleep.
+        await pilot.press("c")
+        await asyncio.wait_for(app._extras_task, timeout=5.0)
 
 
 # 5 — Worker emits done event on success
