@@ -79,6 +79,51 @@ def _strip_quotes(s: str) -> str:
     return s
 
 
+def scan_exact_values(query: str) -> list[tuple[str, str]]:
+    """Every ``kind:``/``c:`` value a query names, as ``(field, value)`` rows.
+
+    Reuses the tokenizer and clause grammar that lower these clauses into
+    filters, so a caller validating the values can't disagree with the engine
+    about what counts as one. Groups (``kind:(a b)``) and collection comma
+    lists (``c:a,b``) are split exactly the way :func:`_compile` splits them —
+    notably ``kind:a,b`` is NOT split, because the compiler treats it as a
+    single term.
+
+    Only EXACT fields are reported: they're the ones backed by a closed set of
+    legal values, so an unrecognised one can never match. Recurses into
+    ``(...)`` groups, which ``extract_filters`` leaves for tantivy's parser.
+    """
+    found: list[tuple[str, str]] = []
+    _scan_exact_into(query, found)
+    return found
+
+
+def _scan_exact_into(s: str, found: list[tuple[str, str]]) -> None:
+    for token in _tokenize_top_level(s):
+        if token.startswith("(") and token.endswith(")"):
+            _scan_exact_into(token[1:-1], found)
+            continue
+        m = _CLAUSE_RE.match(token)
+        if not m:
+            continue
+        spec = resolve(m.group(1))
+        if spec is None or spec.value is not FieldValue.EXACT:
+            continue
+        found.extend((spec.query_name, v) for v in _exact_values(spec, m.group(2)))
+
+
+def _exact_values(spec: FieldSpec, value: str) -> list[str]:
+    """Split one EXACT clause value into the terms it will compile to."""
+    if value.startswith("(") and value.endswith(")"):
+        return [
+            _strip_quotes(t) for t in _tokenize_top_level(value[1:-1]) if t.upper() not in _BOOL_OPS
+        ]
+    if spec.query_name == "collection":
+        return [_strip_quotes(p.strip()) for p in value.split(",") if p.strip()]
+    stripped = _strip_quotes(value).strip()
+    return [stripped] if stripped else []
+
+
 def _uint_range(spec: FieldSpec, value: str, schema: tantivy.Schema) -> Query | None:
     """Compile a UINT field value (point / [lo TO hi] / >N / mtime token)."""
     assert spec.coerce is not None
