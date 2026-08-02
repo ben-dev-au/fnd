@@ -176,20 +176,21 @@ class ScopeController:
         """Resolve a ``--collection`` value to real config collection names.
 
         ``all`` (any case) is the pseudo-name for every configured
-        collection. Otherwise a whole-string match wins (so a config name
-        that itself contains a comma survives), then the value is split on
-        commas. Unknown names are dropped. With no config loaded, the raw
-        value is trusted.
+        collection. Otherwise the shared vocabulary canonicalises the value
+        (so ``dpc2`` reaches the index as ``DPC2``) and unknown names are
+        dropped — the CLI has already offered the user a correction by the
+        time a value gets here. With no config loaded, the raw value is
+        trusted.
         """
+        from fnd.vocabulary import collection_vocabulary
+
         cfg = self._app._config
-        known = set(cfg.collections) if cfg else None
-        if known is None:
+        if cfg is None:
             return [] if is_all_collections(raw) else [raw]
-        if is_all_collections(raw, known=known):
-            return list(cfg.collections) if cfg else []
-        if raw in known:
-            return [raw]
-        return [n for n in (p.strip() for p in raw.split(",")) if n in known]
+        if is_all_collections(raw, known=set(cfg.collections)):
+            return list(cfg.collections)
+        known, _unknown = collection_vocabulary(cfg).split_resolve(raw)
+        return known
 
     def _derive_selection(
         self, full_names: list[str], flat_sources: list[str]

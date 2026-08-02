@@ -40,11 +40,14 @@ def test_empty_scope_is_falsy() -> None:
     assert not scope
 
 
+# These flags now share the unknown-value path with --collection / --kind, so
+# they exit 2 ("name not in a known set", as `fnd extras install` already did)
+# rather than the generic 1.
 @pytest.mark.parametrize("bad", ["bogus", "fortnight", "2024"])
 def test_bad_date_token_exits(bad: str) -> None:
     with pytest.raises(typer.Exit) as exc:
         parse_filter_flags(created=bad, modified=None, kind=[], tag=[], not_tag=[], tag_match="all")
-    assert exc.value.exit_code == 1
+    assert exc.value.exit_code == 2
 
 
 def test_bad_tag_match_exits() -> None:
@@ -52,7 +55,16 @@ def test_bad_tag_match_exits() -> None:
         parse_filter_flags(
             created=None, modified=None, kind=[], tag=[], not_tag=[], tag_match="nope"
         )
-    assert exc.value.exit_code == 1
+    assert exc.value.exit_code == 2
+
+
+def test_bad_kind_exits() -> None:
+    """An unknown kind used to survive as a clause that matched nothing."""
+    with pytest.raises(typer.Exit) as exc:
+        parse_filter_flags(
+            created=None, modified=None, kind=["pdff"], tag=[], not_tag=[], tag_match="all"
+        )
+    assert exc.value.exit_code == 2
 
 
 def test_copy_command_action_is_registered() -> None:

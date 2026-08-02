@@ -16,12 +16,17 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 
 from fnd.config import default_config_path, default_index_dir, is_all_collections
 from fnd.kinds import KINDS_IN_CATEGORY
 from fnd.launch_command import LaunchScope
+
+if TYPE_CHECKING:
+    from fnd.cli_scope import FilterIssues
+    from fnd.config import Config
 
 _ROOT_HELP = """Fast, free, keyboard-driven document search for macOS.
 
@@ -115,28 +120,39 @@ def parse_filter_flags(
     tag: list[str],
     not_tag: list[str],
     tag_match: str,
+    issues: FilterIssues | None = None,
 ) -> LaunchScope:
     """Validate the shared search/launch filter flags into a ``LaunchScope``.
 
-    Exits (code 1) on a bad date token or tag-match mode so a typo fails
-    loudly instead of surviving as an unmatched literal in the query. Shared
-    by ``search`` and ``tui`` so the two command surfaces can't drift.
-    """
-    from fnd.query_fields import date_token_range
+    A bad date token, tag-match mode, or file kind fails loudly instead of
+    surviving as a clause that can never match. Shared by ``search`` and
+    ``tui`` so the two command surfaces can't drift.
 
-    if tag_match not in ("all", "any"):
-        typer.echo(f"--tag-match must be 'all' or 'any', not {tag_match!r}", err=True)
-        raise typer.Exit(1)
-    for flag, value in (("--created", created), ("--modified", modified)):
-        if value is not None and date_token_range(value) is None:
-            typer.echo(f"{flag}: unknown date token {value!r}", err=True)
-            raise typer.Exit(1)
+    Pass ``issues`` to fold these problems in with the rest of a command's
+    filters and report them together; without one, they're reported here.
+    """
+    from fnd.cli_scope import FilterIssues, resolve_or_exit
+    from fnd.vocabulary import date_vocabulary, kind_vocabulary, tag_match_vocabulary
+
+    own = issues is None
+    found = FilterIssues() if issues is None else issues
+
+    tag_match = found.resolve(tag_match_vocabulary(), tag_match, flag="--tag-match")
+    dates = date_vocabulary()
+    if created is not None:
+        created = found.resolve(dates, created, flag="--created")
+    if modified is not None:
+        modified = found.resolve(dates, modified, flag="--modified")
+    kinds = found.resolve_each(kind_vocabulary(), kind, flag="--kind")
+    if own:
+        resolve_or_exit(found)
+
     # Expand category ids (e.g. "code" → its member language kinds) and de-dupe,
     # so BOTH `search` and `tui` seed the index-compatible fine-grained ids —
     # F_KIND never stores a category, so a raw ``kind:code`` clause matches
     # nothing. Centralised here so the two command surfaces can't drift.
     kind_values: list[str] = []
-    for k in kind:
+    for k in kinds:
         kind_values.extend(KINDS_IN_CATEGORY.get(k, (k,)))
     return LaunchScope(
         created=created,
@@ -181,14 +197,23 @@ def tui(
     Accepts the same filter flags as ``search`` (``--tag``, ``--created``,
     …) so a query copied out of the app relaunches with its filters applied.
     """
+    from fnd.cli_scope import FilterIssues, resolve_launch_collection, resolve_or_exit
     from fnd.config import default_config_path, load
     from fnd.migrate import prompt_and_rebuild_or_exit
     from fnd.tui import FNDApp
     from fnd.tui.config_recovery_screen import run_recovery
 
-    # Validate filter flags up front so a typo fails before we warm workers.
+    # Flag values are collected now but reported once the config has loaded, so
+    # a bad --collection joins the same report as a bad --kind.
+    issues = FilterIssues()
     launch_filters = parse_filter_flags(
-        created=created, modified=modified, kind=kind, tag=tag, not_tag=not_tag, tag_match=tag_match
+        created=created,
+        modified=modified,
+        kind=kind,
+        tag=tag,
+        not_tag=not_tag,
+        tag_match=tag_match,
+        issues=issues,
     )
     initial_query = " ".join(query) if query else query_opt
 
@@ -200,6 +225,12 @@ def tui(
         except Exception as e:
             if not run_recovery(e, default_config_path()):
                 raise typer.Exit(code=1) from e
+
+    # Ahead of the rebuild prompt and the worker pool, and well ahead of
+    # Textual taking the screen — the prompt has to land on a plain terminal.
+    _check_query_filters(initial_query, cfg, issues)
+    collection = resolve_launch_collection(collection, cfg, issues)
+    resolve_or_exit(issues)
 
     prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg)
 
@@ -281,6 +312,7 @@ def search(
     """
     import json
 
+    from fnd.cli_scope import FilterIssues, resolve_collection_option, resolve_or_exit
     from fnd.config import load
     from fnd.filter_dsl import FilterError
     from fnd.layered import search_layered
@@ -291,10 +323,24 @@ def search(
     from fnd.tag_query import TagFilter
     from fnd.tags import providers_for, source_tag_selection
 
-    # One validator shared with the `tui` command (fails on a bad token).
+    cfg = load()
+    # Everything a user can misspell is checked into one collector and reported
+    # together, so two typos cost one re-run rather than two. Ahead of the
+    # rebuild prompt as well, so a typo fails before a long rebuild is offered.
+    issues = FilterIssues()
     flags = parse_filter_flags(
-        created=created, modified=modified, kind=kind, tag=tag, not_tag=not_tag, tag_match=tag_match
+        created=created,
+        modified=modified,
+        kind=kind,
+        tag=tag,
+        not_tag=not_tag,
+        tag_match=tag_match,
+        issues=issues,
     )
+    _check_query_filters(query, cfg, issues)
+    collections = resolve_collection_option(collection, cfg, issues)
+    resolve_or_exit(issues)
+
     prefix_clauses: list[str] = []
     if flags.created:
         prefix_clauses.append(f"created:{flags.created}")
@@ -311,13 +357,7 @@ def search(
     if prefix_clauses:
         query = f"{' '.join(prefix_clauses)} {query}".strip()
 
-    cfg = load()
     prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg)
-
-    # ``-c all`` is the quick "search everything" spelling; an unscoped
-    # search is exactly what ``collection=None`` already means downstream.
-    if is_all_collections(collection, known=set(cfg.collections)):
-        collection = None
 
     # Tags never enter the query string — see fnd/tag_query.py. They are
     # normalised the same way indexed tags were, then passed as typed state.
@@ -341,7 +381,7 @@ def search(
             hits = searcher.search(
                 lexical,
                 limit=limit,
-                collection=collection,
+                collection=collections,
                 metadata_filter=metadata_filter,
                 tag_filter=tag_filter,
             )
@@ -353,7 +393,7 @@ def search(
             query=lexical,
             limit=limit,
             sections_per_file=5,
-            collection=collection,
+            collection=collections,
             metadata_filter=metadata_filter,
             auto_fuzzy_enabled=cfg.defaults.fuzzy_enabled,
             min_term_chars=cfg.defaults.fuzzy_min_term_chars,
@@ -387,6 +427,21 @@ def search(
     except QueryTooLargeError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(code=1) from e
+
+
+def _check_query_filters(query: str, cfg: Config, issues: FilterIssues) -> None:
+    """Record any ``c:`` / ``kind:`` value typed inside the query itself.
+
+    These are reported but never rewritten — see ``fnd.cli_scope``. The
+    ``all`` pseudo-name isn't valid in the DSL (it would be a literal
+    collection name), so it isn't special-cased here.
+    """
+    from fnd.query_filters import scan_exact_values
+    from fnd.vocabulary import collection_vocabulary, kind_vocabulary
+
+    vocabs = {"collection": collection_vocabulary(cfg), "kind": kind_vocabulary()}
+    for field, value in scan_exact_values(query):
+        issues.check(vocabs[field], value)
 
 
 def _print_hit(hit: object) -> None:
@@ -474,6 +529,18 @@ def config_validate() -> None:
         f"✓ {path} valid; {len(cfg.collections)} collection(s): "
         f"{', '.join(sorted(cfg.collections)) or '(none)'}"
     )
+    # Not a schema error — the file parses — but a default naming a collection
+    # that no longer exists silently widens every fresh launch to everything.
+    want = cfg.defaults.collection
+    if want and not is_all_collections(want, known=set(cfg.collections)):
+        from fnd.vocabulary import collection_vocabulary
+
+        vocab = collection_vocabulary(cfg)
+        if vocab.match(want) is None:
+            err = vocab.unknown(want, flag="defaults.collection")
+            typer.echo(
+                f"warning: defaults.collection = {want!r} — {err.hint or 'no such collection'}"
+            )
 
 
 # ── collection sub-commands ───────────────────────────────────────────────
@@ -573,10 +640,16 @@ def collection_reindex(
     rebuild: bool = typer.Option(False, "--rebuild", help="Drop existing chunks first."),
 ) -> None:
     """Index (or re-index) a configured collection."""
+    from fnd.cli_scope import FilterIssues, resolve_or_exit
     from fnd.config import load
     from fnd.index import build_index_from_config
+    from fnd.vocabulary import collection_vocabulary
 
     cfg = load()
+    # A typo here used to surface as a raw KeyError traceback.
+    issues = FilterIssues()
+    name = issues.resolve(collection_vocabulary(cfg), name, flag="fnd collection reindex")
+    resolve_or_exit(issues)
     cc = cfg.collection(name)
     written = build_index_from_config(
         config=cc,
