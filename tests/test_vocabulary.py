@@ -122,7 +122,21 @@ def test_split_resolve_carries_corrections_through() -> None:
     assert len(issues.issues) == 1
 
 
-def test_punctuation_only_scope_is_an_error_not_a_silent_widening() -> None:
+@pytest.mark.parametrize("blank", [",", ", ,", " , "])
+def test_separator_only_scope_is_an_error_not_a_silent_widening(blank: str) -> None:
     issues = FilterIssues()
-    assert issues.split_resolve(COLLECTIONS, ",", flag="--collection") == []
+    assert issues.split_resolve(COLLECTIONS, blank, flag="--collection") == []
     assert len(issues.issues) == 1
+
+
+def test_every_exact_field_has_a_vocabulary() -> None:
+    """``_check_query_filters`` maps EXACT query fields to vocabularies by name.
+    A new EXACT field in the registry with no vocabulary would go unvalidated —
+    fail here rather than let that happen quietly."""
+    from fnd.query_fields import REGISTRY, FieldValue
+
+    exact = {name for name, spec in REGISTRY.items() if spec.value is FieldValue.EXACT}
+    assert exact == {"collection", "kind"}, (
+        "add a vocabulary for the new EXACT field in fnd.cli._check_query_filters, "
+        "then update this test"
+    )

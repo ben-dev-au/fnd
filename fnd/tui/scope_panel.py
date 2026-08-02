@@ -181,6 +181,14 @@ class ScopeController:
         dropped — the CLI has already offered the user a correction by the
         time a value gets here. With no config loaded, the raw value is
         trusted.
+
+        Names absent from the config stay dropped even when the config
+        defines none at all. Keeping one would put a key in ``selection``
+        that no panel row can toggle, which pins every search with no way to
+        clear it — the same phantom-scope failure ``_derive_selection``
+        guards against. An ad-hoc ``fnd index --collection`` name is
+        therefore searchable via ``fnd search -c`` but not scopeable in the
+        TUI, whose scope model is config-driven by design.
         """
         from fnd.vocabulary import collection_vocabulary
 

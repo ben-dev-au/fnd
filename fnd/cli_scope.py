@@ -73,8 +73,8 @@ class FilterIssues:
         return err.correction or raw
 
     def check(self, vocab: Vocabulary, raw: str, *, flag: str | None = None) -> None:
-        """Record ``raw`` if it isn't legal, offering no correction — for
-        values the CLI reports but won't rewrite on the user's behalf."""
+        """Record ``raw`` if it isn't legal, handing nothing back — for values
+        the CLI reports but has nothing to carry forward from."""
         if vocab.match(raw) is None:
             self._issues.append(vocab.unknown(raw, flag=flag))
 
@@ -92,11 +92,41 @@ class FilterIssues:
             self._issues.append(err)
             if err.correction is not None:
                 known.append(err.correction)
-        if not known and not unknown and raw.strip():
-            # Punctuation-only input ("," / ", ,") — resolves to nothing but
-            # must not quietly widen the search to every collection.
+        if not known and not unknown:
+            # Separator-only input ("," / ", ,") names nothing at all. Callers
+            # read an empty list as "unscoped", so staying quiet here would
+            # widen the search to every collection — the exact failure this
+            # module exists to prevent.
             self._issues.append(vocab.unknown(raw, flag=flag))
         return list(dict.fromkeys(known))
+
+
+def _collection_names(
+    raw: str | None, config: Config, issues: FilterIssues, flag: str
+) -> list[str] | None:
+    """Canonical names for a ``--collection`` value, or None for "everything".
+
+    None covers the flag being absent and the ``all`` pseudo-name, which is
+    tested before the vocabulary so a collection literally named ``all`` still
+    wins.
+
+    A config with no collections is passed through unvalidated: there's
+    nothing to compare against, and an ad-hoc ``fnd index --collection`` name
+    would be indistinguishable from a typo. (The TUI still can't scope to such
+    a name — see the note in ScopeController._valid_collection_names.)
+    """
+    if raw is None:
+        return None
+    if is_all_collections(raw, known=set(config.collections)):
+        return None
+    if not raw.strip():
+        # `-c ""` / `-c " "`, most often an unset shell variable. Treating it
+        # as "no flag" would silently search everything.
+        issues.check(collection_vocabulary(config), raw, flag=flag)
+        return []
+    if not config.collections:
+        return [raw]
+    return issues.split_resolve(collection_vocabulary(config), raw, flag=flag)
 
 
 def resolve_collection_option(
@@ -106,21 +136,9 @@ def resolve_collection_option(
     *,
     flag: str = "--collection",
 ) -> list[str] | None:
-    """Resolve a ``--collection`` value to canonical names for the searcher.
-
-    None means "every collection" — both the unset flag and the ``all``
-    pseudo-name, which is checked before the vocabulary so a collection
-    literally named ``all`` still wins.
-
-    A config with no collections is passed through unvalidated: there's
-    nothing to compare against, and an ad-hoc ``fnd index --collection`` name
-    is then indistinguishable from a typo.
-    """
-    if not raw or is_all_collections(raw, known=set(config.collections)):
-        return None
-    if not config.collections:
-        return [raw]
-    return issues.split_resolve(collection_vocabulary(config), raw, flag=flag) or None
+    """A ``--collection`` value as the searcher wants it: names, or None for
+    every collection."""
+    return _collection_names(raw, config, issues, flag) or None
 
 
 def resolve_launch_collection(
@@ -130,18 +148,16 @@ def resolve_launch_collection(
     *,
     flag: str = "--collection",
 ) -> str | None:
-    """The same value canonicalised for the TUI, which takes one string.
+    """The same value as the TUI wants it — one string.
 
     ``all`` passes through untouched: the sidebar expands it against the live
     config, and collapsing it to None here would read as "no flag given" and
     let a saved scope win instead.
     """
-    if not raw or is_all_collections(raw, known=set(config.collections)):
+    names = _collection_names(raw, config, issues, flag)
+    if names is None:
         return raw or None
-    if not config.collections:
-        return raw
-    names = issues.split_resolve(collection_vocabulary(config), raw, flag=flag)
-    return ",".join(names) if names else None
+    return ",".join(names) or None
 
 
 def resolve_or_exit(issues: FilterIssues, *, is_tty: bool | None = None) -> None:

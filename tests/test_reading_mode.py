@@ -8,11 +8,12 @@ return)."""
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+from textual.containers import VerticalScroll
 from textual.pilot import Pilot
 
 from fnd.config import Config
@@ -134,6 +135,45 @@ def _build_doc(tmp_path: Path, tmp_index_dir: Path, n_sections: int) -> tuple[Co
         f'[[collections.notes.sources]]\npath = "{notes.as_posix()}"\n', encoding="utf-8"
     )
     return load(cfg_path), Path(tmp_index_dir)
+
+
+async def _rest_at_top(pilot: Pilot[None], pane: VerticalScroll) -> None:
+    """Park the pane at the top and confirm it stays there.
+
+    ``scroll_to`` defers the target update to the next refresh, and the
+    Reading View toggle schedules its own ``call_after_refresh`` scroll
+    restore. Measuring on a fixed tick therefore races both: a restore that
+    lands late gets counted as the key press, and a target update that lands
+    late reads as a step of 0. Re-scroll until the target holds at the top
+    across consecutive refreshes, so the next press is the only thing that
+    can move it.
+    """
+    for _ in range(100):
+        pane.scroll_to(y=0, animate=False, immediate=True)
+        await pilot.pause()
+        if pane.scroll_target_y == 0:
+            await pilot.pause()
+            if pane.scroll_target_y == 0:
+                return
+    raise AssertionError("preview never settled at the top")
+
+
+async def _step_after(pilot: Pilot[None], pane: VerticalScroll, press: Callable[[], None]) -> float:
+    """Lines the pane advances for one scroll-key press, from a resting top.
+
+    Waits for the deferred target update rather than assuming one ``pause()``
+    covers it — under load it doesn't, and the delta then reads 0.
+    """
+    from tests._pilot_wait import wait_until
+
+    press()
+    await wait_until(
+        pilot,
+        lambda: pane.scroll_target_y != 0,
+        timeout=10.0,
+        message="scroll target never moved after the key press",
+    )
+    return pane.scroll_target_y
 
 
 async def _wait_preview_settled(app: FNDApp, pilot: Pilot[None], *, min_mounted: int = 1) -> None:
@@ -260,25 +300,15 @@ async def test_reading_view_scroll_step_is_larger(tmp_path: Path, tmp_index_dir:
         pane = app.query_one("#preview_pane", MatchAwareScroll)
         pane.focus()
         # Compare scroll_target_y deltas (the intended destination, not the
-        # animated scroll_y mid-flight). scroll_to defers the target update to
-        # the next refresh, so pause() after each press before reading it.
+        # animated scroll_y mid-flight).
         # Normal preview from the top: one line per press.
-        pane.scroll_to(y=0, animate=False, immediate=True)
-        await pilot.pause()
-        base = pane.scroll_target_y
-        pane.action_scroll_down()
-        await pilot.pause()
-        normal_step = pane.scroll_target_y - base
+        await _rest_at_top(pilot, pane)
+        normal_step = await _step_after(pilot, pane, pane.action_scroll_down)
         assert normal_step == 1, f"normal step should be 1 line, got {normal_step}"
         # Reading view from the top: larger step (not pruned — few chunks).
         app.action_toggle_reading_mode()
-        await pilot.pause()
-        pane.scroll_to(y=0, animate=False, immediate=True)
-        await pilot.pause()
-        base = pane.scroll_target_y
-        pane.action_scroll_down()
-        await pilot.pause()
-        reading_step = pane.scroll_target_y - base
+        await _rest_at_top(pilot, pane)
+        reading_step = await _step_after(pilot, pane, pane.action_scroll_down)
         assert reading_step > normal_step, (
             f"reading-view step ({reading_step}) should exceed normal ({normal_step})"
         )

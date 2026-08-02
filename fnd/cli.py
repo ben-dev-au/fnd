@@ -435,13 +435,20 @@ def _check_query_filters(query: str, cfg: Config, issues: FilterIssues) -> None:
     These are reported but never rewritten — see ``fnd.cli_scope``. The
     ``all`` pseudo-name isn't valid in the DSL (it would be a literal
     collection name), so it isn't special-cased here.
+
+    A field with no vocabulary is skipped rather than crashing the search;
+    ``test_every_exact_field_has_a_vocabulary`` fails if the registry grows an
+    EXACT field this map doesn't cover, so the gap is caught in development
+    rather than going quietly unvalidated.
     """
     from fnd.query_filters import scan_exact_values
     from fnd.vocabulary import collection_vocabulary, kind_vocabulary
 
     vocabs = {"collection": collection_vocabulary(cfg), "kind": kind_vocabulary()}
     for field, value in scan_exact_values(query):
-        issues.check(vocabs[field], value)
+        vocab = vocabs.get(field)
+        if vocab is not None:
+            issues.check(vocab, value)
 
 
 def _print_hit(hit: object) -> None:

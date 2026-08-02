@@ -194,6 +194,16 @@ def test_bad_date_and_bad_tag_match_report_together(corpus: Path) -> None:
     assert "some" in out
 
 
+@pytest.mark.parametrize("blank", ["", " ", ","])
+def test_blank_collection_value_is_an_error_not_everything(corpus: Path, blank: str) -> None:
+    """``-c "$COLL"`` with ``COLL`` unset is the scripted version of the bug
+    this PR fixes — it must not resolve to "search everything"."""
+    code, out = _search("lightning", "-c", blank)
+    assert code == 2, out
+    assert "no collection named" in out
+    assert "a.md" not in out
+
+
 # ── the default path must not change ──────────────────────────────────────
 
 
