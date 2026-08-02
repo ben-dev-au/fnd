@@ -110,23 +110,26 @@ def _collection_names(
     tested before the vocabulary so a collection literally named ``all`` still
     wins.
 
-    A config with no collections is passed through unvalidated: there's
-    nothing to compare against, and an ad-hoc ``fnd index --collection`` name
-    would be indistinguishable from a typo. (The TUI still can't scope to such
-    a name — see the note in ScopeController._valid_collection_names.)
+    A config with no collections skips the *name* check: there's nothing to
+    compare against, and an ad-hoc ``fnd index --collection`` name would be
+    indistinguishable from a typo. It still has to name something, and it is
+    still comma-split — an unvalidated value is not an unparsed one. (The TUI
+    can't scope to such a name either way — see the note in
+    ScopeController._valid_collection_names.)
     """
     if raw is None:
         return None
     if is_all_collections(raw, known=set(config.collections)):
         return None
-    if not raw.strip():
-        # `-c ""` / `-c " "`, most often an unset shell variable. Treating it
-        # as "no flag" would silently search everything.
+    if config.collections:
+        return issues.split_resolve(collection_vocabulary(config), raw, flag=flag)
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+    if not names:
+        # `-c ""` / `-c " "` (usually an unset shell variable) or `-c ","`.
+        # Names nothing, so treating it as "no flag" would silently search
+        # everything — the failure this module exists to prevent.
         issues.check(collection_vocabulary(config), raw, flag=flag)
-        return []
-    if not config.collections:
-        return [raw]
-    return issues.split_resolve(collection_vocabulary(config), raw, flag=flag)
+    return names
 
 
 def resolve_collection_option(

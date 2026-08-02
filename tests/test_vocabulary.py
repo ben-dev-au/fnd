@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from fnd.cli_scope import FilterIssues
+from fnd.cli_scope import FilterIssues, resolve_collection_option
+from fnd.config import Config
 from fnd.query_errors import UnknownFilterValueError
 from fnd.vocabulary import Vocabulary, kind_vocabulary
 
@@ -127,6 +128,43 @@ def test_separator_only_scope_is_an_error_not_a_silent_widening(blank: str) -> N
     issues = FilterIssues()
     assert issues.split_resolve(COLLECTIONS, blank, flag="--collection") == []
     assert len(issues.issues) == 1
+
+
+# ── the no-collections-configured branch ──────────────────────────────────
+#
+# Names can't be checked against an empty config — an ad-hoc
+# `fnd index --collection` name would look exactly like a typo — but the value
+# still has to parse and still has to name something.
+
+
+def _empty() -> Config:
+    return Config()
+
+
+def test_ad_hoc_name_passes_through_when_nothing_is_configured() -> None:
+    issues = FilterIssues()
+    assert resolve_collection_option("ADHOC", _empty(), issues) == ["ADHOC"]
+    assert not issues
+
+
+def test_comma_list_still_splits_when_nothing_is_configured() -> None:
+    """Unvalidated is not unparsed — one comma-joined term matches nothing."""
+    issues = FilterIssues()
+    assert resolve_collection_option("one,two", _empty(), issues) == ["one", "two"]
+    assert not issues
+
+
+@pytest.mark.parametrize("blank", ["", " ", ",", " , "])
+def test_value_naming_nothing_is_an_error_even_with_no_config(blank: str) -> None:
+    issues = FilterIssues()
+    resolve_collection_option(blank, _empty(), issues)
+    assert len(issues.issues) == 1
+
+
+def test_all_still_means_everything_with_no_config() -> None:
+    issues = FilterIssues()
+    assert resolve_collection_option("all", _empty(), issues) is None
+    assert not issues
 
 
 def test_every_exact_field_has_a_vocabulary() -> None:
