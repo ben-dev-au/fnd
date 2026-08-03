@@ -109,6 +109,12 @@ class PreviewPresenter:
         self.load_progress: tuple[int, int | None] | None = None
         # Strong ref so the event loop doesn't GC the in-flight mount task.
         self.mount_task: object | None = None
+        # The in-flight chunk-decode worker, if any. A cold load cancels the
+        # mount task and the debounce timer before handing off to this worker,
+        # so without tracking it the pipeline looks idle for the whole decode —
+        # precisely while the pane is still (deliberately) showing the previous
+        # file. See pipeline_busy.
+        self.decode_worker: object | None = None
         # Prebuilt flat-buffer bundles keyed by (parent_id, query_sig).
         # Cleared on query change — highlight spans are baked in at build time.
         self.prebuilt_cache: dict[tuple[str, str], RenderedDocument] = {}
@@ -201,10 +207,23 @@ class PreviewPresenter:
         return container.parent_doc_id if container is not None else None
 
     def pipeline_busy(self) -> bool:
-        """True while a load / mount / finalize for the preview is still in
-        flight — i.e. a blank pane right now is expected, not a strand."""
+        """True while a decode / load / mount / finalize for the preview is
+        still in flight — i.e. the pane not yet showing the cursor's file is
+        expected right now, not a strand."""
         if self.load_timer is not None:
             return True
+        # The decode is the easiest one to miss: a cold load cancels the mount
+        # task and the debounce timer BEFORE handing the file to this worker, so
+        # all the other signals read idle for its whole duration — while the pane
+        # is still deliberately showing the previous file. Left untracked, the
+        # check would call that a strand and spend its one repair, and the repair
+        # re-enters render_full_doc, whose worker group is exclusive — restarting
+        # the very decode that was about to finish.
+        worker = self.decode_worker
+        if worker is not None:
+            with contextlib.suppress(Exception):
+                if not worker.is_finished:  # type: ignore[attr-defined]
+                    return True
         task = self.mount_task
         if task is not None:
             with contextlib.suppress(Exception):
@@ -546,7 +565,9 @@ class PreviewPresenter:
             )
 
         _ = asyncio.get_event_loop()  # ensure a loop exists for the callback
-        self._app.run_worker(_load, thread=True, exclusive=True, group="preview-load")
+        self.decode_worker = self._app.run_worker(
+            _load, thread=True, exclusive=True, group="preview-load"
+        )
 
     def prune_active_to_window(self, margin: int = 3) -> None:
         """Drop the currently-active container's off-screen chunks down to its
@@ -1667,6 +1688,7 @@ class PreviewPresenter:
 
     def on_load_failed(self, exc: BaseException) -> None:
         """Worker error callback. Hide the bar, surface a notify."""
+        self.decode_worker = None
         self.hide_progress_bar()
         self._app.notify(f"Preview load failed: {exc}", severity="error")
 
@@ -1679,6 +1701,9 @@ class PreviewPresenter:
     ) -> None:
         """Worker callback. Caches chunks + (optional) flat-path bundle;
         re-enters the mount path."""
+        # This decode is done. (A cancelled worker never reaches either callback,
+        # but ``is_finished`` covers CANCELLED too, so pipeline_busy self-clears.)
+        self.decode_worker = None
         self.chunk_cache[parent_id] = chunks
         if prebuilt is not None:
             # Cache the bundle so a later visit to the same file in the
