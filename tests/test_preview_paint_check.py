@@ -18,9 +18,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from textual.pilot import Pilot
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from fnd.tui.preview.presenter import PreviewPresenter
 from tests._pilot_wait import safe_pause, wait_until
 
 
@@ -37,13 +39,29 @@ def built_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
     return tmp_index_dir
 
 
+async def _settled(pilot: Pilot[None], preview: PreviewPresenter) -> None:
+    """Wait until the preview has painted AND the pipeline is idle.
+
+    ``_verify_painted`` re-arms instead of repairing while a load/mount/finalize
+    is still in flight — including the Phase 3 background fill that keeps running
+    after first paint. A test that asserts on the repair DECISION must gate on
+    that, or it is really asserting on how far the background fill happened to
+    get by the time it looked (which made this file timing-dependent)."""
+    await wait_until(pilot, preview.is_painted, message="preview never painted")
+    await wait_until(
+        pilot,
+        lambda: not preview.pipeline_busy(),
+        message="preview pipeline never went idle",
+    )
+
+
 @pytest.mark.asyncio
 async def test_paint_check_rebuilds_a_stranded_blank_preview(built_index: Path) -> None:
     app = FNDApp(index_dir=built_index, initial_query="apple")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
         preview = app._preview
-        await wait_until(pilot, preview.is_painted, message="preview never painted at startup")
+        await _settled(pilot, preview)
 
         target = preview.cursor_target()
         assert target is not None, "setup — the cursor should be on a result"
@@ -71,7 +89,7 @@ async def test_paint_check_is_a_noop_when_the_preview_is_painted(built_index: Pa
     async with app.run_test() as pilot:
         await safe_pause(pilot)
         preview = app._preview
-        await wait_until(pilot, preview.is_painted, message="preview never painted at startup")
+        await _settled(pilot, preview)
 
         target = preview.cursor_target()
         assert target is not None
@@ -101,7 +119,7 @@ async def test_paint_check_repairs_a_preview_showing_the_wrong_file(built_index:
     async with app.run_test() as pilot:
         await safe_pause(pilot)
         preview = app._preview
-        await wait_until(pilot, preview.is_painted, message="preview never painted at startup")
+        await _settled(pilot, preview)
         target = preview.cursor_target()
         assert target is not None
 
@@ -137,7 +155,7 @@ async def test_paint_check_leaves_option_scan_mode_alone(built_index: Path) -> N
     async with app.run_test() as pilot:
         await safe_pause(pilot)
         preview = app._preview
-        await wait_until(pilot, preview.is_painted, message="preview never painted at startup")
+        await _settled(pilot, preview)
 
         rebuilt: list[str] = []
         preview.render_full_doc = lambda parent_id, *, focus_chunk_seq: rebuilt.append(  # type: ignore[assignment,method-assign]
@@ -158,7 +176,7 @@ async def test_paint_check_repairs_at_most_once_per_target(built_index: Path) ->
     async with app.run_test() as pilot:
         await safe_pause(pilot)
         preview = app._preview
-        await wait_until(pilot, preview.is_painted, message="preview never painted at startup")
+        await _settled(pilot, preview)
         target = preview.cursor_target()
         assert target is not None
 
@@ -186,7 +204,7 @@ async def test_paint_check_defers_while_the_pipeline_is_busy(built_index: Path) 
     async with app.run_test() as pilot:
         await safe_pause(pilot)
         preview = app._preview
-        await wait_until(pilot, preview.is_painted, message="preview never painted at startup")
+        await _settled(pilot, preview)
         target = preview.cursor_target()
         assert target is not None
 

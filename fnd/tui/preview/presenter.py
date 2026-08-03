@@ -37,7 +37,34 @@ if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
     from fnd.tui.line_buffer import RenderedDocument
 
-__all__ = ["PreviewPresenter"]
+__all__ = ["PreviewPresenter", "target_from_node_data"]
+
+
+def target_from_node_data(data: Any) -> tuple[str, int] | None:
+    """Map a results-tree node's ``data`` to the ``(parent_id, focus_chunk_seq)``
+    the preview should be showing for it, or None if it isn't a result row.
+
+    The single definition of that mapping. It used to be written out three
+    times — here, in :meth:`PreviewPresenter.rerender_current`, and in
+    ``FNDApp._load_result_node`` — with the loader deciding what to mount
+    through one copy and the settle-time paint check deciding what *should* be
+    mounted through another. A divergence between the copies (a new node
+    ``kind``, a different fallback for an empty ``hits`` list) would have them
+    disagree about which file the cursor is on: the check would then either
+    repair a target the loader never paints, or excuse a real divergence. That
+    is the failure class this module exists to close, so the mapping gets one
+    home."""
+    if not isinstance(data, dict):
+        return None
+    kind = data.get("kind")
+    if kind == "section":
+        hit: Hit = data["hit"]
+        return (hit.parent_id, hit.chunk_seq)
+    if kind == "file":
+        g: FileGroup = data["group"]
+        top = g.hits[0] if g.hits else None
+        return (g.parent_id, top.chunk_seq if top else 0)
+    return None
 
 
 class PreviewPresenter:
@@ -199,17 +226,7 @@ class PreviewPresenter:
         except Exception:
             return None
         cursor = tree.cursor_node
-        if cursor is None or not isinstance(cursor.data, dict):
-            return None
-        kind = cursor.data.get("kind")
-        if kind == "section":
-            hit: Hit = cursor.data["hit"]
-            return (hit.parent_id, hit.chunk_seq)
-        if kind == "file":
-            g: FileGroup = cursor.data["group"]
-            top = g.hits[0] if g.hits else None
-            return (g.parent_id, top.chunk_seq if top else 0)
-        return None
+        return target_from_node_data(cursor.data) if cursor is not None else None
 
     def _cancel_paint_check(self) -> None:
         if self._paint_check is not None:
@@ -2296,22 +2313,10 @@ class PreviewPresenter:
         self.match_targets = {}
         self.parent_id = None
         self.hide_progress_bar()
-        # Re-trigger the preview render for the focused result. We pull
-        # the (parent_id, focus_chunk_seq) pair off the cursor's
-        # data — same logic ``_on_tree_highlight`` uses on cursor
-        # change.
-        try:
-            tree = self._app.query_one("#results_pane", Tree)
-        except Exception:
+        # Re-trigger the preview render for the focused result, through the same
+        # cursor→target mapping the paint check reads (see cursor_target).
+        target = self.cursor_target()
+        if target is None:
             return
-        cursor = tree.cursor_node
-        if cursor is None or not isinstance(cursor.data, dict):
-            return
-        kind = cursor.data.get("kind")
-        if kind == "section":
-            hit: Hit = cursor.data["hit"]
-            self.render_full_doc(hit.parent_id, focus_chunk_seq=hit.chunk_seq)
-        elif kind == "file":
-            g: FileGroup = cursor.data["group"]
-            top = g.hits[0] if g.hits else None
-            self.render_full_doc(g.parent_id, focus_chunk_seq=top.chunk_seq if top else 0)
+        parent_id, focus_chunk_seq = target
+        self.render_full_doc(parent_id, focus_chunk_seq=focus_chunk_seq)
