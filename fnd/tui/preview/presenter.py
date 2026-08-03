@@ -23,6 +23,7 @@ from fnd.matching import MatchSpec
 from fnd.render import render_chunk_pieces
 from fnd.tui.line_buffer import LineBufferPreview, build_rendered_document
 from fnd.tui.preview import tuning
+from fnd.tui.preview.liveness import is_condemned, is_live
 from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
 from fnd.tui.preview_scroll import ScrollAnchor
 from fnd.tui.preview_scrollbar import MatchAwareScroll
@@ -36,7 +37,34 @@ if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
     from fnd.tui.line_buffer import RenderedDocument
 
-__all__ = ["PreviewPresenter"]
+__all__ = ["PreviewPresenter", "target_from_node_data"]
+
+
+def target_from_node_data(data: Any) -> tuple[str, int] | None:
+    """Map a results-tree node's ``data`` to the ``(parent_id, focus_chunk_seq)``
+    the preview should be showing for it, or None if it isn't a result row.
+
+    The single definition of that mapping. It used to be written out three
+    times — here, in :meth:`PreviewPresenter.rerender_current`, and in
+    ``FNDApp._load_result_node`` — with the loader deciding what to mount
+    through one copy and the settle-time paint check deciding what *should* be
+    mounted through another. A divergence between the copies (a new node
+    ``kind``, a different fallback for an empty ``hits`` list) would have them
+    disagree about which file the cursor is on: the check would then either
+    repair a target the loader never paints, or excuse a real divergence. That
+    is the failure class this module exists to close, so the mapping gets one
+    home."""
+    if not isinstance(data, dict):
+        return None
+    kind = data.get("kind")
+    if kind == "section":
+        hit: Hit = data["hit"]
+        return (hit.parent_id, hit.chunk_seq)
+    if kind == "file":
+        g: FileGroup = data["group"]
+        top = g.hits[0] if g.hits else None
+        return (g.parent_id, top.chunk_seq if top else 0)
+    return None
 
 
 class PreviewPresenter:
@@ -81,6 +109,12 @@ class PreviewPresenter:
         self.load_progress: tuple[int, int | None] | None = None
         # Strong ref so the event loop doesn't GC the in-flight mount task.
         self.mount_task: object | None = None
+        # The in-flight chunk-decode worker, if any. A cold load cancels the
+        # mount task and the debounce timer before handing off to this worker,
+        # so without tracking it the pipeline looks idle for the whole decode —
+        # precisely while the pane is still (deliberately) showing the previous
+        # file. See pipeline_busy.
+        self.decode_worker: object | None = None
         # Prebuilt flat-buffer bundles keyed by (parent_id, query_sig).
         # Cleared on query change — highlight spans are baked in at build time.
         self.prebuilt_cache: dict[tuple[str, str], RenderedDocument] = {}
@@ -113,6 +147,13 @@ class PreviewPresenter:
         # Bounded-time reveal backstop timer (see _arm_reveal_watchdog). Re-armed
         # on every pre-reveal activation; disarmed when the container is revealed.
         self._reveal_watchdog: object | None = None
+        # Settle-time paint check (see _arm_paint_check): armed on every
+        # navigation, verifies the pane really is showing the cursor's file.
+        self._paint_check: object | None = None
+        self._paint_check_rearms: int = 0
+        # The target a repair has already been spent on, so a repair that itself
+        # fails cannot cascade into a re-dispatch storm.
+        self._paint_repair_target: tuple[str, int] | None = None
 
     def _arm_reveal_watchdog(self) -> None:
         """(Re)start the bounded-time reveal backstop for the active container.
@@ -137,6 +178,150 @@ class PreviewPresenter:
             with contextlib.suppress(Exception):
                 self._reveal_watchdog.stop()  # type: ignore[attr-defined]
             self._reveal_watchdog = None
+
+    # ── settle-time paint check ────────────────────────────────────
+
+    def is_painted(self) -> bool:
+        """Is the preview pane actually showing a document right now?
+
+        The outcome the whole pipeline exists to produce: some widget that is
+        live in the DOM, not hidden, not still invisible behind ``-pre-reveal``,
+        and carrying displayed content."""
+        buf = self._app._flat.active_buffer
+        if buf is not None:
+            return is_live(buf) and not buf.has_class("-hidden")
+        container = self.active
+        if container is None or not is_live(container):
+            return False
+        if container.has_class("-hidden") or container.has_class("-pre-reveal"):
+            return False
+        return any(w.display for w in container.children)
+
+    def showing_parent(self) -> str | None:
+        """The parent_doc_id of whatever the pane is currently showing."""
+        buf = self._app._flat.active_buffer
+        if buf is not None:
+            pid = getattr(buf, "parent_doc_id", None)
+            return pid if isinstance(pid, str) else None
+        container = self.active
+        return container.parent_doc_id if container is not None else None
+
+    def pipeline_busy(self) -> bool:
+        """True while a decode / load / mount / finalize for the preview is
+        still in flight — i.e. the pane not yet showing the cursor's file is
+        expected right now, not a strand."""
+        if self.load_timer is not None:
+            return True
+        # The decode is the easiest one to miss: a cold load cancels the mount
+        # task and the debounce timer BEFORE handing the file to this worker, so
+        # all the other signals read idle for its whole duration — while the pane
+        # is still deliberately showing the previous file. Left untracked, the
+        # check would call that a strand and spend its one repair, and the repair
+        # re-enters render_full_doc, whose worker group is exclusive — restarting
+        # the very decode that was about to finish.
+        worker = self.decode_worker
+        if worker is not None:
+            with contextlib.suppress(Exception):
+                if not worker.is_finished:  # type: ignore[attr-defined]
+                    return True
+        task = self.mount_task
+        if task is not None:
+            with contextlib.suppress(Exception):
+                if not task.done():  # type: ignore[attr-defined]
+                    return True
+        container = self.active
+        finalize = getattr(container, "_finalize_task", None) if container is not None else None
+        if finalize is not None:
+            with contextlib.suppress(Exception):
+                if not finalize.done():
+                    return True
+        return False
+
+    def cursor_target(self) -> tuple[str, int] | None:
+        """The (parent_id, focus_chunk_seq) the results cursor currently points
+        at — the file the preview is supposed to be showing."""
+        try:
+            tree = self._app.query_one("#results_pane", Tree)
+        except Exception:
+            return None
+        cursor = tree.cursor_node
+        return target_from_node_data(cursor.data) if cursor is not None else None
+
+    def _cancel_paint_check(self) -> None:
+        if self._paint_check is not None:
+            with contextlib.suppress(Exception):
+                self._paint_check.stop()  # type: ignore[attr-defined]
+            self._paint_check = None
+
+    def _arm_paint_check(self) -> None:
+        """Arm the settle-time invariant check.
+
+        Prevention at the consumption seams is the real fix (see
+        ``fnd/tui/preview/liveness.py``); this only ensures that if any seam
+        ever regresses, the user sees one extra rebuild instead of a preview
+        that stays wrong until they navigate away and come back."""
+        self._cancel_paint_check()
+        self._paint_check_rearms = 0
+        self._paint_check = self._app.set_timer(
+            tuning.PAINT_CHECK_MS / 1000.0,
+            self._verify_painted,
+            name="preview-paint-check",
+        )
+
+    def _verify_painted(self) -> None:
+        """The invariant, checked against the CURSOR rather than against
+        whichever navigation happened to arm this timer.
+
+        Deliberately not "did the navigation I was armed for land?": a stale
+        dispatch (a late cursor echo, a debounce timer firing for a row the user
+        has already left) re-arms this check under its own target, so keying off
+        the armed target would make the check excuse the very divergence it
+        exists to catch. The question is always the same one the user is asking:
+        *is the pane showing the file I have selected?*"""
+        self._paint_check = None
+        # Option/Alt scan mode moves the cursor WITHOUT loading, by design —
+        # a divergence here is the feature working, not a strand.
+        if self._scan_move:
+            return
+        target = self.cursor_target()
+        if target is None:
+            return  # no selection (empty results, non-result node) — nothing owed
+        # Still legitimately working (a big file can mount for a while) — look
+        # again rather than pre-empting a healthy navigation. Bounded, so a
+        # wedged pipeline still gets its one repair.
+        if self.pipeline_busy() and self._paint_check_rearms < tuning.PAINT_CHECK_MAX_REARMS:
+            self._paint_check_rearms += 1
+            self._paint_check = self._app.set_timer(
+                tuning.PAINT_CHECK_MS / 1000.0,
+                self._verify_painted,
+                name="preview-paint-check",
+            )
+            return
+        if self.is_painted() and self.showing_parent() == target[0]:
+            self._paint_repair_target = None
+            return
+        if self._paint_repair_target == target:
+            # One repair per target. An earlier recovery attempt in this
+            # subsystem re-dispatched on every failed reveal and produced a
+            # cascade that was far worse than the strand; this cap is what
+            # keeps a failing repair from doing that again.
+            self.diag_log(f"paint check unresolved parent={target[0][:8]} — repair spent")
+            return
+        self._paint_repair_target = target
+        self.diag_log(
+            f"paint check FAILED cursor={target[0][:8]}/{target[1]} "
+            f"showing={str(self.showing_parent())[:8]} painted={self.is_painted()} — rebuilding"
+        )
+        parent_id, focus_chunk_seq = target
+        # Drop whatever half-state we are looking at so the rebuild starts clean
+        # (a dead container in the cache would just be served straight back).
+        with contextlib.suppress(Exception):
+            evicted = self.preview_cache.clear()
+            for old in evicted:
+                with contextlib.suppress(Exception):
+                    old.remove()
+        self.active = None
+        self.render_full_doc(parent_id, focus_chunk_seq=focus_chunk_seq)
 
     def schedule_load(self, parent_id: str, focus_chunk_seq: int) -> None:
         """Debounce a cursor-move → preview-load; coalesces rapid arrow sweeps."""
@@ -290,6 +475,10 @@ class PreviewPresenter:
         self._app._preview_scroll.arm(
             ScrollAnchor(parent_id, focus_chunk_seq, animate=target_mounted)
         )
+        # Every navigation is checked once it should have settled (see
+        # _arm_paint_check) — the single place that verifies the OUTCOME rather
+        # than one mechanism, so no seam can strand the pane indefinitely.
+        self._arm_paint_check()
 
         chunks = self.chunk_cache.get(parent_id)
         if chunks is not None:
@@ -376,7 +565,9 @@ class PreviewPresenter:
             )
 
         _ = asyncio.get_event_loop()  # ensure a loop exists for the callback
-        self._app.run_worker(_load, thread=True, exclusive=True, group="preview-load")
+        self.decode_worker = self._app.run_worker(
+            _load, thread=True, exclusive=True, group="preview-load"
+        )
 
     def prune_active_to_window(self, margin: int = 3) -> None:
         """Drop the currently-active container's off-screen chunks down to its
@@ -495,7 +686,7 @@ class PreviewPresenter:
         #       chunks; the worker only mounts the missing ones.
         if (
             self.active is not None
-            and getattr(self.active, "parent", None) is not None
+            and is_live(self.active)
             and self.active.parent_doc_id == parent_id
             and self.active.query_signature == query_sig
         ):
@@ -547,45 +738,32 @@ class PreviewPresenter:
         # inflates the new file's mount several-fold. Prune it to its visible
         # window now (flash-free) so the incoming mount is cheap.
         self.prune_active_to_window()
-        # Sweep stranded containers — but preserve any still being filled by
-        # a prefetch task. Removing those would orphan the task and trigger
-        # a MountError on its next mount-before call.
         import contextlib as _contextlib
 
         cached_containers = set(self.preview_cache._cache.values())
-        for stranded in list(self._app.query(PreviewContainer)):
-            if stranded in cached_containers:
-                continue
-            pfetch = getattr(stranded, "_prefetch_task", None)
-            if pfetch is not None and not pfetch.done():
-                continue
-            with _contextlib.suppress(Exception):
-                stranded.remove()
-        if self.active is not None and self.active not in cached_containers:
-            self.active = None
-        # Adopt an idle prefetched container for this key so the cold branch
-        # resumes it; _mount_chunks_async cancels its prefetch task first to
-        # avoid concurrent-mount races.
+        # Resolve the container we intend to reuse BEFORE sweeping. The sweep
+        # and the DOM-scan adopt used to run in the other order, and because
+        # ``remove()`` is deferred (the widget keeps a parent and stays in
+        # ``query()`` until its Prune is processed) the adopt happily picked up
+        # a container the sweep had just condemned. The mount then saw a parent,
+        # skipped its ``pane.mount()``, built into it and activated it — and the
+        # queued Prune detached it: ``active`` left pointing outside the tree,
+        # pane blank, nothing to heal it. Choosing first, then sweeping
+        # everything except the choice, makes that self-condemnation impossible.
         cached = self.preview_cache.get(parent_id, query_sig)
-        # A cached container that is no longer in the DOM is NOT a valid hit.
-        # Under rapid navigation, an eviction/sweep race (single-slot cache +
-        # concurrent prefetch/mount finallys) can detach the widget while its
-        # cache entry lingers. The warm/resume paths below would then activate +
-        # scroll a zero-region ghost and reveal a blank pane — the "preview blank
-        # until I select another result and come back" strand. Treat a detached
-        # entry as a miss: drop it and fall through to a fresh, ATTACHED mount.
-        # This is the single seam every cache hit is consumed at, so it closes
-        # the strand no matter which race detached the container.
-        if cached is not None and getattr(cached, "parent", None) is None:
+        # A cache entry that is no longer LIVE is not a valid hit — that covers
+        # both an already-detached widget and one whose removal is merely queued
+        # (see fnd/tui/preview/liveness.py). Purge it and rebuild fresh.
+        if cached is not None and not is_live(cached):
             key = (cached.parent_doc_id, cached.query_signature)
             if self.preview_cache._cache.get(key) is cached:
                 del self.preview_cache._cache[key]
-            # Don't leave self.active dangling on the purged detached container
-            # through the async rebuild (line 563 above keeps it because a cached
-            # container is still in cached_containers) — a fresh one is coming.
+            cached_containers.discard(cached)
+            # Don't leave self.active dangling on the purged container through
+            # the async rebuild — a fresh one is coming.
             if self.active is cached:
                 self.active = None
-            self.diag_log(f"cache hit detached parent={parent_id[:8]} — rebuilding fresh")
+            self.diag_log(f"cache hit not live parent={parent_id[:8]} — rebuilding fresh")
             cached = None
         if cached is None:
             for c in self._app.query(PreviewContainer):
@@ -599,6 +777,9 @@ class PreviewPresenter:
                 # (and eviction can't drop while it is the protected active one).
                 if getattr(c, "_prefetch_task", None) is not None:
                     continue
+                # Nor one that is already being torn down.
+                if not is_live(c):
+                    continue
                 if (
                     c.parent_doc_id == parent_id
                     and c.query_signature == query_sig
@@ -606,6 +787,24 @@ class PreviewPresenter:
                 ):
                     cached = c
                     break
+
+        # Sweep stranded containers — but preserve any still being filled by
+        # a prefetch task. Removing those would orphan the task and trigger
+        # a MountError on its next mount-before call.
+        for stranded in list(self._app.query(PreviewContainer)):
+            if stranded in cached_containers or stranded is cached:
+                continue
+            pfetch = getattr(stranded, "_prefetch_task", None)
+            if pfetch is not None and not pfetch.done():
+                continue
+            with _contextlib.suppress(Exception):
+                stranded.remove()
+        if (
+            self.active is not None
+            and self.active is not cached
+            and self.active not in cached_containers
+        ):
+            self.active = None
 
         import os
 
@@ -695,6 +894,16 @@ class PreviewPresenter:
     ) -> None:
         """Flat-buffer mount: resolve doc (cache > prebuilt > main-thread
         build), install into the shared widget, activate."""
+        # Stop the structural pipeline we are replacing — the symmetric step the
+        # structural branch of dispatch_mount does for itself. Without it an
+        # in-flight structural mount kept building and, on completion,
+        # ``activate_container`` hid every LineBufferPreview and showed its own
+        # container: the preview displayed the file the user had just navigated
+        # away from. ``schedule_load``'s navigate-away cancel doesn't cover this
+        # — it compares against ``self.active``, which the flat path sets to
+        # None, so with a flat preview on screen there is nothing to compare.
+        self.cancel_mount_task()
+        self._app._lazy.cancel()
         query_sig = self._app._search.query_signature()
         cache_key = (parent_id, query_sig)
 
@@ -903,7 +1112,17 @@ class PreviewPresenter:
         built content. Called just before the finalize reveals, so the reveal
         always lands on an attached container. A no-op unless the container is
         both the active preview and detached."""
-        if container is not self.active or getattr(container, "parent", None) is not None:
+        if container is not self.active or is_live(container):
+            return
+        if is_condemned(container):
+            # Its message loop is already closing — ``pane.mount()`` cannot
+            # revive it, and the queued Prune would tear it out again. Drop the
+            # active reference instead so the reveal no-ops and the settle-time
+            # paint check (:meth:`_verify_painted`) rebuilds from scratch.
+            self.diag_log(
+                f"finalize re-attach SKIPPED (condemned) parent={container.parent_doc_id[:8]}"
+            )
+            self.active = None
             return
         try:
             await self.preview_pane().mount(container)
@@ -1445,6 +1664,9 @@ class PreviewPresenter:
         resume paths that cancel a mount but keep the cache must NOT call this —
         their partial container is still wanted for a later resume."""
         self.reset_generation += 1
+        # A new query / scope change is a fresh start: the next navigation gets
+        # its own repair budget rather than inheriting a spent one.
+        self._paint_repair_target = None
 
     def cancel_mount_task(self) -> None:
         """Cancel any in-flight mount task. The cancelled task's
@@ -1466,6 +1688,7 @@ class PreviewPresenter:
 
     def on_load_failed(self, exc: BaseException) -> None:
         """Worker error callback. Hide the bar, surface a notify."""
+        self.decode_worker = None
         self.hide_progress_bar()
         self._app.notify(f"Preview load failed: {exc}", severity="error")
 
@@ -1478,6 +1701,9 @@ class PreviewPresenter:
     ) -> None:
         """Worker callback. Caches chunks + (optional) flat-path bundle;
         re-enters the mount path."""
+        # This decode is done. (A cancelled worker never reaches either callback,
+        # but ``is_finished`` covers CANCELLED too, so pipeline_busy self-clears.)
+        self.decode_worker = None
         self.chunk_cache[parent_id] = chunks
         if prebuilt is not None:
             # Cache the bundle so a later visit to the same file in the
@@ -1548,7 +1774,22 @@ class PreviewPresenter:
         # container instead of re-caching it back into the just-cleared state.
         my_generation = reset_generation
 
-        needs_pre_reveal = container.parent is None or container.has_class("-hidden")
+        # A container whose Prune is queued is dead: ``on_prune`` closes its
+        # message loop, so re-mounting it does not bring it back. Dispatch
+        # resolves reuse candidates through ``is_live`` precisely so we never
+        # get here with one — this is the backstop that keeps a future caller
+        # from silently building a preview into a widget that is on its way out.
+        if is_condemned(container):
+            self.diag_log(
+                f"mount abandoned: container condemned parent={container.parent_doc_id[:8]}"
+            )
+            if self.active is container:
+                self.active = None
+            self.hide_progress_bar()
+            self.inflight_target = None
+            return
+
+        needs_pre_reveal = not is_live(container) or container.has_class("-hidden")
         # Newly-mounted "above-window" widgets get hidden until phase 2b
         # finishes; the finally block makes sure every entry in this
         # list ends up displayed even on cancellation.
@@ -1559,7 +1800,7 @@ class PreviewPresenter:
         # spawned, and a cancellation here would otherwise skip the finally
         # entirely — stranding the progress bar with no task left to hide it.
         try:
-            if container.parent is None:
+            if not is_live(container):
                 await pane.remove_children("#placeholder")
                 await pane.mount(container)
             else:
@@ -1760,17 +2001,20 @@ class PreviewPresenter:
                 # (held-visible-during-swap) reference for the next reveal.
                 if self.outgoing is container:
                     self.outgoing = None
-            elif container.parent is None:
+            elif not is_live(container):
                 # A newer, same-query navigation swept this container out of the
                 # DOM while this (now-cancelled) mount was in flight. Same-query
                 # nav doesn't bump reset_generation, so the ``superseded`` branch
-                # above doesn't catch it. Caching a detached container hands the
-                # next visit a cache-HIT on a widget that isn't in the tree — the
-                # warm path then activates + scrolls a zero-region ghost and
-                # reveals a blank pane ("blank until I select another result and
-                # come back"). Never cache it, and drop any dangling reference.
+                # above doesn't catch it. Caching a dead container hands the next
+                # visit a cache-HIT on a widget that isn't in the tree — the warm
+                # path then activates + scrolls a zero-region ghost and reveals a
+                # blank pane ("blank until I select another result and come
+                # back"). ``is_live`` also rejects a container whose removal is
+                # only QUEUED: it still reports a parent here, so the old
+                # ``parent is None`` test cached it and reopened the same strand
+                # one tick later. Never cache it, and drop any dangling reference.
                 self.diag_log(
-                    f"mount finally: container detached "
+                    f"mount finally: container not live "
                     f"parent={container.parent_doc_id[:8]} — not caching"
                 )
                 if self.active is container:
@@ -2094,22 +2338,10 @@ class PreviewPresenter:
         self.match_targets = {}
         self.parent_id = None
         self.hide_progress_bar()
-        # Re-trigger the preview render for the focused result. We pull
-        # the (parent_id, focus_chunk_seq) pair off the cursor's
-        # data — same logic ``_on_tree_highlight`` uses on cursor
-        # change.
-        try:
-            tree = self._app.query_one("#results_pane", Tree)
-        except Exception:
+        # Re-trigger the preview render for the focused result, through the same
+        # cursor→target mapping the paint check reads (see cursor_target).
+        target = self.cursor_target()
+        if target is None:
             return
-        cursor = tree.cursor_node
-        if cursor is None or not isinstance(cursor.data, dict):
-            return
-        kind = cursor.data.get("kind")
-        if kind == "section":
-            hit: Hit = cursor.data["hit"]
-            self.render_full_doc(hit.parent_id, focus_chunk_seq=hit.chunk_seq)
-        elif kind == "file":
-            g: FileGroup = cursor.data["group"]
-            top = g.hits[0] if g.hits else None
-            self.render_full_doc(g.parent_id, focus_chunk_seq=top.chunk_seq if top else 0)
+        parent_id, focus_chunk_seq = target
+        self.render_full_doc(parent_id, focus_chunk_seq=focus_chunk_seq)

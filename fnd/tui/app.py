@@ -42,14 +42,14 @@ from fnd import opener, os_labels
 from fnd.config import Config, default_index_dir
 from fnd.launch_command import LaunchCommandSerializer, LaunchScope
 from fnd.matching import MatchSpec
-from fnd.query import FileGroup, Hit, Searcher
+from fnd.query import Searcher
 from fnd.tui.actions import REGISTRY, Keymap, load_keymap
 from fnd.tui.indexer_service import IndexerService
 from fnd.tui.match_navigator import MatchNavigator
 from fnd.tui.preview.flat_view import FlatBufferView
 from fnd.tui.preview.lazy_mount import LazyMounter
 from fnd.tui.preview.prefetch import PrefetchEngine
-from fnd.tui.preview.presenter import PreviewPresenter
+from fnd.tui.preview.presenter import PreviewPresenter, target_from_node_data
 from fnd.tui.preview_dispatcher import uses_markdown_renderer
 from fnd.tui.preview_scroll import (
     FlatScrollStrategy,
@@ -888,6 +888,17 @@ class FNDApp(App[None]):
 
     @on(Tree.NodeHighlighted)
     def _on_tree_highlight(self, ev: Tree.NodeHighlighted[Any]) -> None:
+        # NodeHighlighted is a message, so it is handled a tick or more after
+        # the cursor actually moved. Back-to-back searches each rebuild the
+        # results tree and each post highlight events, so an earlier rebuild's
+        # event can still be queued when a later one has already been handled.
+        # Such an echo names a row the user has already left; loading it wins
+        # the "last writer" race and settles the preview on a file the cursor
+        # is not on. The cursor moving TO a node is what posts the event, so a
+        # node that is no longer the cursor is stale by definition.
+        tree = ev.node.tree
+        if tree.cursor_node is not ev.node:
+            return
         self._load_result_node(ev.node.data)
 
     @on(Tree.NodeSelected, "#results_pane")
@@ -903,16 +914,12 @@ class FNDApp(App[None]):
         self._load_result_node(ev.node.data)
 
     def _load_result_node(self, data: Any) -> None:
-        if not isinstance(data, dict):
+        # Same cursor→target mapping the settle-time paint check reads, so the
+        # loader and the check can never disagree about which file is selected.
+        target = target_from_node_data(data)
+        if target is None:
             return
-        kind = data.get("kind")
-        if kind == "section":
-            hit: Hit = data["hit"]
-            self._preview.schedule_load(hit.parent_id, hit.chunk_seq)
-        elif kind == "file":
-            g: FileGroup = data["group"]
-            top = g.hits[0] if g.hits else None
-            self._preview.schedule_load(g.parent_id, top.chunk_seq if top else 0)
+        self._preview.schedule_load(*target)
 
     # ── Preview delegation (state lives on PreviewPresenter) ──────
     # Tests, sibling components, and the scroll strategies read AND
