@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 # the import package and the primary CLI command stay `fnd` (see
 # [tool.hatch.build.targets.wheel] and [project.scripts]).
 name = "fndr"
-version = "0.0.4"
+version = "0.0.5"
 description = "Fast, free, keyboard-driven document search for macOS (Linux and Windows in early beta)"
 readme = "README.md"
 requires-python = ">=3.13"
