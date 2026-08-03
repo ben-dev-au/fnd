@@ -888,6 +888,17 @@ class FNDApp(App[None]):
 
     @on(Tree.NodeHighlighted)
     def _on_tree_highlight(self, ev: Tree.NodeHighlighted[Any]) -> None:
+        # NodeHighlighted is a message, so it is handled a tick or more after
+        # the cursor actually moved. Back-to-back searches each rebuild the
+        # results tree and each post highlight events, so an earlier rebuild's
+        # event can still be queued when a later one has already been handled.
+        # Such an echo names a row the user has already left; loading it wins
+        # the "last writer" race and settles the preview on a file the cursor
+        # is not on. The cursor moving TO a node is what posts the event, so a
+        # node that is no longer the cursor is stale by definition.
+        tree = ev.node.tree
+        if tree.cursor_node is not ev.node:
+            return
         self._load_result_node(ev.node.data)
 
     @on(Tree.NodeSelected, "#results_pane")

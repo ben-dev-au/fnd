@@ -14,6 +14,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from fnd.tui.line_buffer import FileView, LineBufferPreview, build_file_view
+from fnd.tui.preview.liveness import is_live
 from fnd.tui.widgets.markdown import _build_match_spans
 from fnd.tui.widgets.preview_container import PreviewContainer
 
@@ -57,8 +58,18 @@ class FlatBufferView:
         import contextlib
 
         buf = self.shared_buffer
-        if buf is not None and buf.parent is not None:
+        # ``is_live`` rather than ``parent is not None``: a buffer whose removal
+        # is queued still reports a parent (Textual prunes on a message), so the
+        # old test handed back a widget that was about to be torn out — the doc
+        # was installed into it and the flat preview painted nothing. A dead
+        # buffer is replaced, and ``installed_key`` reset so the fresh widget
+        # gets the document installed rather than short-circuiting as "already
+        # showing this file".
+        if is_live(buf):
             return buf
+        if buf is not None:
+            self.installed_key = None
+            self.active_buffer = None
         try:
             pane = self._app.query_one("#preview_pane", VerticalScroll)
         except Exception:

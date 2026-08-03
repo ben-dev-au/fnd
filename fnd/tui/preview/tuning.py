@@ -54,3 +54,17 @@ MATCH_CONTEXT_FRACTION = 0.25
 # the finalize's own 8s internal timeouts so a hang can't show a multi-second
 # blank. Re-armed on every navigation; a fast finalize reveals first and disarms.
 REVEAL_WATCHDOG_MS = 1500
+# Settle-time paint check. The reveal watchdog above fixes exactly one failure
+# mode (still ``-pre-reveal``). This one checks the OUTCOME instead: some while
+# after a navigation, is the pane actually showing the file the cursor is on?
+# Every seam in the pipeline is written to guarantee that, but it has many
+# concurrent writers (mount, prefetch, lazy-mount, three reset paths) and this
+# subsystem's history is a succession of one-seam-at-a-time strands. This check
+# is the backstop that turns any future strand into one extra rebuild rather
+# than a pane that stays blank until the user navigates away and back. Set past
+# the reveal watchdog so a slow-but-healthy navigation is never pre-empted.
+PAINT_CHECK_MS = 2200
+# Re-arms allowed while the pipeline is still legitimately working (a monster
+# file can mount for a while). Bounded so a genuinely wedged pipeline still
+# reaches the single repair rather than deferring forever.
+PAINT_CHECK_MAX_REARMS = 6
