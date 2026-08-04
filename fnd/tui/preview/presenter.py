@@ -1149,6 +1149,38 @@ class PreviewPresenter:
     def diag_log(self, msg: str) -> None:
         self._app._diag_log(msg)
 
+    def above_window_pending(self, focus_chunk_seq: int) -> bool:
+        """Is content still to arrive ABOVE the focus chunk?
+
+        True while any chunk of the mount window above the focus chunk is either
+        not mounted yet or still building. Both matter, and the first is the one
+        that is easy to miss: navigating backwards into a file mounts that window
+        *after* the scroll is first attempted, so a check over the widgets that
+        happen to be mounted sees nothing pending and commits a scroll the
+        arriving content then pushes down.
+
+        This is the same guarantee ``_finalize_via_lock`` gets from its
+        ``expected_above_seqs``; the difference is only that the scroll strategy
+        can't know the window, so it asks the presenter, which does.
+        """
+        container = self.active
+        if container is None:
+            return False
+        chunks = self.chunk_cache.get(container.parent_doc_id)
+        if not chunks:
+            return False
+        focus_idx = next((i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq), None)
+        if focus_idx is None:
+            return False
+        for i in range(max(0, focus_idx - tuning.VISIBLE_FIRST_ABOVE), focus_idx):
+            widget = container.chunk_widgets.get(chunks[i].chunk_seq)
+            if widget is None:
+                return True
+            build_done = getattr(widget, "build_done", None)
+            if build_done is not None and not build_done.is_set():
+                return True
+        return False
+
     def call_after_refresh(self, callback: Callable[..., Any], *args: Any, **kwargs: Any) -> object:
         return self._app.call_after_refresh(callback, *args, **kwargs)
 

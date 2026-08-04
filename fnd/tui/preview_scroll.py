@@ -26,6 +26,18 @@ if TYPE_CHECKING:
     from fnd.tui.widgets.markdown import FNDMarkdown
 
 
+# Consecutive refreshes the content above the match must keep the same height
+# before the scroll commits. One is not enough — layout arrives in bursts, so a
+# single unchanged sample lands on a plateau mid-growth.
+_ABOVE_STABLE_TICKS = 2
+# Floor on the shared retry budget (30) below which the settle gate stops
+# waiting and commits anyway. Without it a chunk whose layout keeps moving —
+# a heavy table/fence page — could hold the scroll for the whole budget, and a
+# match that lands late is worse than one that lands a few rows off: measured
+# an 864ms tail before this bound, ~130ms after.
+_ABOVE_WAIT_FLOOR = 22
+
+
 @dataclass(frozen=True, slots=True)
 class ScrollAnchor:
     parent_id: str
@@ -221,6 +233,7 @@ class StructuralHost(Protocol):
         self, callback: Callable[..., Any], *args: Any, **kwargs: Any
     ) -> object: ...
     def diag_log(self, msg: str) -> None: ...
+    def above_window_pending(self, focus_chunk_seq: int) -> bool: ...
 
     @property
     def chunk_widgets(self) -> dict[int, Widget]: ...
@@ -248,6 +261,8 @@ class StructuralScrollStrategy:
         *,
         generation: int = 0,
         current_generation: Callable[[], int] | None = None,
+        above_height: int | None = None,
+        stable_ticks: int = 0,
     ) -> None:
         from fnd.tui.widgets.markdown import FNDMarkdown
 
@@ -289,6 +304,8 @@ class StructuralScrollStrategy:
         animate: bool = False,
         generation: int = 0,
         current_generation: Callable[[], int] | None = None,
+        above_height: int | None = None,
+        stable_ticks: int = 0,
     ) -> None:
         from fnd.tui.widgets.markdown import FNDMarkdown
 
@@ -359,6 +376,48 @@ class StructuralScrollStrategy:
                     f"retries_left={retries}"
                 )
                 path = f"fallback({type(target).__name__})"
+        # Content ABOVE the match decides where it ends up on screen, and it is
+        # still arriving when the scroll first runs: chunk widgets mount at ~0
+        # height and grow as their markdown lays out. Committing early lands
+        # correctly and then slides — ~18 rows on the AWS guide's p.24, leaving
+        # the match two thirds down the pane instead of a quarter.
+        #
+        # Two distinct things have to settle, and neither implies the other:
+        #
+        # * the window's chunks have to EXIST. Navigating backwards into a file
+        #   mounts them after this first runs, so inspecting only what is
+        #   currently mounted sees nothing pending (the trap
+        #   ``_finalize_via_lock``'s ``expected_above_seqs`` exists to avoid);
+        # * their HEIGHT has to stop changing. ``build_done`` is not that
+        #   signal — measured on p.24, the seven chunks above were all mounted
+        #   with build_done set and still grew 142 → 159 rows afterwards.
+        #
+        # So: ask the host about existence, and watch the measured height until
+        # it holds still for two consecutive refreshes. A settled file passes
+        # both on the first look and pays two refresh ticks; the alternative is
+        # landing in the wrong place.
+        if retries >= _ABOVE_WAIT_FLOOR:
+            above = [w for s, w in self._host.chunk_widgets.items() if s < focus_chunk_seq]
+            settling = self._host.above_window_pending(focus_chunk_seq)
+            # Nothing above, and nothing due to arrive there: the match cannot be
+            # pushed around, so don't spend refreshes proving it.
+            if above or settling:
+                measured = sum(w.region.height for w in above)
+                stable_ticks = stable_ticks + 1 if not settling and measured == above_height else 0
+                if settling or stable_ticks < _ABOVE_STABLE_TICKS:
+                    self._host.call_after_refresh(
+                        self._do_scroll_to_chunk,
+                        focus_chunk_seq,
+                        retries - 1,
+                        on_done,
+                        margin_from,
+                        animate,
+                        generation,
+                        current_generation,
+                        measured,
+                        stable_ticks,
+                    )
+                    return
         if target.region.height == 0 and retries > 0:
             self._host.call_after_refresh(
                 self._do_scroll_to_chunk,
@@ -425,6 +484,7 @@ class StructuralScrollStrategy:
             return
         try:
             pane = self._host.preview_pane()
+
             # Drop the match ~a quarter down the viewport so the lines above it
             # give context, instead of pinning it to the top line — but only when
             # we actually landed on a match (not a bare chunk-top navigation).
