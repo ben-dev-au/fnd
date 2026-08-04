@@ -152,9 +152,13 @@ jobs:
           # Attach sdist, wheel, and SBOM; the provenance attestation
           # is fetched separately via `gh attestation verify` and is
           # not uploaded as a release asset (GitHub stores it).
+          # `--notes` is PREPENDED to `--generate-notes`, so the checksum leads
+          # and GitHub's per-PR notes follow. The old static body pointed at a
+          # CHANGELOG this repo has never had.
           gh release create "$tag" \
             --title "fnd $tag" \
-            --notes "See CHANGELOG / commit log for details. SHA-256: ${{ needs.build.outputs.sdist-sha256 }}" \
+            --notes "SHA-256 (sdist): \`${{ needs.build.outputs.sdist-sha256 }}\`" \
+            --generate-notes \
             dist/*.tar.gz dist/*.whl sbom/sbom.cdx.json
 
   bump-homebrew-tap:
@@ -198,6 +202,15 @@ jobs:
           formula=Formula/fnd.rb
           sed -i.bak "s|^  url \".*\"|  url \"$new_url\"|" "$formula"
           sed -i.bak "s|^  sha256 \".*\"|  sha256 \"$new_sha\"|" "$formula"
+          # Drop the PREVIOUS version's `bottle do` block. Homebrew derives the
+          # bottle filename from the formula version, so a bumped url + a stale
+          # root_url makes every `brew upgrade fnd` 404 until the tap's bottle
+          # workflow runs. With no block, brew builds from source instead —
+          # slower, but never broken. The bottle job re-adds it via
+          # `brew bottle --merge --write`. No-op when the block is absent.
+          sed -i.bak "/^  bottle do$/,/^  end$/d" "$formula"
+          # Collapse the blank-line pair the deletion leaves behind.
+          cat -s "$formula" > "$formula.tmp" && mv "$formula.tmp" "$formula"
           rm -f "$formula.bak"
           branch="bump/fnd-$VERSION"
           git checkout -b "$branch"
@@ -205,6 +218,41 @@ jobs:
           git -c user.email="actions@github.com" -c user.name="fnd-release-bot" \
             commit -m "fnd $VERSION"
           git push -u origin "$branch"
-          gh pr create \
+          pr=$(gh pr create \
             --title "fnd $VERSION" \
-            --body "Automated bump from ben-dev-au/fnd@${GITHUB_REF##*/}. sha256 \`$new_sha\`."
+            --body "Automated bump from ben-dev-au/fnd@${GITHUB_REF##*/}. sha256 \`$new_sha\`.")
+          # Merge it here rather than leaving it for a human. The diff is
+          # machine-generated from PyPI's own metadata and the tap runs no PR
+          # checks, so the manual gate bought nothing — and forgetting it is
+          # what left 0.0.5's formula serving a 404 for twelve hours. Merging
+          # is also what triggers the tap's bottle build.
+          gh pr merge "$pr" --squash --delete-branch
+
+  smoke-pypi:
+    name: smoke-test the published wheel
+    # Installs from PyPI exactly the way a user does, in a clean runner, and
+    # asserts the CLI reports the version we just shipped. The Homebrew half
+    # is smoke-tested in the tap's bottle workflow, which is the only place
+    # that knows when bottles are actually ready.
+    needs: [build, publish-pypi]
+    runs-on: macos-14
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - run: uv python install 3.13
+      - name: Install from PyPI and run it
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          # PyPI's index can lag the upload, same as the tap bump above.
+          out=""
+          for i in 1 2 3 4 5 6; do
+            out=$(uvx --refresh --from "fndr==$VERSION" fnd version 2>&1) && break
+            echo "fndr $VERSION not installable yet (attempt $i); retrying…" >&2
+            sleep 10
+          done
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -qF "$VERSION" \
+            || { echo "::error::\`fnd version\` did not report $VERSION"; exit 1; }
+          echo "PyPI install OK: fndr $VERSION"

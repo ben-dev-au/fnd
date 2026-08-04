@@ -1,6 +1,9 @@
-# False positive: `key = "corruptkey--v1"` is a literal cache-key
-# fixture for the corrupt-JSON test. Renamed in a later commit on
-# this branch, but the historical commit still trips the
-# generic-api-key heuristic because gitleaks scans the full commit
-# range, not just HEAD.
+# Allowlisted false positives, one fingerprint per line.
+# 1. A literal cache-key fixture in the corrupt-JSON test, since renamed.
+#    The historical commit still trips generic-api-key because gitleaks
+#    scans the full commit range, not just HEAD.
+# 2. The note above used to quote that fixture verbatim, so this file
+#    tripped the very rule it suppresses. Reworded, but the original
+#    commit is immutable — hence the second fingerprint.
 ac26e70dc720c7a3b44a5a09497a395814514b4f:tests/test_extraction_cache.py:generic-api-key:84
+113b88e9f185faf64456691a7e90d860862d232a:.gitleaksignore:generic-api-key:1
