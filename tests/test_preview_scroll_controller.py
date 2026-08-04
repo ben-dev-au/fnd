@@ -597,3 +597,36 @@ def test_the_wait_is_bounded_so_a_restless_layout_still_lands() -> None:
     strat._do_scroll_to_chunk(5, retries=21, on_done=None, above_height=10, stable_ticks=0)
 
     assert pane.captured is not None
+
+
+def test_an_unlaid_out_chunk_above_is_not_mistaken_for_settled() -> None:
+    """Zero height is the absence of a measurement, not a stable one.
+
+    A preceding chunk mounts at height 0 and grows on a later refresh. Reading
+    three zeroes as two stable ticks commits the scroll, and the chunk then lays
+    out and pushes the match down — the same class of drift the settle gate
+    exists to prevent, entered from the other side.
+    """
+    pane = _FakePane()
+    above = _FakeWidget(Region(0, 0, 80, 0))  # mounted, not yet laid out
+    target = _FakeWidget(Region(0, 40, 80, 3))
+    host = _FakeHost(pane, chunk_widgets={1: above, 5: target}, match_targets={5: target})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+
+    for ticks in (0, 1, 2):
+        strat._do_scroll_to_chunk(5, on_done=None, above_height=0, stable_ticks=ticks)
+        assert pane.captured is None, f"committed against a zero-height chunk (ticks={ticks})"
+
+
+def test_a_genuinely_empty_chunk_above_still_lands() -> None:
+    """The wait is bounded, so a chunk that is legitimately zero-height cannot
+    stall navigation for ever."""
+    pane = _FakePane()
+    above = _FakeWidget(Region(0, 0, 80, 0))
+    target = _FakeWidget(Region(0, 40, 80, 3))
+    host = _FakeHost(pane, chunk_widgets={1: above, 5: target}, match_targets={5: target})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+
+    strat._do_scroll_to_chunk(5, retries=21, on_done=None, above_height=0, stable_ticks=0)
+
+    assert pane.captured is not None

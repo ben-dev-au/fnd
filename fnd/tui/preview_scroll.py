@@ -423,6 +423,15 @@ class StructuralScrollStrategy:
                 _wait(0)
                 return
             if above and retries >= _ABOVE_WAIT_FLOOR:
+                if any(w.region.height == 0 for w in above):
+                    # An unlaid-out chunk measures 0 and keeps measuring 0, so
+                    # the stability check reads three zeroes as "settled" and
+                    # commits — then the chunk lays out and pushes the match
+                    # down. Zero height is the absence of a measurement, not a
+                    # stable one. The floor still bounds this, so a genuinely
+                    # empty chunk can't stall navigation.
+                    _wait(0)
+                    return
                 # Mounted and built; now wait for the measured height to hold
                 # still, since build_done is not a height-settled signal. THIS
                 # is what the floor bounds — a page whose layout never quite

@@ -371,6 +371,10 @@ class MatchNavigator:
         # Matches" for the result the user just navigated AWAY from. Recomputed
         # by the count tick below once the new preview is up.
         self._above = self._below = self._count = 0
+        # Release the coalescing latch: the in-flight poll (if any) belongs to
+        # the previous generation and will now exit without measuring, so
+        # leaving the latch set would drop every request for THIS preview.
+        self._measure_pending = False
         self._notify()
         self._await_mount(self._refresh_gen, retries=60)
 
@@ -486,16 +490,30 @@ class MatchNavigator:
     def _schedule_measure(self) -> None:
         """Start a coalesced, settle-gated re-measure (idempotent while one is in
         flight). The poll reads only the scroll reactive until the scroll lands;
-        the single region read happens at the end."""
+        the single region read happens at the end.
+
+        Tied to the rebuild generation, like :meth:`_measure_after_settle`. An
+        untied poll outlived the preview it was started for: a rebuild would
+        clear the counts and advance the generation, and this poll would then
+        land mid-mount, read regions during the cold-nav settle window, and
+        repopulate ▲/▼ counts belonging to the previous result. Coalescing made
+        it worse — while the stale poll was pending, requests for the NEW
+        preview were dropped as duplicates.
+        """
         if self._measure_pending:
             return
         self._measure_pending = True
+        gen = self._refresh_gen
 
         def _landed() -> None:
+            if gen != self._refresh_gen:
+                return  # superseded; the newer rebuild owns the measurement
             self._measure_pending = False
             self._measure_offscreen()
 
-        self._poll_until_landed(30, None, is_valid=lambda: True, on_landed=_landed)
+        self._poll_until_landed(
+            30, None, is_valid=lambda: gen == self._refresh_gen, on_landed=_landed
+        )
 
     def next(self) -> None:
         self._go(forward=True)
