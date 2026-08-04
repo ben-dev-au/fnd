@@ -365,7 +365,12 @@ class MatchNavigator:
         # there — so the "match not shown here" notice never appeared on the
         # rows that need it, and never cleared on the rows that don't. One
         # border + footer update per preview mount is not worth the ambiguity.
-        self._above = self._below = 0
+        # ``_count`` too: it is the fallback ``current_chunk_has_stops`` uses
+        # while no current chunk is resolvable, which is exactly the window a
+        # mounting preview sits in — so a retained count advertised "n/b
+        # Matches" for the result the user just navigated AWAY from. Recomputed
+        # by the count tick below once the new preview is up.
+        self._above = self._below = self._count = 0
         self._notify()
         self._await_mount(self._refresh_gen, retries=60)
 

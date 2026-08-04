@@ -396,27 +396,40 @@ class StructuralScrollStrategy:
         # it holds still for two consecutive refreshes. A settled file passes
         # both on the first look and pays two refresh ticks; the alternative is
         # landing in the wrong place.
-        if retries >= _ABOVE_WAIT_FLOOR:
+        if retries > 0:
             above = [w for s, w in self._host.chunk_widgets.items() if s < focus_chunk_seq]
-            settling = self._host.above_window_pending(focus_chunk_seq)
-            # Nothing above, and nothing due to arrive there: the match cannot be
-            # pushed around, so don't spend refreshes proving it.
-            if above or settling:
-                measured = sum(w.region.height for w in above)
-                stable_ticks = stable_ticks + 1 if not settling and measured == above_height else 0
-                if settling or stable_ticks < _ABOVE_STABLE_TICKS:
-                    self._host.call_after_refresh(
-                        self._do_scroll_to_chunk,
-                        focus_chunk_seq,
-                        retries - 1,
-                        on_done,
-                        margin_from,
-                        animate,
-                        generation,
-                        current_generation,
-                        measured,
-                        stable_ticks,
-                    )
+            measured = sum(w.region.height for w in above)
+
+            def _wait(ticks: int) -> None:
+                self._host.call_after_refresh(
+                    self._do_scroll_to_chunk,
+                    focus_chunk_seq,
+                    retries - 1,
+                    on_done,
+                    margin_from,
+                    animate,
+                    generation,
+                    current_generation,
+                    measured,
+                    ticks,
+                )
+
+            if self._host.above_window_pending(focus_chunk_seq):
+                # Content that will sit above the match doesn't exist yet, so
+                # its position is about to change. Wait — bounded only by the
+                # shared retry budget, like every other "not laid out yet"
+                # condition here. Bounding this more tightly gave up on a slow
+                # mount and landed the match off screen entirely.
+                _wait(0)
+                return
+            if above and retries >= _ABOVE_WAIT_FLOOR:
+                # Mounted and built; now wait for the measured height to hold
+                # still, since build_done is not a height-settled signal. THIS
+                # is what the floor bounds — a page whose layout never quite
+                # stops moving still has to land.
+                ticks = stable_ticks + 1 if measured == above_height else 0
+                if ticks < _ABOVE_STABLE_TICKS:
+                    _wait(ticks)
                     return
         if target.region.height == 0 and retries > 0:
             self._host.call_after_refresh(
