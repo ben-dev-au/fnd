@@ -72,6 +72,11 @@ class FilterIssues:
         self._issues.append(err)
         return err.correction or raw
 
+    def add(self, err: UnknownFilterValueError) -> None:
+        """Record an issue the caller built itself — a scope that is missing
+        rather than misspelled, say. Reported and offered like any other."""
+        self._issues.append(err)
+
     def check(self, vocab: Vocabulary, raw: str, *, flag: str | None = None) -> None:
         """Record ``raw`` if it isn't legal, handing nothing back — for values
         the CLI reports but has nothing to carry forward from."""

@@ -643,26 +643,46 @@ def collection_add(
 
 @collection_app.command("reindex")
 def collection_reindex(
-    name: str | None = typer.Argument(
-        None, help="Collection(s) to index, comma-separated. Omit (or 'all') for every collection."
+    name: str | None = typer.Argument(None, help="Collection to index (same as -c)."),
+    collection: str | None = typer.Option(
+        None,
+        "-c",
+        "--collection",
+        help="Collection(s) to index, comma-separated, or 'all' for every one.",
     ),
     rebuild: bool = typer.Option(False, "--rebuild", help="Drop existing chunks first."),
 ) -> None:
     """Index (or re-index) configured collections.
 
-    Scoping matches ``fnd search``: naming nothing covers everything, ``all``
-    says so explicitly, and a comma-separated list names several.
+    ``-c`` scopes this the same way it scopes ``fnd search``, and ``-c all``
+    means every collection here exactly as it does there. Unlike a search,
+    naming nothing is an error rather than "everything": re-indexing every
+    collection is a minutes-long rebuild, so it is asked for, not defaulted
+    into. The error proposes ``-c all``.
     """
     from fnd.cli_scope import FilterIssues, resolve_collection_option, resolve_or_exit
     from fnd.config import load
     from fnd.index import build_index_from_config
+    from fnd.query_errors import MissingFilterValueError
 
     cfg = load()
+    if name is not None and collection is not None and name != collection:
+        typer.echo(f"-c: given twice — {collection!r} and {name!r}. Use one.", err=True)
+        raise typer.Exit(code=2)
+    raw = collection if collection is not None else name
     # A typo here used to surface as a raw KeyError traceback.
     issues = FilterIssues()
+    if raw is None:
+        issues.add(
+            MissingFilterValueError(
+                label="collection", flag="-c", proposal="all", known=list(cfg.collections)
+            )
+        )
+        resolve_or_exit(issues)
+        raw = "all"  # only reached when the user accepted the proposal
     # Same resolver the search path uses; None is its "everything" answer, which
     # a command has to expand because it iterates rather than filters.
-    scoped = resolve_collection_option(name, cfg, issues, flag="fnd collection reindex")
+    scoped = resolve_collection_option(raw, cfg, issues, flag="-c")
     resolve_or_exit(issues)
     targets = scoped if scoped is not None else list(cfg.collections)
     if not targets:

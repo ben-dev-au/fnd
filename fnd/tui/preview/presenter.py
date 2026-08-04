@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Callable, Generator
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -1194,47 +1194,6 @@ class PreviewPresenter:
         self.outgoing = None
         return True
 
-    @contextlib.contextmanager
-    def _growth_above_kept_still(
-        self, container: PreviewContainer, anchor: Widget | None
-    ) -> Generator[None]:
-        """Absorb content mounted ABOVE ``anchor`` into the scroll offset.
-
-        Mounting a chunk above the anchor pushes everything below it down, so a
-        match positioned before the mount ends up that much lower on screen —
-        17 rows on the AWS guide's p.24, which put the match two thirds down the
-        pane instead of a quarter. The warm/partial-cache path hit this hardest:
-        it scrolls first and resumes the remaining mount with
-        ``skip_internal_scrolls``, so nothing re-anchored, and the drift shrank
-        as the file's cache filled — the "only sometimes, and better the more I
-        try it" symptom.
-
-        Compensating in the same synchronous block Textual paints keeps the view
-        visually still, which a corrective scroll afterwards cannot: that is a
-        second, visible jump. Same technique ``LazyMounter._mount_batch`` uses
-        when prepending above the viewport.
-        """
-        pane: VerticalScroll | None = None
-        before_y: int | None = None
-        before_scroll = 0
-        if anchor is not None:
-            with contextlib.suppress(Exception):
-                pane = self._app.query_one("#preview_pane", VerticalScroll)
-                before_y = anchor.virtual_region.y
-                before_scroll = pane.scroll_y
-        try:
-            yield
-        finally:
-            if pane is not None and before_y is not None and self.active is container:
-                with contextlib.suppress(Exception):
-                    delta = anchor.virtual_region.y - before_y  # pyright: ignore[reportOptionalMemberAccess]
-                    if delta:
-                        self.begin_reconcile_scroll()
-                        try:
-                            pane.scroll_to(y=before_scroll + delta, animate=False, immediate=True)
-                        finally:
-                            self.end_reconcile_scroll()
-
     def reveal(self, container: PreviewContainer) -> None:
         """Reveal ``container`` and drop any still-held outgoing preview.
         Fallback for paths where :meth:`swap_reveal_target` did not run (no
@@ -1966,18 +1925,16 @@ class PreviewPresenter:
             # folds both layout changes into a single paint — no
             # visible "shift down then scroll back up" sequence.
             if hidden_widgets:
-                focus_w = container.chunk_widgets.get(focus_chunk_seq)
-                with self._growth_above_kept_still(container, focus_w):
-                    for w in hidden_widgets:
-                        w.display = True
-                    hidden_widgets.clear()
+                for w in hidden_widgets:
+                    w.display = True
+                hidden_widgets.clear()
                 if not skip_internal_scrolls and focus_chunk_seq in container.chunk_widgets:
-                    # Belt-and-braces on the paths that own their scroll: land on
-                    # the MATCH (first_match_block), not the chunk's top edge —
-                    # anchoring to the top pushes a match deep inside the chunk
-                    # off-screen (the cold-load "wrong position until expanded"
-                    # symptom). Compensation above has already kept the view
-                    # still, so this is a no-op when it was already right.
+                    # Revealing the above-window chunks shifted the layout, so
+                    # the focus chunk must be re-anchored. Scroll to the MATCH
+                    # (first_match_block), not the chunk's top edge — anchoring
+                    # to the top pushes a match deep inside the chunk off-screen
+                    # the moment the background fill completes (the cold-load
+                    # "wrong position until expanded" symptom).
                     with contextlib.suppress(Exception):
                         self._app._preview_scroll.reconcile()
 
