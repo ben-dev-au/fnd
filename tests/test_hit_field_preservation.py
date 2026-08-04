@@ -27,7 +27,15 @@ from fnd.rerank import _replace_score
 
 def _populated_hit() -> Hit:
     """A Hit with every field set to a distinctive non-default value so
-    accidental defaulting is unambiguous."""
+    accidental defaulting is unambiguous.
+
+    Every field must be listed: the guard compares field-by-field, so any field
+    left at its default compares equal to a dropped one and the guard passes
+    while the field is being silently lost. That is exactly what happened to
+    ``body_text`` and ``body_md`` — see
+    :func:`test_every_hit_field_is_populated_by_the_fixture`, which now makes
+    the omission impossible to repeat.
+    """
     return Hit(
         score=1.5,
         parent_id="pid",
@@ -44,7 +52,37 @@ def _populated_hit() -> Hit:
         mtime=1700000000,
         pass_index=2,
         meta_blob=b"\x01\x02",
+        body_text="the full decoded chunk body",
+        body_md="## the markdown the preview renders",
     )
+
+
+def test_every_hit_field_is_populated_by_the_fixture() -> None:
+    """The guard on the guard.
+
+    A field left at its default in ``_populated_hit`` makes the round-trip
+    assertions vacuous for that field. ``body_md`` was added to Hit and dropped
+    by all four rebuild helpers, and this suite stayed green throughout because
+    the fixture never set it.
+    """
+    populated = _populated_hit()
+    empty = Hit(
+        score=0.0,
+        parent_id="",
+        path="",
+        kind="",
+        page=0,
+        slide=0,
+        heading_path="",
+        title="",
+        snippet="",
+    )
+    defaulted = [
+        f.name
+        for f in dataclasses.fields(Hit)
+        if getattr(populated, f.name) == getattr(empty, f.name)
+    ]
+    assert not defaulted, f"_populated_hit leaves these at their default: {defaulted}"
 
 
 @pytest.mark.parametrize(

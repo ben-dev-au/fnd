@@ -1815,8 +1815,19 @@ class PreviewPresenter:
             # Establish the focused window indices (clamped to chunks).
             focus_idx = next(
                 (i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq),
-                0,
+                -1,
             )
+            if focus_idx < 0:
+                # The requested chunk isn't in the decoded list (a file past the
+                # 5000-chunk decode ceiling, or hit/decode skew). Mounting around
+                # chunk 0 and saying nothing let the user believe they were
+                # looking at their result; the scroll then never finds a header
+                # for the requested seq either. Say so, then fall back.
+                self.diag_log(
+                    f"mount seq={focus_chunk_seq} miss=not-in-decoded-chunks "
+                    f"chunks={len(chunks)} — falling back to the first chunk"
+                )
+                focus_idx = 0
             win_start = max(0, focus_idx - tuning.VISIBLE_FIRST_ABOVE)
             win_end = min(len(chunks), focus_idx + tuning.VISIBLE_FIRST_BELOW + 1)
 

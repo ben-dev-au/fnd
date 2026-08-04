@@ -78,6 +78,10 @@ class SearchController:
         # gets the user-visible highlight (not just exact-stem hits).
         # Recomputed on every ``_run_query``.
         self.match_spec: MatchSpec = MatchSpec()
+        # The painting spec minus AUTO-fuzzy — see _run_query. Answers "is the
+        # term the user typed visible here?", which auto-fuzzy near-misses would
+        # otherwise answer yes to.
+        self.evidence_spec: MatchSpec = MatchSpec()
         # Distraction-free reading toggle. When ``False`` the renderers
         # see an empty MatchSpec and emit no highlight spans / scrollbar
         # markers, leaving the preview as plain text. The current
@@ -188,6 +192,22 @@ class SearchController:
             synonyms=self.synonyms,
             auto_fuzzy=defaults.fuzzy_enabled if defaults else True,
             min_term_chars=defaults.fuzzy_min_term_chars if defaults else 0,
+            multicolour=defaults.multicolour_highlights if defaults else True,
+        )
+        # The same spec minus AUTO-fuzzy, used to answer "can the user see what
+        # they actually searched for here?" (fnd.tui.match_evidence).
+        #
+        # Painting is deliberately generous: auto-fuzzy lights up near-misses so
+        # a typo still shows something. But near-misses are not evidence — a
+        # query for "test" paints "best" and "rest" at distance 1, so judging
+        # visibility on the painting spec would report every such chunk as fine
+        # while the user stares at a paragraph with none of their term in it.
+        # An explicit ``term~N`` survives here: the user asked for fuzzy, so a
+        # fuzzy hit IS what they searched for.
+        self.evidence_spec = MatchSpec.from_query(
+            lexical,
+            synonyms=self.synonyms,
+            auto_fuzzy=False,
             multicolour=defaults.multicolour_highlights if defaults else True,
         )
         # Phase F: build the filter scaffolding (kind:, mtime:) and

@@ -315,7 +315,15 @@ class StructuralScrollStrategy:
         chunk_md = target if hasattr(target, "first_match_block") else None
         if chunk_md is not None:
             inner = chunk_md.first_match_block  # pyright: ignore[reportAttributeAccessIssue]
-            if inner is None and retries > 0:
+            # Retry only while the build could still produce a match.
+            # ``first_match_block`` is populated during build_from_token, so
+            # before the build finishes ``None`` means "not yet"; after it, it
+            # means "there is no match in this chunk" and no amount of
+            # refreshing will change that. Waiting out all 30 refreshes on a
+            # genuinely match-free chunk delayed the reveal for nothing.
+            build_done = getattr(chunk_md, "build_done", None)
+            still_building = build_done is None or not build_done.is_set()
+            if inner is None and retries > 0 and still_building:
                 self._host.call_after_refresh(
                     self._do_scroll_to_chunk,
                     focus_chunk_seq,
@@ -400,6 +408,12 @@ class StructuralScrollStrategy:
                 f"target={type(target).__name__} path={path}"
             )
             anchor = match_table.region if match_table is not None else target.region
+        if match_table is None and (line_offset := self._match_line_offset(target)):
+            # Drop the anchor onto the matching line inside a tall block rather
+            # than the block's first row.
+            anchor = Region(
+                anchor.x, anchor.y + line_offset, anchor.width, max(1, anchor.height - line_offset)
+            )
         # Generation guard (immediately before the commit): the resolution above
         # spanned refreshes, during which a newer navigation may have superseded
         # this chain. Re-check freshness right before the side effect — the
@@ -519,6 +533,50 @@ class StructuralScrollStrategy:
         # no internal scroll, but honour its offset defensively).
         return cell.translate(table.region.offset - table.scroll_offset)
 
+    @staticmethod
+    def _widget_plain(w: Widget) -> str | None:
+        """A widget's rendered text, however it happens to store it.
+
+        ``MarkdownFence`` renders a ``rich.syntax.Syntax`` and keeps its text on
+        ``.code`` instead of ``._content``; everything else carries ``_content``.
+        """
+        try:
+            plain = w._content.plain  # type: ignore[attr-defined]
+        except Exception:
+            plain = None
+        if plain is None:
+            return getattr(w, "code", None)
+        return plain
+
+    def _match_line_offset(self, target: Widget) -> int:
+        """Rows from the top of ``target`` down to its first matching line.
+
+        ``scroll_to_region`` anchors a widget's *top*, so a match a hundred rows
+        into a long code fence landed off-screen below the viewport — the scroll
+        reported success while showing the user nothing. Counting newlines is
+        exact for those blocks (a fence renders one source line per row) and
+        returns 0 for wrapped prose, where the block is short enough that its
+        top is the match anyway.
+        """
+        spec = self._host.effective_match_spec()
+        if spec.is_empty:
+            return 0
+        plain = self._widget_plain(target)
+        if not plain or "\n" not in plain:
+            return 0
+        from fnd.matching import phrase_char_spans
+        from fnd.render import match_word_spans
+
+        starts = [a for a, _b, _style in match_word_spans(plain, spec)]
+        starts += [a for a, _b in phrase_char_spans(plain, spec)]
+        if not starts:
+            return 0
+        offset = plain.count("\n", 0, min(starts))
+        # Never push the anchor past the widget: an offset that large means the
+        # newline count and the rendered rows have diverged (wrapping), and the
+        # widget top is the safer answer.
+        return offset if 0 < offset < target.region.height else 0
+
     def _fallback_match_target(self, chunk: FNDMarkdown) -> Widget:
         """Scan ``chunk``'s descendants for the first widget whose plain text
         contains a match. Used when no highlight-aware subclass claimed
@@ -531,14 +589,7 @@ class StructuralScrollStrategy:
         for w in chunk.query("*"):
             if w is chunk:
                 continue
-            try:
-                plain = w._content.plain  # type: ignore[attr-defined]
-            except Exception:
-                plain = None
-            if plain is None:
-                # MarkdownFence renders rich.syntax.Syntax — its text lives
-                # on .code attribute set by build_from_token.
-                plain = getattr(w, "code", None)
+            plain = self._widget_plain(w)
             if plain and text_has_any_match(plain, spec) and w.region.height > 0:
                 return w
         return chunk

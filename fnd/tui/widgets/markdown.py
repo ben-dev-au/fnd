@@ -274,22 +274,6 @@ def _fence_language(token: Any) -> str:
     return (getattr(token, "info", "") or "").strip().split(" ", 1)[0].lower()
 
 
-def _record_fence_anchor_if_matched(widget: FNDMarkdownFence, code: str) -> None:
-    """Register a rendered-diagram fence as the first-match scroll target
-    when the active query matches inside its source. Diagram art carries no
-    painted spans, so we only anchor — jump-to-match still scrolls here."""
-    spec = getattr(widget._markdown, "match_spec", None)
-    if spec is None or spec.is_empty:
-        return
-    spans = _build_match_spans(code, spec)
-    if not spans:
-        return
-    md = widget._markdown
-    if not isinstance(md, FNDMarkdown):
-        return
-    _append_match_block(md, widget, full=_spans_have_full_match(spans))
-
-
 class FNDMarkdownFence(MarkdownFence):
     """Code fence that overlays search-term highlights on the syntax
     colouring. Stock ``MarkdownFence`` builds a syntax-highlighted
@@ -333,7 +317,13 @@ class FNDMarkdownFence(MarkdownFence):
         self._mermaid_code = code
         self.add_class("mermaid-diagram")
         self._set_diagram_content(art)
-        _record_fence_anchor_if_matched(self, code)
+        # Overlay matches on the *art*, not on the fence source. The art is
+        # derived from the source, so a term in a node label survives into it
+        # and highlights like any other text; a term living only in mermaid
+        # syntax (arrows, node ids) does not, and must not register as a match
+        # stop — n/b and the ▲/▼ counts would then point at a diagram with
+        # nothing visibly highlighted.
+        self._apply_fence_highlights()
         return True
 
     def _set_diagram_content(self, art: Text) -> None:
@@ -353,6 +343,7 @@ class FNDMarkdownFence(MarkdownFence):
             art = _MERMAID_RENDERER.render(code)
             if art is not None:
                 self._set_diagram_content(art)
+                self._apply_fence_highlights()
                 return
             # Re-render failed — this is no longer a diagram: drop the
             # diagram-only styling (hscroll/no-wrap) before falling back.

@@ -278,6 +278,49 @@ class MatchNavigator:
     def count(self) -> int:
         return self._count  # cached — cheap, no subtree walk
 
+    def current_chunk_has_stops(self) -> bool:
+        """Whether ``n``/``b`` can actually reach a match from where the user is.
+
+        ``count`` spans the whole mounted preview, but ``_go`` operates on
+        ``_chunk_stops`` — scoped to the current result's chunk. Gating the
+        footer hint on ``count`` therefore advertised ``n/b Matches`` on a chunk
+        where both keys silently no-op. Mirrors ``_chunk_stops``' own scoping
+        rule, including its unscoped fallback, and reads data only (widget
+        classes and registered match blocks), never regions — so it is safe on
+        the same paths ``count`` is.
+        """
+        from textual.widgets import DataTable
+
+        from fnd.tui.widgets.markdown import (
+            FNDMarkdown,
+            FNDMarkdownTableDT,
+            FNDMarkdownTD,
+            FNDMarkdownTH,
+        )
+
+        if self._app._effective_match_spec.is_empty:
+            return False
+        ctrl = getattr(self._app, "_preview_scroll", None)
+        anchor = getattr(ctrl, "anchor", None)
+        widgets: dict[int, object] = getattr(self._app._preview, "chunk_widgets", None) or {}
+        current = widgets.get(anchor.focus_chunk_seq) if anchor is not None else None
+        if current is None:
+            # Flat preview, or nothing mounted yet — _chunk_stops falls back to
+            # every mounted stop here, so the file-wide count is the honest gate.
+            return self._count > 0
+        if isinstance(current, FNDMarkdown):
+            if any(getattr(dt, "_fnd_match_coords", []) for dt in current.query(DataTable)):
+                return True
+            return any(
+                not isinstance(b, FNDMarkdownTableDT | FNDMarkdownTD | FNDMarkdownTH)
+                for b in current.match_blocks
+            )
+        # Plain per-line chunk: the mount records the first matching line as the
+        # match target, falling back to the first line when nothing matched — so
+        # the match class on that target is exactly "this chunk has a stop".
+        target = self._app._preview.match_targets.get(anchor.focus_chunk_seq) if anchor else None
+        return target is not None and target.has_class("chunk-line-match")
+
     @property
     def above(self) -> int:
         return self._above  # cached — matching views above the viewport (this result)

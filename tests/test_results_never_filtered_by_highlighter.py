@@ -71,10 +71,15 @@ def _rows(tree: Tree[object]) -> list[tuple[str, int]]:
 
 
 def _blind(app: FNDApp, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace the app's live spec with one that matches nothing — a
-    highlighter that has stopped working. monkeypatch restores the real
-    property afterwards."""
-    monkeypatch.setattr(type(app), "_effective_match_spec", property(lambda _self: BLIND_SPEC))
+    """Replace the app's specs with ones that match nothing — a highlighter
+    that has stopped working.
+
+    Both the painting spec and the evidence spec are blinded: they are built
+    from the same query by the same code, so a real breakage takes out both.
+    monkeypatch restores the real properties afterwards.
+    """
+    for name in ("_effective_match_spec", "_effective_evidence_spec"):
+        monkeypatch.setattr(type(app), name, property(lambda _self: BLIND_SPEC))
 
 
 @pytest.mark.asyncio

@@ -55,7 +55,7 @@ class ResultsView:
         budget = self.file_label_budget(tree)
         # Rows are never filtered on paintability — see fnd.tui.match_evidence.
         # A row the preview can't highlight is marked, not withheld.
-        spec = self._app._effective_match_spec
+        spec = self._app._effective_evidence_spec
         unlocatable = 0
         for i, g in enumerate(self._app._search.groups):
             file_node = tree.root.add(

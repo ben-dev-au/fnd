@@ -678,7 +678,16 @@ class FNDApp(App[None]):
         """True when the chunk the preview is showing for the current result
         carries no paintable match. Reads the decoded chunk, not the mounted
         widgets, so it is settle-independent — the answer is the same before
-        and after the scroll lands."""
+        and after the scroll lands.
+
+        Gated on the anchor still being *armed*: the notice describes where the
+        selected result put the view, so once the user scrolls away it no longer
+        describes anything on screen. ``release()`` clears ``_armed`` but keeps
+        ``_anchor`` for the controller's own bookkeeping, so reading the anchor
+        alone left the notice pinned to the border for the rest of the session.
+        """
+        if not self._preview_scroll.is_armed:
+            return False
         anchor = getattr(self._preview_scroll, "anchor", None)
         if anchor is None:
             return False
@@ -686,7 +695,7 @@ class FNDApp(App[None]):
         if not chunks:
             return False
         chunk = next((c for c in chunks if c.chunk_seq == anchor.focus_chunk_seq), None)
-        return chunk is not None and not has_paintable_match(chunk, self._effective_match_spec)
+        return chunk is not None and not has_paintable_match(chunk, self._effective_evidence_spec)
 
     def _dispatch_apps_notice(self, message: str) -> None:
         """Route a notice from fnd.apps through the right UI surface.
@@ -806,10 +815,10 @@ class FNDApp(App[None]):
         nav = getattr(self, "_match_nav", None)
         if (
             nav is not None
-            and nav.count
             and overlay_hint is None
             and not self._reading_mode
             and ctx in ("results", "preview")
+            and nav.current_chunk_has_stops()
         ):
             contextual = (("n/b", "Matches"), *contextual)
 
@@ -1500,6 +1509,20 @@ class FNDApp(App[None]):
         preview pane then renders the plain document with no yellow /
         orange overlays and no scrollbar match markers."""
         return self._search.match_spec if self._search.highlights_enabled else MatchSpec()
+
+    @property
+    def _effective_evidence_spec(self) -> MatchSpec:
+        """The MatchSpec that decides whether a result can show the user their
+        match (:mod:`fnd.tui.match_evidence`).
+
+        Same as :meth:`_effective_match_spec` but without AUTO-fuzzy. Painting
+        is deliberately generous — a query for "test" highlights "best" and
+        "rest" at edit distance 1 so a typo still lands somewhere. Those are not
+        evidence: judging visibility by them reported "your match is here" over
+        a paragraph containing nothing the user typed, which is precisely the
+        complaint this work exists to fix.
+        """
+        return self._search.evidence_spec if self._search.highlights_enabled else MatchSpec()
 
     def action_toggle_highlights(self) -> None:
         self._search.toggle_highlights()
