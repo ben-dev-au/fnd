@@ -45,7 +45,7 @@ from fnd.matching import MatchSpec
 from fnd.query import Searcher
 from fnd.tui.actions import REGISTRY, Keymap, load_keymap
 from fnd.tui.indexer_service import IndexerService
-from fnd.tui.match_evidence import has_paintable_match
+from fnd.tui.match_evidence import evidence_spec_for_pass, has_paintable_match
 from fnd.tui.match_navigator import MatchNavigator
 from fnd.tui.preview.flat_view import FlatBufferView
 from fnd.tui.preview.lazy_mount import LazyMounter
@@ -695,7 +695,27 @@ class FNDApp(App[None]):
         if not chunks:
             return False
         chunk = next((c for c in chunks if c.chunk_seq == anchor.focus_chunk_seq), None)
-        return chunk is not None and not has_paintable_match(chunk, self._effective_evidence_spec)
+        if chunk is None:
+            return False
+        return not has_paintable_match(chunk, self._evidence_spec_for_current_row())
+
+    def _evidence_spec_for_current_row(self) -> MatchSpec:
+        """Evidence spec for the result the cursor is on, honouring which search
+        pass produced it (see :func:`fnd.tui.match_evidence.evidence_spec_for_pass`).
+        Falls back to the strict spec when the row can't be read."""
+        pass_index = 0
+        try:
+            node = self.query_one("#results_pane", Tree).cursor_node
+            data = node.data if node is not None else None
+            if isinstance(data, dict) and data.get("kind") == "section":
+                pass_index = int(data["hit"].pass_index)
+        except Exception:
+            pass_index = 0
+        return evidence_spec_for_pass(
+            pass_index,
+            strict=self._effective_evidence_spec,
+            painting=self._effective_match_spec,
+        )
 
     def _dispatch_apps_notice(self, message: str) -> None:
         """Route a notice from fnd.apps through the right UI surface.

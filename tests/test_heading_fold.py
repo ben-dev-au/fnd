@@ -129,3 +129,27 @@ def test_empty_body_md_is_left_empty() -> None:
     c = folder.fold(_chunk("Ch 1 > Alpha", "prose", body_md=""))
 
     assert c.body_md == ""
+
+
+def test_emphasised_heading_is_recognised_as_already_present() -> None:
+    """The structured extractor emits page headings with their typographic
+    emphasis intact (``## **Foo**``) while the TOC gives the plain string.
+    Comparing them literally folded a second copy in, and the preview showed
+    the same heading twice — seen live on the AWS guide's p.24."""
+    folder = HeadingFolder()
+    c = folder.fold(
+        _chunk(
+            "Introduction > Interactive Online Learning Environment and Test Bank",
+            "prose",
+            body_md="## **Interactive Online Learning Environment and Test Bank** \n\nprose",
+        )
+    )
+
+    assert c.body_md.count("Interactive Online Learning Environment") == 1
+
+
+def test_case_and_spacing_differences_do_not_duplicate() -> None:
+    folder = HeadingFolder()
+    c = folder.fold(_chunk("Ch 1 > Alpha Beta", "prose", body_md="##   alpha   beta\n\nprose"))
+
+    assert c.body_md.count("lpha") == 1

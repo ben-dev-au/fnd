@@ -354,9 +354,15 @@ class MatchNavigator:
         # Drop stale arrows now and refresh the border this frame (real counts
         # land once the mount settles, via _measure_after_settle). Without the
         # notify the previous result's markers would linger until settle.
-        if (self._above, self._below) != (0, 0):
-            self._above = self._below = 0
-            self._notify()
+        #
+        # Unconditional: this used to skip the notify when the arrow counts were
+        # already (0, 0), which is exactly the case for a result the preview
+        # can't paint. The border then kept whatever the PREVIOUS result had put
+        # there — so the "match not shown here" notice never appeared on the
+        # rows that need it, and never cleared on the rows that don't. One
+        # border + footer update per preview mount is not worth the ambiguity.
+        self._above = self._below = 0
+        self._notify()
         self._await_mount(self._refresh_gen, retries=60)
 
     def _await_mount(self, gen: int, retries: int) -> None:

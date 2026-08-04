@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from textual.widgets import Tree
 
-from fnd.tui.match_evidence import has_paintable_match
+from fnd.tui.match_evidence import evidence_spec_for_pass, has_paintable_match
 from fnd.tui.results_labels import _format_file_label, _format_hit_label, _styled_parent_label
 
 if TYPE_CHECKING:
@@ -55,7 +55,8 @@ class ResultsView:
         budget = self.file_label_budget(tree)
         # Rows are never filtered on paintability — see fnd.tui.match_evidence.
         # A row the preview can't highlight is marked, not withheld.
-        spec = self._app._effective_evidence_spec
+        strict = self._app._effective_evidence_spec
+        painting = self._app._effective_match_spec
         unlocatable = 0
         for i, g in enumerate(self._app._search.groups):
             file_node = tree.root.add(
@@ -66,7 +67,9 @@ class ResultsView:
                 expand=(i == 0),
             )
             for h in g.hits:
-                visible = has_paintable_match(h, spec)
+                visible = has_paintable_match(
+                    h, evidence_spec_for_pass(h.pass_index, strict=strict, painting=painting)
+                )
                 unlocatable += not visible
                 file_node.add_leaf(
                     _format_hit_label(h, max_score=max_score, match_visible=visible),

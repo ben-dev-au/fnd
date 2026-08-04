@@ -40,7 +40,24 @@ from fnd.tui.preview_dispatcher import PreviewBody, uses_markdown_renderer
 if TYPE_CHECKING:
     from fnd.matching import MatchSpec
 
-__all__ = ["has_paintable_match", "rendered_text"]
+__all__ = ["FUZZY_PASS_INDEX", "evidence_spec_for_pass", "has_paintable_match", "rendered_text"]
+
+# ``Hit.pass_index`` for the cascade's fuzzy pass (0 exact, 1 fuzzy, 2 synonym,
+# 3 fusion-phrase).
+FUZZY_PASS_INDEX = 1
+
+
+def evidence_spec_for_pass(pass_index: int, *, strict: MatchSpec, painting: MatchSpec) -> MatchSpec:
+    """Which spec decides whether THIS hit can show the user its match.
+
+    A hit from the fuzzy pass exists *because* of fuzzy, so a fuzzy highlight is
+    the evidence for it and the painting spec is the right judge. Every other
+    hit was produced by an exact/phrase/synonym match, so it has to show one:
+    judging those with the painting spec let auto-fuzzy near-misses ("best" and
+    "rest" for a query of "test") stand in as proof, which is how a chunk with
+    none of the user's term in it passed as fine.
+    """
+    return painting if pass_index == FUZZY_PASS_INDEX else strict
 
 
 def rendered_text(body: PreviewBody) -> str:

@@ -227,8 +227,12 @@ def _format_hit_label(h: Hit, *, max_score: float = 0.0, match_visible: bool = T
     body = f"{loc}  {snippet}" if snippet else loc
     glyph = _PASS_GLYPHS.get(h.pass_index, "")
     pass_marker = f" {glyph}" if h.pass_index > 0 else ""
-    unlocatable = "" if match_visible else f" {_UNLOCATABLE_GLYPH}"
-    return _build_label(f"{body}{pass_marker}{unlocatable}", h.score, max_score)
+    # Leading, not trailing: locator + 80-char snippet routinely overruns the
+    # results pane, so the row is hard-truncated at the border and anything
+    # appended to the end is never drawn. Verified in a real terminal — the
+    # marker was being emitted correctly and clipped off screen every time.
+    prefix = "" if match_visible else f"{_UNLOCATABLE_GLYPH} "
+    return _build_label(f"{prefix}{body}{pass_marker}", h.score, max_score)
 
 
 def _format_file_label(g: FileGroup, *, max_score: float = 0.0, name_budget: int = 0) -> Any:

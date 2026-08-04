@@ -25,18 +25,34 @@ state, so chunks served from the texture cache follow the identical rule.
 
 from __future__ import annotations
 
+import re
+
 from fnd.extract.base import Block, Chunk
 
 __all__ = ["HeadingFolder"]
 
 
-def _leading_atx(body_md: str) -> str:
-    """Text of ``body_md``'s first non-blank line when it is an ATX heading."""
+def _heading_key(text: str) -> str:
+    """Comparable form of a heading: no ATX hashes, no inline emphasis, folded
+    case and whitespace.
+
+    The structured extractor commonly emits a page heading with its typographic
+    emphasis intact (``## **Interactive Online Learning Environment and Test
+    Bank**``) while the TOC gives the plain string. Comparing the two literally
+    said "not present" and folded a second copy in, so the preview showed the
+    same heading twice.
+    """
+    return re.sub(r"[*_`~\s]+", " ", text.lstrip("#")).strip().casefold()
+
+
+def _leading_heading_key(body_md: str) -> str:
+    """:func:`_heading_key` of ``body_md``'s first non-blank line when that line
+    is an ATX heading, else ``""``."""
     for line in body_md.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
-        return stripped.lstrip("#").strip() if stripped.startswith("#") else ""
+        return _heading_key(stripped) if stripped.startswith("#") else ""
     return ""
 
 
@@ -66,12 +82,14 @@ class HeadingFolder:
         leaf = heading_path.split(" > ")[-1].strip()
         if not leaf:
             return chunk
-        # Anchored checks, not ``in``: a substring test would false-match a
-        # leaf inside a longer word (leaf "Security" in body "Cybersecurity").
-        if not chunk.body.startswith(f"{leaf}\n"):
+        # Compare whole opening lines, never substrings: a substring test would
+        # false-match a leaf inside a longer word (leaf "Security" already
+        # present in a body opening "Cybersecurity is broad").
+        leaf_key = _heading_key(leaf)
+        if _heading_key(chunk.body.split("\n", 1)[0]) != leaf_key:
             chunk.body = f"{leaf}\n{chunk.body}"
-        if not (chunk.body_struct and chunk.body_struct[0].text.strip() == leaf):
+        if not (chunk.body_struct and _heading_key(chunk.body_struct[0].text) == leaf_key):
             chunk.body_struct.insert(0, Block(kind="h2", text=leaf))
-        if chunk.body_md and _leading_atx(chunk.body_md) != leaf:
+        if chunk.body_md and _leading_heading_key(chunk.body_md) != leaf_key:
             chunk.body_md = f"## {leaf}\n\n{chunk.body_md}"
         return chunk

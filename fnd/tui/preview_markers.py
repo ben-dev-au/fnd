@@ -30,16 +30,6 @@ if TYPE_CHECKING:
     from fnd.query import FileChunk
 
 
-def _chunk_source(chunk: FileChunk) -> str:
-    """The text whose line count stands in for the chunk's rendered height.
-
-    Routed through :func:`fnd.tui.match_evidence.rendered_text` so the markers
-    are measured against exactly the substrate the renderer mounts — the same
-    single source of truth the row marker and the landing signal read.
-    """
-    return rendered_text(chunk)
-
-
 def structural_match_lines(chunks: list[FileChunk], spec: MatchSpec) -> tuple[list[int], int]:
     """Return ``(sorted absolute match-line positions, total line count)``.
 
@@ -60,7 +50,9 @@ def structural_match_lines(chunks: list[FileChunk], spec: MatchSpec) -> tuple[li
         # splitlines() (not split("\n")) so a trailing newline doesn't add a
         # phantom line and an empty source counts as 0 lines, not 1 — both keep
         # the total / fractions closer to the rendered row count.
-        lines = _chunk_source(c).splitlines()
+        # rendered_text: the substrate the renderer actually mounts, so a
+        # marker can never point at a line the pane won't paint.
+        lines = rendered_text(c).splitlines()
         local = next(
             (i for i, ln in enumerate(lines) if text_has_any_match(ln, spec)),
             None,

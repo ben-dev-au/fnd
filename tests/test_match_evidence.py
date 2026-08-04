@@ -126,5 +126,27 @@ def test_module_exposes_no_filter() -> None:
     is how the highlighter would quietly become the gate on results."""
     import fnd.tui.match_evidence as module
 
-    assert set(module.__all__) == {"has_paintable_match", "rendered_text"}
+    assert set(module.__all__) == {
+        "FUZZY_PASS_INDEX",
+        "evidence_spec_for_pass",
+        "has_paintable_match",
+        "rendered_text",
+    }
     assert not [n for n in dir(module) if "filter" in n.lower() or "drop" in n.lower()]
+
+
+def test_a_fuzzy_pass_hit_is_judged_by_what_gets_painted() -> None:
+    """A hit the FUZZY pass produced exists because of fuzzy, so a fuzzy
+    highlight is its evidence — marking it unlocatable would flag every result
+    of a typo search. Hits from any other pass must show a real match."""
+    from fnd.tui.match_evidence import FUZZY_PASS_INDEX, evidence_spec_for_pass
+
+    strict = MatchSpec.from_query("test", auto_fuzzy=False)
+    painting = MatchSpec.from_query("test", auto_fuzzy=True)
+
+    assert evidence_spec_for_pass(FUZZY_PASS_INDEX, strict=strict, painting=painting) is painting
+    for exact_or_synonym_or_phrase in (0, 2, 3):
+        assert (
+            evidence_spec_for_pass(exact_or_synonym_or_phrase, strict=strict, painting=painting)
+            is strict
+        )

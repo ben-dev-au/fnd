@@ -643,30 +643,47 @@ def collection_add(
 
 @collection_app.command("reindex")
 def collection_reindex(
-    name: str,
+    name: str | None = typer.Argument(
+        None, help="Collection(s) to index, comma-separated. Omit (or 'all') for every collection."
+    ),
     rebuild: bool = typer.Option(False, "--rebuild", help="Drop existing chunks first."),
 ) -> None:
-    """Index (or re-index) a configured collection."""
-    from fnd.cli_scope import FilterIssues, resolve_or_exit
+    """Index (or re-index) configured collections.
+
+    Scoping matches ``fnd search``: naming nothing covers everything, ``all``
+    says so explicitly, and a comma-separated list names several.
+    """
+    from fnd.cli_scope import FilterIssues, resolve_collection_option, resolve_or_exit
     from fnd.config import load
     from fnd.index import build_index_from_config
-    from fnd.vocabulary import collection_vocabulary
 
     cfg = load()
     # A typo here used to surface as a raw KeyError traceback.
     issues = FilterIssues()
-    name = issues.resolve(collection_vocabulary(cfg), name, flag="fnd collection reindex")
+    # Same resolver the search path uses; None is its "everything" answer, which
+    # a command has to expand because it iterates rather than filters.
+    scoped = resolve_collection_option(name, cfg, issues, flag="fnd collection reindex")
     resolve_or_exit(issues)
-    cc = cfg.collection(name)
-    written = build_index_from_config(
-        config=cc,
-        collection=name,
-        index_dir=default_index_dir(),
-        rebuild=rebuild,
-        tag_sources=tuple(cfg.defaults.tag_sources),
-        tag_frontmatter_keys=tuple(cfg.defaults.tag_frontmatter_keys),
-    )
-    typer.echo(f"indexed {written} chunks for collection {name}")
+    targets = scoped if scoped is not None else list(cfg.collections)
+    if not targets:
+        typer.echo("no collections configured — add one with `fnd collection add`")
+        raise typer.Exit(1)
+    if len(targets) > 1:
+        typer.echo(f"indexing {len(targets)} collections: {', '.join(targets)}")
+    total = 0
+    for target in targets:
+        written = build_index_from_config(
+            config=cfg.collection(target),
+            collection=target,
+            index_dir=default_index_dir(),
+            rebuild=rebuild,
+            tag_sources=tuple(cfg.defaults.tag_sources),
+            tag_frontmatter_keys=tuple(cfg.defaults.tag_frontmatter_keys),
+        )
+        typer.echo(f"indexed {written} chunks for collection {target}")
+        total += written
+    if len(targets) > 1:
+        typer.echo(f"indexed {total} chunks across {len(targets)} collections")
 
 
 # ---- extras ---------------------------------------------------------------
