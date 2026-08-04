@@ -153,3 +153,56 @@ def test_case_and_spacing_differences_do_not_duplicate() -> None:
     c = folder.fold(_chunk("Ch 1 > Alpha Beta", "prose", body_md="##   alpha   beta\n\nprose"))
 
     assert c.body_md.count("lpha") == 1
+
+
+def test_searchable_text_the_markdown_lost_is_appended() -> None:
+    """A chunk's rendered markdown must not be missing text the index can match.
+
+    FlatFallbackTier repairs a PAGE's markdown but appends the recovered prose
+    at the end, headingless; _split_page_sections then slices at ATX headings,
+    so the recovery lands in one slice and the other chunks keep what the layout
+    parser gave them. Measured on a book-index page: 51 rendered characters of a
+    628-character page, every word of it searchable.
+    """
+    from fnd.extract.pdf import _mirror_body_into_md
+
+    chunk = _chunk(
+        "Index",
+        "virtual memory, 123\ntransposition sort, 88",
+        body_md="**U**\n\n**V**",
+    )
+    repaired = _mirror_body_into_md(chunk)
+
+    assert "virtual memory, 123" in repaired.body_md
+    assert "transposition sort, 88" in repaired.body_md
+    assert repaired.body_md.startswith("**U**")  # the parser's own work is kept
+
+
+def test_mirroring_is_idempotent() -> None:
+    """Re-running must not duplicate — the repair also runs on cache-served
+    chunks, which may already carry it."""
+    from fnd.extract.pdf import _mirror_body_into_md
+
+    chunk = _chunk("Index", "virtual memory, 123", body_md="**V**")
+    once = _mirror_body_into_md(chunk).body_md
+    twice = _mirror_body_into_md(_mirror_body_into_md(chunk)).body_md
+
+    assert once == twice
+    assert twice.count("virtual memory") == 1
+
+
+def test_a_faithfully_rendered_chunk_is_untouched() -> None:
+    from fnd.extract.pdf import _mirror_body_into_md
+
+    chunk = _chunk("Ch 1", "alpha beta gamma", body_md="alpha beta gamma")
+
+    assert _mirror_body_into_md(chunk).body_md == "alpha beta gamma"
+
+
+def test_flat_chunks_without_markdown_are_untouched() -> None:
+    """No body_md means the flat renderer, which already shows the block text."""
+    from fnd.extract.pdf import _mirror_body_into_md
+
+    chunk = _chunk("Ch 1", "alpha beta", body_md="")
+
+    assert _mirror_body_into_md(chunk).body_md == ""

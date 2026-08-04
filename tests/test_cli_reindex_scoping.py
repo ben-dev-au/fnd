@@ -133,3 +133,28 @@ def test_naming_the_collection_twice_is_refused(cli: tuple[CliRunner, list[str]]
 
     assert result.exit_code == 2
     assert touched == []
+
+
+def test_accepting_the_all_proposal_prompts_once(
+    monkeypatch: pytest.MonkeyPatch, cli: tuple[CliRunner, list[str]]
+) -> None:
+    """One confirmation, not two.
+
+    The accepted `MissingFilterValueError` stayed in the issue set, so resolving
+    the collection afterwards re-reported it and asked the user to accept the
+    same proposal a second time.
+    """
+    runner, touched = cli
+    monkeypatch.setattr("fnd.cli_scope._interactive", lambda _is_tty: True)
+    prompts: list[str] = []
+
+    def one_yes(text: str, default: bool = True) -> bool:
+        prompts.append(text)
+        return True
+
+    monkeypatch.setattr("typer.confirm", one_yes)
+    result = runner.invoke(app, ["collection", "reindex"])
+
+    assert result.exit_code == 0, result.output
+    assert len(prompts) == 1, f"asked {len(prompts)} times: {prompts}"
+    assert sorted(touched) == ["books", "notes"]

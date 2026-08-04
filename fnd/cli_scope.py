@@ -74,7 +74,7 @@ class FilterIssues:
 
     def add(self, err: UnknownFilterValueError) -> None:
         """Record an issue the caller built itself — a scope that is missing
-        rather than misspelled, say. Reported and offered like any other."""
+        rather than misspelt, say. Reported and offered like any other."""
         self._issues.append(err)
 
     def check(self, vocab: Vocabulary, raw: str, *, flag: str | None = None) -> None:

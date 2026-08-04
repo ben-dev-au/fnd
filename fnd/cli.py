@@ -679,7 +679,12 @@ def collection_reindex(
             )
         )
         resolve_or_exit(issues)
-        raw = "all"  # only reached when the user accepted the proposal
+        # Reached only when the user accepted the proposal. Start a fresh issue
+        # set: the accepted one is still in `issues`, and resolving `raw` below
+        # runs resolve_or_exit again — which would re-offer what they just said
+        # yes to.
+        issues = FilterIssues()
+        raw = "all"
     # Same resolver the search path uses; None is its "everything" answer, which
     # a command has to expand because it iterates rather than filters.
     scoped = resolve_collection_option(raw, cfg, issues, flag="-c")

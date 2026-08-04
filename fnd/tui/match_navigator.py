@@ -17,7 +17,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from textual.containers import VerticalScroll
+    from textual.widget import Widget
 
+    from fnd.matching import MatchSpec
     from fnd.tui.app import FNDApp
 
 
@@ -171,10 +173,17 @@ class MatchNavigator:
         except Exception:
             return None
 
-    def _count_stops(self, pane: VerticalScroll) -> int:
-        """Number of match stops from DATA only — no region reads, so no layout
-        is forced. Mirrors ``enumerate_stop_regions``' stop set: one per matching
-        table cell, one per non-table match block, one per matching plain line."""
+    def _stops_within(self, root: Widget, spec: MatchSpec) -> int:
+        """Match stops inside ``root``, from DATA only — no region reads, so no
+        layout is forced. Mirrors ``enumerate_stop_regions``' stop set: one per
+        matching table cell, one per non-table match block, one per matching
+        plain line.
+
+        Shared by the preview-wide count and the current-chunk check so the two
+        can't drift on what counts as a stop — they answer the same question at
+        different scopes, and a footer hint disagreeing with what n/b can reach
+        is exactly the confusion this scan exists to prevent.
+        """
         from textual.widgets import DataTable
 
         from fnd.render import text_has_any_match
@@ -185,22 +194,26 @@ class MatchNavigator:
             FNDMarkdownTH,
         )
 
-        spec = self._app._effective_match_spec
         if spec.is_empty:
             return 0
+        markdowns = [root] if isinstance(root, FNDMarkdown) else list(root.query(FNDMarkdown))
         n = 0
-        for md in pane.query(FNDMarkdown):
+        for md in markdowns:
             for dt in md.query(DataTable):
                 n += len(getattr(dt, "_fnd_match_coords", []))
             for block in md.match_blocks:
                 if isinstance(block, FNDMarkdownTableDT | FNDMarkdownTD | FNDMarkdownTH):
                     continue
                 n += 1
-        for line in pane.query("Static.chunk-line"):
+        for line in root.query("Static.chunk-line"):
             txt = getattr(line, "fnd_text", None)
             if txt and text_has_any_match(txt, spec):
                 n += 1
         return n
+
+    def _count_stops(self, pane: VerticalScroll) -> int:
+        """Stops across the whole mounted preview — the footer-hint cache."""
+        return self._stops_within(pane, self._app._effective_match_spec)
 
     def _region_stops(self, pane: VerticalScroll) -> list[int]:
         """Match stops as content-space tops (reads regions — call only on a
@@ -289,13 +302,9 @@ class MatchNavigator:
         classes and registered match blocks), never regions — so it is safe on
         the same paths ``count`` is.
         """
-        from textual.widgets import DataTable
 
         from fnd.tui.widgets.markdown import (
             FNDMarkdown,
-            FNDMarkdownTableDT,
-            FNDMarkdownTD,
-            FNDMarkdownTH,
         )
 
         if self._app._effective_match_spec.is_empty:
@@ -309,12 +318,7 @@ class MatchNavigator:
             # every mounted stop here, so the file-wide count is the honest gate.
             return self._count > 0
         if isinstance(current, FNDMarkdown):
-            if any(getattr(dt, "_fnd_match_coords", []) for dt in current.query(DataTable)):
-                return True
-            return any(
-                not isinstance(b, FNDMarkdownTableDT | FNDMarkdownTD | FNDMarkdownTH)
-                for b in current.match_blocks
-            )
+            return self._stops_within(current, self._app._effective_match_spec) > 0
         # Plain per-line chunk: the mount records the first matching line as the
         # match target, falling back to the first line when nothing matched — so
         # the match class on that target is exactly "this chunk has a stop".

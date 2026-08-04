@@ -50,6 +50,7 @@ from fnd.extract.recovery import (
     PageExtraction,
     PageRecoveryPipeline,
     ProductionLayoutTier,
+    alpha_tokens,
 )
 from fnd.fsmeta import read_file_times
 
@@ -363,6 +364,40 @@ def _md_segments(body_md: str) -> list[str]:
         return [body_md]
     bounds = [0, *heads, len(lines)]
     return ["\n".join(lines[a:b]).strip("\n") for a, b in itertools.pairwise(bounds)]
+
+
+def _mirror_body_into_md(chunk: Chunk, *, present_ratio: float = 0.5) -> Chunk:
+    """Append searchable text the chunk's rendered markdown lost.
+
+    ``FlatFallbackTier`` repairs a page's markdown, but it appends the recovered
+    prose at the end, where it carries no heading. ``_split_page_sections`` then
+    slices that markdown at ATX headings, so everything recovered lands in
+    whichever slice happens to be last while the other sections keep the
+    impoverished text the layout parser gave them. On a book-index page that
+    left a chunk rendering 51 characters of a 628-character page — searchable in
+    full, all but invisible in the preview.
+
+    Applied at YIELD time, like the heading fold, so it also repairs chunks
+    served from the texture cache. Doing it inside the extraction would reach
+    only cache misses, which is to say almost nothing on an established corpus.
+
+    Idempotent: a line already represented in the markdown (>= half its tokens
+    present) is left alone, so re-running appends nothing and formatting the
+    layout parser did get right is never duplicated.
+    """
+    if not chunk.body_md.strip() or not chunk.body.strip():
+        return chunk
+    md_tokens = alpha_tokens(chunk.body_md)
+    missing = [
+        stripped
+        for line in chunk.body.splitlines()
+        if (stripped := line.strip())
+        and (tokens := alpha_tokens(line))
+        and len(tokens & md_tokens) / len(tokens) < present_ratio
+    ]
+    if missing:
+        chunk.body_md = "\n\n".join([chunk.body_md.rstrip(), *missing])
+    return chunk
 
 
 def _largest_font_headings(page: pymupdf.Page) -> set[str]:
@@ -924,7 +959,7 @@ def extract(
             chunk.mtime = mtime_now
             chunk.created = times_now.created
             chunk.inode_changed = times_now.inode_changed
-            yield folder.fold(chunk)
+            yield _mirror_body_into_md(folder.fold(chunk))
         return
 
     # Dispatch the heavy extraction to a subprocess. pymupdf-layout
@@ -976,7 +1011,7 @@ def extract(
             cache.put(key, chunks)
 
     for chunk in chunks:
-        yield folder.fold(chunk)
+        yield _mirror_body_into_md(folder.fold(chunk))
 
 
 def _get_cache() -> ExtractionCache:

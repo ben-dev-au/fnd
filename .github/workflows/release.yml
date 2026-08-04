@@ -127,7 +127,10 @@ jobs:
 
   release-notes:
     name: publish GitHub Release
-    needs: build
+    # publish-pypi too: with `needs: build` alone a failed upload still produced
+    # a public release advertising a version and sdist checksum nobody could
+    # install.
+    needs: [build, publish-pypi]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -215,6 +218,12 @@ jobs:
           branch="bump/fnd-$VERSION"
           git checkout -b "$branch"
           git add "$formula"
+          if git diff --cached --quiet; then
+            # Re-run for a version whose formula is already current: `git commit`
+            # would exit 1 on an empty commit and fail the job before the PR.
+            echo "Homebrew formula already at $VERSION — nothing to bump"
+            exit 0
+          fi
           git -c user.email="actions@github.com" -c user.name="fnd-release-bot" \
             commit -m "fnd $VERSION"
           git push -u origin "$branch"
@@ -247,12 +256,22 @@ jobs:
           set -euo pipefail
           # PyPI's index can lag the upload, same as the tap bump above.
           out=""
+          installed=0
           for i in 1 2 3 4 5 6; do
-            out=$(uvx --refresh --from "fndr==$VERSION" fnd version 2>&1) && break
+            if out=$(uvx --refresh --from "fndr==$VERSION" fnd version 2>&1); then
+              installed=1
+              break
+            fi
             echo "fndr $VERSION not installable yet (attempt $i); retrying…" >&2
             sleep 10
           done
           printf '%s\n' "$out"
-          printf '%s\n' "$out" | grep -qF "$VERSION" \
-            || { echo "::error::\`fnd version\` did not report $VERSION"; exit 1; }
+          # The loop's own exit status, not just its output: on six failures
+          # `out` holds the error text, which quotes $VERSION and would satisfy
+          # a bare grep.
+          [ "$installed" -eq 1 ] \
+            || { echo "::error::fndr $VERSION never became installable"; exit 1; }
+          # Whole line, not substring — 0.0.50 contains 0.0.5.
+          printf '%s\n' "$out" | grep -qFx "$VERSION" \
+            || { echo "::error::\`fnd version\` did not report exactly $VERSION"; exit 1; }
           echo "PyPI install OK: fndr $VERSION"

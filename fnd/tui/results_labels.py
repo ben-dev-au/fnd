@@ -211,7 +211,7 @@ def _format_hit_label(h: Hit, *, max_score: float = 0.0, match_visible: bool = T
     so the body snippet — the actually useful context for "is this
     the match I want" — claims most of the row width.
 
-    ``match_visible=False`` appends :data:`_UNLOCATABLE_GLYPH`: the row stays,
+    ``match_visible=False`` prepends :data:`_UNLOCATABLE_GLYPH`: the row stays,
     but the user is told the preview won't be able to show them the match.
     """
     if h.page_label:
