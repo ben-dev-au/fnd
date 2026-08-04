@@ -45,6 +45,7 @@ from fnd.matching import MatchSpec
 from fnd.query import Searcher
 from fnd.tui.actions import REGISTRY, Keymap, load_keymap
 from fnd.tui.indexer_service import IndexerService
+from fnd.tui.match_evidence import has_paintable_match
 from fnd.tui.match_navigator import MatchNavigator
 from fnd.tui.preview.flat_view import FlatBufferView
 from fnd.tui.preview.lazy_mount import LazyMounter
@@ -657,7 +658,13 @@ class FNDApp(App[None]):
         except Exception:
             return
         nav = getattr(self, "_match_nav", None)
-        if nav is not None and not self._reading_mode and (nav.above or nav.below):
+        if self._current_match_unlocatable() and not self._reading_mode:
+            # The engine matched this chunk but the preview has nothing to
+            # highlight. Say so rather than leaving the user to wonder why the
+            # result they picked looks unrelated — and so a highlighting
+            # regression is visible on screen. See fnd.tui.match_evidence.
+            pane.border_subtitle = " [$warning]◌ match not shown here[/] "
+        elif nav is not None and not self._reading_mode and (nav.above or nav.below):
             parts: list[str] = []
             if nav.above:
                 parts.append(f"[$accent]▲{nav.above}[/]")
@@ -666,6 +673,20 @@ class FNDApp(App[None]):
             pane.border_subtitle = f" {'  '.join(parts)} "
         else:
             pane.border_subtitle = ""
+
+    def _current_match_unlocatable(self) -> bool:
+        """True when the chunk the preview is showing for the current result
+        carries no paintable match. Reads the decoded chunk, not the mounted
+        widgets, so it is settle-independent — the answer is the same before
+        and after the scroll lands."""
+        anchor = getattr(self._preview_scroll, "anchor", None)
+        if anchor is None:
+            return False
+        chunks = self._preview.chunk_cache.get(anchor.parent_id)
+        if not chunks:
+            return False
+        chunk = next((c for c in chunks if c.chunk_seq == anchor.focus_chunk_seq), None)
+        return chunk is not None and not has_paintable_match(chunk, self._effective_match_spec)
 
     def _dispatch_apps_notice(self, message: str) -> None:
         """Route a notice from fnd.apps through the right UI surface.

@@ -265,6 +265,7 @@ def _materialize_hits(
         meta_blob_bytes = doc.get_first(F_META_BLOB)  # type: ignore[attr-defined]
         if meta_blob_bytes is None:
             meta_blob_bytes = b""
+        body_md_bytes = doc.get_first("body_md")  # type: ignore[attr-defined]
         out.append(
             Hit(
                 score=float(score),
@@ -282,6 +283,7 @@ def _materialize_hits(
                 mtime=_first_int(doc, "mtime"),
                 meta_blob=meta_blob_bytes,
                 body_text=body_text,
+                body_md=body_md_bytes.decode("utf-8") if body_md_bytes else "",
             )
         )
     return out

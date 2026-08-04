@@ -13,8 +13,10 @@ caller still gets ``limit`` survivors when the filter is strict.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
@@ -22,6 +24,7 @@ from tantivy import Index, Query, Schema
 
 from fnd.display_text import sanitise_display_text
 from fnd.extract.base import Block
+from fnd.matching import MatchSpec
 from fnd.query_errors import QuerySyntaxError
 from fnd.query_errors import QueryTooLargeError as QueryTooLargeError  # re-export (back-compat)
 from fnd.query_plan import enforce_query_bounds
@@ -103,6 +106,12 @@ class Hit:
     # phrase-proximity reranker can measure term spread across the whole
     # chunk, not just the ~240-char snippet. Empty until populated.
     body_text: str = ""
+    # Decoded markdown source (from F_BODY_MD) — what the structural preview
+    # renders for this chunk. Carried alongside ``body_text`` so a caller
+    # holding only a Hit can still ask which text the user will actually read
+    # (see ``fnd.tui.match_evidence``); the two substrates diverge, and that
+    # divergence is what makes a match unpaintable.
+    body_md: str = ""
 
 
 @dataclass(slots=True, frozen=True)
@@ -129,6 +138,16 @@ class FileChunk:
     page_label: str = ""
     body_md: str = ""
     score: float | None = None
+
+    @property
+    def body_text(self) -> str:
+        """Block text joined on newlines — the flat renderer's substrate.
+
+        Named to match :attr:`Hit.body_text` so both satisfy
+        :class:`fnd.tui.preview_dispatcher.PreviewBody` and one evidence check
+        serves the results pane and the preview alike.
+        """
+        return "\n".join(b.text for b in self.blocks)
 
 
 @dataclass(slots=True, frozen=True)
@@ -172,6 +191,46 @@ def _first_int(doc: object, field: str) -> int:
     return int(val)
 
 
+@lru_cache(maxsize=64)
+def _snippet_spec(query: str) -> MatchSpec:
+    """Highlight spec for snippet anchoring, cached across a query's hits.
+
+    Built from the query alone — no synonym table. The searcher has none, and
+    measurement over a real corpus found no snippet that needed synonym
+    expansion to be anchorable, so threading one down here would be coupling
+    without a payoff.
+    """
+    return MatchSpec.from_query(query)
+
+
+def _snippet_anchors(body_text: str, spec: MatchSpec) -> list[tuple[int, str]]:
+    """``(position, key)`` for every place a highlight would be painted.
+
+    ``key`` is the matched word's stem (or the phrase's position), used only to
+    count how many *distinct* terms a candidate window covers.
+
+    Exact evidence wins outright: a spec carrying auto-fuzzy pairs is retried
+    without them first, so a snippet centres on a real occurrence rather than a
+    near-miss ("est" for "test") when the chunk holds both.
+    """
+    from fnd.matching import _stem, phrase_char_spans
+    from fnd.render import match_word_spans
+
+    specs = (dataclasses.replace(spec, fuzzy_per_stem=()), spec) if spec.fuzzy_per_stem else (spec,)
+    for candidate in specs:
+        anchors = [
+            (a, _stem(body_text[a:b].lower())) for a, b, _ in match_word_spans(body_text, candidate)
+        ]
+        anchors += [(a, f"\0phrase{a}") for a, _end in phrase_char_spans(body_text, candidate)]
+        if anchors:
+            return sorted(anchors)
+    return []
+
+
+def _window(body_text: str, pos: int, half: int) -> str:
+    return sanitise_display_text(body_text[max(0, pos - half) : pos + half]).strip()
+
+
 def _make_snippet(
     body_text: str,
     query: str,
@@ -179,48 +238,50 @@ def _make_snippet(
     ctx: int = _SNIPPET_CTX,
     intent: str | None = None,
 ) -> str:
-    """Return a short snippet centered on the first query-term match.
+    """Return a short snippet centred on a match the preview would highlight.
 
-    When ``intent`` is supplied (UX-pass-4 §3), prefers a window whose
-    context overlaps with intent tokens — picks the first occurrence of
-    the query term whose ``±ctx/2`` window contains an intent token.
-    Falls back to the first occurrence when no intent-aware candidate
-    is found.
+    Anchors on the *highlighter's* spans, not on literal substrings of the typed
+    words, so a stem / wildcard / fuzzy / phrase hit centres the window on the
+    occurrence the user will see highlighted. Anchoring literally meant a hit on
+    "testing" for the query "test" found no anchor at all and fell back to the
+    chunk's opening characters — a row whose snippet showed no match.
+
+    When ``intent`` is supplied (UX-pass-4 §3), prefers a window whose context
+    overlaps with intent tokens. Otherwise prefers the window covering the most
+    distinct terms (the actual proximity / phrase match), then the earliest.
     """
     if not body_text:
         return ""
-    from fnd.render import _terms_from_query  # lazy: avoid import cycle
-
-    lower = body_text.lower()
-    # Clean content terms — strips ``{N}``/``NEAR/N``/``"…"~N``/wildcards/operators/
-    # field qualifiers so a proximity or phrase query anchors on real words, not
-    # its DSL sigils. A raw ``query.split()`` would skip ``{5}exit`` and centre
-    # the window on the wrong lone term (the bug behind "result doesn't match").
-    terms = list(dict.fromkeys(t for t in _terms_from_query(query) if t in lower))
-    if not terms:
+    spec = _snippet_spec(query)
+    anchors = _snippet_anchors(body_text, spec)
+    if not anchors:
         return sanitise_display_text(body_text[:ctx]).strip()
 
     half = ctx // 2
+    lower = body_text.lower()
     intent_tokens = [t for t in (intent or "").lower().split() if len(t) >= 3]
-    # Anchor on the occurrence whose ±half window covers the MOST distinct query
-    # terms (the actual proximity / phrase match), then an intent-token overlap,
-    # then the earliest position.
-    best_pos = lower.find(terms[0])
+    best_pos = anchors[0][0]
     best_key: tuple[int, bool, int] | None = None
-    for term in terms:
-        start = 0
-        while (i := lower.find(term, start)) >= 0:
-            window = lower[max(0, i - half) : i + half]
-            covered = sum(1 for t in terms if t in window)
-            has_intent = any(tok in window for tok in intent_tokens)
-            key = (covered, has_intent, -i)
-            if best_key is None or key > best_key:
-                best_key, best_pos = key, i
-            start = i + len(term)
+    for pos, _key in anchors:
+        lo, hi = max(0, pos - half), pos + half
+        covered = len({k for p, k in anchors if lo <= p < hi})
+        has_intent = any(tok in lower[lo:hi] for tok in intent_tokens)
+        key = (covered, has_intent, -pos)
+        if best_key is None or key > best_key:
+            best_key, best_pos = key, pos
 
-    start_idx = max(0, best_pos - half)
-    end_idx = min(len(body_text), best_pos + half)
-    return sanitise_display_text(body_text[start_idx:end_idx]).strip()
+    snippet = _window(body_text, best_pos, half)
+    # The chosen window is centred on an anchor, so it normally shows that
+    # match — but a phrase span can straddle the edge once display sanitising
+    # has run. Verify rather than assume; the whole point of the change is that
+    # a listed row shows its match.
+    from fnd.render import text_has_any_match
+
+    if not text_has_any_match(snippet, spec):
+        first = _window(body_text, anchors[0][0], half)
+        if text_has_any_match(first, spec):
+            return first
+    return snippet
 
 
 def _passes_meta_filter(hit: Hit, predicate: object) -> bool:
@@ -445,6 +506,7 @@ class Searcher:
             meta_blob_bytes = doc.get_first(F_META_BLOB)  # type: ignore[attr-defined]
             if meta_blob_bytes is None:
                 meta_blob_bytes = b""
+            body_md_bytes = doc.get_first(F_BODY_MD)  # type: ignore[attr-defined]
             out.append(
                 Hit(
                     score=float(score),
@@ -462,6 +524,7 @@ class Searcher:
                     mtime=_first_int(doc, F_MTIME),
                     meta_blob=meta_blob_bytes,
                     body_text=body_text,
+                    body_md=body_md_bytes.decode("utf-8") if body_md_bytes else "",
                 )
             )
         return out

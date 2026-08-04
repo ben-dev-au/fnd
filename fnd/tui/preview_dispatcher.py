@@ -20,10 +20,29 @@ structural renderer" means.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Protocol
 
 from fnd.kinds import MARKDOWN_RENDERED_KINDS
 from fnd.query import FileChunk
+
+
+class PreviewBody(Protocol):
+    """The three fields the substrate decision needs from one chunk.
+
+    Both :class:`fnd.query.FileChunk` (what the preview mounts) and
+    :class:`fnd.query.Hit` (what the results pane lists) satisfy it, so a
+    caller holding either can ask which text the user will end up reading —
+    see :mod:`fnd.tui.match_evidence`. Read-only properties, since both
+    implementations are frozen dataclasses.
+    """
+
+    @property
+    def kind(self) -> str: ...
+    @property
+    def body_md(self) -> str: ...
+    @property
+    def body_text(self) -> str: ...
+
 
 # Kinds whose extractor can emit a Markdown serialisation in ``body_md``;
 # these route through the structural Markdown widget when the chunk actually
@@ -36,14 +55,15 @@ _MARKDOWN_RENDERED_KINDS: frozenset[str] = MARKDOWN_RENDERED_KINDS
 PreviewMode = Literal["flat", "structural"]
 
 
-def uses_markdown_renderer(c: FileChunk) -> bool:
+def uses_markdown_renderer(c: PreviewBody) -> bool:
     """True when this chunk should mount through the structural Markdown
     renderer. A chunk needs both a markdown-capable kind AND non-empty
     ``body_md``; chunks failing either condition take the flat per-line
     path.
 
-    Public so ``app.py``'s per-chunk mount loop and the file-level
-    ``choose_preview_mode`` decision share one source of truth.
+    Public so ``app.py``'s per-chunk mount loop, the file-level
+    ``choose_preview_mode`` decision and ``match_evidence`` share one source
+    of truth.
     """
     return c.kind in _MARKDOWN_RENDERED_KINDS and bool(c.body_md)
 
@@ -75,4 +95,4 @@ def choose_preview_mode(chunks: list[FileChunk]) -> PreviewMode:
     return "flat"
 
 
-__all__ = ["PreviewMode", "choose_preview_mode", "uses_markdown_renderer"]
+__all__ = ["PreviewBody", "PreviewMode", "choose_preview_mode", "uses_markdown_renderer"]
