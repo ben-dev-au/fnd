@@ -37,6 +37,7 @@ import pymupdf  # type: ignore[import-not-found]
 
 from fnd.cache import ExtractionCache, sha256_file
 from fnd.extract.base import Block, Chunk, ExtractError
+from fnd.extract.heading_fold import HeadingFolder
 from fnd.extract.recovery import (
     TABLE_CAPTION_RE,
     CoverageEvaluator,
@@ -865,22 +866,6 @@ def _has_docling() -> bool:
     return shutil.which("docling") is not None
 
 
-def _fold_own_heading(chunk: Chunk) -> Chunk:
-    """Fold the page's own (leaf) heading into ``body`` so it's searchable.
-
-    Parity with md/docx/pptx, which bake a chunk's own heading into body.
-    A TOC-derived heading often isn't rendered verbatim in the page text;
-    prepend it unless already present. Applied at yield time — so it also
-    fixes chunks served from the texture cache, where ``body`` was stored
-    pre-fold. Idempotent: skips when ``body`` already opens with the folded
-    heading line (a plain ``in`` check would false-match a substring, e.g.
-    leaf "Security" inside body "Cybersecurity")."""
-    leaf = chunk.heading_path.split(" > ")[-1].strip() if chunk.heading_path else ""
-    if leaf and not chunk.body.startswith(f"{leaf}\n"):
-        chunk.body = f"{leaf}\n{chunk.body}"
-    return chunk
-
-
 def extract(
     path: Path,
     *,
@@ -901,6 +886,9 @@ def extract(
     refines as a single long PDF processes its pages.
     """
     cache = _get_cache()
+    # One folder per document: ownership is decided against the previous
+    # chunk, so the state must not span files.
+    folder = HeadingFolder()
     try:
         content_sha = sha256_file(path)
     except OSError as e:
@@ -936,7 +924,7 @@ def extract(
             chunk.mtime = mtime_now
             chunk.created = times_now.created
             chunk.inode_changed = times_now.inode_changed
-            yield _fold_own_heading(chunk)
+            yield folder.fold(chunk)
         return
 
     # Dispatch the heavy extraction to a subprocess. pymupdf-layout
@@ -988,7 +976,7 @@ def extract(
             cache.put(key, chunks)
 
     for chunk in chunks:
-        yield _fold_own_heading(chunk)
+        yield folder.fold(chunk)
 
 
 def _get_cache() -> ExtractionCache:
