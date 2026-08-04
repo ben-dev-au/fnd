@@ -206,3 +206,35 @@ def test_flat_chunks_without_markdown_are_untouched() -> None:
     chunk = _chunk("Ch 1", "alpha beta", body_md="")
 
     assert _mirror_body_into_md(chunk).body_md == ""
+
+
+def test_dispersed_terms_do_not_stand_in_for_a_phrase() -> None:
+    """Presence has to be CONTIGUOUS.
+
+    Asking whether a line's tokens appear anywhere in the markdown let scattered
+    words satisfy a phrase: "virtual memory" was treated as present because
+    "virtual" and "memory" each occurred elsewhere. A phrase query then matched
+    the chunk with no contiguous rendered text for the highlighter to paint —
+    the exact failure this repair exists to prevent.
+    """
+    from fnd.extract.pdf import _mirror_body_into_md
+
+    chunk = _chunk(
+        "Index",
+        "virtual memory, 123",
+        body_md="virtual address space\n\nphysical memory layout",
+    )
+
+    assert "virtual memory, 123" in _mirror_body_into_md(chunk).body_md
+
+
+def test_markup_around_a_rendered_line_is_not_a_difference() -> None:
+    """The parser's own formatting must not read as missing text, or every
+    emphasised or tabulated line would be appended a second time."""
+    from fnd.extract.pdf import _mirror_body_into_md
+
+    emphasised = _chunk("Ch 1", "virtual memory", body_md="**virtual memory**")
+    tabulated = _chunk("Ch 1", "alpha beta", body_md="| alpha | beta |")
+
+    assert _mirror_body_into_md(emphasised).body_md == "**virtual memory**"
+    assert _mirror_body_into_md(tabulated).body_md == "| alpha | beta |"

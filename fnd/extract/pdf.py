@@ -50,7 +50,6 @@ from fnd.extract.recovery import (
     PageExtraction,
     PageRecoveryPipeline,
     ProductionLayoutTier,
-    alpha_tokens,
 )
 from fnd.fsmeta import read_file_times
 
@@ -366,7 +365,26 @@ def _md_segments(body_md: str) -> list[str]:
     return ["\n".join(lines[a:b]).strip("\n") for a, b in itertools.pairwise(bounds)]
 
 
-def _mirror_body_into_md(chunk: Chunk, *, present_ratio: float = 0.5) -> Chunk:
+_WORD_RE: Final = re.compile(r"[^\W_]+")
+
+
+def _word_sequence(text: str) -> list[str]:
+    """Lowercased words in order — the comparable form of a line."""
+    return _WORD_RE.findall(text.lower())
+
+
+def _contains_run(haystack: list[str], needle: list[str]) -> bool:
+    """Whether ``needle`` appears as a contiguous run inside ``haystack``."""
+    if not needle or len(needle) > len(haystack):
+        return False
+    first = needle[0]
+    span = len(needle)
+    return any(
+        word == first and haystack[i : i + span] == needle for i, word in enumerate(haystack)
+    )
+
+
+def _mirror_body_into_md(chunk: Chunk) -> Chunk:
     """Append searchable text the chunk's rendered markdown lost.
 
     ``FlatFallbackTier`` repairs a page's markdown, but it appends the recovered
@@ -381,19 +399,28 @@ def _mirror_body_into_md(chunk: Chunk, *, present_ratio: float = 0.5) -> Chunk:
     served from the texture cache. Doing it inside the extraction would reach
     only cache misses, which is to say almost nothing on an established corpus.
 
-    Idempotent: a line already represented in the markdown (>= half its tokens
-    present) is left alone, so re-running appends nothing and formatting the
-    layout parser did get right is never duplicated.
+    A line counts as present only when its words appear CONTIGUOUSLY in the
+    markdown. Asking whether its tokens appear anywhere let dispersed terms
+    stand in for a phrase — ``body`` of "virtual memory" against a ``body_md``
+    holding "virtual address" and "physical memory" appended nothing, and a
+    phrase query then matched the chunk with no contiguous rendered text to
+    highlight. That is the very failure this repair exists to prevent.
+
+    Comparing word runs rather than raw text keeps it robust to markup: the
+    layout parser's ``**virtual memory**`` and ``| virtual | memory |`` both
+    reduce to the same run, so faithfully-rendered lines are never re-appended.
+
+    Idempotent, so re-running over an already-repaired chunk appends nothing.
     """
     if not chunk.body_md.strip() or not chunk.body.strip():
         return chunk
-    md_tokens = alpha_tokens(chunk.body_md)
+    rendered = _word_sequence(chunk.body_md)
     missing = [
         stripped
         for line in chunk.body.splitlines()
         if (stripped := line.strip())
-        and (tokens := alpha_tokens(line))
-        and len(tokens & md_tokens) / len(tokens) < present_ratio
+        and (words := _word_sequence(line))
+        and not _contains_run(rendered, words)
     ]
     if missing:
         chunk.body_md = "\n\n".join([chunk.body_md.rstrip(), *missing])

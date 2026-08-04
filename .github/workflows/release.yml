@@ -205,6 +205,14 @@ jobs:
           formula=Formula/fnd.rb
           sed -i.bak "s|^  url \".*\"|  url \"$new_url\"|" "$formula"
           sed -i.bak "s|^  sha256 \".*\"|  sha256 \"$new_sha\"|" "$formula"
+          # Nothing to do when the formula already points at this version: the
+          # tap's bottle workflow may since have added a VALID bottle block, and
+          # deleting it below would open a PR that strips bottles and forces
+          # source builds until that workflow runs again.
+          if grep -qF "$new_url" "$formula" && grep -qF "$new_sha" "$formula"; then
+            echo "Homebrew formula already at $VERSION — leaving its bottle block alone"
+            exit 0
+          fi
           # Drop the PREVIOUS version's `bottle do` block. Homebrew derives the
           # bottle filename from the formula version, so a bumped url + a stale
           # root_url makes every `brew upgrade fnd` 404 until the tap's bottle
