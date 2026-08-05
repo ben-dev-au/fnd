@@ -222,24 +222,28 @@ class FlatFallbackTier:
     so ``body_md`` is far less complete than the flat ``get_text`` layer the
     index searches — a hit on the dropped prose can't be shown in preview.
 
-    When best coverage sits below the floor, append the flat blocks the
-    structured Markdown missed (token overlap below ``block_present_ratio``),
-    in reading order. The structured Markdown and its formatting are kept;
-    only the genuinely-dropped blocks are filled, so no block is duplicated
-    and a faithfully-extracted page (cov >= floor) is left untouched."""
+    Every page is checked block-by-block: any flat block the structured
+    Markdown missed (token overlap below ``block_present_ratio``) is appended
+    in reading order. The structured Markdown and its formatting are kept, and
+    a block already represented is never re-appended.
+
+    There is deliberately no page-level coverage floor. A floor let a page
+    that was, say, 92% covered keep the other 8% searchable-but-unrenderable —
+    measured at 5.7% of PDF tokens corpus-wide, with individual pages losing
+    over 30%. Complete coverage is the only exact short-circuit: when every
+    flat token is already in the Markdown, no block can be missing, so the
+    (comparatively costly) block extraction is skipped."""
 
     def __init__(
         self,
         coverage: CoverageEvaluator,
         extract_blocks: ExtractFlatBlocks,
         *,
-        cov_floor: float = 0.90,
         block_present_ratio: float = 0.5,
         min_flat_tokens: int = 20,
     ) -> None:
         self._coverage = coverage
         self._extract_blocks = extract_blocks
-        self._cov_floor = cov_floor
         self._block_present_ratio = block_present_ratio
         self._min_flat_tokens = min_flat_tokens
 
@@ -251,7 +255,7 @@ class FlatFallbackTier:
             if current.coverage is not None
             else self._coverage.coverage(current.markdown, ctx.flat)
         )
-        if cov >= self._cov_floor:
+        if cov >= 1.0:
             return dataclasses.replace(current, coverage=cov)
         missing = self._missing_blocks(ctx, current.markdown)
         if not missing:

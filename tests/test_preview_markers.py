@@ -88,14 +88,20 @@ def test_empty_query_clears_markers_but_keeps_track_length() -> None:
     assert total == 3
 
 
-def test_block_text_fallback_marks_chunk_top_when_serialisation_differs() -> None:
-    """If the per-line scan of body_md misses the term but the block text
-    carries it (a serialisation that phrased things differently), the
-    chunk is still marked — at its top — so no matched chunk is silent."""
+def test_no_marker_when_the_match_is_only_in_unrendered_text() -> None:
+    """A term the renderer never mounts gets no marker.
+
+    This used to mark the chunk's top line, on the reasoning that no matched
+    chunk should be silent. But the marker is a promise that a highlight is
+    down there: scrolling to it showed the user nothing, and the scrollbar
+    disagreed with the pane. The results row carries the ``◌`` flag for exactly
+    this chunk, so the match is still reported — just not by a marker that
+    can't lead anywhere.
+    """
     spec = MatchSpec.from_query("glimmer")
     chunks = [
         _chunk(0, "plain\nlines\nonly", blocks_text="glimmer in blocks only"),
     ]
     lines, total = structural_match_lines(chunks, spec)
     assert total == 3
-    assert lines == [0]
+    assert lines == []

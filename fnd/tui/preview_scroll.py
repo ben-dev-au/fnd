@@ -26,6 +26,24 @@ if TYPE_CHECKING:
     from fnd.tui.widgets.markdown import FNDMarkdown
 
 
+# Consecutive refreshes the content above the match must keep the same height
+# before the scroll commits. One is not enough — layout arrives in bursts, so a
+# single unchanged sample lands on a plateau mid-growth.
+_ABOVE_STABLE_TICKS = 2
+# Floor on the shared retry budget (30) below which the settle gate stops
+# waiting and commits anyway. Without it a chunk whose layout keeps moving —
+# a heavy table/fence page — could hold the scroll for the whole budget, and a
+# match that lands late is worse than one that lands a few rows off: measured
+# an 864ms tail before this bound.
+#
+# Deliberately tight. The gate needs three iterations to see _ABOVE_STABLE_TICKS
+# consecutive stable heights, so four deferrals is one spare — anything more is
+# latency the settle waits on, and _settled gates lazy-mount and prefetch as well
+# as the scroll. A looser bound delayed both far enough to fail CI (a Reading
+# View re-wrap, which re-lays out every chunk, and a prefetch waiting on settle).
+_ABOVE_WAIT_FLOOR = 26
+
+
 @dataclass(frozen=True, slots=True)
 class ScrollAnchor:
     parent_id: str
@@ -221,6 +239,7 @@ class StructuralHost(Protocol):
         self, callback: Callable[..., Any], *args: Any, **kwargs: Any
     ) -> object: ...
     def diag_log(self, msg: str) -> None: ...
+    def above_window_pending(self, focus_chunk_seq: int) -> bool: ...
 
     @property
     def chunk_widgets(self) -> dict[int, Widget]: ...
@@ -248,6 +267,8 @@ class StructuralScrollStrategy:
         *,
         generation: int = 0,
         current_generation: Callable[[], int] | None = None,
+        above_height: int | None = None,
+        stable_ticks: int = 0,
     ) -> None:
         from fnd.tui.widgets.markdown import FNDMarkdown
 
@@ -289,6 +310,8 @@ class StructuralScrollStrategy:
         animate: bool = False,
         generation: int = 0,
         current_generation: Callable[[], int] | None = None,
+        above_height: int | None = None,
+        stable_ticks: int = 0,
     ) -> None:
         from fnd.tui.widgets.markdown import FNDMarkdown
 
@@ -315,7 +338,15 @@ class StructuralScrollStrategy:
         chunk_md = target if hasattr(target, "first_match_block") else None
         if chunk_md is not None:
             inner = chunk_md.first_match_block  # pyright: ignore[reportAttributeAccessIssue]
-            if inner is None and retries > 0:
+            # Retry only while the build could still produce a match.
+            # ``first_match_block`` is populated during build_from_token, so
+            # before the build finishes ``None`` means "not yet"; after it, it
+            # means "there is no match in this chunk" and no amount of
+            # refreshing will change that. Waiting out all 30 refreshes on a
+            # genuinely match-free chunk delayed the reveal for nothing.
+            build_done = getattr(chunk_md, "build_done", None)
+            still_building = build_done is None or not build_done.is_set()
+            if inner is None and retries > 0 and still_building:
                 self._host.call_after_refresh(
                     self._do_scroll_to_chunk,
                     focus_chunk_seq,
@@ -351,6 +382,70 @@ class StructuralScrollStrategy:
                     f"retries_left={retries}"
                 )
                 path = f"fallback({type(target).__name__})"
+        # Content ABOVE the match decides where it ends up on screen, and it is
+        # still arriving when the scroll first runs: chunk widgets mount at ~0
+        # height and grow as their markdown lays out. Committing early lands
+        # correctly and then slides — ~18 rows on the AWS guide's p.24, leaving
+        # the match two thirds down the pane instead of a quarter.
+        #
+        # Two distinct things have to settle, and neither implies the other:
+        #
+        # * the window's chunks have to EXIST. Navigating backwards into a file
+        #   mounts them after this first runs, so inspecting only what is
+        #   currently mounted sees nothing pending (the trap
+        #   ``_finalize_via_lock``'s ``expected_above_seqs`` exists to avoid);
+        # * their HEIGHT has to stop changing. ``build_done`` is not that
+        #   signal — measured on p.24, the seven chunks above were all mounted
+        #   with build_done set and still grew 142 → 159 rows afterwards.
+        #
+        # So: ask the host about existence, and watch the measured height until
+        # it holds still for two consecutive refreshes. A settled file passes
+        # both on the first look and pays two refresh ticks; the alternative is
+        # landing in the wrong place.
+        if retries > 0:
+            above = [w for s, w in self._host.chunk_widgets.items() if s < focus_chunk_seq]
+            measured = sum(w.region.height for w in above)
+
+            def _wait(ticks: int) -> None:
+                self._host.call_after_refresh(
+                    self._do_scroll_to_chunk,
+                    focus_chunk_seq,
+                    retries - 1,
+                    on_done,
+                    margin_from,
+                    animate,
+                    generation,
+                    current_generation,
+                    measured,
+                    ticks,
+                )
+
+            if self._host.above_window_pending(focus_chunk_seq):
+                # Content that will sit above the match doesn't exist yet, so
+                # its position is about to change. Wait — bounded only by the
+                # shared retry budget, like every other "not laid out yet"
+                # condition here. Bounding this more tightly gave up on a slow
+                # mount and landed the match off screen entirely.
+                _wait(0)
+                return
+            if above and retries >= _ABOVE_WAIT_FLOOR:
+                if any(w.region.height == 0 for w in above):
+                    # An unlaid-out chunk measures 0 and keeps measuring 0, so
+                    # the stability check reads three zeroes as "settled" and
+                    # commits — then the chunk lays out and pushes the match
+                    # down. Zero height is the absence of a measurement, not a
+                    # stable one. The floor still bounds this, so a genuinely
+                    # empty chunk can't stall navigation.
+                    _wait(0)
+                    return
+                # Mounted and built; now wait for the measured height to hold
+                # still, since build_done is not a height-settled signal. THIS
+                # is what the floor bounds — a page whose layout never quite
+                # stops moving still has to land.
+                ticks = stable_ticks + 1 if measured == above_height else 0
+                if ticks < _ABOVE_STABLE_TICKS:
+                    _wait(ticks)
+                    return
         if target.region.height == 0 and retries > 0:
             self._host.call_after_refresh(
                 self._do_scroll_to_chunk,
@@ -400,6 +495,12 @@ class StructuralScrollStrategy:
                 f"target={type(target).__name__} path={path}"
             )
             anchor = match_table.region if match_table is not None else target.region
+        if match_table is None and (line_offset := self._match_line_offset(target)):
+            # Drop the anchor onto the matching line inside a tall block rather
+            # than the block's first row.
+            anchor = Region(
+                anchor.x, anchor.y + line_offset, anchor.width, max(1, anchor.height - line_offset)
+            )
         # Generation guard (immediately before the commit): the resolution above
         # spanned refreshes, during which a newer navigation may have superseded
         # this chain. Re-check freshness right before the side effect — the
@@ -411,6 +512,7 @@ class StructuralScrollStrategy:
             return
         try:
             pane = self._host.preview_pane()
+
             # Drop the match ~a quarter down the viewport so the lines above it
             # give context, instead of pinning it to the top line — but only when
             # we actually landed on a match (not a bare chunk-top navigation).
@@ -519,6 +621,50 @@ class StructuralScrollStrategy:
         # no internal scroll, but honour its offset defensively).
         return cell.translate(table.region.offset - table.scroll_offset)
 
+    @staticmethod
+    def _widget_plain(w: Widget) -> str | None:
+        """A widget's rendered text, however it happens to store it.
+
+        ``MarkdownFence`` renders a ``rich.syntax.Syntax`` and keeps its text on
+        ``.code`` instead of ``._content``; everything else carries ``_content``.
+        """
+        try:
+            plain = w._content.plain  # type: ignore[attr-defined]
+        except Exception:
+            plain = None
+        if plain is None:
+            return getattr(w, "code", None)
+        return plain
+
+    def _match_line_offset(self, target: Widget) -> int:
+        """Rows from the top of ``target`` down to its first matching line.
+
+        ``scroll_to_region`` anchors a widget's *top*, so a match a hundred rows
+        into a long code fence landed off-screen below the viewport — the scroll
+        reported success while showing the user nothing. Counting newlines is
+        exact for those blocks (a fence renders one source line per row) and
+        returns 0 for wrapped prose, where the block is short enough that its
+        top is the match anyway.
+        """
+        spec = self._host.effective_match_spec()
+        if spec.is_empty:
+            return 0
+        plain = self._widget_plain(target)
+        if not plain or "\n" not in plain:
+            return 0
+        from fnd.matching import phrase_char_spans
+        from fnd.render import match_word_spans
+
+        starts = [a for a, _b, _style in match_word_spans(plain, spec)]
+        starts += [a for a, _b in phrase_char_spans(plain, spec)]
+        if not starts:
+            return 0
+        offset = plain.count("\n", 0, min(starts))
+        # Never push the anchor past the widget: an offset that large means the
+        # newline count and the rendered rows have diverged (wrapping), and the
+        # widget top is the safer answer.
+        return offset if 0 < offset < target.region.height else 0
+
     def _fallback_match_target(self, chunk: FNDMarkdown) -> Widget:
         """Scan ``chunk``'s descendants for the first widget whose plain text
         contains a match. Used when no highlight-aware subclass claimed
@@ -531,14 +677,7 @@ class StructuralScrollStrategy:
         for w in chunk.query("*"):
             if w is chunk:
                 continue
-            try:
-                plain = w._content.plain  # type: ignore[attr-defined]
-            except Exception:
-                plain = None
-            if plain is None:
-                # MarkdownFence renders rich.syntax.Syntax — its text lives
-                # on .code attribute set by build_from_token.
-                plain = getattr(w, "code", None)
+            plain = self._widget_plain(w)
             if plain and text_has_any_match(plain, spec) and w.region.height > 0:
                 return w
         return chunk

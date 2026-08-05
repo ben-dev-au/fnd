@@ -37,6 +37,7 @@ import pymupdf  # type: ignore[import-not-found]
 
 from fnd.cache import ExtractionCache, sha256_file
 from fnd.extract.base import Block, Chunk, ExtractError
+from fnd.extract.heading_fold import HeadingFolder
 from fnd.extract.recovery import (
     TABLE_CAPTION_RE,
     CoverageEvaluator,
@@ -362,6 +363,68 @@ def _md_segments(body_md: str) -> list[str]:
         return [body_md]
     bounds = [0, *heads, len(lines)]
     return ["\n".join(lines[a:b]).strip("\n") for a, b in itertools.pairwise(bounds)]
+
+
+_WORD_RE: Final = re.compile(r"[^\W_]+")
+
+
+def _word_sequence(text: str) -> list[str]:
+    """Lowercased words in order — the comparable form of a line."""
+    return _WORD_RE.findall(text.lower())
+
+
+def _contains_run(haystack: list[str], needle: list[str]) -> bool:
+    """Whether ``needle`` appears as a contiguous run inside ``haystack``."""
+    if not needle or len(needle) > len(haystack):
+        return False
+    first = needle[0]
+    span = len(needle)
+    return any(
+        word == first and haystack[i : i + span] == needle for i, word in enumerate(haystack)
+    )
+
+
+def _mirror_body_into_md(chunk: Chunk) -> Chunk:
+    """Append searchable text the chunk's rendered markdown lost.
+
+    ``FlatFallbackTier`` repairs a page's markdown, but it appends the recovered
+    prose at the end, where it carries no heading. ``_split_page_sections`` then
+    slices that markdown at ATX headings, so everything recovered lands in
+    whichever slice happens to be last while the other sections keep the
+    impoverished text the layout parser gave them. On a book-index page that
+    left a chunk rendering 51 characters of a 628-character page — searchable in
+    full, all but invisible in the preview.
+
+    Applied at YIELD time, like the heading fold, so it also repairs chunks
+    served from the texture cache. Doing it inside the extraction would reach
+    only cache misses, which is to say almost nothing on an established corpus.
+
+    A line counts as present only when its words appear CONTIGUOUSLY in the
+    markdown. Asking whether its tokens appear anywhere let dispersed terms
+    stand in for a phrase — ``body`` of "virtual memory" against a ``body_md``
+    holding "virtual address" and "physical memory" appended nothing, and a
+    phrase query then matched the chunk with no contiguous rendered text to
+    highlight. That is the very failure this repair exists to prevent.
+
+    Comparing word runs rather than raw text keeps it robust to markup: the
+    layout parser's ``**virtual memory**`` and ``| virtual | memory |`` both
+    reduce to the same run, so faithfully-rendered lines are never re-appended.
+
+    Idempotent, so re-running over an already-repaired chunk appends nothing.
+    """
+    if not chunk.body_md.strip() or not chunk.body.strip():
+        return chunk
+    rendered = _word_sequence(chunk.body_md)
+    missing = [
+        stripped
+        for line in chunk.body.splitlines()
+        if (stripped := line.strip())
+        and (words := _word_sequence(line))
+        and not _contains_run(rendered, words)
+    ]
+    if missing:
+        chunk.body_md = "\n\n".join([chunk.body_md.rstrip(), *missing])
+    return chunk
 
 
 def _largest_font_headings(page: pymupdf.Page) -> set[str]:
@@ -865,22 +928,6 @@ def _has_docling() -> bool:
     return shutil.which("docling") is not None
 
 
-def _fold_own_heading(chunk: Chunk) -> Chunk:
-    """Fold the page's own (leaf) heading into ``body`` so it's searchable.
-
-    Parity with md/docx/pptx, which bake a chunk's own heading into body.
-    A TOC-derived heading often isn't rendered verbatim in the page text;
-    prepend it unless already present. Applied at yield time — so it also
-    fixes chunks served from the texture cache, where ``body`` was stored
-    pre-fold. Idempotent: skips when ``body`` already opens with the folded
-    heading line (a plain ``in`` check would false-match a substring, e.g.
-    leaf "Security" inside body "Cybersecurity")."""
-    leaf = chunk.heading_path.split(" > ")[-1].strip() if chunk.heading_path else ""
-    if leaf and not chunk.body.startswith(f"{leaf}\n"):
-        chunk.body = f"{leaf}\n{chunk.body}"
-    return chunk
-
-
 def extract(
     path: Path,
     *,
@@ -901,6 +948,9 @@ def extract(
     refines as a single long PDF processes its pages.
     """
     cache = _get_cache()
+    # One folder per document: ownership is decided against the previous
+    # chunk, so the state must not span files.
+    folder = HeadingFolder()
     try:
         content_sha = sha256_file(path)
     except OSError as e:
@@ -936,7 +986,7 @@ def extract(
             chunk.mtime = mtime_now
             chunk.created = times_now.created
             chunk.inode_changed = times_now.inode_changed
-            yield _fold_own_heading(chunk)
+            yield _mirror_body_into_md(folder.fold(chunk))
         return
 
     # Dispatch the heavy extraction to a subprocess. pymupdf-layout
@@ -988,7 +1038,7 @@ def extract(
             cache.put(key, chunks)
 
     for chunk in chunks:
-        yield _fold_own_heading(chunk)
+        yield _mirror_body_into_md(folder.fold(chunk))
 
 
 def _get_cache() -> ExtractionCache:

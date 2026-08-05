@@ -44,6 +44,9 @@ def _nav(stops: list[int], vh: int = 20) -> MatchNavigator:
     nav._above = 0
     nav._below = 0
     nav._measure_pending = False
+    # Measurement polls are tied to the rebuild generation so a superseded one
+    # can't repopulate a newer preview's counts; the stand-in has to carry it.
+    nav._refresh_gen = 0
     pane = FakePane(vh)
     # Inject the pane + a fixed region-stop list so _go/next use them, plus a
     # wide chunk extent so scoping keeps every stop (the app derives this from

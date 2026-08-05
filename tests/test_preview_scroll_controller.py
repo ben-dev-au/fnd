@@ -236,6 +236,10 @@ class _FakeHost:
         self.deferred.append((callback, args))
         return None
 
+    def above_window_pending(self, focus_chunk_seq: int) -> bool:
+        # Fakes lay out synchronously, so nothing is ever still arriving above.
+        return False
+
     def diag_log(self, msg: str) -> None:
         self.diag_msgs.append(msg)
 
@@ -541,3 +545,88 @@ def test_reconcile_does_not_double_fire_on_settled_when_strategy_calls_then_rais
         raised = True
     assert raised  # error still surfaced
     assert calls == [True]  # fired EXACTLY once, not twice
+
+
+def test_scroll_waits_while_content_above_the_match_is_still_arriving() -> None:
+    """The match's screen position is decided by how much content sits above it,
+    and that content arrives late: chunk widgets mount at ~0 height and grow as
+    their markdown lays out. Committing before it settles lands correctly and
+    then slides — measured at 17 rows on a real book page, leaving the match two
+    thirds down the pane instead of a quarter.
+
+    ``build_done`` is NOT the signal to wait on: on that page the chunks above
+    were all mounted with build_done set and still grew 142 -> 159 rows. Height
+    has to stop changing.
+    """
+    pane = _FakePane()
+    above = _FakeWidget(Region(0, 0, 80, 10))
+    target = _FakeWidget(Region(0, 40, 80, 3))
+    host = _FakeHost(pane, chunk_widgets={1: above, 5: target}, match_targets={5: target})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+
+    strat._do_scroll_to_chunk(5, on_done=None)
+    assert pane.captured is None, "committed while the content above was unmeasured"
+
+    # Same height twice running = settled, so the commit goes through.
+    strat._do_scroll_to_chunk(5, on_done=None, above_height=10, stable_ticks=1)
+    assert pane.captured is not None
+
+
+def test_a_growing_region_above_defers_the_commit() -> None:
+    pane = _FakePane()
+    above = _FakeWidget(Region(0, 0, 80, 27))
+    target = _FakeWidget(Region(0, 40, 80, 3))
+    host = _FakeHost(pane, chunk_widgets={1: above, 5: target}, match_targets={5: target})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+
+    # Last seen 10 rows, now 27: still growing, so the stability count resets.
+    strat._do_scroll_to_chunk(5, on_done=None, above_height=10, stable_ticks=1)
+
+    assert pane.captured is None
+
+
+def test_the_wait_is_bounded_so_a_restless_layout_still_lands() -> None:
+    """A page whose layout never quite settles must not hold the scroll open —
+    landing late is worse than landing a few rows off."""
+    pane = _FakePane()
+    above = _FakeWidget(Region(0, 0, 80, 27))
+    target = _FakeWidget(Region(0, 40, 80, 3))
+    host = _FakeHost(pane, chunk_widgets={1: above, 5: target}, match_targets={5: target})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+
+    strat._do_scroll_to_chunk(5, retries=21, on_done=None, above_height=10, stable_ticks=0)
+
+    assert pane.captured is not None
+
+
+def test_an_unlaid_out_chunk_above_is_not_mistaken_for_settled() -> None:
+    """Zero height is the absence of a measurement, not a stable one.
+
+    A preceding chunk mounts at height 0 and grows on a later refresh. Reading
+    three zeroes as two stable ticks commits the scroll, and the chunk then lays
+    out and pushes the match down — the same class of drift the settle gate
+    exists to prevent, entered from the other side.
+    """
+    pane = _FakePane()
+    above = _FakeWidget(Region(0, 0, 80, 0))  # mounted, not yet laid out
+    target = _FakeWidget(Region(0, 40, 80, 3))
+    host = _FakeHost(pane, chunk_widgets={1: above, 5: target}, match_targets={5: target})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+
+    for ticks in (0, 1, 2):
+        strat._do_scroll_to_chunk(5, on_done=None, above_height=0, stable_ticks=ticks)
+        assert pane.captured is None, f"committed against a zero-height chunk (ticks={ticks})"
+
+
+def test_a_genuinely_empty_chunk_above_still_lands() -> None:
+    """The wait is bounded, so a chunk that is legitimately zero-height cannot
+    stall navigation for ever."""
+    pane = _FakePane()
+    above = _FakeWidget(Region(0, 0, 80, 0))
+    target = _FakeWidget(Region(0, 40, 80, 3))
+    host = _FakeHost(pane, chunk_widgets={1: above, 5: target}, match_targets={5: target})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+
+    strat._do_scroll_to_chunk(5, retries=21, on_done=None, above_height=0, stable_ticks=0)
+
+    assert pane.captured is not None

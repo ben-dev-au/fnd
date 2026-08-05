@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from textual.widgets import Tree
 
+from fnd.tui.match_evidence import evidence_spec_for_pass, has_paintable_match
 from fnd.tui.results_labels import _format_file_label, _format_hit_label, _styled_parent_label
 
 if TYPE_CHECKING:
@@ -52,6 +53,11 @@ class ResultsView:
         tree.clear()
         max_score = max((g.top_score for g in self._app._search.groups), default=0.0)
         budget = self.file_label_budget(tree)
+        # Rows are never filtered on paintability — see fnd.tui.match_evidence.
+        # A row the preview can't highlight is marked, not withheld.
+        strict = self._app._effective_evidence_spec
+        painting = self._app._effective_match_spec
+        unlocatable = 0
         for i, g in enumerate(self._app._search.groups):
             file_node = tree.root.add(
                 _styled_parent_label(
@@ -61,10 +67,21 @@ class ResultsView:
                 expand=(i == 0),
             )
             for h in g.hits:
+                visible = has_paintable_match(
+                    h, evidence_spec_for_pass(h.pass_index, strict=strict, painting=painting)
+                )
+                unlocatable += not visible
                 file_node.add_leaf(
-                    _format_hit_label(h, max_score=max_score),
+                    _format_hit_label(h, max_score=max_score, match_visible=visible),
                     data={"kind": "section", "hit": h},
                 )
+        if unlocatable:
+            # Counted, not just marked: the regression harness asserts this
+            # stays at zero, so a highlighting bug is measurable and not merely
+            # visible to whoever happens to look at the glyph.
+            self._app._preview.diag_log(
+                f"results unlocatable={unlocatable} query={self._app._search.current_query!r}"
+            )
         self._app._refresh_status()
         if self._app._search.groups:
             # Don't yank focus out of a sidebar panel the user is driving.

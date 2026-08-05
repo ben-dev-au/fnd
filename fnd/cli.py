@@ -643,30 +643,72 @@ def collection_add(
 
 @collection_app.command("reindex")
 def collection_reindex(
-    name: str,
+    name: str | None = typer.Argument(None, help="Collection to index (same as -c)."),
+    collection: str | None = typer.Option(
+        None,
+        "-c",
+        "--collection",
+        help="Collection(s) to index, comma-separated, or 'all' for every one.",
+    ),
     rebuild: bool = typer.Option(False, "--rebuild", help="Drop existing chunks first."),
 ) -> None:
-    """Index (or re-index) a configured collection."""
-    from fnd.cli_scope import FilterIssues, resolve_or_exit
+    """Index (or re-index) configured collections.
+
+    ``-c`` scopes this the same way it scopes ``fnd search``, and ``-c all``
+    means every collection here exactly as it does there. Unlike a search,
+    naming nothing is an error rather than "everything": re-indexing every
+    collection is a minutes-long rebuild, so it is asked for, not defaulted
+    into. The error proposes ``-c all``.
+    """
+    from fnd.cli_scope import FilterIssues, resolve_collection_option, resolve_or_exit
     from fnd.config import load
     from fnd.index import build_index_from_config
-    from fnd.vocabulary import collection_vocabulary
+    from fnd.query_errors import MissingFilterValueError
 
     cfg = load()
+    if name is not None and collection is not None and name != collection:
+        typer.echo(f"-c: given twice — {collection!r} and {name!r}. Use one.", err=True)
+        raise typer.Exit(code=2)
+    raw = collection if collection is not None else name
     # A typo here used to surface as a raw KeyError traceback.
     issues = FilterIssues()
-    name = issues.resolve(collection_vocabulary(cfg), name, flag="fnd collection reindex")
+    if raw is None:
+        issues.add(
+            MissingFilterValueError(
+                label="collection", flag="-c", proposal="all", known=list(cfg.collections)
+            )
+        )
+        resolve_or_exit(issues)
+        # Reached only when the user accepted the proposal. Start a fresh issue
+        # set: the accepted one is still in `issues`, and resolving `raw` below
+        # runs resolve_or_exit again — which would re-offer what they just said
+        # yes to.
+        issues = FilterIssues()
+        raw = "all"
+    # Same resolver the search path uses; None is its "everything" answer, which
+    # a command has to expand because it iterates rather than filters.
+    scoped = resolve_collection_option(raw, cfg, issues, flag="-c")
     resolve_or_exit(issues)
-    cc = cfg.collection(name)
-    written = build_index_from_config(
-        config=cc,
-        collection=name,
-        index_dir=default_index_dir(),
-        rebuild=rebuild,
-        tag_sources=tuple(cfg.defaults.tag_sources),
-        tag_frontmatter_keys=tuple(cfg.defaults.tag_frontmatter_keys),
-    )
-    typer.echo(f"indexed {written} chunks for collection {name}")
+    targets = scoped if scoped is not None else list(cfg.collections)
+    if not targets:
+        typer.echo("no collections configured — add one with `fnd collection add`")
+        raise typer.Exit(1)
+    if len(targets) > 1:
+        typer.echo(f"indexing {len(targets)} collections: {', '.join(targets)}")
+    total = 0
+    for target in targets:
+        written = build_index_from_config(
+            config=cfg.collection(target),
+            collection=target,
+            index_dir=default_index_dir(),
+            rebuild=rebuild,
+            tag_sources=tuple(cfg.defaults.tag_sources),
+            tag_frontmatter_keys=tuple(cfg.defaults.tag_frontmatter_keys),
+        )
+        typer.echo(f"indexed {written} chunks for collection {target}")
+        total += written
+    if len(targets) > 1:
+        typer.echo(f"indexed {total} chunks across {len(targets)} collections")
 
 
 # ---- extras ---------------------------------------------------------------

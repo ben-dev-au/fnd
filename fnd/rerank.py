@@ -26,6 +26,7 @@ default profile.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import re
 import time
@@ -201,24 +202,9 @@ def rerank_hits(
 
 
 def _replace_score(h: Hit, score: float) -> Hit:
-    return Hit(
-        score=score,
-        parent_id=h.parent_id,
-        path=h.path,
-        kind=h.kind,
-        page=h.page,
-        slide=h.slide,
-        heading_path=h.heading_path,
-        title=h.title,
-        snippet=h.snippet,
-        page_label=h.page_label,
-        chunk_seq=h.chunk_seq,
-        line=h.line,
-        mtime=h.mtime,
-        pass_index=h.pass_index,
-        meta_blob=h.meta_blob,
-        body_text=h.body_text,
-    )
+    """``h`` with a new score — see :func:`fnd.fusion._with_score` on why this
+    is a ``dataclasses.replace`` and not an enumerated rebuild."""
+    return dataclasses.replace(h, score=score)
 
 
 def _terms_for_proximity(query: str) -> list[str]:

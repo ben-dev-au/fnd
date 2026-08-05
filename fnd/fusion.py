@@ -34,6 +34,7 @@ the implementation here is a Python rewrite. See README acknowledgments.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal, overload
@@ -561,42 +562,17 @@ def _attribute_sources(
 
 
 def _with_score(h: Hit, score: float) -> Hit:
-    return Hit(
-        score=score,
-        parent_id=h.parent_id,
-        path=h.path,
-        kind=h.kind,
-        page=h.page,
-        slide=h.slide,
-        heading_path=h.heading_path,
-        title=h.title,
-        snippet=h.snippet,
-        page_label=h.page_label,
-        chunk_seq=h.chunk_seq,
-        line=h.line,
-        mtime=h.mtime,
-        pass_index=h.pass_index,
-        meta_blob=h.meta_blob,
-        body_text=h.body_text,
-    )
+    """``h`` with a new score.
+
+    ``dataclasses.replace`` rather than an enumerated rebuild: listing the
+    fields by hand silently defaults any field the list forgets, which is how
+    ``line`` went missing on the way to the opener, and then ``body_md`` on the
+    way to the results pane. A replace cannot drop a field that is added later.
+    """
+    return dataclasses.replace(h, score=score)
 
 
 def _with_pass_index(h: Hit, pass_index: int) -> Hit:
-    return Hit(
-        score=h.score,
-        parent_id=h.parent_id,
-        path=h.path,
-        kind=h.kind,
-        page=h.page,
-        slide=h.slide,
-        heading_path=h.heading_path,
-        title=h.title,
-        snippet=h.snippet,
-        page_label=h.page_label,
-        chunk_seq=h.chunk_seq,
-        line=h.line,
-        mtime=h.mtime,
-        pass_index=pass_index,
-        meta_blob=h.meta_blob,
-        body_text=h.body_text,
-    )
+    """``h`` tagged with the pass that produced it — see :func:`_with_score`
+    on why this is a replace."""
+    return dataclasses.replace(h, pass_index=pass_index)

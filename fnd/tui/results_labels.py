@@ -25,6 +25,13 @@ __all__ = [
 ]
 
 _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
+# The engine matched this chunk, but nothing in the text the preview renders
+# carries a paintable span — selecting the row lands somewhere with no visible
+# highlight. The row is still listed (the engine's match is what makes a result
+# a result); the glyph says the match is there but couldn't be located, so a
+# highlighting regression shows up as marks on screen instead of results
+# quietly disappearing. See :mod:`fnd.tui.match_evidence`.
+_UNLOCATABLE_GLYPH = "◌"
 
 
 def _score_bar(  # pyright: ignore[reportUnusedFunction]
@@ -197,12 +204,15 @@ def _elide_middle_keep_suffix(name: str, max_width: int) -> str:
     return stem[:head] + "…" + (stem[-tail:] if tail else "") + suffix
 
 
-def _format_hit_label(h: Hit, *, max_score: float = 0.0) -> Any:
+def _format_hit_label(h: Hit, *, max_score: float = 0.0, match_visible: bool = True) -> Any:
     """Result-tree row label: short locator left, snippet right.
 
     Locator is a few chars (page / slide / trimmed heading / chunk N)
     so the body snippet — the actually useful context for "is this
     the match I want" — claims most of the row width.
+
+    ``match_visible=False`` prepends :data:`_UNLOCATABLE_GLYPH`: the row stays,
+    but the user is told the preview won't be able to show them the match.
     """
     if h.page_label:
         loc = f"p.{h.page_label}"
@@ -217,7 +227,12 @@ def _format_hit_label(h: Hit, *, max_score: float = 0.0) -> Any:
     body = f"{loc}  {snippet}" if snippet else loc
     glyph = _PASS_GLYPHS.get(h.pass_index, "")
     pass_marker = f" {glyph}" if h.pass_index > 0 else ""
-    return _build_label(f"{body}{pass_marker}", h.score, max_score)
+    # Leading, not trailing: locator + 80-char snippet routinely overruns the
+    # results pane, so the row is hard-truncated at the border and anything
+    # appended to the end is never drawn. Verified in a real terminal — the
+    # marker was being emitted correctly and clipped off screen every time.
+    prefix = "" if match_visible else f"{_UNLOCATABLE_GLYPH} "
+    return _build_label(f"{prefix}{body}{pass_marker}", h.score, max_score)
 
 
 def _format_file_label(g: FileGroup, *, max_score: float = 0.0, name_budget: int = 0) -> Any:

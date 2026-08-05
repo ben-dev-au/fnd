@@ -19,5 +19,6 @@ def test_manual_scroll_clears_last_target() -> None:
     nav._last_target = 3
     nav._measure_pending = False
     nav._above = nav._below = 0  # set by __init__; bypassed by __new__ here
+    nav._refresh_gen = 0  # measurement polls are generation-tied
     nav.on_manual_scroll()
     assert nav._last_target is None

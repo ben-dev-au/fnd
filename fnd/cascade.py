@@ -23,6 +23,7 @@ TUI shows exact matches above fuzzy ones above synonym ones.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from typing import TYPE_CHECKING, Literal, overload
 
@@ -265,6 +266,7 @@ def _materialize_hits(
         meta_blob_bytes = doc.get_first(F_META_BLOB)  # type: ignore[attr-defined]
         if meta_blob_bytes is None:
             meta_blob_bytes = b""
+        body_md_bytes = doc.get_first("body_md")  # type: ignore[attr-defined]
         out.append(
             Hit(
                 score=float(score),
@@ -282,6 +284,7 @@ def _materialize_hits(
                 mtime=_first_int(doc, "mtime"),
                 meta_blob=meta_blob_bytes,
                 body_text=body_text,
+                body_md=body_md_bytes.decode("utf-8") if body_md_bytes else "",
             )
         )
     return out
@@ -500,22 +503,7 @@ def _apply_metadata_filter(hits: list[Hit], metadata_filter: str | None) -> list
 
 def _with_pass(h: Hit, pass_index: int) -> Hit:
     """Return a copy of ``h`` tagged with ``pass_index``. Hits are frozen
-    dataclasses, so we rebuild rather than mutate."""
-    return Hit(
-        score=h.score,
-        parent_id=h.parent_id,
-        path=h.path,
-        kind=h.kind,
-        page=h.page,
-        slide=h.slide,
-        heading_path=h.heading_path,
-        title=h.title,
-        snippet=h.snippet,
-        page_label=h.page_label,
-        chunk_seq=h.chunk_seq,
-        line=h.line,
-        mtime=h.mtime,
-        pass_index=pass_index,
-        meta_blob=h.meta_blob,
-        body_text=h.body_text,
-    )
+    dataclasses, so we copy rather than mutate — via ``dataclasses.replace``,
+    which cannot drop a field the way an enumerated rebuild does (see
+    :func:`fnd.fusion._with_score`)."""
+    return dataclasses.replace(h, pass_index=pass_index)

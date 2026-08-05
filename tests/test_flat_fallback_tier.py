@@ -41,9 +41,10 @@ def _tier(blocks: list[str], calls: list[int] | None = None) -> FlatFallbackTier
     return FlatFallbackTier(CoverageEvaluator(), fake_blocks)
 
 
-def test_passthrough_when_coverage_meets_floor() -> None:
-    """A well-extracted page (cov >= floor) is never touched, and the flat
-    blocks are not even queried."""
+def test_passthrough_on_complete_coverage() -> None:
+    """A fully-captured page is never touched, and the flat blocks are not
+    even queried — the one exact short-circuit: if every flat token is in the
+    Markdown, no block can be missing."""
     flat = _distinct_words(0, 40)
     calls: list[int] = []
     current = PageExtraction(markdown=flat, tier="production-layout")
@@ -52,6 +53,27 @@ def test_passthrough_when_coverage_meets_floor() -> None:
     assert out.tier == "production-layout"
     assert out.coverage == pytest.approx(1.0)
     assert calls == []
+
+
+def test_backfills_a_dropped_block_on_a_well_covered_page() -> None:
+    """The regression this tier's old 0.90 page-level floor allowed through.
+
+    A page can be 92% covered and still have lost a whole block — searchable
+    prose the preview could never show. Block-level evidence decides now, not
+    a page-level ratio.
+    """
+    kept = _distinct_words(0, 46)
+    dropped = _distinct_words(46, 4)  # 4/50 tokens -> coverage 0.92, above the old floor
+    flat = kept + " " + dropped
+    current = PageExtraction(markdown=kept, tier="production-layout")
+
+    out = _tier([kept, dropped]).refine(_ctx(flat), current)
+
+    assert out.coverage == pytest.approx(1.0)
+    assert out.tier == "flat-fallback"
+    assert dropped in out.markdown
+    assert out.markdown.startswith(kept)
+    assert FLAG_TEXTURE_RECOVERED in out.flags
 
 
 def test_skips_below_token_floor() -> None:

@@ -17,7 +17,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from textual.containers import VerticalScroll
+    from textual.widget import Widget
 
+    from fnd.matching import MatchSpec
     from fnd.tui.app import FNDApp
 
 
@@ -171,10 +173,17 @@ class MatchNavigator:
         except Exception:
             return None
 
-    def _count_stops(self, pane: VerticalScroll) -> int:
-        """Number of match stops from DATA only — no region reads, so no layout
-        is forced. Mirrors ``enumerate_stop_regions``' stop set: one per matching
-        table cell, one per non-table match block, one per matching plain line."""
+    def _stops_within(self, root: Widget, spec: MatchSpec) -> int:
+        """Match stops inside ``root``, from DATA only — no region reads, so no
+        layout is forced. Mirrors ``enumerate_stop_regions``' stop set: one per
+        matching table cell, one per non-table match block, one per matching
+        plain line.
+
+        Shared by the preview-wide count and the current-chunk check so the two
+        can't drift on what counts as a stop — they answer the same question at
+        different scopes, and a footer hint disagreeing with what n/b can reach
+        is exactly the confusion this scan exists to prevent.
+        """
         from textual.widgets import DataTable
 
         from fnd.render import text_has_any_match
@@ -185,22 +194,26 @@ class MatchNavigator:
             FNDMarkdownTH,
         )
 
-        spec = self._app._effective_match_spec
         if spec.is_empty:
             return 0
+        markdowns = [root] if isinstance(root, FNDMarkdown) else list(root.query(FNDMarkdown))
         n = 0
-        for md in pane.query(FNDMarkdown):
+        for md in markdowns:
             for dt in md.query(DataTable):
                 n += len(getattr(dt, "_fnd_match_coords", []))
             for block in md.match_blocks:
                 if isinstance(block, FNDMarkdownTableDT | FNDMarkdownTD | FNDMarkdownTH):
                     continue
                 n += 1
-        for line in pane.query("Static.chunk-line"):
+        for line in root.query("Static.chunk-line"):
             txt = getattr(line, "fnd_text", None)
             if txt and text_has_any_match(txt, spec):
                 n += 1
         return n
+
+    def _count_stops(self, pane: VerticalScroll) -> int:
+        """Stops across the whole mounted preview — the footer-hint cache."""
+        return self._stops_within(pane, self._app._effective_match_spec)
 
     def _region_stops(self, pane: VerticalScroll) -> list[int]:
         """Match stops as content-space tops (reads regions — call only on a
@@ -278,6 +291,40 @@ class MatchNavigator:
     def count(self) -> int:
         return self._count  # cached — cheap, no subtree walk
 
+    def current_chunk_has_stops(self) -> bool:
+        """Whether ``n``/``b`` can actually reach a match from where the user is.
+
+        ``count`` spans the whole mounted preview, but ``_go`` operates on
+        ``_chunk_stops`` — scoped to the current result's chunk. Gating the
+        footer hint on ``count`` therefore advertised ``n/b Matches`` on a chunk
+        where both keys silently no-op. Mirrors ``_chunk_stops``' own scoping
+        rule, including its unscoped fallback, and reads data only (widget
+        classes and registered match blocks), never regions — so it is safe on
+        the same paths ``count`` is.
+        """
+
+        from fnd.tui.widgets.markdown import (
+            FNDMarkdown,
+        )
+
+        if self._app._effective_match_spec.is_empty:
+            return False
+        ctrl = getattr(self._app, "_preview_scroll", None)
+        anchor = getattr(ctrl, "anchor", None)
+        widgets: dict[int, object] = getattr(self._app._preview, "chunk_widgets", None) or {}
+        current = widgets.get(anchor.focus_chunk_seq) if anchor is not None else None
+        if current is None:
+            # Flat preview, or nothing mounted yet — _chunk_stops falls back to
+            # every mounted stop here, so the file-wide count is the honest gate.
+            return self._count > 0
+        if isinstance(current, FNDMarkdown):
+            return self._stops_within(current, self._app._effective_match_spec) > 0
+        # Plain per-line chunk: the mount records the first matching line as the
+        # match target, falling back to the first line when nothing matched — so
+        # the match class on that target is exactly "this chunk has a stop".
+        target = self._app._preview.match_targets.get(anchor.focus_chunk_seq) if anchor else None
+        return target is not None and target.has_class("chunk-line-match")
+
     @property
     def above(self) -> int:
         return self._above  # cached — matching views above the viewport (this result)
@@ -311,9 +358,24 @@ class MatchNavigator:
         # Drop stale arrows now and refresh the border this frame (real counts
         # land once the mount settles, via _measure_after_settle). Without the
         # notify the previous result's markers would linger until settle.
-        if (self._above, self._below) != (0, 0):
-            self._above = self._below = 0
-            self._notify()
+        #
+        # Unconditional: this used to skip the notify when the arrow counts were
+        # already (0, 0), which is exactly the case for a result the preview
+        # can't paint. The border then kept whatever the PREVIOUS result had put
+        # there — so the "match not shown here" notice never appeared on the
+        # rows that need it, and never cleared on the rows that don't. One
+        # border + footer update per preview mount is not worth the ambiguity.
+        # ``_count`` too: it is the fallback ``current_chunk_has_stops`` uses
+        # while no current chunk is resolvable, which is exactly the window a
+        # mounting preview sits in — so a retained count advertised "n/b
+        # Matches" for the result the user just navigated AWAY from. Recomputed
+        # by the count tick below once the new preview is up.
+        self._above = self._below = self._count = 0
+        # Release the coalescing latch: the in-flight poll (if any) belongs to
+        # the previous generation and will now exit without measuring, so
+        # leaving the latch set would drop every request for THIS preview.
+        self._measure_pending = False
+        self._notify()
         self._await_mount(self._refresh_gen, retries=60)
 
     def _await_mount(self, gen: int, retries: int) -> None:
@@ -428,16 +490,30 @@ class MatchNavigator:
     def _schedule_measure(self) -> None:
         """Start a coalesced, settle-gated re-measure (idempotent while one is in
         flight). The poll reads only the scroll reactive until the scroll lands;
-        the single region read happens at the end."""
+        the single region read happens at the end.
+
+        Tied to the rebuild generation, like :meth:`_measure_after_settle`. An
+        untied poll outlived the preview it was started for: a rebuild would
+        clear the counts and advance the generation, and this poll would then
+        land mid-mount, read regions during the cold-nav settle window, and
+        repopulate ▲/▼ counts belonging to the previous result. Coalescing made
+        it worse — while the stale poll was pending, requests for the NEW
+        preview were dropped as duplicates.
+        """
         if self._measure_pending:
             return
         self._measure_pending = True
+        gen = self._refresh_gen
 
         def _landed() -> None:
+            if gen != self._refresh_gen:
+                return  # superseded; the newer rebuild owns the measurement
             self._measure_pending = False
             self._measure_offscreen()
 
-        self._poll_until_landed(30, None, is_valid=lambda: True, on_landed=_landed)
+        self._poll_until_landed(
+            30, None, is_valid=lambda: gen == self._refresh_gen, on_landed=_landed
+        )
 
     def next(self) -> None:
         self._go(forward=True)

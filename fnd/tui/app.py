@@ -45,6 +45,7 @@ from fnd.matching import MatchSpec
 from fnd.query import Searcher
 from fnd.tui.actions import REGISTRY, Keymap, load_keymap
 from fnd.tui.indexer_service import IndexerService
+from fnd.tui.match_evidence import evidence_spec_for_pass, has_paintable_match
 from fnd.tui.match_navigator import MatchNavigator
 from fnd.tui.preview.flat_view import FlatBufferView
 from fnd.tui.preview.lazy_mount import LazyMounter
@@ -657,7 +658,13 @@ class FNDApp(App[None]):
         except Exception:
             return
         nav = getattr(self, "_match_nav", None)
-        if nav is not None and not self._reading_mode and (nav.above or nav.below):
+        if self._current_match_unlocatable() and not self._reading_mode:
+            # The engine matched this chunk but the preview has nothing to
+            # highlight. Say so rather than leaving the user to wonder why the
+            # result they picked looks unrelated — and so a highlighting
+            # regression is visible on screen. See fnd.tui.match_evidence.
+            pane.border_subtitle = " [$warning]◌ match not shown here[/] "
+        elif nav is not None and not self._reading_mode and (nav.above or nav.below):
             parts: list[str] = []
             if nav.above:
                 parts.append(f"[$accent]▲{nav.above}[/]")
@@ -666,6 +673,49 @@ class FNDApp(App[None]):
             pane.border_subtitle = f" {'  '.join(parts)} "
         else:
             pane.border_subtitle = ""
+
+    def _current_match_unlocatable(self) -> bool:
+        """True when the chunk the preview is showing for the current result
+        carries no paintable match. Reads the decoded chunk, not the mounted
+        widgets, so it is settle-independent — the answer is the same before
+        and after the scroll lands.
+
+        Gated on the anchor still being *armed*: the notice describes where the
+        selected result put the view, so once the user scrolls away it no longer
+        describes anything on screen. ``release()`` clears ``_armed`` but keeps
+        ``_anchor`` for the controller's own bookkeeping, so reading the anchor
+        alone left the notice pinned to the border for the rest of the session.
+        """
+        if not self._preview_scroll.is_armed:
+            return False
+        anchor = getattr(self._preview_scroll, "anchor", None)
+        if anchor is None:
+            return False
+        chunks = self._preview.chunk_cache.get(anchor.parent_id)
+        if not chunks:
+            return False
+        chunk = next((c for c in chunks if c.chunk_seq == anchor.focus_chunk_seq), None)
+        if chunk is None:
+            return False
+        return not has_paintable_match(chunk, self._evidence_spec_for_current_row())
+
+    def _evidence_spec_for_current_row(self) -> MatchSpec:
+        """Evidence spec for the result the cursor is on, honouring which search
+        pass produced it (see :func:`fnd.tui.match_evidence.evidence_spec_for_pass`).
+        Falls back to the strict spec when the row can't be read."""
+        pass_index = 0
+        try:
+            node = self.query_one("#results_pane", Tree).cursor_node
+            data = node.data if node is not None else None
+            if isinstance(data, dict) and data.get("kind") == "section":
+                pass_index = int(data["hit"].pass_index)
+        except Exception:
+            pass_index = 0
+        return evidence_spec_for_pass(
+            pass_index,
+            strict=self._effective_evidence_spec,
+            painting=self._effective_match_spec,
+        )
 
     def _dispatch_apps_notice(self, message: str) -> None:
         """Route a notice from fnd.apps through the right UI surface.
@@ -785,10 +835,10 @@ class FNDApp(App[None]):
         nav = getattr(self, "_match_nav", None)
         if (
             nav is not None
-            and nav.count
             and overlay_hint is None
             and not self._reading_mode
             and ctx in ("results", "preview")
+            and nav.current_chunk_has_stops()
         ):
             contextual = (("n/b", "Matches"), *contextual)
 
@@ -1479,6 +1529,20 @@ class FNDApp(App[None]):
         preview pane then renders the plain document with no yellow /
         orange overlays and no scrollbar match markers."""
         return self._search.match_spec if self._search.highlights_enabled else MatchSpec()
+
+    @property
+    def _effective_evidence_spec(self) -> MatchSpec:
+        """The MatchSpec that decides whether a result can show the user their
+        match (:mod:`fnd.tui.match_evidence`).
+
+        Same as :meth:`_effective_match_spec` but without AUTO-fuzzy. Painting
+        is deliberately generous — a query for "test" highlights "best" and
+        "rest" at edit distance 1 so a typo still lands somewhere. Those are not
+        evidence: judging visibility by them reported "your match is here" over
+        a paragraph containing nothing the user typed, which is precisely the
+        complaint this work exists to fix.
+        """
+        return self._search.evidence_spec if self._search.highlights_enabled else MatchSpec()
 
     def action_toggle_highlights(self) -> None:
         self._search.toggle_highlights()

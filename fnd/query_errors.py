@@ -67,6 +67,32 @@ class UnknownFilterValueError(QueryError):
         return self.suggestions[0] if len(self.suggestions) == 1 else None
 
 
+class MissingFilterValueError(UnknownFilterValueError):
+    """A required scope the user didn't name at all.
+
+    Same shape as an unrecognised value so the CLI's report-and-offer path
+    handles it unchanged — the difference is only what the one-liner says and
+    what it proposes. Used where naming nothing must not silently widen: a
+    reindex covering every collection is a minutes-long rebuild, so it has to
+    be asked for rather than defaulted into.
+    """
+
+    def __init__(
+        self,
+        *,
+        label: str,
+        flag: str,
+        proposal: str,
+        known: Sequence[str] = (),
+    ) -> None:
+        super().__init__(label=label, value="", suggestions=[proposal], known=known, flag=flag)
+        self.message = f"no {label} given"
+
+    @property
+    def hint(self) -> str | None:
+        return f"name one, or {self.flag} {self.correction} for every {self.label}"
+
+
 class QueryTooLargeError(QueryError):
     """Query exceeds the size / complexity bounds in :mod:`fnd.extract._limits`.
     Defensive today — the local user is the only author — but pinned so any

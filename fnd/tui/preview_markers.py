@@ -23,23 +23,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from fnd.render import text_has_any_match
+from fnd.tui.match_evidence import rendered_text
 
 if TYPE_CHECKING:
     from fnd.matching import MatchSpec
     from fnd.query import FileChunk
-
-
-def _chunk_source(chunk: FileChunk) -> str:
-    """The text whose line count stands in for the chunk's rendered height.
-
-    Prefers ``body_md`` (what the structural renderer mounts). Falls back to
-    block text joined on newlines for stale chunks with empty ``body_md`` —
-    a rough basis, but those are the defensive path, not the common one.
-    """
-    body = getattr(chunk, "body_md", "") or ""
-    if body:
-        return body
-    return "\n".join((getattr(b, "text", "") or "") for b in chunk.blocks)
 
 
 def structural_match_lines(chunks: list[FileChunk], spec: MatchSpec) -> tuple[list[int], int]:
@@ -47,10 +35,14 @@ def structural_match_lines(chunks: list[FileChunk], spec: MatchSpec) -> tuple[li
 
     The total is the summed line count across all chunks (the scroll-track
     length in source-line units). Each matched chunk contributes one position:
-    the first body line that matches, or — when only the block text matches
-    (serialisation differed) — the chunk's top line. No-match / empty-query
-    input yields ``([], total)`` so the caller clears stale markers while
-    keeping a sane track length.
+    the first rendered line that matches. No-match / empty-query input yields
+    ``([], total)`` so the caller clears stale markers while keeping a sane
+    track length.
+
+    A chunk whose match exists only in text the renderer does NOT mount
+    contributes nothing. It used to contribute a marker at the chunk's top line,
+    which put a mark on the track pointing at a place with no highlight — the
+    scrollbar promising a match the pane could never show.
     """
     match_lines: list[int] = []
     cursor = 0
@@ -58,15 +50,13 @@ def structural_match_lines(chunks: list[FileChunk], spec: MatchSpec) -> tuple[li
         # splitlines() (not split("\n")) so a trailing newline doesn't add a
         # phantom line and an empty source counts as 0 lines, not 1 — both keep
         # the total / fractions closer to the rendered row count.
-        lines = _chunk_source(c).splitlines()
+        # rendered_text: the substrate the renderer actually mounts, so a
+        # marker can never point at a line the pane won't paint.
+        lines = rendered_text(c).splitlines()
         local = next(
             (i for i, ln in enumerate(lines) if text_has_any_match(ln, spec)),
             None,
         )
-        if local is None and any(
-            text_has_any_match(getattr(b, "text", "") or "", spec) for b in c.blocks
-        ):
-            local = 0
         if local is not None:
             match_lines.append(cursor + local)
         cursor += len(lines)

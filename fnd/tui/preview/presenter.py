@@ -479,6 +479,14 @@ class PreviewPresenter:
         # _arm_paint_check) — the single place that verifies the OUTCOME rather
         # than one mechanism, so no seam can strand the pane indefinitely.
         self._arm_paint_check()
+        # Refresh the preview's border indicator for the NEW target. Arming is
+        # the one event common to every navigation; the indicator was otherwise
+        # driven only by a document mount (``refresh_match_scrollbar`` →
+        # ``MatchNavigator.rebuild``) and by scroll events, so stepping between
+        # section rows of the SAME file refreshed nothing — and a row whose
+        # chunk has no match doesn't even scroll, so the border kept displaying
+        # the previous row's state.
+        self._app.call_after_refresh(self._app._refresh_preview_match_indicator)
 
         chunks = self.chunk_cache.get(parent_id)
         if chunks is not None:
@@ -1140,6 +1148,38 @@ class PreviewPresenter:
 
     def diag_log(self, msg: str) -> None:
         self._app._diag_log(msg)
+
+    def above_window_pending(self, focus_chunk_seq: int) -> bool:
+        """Is content still to arrive ABOVE the focus chunk?
+
+        True while any chunk of the mount window above the focus chunk is either
+        not mounted yet or still building. Both matter, and the first is the one
+        that is easy to miss: navigating backwards into a file mounts that window
+        *after* the scroll is first attempted, so a check over the widgets that
+        happen to be mounted sees nothing pending and commits a scroll the
+        arriving content then pushes down.
+
+        This is the same guarantee ``_finalize_via_lock`` gets from its
+        ``expected_above_seqs``; the difference is only that the scroll strategy
+        can't know the window, so it asks the presenter, which does.
+        """
+        container = self.active
+        if container is None:
+            return False
+        chunks = self.chunk_cache.get(container.parent_doc_id)
+        if not chunks:
+            return False
+        focus_idx = next((i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq), None)
+        if focus_idx is None:
+            return False
+        for i in range(max(0, focus_idx - tuning.VISIBLE_FIRST_ABOVE), focus_idx):
+            widget = container.chunk_widgets.get(chunks[i].chunk_seq)
+            if widget is None:
+                return True
+            build_done = getattr(widget, "build_done", None)
+            if build_done is not None and not build_done.is_set():
+                return True
+        return False
 
     def call_after_refresh(self, callback: Callable[..., Any], *args: Any, **kwargs: Any) -> object:
         return self._app.call_after_refresh(callback, *args, **kwargs)
@@ -1815,8 +1855,19 @@ class PreviewPresenter:
             # Establish the focused window indices (clamped to chunks).
             focus_idx = next(
                 (i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq),
-                0,
+                -1,
             )
+            if focus_idx < 0:
+                # The requested chunk isn't in the decoded list (a file past the
+                # 5000-chunk decode ceiling, or hit/decode skew). Mounting around
+                # chunk 0 and saying nothing let the user believe they were
+                # looking at their result; the scroll then never finds a header
+                # for the requested seq either. Say so, then fall back.
+                self.diag_log(
+                    f"mount seq={focus_chunk_seq} miss=not-in-decoded-chunks "
+                    f"chunks={len(chunks)} — falling back to the first chunk"
+                )
+                focus_idx = 0
             win_start = max(0, focus_idx - tuning.VISIBLE_FIRST_ABOVE)
             win_end = min(len(chunks), focus_idx + tuning.VISIBLE_FIRST_BELOW + 1)
 
