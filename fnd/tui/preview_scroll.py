@@ -34,8 +34,14 @@ _ABOVE_STABLE_TICKS = 2
 # waiting and commits anyway. Without it a chunk whose layout keeps moving —
 # a heavy table/fence page — could hold the scroll for the whole budget, and a
 # match that lands late is worse than one that lands a few rows off: measured
-# an 864ms tail before this bound, ~130ms after.
-_ABOVE_WAIT_FLOOR = 22
+# an 864ms tail before this bound.
+#
+# Deliberately tight. The gate needs three iterations to see _ABOVE_STABLE_TICKS
+# consecutive stable heights, so four deferrals is one spare — anything more is
+# latency the settle waits on, and _settled gates lazy-mount and prefetch as well
+# as the scroll. A looser bound delayed both far enough to fail CI (a Reading
+# View re-wrap, which re-lays out every chunk, and a prefetch waiting on settle).
+_ABOVE_WAIT_FLOOR = 26
 
 
 @dataclass(frozen=True, slots=True)
