@@ -15,7 +15,8 @@ from pathlib import Path
 
 import pytest
 from textual.geometry import Region
-from textual.pilot import Pilot
+from textual.pilot import Pilot, WaitForScreenTimeout
+from textual.widget import Widget
 from textual.widgets import DataTable, Tree
 
 from fnd.config import Config, Defaults, RankingProfileConfig
@@ -24,7 +25,7 @@ from fnd.query import FileGroup
 from fnd.tui import FNDApp
 from fnd.tui.line_buffer import LineBufferPreview
 from fnd.tui.preview.presenter import PreviewPresenter
-from tests._pilot_wait import safe_pause, settle, wait_until
+from tests._pilot_wait import safe_pause, settle, wait_stable, wait_until
 
 
 @pytest.fixture
@@ -491,7 +492,16 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
             timeout=20.0,
             message="match scroll never landed after the controller settled",
         )
-        await settle(pilot)
+        # is_settling clears when the scroll is ISSUED, not when it lands: the
+        # scroll may still be animating, and the reveal + the lazy-mount gate it
+        # unblocks both move the viewport afterwards. Gate on the offset holding
+        # still — a fixed settle here is what let the assertion read mid-glide.
+        await wait_stable(
+            pilot,
+            lambda: pane.scroll_offset.y,
+            timeout=20.0,
+            message="scroll never stopped moving after the controller settled",
+        )
         region = match_region()
         assert region is not None, "content match widget never laid out"
         top, bottom = pane.region.y, pane.region.y + pane.region.height
@@ -536,6 +546,24 @@ def _top_chunk_seq(app: FNDApp) -> int | None:
     return None
 
 
+async def _reading_reflow_landed(pilot: Pilot[None], app: FNDApp, pane: Widget) -> None:
+    """Wait out a Reading View toggle: the widen re-wraps asynchronously and the
+    controller re-applies its restore across an unbounded number of refreshes,
+    so gate on the restore reporting done, then on the scroll holding still."""
+    await wait_until(
+        pilot,
+        lambda: not app._preview_scroll.is_restoring,
+        timeout=20.0,
+        message="reading-view reflow restore never finished",
+    )
+    await wait_stable(
+        pilot,
+        lambda: (pane.scroll_offset.y, pane.virtual_size.height),
+        timeout=20.0,
+        message="preview never stopped re-wrapping after the toggle",
+    )
+
+
 @pytest.mark.asyncio
 async def test_reading_view_preserves_match_position(tmp_path: Path, tmp_index_dir: Path) -> None:
     """Toggling Reading View (full-width reflow) keeps the match on screen when
@@ -562,7 +590,7 @@ async def test_reading_view_preserves_match_position(tmp_path: Path, tmp_index_d
         match_seq = anchor.focus_chunk_seq
 
         app.action_toggle_reading_mode()
-        await settle(pilot, ticks=12)
+        await _reading_reflow_landed(pilot, app, pane)
 
         assert app._reading_mode is True
         c = app._preview.active
@@ -578,6 +606,57 @@ async def test_reading_view_preserves_match_position(tmp_path: Path, tmp_index_d
         assert overlaps_viewport, (
             f"match chunk {match_seq} (region={w.region}) left the viewport "
             f"[{vtop}, {vbot}) after the Reading View toggle"
+        )
+
+
+@pytest.mark.asyncio
+async def test_reading_view_preserves_match_position_under_a_degraded_pause(
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The load-spike shape, made deterministic.
+
+    A saturated CI runner makes ``pilot.pause()`` hit Textual's internal
+    ``_wait_for_screen`` timeout; ``safe_pause`` swallows it into a few
+    ``asyncio.sleep(0)`` yields, so a fixed-tick settle flushes almost no
+    refreshes. Forcing that timeout on every pause reproduced the CI failure of
+    the sibling test above on all three OSes; gating on the restore instead of
+    on a tick count survives it."""
+
+    async def _always_times_out(self: Pilot[None], delay: float | None = None) -> None:
+        raise WaitForScreenTimeout()
+
+    monkeypatch.setattr(Pilot, "pause", _always_times_out)
+    index = _reading_doc(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin-anchor")
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one("#preview_pane")
+        await wait_until(
+            pilot,
+            lambda: (
+                app._preview.active is not None
+                and pane.scroll_y > 0
+                and _top_chunk_seq(app) is not None
+            ),
+            timeout=30.0,
+            message="structural preview never scrolled to match",
+        )
+        anchor = app._preview_scroll.anchor
+        assert anchor is not None
+        match_seq = anchor.focus_chunk_seq
+
+        app.action_toggle_reading_mode()
+        await _reading_reflow_landed(pilot, app, pane)
+
+        c = app._preview.active
+        assert c is not None
+        w = c.chunk_widgets.get(match_seq)
+        assert w is not None
+        vtop = pane.scrollable_content_region.y
+        vbot = vtop + pane.scrollable_content_region.height
+        overlaps_viewport = w.region.y < vbot and w.region.y + w.region.height > vtop
+        assert overlaps_viewport, (
+            f"match chunk {match_seq} (region={w.region}) left the viewport "
+            f"[{vtop}, {vbot}) under a degraded pause"
         )
 
 
@@ -609,7 +688,7 @@ async def test_reading_view_preserves_scrolled_position(
         assert before is not None
 
         app.action_toggle_reading_mode()
-        await settle(pilot, ticks=12)
+        await _reading_reflow_landed(pilot, app, pane)
 
         after = _top_chunk_seq(app)
         assert after == before, (

@@ -12,13 +12,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from textual.pilot import Pilot
 from textual.widgets import Tree
 
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.preview_scrollbar import MatchAwareScroll
-from tests._pilot_wait import wait_until
+from tests._pilot_wait import safe_pause, safe_press, wait_until
 
 # One file, two matching results: a tall flashcards table (CRC far apart → a
 # match a screenful below the fold = multi-view) and a short paragraph (one CRC,
@@ -62,14 +63,21 @@ def _stops(app: FNDApp) -> int:
     return len(app._match_nav._chunk_stops(pane))
 
 
-async def _walk_to(pilot: object, app: FNDApp, want: Callable[[int], bool], key: str) -> bool:
-    """Press ``key`` until the current result's stop count satisfies ``want``."""
+async def _walk_to(pilot: Pilot[None], app: FNDApp, want: Callable[[int], bool], key: str) -> bool:
+    """Press ``key`` until the current result's stop count satisfies ``want``.
+
+    Each press is followed by a wall-clock wait for the stop count to react, not
+    a tick count: under load a fixed run of pauses degrades to no-op yields, the
+    preview hasn't remounted, and the walk presses straight past the result."""
     for _ in range(10):
         if want(_stops(app)):
             return True
-        await pilot.press(key)  # type: ignore[attr-defined]
-        for _ in range(14):
-            await pilot.pause()  # type: ignore[attr-defined]
+        await safe_press(pilot, key)
+        try:
+            await wait_until(pilot, lambda: want(_stops(app)), timeout=10.0)
+        except AssertionError:
+            continue
+        return True
     return want(_stops(app))
 
 
@@ -79,7 +87,7 @@ async def test_markers_track_current_result_across_switches(
 ) -> None:
     app = FNDApp(index_dir=two_result_index, config=cfg, collection="notes", initial_query="CRC")
     async with app.run_test(size=(100, 30)) as pilot:
-        await pilot.pause()
+        await safe_pause(pilot)
         app.query_one("#results_pane", Tree).focus()
         nav = app._match_nav
 
