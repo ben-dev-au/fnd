@@ -65,7 +65,7 @@ async def wait_stable(
     timeout: float = 10.0,
     message: str = "",
 ) -> None:
-    """Wait until ``sample()`` is unchanged across ``rounds`` consecutive pauses.
+    """Wait until ``sample()`` is unchanged across ``rounds`` consecutive rounds.
 
     The event-gated replacement for ``settle(pilot, ticks=N)``: a tick count
     assumes each ``safe_pause`` flushes a refresh, but a load spike degrades it

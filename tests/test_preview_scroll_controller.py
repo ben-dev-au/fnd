@@ -218,6 +218,7 @@ class _FakeHost:
         self._match_targets = match_targets
         self.diag_msgs: list[str] = []
         self.deferred: list[tuple[object, tuple[object, ...]]] = []
+        self.pending_layout = False
 
     def preview_pane(self) -> _FakePane:
         return self._pane
@@ -241,6 +242,9 @@ class _FakeHost:
     def above_window_pending(self, focus_chunk_seq: int) -> bool:
         # Fakes lay out synchronously, so nothing is ever still arriving above.
         return False
+
+    def layout_pending(self) -> bool:
+        return self.pending_layout
 
     def diag_log(self, msg: str) -> None:
         self.diag_msgs.append(msg)
@@ -496,6 +500,42 @@ def test_structural_restore_extends_its_budget_while_the_layout_still_moves() ->
 
     assert refreshes > 12, "a still-moving reflow must outlast the base budget"
     assert finished == [True], "the restore must still report done at the ceiling"
+
+
+def test_structural_restore_outlasts_a_mid_reflow_plateau() -> None:
+    # The re-wrap's progress plateaus: virtual_region.y holds still for a
+    # stretch, then jumps once the wrap lands. Extending only while the number
+    # moves stops mid-plateau and lands a chunk off — so the screen's own
+    # layout-pending flag is what decides, not the geometry.
+    w = _FakeWidget(Region(0, 100, 80, 40), virtual_region=Region(0, 200, 80, 40))
+    pane = _FakePane(height=40)
+    host = _FakeHost(pane, chunk_widgets={5: w}, match_targets={})
+    host.pending_layout = True  # the screen is still re-wrapping…
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+    finished: list[bool] = []
+
+    strat.scroll_to_location(
+        ViewportLocation("structural", chunk_seq=5, offset=6),
+        lambda: finished.append(True),
+    )
+    # …and vy never changes, so a value-stability test would call it done.
+    refreshes = 0
+    while host.deferred and refreshes < 40:
+        cb, args = host.deferred.pop(0)
+        assert callable(cb)
+        cb(*args)
+        refreshes += 1
+
+    assert refreshes > 12, "a plateau with layout still pending must not end the restore"
+    assert finished == [], "the restore must still be running while layout is pending"
+
+    # The wrap lands: the chunk moves and the screen goes idle.
+    host.pending_layout = False
+    w.virtual_region = Region(0, 260, 80, 40)
+    _drain(host)
+
+    assert finished == [True]
+    assert pane.scrolled_to_y == 266, "the final apply must land on the settled layout"
 
 
 def test_structural_restore_reports_done_once_the_layout_settles() -> None:

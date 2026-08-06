@@ -271,6 +271,7 @@ class StructuralHost(Protocol):
     ) -> object: ...
     def diag_log(self, msg: str) -> None: ...
     def above_window_pending(self, focus_chunk_seq: int) -> bool: ...
+    def layout_pending(self) -> bool: ...
 
     @property
     def chunk_widgets(self) -> dict[int, Widget]: ...
@@ -840,13 +841,18 @@ class StructuralScrollStrategy:
         # first scroll. Re-apply on every refresh for the whole budget (do NOT
         # early-stop: the position is stale-stable for a stretch, then jumps
         # once the re-wrap lands), re-reading it each time so the final applies
-        # land on the settled layout. A layout STILL moving when the budget
-        # runs out earns another budget, capped by the ceiling — on a loaded
-        # machine the re-wrap outruns a fixed count, and losing the restore
-        # entirely is worse than spending a few more refreshes on it.
+        # land on the settled layout. A reflow that has NOT finished when the
+        # budget runs out earns another budget, capped by the ceiling: on a
+        # loaded machine the re-wrap outruns a fixed count, and losing the
+        # restore entirely is worse than a few more refreshes.
+        #
+        # "Not finished" must ask the screen, not the numbers. The re-wrap's
+        # progress plateaus — vy holds still for a stretch, then jumps once the
+        # wrap lands — so extending only while vy moves stops mid-plateau,
+        # exactly the trap await_settled documents.
         if retries > 0:
             remaining = retries - 1
-        elif vy != last_vy and spent < _RESTORE_CEILING:
+        elif (vy != last_vy or self._host.layout_pending()) and spent < _RESTORE_CEILING:
             remaining = _RESTORE_REFRESHES
         else:
             done()
