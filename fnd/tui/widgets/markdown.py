@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
 from textual import events
@@ -30,7 +31,7 @@ from fnd.matching import MatchSpec, phrase_char_spans
 from fnd.render import (
     DIM_STYLES,
     HIGHLIGHT_STYLE,
-    match_word_spans,
+    match_word_spans_multi,
     phrase_gap_spans,
 )
 from fnd.tui.mermaid_render import MermaidRenderer
@@ -100,18 +101,31 @@ def _build_match_spans(plain: str, spec: MatchSpec) -> list[Span]:
     """
     if spec.is_empty or not plain:
         return []
-    spans: list[Span] = []
-    covered: set[int] = set()
-    for a, b, style in match_word_spans(plain, spec):
-        spans.append(Span(a, b, style))
-        covered.update(range(a, b))
-    # Phrase highlighting (quoted phrase, or a stopword between content words)
-    # fills only the GAPS between term spans — never overlaps them. Textual's
-    # Content drops overlapping differently-styled spans, so an overlapping
-    # phrase span in multi-colour mode would blank the whole word.
-    for start, end in phrase_gap_spans(phrase_char_spans(plain, spec), covered):
-        spans.append(Span(start, end, HIGHLIGHT_STYLE))
-    return spans
+    return _build_match_spans_multi((plain,), spec)[0]
+
+
+def _build_match_spans_multi(plains: Sequence[str], spec: MatchSpec) -> list[list[Span]]:
+    """Per-segment highlight spans with the proximity window computed across the
+    WHOLE sequence — see :func:`fnd.render.match_word_spans_multi`. Segments are
+    the consecutive blocks of one chunk."""
+    if spec.is_empty:
+        return [[] for _ in plains]
+    out: list[list[Span]] = []
+    for plain, runs in zip(plains, match_word_spans_multi(plains, spec), strict=True):
+        spans: list[Span] = []
+        covered: set[int] = set()
+        for a, b, style in runs:
+            spans.append(Span(a, b, style))
+            covered.update(range(a, b))
+        # Phrase highlighting (quoted phrase, or a stopword between content words)
+        # fills only the GAPS between term spans — never overlaps them. Textual's
+        # Content drops overlapping differently-styled spans, so an overlapping
+        # phrase span in multi-colour mode would blank the whole word. Phrases stay
+        # block-local: a quoted phrase is contiguous by definition.
+        for start, end in phrase_gap_spans(phrase_char_spans(plain, spec), covered):
+            spans.append(Span(start, end, HIGHLIGHT_STYLE))
+        out.append(spans)
+    return out
 
 
 def _spans_have_full_match(spans: list[Span]) -> bool:
@@ -153,13 +167,13 @@ def _record_first_match(block: MarkdownBlock, spans: list[Span]) -> None:
 
 
 def _apply_highlights_after_build(block: MarkdownBlock) -> None:
-    """Common ``build_from_token`` postlude shared by every highlight-
-    aware subclass: pull ``match_spec`` off the parent FNDMarkdown,
-    compute spans against ``block._content.plain``, and replace the
-    block's content with the span-augmented version. No-op when the
-    parent isn't an FNDMarkdown (e.g. the stock Markdown widget the
-    help overlay uses) or when the spec is empty."""
+    """``build_from_token`` postlude for a block whose parent is NOT an
+    ``FNDMarkdown`` — the stock Markdown widget the help overlay uses. Blocks
+    under an FNDMarkdown are highlighted chunk-wide instead, by
+    :func:`apply_chunk_highlights`, so a proximity window can straddle them."""
     md = block._markdown
+    if isinstance(md, FNDMarkdown):
+        return
     spec = getattr(md, "match_spec", None)
     if spec is None or spec.is_empty:
         return
@@ -168,6 +182,75 @@ def _apply_highlights_after_build(block: MarkdownBlock) -> None:
         return
     block.set_content(block._content.add_spans(spans))
     _record_first_match(block, spans)
+
+
+def _block_plain(block: MarkdownBlock) -> str:
+    """A block's own rendered text. Fences carry theirs on ``_highlighted_code``
+    (the syntax-coloured code, or the mermaid art we deliberately match against
+    instead of the diagram source); every other block carries it on ``_content``.
+    Container blocks — lists, table wrappers — own no text of their own."""
+    code = getattr(block, "_highlighted_code", None)
+    if code is not None:
+        return str(code.plain)
+    return str(block._content.plain)
+
+
+def _content_blocks(blocks: Iterable[MarkdownBlock]) -> Iterator[MarkdownBlock]:
+    """Depth-first, document order, yielding only blocks that own text.
+
+    Walks ``_blocks`` rather than the DOM because a table's ``MarkdownTH`` /
+    ``MarkdownTD`` cells are consumed into a DataTable by
+    ``FNDMarkdownTableDT.compose`` and are never mounted — a post-mount query
+    would miss exactly the cells where a cross-boundary window is most common.
+    No block has both own text and children, so nothing is counted twice."""
+    for block in blocks:
+        children = getattr(block, "_blocks", None)
+        if children:
+            yield from _content_blocks(children)
+        elif _block_plain(block):
+            yield block
+
+
+def _set_block_spans(block: MarkdownBlock, spans: list[Span]) -> None:
+    """Apply ``spans`` to ``block`` and cache them on it.
+
+    The cache is what survives a fence's ``notify_style_update``: that rebuilds
+    ``_highlighted_code`` from scratch and drops every span, so without it the
+    fence would silently fall back to recomputing block-locally — the very scope
+    this pass exists to widen."""
+    block._fnd_match_spans = spans  # type: ignore[attr-defined]
+    if not spans:
+        return
+    code = getattr(block, "_highlighted_code", None)
+    if code is not None:
+        block._highlighted_code = code.add_spans(spans)  # type: ignore[attr-defined]
+        block.set_content(block._highlighted_code)  # type: ignore[attr-defined]
+    else:
+        block.set_content(block._content.add_spans(spans))
+    _record_first_match(block, spans)
+
+
+def apply_chunk_highlights(md: FNDMarkdown, blocks: list[MarkdownBlock]) -> None:
+    """Bake match highlights across a whole chunk in ONE two-tier decision.
+
+    A proximity window is scoped to the chunk — the unit the index matched the
+    slop-phrase in — not to a single block. Highlighting block-by-block made the
+    token positions restart at every paragraph and list item, so a genuine
+    ``{N}`` co-occurrence split across two blocks could never qualify and both
+    terms rendered dimmed at any slop.
+
+    Runs pre-mount, off the parsed block tree, so ``set_content`` costs no
+    layout and the table cells are still reachable."""
+    spec = getattr(md, "match_spec", None)
+    if spec is None or spec.is_empty:
+        return
+    targets = list(_content_blocks(blocks))
+    if not targets:
+        return
+    for block, spans in zip(
+        targets, _build_match_spans_multi([_block_plain(b) for b in targets], spec), strict=True
+    ):
+        _set_block_spans(block, spans)
 
 
 def _apply_inline_code_highlights(block: MarkdownBlock) -> None:
@@ -301,9 +384,10 @@ class FNDMarkdownFence(MarkdownFence):
 
     def __init__(self, markdown: Markdown, token: Any, code: str) -> None:
         super().__init__(markdown, token, code)
-        if self._try_render_mermaid(token, code):
-            return
-        self._apply_fence_highlights()
+        # Highlights are baked chunk-wide after the whole block tree is parsed
+        # (``apply_chunk_highlights``) so a proximity window can span the fence
+        # and its neighbours; nothing to do per-fence here.
+        self._try_render_mermaid(token, code)
 
     def _try_render_mermaid(self, token: Any, code: str) -> bool:
         self._mermaid_code: str | None = None
@@ -316,14 +400,14 @@ class FNDMarkdownFence(MarkdownFence):
             return False
         self._mermaid_code = code
         self.add_class("mermaid-diagram")
+        # The art lands on ``_highlighted_code`` before the chunk pass runs, so
+        # matches overlay the *art*, not the fence source. The art is derived
+        # from the source, so a term in a node label survives into it and
+        # highlights like any other text; a term living only in mermaid syntax
+        # (arrows, node ids) does not, and must not register as a match stop —
+        # n/b and the ▲/▼ counts would then point at a diagram with nothing
+        # visibly highlighted.
         self._set_diagram_content(art)
-        # Overlay matches on the *art*, not on the fence source. The art is
-        # derived from the source, so a term in a node label survives into it
-        # and highlights like any other text; a term living only in mermaid
-        # syntax (arrows, node ids) does not, and must not register as a match
-        # stop — n/b and the ▲/▼ counts would then point at a diagram with
-        # nothing visibly highlighted.
-        self._apply_fence_highlights()
         return True
 
     def _set_diagram_content(self, art: Text) -> None:
@@ -343,24 +427,30 @@ class FNDMarkdownFence(MarkdownFence):
             art = _MERMAID_RENDERER.render(code)
             if art is not None:
                 self._set_diagram_content(art)
-                self._apply_fence_highlights()
+                self._reapply_cached_highlights()
                 return
             # Re-render failed — this is no longer a diagram: drop the
             # diagram-only styling (hscroll/no-wrap) before falling back.
             self.remove_class("mermaid-diagram")
             self._mermaid_code = None
-        self._apply_fence_highlights()
+        self._reapply_cached_highlights()
 
-    def _apply_fence_highlights(self) -> None:
-        spec = getattr(self._markdown, "match_spec", None)
-        if spec is None or spec.is_empty:
-            return
-        spans = _build_match_spans(self._highlighted_code.plain, spec)
+    def _reapply_cached_highlights(self) -> None:
+        """Re-add the chunk-scoped spans the base class just threw away.
+
+        ``notify_style_update`` rebuilds ``_highlighted_code`` from scratch on
+        every theme change (and fires several times during the initial mount),
+        dropping all spans. Recomputing here would use the fence's own text
+        alone, undoing the chunk-wide proximity scope — so replay the cache
+        instead. The length guard catches the one case the cache can go stale:
+        a mermaid re-render producing different art."""
+        spans = getattr(self, "_fnd_match_spans", None)
         if not spans:
+            return
+        if max(s.end for s in spans) > len(self._highlighted_code.plain):
             return
         self._highlighted_code = self._highlighted_code.add_spans(spans)
         self.set_content(self._highlighted_code)
-        _record_first_match(self, spans)
 
 
 class FNDMarkdownTableDT(MarkdownTable):
@@ -437,8 +527,15 @@ class FNDMarkdownTableDT(MarkdownTable):
         for row in row_texts:
             dt.add_row(*row, height=None)
         md = self._markdown
-        spec = getattr(md, "match_spec", None) or MatchSpec()
-        matches = _find_match_coords_in_table(headers, rows, spec)
+        # Tiers come from the cells' cached chunk-scoped spans, so a window
+        # spanning two cells of a row counts as full — see
+        # ``_match_coords_from_blocks``. Falls back to the spec-derived scan for
+        # a non-FNDMarkdown parent, which never ran the chunk pass.
+        if isinstance(md, FNDMarkdown):
+            matches = _match_coords_from_blocks(self)
+        else:
+            spec = getattr(md, "match_spec", None) or MatchSpec()
+            matches = _find_match_coords_in_table(headers, rows, spec)
         # Full-match cells (dim proximity strays skipped) so match-nav hops
         # only between genuine hits; the first match stays the scroll target.
         dt._fnd_match_coords = [Coordinate(*rc) for rc, full in matches if full]  # type: ignore[attr-defined]
@@ -619,33 +716,82 @@ def _find_match_coords_in_table(
             return None
         return (not prox) or text_has_full_match(plain, spec)
 
-    # Header hits and a first-data-row hit both map to ``(0, col)`` (the header
-    # has no cursor coordinate of its own), so a match in both would emit the
-    # coordinate twice — inflating the count and making n/b land on it twice.
-    # Merge by coordinate, keeping the strongest tier (full beats dim-only) and
-    # first-seen order (headers before rows).
+    return _merge_cell_tiers(
+        [_tier(getattr(h, "plain", "") or "") for h in headers],
+        [[_tier(getattr(c, "plain", "") or "") for c in row] for row in rows],
+    )
+
+
+def _merge_cell_tiers(
+    header_tiers: list[bool | None], row_tiers: list[list[bool | None]]
+) -> list[tuple[tuple[int, int], bool]]:
+    """Fold per-cell tiers (``None`` no match · ``True`` full · ``False`` dim-only)
+    into ``((row, col), is_full)`` coordinates, full matches first.
+
+    Header hits and a first-data-row hit both map to ``(0, col)`` (the header has
+    no cursor coordinate of its own), so a match in both would emit the
+    coordinate twice — inflating the count and making n/b land on it twice.
+    Merge by coordinate, keeping the strongest tier (full beats dim-only) and
+    first-seen order (headers before rows)."""
     tier_by_coord: dict[tuple[int, int], bool] = {}
     order: list[tuple[int, int]] = []
-    for col, h in enumerate(headers):
-        tier = _tier(getattr(h, "plain", "") or "")
-        if tier is not None:
-            if (0, col) not in tier_by_coord:
-                order.append((0, col))
-            tier_by_coord[(0, col)] = tier_by_coord.get((0, col), False) or bool(tier)
-    for r_idx, row in enumerate(rows):
-        for c_idx, cell in enumerate(row):
-            tier = _tier(getattr(cell, "plain", "") or "")
-            if tier is not None:
-                if (r_idx, c_idx) not in tier_by_coord:
-                    order.append((r_idx, c_idx))
-                tier_by_coord[(r_idx, c_idx)] = tier_by_coord.get((r_idx, c_idx), False) or bool(
-                    tier
-                )
+
+    def _add(coord: tuple[int, int], tier: bool | None) -> None:
+        if tier is None:
+            return
+        if coord not in tier_by_coord:
+            order.append(coord)
+        tier_by_coord[coord] = tier_by_coord.get(coord, False) or bool(tier)
+
+    for col, tier in enumerate(header_tiers):
+        _add((0, col), tier)
+    for r_idx, row in enumerate(row_tiers):
+        for c_idx, tier in enumerate(row):
+            _add((r_idx, c_idx), tier)
     out = [(coord, tier_by_coord[coord]) for coord in order]
     # Full matches first (stable within tier) so the single scroll target and
     # the first nav stop prefer a real co-occurrence over a dim-only stray.
     out.sort(key=lambda t: not t[1])
     return out
+
+
+def _match_coords_from_blocks(table: Any) -> list[tuple[tuple[int, int], bool]]:
+    """Table match coordinates derived from the cells' CACHED chunk-scoped spans.
+
+    The spec-derived :func:`_find_match_coords_in_table` re-tests each cell's
+    text on its own, which reinstates the per-block window the chunk pass exists
+    to widen — a ``{N}`` co-occurrence split across two cells of one row would
+    sort as dim-only. Reading the cached spans keeps the tier consistent with
+    what was actually painted."""
+    from textual.widgets._markdown import MarkdownTD, MarkdownTH, MarkdownTR
+
+    def _tier(block: MarkdownBlock) -> bool | None:
+        spans = getattr(block, "_fnd_match_spans", None)
+        if not spans:
+            return None
+        return _spans_have_full_match(spans)
+
+    header_tiers: list[bool | None] = []
+    row_tiers: list[list[bool | None]] = []
+    for block in _flatten_blocks(table):
+        if isinstance(block, MarkdownTH):
+            header_tiers.append(_tier(block))
+        elif isinstance(block, MarkdownTR):
+            row_tiers.append([])
+        elif isinstance(block, MarkdownTD):
+            row_tiers[-1].append(_tier(block))
+    if row_tiers and not row_tiers[-1]:
+        row_tiers.pop()
+    return _merge_cell_tiers(header_tiers, row_tiers)
+
+
+def _flatten_blocks(block: MarkdownBlock) -> Iterator[MarkdownBlock]:
+    """Depth-first walk of ``_blocks``, mirroring the order Textual's
+    ``MarkdownTable._get_headers_and_rows`` uses so cell coordinates agree."""
+    for child in block._blocks:
+        if child._blocks:
+            yield from _flatten_blocks(child)
+        yield child
 
 
 def _find_first_match_coord_in_table(
@@ -795,6 +941,15 @@ class FNDMarkdown(Markdown):
             lambda _: self.build_done.set() if self._build_gen == gen else None
         )
         return aw
+
+    def _parse_markdown(self, tokens):  # type: ignore[no-untyped-def, override]
+        # Materialise the block tree before yielding any of it: the two-tier
+        # proximity decision needs the whole chunk's text at once, and right here
+        # every block — including the TH/TD cells the table later composes away —
+        # is still reachable and unmounted, so applying spans costs no layout.
+        blocks = list(super()._parse_markdown(tokens))
+        apply_chunk_highlights(self, blocks)
+        return blocks
 
 
 def _legacy_blocks_to_md(blocks: list[Any]) -> str:

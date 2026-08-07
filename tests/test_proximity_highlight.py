@@ -267,9 +267,12 @@ def test_table_coord_falls_back_to_dim_when_no_cooccurrence():
 
 @pytest.mark.asyncio
 async def test_first_match_block_prefers_proximity_cooccurrence():
-    # Paragraph one mentions only "code" (dimmed); paragraph two carries the
+    # Paragraph one mentions only "code" (dimmed); the last paragraph carries the
     # real "exit code" co-occurrence. first_match_block must resolve to the
     # co-occurrence paragraph so the preview scrolls to the genuine match.
+    # The filler paragraph is load-bearing: the window is chunk-scoped, so
+    # without it the lone "code" would sit within slop of the later "exit" and
+    # legitimately qualify.
     from textual.app import App, ComposeResult
 
     from fnd.tui.widgets.markdown import FNDMarkdown
@@ -282,8 +285,167 @@ async def test_first_match_block_prefers_proximity_cooccurrence():
 
     async with _Harness().run_test() as pilot:
         md = pilot.app.query_one(FNDMarkdown)
-        await md.update("para one mentions code only.\n\nlater the exit code is shown.\n")
+        await md.update(
+            "para one mentions code only.\n\n"
+            "some unrelated filler text goes here to push the paragraphs apart.\n\n"
+            "later the exit code is shown.\n"
+        )
         await md.build_done.wait()
         fm = md.first_match_block
         assert fm is not None
         assert "exit code" in fm._content.plain
+
+
+# ── chunk-scoped window: a co-occurrence may straddle a block ───────
+
+
+def test_multi_single_segment_matches_the_single_segment_form():
+    # match_word_spans is now a wrapper over match_word_spans_multi; the two
+    # must not drift, for proximity and plain specs alike.
+    from fnd.render import match_word_spans, match_word_spans_multi
+
+    text = "A responsive form validation grid for mobile bootstrap layouts."
+    for query in ("responsive mobile", "{50}responsive mobile", "bootstrap", "{6}respons* mobile"):
+        spec = MatchSpec.from_query(query, auto_fuzzy=False)
+        assert match_word_spans(text, spec) == match_word_spans_multi((text,), spec)[0], query
+
+
+def test_window_spans_a_segment_boundary():
+    # The reported bug: "responsive" closes one block and "Mobile" opens the
+    # next. Scoped per block, neither could qualify at any slop.
+    from fnd.render import DIM_STYLES, match_word_spans_multi
+
+    segments = [
+        "His combined example is the standard responsive pattern:",
+        "Mobile - one column, full width.",
+    ]
+    spec = MatchSpec.from_query("{50}responsive mobile", auto_fuzzy=False)
+    runs = match_word_spans_multi(segments, spec)
+    assert [len(r) for r in runs] == [1, 1]
+    assert all(style not in DIM_STYLES for seg in runs for _a, _b, style in seg)
+
+
+def test_window_bound_still_honoured_across_segments():
+    # Widening the scope must not widen the window: push the pair past
+    # slop + (n - 1) and both fall back to dimmed.
+    from fnd.render import DIM_STYLES, match_word_spans_multi
+
+    segments = ["responsive " + "filler " * 20, "mobile here"]
+    spec = MatchSpec.from_query("{5}responsive mobile", auto_fuzzy=False)
+    runs = match_word_spans_multi(segments, spec)
+    assert [len(r) for r in runs] == [1, 1]
+    assert all(style in DIM_STYLES for seg in runs for _a, _b, style in seg)
+
+
+def test_plain_query_multi_is_per_segment_unchanged():
+    from fnd.render import match_word_spans, match_word_spans_multi
+
+    segments = ["a responsive layout", "a mobile layout"]
+    spec = MatchSpec.from_query("responsive mobile", auto_fuzzy=False)
+    assert match_word_spans_multi(segments, spec) == [match_word_spans(s, spec) for s in segments]
+
+
+def test_wildcard_member_can_qualify_a_window():
+    # DOC_WORD_RE drops the glob, so ``respons*`` used to reduce to the stem
+    # ``respon`` — a stem no document token carries — leaving every group term
+    # dimmed however close they sat.
+    from fnd.render import DIM_STYLES, match_word_spans_multi
+
+    spec = MatchSpec.from_query("{6}respons* mobile", auto_fuzzy=False)
+    assert spec.proximity_groups == ((("respons*", "mobil"), 6),)
+    runs = match_word_spans_multi(["The responsive grid is mobile first."], spec)[0]
+    assert runs, "wildcard proximity should still paint"
+    assert all(style not in DIM_STYLES for _a, _b, style in runs)
+
+
+def test_render_chunk_pieces_window_spans_lines():
+    # The plain mount highlighted per source line, so a cross-line window could
+    # never qualify there either.
+    from fnd.extract.base import Block
+    from fnd.query import FileChunk
+    from fnd.render import DIM_STYLES, render_chunk_pieces
+
+    chunk = FileChunk(
+        parent_id="x",
+        path="/x.md",
+        kind="md",
+        page=0,
+        slide=0,
+        heading_path="",
+        chunk_seq=0,
+        blocks=[
+            Block(kind="p", text="the standard responsive pattern"),
+            Block(kind="ul", text="Mobile only"),
+        ],
+    )
+    spec = MatchSpec.from_query("{50}responsive mobile", auto_fuzzy=False)
+    _header, pieces = render_chunk_pieces(chunk, match_spec=spec)
+    styles = [str(span.style) for text, _hit in pieces for span in text.spans]
+    assert styles, "both terms should paint"
+    assert all(style not in DIM_STYLES for style in styles)
+
+
+@pytest.mark.asyncio
+async def test_live_markdown_window_spans_paragraph_and_list_item():
+    # End-to-end regression for the reported bug, through the real widget: a
+    # paragraph followed by a bullet list, which Textual renders as separate
+    # blocks (the item's text lands on an inner paragraph).
+    from textual.app import App, ComposeResult
+    from textual.widgets._markdown import MarkdownBlock
+
+    from fnd.render import DIM_STYLES
+    from fnd.tui.widgets.markdown import FNDMarkdown
+
+    spec = MatchSpec.from_query("{50}responsive mobile", auto_fuzzy=False)
+
+    class _Harness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield FNDMarkdown(match_spec=spec)
+
+    async with _Harness().run_test() as pilot:
+        md = pilot.app.query_one(FNDMarkdown)
+        await md.update(
+            "His combined example is the standard responsive pattern:\n\n"
+            "- Mobile - one column, full width.\n"
+        )
+        await md.build_done.wait()
+        painted = [
+            (blk._content.plain[s.start : s.end], str(s.style))
+            for blk in md.query(MarkdownBlock)
+            for s in (getattr(blk, "_fnd_match_spans", None) or [])
+        ]
+        assert sorted(word for word, _ in painted) == ["Mobile", "responsive"]
+        assert all(style not in DIM_STYLES for _, style in painted)
+        assert md.first_match_block is not None
+
+
+@pytest.mark.asyncio
+async def test_fence_highlight_survives_style_update():
+    # notify_style_update rebuilds _highlighted_code from scratch, dropping every
+    # span. Without the cached-span replay the fence would recompute
+    # block-locally and silently undo the chunk-wide scope.
+    from textual.app import App, ComposeResult
+
+    from fnd.tui.widgets.markdown import FNDMarkdown, FNDMarkdownFence
+
+    spec = MatchSpec.from_query("responsive", auto_fuzzy=False)
+
+    class _Harness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield FNDMarkdown(match_spec=spec)
+
+    async with _Harness().run_test() as pilot:
+        md = pilot.app.query_one(FNDMarkdown)
+        await md.update("intro\n\n```css\n.responsive { width: 100%; }\n```\n")
+        await md.build_done.wait()
+        fence = md.query_one(FNDMarkdownFence)
+
+        def _match_spans():
+            plain = fence._highlighted_code.plain
+            return [
+                s for s in fence._highlighted_code.spans if "responsive" in plain[s.start : s.end]
+            ]
+
+        assert _match_spans(), "fence should carry a match span"
+        fence.notify_style_update()
+        assert _match_spans(), "match span must survive the theme rebuild"

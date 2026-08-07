@@ -90,6 +90,12 @@ def _slice(md_text: str, rng: _IslandRange) -> str:
 def _bake_match_spans_into_text(text: Text, spec: MatchSpec) -> bool:
     """Mutate ``text`` in place, adding highlight spans for query
     matches. Returns True if any span was applied.
+
+    Known limitation: the proximity window is island-scoped here, so a ``{N}``
+    co-occurrence split by a table or fence renders dimmed. The live paths use
+    ``fnd.render.match_word_spans_multi`` to widen it to the chunk; wiring that
+    in needs a two-phase rebuild of ``build_hybrid_chunk_widgets``, and this
+    prototype ships off (``_FND_W_HYBRID``).
     """
     if spec.is_empty:
         return False
