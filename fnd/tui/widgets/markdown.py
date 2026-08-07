@@ -430,9 +430,13 @@ class FNDMarkdownFence(MarkdownFence):
                 self._reapply_cached_highlights()
                 return
             # Re-render failed — this is no longer a diagram: drop the
-            # diagram-only styling (hscroll/no-wrap) before falling back.
+            # diagram-only styling (hscroll/no-wrap) before falling back. The
+            # cached spans were computed against the ART, so they address text
+            # that no longer exists; drop them rather than replay them onto the
+            # fence source at meaningless offsets.
             self.remove_class("mermaid-diagram")
             self._mermaid_code = None
+            self._fnd_match_spans = []
         self._reapply_cached_highlights()
 
     def _reapply_cached_highlights(self) -> None:
@@ -442,8 +446,9 @@ class FNDMarkdownFence(MarkdownFence):
         every theme change (and fires several times during the initial mount),
         dropping all spans. Recomputing here would use the fence's own text
         alone, undoing the chunk-wide proximity scope — so replay the cache
-        instead. The length guard catches the one case the cache can go stale:
-        a mermaid re-render producing different art."""
+        instead. The length check is a backstop against a stale cache; the one
+        case that actually invalidates it (a failed mermaid re-render) clears
+        the cache at source."""
         spans = getattr(self, "_fnd_match_spans", None)
         if not spans:
             return
@@ -778,7 +783,10 @@ def _match_coords_from_blocks(table: Any) -> list[tuple[tuple[int, int], bool]]:
             header_tiers.append(_tier(block))
         elif isinstance(block, MarkdownTR):
             row_tiers.append([])
-        elif isinstance(block, MarkdownTD):
+        # A TD before any TR means a table with no header row — not reachable
+        # through GFM, which requires the delimiter row, but an unguarded
+        # ``row_tiers[-1]`` here would take the whole preview down.
+        elif isinstance(block, MarkdownTD) and row_tiers:
             row_tiers[-1].append(_tier(block))
     if row_tiers and not row_tiers[-1]:
         row_tiers.pop()
@@ -787,7 +795,13 @@ def _match_coords_from_blocks(table: Any) -> list[tuple[tuple[int, int], bool]]:
 
 def _flatten_blocks(block: MarkdownBlock) -> Iterator[MarkdownBlock]:
     """Depth-first walk of ``_blocks``, mirroring the order Textual's
-    ``MarkdownTable._get_headers_and_rows`` uses so cell coordinates agree."""
+    ``MarkdownTable._get_headers_and_rows`` uses so cell coordinates agree.
+
+    Children are yielded BEFORE their parent, so a row's cells arrive before its
+    ``MarkdownTR``. That lag is load-bearing, not incidental: the header row's TR
+    is what opens row 0, so the first body row's TDs land in it and every
+    subsequent TR opens the next row. Switching to pre-order would shift every
+    data row down by one and leave row 0 empty."""
     for child in block._blocks:
         if child._blocks:
             yield from _flatten_blocks(child)

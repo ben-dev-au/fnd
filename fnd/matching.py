@@ -597,12 +597,16 @@ def phrase_char_spans(text: str, spec: MatchSpec) -> list[tuple[int, int]]:
 
 
 @lru_cache(maxsize=256)
-def _group_matchers(members: tuple[str, ...]) -> tuple[frozenset[str], tuple[tuple[str, str], ...]]:
+def _group_matchers(
+    members: tuple[str, ...],
+) -> tuple[frozenset[str], tuple[tuple[str, re.Pattern[str]], ...]]:
     """Split a group's members into ``(literal_stems, globs)``, where each glob is
-    ``(member, compiled_pattern_source)``. Cached: a spec is reused across every
-    block of every chunk, so the regex build must not repeat per token."""
+    ``(member, compiled_pattern)``. Cached, and the patterns are pre-compiled: a
+    spec is reused across every block of every chunk and the glob is tested per
+    document token, so neither the regex build nor a per-call lookup in ``re``'s
+    internal pattern cache should repeat per token."""
     literals = {m for m in members if "*" not in m and "?" not in m}
-    globs = tuple((m, glob_to_regex(m)) for m in members if m not in literals)
+    globs = tuple((m, re.compile(glob_to_regex(m))) for m in members if m not in literals)
     return frozenset(literals), globs
 
 
@@ -625,7 +629,7 @@ def _group_member_positions(
             positions.append((i, s))
             continue
         for member, pattern in globs:
-            if re.fullmatch(pattern, s) is not None:
+            if pattern.fullmatch(s) is not None:
                 positions.append((i, member))
                 break
     return positions, n

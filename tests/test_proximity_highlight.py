@@ -3,6 +3,8 @@ co-occurrence window render at full strength; the rest are dimmed."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 from rich.text import Text
 from textual.content import Span
@@ -358,6 +360,19 @@ def test_wildcard_member_can_qualify_a_window():
     assert all(style not in DIM_STYLES for _a, _b, style in runs)
 
 
+def test_wildcard_member_outside_the_window_dims():
+    # The mirror of the above: a glob member still has to obey the window, or
+    # "wildcards qualify" would just mean "wildcards never dim".
+    from fnd.render import DIM_STYLES, match_word_spans_multi
+
+    spec = MatchSpec.from_query("{2}respons* mobile", auto_fuzzy=False)
+    runs = match_word_spans_multi(["The responsive grid " + ("filler " * 20) + "is mobile."], spec)[
+        0
+    ]
+    assert runs, "both terms should still paint"
+    assert all(style in DIM_STYLES for _a, _b, style in runs)
+
+
 def test_render_chunk_pieces_window_spans_lines():
     # The plain mount highlighted per source line, so a cross-line window could
     # never qualify there either.
@@ -426,6 +441,7 @@ async def test_fence_highlight_survives_style_update():
     # block-locally and silently undo the chunk-wide scope.
     from textual.app import App, ComposeResult
 
+    from fnd.render import MATCH_STYLES
     from fnd.tui.widgets.markdown import FNDMarkdown, FNDMarkdownFence
 
     spec = MatchSpec.from_query("responsive", auto_fuzzy=False)
@@ -441,11 +457,63 @@ async def test_fence_highlight_survives_style_update():
         fence = md.query_one(FNDMarkdownFence)
 
         def _match_spans():
+            # Filter on the match PALETTE, not merely on covering the word: the
+            # lexer also emits a syntax span over `.responsive`, so a text-only
+            # filter would stay green even if the overlay were dropped entirely.
             plain = fence._highlighted_code.plain
             return [
-                s for s in fence._highlighted_code.spans if "responsive" in plain[s.start : s.end]
+                s
+                for s in fence._highlighted_code.spans
+                if str(s.style) in set(MATCH_STYLES) and plain[s.start : s.end] == "responsive"
             ]
 
         assert _match_spans(), "fence should carry a match span"
         fence.notify_style_update()
         assert _match_spans(), "match span must survive the theme rebuild"
+
+
+@pytest.mark.asyncio
+async def test_no_block_owns_both_text_and_children():
+    # ``_content_blocks`` yields a block's children INSTEAD of the block when it
+    # has any, which is only lossless because Textual's container blocks (lists,
+    # table wrappers) own no text of their own. Pin that invariant against a
+    # representative tree so a framework change fails here rather than silently
+    # dropping text out of the chunk-wide proximity window.
+    from textual.app import App, ComposeResult
+    from textual.widgets._markdown import MarkdownBlock
+
+    from fnd.tui.widgets.markdown import FNDMarkdown, _block_plain
+
+    def _walk(block: MarkdownBlock) -> Iterator[MarkdownBlock]:
+        yield block
+        for child in getattr(block, "_blocks", None) or []:
+            yield from _walk(child)
+
+    class _Harness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield FNDMarkdown(match_spec=MatchSpec.from_query("alpha", auto_fuzzy=False))
+
+    async with _Harness().run_test() as pilot:
+        md = pilot.app.query_one(FNDMarkdown)
+        await md.update(
+            "# Heading alpha\n\n"
+            "Paragraph alpha.\n\n"
+            "> Quoted alpha\n\n"
+            "- item alpha\n"
+            "  - nested alpha\n\n"
+            "1. ordered alpha\n\n"
+            "| H1 | H2 |\n| --- | --- |\n| c1 alpha | c2 |\n\n"
+            "```py\nalpha = 1\n```\n"
+        )
+        await md.build_done.wait()
+        seen: dict[int, object] = {}
+        for top in md.query(MarkdownBlock):
+            for b in _walk(top):
+                seen[id(b)] = b
+        assert len(seen) > 10, "expected a representative block tree"
+        offenders = [
+            type(b).__name__
+            for b in seen.values()
+            if getattr(b, "_blocks", None) and _block_plain(b)  # type: ignore[arg-type]
+        ]
+        assert offenders == [], f"container blocks must own no text: {offenders}"

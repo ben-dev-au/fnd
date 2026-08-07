@@ -211,9 +211,9 @@ def match_word_spans_multi(
     preview baker (the markdown widget, the flat/hybrid prototypes) and the
     export path routes through here, so the full-vs-dim treatment can never
     drift between rendering surfaces."""
-    per_segment = [list(DOC_WORD_RE.finditer(s)) if s else [] for s in segments]
     if spec.is_empty:
         return [[] for _ in segments]
+    per_segment = [list(DOC_WORD_RE.finditer(s)) if s else [] for s in segments]
     # ``full`` holds the token indices that DO qualify, numbered across the whole
     # sequence; only proximity group members consult it, so plain queries get the
     # undimmed runs unchanged (and skip stemming entirely).
