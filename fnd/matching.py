@@ -298,21 +298,27 @@ class MatchSpec:
         proximity_groups: list[tuple[tuple[str, ...], int]] = []
         prox_words: list[str] = []
         for pm in _PROX_PHRASE.finditer(expanded_query):
-            pwords = DOC_WORD_RE.findall(pm.group(1))
             pslop = int(pm.group(2))
-            # Split on whitespace first so a glob survives as ONE member:
-            # DOC_WORD_RE drops ``*``/``?``, which used to turn ``respons*`` into
-            # the literal stem ``respon`` — a stem no document token ever carries,
-            # so the window could never qualify and every group term dimmed.
+            # Split on whitespace first so a glob survives as ONE member, and
+            # keep it intact in BOTH sinks. DOC_WORD_RE drops ``*``/``?``, which
+            # used to turn ``respons*`` into the literal stem ``respon`` — a stem
+            # no document token carries, so the window never qualified. The same
+            # stripping in the loose-term run left ``spec.wildcards`` empty, so
+            # ``word_matches`` had no wildcard and the group's own term went
+            # unpainted even when it did qualify.
             members: list[str] = []
+            group_words: list[str] = []
             for raw in pm.group(1).split():
                 if "*" in raw or "?" in raw:
                     members.append(raw.lower())
+                    group_words.append(raw.lower())
                 else:
-                    members.extend(_stem(w) for w in DOC_WORD_RE.findall(raw))
+                    words = DOC_WORD_RE.findall(raw)
+                    members.extend(_stem(w) for w in words)
+                    group_words.extend(words)
             if len(members) >= 2 and pslop > 0:
                 proximity_groups.append((tuple(members), pslop))
-                prox_words.extend(pwords)
+                prox_words.extend(group_words)
 
         # Quoted phrases are matched as contiguous spans; their words are
         # kept out of the loose (document-wide) term set, so only the
@@ -604,10 +610,16 @@ def _group_matchers(
     ``(member, compiled_pattern)``. Cached, and the patterns are pre-compiled: a
     spec is reused across every block of every chunk and the glob is tested per
     document token, so neither the regex build nor a per-call lookup in ``re``'s
-    internal pattern cache should repeat per token."""
-    literals = {m for m in members if "*" not in m and "?" not in m}
-    globs = tuple((m, re.compile(glob_to_regex(m))) for m in members if m not in literals)
-    return frozenset(literals), globs
+    internal pattern cache should repeat per token.
+
+    Members are de-duplicated first, so the co-occurrence count derived from this
+    (``len(literals) + len(globs)``) is the number of DISTINCT members. Without
+    that, ``{5}respons* respons* mobile`` would demand three distinct members
+    from a group that only has two, and could never qualify."""
+    distinct = tuple(dict.fromkeys(members))
+    literals = frozenset(m for m in distinct if "*" not in m and "?" not in m)
+    globs = tuple((m, re.compile(glob_to_regex(m))) for m in distinct if m not in literals)
+    return literals, globs
 
 
 def _group_member_positions(

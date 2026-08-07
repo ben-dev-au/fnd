@@ -347,30 +347,53 @@ def test_plain_query_multi_is_per_segment_unchanged():
     assert match_word_spans_multi(segments, spec) == [match_word_spans(s, spec) for s in segments]
 
 
-def test_wildcard_member_can_qualify_a_window():
-    # DOC_WORD_RE drops the glob, so ``respons*`` used to reduce to the stem
-    # ``respon`` — a stem no document token carries — leaving every group term
-    # dimmed however close they sat.
-    from fnd.render import DIM_STYLES, match_word_spans_multi
+def _painted(text: str, spec: MatchSpec) -> dict[str, bool]:
+    """``{covered word: is_full}`` for ``text``. Keyed by the whole doc word, so a
+    wildcard hit split into literal/fill runs collapses back to one entry —
+    letting a test name the term it cares about instead of trusting that "some
+    run was full" refers to the right one."""
+    from fnd.matching import DOC_WORD_RE
+    from fnd.render import DIM_STYLES, match_word_spans
 
+    out: dict[str, bool] = {}
+    for a, _b, style in match_word_spans(text, spec):
+        word = next(m.group(0) for m in DOC_WORD_RE.finditer(text) if m.start() <= a < m.end())
+        out[word] = out.get(word, True) and style not in DIM_STYLES
+    return out
+
+
+def test_wildcard_member_can_qualify_a_window():
+    # DOC_WORD_RE dropped the glob in BOTH sinks: ``respons*`` reduced to the
+    # stem ``respon`` (which no document token carries, so the window never
+    # qualified) and left spec.wildcards empty (so the group's own term went
+    # unpainted). Assert on the wildcard term by name — asserting only that
+    # "some run is full" would pass on the sibling ``mobile`` alone.
     spec = MatchSpec.from_query("{6}respons* mobile", auto_fuzzy=False)
     assert spec.proximity_groups == ((("respons*", "mobil"), 6),)
-    runs = match_word_spans_multi(["The responsive grid is mobile first."], spec)[0]
-    assert runs, "wildcard proximity should still paint"
-    assert all(style not in DIM_STYLES for _a, _b, style in runs)
+    assert spec.wildcards == ("respons*",)
+    assert _painted("The responsive grid is mobile first.", spec) == {
+        "responsive": True,
+        "mobile": True,
+    }
 
 
 def test_wildcard_member_outside_the_window_dims():
     # The mirror of the above: a glob member still has to obey the window, or
     # "wildcards qualify" would just mean "wildcards never dim".
-    from fnd.render import DIM_STYLES, match_word_spans_multi
-
     spec = MatchSpec.from_query("{2}respons* mobile", auto_fuzzy=False)
-    runs = match_word_spans_multi(["The responsive grid " + ("filler " * 20) + "is mobile."], spec)[
-        0
-    ]
-    assert runs, "both terms should still paint"
-    assert all(style in DIM_STYLES for _a, _b, style in runs)
+    painted = _painted("The responsive grid " + ("filler " * 20) + "is mobile.", spec)
+    assert painted == {"responsive": False, "mobile": False}
+
+
+def test_repeated_wildcard_member_still_qualifies():
+    # ``n`` is the count of DISTINCT members. Deriving it from the raw member
+    # list made ``{5}respons* respons* mobile`` demand three distinct members
+    # from a two-member group, so nothing could ever qualify.
+    spec = MatchSpec.from_query("{5}respons* respons* mobile", auto_fuzzy=False)
+    assert _painted("The responsive grid is mobile first.", spec) == {
+        "responsive": True,
+        "mobile": True,
+    }
 
 
 def test_render_chunk_pieces_window_spans_lines():
