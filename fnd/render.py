@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import threading
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 import snowballstemmer
@@ -174,70 +175,103 @@ def phrase_gap_spans(
     return out
 
 
-def _proximity_full_indices(
-    tokens: list[re.Match[str]], spec: MatchSpec
-) -> tuple[frozenset[str], frozenset[int], list[str]]:
-    """For a spec's proximity groups, return ``(prox_stems, full, stems_by_token)``.
+def _proximity_tiers(
+    words_by_token: list[str], spec: MatchSpec
+) -> tuple[frozenset[int], frozenset[int]]:
+    """For a spec's proximity groups, return ``(members, full)`` token index sets.
 
-    ``prox_stems`` is the union of every group's stems; ``full`` is the set of
-    token indices that participate in a qualifying window for some group they
-    belong to. Returns empties (and an empty ``stems_by_token``) when the query
-    carries no proximity operator — so plain queries skip stemming entirely."""
+    ``members`` are the tokens belonging to some group (by literal stem or by a
+    glob member such as ``respons*``); ``full`` are those inside a qualifying
+    window. A member outside ``full`` renders dimmed. Returns empties when the
+    query carries no proximity operator — so plain queries skip stemming
+    entirely."""
     if not spec.proximity_groups:
-        return frozenset(), frozenset(), []
-    from fnd.matching import _stem, proximity_qualifying_indices
+        return frozenset(), frozenset()
+    from fnd.matching import _stem, proximity_tier_indices
 
-    stems_by_token = [_stem(m.group(0)) for m in tokens]
-    prox_stems = frozenset(s for stems, _ in spec.proximity_groups for s in stems)
-    full: set[int] = set()
-    for group in spec.proximity_groups:
-        full |= proximity_qualifying_indices(stems_by_token, group)
-    return prox_stems, frozenset(full), stems_by_token
+    return proximity_tier_indices([_stem(w) for w in words_by_token], spec.proximity_groups)
 
 
-def match_word_spans(plain: str, spec: MatchSpec) -> list[tuple[int, int, str]]:
-    """Absolute ``(start, end, style)`` highlight runs for every matching word in
-    ``plain``, with proximity-group terms that fall OUTSIDE a qualifying
-    co-occurrence window rendered in the dimmed palette.
+def match_word_spans_multi(
+    segments: Sequence[str], spec: MatchSpec
+) -> list[list[tuple[int, int, str]]]:
+    """Per-segment ``(start, end, style)`` highlight runs, with the proximity
+    window computed across the WHOLE sequence.
+
+    ``segments`` are consecutive slices of one document (the markdown blocks of
+    a chunk, a chunk's rendered lines), so a ``{N}`` / ``NEAR/N`` / ``"a b"~N``
+    window has to be able to straddle a boundary — scoping it to one block is
+    what made an adjacent paragraph and list item render dimmed. Offsets in the
+    result are segment-local.
+
+    No string join is needed: ``DOC_WORD_RE`` matches no separator character, so
+    concatenating the per-segment token lists IS the joined token stream.
 
     This is the single place the two-tier proximity decision is made. Every
     preview baker (the markdown widget, the flat/hybrid prototypes) and the
     export path routes through here, so the full-vs-dim treatment can never
     drift between rendering surfaces."""
-    if spec.is_empty or not plain:
-        return []
-    out: list[tuple[int, int, str]] = []
-    tokens = list(DOC_WORD_RE.finditer(plain))
-    # ``full`` holds the token indices that DO qualify; only proximity group
-    # terms consult it, so plain queries get the undimmed runs unchanged.
-    prox_stems, full, stems_by_token = _proximity_full_indices(tokens, spec)
-    for ti, m in enumerate(tokens):
-        dim = bool(prox_stems) and stems_by_token[ti] in prox_stems and ti not in full
-        for offset_start, offset_end, style in word_highlight_runs(m.group(0), spec, dim=dim):
-            out.append((m.start() + offset_start, m.start() + offset_end, style))
+    if spec.is_empty:
+        return [[] for _ in segments]
+    per_segment = [list(DOC_WORD_RE.finditer(s)) if s else [] for s in segments]
+    # ``full`` holds the token indices that DO qualify, numbered across the whole
+    # sequence; only proximity group members consult it, so plain queries get the
+    # undimmed runs unchanged (and skip stemming entirely).
+    words = [m.group(0) for tokens in per_segment for m in tokens]
+    members, full = _proximity_tiers(words, spec)
+    out: list[list[tuple[int, int, str]]] = []
+    base = 0
+    for tokens in per_segment:
+        runs: list[tuple[int, int, str]] = []
+        for local, m in enumerate(tokens):
+            ti = base + local
+            dim = ti in members and ti not in full
+            for offset_start, offset_end, style in word_highlight_runs(m.group(0), spec, dim=dim):
+                runs.append((m.start() + offset_start, m.start() + offset_end, style))
+        out.append(runs)
+        base += len(tokens)
     return out
 
 
-def apply_match_highlights(rendered: Text, spec: MatchSpec) -> bool:
-    """Stylize matches in ``rendered``: per-term loose words via
-    match_word_spans (proximity-aware), then quoted/connector phrases in the
-    GAPS between term spans (never overlapping them, so per-term colours
-    survive)."""
+def match_word_spans(plain: str, spec: MatchSpec) -> list[tuple[int, int, str]]:
+    """Absolute ``(start, end, style)`` highlight runs for every matching word in
+    ``plain`` — the single-segment form of :func:`match_word_spans_multi`."""
+    return match_word_spans_multi((plain,), spec)[0]
+
+
+def apply_match_highlights_multi(rendered: Sequence[Text], spec: MatchSpec) -> list[bool]:
+    """Stylize matches across a run of consecutive ``Text`` lines, mutating each
+    in place and returning a per-line "did anything match" flag.
+
+    Per line: loose words via :func:`match_word_spans_multi` (proximity-aware
+    across the WHOLE run, so a ``{N}`` window can straddle a line break), then
+    quoted/connector phrases in the GAPS between term spans — never overlapping
+    them, so per-term colours survive. Phrases stay line-local because a quoted
+    phrase is contiguous by definition."""
     from fnd.matching import phrase_char_spans
 
     if spec.is_empty:
-        return False
-    found = False
-    plain = rendered.plain
-    covered: set[int] = set()
-    for a, b, style in match_word_spans(plain, spec):
-        rendered.stylize(style, a, b)
-        covered.update(range(a, b))
-        found = True
-    for start, end in phrase_gap_spans(phrase_char_spans(plain, spec), covered):
-        rendered.stylize(HIGHLIGHT_STYLE, start, end)
-        found = True
+        return [False] * len(rendered)
+    found: list[bool] = []
+    for line, runs in zip(
+        rendered, match_word_spans_multi([t.plain for t in rendered], spec), strict=True
+    ):
+        hit = False
+        covered: set[int] = set()
+        for a, b, style in runs:
+            line.stylize(style, a, b)
+            covered.update(range(a, b))
+            hit = True
+        for start, end in phrase_gap_spans(phrase_char_spans(line.plain, spec), covered):
+            line.stylize(HIGHLIGHT_STYLE, start, end)
+            hit = True
+        found.append(hit)
     return found
+
+
+def apply_match_highlights(rendered: Text, spec: MatchSpec) -> bool:
+    """Single-``Text`` form of :func:`apply_match_highlights_multi`."""
+    return apply_match_highlights_multi((rendered,), spec)[0]
 
 
 def _runs_from_mask(
@@ -464,6 +498,10 @@ def render_chunk_pieces(
         return header, pieces
 
     # Match-bearing chunk: per-line pieces so we have precise scroll targets.
+    # Build every line first, then highlight them as one run — a proximity
+    # window has to be able to straddle a line break, which per-line
+    # highlighting made impossible at any slop.
+    lines: list[Text] = []
     for b in chunk.blocks:
         kind = getattr(b, "kind", "p")
         text_value = getattr(b, "text", "") or ""
@@ -484,11 +522,12 @@ def render_chunk_pieces(
                 rendered = Text(f"  ▎ {line}", style="italic dim")
             else:
                 rendered = Text(line)
-            if match_spec is not None and not match_spec.is_empty:
-                has_match = apply_match_highlights(rendered, match_spec)
-            else:
-                has_match = apply_stem_highlights(rendered, term_stems)
-            pieces.append((rendered, has_match))
+            lines.append(rendered)
+    if match_spec is not None and not match_spec.is_empty:
+        flags = apply_match_highlights_multi(lines, match_spec)
+    else:
+        flags = [apply_stem_highlights(line, term_stems) for line in lines]
+    pieces.extend(zip(lines, flags, strict=True))
     return header, pieces
 
 

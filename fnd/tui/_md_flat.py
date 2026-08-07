@@ -14,23 +14,24 @@ from rich.text import Text
 
 from fnd.matching import MatchSpec
 from fnd.query import FileChunk
-from fnd.render import match_word_spans
+from fnd.render import match_word_spans_multi
 from fnd.tui.line_buffer import FileView
 
 
-def _bake_match_spans(line: Text, spec: MatchSpec) -> bool:
-    """Apply highlight spans on ``line`` in place. Returns True if any
-    match was baked."""
+def _bake_chunk_match_spans(lines: list[Text], spec: MatchSpec) -> list[bool]:
+    """Apply highlight spans on a chunk's ``lines`` in place, one per-line
+    "did anything match" flag out. The proximity window is computed across the
+    whole chunk, so it can span a line break."""
     if spec.is_empty:
-        return False
-    plain = line.plain
-    if not plain:
-        return False
-    hit = False
-    for a, b, style in match_word_spans(plain, spec):
-        line.stylize(str(style), a, b)
-        hit = True
-    return hit
+        return [False] * len(lines)
+    out: list[bool] = []
+    for line, runs in zip(
+        lines, match_word_spans_multi([ln.plain for ln in lines], spec), strict=True
+    ):
+        for a, b, style in runs:
+            line.stylize(str(style), a, b)
+        out.append(bool(runs))
+    return out
 
 
 def _render_md_to_lines(md_text: str, wrap_width: int) -> list[Text]:
@@ -84,8 +85,10 @@ def build_md_file_view(
             cursor += 1
         chunk_start = cursor
         first_hit_local: int | None = None
-        for ln in rendered:
-            had_match = _bake_match_spans(ln, spec)
+        # Bake the whole chunk's lines in one pass so a proximity window can
+        # straddle a (wrapped) line break rather than restarting on each.
+        hits = _bake_chunk_match_spans(rendered, spec)
+        for ln, had_match in zip(rendered, hits, strict=True):
             if had_match and first_hit_local is None:
                 first_hit_local = cursor
             if had_match:

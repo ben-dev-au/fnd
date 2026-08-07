@@ -3,6 +3,8 @@ co-occurrence window render at full strength; the rest are dimmed."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 from rich.text import Text
 from textual.content import Span
@@ -267,9 +269,12 @@ def test_table_coord_falls_back_to_dim_when_no_cooccurrence():
 
 @pytest.mark.asyncio
 async def test_first_match_block_prefers_proximity_cooccurrence():
-    # Paragraph one mentions only "code" (dimmed); paragraph two carries the
+    # Paragraph one mentions only "code" (dimmed); the last paragraph carries the
     # real "exit code" co-occurrence. first_match_block must resolve to the
     # co-occurrence paragraph so the preview scrolls to the genuine match.
+    # The filler paragraph is load-bearing: the window is chunk-scoped, so
+    # without it the lone "code" would sit within slop of the later "exit" and
+    # legitimately qualify.
     from textual.app import App, ComposeResult
 
     from fnd.tui.widgets.markdown import FNDMarkdown
@@ -282,8 +287,256 @@ async def test_first_match_block_prefers_proximity_cooccurrence():
 
     async with _Harness().run_test() as pilot:
         md = pilot.app.query_one(FNDMarkdown)
-        await md.update("para one mentions code only.\n\nlater the exit code is shown.\n")
+        await md.update(
+            "para one mentions code only.\n\n"
+            "some unrelated filler text goes here to push the paragraphs apart.\n\n"
+            "later the exit code is shown.\n"
+        )
         await md.build_done.wait()
         fm = md.first_match_block
         assert fm is not None
         assert "exit code" in fm._content.plain
+
+
+# ── chunk-scoped window: a co-occurrence may straddle a block ───────
+
+
+def test_multi_single_segment_matches_the_single_segment_form():
+    # match_word_spans is now a wrapper over match_word_spans_multi; the two
+    # must not drift, for proximity and plain specs alike.
+    from fnd.render import match_word_spans, match_word_spans_multi
+
+    text = "A responsive form validation grid for mobile bootstrap layouts."
+    for query in ("responsive mobile", "{50}responsive mobile", "bootstrap", "{6}respons* mobile"):
+        spec = MatchSpec.from_query(query, auto_fuzzy=False)
+        assert match_word_spans(text, spec) == match_word_spans_multi((text,), spec)[0], query
+
+
+def test_window_spans_a_segment_boundary():
+    # The reported bug: "responsive" closes one block and "Mobile" opens the
+    # next. Scoped per block, neither could qualify at any slop.
+    from fnd.render import DIM_STYLES, match_word_spans_multi
+
+    segments = [
+        "His combined example is the standard responsive pattern:",
+        "Mobile - one column, full width.",
+    ]
+    spec = MatchSpec.from_query("{50}responsive mobile", auto_fuzzy=False)
+    runs = match_word_spans_multi(segments, spec)
+    assert [len(r) for r in runs] == [1, 1]
+    assert all(style not in DIM_STYLES for seg in runs for _a, _b, style in seg)
+
+
+def test_window_bound_still_honoured_across_segments():
+    # Widening the scope must not widen the window: push the pair past
+    # slop + (n - 1) and both fall back to dimmed.
+    from fnd.render import DIM_STYLES, match_word_spans_multi
+
+    segments = ["responsive " + "filler " * 20, "mobile here"]
+    spec = MatchSpec.from_query("{5}responsive mobile", auto_fuzzy=False)
+    runs = match_word_spans_multi(segments, spec)
+    assert [len(r) for r in runs] == [1, 1]
+    assert all(style in DIM_STYLES for seg in runs for _a, _b, style in seg)
+
+
+def test_plain_query_multi_is_per_segment_unchanged():
+    from fnd.render import match_word_spans, match_word_spans_multi
+
+    segments = ["a responsive layout", "a mobile layout"]
+    spec = MatchSpec.from_query("responsive mobile", auto_fuzzy=False)
+    assert match_word_spans_multi(segments, spec) == [match_word_spans(s, spec) for s in segments]
+
+
+def _painted(text: str, spec: MatchSpec) -> dict[str, bool]:
+    """``{covered word: is_full}`` for ``text``. Keyed by the whole doc word, so a
+    wildcard hit split into literal/fill runs collapses back to one entry —
+    letting a test name the term it cares about instead of trusting that "some
+    run was full" refers to the right one."""
+    from fnd.matching import DOC_WORD_RE
+    from fnd.render import DIM_STYLES, match_word_spans
+
+    out: dict[str, bool] = {}
+    for a, _b, style in match_word_spans(text, spec):
+        word = next(m.group(0) for m in DOC_WORD_RE.finditer(text) if m.start() <= a < m.end())
+        out[word] = out.get(word, True) and style not in DIM_STYLES
+    return out
+
+
+def test_wildcard_member_can_qualify_a_window():
+    # DOC_WORD_RE dropped the glob in BOTH sinks: ``respons*`` reduced to the
+    # stem ``respon`` (which no document token carries, so the window never
+    # qualified) and left spec.wildcards empty (so the group's own term went
+    # unpainted). Assert on the wildcard term by name — asserting only that
+    # "some run is full" would pass on the sibling ``mobile`` alone.
+    spec = MatchSpec.from_query("{6}respons* mobile", auto_fuzzy=False)
+    assert spec.proximity_groups == ((("respons*", "mobil"), 6),)
+    assert spec.wildcards == ("respons*",)
+    assert _painted("The responsive grid is mobile first.", spec) == {
+        "responsive": True,
+        "mobile": True,
+    }
+
+
+def test_wildcard_member_outside_the_window_dims():
+    # The mirror of the above: a glob member still has to obey the window, or
+    # "wildcards qualify" would just mean "wildcards never dim".
+    spec = MatchSpec.from_query("{2}respons* mobile", auto_fuzzy=False)
+    painted = _painted("The responsive grid " + ("filler " * 20) + "is mobile.", spec)
+    assert painted == {"responsive": False, "mobile": False}
+
+
+def test_repeated_wildcard_member_still_qualifies():
+    # ``n`` is the count of DISTINCT members. Deriving it from the raw member
+    # list made ``{5}respons* respons* mobile`` demand three distinct members
+    # from a two-member group, so nothing could ever qualify.
+    spec = MatchSpec.from_query("{5}respons* respons* mobile", auto_fuzzy=False)
+    assert _painted("The responsive grid is mobile first.", spec) == {
+        "responsive": True,
+        "mobile": True,
+    }
+
+
+def test_render_chunk_pieces_window_spans_lines():
+    # The plain mount highlighted per source line, so a cross-line window could
+    # never qualify there either.
+    from fnd.extract.base import Block
+    from fnd.query import FileChunk
+    from fnd.render import DIM_STYLES, render_chunk_pieces
+
+    chunk = FileChunk(
+        parent_id="x",
+        path="/x.md",
+        kind="md",
+        page=0,
+        slide=0,
+        heading_path="",
+        chunk_seq=0,
+        blocks=[
+            Block(kind="p", text="the standard responsive pattern"),
+            Block(kind="ul", text="Mobile only"),
+        ],
+    )
+    spec = MatchSpec.from_query("{50}responsive mobile", auto_fuzzy=False)
+    _header, pieces = render_chunk_pieces(chunk, match_spec=spec)
+    styles = [str(span.style) for text, _hit in pieces for span in text.spans]
+    assert styles, "both terms should paint"
+    assert all(style not in DIM_STYLES for style in styles)
+
+
+@pytest.mark.asyncio
+async def test_live_markdown_window_spans_paragraph_and_list_item():
+    # End-to-end regression for the reported bug, through the real widget: a
+    # paragraph followed by a bullet list, which Textual renders as separate
+    # blocks (the item's text lands on an inner paragraph).
+    from textual.app import App, ComposeResult
+    from textual.widgets._markdown import MarkdownBlock
+
+    from fnd.render import DIM_STYLES
+    from fnd.tui.widgets.markdown import FNDMarkdown
+
+    spec = MatchSpec.from_query("{50}responsive mobile", auto_fuzzy=False)
+
+    class _Harness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield FNDMarkdown(match_spec=spec)
+
+    async with _Harness().run_test() as pilot:
+        md = pilot.app.query_one(FNDMarkdown)
+        await md.update(
+            "His combined example is the standard responsive pattern:\n\n"
+            "- Mobile - one column, full width.\n"
+        )
+        await md.build_done.wait()
+        painted = [
+            (blk._content.plain[s.start : s.end], str(s.style))
+            for blk in md.query(MarkdownBlock)
+            for s in (getattr(blk, "_fnd_match_spans", None) or [])
+        ]
+        assert sorted(word for word, _ in painted) == ["Mobile", "responsive"]
+        assert all(style not in DIM_STYLES for _, style in painted)
+        assert md.first_match_block is not None
+
+
+@pytest.mark.asyncio
+async def test_fence_highlight_survives_style_update():
+    # notify_style_update rebuilds _highlighted_code from scratch, dropping every
+    # span. Without the cached-span replay the fence would recompute
+    # block-locally and silently undo the chunk-wide scope.
+    from textual.app import App, ComposeResult
+
+    from fnd.render import MATCH_STYLES
+    from fnd.tui.widgets.markdown import FNDMarkdown, FNDMarkdownFence
+
+    spec = MatchSpec.from_query("responsive", auto_fuzzy=False)
+
+    class _Harness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield FNDMarkdown(match_spec=spec)
+
+    async with _Harness().run_test() as pilot:
+        md = pilot.app.query_one(FNDMarkdown)
+        await md.update("intro\n\n```css\n.responsive { width: 100%; }\n```\n")
+        await md.build_done.wait()
+        fence = md.query_one(FNDMarkdownFence)
+
+        def _match_spans():
+            # Filter on the match PALETTE, not merely on covering the word: the
+            # lexer also emits a syntax span over `.responsive`, so a text-only
+            # filter would stay green even if the overlay were dropped entirely.
+            plain = fence._highlighted_code.plain
+            return [
+                s
+                for s in fence._highlighted_code.spans
+                if str(s.style) in set(MATCH_STYLES) and plain[s.start : s.end] == "responsive"
+            ]
+
+        assert _match_spans(), "fence should carry a match span"
+        fence.notify_style_update()
+        assert _match_spans(), "match span must survive the theme rebuild"
+
+
+@pytest.mark.asyncio
+async def test_no_block_owns_both_text_and_children():
+    # ``_content_blocks`` yields a block's children INSTEAD of the block when it
+    # has any, which is only lossless because Textual's container blocks (lists,
+    # table wrappers) own no text of their own. Pin that invariant against a
+    # representative tree so a framework change fails here rather than silently
+    # dropping text out of the chunk-wide proximity window.
+    from textual.app import App, ComposeResult
+    from textual.widgets._markdown import MarkdownBlock
+
+    from fnd.tui.widgets.markdown import FNDMarkdown, _block_plain
+
+    def _walk(block: MarkdownBlock) -> Iterator[MarkdownBlock]:
+        yield block
+        for child in getattr(block, "_blocks", None) or []:
+            yield from _walk(child)
+
+    class _Harness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield FNDMarkdown(match_spec=MatchSpec.from_query("alpha", auto_fuzzy=False))
+
+    async with _Harness().run_test() as pilot:
+        md = pilot.app.query_one(FNDMarkdown)
+        await md.update(
+            "# Heading alpha\n\n"
+            "Paragraph alpha.\n\n"
+            "> Quoted alpha\n\n"
+            "- item alpha\n"
+            "  - nested alpha\n\n"
+            "1. ordered alpha\n\n"
+            "| H1 | H2 |\n| --- | --- |\n| c1 alpha | c2 |\n\n"
+            "```py\nalpha = 1\n```\n"
+        )
+        await md.build_done.wait()
+        seen: dict[int, object] = {}
+        for top in md.query(MarkdownBlock):
+            for b in _walk(top):
+                seen[id(b)] = b
+        assert len(seen) > 10, "expected a representative block tree"
+        offenders = [
+            type(b).__name__
+            for b in seen.values()
+            if getattr(b, "_blocks", None) and _block_plain(b)  # type: ignore[arg-type]
+        ]
+        assert offenders == [], f"container blocks must own no text: {offenders}"

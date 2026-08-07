@@ -26,6 +26,7 @@ import re
 import threading
 from collections import Counter
 from dataclasses import dataclass, field
+from functools import lru_cache
 from itertools import pairwise
 
 import snowballstemmer
@@ -254,10 +255,12 @@ class MatchSpec:
     # kept OUT of ``exact_stems`` so a stopword inside a phrase ("in",
     # "and") doesn't light up document-wide.
     phrases: tuple[tuple[str, ...], ...] = field(default_factory=tuple)
-    # Proximity groups: ``((stem, …), slop)`` per ``{N}`` / ``NEAR/N`` / typed
-    # ``"a b"~N`` operator (slop > 0). Their stems ALSO live in ``exact_stems``;
-    # the slop only governs which occurrences highlight at full vs dim strength
-    # (see :func:`proximity_qualifying_indices`).
+    # Proximity groups: ``((member, …), slop)`` per ``{N}`` / ``NEAR/N`` / typed
+    # ``"a b"~N`` operator (slop > 0). A member is a stem, or — when the user
+    # wrote a wildcard (``{6}respons* mobile``) — the raw glob, matched against
+    # the token stem exactly as :func:`word_matches` does. Members ALSO live in
+    # ``exact_stems`` / ``wildcards``; the slop only governs which occurrences
+    # highlight at full vs dim strength (see :func:`proximity_tier_indices`).
     proximity_groups: tuple[tuple[tuple[str, ...], int], ...] = field(default_factory=tuple)
 
     @classmethod
@@ -295,11 +298,27 @@ class MatchSpec:
         proximity_groups: list[tuple[tuple[str, ...], int]] = []
         prox_words: list[str] = []
         for pm in _PROX_PHRASE.finditer(expanded_query):
-            pwords = DOC_WORD_RE.findall(pm.group(1))
             pslop = int(pm.group(2))
-            if len(pwords) >= 2 and pslop > 0:
-                proximity_groups.append((tuple(_stem(w) for w in pwords), pslop))
-                prox_words.extend(pwords)
+            # Split on whitespace first so a glob survives as ONE member, and
+            # keep it intact in BOTH sinks. DOC_WORD_RE drops ``*``/``?``, which
+            # used to turn ``respons*`` into the literal stem ``respon`` — a stem
+            # no document token carries, so the window never qualified. The same
+            # stripping in the loose-term run left ``spec.wildcards`` empty, so
+            # ``word_matches`` had no wildcard and the group's own term went
+            # unpainted even when it did qualify.
+            members: list[str] = []
+            group_words: list[str] = []
+            for raw in pm.group(1).split():
+                if "*" in raw or "?" in raw:
+                    members.append(raw.lower())
+                    group_words.append(raw.lower())
+                else:
+                    words = DOC_WORD_RE.findall(raw)
+                    members.extend(_stem(w) for w in words)
+                    group_words.extend(words)
+            if len(members) >= 2 and pslop > 0:
+                proximity_groups.append((tuple(members), pslop))
+                prox_words.extend(group_words)
 
         # Quoted phrases are matched as contiguous spans; their words are
         # kept out of the loose (document-wide) term set, so only the
@@ -583,29 +602,91 @@ def phrase_char_spans(text: str, spec: MatchSpec) -> list[tuple[int, int]]:
     return merged
 
 
+@lru_cache(maxsize=256)
+def _group_matchers(
+    members: tuple[str, ...],
+) -> tuple[frozenset[str], tuple[tuple[str, re.Pattern[str]], ...]]:
+    """Split a group's members into ``(literal_stems, globs)``, where each glob is
+    ``(member, compiled_pattern)``. Cached, and the patterns are pre-compiled: a
+    spec is reused across every block of every chunk and the glob is tested per
+    document token, so neither the regex build nor a per-call lookup in ``re``'s
+    internal pattern cache should repeat per token.
+
+    Members are de-duplicated first, so the co-occurrence count derived from this
+    (``len(literals) + len(globs)``) is the number of DISTINCT members. Without
+    that, ``{5}respons* respons* mobile`` would demand three distinct members
+    from a group that only has two, and could never qualify."""
+    distinct = tuple(dict.fromkeys(members))
+    literals = frozenset(m for m in distinct if "*" not in m and "?" not in m)
+    globs = tuple((m, re.compile(glob_to_regex(m))) for m in distinct if m not in literals)
+    return literals, globs
+
+
+def _group_member_positions(
+    stems_by_token: list[str], members: tuple[str, ...]
+) -> tuple[list[tuple[int, str]], int]:
+    """``(positions, n)`` for a group: each ``(token_index, member)`` occurrence in
+    token order, and the count of DISTINCT members that must co-occur.
+
+    Literal members are an O(1) set test on the hot per-token path; globs are
+    tested only when the group actually has any, and against the token *stem* —
+    the same surface :func:`word_matches` globs against."""
+    literals, globs = _group_matchers(members)
+    n = len(literals) + len(globs)
+    if not globs:
+        return [(i, s) for i, s in enumerate(stems_by_token) if s in literals], n
+    positions: list[tuple[int, str]] = []
+    for i, s in enumerate(stems_by_token):
+        if s in literals:
+            positions.append((i, s))
+            continue
+        for member, pattern in globs:
+            if pattern.fullmatch(s) is not None:
+                positions.append((i, member))
+                break
+    return positions, n
+
+
+def proximity_tier_indices(
+    stems_by_token: list[str], groups: tuple[tuple[tuple[str, ...], int], ...]
+) -> tuple[frozenset[int], frozenset[int]]:
+    """``(members, qualifying)`` token index sets across every group.
+
+    ``members`` is every token belonging to some group; ``qualifying`` is the
+    subset inside a co-occurrence window. A member outside the qualifying set is
+    what the preview renders dimmed."""
+    members: set[int] = set()
+    qualifying: set[int] = set()
+    for group in groups:
+        positions, n = _group_member_positions(stems_by_token, group[0])
+        members.update(i for i, _ in positions)
+        qualifying |= _qualifying_from_positions(positions, n, group[1])
+    return frozenset(members), frozenset(qualifying)
+
+
 def proximity_qualifying_indices(
     stems_by_token: list[str], group: tuple[tuple[str, ...], int]
 ) -> set[int]:
     """Token indices that participate in a qualifying proximity cluster.
 
-    ``group`` is ``((stem, …), slop)``. A window of tokens qualifies when all
-    ``n`` distinct group stems appear within a token span ``<= slop + (n - 1)``
+    ``group`` is ``((member, …), slop)``. A window of tokens qualifies when all
+    ``n`` distinct group members appear within a token span ``<= slop + (n - 1)``
     (Tantivy's in-order slop bound; order is ignored, so this is a slight
     superset of the matcher — fine for a dim/full split). Returns the indices of
-    every group-stem occurrence that falls inside at least one such window.
+    every group-member occurrence that falls inside at least one such window."""
+    positions, n = _group_member_positions(stems_by_token, group[0])
+    return _qualifying_from_positions(positions, n, group[1])
 
-    Two-pointer sweep: ``r`` only advances, so the membership counter is
-    maintained incrementally. For each left edge ``l`` the widest in-bound window
-    ``[l, r]`` is the most inclusive; if it holds all stems, every member token in
-    it qualifies (a narrower window can only drop stems). Marked ranges are
-    merged via ``marked`` to keep the total work linear."""
-    stems, slop = group
-    need = set(stems)
-    n = len(need)
+
+def _qualifying_from_positions(positions: list[tuple[int, str]], n: int, slop: int) -> set[int]:
+    """Two-pointer sweep over a group's member occurrences: ``r`` only advances,
+    so the membership counter is maintained incrementally. For each left edge the
+    widest in-bound window ``[left, r]`` is the most inclusive; if it holds all
+    members, every occurrence in it qualifies (a narrower window can only drop
+    members). Marked ranges are merged via ``marked`` to keep the work linear."""
     if n == 0:
         return set()
     bound = slop + n - 1
-    positions = [(i, s) for i, s in enumerate(stems_by_token) if s in need]
     m = len(positions)
     qualifying: set[int] = set()
     if m < n:
