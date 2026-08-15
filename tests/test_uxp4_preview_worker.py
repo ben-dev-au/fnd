@@ -14,6 +14,7 @@ from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.progress import FNDProgressBar
+from tests._pilot_wait import wait_until
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -124,11 +125,16 @@ async def test_progress_strip_runs_determinate_then_hides_on_complete(
         active_session = app._progress.active
         assert active_session is not None
         assert active_session.total >= 1
-        # Drain decode + mount completely.
-        for _ in range(8):
-            await pilot.pause()
-        # After mount completes, strip hides and pane scroll lock lifts.
-        assert "-idle" in strip.classes
+        # The line now holds a completed fill for a minimum duration before it
+        # clears (so short loads read as "done" rather than flashing), so a
+        # fixed number of pauses is no longer a sound way to wait for it —
+        # under load it under-waits, and it says nothing about WHY it cleared.
+        # Gate on the widget's own state instead.
+        await wait_until(
+            pilot,
+            lambda: "-idle" in strip.classes,
+            message="progress line never cleared after the mount completed",
+        )
         pane = app.query_one("#preview_pane")
         assert "is-loading" not in pane.classes
         # Chunks landed in a PreviewContainer in the pane.
