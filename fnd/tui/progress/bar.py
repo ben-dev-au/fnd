@@ -22,10 +22,13 @@ from textual.app import RenderResult
 from textual.reactive import reactive
 from textual.widget import Widget
 
-# Same family as the thin scrollbar's thumb: the filled run is the heavy
-# rule, the remainder the light one, so progress reads as a change in
-# weight as well as colour.
-FILL_GLYPH = "━"
+# Both runs are the pane border's own rule, so the line sits in the frame at
+# exactly the weight of the borders it sits under; only colour separates the
+# filled part from the remainder. A heavier glyph for the fill was tried first
+# and read as too loud — progress is ambient information, not an alert, and it
+# should not compete with the content for the eye. If it needs to recede
+# further, dim the accent rather than changing the glyph again.
+FILL_GLYPH = "─"
 TRACK_GLYPH = "─"
 
 # Below this the bar carries no information, so the label is dropped and

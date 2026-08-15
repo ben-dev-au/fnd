@@ -117,20 +117,27 @@ class PreviewProgressTracker:
 
     @staticmethod
     def _landing(preview: Any, scroll: Any) -> bool:
-        """An armed-but-uncommitted scroll, with something to land on.
+        """A navigation whose scroll has not committed yet.
 
-        ``is_settling`` alone is not enough. It is set when a navigation arms
-        the anchor and cleared only when that scroll commits — and nothing
-        releases it on a reset (``PreviewScrollController.release`` has exactly
-        one caller, in the lazy mounter). So after a query that returns no
-        results, or a scope clear, it stays true indefinitely and would hold
-        the line up until the hard cap. Every reset path drops both the active
-        container and the parent id, which is what distinguishes "still
-        landing" from "nothing left to land on".
+        ``is_settling`` cannot carry this on its own. It is set when a
+        navigation arms its anchor and cleared only when THAT scroll commits;
+        ``PreviewScrollController.release`` has exactly one caller in the whole
+        codebase (the lazy mounter), and ``dispatch_mount`` has paths that
+        cancel and rebuild without ever reconciling. Left to it, a preview that
+        had finished loading could hold the line open until the hard cap —
+        observed as "the bar stalled part-filled until I navigated away and
+        came back".
+
+        ``inflight_target`` closes that hole. It is set in exactly one place
+        (``fire_pending_load``) and cleared in five, including
+        ``reveal_active`` — which the reveal watchdog invokes within
+        ``REVEAL_WATCHDOG_MS`` even when a reveal never happens, so the latch
+        cannot stay set indefinitely the way the settling flag can. Requiring
+        BOTH means the line lives only while the two agree work is
+        outstanding, and it still ends on a reset: a committed search clears
+        the latch explicitly.
         """
-        if not scroll.is_settling:
-            return False
-        return preview.active is not None or preview.parent_id is not None
+        return bool(scroll.is_settling) and preview.inflight_target is not None
 
     # ── pipeline signals ─────────────────────────────────────────
 

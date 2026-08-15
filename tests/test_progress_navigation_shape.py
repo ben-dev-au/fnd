@@ -68,6 +68,9 @@ class ScriptedPipeline:
         self._schedule = schedule
         self.active = _Container()
         self.parent_id = "doc"
+        # The in-flight latch the real presenter sets in fire_pending_load and
+        # clears when the navigation lands.
+        self.inflight_target: tuple[str, int] | None = ("doc", 0)
 
     # -- the signals the tracker samples -----------------------------
 
@@ -93,6 +96,11 @@ class ScriptedPipeline:
 
     def pipeline_busy(self) -> bool:
         return self._stage in {"decode", "mount", "build"}
+
+    def sync_latch(self) -> None:
+        """Clear the in-flight latch once the schedule is done, the way every
+        completion path in the presenter does."""
+        self.inflight_target = ("doc", 0) if self._stage is not None else None
 
     def sync_finalize(self) -> None:
         """The real presenter spawns a detached finalize task and hangs it on
@@ -173,6 +181,7 @@ def run_navigation(schedule: list[tuple[str, float]]) -> list[tuple[bool, float]
     for _ in range(400):
         clock.advance(TICK)
         app._preview.sync_finalize()
+        app._preview.sync_latch()
         app._progress.tick()
         frames.append((bar.visible, bar.fraction))
         if not bar.visible and len(frames) > 2:

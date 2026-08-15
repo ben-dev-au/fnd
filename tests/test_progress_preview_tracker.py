@@ -55,6 +55,7 @@ class StubPreview:
         self.mount_task: StubTask | None = None
         self.active: StubContainer | None = None
         self.parent_id: str | None = None
+        self.inflight_target: tuple[str, int] | None = None
         self.busy = False
 
     def pipeline_busy(self) -> bool:
@@ -152,7 +153,7 @@ def test_an_uncommitted_scroll_puts_us_in_land(
     app: StubApp, tracker: PreviewProgressTracker
 ) -> None:
     session = tracker.begin("doc")
-    app._preview.parent_id = "doc"
+    app._preview.inflight_target = ("doc", 0)
     app._preview_scroll.is_settling = True
     tracker.sample(session)
     assert session.phase == "land"
@@ -176,7 +177,7 @@ def test_phases_never_run_backwards(app: StubApp, tracker: PreviewProgressTracke
     """A late decode-worker reference must not drag a landing navigation
     back to the first phase."""
     session = tracker.begin("doc")
-    app._preview.parent_id = "doc"
+    app._preview.inflight_target = ("doc", 0)
     app._preview_scroll.is_settling = True
     tracker.sample(session)
     landed = session.fraction
@@ -214,7 +215,7 @@ def test_an_idle_pipeline_is_not_enough_while_the_scroll_is_pending(
 ) -> None:
     session = tracker.begin("doc")
     app._preview.busy = False
-    app._preview.parent_id = "doc"
+    app._preview.inflight_target = ("doc", 0)
     app._preview_scroll.is_settling = True
     assert tracker.sample(session) is True
 
@@ -279,4 +280,26 @@ def test_a_reset_releases_the_line_even_though_the_scroll_never_committed(
     app._preview.busy = False
     app._preview.active = None
     app._preview.parent_id = None
+    app._preview.inflight_target = None
     assert tracker.sample(session) is False
+
+
+def test_a_finished_preview_releases_the_line_even_if_the_scroll_never_commits(
+    app: StubApp, tracker: PreviewProgressTracker
+) -> None:
+    """The reported stall. dispatch_mount has paths that cancel and rebuild
+    without reconciling, so is_settling can stay true for good — and with the
+    pane fully loaded, active and parent_id stay set too. The in-flight latch
+    is the signal that actually ends: every completion path clears it, and the
+    reveal watchdog clears it even when no reveal happens.
+    """
+    session = tracker.begin("doc")
+    app._preview.busy = False
+    app._preview_scroll.is_settling = True  # never commits
+    app._preview.active = StubContainer(parent_doc_id="doc", total_chunks=40, mounted=40)
+    app._preview.parent_id = "doc"
+    app._preview.inflight_target = None  # ...but the navigation finished
+
+    assert tracker.sample(session) is False, (
+        "a loaded preview held the line open on a scroll flag that never clears"
+    )

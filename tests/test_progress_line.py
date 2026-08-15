@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from rich.style import Style as RichStyle
 
 from fnd.tui.progress.bar import (
     FILL_GLYPH,
@@ -32,6 +33,34 @@ def painted(width: int, fraction: float, label: str = "") -> str:
     )
 
 
+# Sentinels so the two runs can be told apart in a test. In the app they are
+# the resolved component styles; here any distinct pair will do.
+_FILL_STYLE = RichStyle(color="red")
+_TRACK_STYLE = RichStyle(color="blue")
+_LABEL_STYLE = RichStyle(color="green")
+
+
+def split(width: int, fraction: float, label: str = "") -> tuple[int, int]:
+    """(filled cells, track cells).
+
+    Fill and track are drawn with the SAME glyph — they differ only in
+    colour — so the painted text cannot tell them apart. Classify by style
+    instead, which is what actually carries the distinction on screen.
+    """
+    segments = progress_line_segments(
+        width=width,
+        fraction=fraction,
+        label=label,
+        fill_style=_FILL_STYLE,
+        track_style=_TRACK_STYLE,
+        label_style=_LABEL_STYLE,
+    )
+    filled = sum(len(s.text) for s in segments if s.style == _FILL_STYLE)
+    # The gap before a label also wears the track style, but it is spaces.
+    track = sum(len(s.text) for s in segments if s.style == _TRACK_STYLE and s.text.strip())
+    return filled, track
+
+
 def test_the_line_spans_the_full_width() -> None:
     """Root cause 1: the old bar was a fixed 32 cells regardless of the
     terminal, so it read as a stub in the corner."""
@@ -39,24 +68,31 @@ def test_the_line_spans_the_full_width() -> None:
         assert len(painted(width, 0.5)) == width
 
 
+def test_the_line_is_drawn_at_the_pane_border_weight() -> None:
+    """It sits in the frame rather than on top of it, so it must not be
+    heavier than the borders it runs under."""
+    assert FILL_GLYPH == TRACK_GLYPH == "─"
+    assert set(painted(20, 0.5)) == {"─"}
+
+
 def test_an_empty_line_is_all_track() -> None:
-    assert painted(20, 0.0) == TRACK_GLYPH * 20
+    assert split(20, 0.0) == (0, 20)
 
 
 def test_a_complete_line_is_all_fill() -> None:
-    assert painted(20, 1.0) == FILL_GLYPH * 20
+    assert split(20, 1.0) == (20, 0)
 
 
 def test_any_progress_at_all_shows_at_least_one_cell() -> None:
     """1% of a 200-cell line rounds to 2 cells, but 1% of a 40-cell line
     rounds to 0 — and a bar that reads as empty while work is happening is
     the complaint, not the fix."""
-    assert painted(40, 0.001).startswith(FILL_GLYPH)
+    assert split(40, 0.001)[0] >= 1
 
 
 def test_a_line_short_of_done_always_leaves_a_cell_unfilled() -> None:
     """So that a full line means finished, and nothing else does."""
-    assert painted(20, 0.999).endswith(TRACK_GLYPH)
+    assert split(20, 0.999)[1] >= 1
 
 
 def test_the_label_is_right_aligned_after_the_bar() -> None:
@@ -66,8 +102,8 @@ def test_the_label_is_right_aligned_after_the_bar() -> None:
 
 
 def test_a_label_that_would_crowd_out_the_bar_is_dropped() -> None:
-    out = painted(20, 0.5, "a rather long label indeed")
-    assert out == FILL_GLYPH * 10 + TRACK_GLYPH * 10
+    assert split(20, 0.5, "a rather long label indeed") == (10, 10)
+    assert len(painted(20, 0.5, "a rather long label indeed")) == 20
 
 
 def test_zero_width_renders_nothing() -> None:
@@ -75,8 +111,8 @@ def test_zero_width_renders_nothing() -> None:
 
 
 def test_fraction_is_clamped() -> None:
-    assert painted(10, -5.0) == TRACK_GLYPH * 10
-    assert painted(10, 5.0) == FILL_GLYPH * 10
+    assert split(10, -5.0) == (0, 10)
+    assert split(10, 5.0) == (10, 0)
 
 
 def test_the_widget_starts_idle() -> None:

@@ -127,7 +127,7 @@ FNDApp
 ├── PrefetchEngine     fnd/tui/preview/prefetch.py    background warming
 ├── LazyMounter        fnd/tui/preview/lazy_mount.py  scroll-driven mounting
 ├── PreviewScrollController  fnd/tui/preview_scroll.py  scroll positioning
-└── ProgressFacility   fnd/tui/progress.py            preview progress sessions
+└── ProgressFacility   fnd/tui/progress/              the progress line
 ```
 
 Textual-specific surfaces stay on the app: `@on` message handlers and
@@ -165,10 +165,35 @@ to the user-side mount.
 Mount-window tunables live in `fnd/tui/preview/tuning.py` and are read
 at call time.
 
+## The progress line
+
+One row under the panes, blank at rest, driven by `fnd/tui/progress/`.
+An operation opens a session against an `OperationPlan` — an ordered set
+of phases, each with an expected duration. Phases with real units report
+them; phases with nothing to count (a single `await build_done`, a layout
+settle) ease on elapsed time. A phase's **weight is its share of the
+plan's total expected duration**, so `calibration` — which records what
+each phase actually cost and summarises the recent runs, the same shape
+as `cost_estimate.py` — reshapes the bar without any hand-tuned numbers.
+
+Sessions are **observed, not reported**. `PreviewProgressTracker` reads
+the preview pipeline's own signals (`pipeline_busy()`, the mount window's
+`mounted_indices`, `inflight_target`, `is_settling`); `IndexProgressTracker`
+reads `IndexerService.state` rather than the event queue, which has a
+single consumer in the modal. The mount path therefore has no progress
+calls to keep in step, and no stale exit can strand or steal the line.
+
+Sessions are owned: closing one that has already been superseded does
+nothing. Visibility is policy, not caller choice — a session paints on
+the frame it opens, holds a minimum visible duration, always eases to a
+full line before clearing, and hands its fill to a successor so a held
+cursor key doesn't saw the bar back to zero.
+
 ## Concurrency rules
 
 | Owner | Task / primitive | Cancelled by |
 |---|---|---|
+| `SearchController` | search worker (`search`, exclusive, thread) | a newer query — but Textual only *marks* a thread worker cancelled, so the stale search still runs to completion and is discarded by the generation guard in `_commit` |
 | `PreviewPresenter` | mount worker (`preview-load`, exclusive), debounce timer, in-flight coalescing latch | file switch / query change (`cancel_mount_task`, latch drop) |
 | `LazyMounter` | scroll-driven mount task + debounce timer | file switch / query change (`cancel`) |
 | `PrefetchEngine` | decode pool (`preview-prefetch`, exclusive), sink queue + drainer task | stale-query signature checks; user mount preempts |
