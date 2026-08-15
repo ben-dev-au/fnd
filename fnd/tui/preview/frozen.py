@@ -95,7 +95,16 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
         inner = chunk.first_match_block
         if inner is not None:
             first_match_row = _row_within(inner, chunk)
+        from fnd.tui.widgets.markdown import FNDMarkdownTableDT, FNDMarkdownTD, FNDMarkdownTH
+
         for block in chunk.match_blocks:
+            # Skip a table's own cell blocks, exactly as enumerate_stop_regions
+            # does: the table owns those cells and they are collected below from
+            # ``_fnd_match_coords``. Counting both double-counts every table
+            # match, which showed up as a frozen chunk reporting 6 stops where
+            # the live one reported 5.
+            if isinstance(block, FNDMarkdownTableDT | FNDMarkdownTD | FNDMarkdownTH):
+                continue
             row = _row_within(block, chunk)
             if row is not None:
                 stop_rows.append(row)

@@ -155,3 +155,38 @@ async def test_a_chunk_that_scrolls_inside_itself_is_refused() -> None:
             await pilot.pause()
         assert dt.virtual_size.height > dt.size.height, "failed to induce a nested scroll"
         assert freeze(md, chunk_seq=7) is None, "a nested scroll region must not be flattened"
+
+
+@pytest.mark.asyncio
+async def test_a_frozen_chunk_still_contributes_its_match_stops() -> None:
+    """Freezing must not make matches unreachable.
+
+    ``enumerate_stop_regions`` walks ``FNDMarkdown`` blocks, and a frozen chunk
+    is not one — so without explicit handling it contributes nothing and its
+    matches drop out of n/b navigation and the off-screen markers. Nothing
+    raises; the matches simply stop existing, which is why this is pinned.
+    """
+    from fnd.tui.preview_scroll import enumerate_stop_regions
+
+    app = _Host()
+    async with app.run_test(size=(90, 24)) as pilot:
+        md = await _built(pilot)
+        pane = app.query_one("#pane", VerticalScroll)
+        spec = md.match_spec
+
+        live_stops = len(enumerate_stop_regions(pane, spec))
+        assert live_stops > 0, "fixture should have match stops while live"
+
+        frozen = freeze(md, chunk_seq=7)
+        assert frozen is not None
+        view = FrozenChunkView(frozen)
+        await pane.mount(view)
+        await md.remove()
+        for _ in range(8):
+            await pilot.pause()
+
+        frozen_stops = len(enumerate_stop_regions(pane, spec))
+        assert frozen_stops == live_stops, (
+            f"{live_stops} stops live but {frozen_stops} once frozen — "
+            "the chunk's matches became unreachable by n/b and the markers"
+        )

@@ -205,6 +205,17 @@ class MatchNavigator:
                 if isinstance(block, FNDMarkdownTableDT | FNDMarkdownTD | FNDMarkdownTH):
                     continue
                 n += 1
+        # Frozen chunks carry their stop count from capture time. Counting them
+        # keeps the footer hint and ``current_chunk_has_stops`` honest: without
+        # it a frozen chunk reads as having no matches, so ``n``/``b`` would be
+        # advertised as unavailable on a chunk that does have them — or, worse,
+        # silently do nothing. Data only, no region reads, like everything else
+        # in this method.
+        from fnd.tui.preview.frozen import FrozenChunkView
+
+        frozen = [root] if isinstance(root, FrozenChunkView) else list(root.query(FrozenChunkView))
+        for view in frozen:
+            n += len(view.frozen.stop_rows)
         for line in root.query("Static.chunk-line"):
             txt = getattr(line, "fnd_text", None)
             if txt and text_has_any_match(txt, spec):
@@ -382,7 +393,21 @@ class MatchNavigator:
         """Phase 1: BARE poll for mount completion — no query, no region reads,
         nothing that touches the preview subtree — so the delicate cold-nav
         settle window is untouched (any per-frame subtree work there stalls the
-        landing). Just wait for is_complete, then count."""
+        landing). Just wait for is_complete, then count.
+
+        ``is_complete`` means every chunk of the file is mounted, which above
+        ``FULLMOUNT_CHUNK_BUDGET`` is deliberately never true — the file stays
+        windowed by design. So on a large file this runs its whole budget out and
+        looks like pure waste. **It is not.** Burning the budget is what holds
+        ``_count_tick``'s subtree walk back until after the mount, which is the
+        guarantee the paragraph above is making. Ending the wait early puts that
+        walk inside the settle window: measured reconcile-to-scroll 549 -> 912ms,
+        worse in every round of an interleaved A/B.
+
+        The protection is therefore accidental, and anything that makes
+        ``is_complete`` reachable removes it silently. Gating on the landing
+        instead (``is_settling`` plus ``pipeline_busy``) states it deliberately
+        and measures neutral — correct, but not worth the churn on its own."""
         if gen != self._refresh_gen:
             return  # superseded by a newer rebuild
         active = getattr(getattr(self._app, "_preview", None), "active", None)

@@ -661,6 +661,12 @@ class StructuralScrollStrategy:
     def _match_line_offset(self, target: Widget) -> int:
         """Rows from the top of ``target`` down to its first matching line.
 
+        A frozen chunk answers this from the row recorded at capture time, while
+        its widgets still existed (``fnd_first_match_row``). Without that a
+        navigation to a frozen chunk lands on the chunk's TOP rather than its
+        match — the widget scan below finds nothing to descend into, since the
+        whole point of freezing is that there are no child widgets left.
+
         ``scroll_to_region`` anchors a widget's *top*, so a match a hundred rows
         into a long code fence landed off-screen below the viewport — the scroll
         reported success while showing the user nothing. Counting newlines is
@@ -668,6 +674,9 @@ class StructuralScrollStrategy:
         returns 0 for wrapped prose, where the block is short enough that its
         top is the match anyway.
         """
+        frozen_row = getattr(target, "fnd_first_match_row", None)
+        if isinstance(frozen_row, int):
+            return frozen_row if 0 < frozen_row < target.region.height else 0
         spec = self._host.effective_match_spec()
         if spec.is_empty:
             return 0
@@ -862,10 +871,17 @@ def enumerate_stop_regions(pane: VerticalScroll, spec: MatchSpec) -> list[Region
     Off-screen cells of a mounted table resolve fine — the table is one
     full-height widget — so a big flashcards/glossary table is fully covered
     once its chunk is mounted. Queries descendants (chunks live inside a
-    ``PreviewContainer``), not just the pane's direct children."""
+    ``PreviewContainer``), not just the pane's direct children.
+
+    A FROZEN chunk has no blocks to walk — that is the point of freezing — so its
+    stops come from the rows recorded at capture time. Without this a frozen
+    chunk contributes nothing, and its matches become unreachable by ``n``/``b``
+    and invisible to the off-screen markers: the failure is silent, which is
+    exactly why it is handled here rather than left to the caller."""
     from textual.widgets import DataTable
 
     from fnd.render import text_has_any_match
+    from fnd.tui.preview.frozen import FrozenChunkView
     from fnd.tui.widgets.markdown import (
         FNDMarkdown,
         FNDMarkdownTableDT,
@@ -891,6 +907,18 @@ def enumerate_stop_regions(pane: VerticalScroll, spec: MatchSpec) -> list[Region
                 continue
             if block.region.height > 0:
                 regions.append(block.region)
+    # Frozen chunks: the stops were recorded as rows while the blocks still
+    # existed, so they resolve by offset from the view's own top. A table cell's
+    # row came from the same capture, which is why they need no special case
+    # here — unlike the live path above, where a cell has to be resolved against
+    # a DataTable that may not have laid its rows out yet.
+    for view in pane.query(FrozenChunkView):
+        base = view.region
+        if base.height == 0:
+            continue
+        for row in view.frozen.stop_rows:
+            if 0 <= row < base.height:
+                regions.append(Region(base.x, base.y + row, base.width, 1))
     # Plain (pdf/txt) chunks render one Static per body line; a matching line
     # is a stop.
     for line in pane.query("Static.chunk-line"):

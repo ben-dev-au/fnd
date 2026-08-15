@@ -1776,6 +1776,30 @@ class PreviewPresenter:
         # cancel left it ``-pre-reveal`` (invisible), scrolling alone would strand
         # it. ``reveal_active`` lifts it once the scroll lands (no-op otherwise).
         self._app._preview_scroll.reconcile(self.reveal_active)
+        # Re-freeze whatever this navigation left live outside the new window.
+        # The sweep after the initial fill is not enough on its own: lazy mount
+        # and each subsequent navigation mount more chunks live, so DOM creeps
+        # back over a reading session — measured 402 widgets after the fill,
+        # 805 after twenty navigations. Freezing has to recur for the same
+        # reason the fill does.
+        await self._refreeze_around(container, focus_chunk_seq)
+
+    async def _refreeze_around(self, container: PreviewContainer, focus_chunk_seq: int) -> None:
+        """Freeze everything outside the window centred on ``focus_chunk_seq``."""
+        chunks = self.chunk_cache.get(container.parent_doc_id)
+        if not chunks:
+            return
+        focus_idx = next((i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq), None)
+        if focus_idx is None:
+            return
+        # Only the focus chunk stays live. Keeping the whole visible window live
+        # was the first cut and it buys nothing: both policies settle at the same
+        # DOM (263 widgets on a 99-chunk file), because each navigation re-freezes
+        # whatever the last one left behind. Freezing the window as well simply
+        # gets there sooner — 401 widgets after the initial fill against 688.
+        win_start = focus_idx
+        win_end = focus_idx + 1
+        await self._freeze_chunks_outside_window(container, chunks, win_start, win_end)
 
     def bump_reset_generation(self) -> None:
         """Invalidate any in-flight mount. Call from every path that clears the
@@ -1875,8 +1899,8 @@ class PreviewPresenter:
                 break
         return start
 
-    async def _freeze_backfilled_chunks(
-        self, container: PreviewContainer, chunks: list[FileChunk], win_end: int
+    async def _freeze_chunks_outside_window(
+        self, container: PreviewContainer, chunks: list[FileChunk], win_start: int, win_end: int
     ) -> None:
         """Swap every background-filled chunk for its frozen capture.
 
@@ -1909,7 +1933,12 @@ class PreviewPresenter:
             return
         frozen = 0
         for index, chunk in enumerate(chunks):
-            if index < win_end or index not in container.mounted_indices:
+            # Only the VISIBLE window stays live. Skipping everything before
+            # win_end — as the first cut did — left every chunk ABOVE the focus
+            # live too, which is most of them on a file the user has read down
+            # through: 11 live chunks holding 329 widgets against 72 frozen
+            # holding 72.
+            if win_start <= index < win_end or index not in container.mounted_indices:
                 continue
             widget = container.chunk_widgets.get(chunk.chunk_seq)
             if not isinstance(widget, FNDMarkdown):
@@ -2202,7 +2231,7 @@ class PreviewPresenter:
                 # not been laid out — size.height is 0 — and a capture of an
                 # unlaid-out widget is correctly refused, which is what made a
                 # per-chunk attempt here fail every single time (72 of 72).
-                await self._freeze_backfilled_chunks(container, chunks, win_end)
+                await self._freeze_chunks_outside_window(container, chunks, win_start, win_end)
         finally:
             # Always reveal any widgets we hid; a cancelled task that
             # left them hidden would leak a half-displayed container
