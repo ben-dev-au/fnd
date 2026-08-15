@@ -11,9 +11,11 @@ Two departures from the indexer's calibrator, both deliberate:
   outlier (a cold monster PDF, a machine under load) would drag a
   five-sample mean far off the typical case and leave the bar crawling
   for every normal navigation afterwards.
-* **Throttled writes.** An operation can complete several times a second
-  during a held Down key. The history is kept in memory and flushed at
-  most once every :data:`_FLUSH_INTERVAL_S`.
+* **No writing during interaction.** An operation completes several times
+  a second under a held cursor key, and every completion records a sample.
+  Writing there would put file I/O on the event loop in the middle of the
+  very navigation the line exists to make feel better. The history lives in
+  memory and is written by :func:`flush`, which the app calls on unmount.
 
 Telemetry must never break a caller: every filesystem and parse path
 here is suppressed, and a failure just means the seeds stay in use.
@@ -42,7 +44,6 @@ _MAX_HISTORY = 200
 # A run this short tells us nothing useful and would drag the expectation
 # down for the cases the bar actually exists to cover.
 _MIN_SAMPLE_MS = 5.0
-_FLUSH_INTERVAL_S = 5.0
 
 
 @dataclass(frozen=True)
@@ -59,7 +60,6 @@ class _Store:
     records: list[PhaseRecord] = field(default_factory=list)
     loaded: bool = False
     dirty: bool = False
-    last_flush: float = 0.0
 
 
 _store = _Store()
@@ -110,7 +110,6 @@ def record(operation_id: str, observed_ms: Mapping[str, float]) -> None:
     )
     del _store.records[:-_MAX_HISTORY]
     _store.dirty = True
-    _maybe_flush()
 
 
 def expected_ms(operation_id: str) -> dict[str, float]:
@@ -137,7 +136,6 @@ def flush() -> None:
     if not _store.dirty:
         return
     _store.dirty = False
-    _store.last_flush = time.monotonic()
     path = _path()
     with contextlib.suppress(OSError):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -156,13 +154,6 @@ def reset_for_tests() -> None:
     _store.records.clear()
     _store.loaded = False
     _store.dirty = False
-    _store.last_flush = 0.0
-
-
-def _maybe_flush() -> None:
-    now = time.monotonic()
-    if now - _store.last_flush >= _FLUSH_INTERVAL_S:
-        flush()
 
 
 __all__ = [

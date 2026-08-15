@@ -139,6 +139,10 @@ class StubBar:
         self.label = ""
         self.visible = False
 
+    @property
+    def is_idle(self) -> bool:
+        return not self.visible
+
     def show(self) -> None:
         self.visible = True
 
@@ -147,11 +151,22 @@ class StubBar:
 
 
 class StubTimer:
+    """Models Textual's Timer where it matters: ``stop()`` cancels the task
+    and drops the reference, which is the liveness signal. (``_active`` is the
+    PAUSE flag and ``stop`` sets it — a detail worth encoding, because reading
+    it as liveness produces a check that is always True.)"""
+
     def __init__(self) -> None:
         self.stopped = False
+        self._task: object | None = object()
 
     def stop(self) -> None:
         self.stopped = True
+        self._task = None
+
+    def die(self) -> None:
+        """A timer killed from outside, e.g. a cancelled task."""
+        self._task = None
 
 
 class StubApp:
@@ -160,6 +175,7 @@ class StubApp:
     def __init__(self, bar: StubBar) -> None:
         self.bar = bar
         self.timers: list[StubTimer] = []
+        self.watchdogs: list[tuple[StubTimer, Any]] = []
 
     def query_one(self, _selector: Any) -> StubBar:
         return self.bar
@@ -167,6 +183,11 @@ class StubApp:
     def set_interval(self, _interval: float, _callback: Any, name: str = "") -> StubTimer:
         timer = StubTimer()
         self.timers.append(timer)
+        return timer
+
+    def set_timer(self, _delay: float, callback: Any, name: str = "") -> StubTimer:
+        timer = StubTimer()
+        self.watchdogs.append((timer, callback))
         return timer
 
 
@@ -305,12 +326,16 @@ def test_a_broken_sampler_releases_the_line_instead_of_holding_it() -> None:
     assert facility.active is None
 
 
-def test_a_session_whose_owner_died_is_released_by_the_hard_cap() -> None:
+def test_a_session_whose_owner_died_is_released() -> None:
+    """A sampler that never says it is finished cannot hold the line for good:
+    once the fill stops advancing, the line has nothing left to say."""
     facility, _bar, clock = make_facility()
     facility.begin(ONE_PHASE, sampler=lambda _s: True)
-    for _ in range(20):
+    for _ in range(120):
         clock.advance(1.0)
         facility.tick()
+        if facility.active is None:
+            break
     assert facility.active is None
 
 
@@ -376,3 +401,135 @@ async def test_the_mounted_widget_renders_a_full_width_line(
         widget.hide()
         await pilot.pause()
         assert pane.region == idle_pane_region
+
+
+# ── the tick loop must not be a single point of failure ──────────
+
+
+def test_a_tick_that_raises_does_not_escape() -> None:
+    """Textual hands a timer-callback exception to App._handle_exception,
+    which takes the whole app down. A progress bar must not be able to do
+    that to the session it exists to serve."""
+    facility, _bar, _clock = make_facility()
+
+    def boom(_session: ProgressSession) -> bool:
+        raise RuntimeError("sampler exploded in a way _sample does not catch")
+
+    facility.begin(ONE_PHASE, sampler=boom)
+    facility.tick()  # must not raise
+
+
+def test_a_dead_timer_is_replaced_rather_than_trusted() -> None:
+    """_start_ticking must not treat a stopped timer as "already ticking"."""
+    facility, _bar, _clock = make_facility()
+    app: StubApp = facility._app  # type: ignore[assignment]
+
+    facility.begin(ONE_PHASE)
+    assert len(app.timers) == 1
+    app.timers[0].die()  # as Textual does when a callback raises
+
+    facility.begin(ONE_PHASE)
+    assert len(app.timers) == 2, "a dead tick loop was never replaced"
+    assert facility._timer is app.timers[1]
+
+
+def test_a_live_timer_is_not_churned() -> None:
+    facility, _bar, _clock = make_facility()
+    app: StubApp = facility._app  # type: ignore[assignment]
+    facility.begin(ONE_PHASE)
+    facility.begin(ONE_PHASE)
+    facility.begin(ONE_PHASE)
+    assert len(app.timers) == 1
+
+
+def test_the_watchdog_clears_a_line_the_tick_loop_abandoned() -> None:
+    """The guarantee that does not depend on the tick loop at all. Whatever
+    goes wrong upstream, the line goes away."""
+    facility, bar, _clock = make_facility()
+    app: StubApp = facility._app  # type: ignore[assignment]
+
+    facility.begin(ONE_PHASE, sampler=lambda _s: True)
+    assert bar.visible
+    app.timers[0].die()  # tick loop is gone; nothing will clear this
+
+    assert app.watchdogs, "no watchdog was armed"
+    _timer, fire = app.watchdogs[-1]
+    fire()
+
+    assert not bar.visible, "the watchdog did not put the line away"
+    assert facility.active is None
+
+
+def test_a_stalled_line_is_retired_even_while_a_session_claims_to_be_working() -> None:
+    """A session whose sampler never finishes, and whose fraction has stopped
+    moving, is not telling the user anything. It gets retired."""
+    facility, bar, clock = make_facility()
+    facility.begin(ONE_PHASE, sampler=lambda _s: True)
+    for _ in range(400):  # 20s at the tick rate
+        clock.advance(1 / 20)
+        facility.tick()
+        if not bar.visible:
+            break
+    assert not bar.visible, "a line that stopped moving stayed on screen"
+
+
+def test_superseding_sessions_cannot_extend_a_stalled_line() -> None:
+    """The reported failure. The paint check re-enters render_full_doc on a
+    failed reveal, and each re-entry begins a new session. Measuring the cap
+    from the last begin handed a stuck line a fresh budget every time, so it
+    outlived any cap. The cap measures painted movement instead."""
+    facility, bar, clock = make_facility()
+    facility.begin(ONE_PHASE, sampler=lambda _s: True)
+    for i in range(600):
+        clock.advance(1 / 20)
+        if i % 20 == 0:  # a re-dispatch storm, one every second
+            facility.begin(ONE_PHASE, sampler=lambda _s: True)
+        facility.tick()
+        if not bar.visible:
+            break
+    assert not bar.visible, "repeated begins kept a stalled line alive"
+
+
+def test_the_watchdog_is_disarmed_on_a_normal_clear() -> None:
+    facility, _bar, clock = make_facility()
+    session = facility.begin(ONE_PHASE)
+    session.close()
+    run_until_idle(facility, clock)
+    assert facility._watchdog is None
+
+
+def test_an_active_session_never_paints_a_full_line() -> None:
+    """A full line means finished. A session whose phases have all eased out
+    is not finished, so it must still show a gap — otherwise a stall there
+    looks identical to a stall in the clear."""
+    facility, bar, clock = make_facility()
+    facility.begin(ONE_PHASE, sampler=lambda _s: True)
+    for _ in range(200):
+        clock.advance(0.05)
+        facility.tick()
+        if facility.active is None:
+            break
+        assert bar.fraction < 1.0
+
+
+def test_an_idle_facility_releases_its_tick_loop() -> None:
+    facility, _bar, _clock = make_facility()
+    facility.begin(ONE_PHASE)
+    facility._active = None  # neither active nor completing
+    facility._completing_at = None
+    facility.tick()
+    assert facility._timer is None
+
+
+def test_a_changing_label_counts_as_movement() -> None:
+    """Indexing one large PDF holds the file counter still for minutes; the
+    page counter in the label is the only thing showing it is alive. Retiring
+    that line as stalled would be exactly backwards."""
+    facility, bar, clock = make_facility()
+    session = facility.begin(ONE_PHASE, sampler=lambda _s: True)
+    for page in range(1, 60):
+        clock.advance(1.0)
+        session.set_label(f"Module_06.pdf · page {page} of 118")
+        facility.tick()
+        assert bar.visible, f"a line with a live page counter was retired at page {page}"
+    assert session is facility.active
