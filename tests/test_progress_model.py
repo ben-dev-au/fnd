@@ -7,7 +7,6 @@ than a race against wall time.
 
 from __future__ import annotations
 
-import math
 from itertools import pairwise
 
 import pytest
@@ -74,19 +73,37 @@ def test_recalibration_keeps_seeds_for_unmeasured_phases() -> None:
 # ── easing ───────────────────────────────────────────────────────
 
 
-def test_timed_phase_reaches_about_80_percent_at_its_expectation() -> None:
+def test_a_timed_phase_reads_half_way_at_its_expected_duration() -> None:
+    """Deliberately not further along than that: reaching the expected
+    duration says nothing about whether the phase is nearly done, and a bar
+    that claims 80% and then sits there is the complaint."""
     clock = FakeClock()
     m = ProgressModel(plan(("only", 200.0)), clock=clock)
     clock.advance_ms(200.0)
-    assert m.tick() == pytest.approx(0.97 * (1 - math.exp(-1.6)), abs=1e-6)
-    assert 0.75 < m.fraction < 0.80
+    assert m.tick() == pytest.approx(0.97 * 0.5, abs=1e-9)
+
+
+def test_a_timed_phase_keeps_a_fat_tail() -> None:
+    """The property the curve was chosen for. Doubling and quadrupling the
+    elapsed time must still move the bar by an amount a user can see — an
+    exponential's tail is flat here, which froze the line for over a second
+    on a phase that overran."""
+    clock = FakeClock()
+    m = ProgressModel(plan(("only", 100.0)), clock=clock)
+    clock.advance_ms(200.0)
+    at_2x = m.tick()
+    clock.advance_ms(200.0)
+    at_4x = m.tick()
+    assert at_2x == pytest.approx(0.97 * 2 / 3, abs=1e-9)
+    assert at_4x == pytest.approx(0.97 * 4 / 5, abs=1e-9)
+    assert at_4x - at_2x > 0.1
 
 
 def test_timed_phase_never_completes_on_time_alone() -> None:
     clock = FakeClock()
     m = ProgressModel(plan(("only", 100.0)), clock=clock)
     clock.advance_ms(60_000.0)
-    assert m.tick() == pytest.approx(0.97)
+    assert 0.96 < m.tick() < 0.97
     assert m.fraction < 1.0
 
 

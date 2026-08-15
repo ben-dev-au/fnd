@@ -85,7 +85,6 @@ async def test_new_query_during_inflight_mount_purges_stale_container(
             await asyncio.wait_for(task, timeout=10.0)
         await safe_pause(pilot)
 
-        assert app._progress.active is None, "progress bar stranded after new query"
         assert stale not in set(preview.preview_cache._cache.values()), (
             "BUG: cancelled mount re-inserted the stale container into the cleared cache"
         )
@@ -180,9 +179,9 @@ async def test_superseded_mount_cancels_detached_finalizer(built_index: Path) ->
         assert not clobbered["ran"], (
             "BUG: superseded finaliser ran and tore down the successor's loading state"
         )
-        assert app._progress.active is not None, (
-            "BUG: stale finaliser hid the successor's progress bar"
-        )
+        # The progress line is no longer part of this contract: it belongs to
+        # the navigation, not to the mount, so a stale finaliser has nothing to
+        # hide. Covered by test_progress_navigation_session.py.
         assert preview.inflight_target == successor, (
             "BUG: stale finaliser cleared the successor's inflight latch"
         )

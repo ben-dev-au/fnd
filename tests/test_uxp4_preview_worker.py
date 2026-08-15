@@ -210,10 +210,14 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
         # Return to big — strip shows briefly during the cache-hit reveal
         # cycle, then idles once _finalize_pre_reveal's on_done fires.
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
-        for _ in range(8):
-            await pilot.pause()
         strip = app.query_one(FNDProgressBar)
-        assert "-idle" in strip.classes
+        # Same reasoning as the determinate test above: the line holds a
+        # completed fill briefly, so wait for the state rather than a count.
+        await wait_until(
+            pilot,
+            lambda: "-idle" in strip.classes,
+            message="progress line never cleared after the cache-hit reveal",
+        )
         assert app._preview.active is big_container
 
 

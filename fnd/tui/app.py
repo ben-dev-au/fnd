@@ -60,6 +60,7 @@ from fnd.tui.preview_scroll import (
 )
 from fnd.tui.preview_scrollbar import MatchAwareScroll, ThinScrollBarRender
 from fnd.tui.progress import FNDProgressBar, ProgressFacility, ProgressSession
+from fnd.tui.progress.operations import PreviewProgressTracker
 from fnd.tui.results_labels import (
     _elide_middle_keep_suffix,
 )
@@ -408,6 +409,10 @@ class FNDApp(App[None]):
         # fnd/tui/preview/lazy_mount.py.
         self._lazy = LazyMounter(self)
         self._progress = ProgressFacility(self)
+        # Watches the preview pipeline and drives the progress line from it, so
+        # the mount path never has to report its own progress. See
+        # fnd/tui/progress/operations.py.
+        self._nav_progress = PreviewProgressTracker(self)
         # Prefetch warming pipeline (sink queue + drainer task started in
         # on_mount); see fnd/tui/preview/prefetch.py.
         self._prefetch = PrefetchEngine(self)
@@ -417,6 +422,11 @@ class FNDApp(App[None]):
     def open_progress(self, phase: str = "", *, total: int = 1) -> ProgressSession:
         """Open a new ProgressSession. Use as a context manager."""
         return self._progress.open(phase, total=total)
+
+    def on_unmount(self) -> None:
+        """Stop the progress tick loop and persist what the phases actually
+        cost, so the next session's pacing starts calibrated."""
+        self._progress.shutdown()
 
     # ── Layout ────────────────────────────────────────────────────
 

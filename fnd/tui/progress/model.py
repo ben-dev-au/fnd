@@ -20,21 +20,13 @@ reached.
 
 from __future__ import annotations
 
-import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-# elapsed == expected lands at ~0.80 of the phase's headroom, leaving
-# visible room for an over-running phase to keep creeping into.
-_EASE_SHAPE = 1.6
 # A timed phase asymptotes here rather than filling: only entering the next
 # phase (or completing the operation) retires the remaining share, so a slow
-# machine can't sit at a hard 100% mid-operation. Applied as a SCALE, not a
-# clamp — clamping makes the bar freeze once a phase overruns ~3x its
-# expectation, which is precisely the "nothing, nothing, nothing" the line
-# exists to prevent. Scaled, it is strictly increasing for as long as the
-# phase runs.
+# machine can't sit at a hard 100% mid-operation.
 _PHASE_CEILING = 0.97
 # Guards a zero/negative expectation from dividing by zero.
 _MIN_EXPECTED_MS = 1.0
@@ -220,8 +212,16 @@ class ProgressModel:
         if run is not None and run.units is not None:
             return run.units
         expected = max(_MIN_EXPECTED_MS, self.phase.expected_ms)
-        eased = 1.0 - math.exp(-(self.phase_elapsed_ms() / expected) * _EASE_SHAPE)
-        return _PHASE_CEILING * eased
+        elapsed = self.phase_elapsed_ms()
+        # Hyperbolic, not exponential. Both are monotonic and both asymptote,
+        # but an exponential's tail dies as e^-t: measured on the seeded cold
+        # budget, a phase running 1.7x its expectation left the line painting
+        # the SAME cell for 1.05 s — a visible freeze, which is the exact
+        # complaint this whole thing exists to answer. This tail dies as 1/t,
+        # so a phase that overruns keeps moving a cell at a time for as long as
+        # it runs. Reads half the phase at its expected duration, two thirds at
+        # double, four fifths at quadruple.
+        return _PHASE_CEILING * (elapsed / (elapsed + expected))
 
 
 __all__ = ["OperationPlan", "Phase", "ProgressModel"]

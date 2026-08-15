@@ -475,6 +475,12 @@ class PreviewPresenter:
         self._app._preview_scroll.arm(
             ScrollAnchor(parent_id, focus_chunk_seq, animate=target_mounted)
         )
+        # One progress session spans the whole navigation, opened here because
+        # arming is the single event every navigation passes through — so the
+        # line is up before any of the work below starts. The tracker samples
+        # this pipeline and closes the session once the match has landed; no
+        # stage below has to remember to hide anything.
+        self._app._nav_progress.begin(parent_id)
         # Every navigation is checked once it should have settled (see
         # _arm_paint_check) — the single place that verifies the OUTCOME rather
         # than one mechanism, so no seam can strand the pane indefinitely.
@@ -984,39 +990,34 @@ class PreviewPresenter:
         progress: int = 0,
         phase: str | None = None,
     ) -> None:
-        """Open or update the progress session for a preview load. Determinate
-        only — ``total=None`` is treated as ``total=1`` so the indeterminate
-        red pulse never paints."""
-        total_eff = total if (total is not None and total > 0) else 1
-        s = self._app._progress.active
-        if s is None or s.closed:
-            s = self._app._progress.open(phase or "loading…", total=total_eff)
-        else:
-            if phase is not None:
-                s.set_phase(phase)
-            s.set_total(total_eff)
-        s.set_progress(progress)
-        import contextlib
+        """Suppress the pane's own scrollbar while a mount is in flight.
 
-        # Pane's own scrollbar would jitter as virtual_size grows; the strip
-        # below the layout carries the loading signal instead.
+        These three methods no longer drive the progress line. A navigation's
+        session is opened once by :meth:`render_full_doc` and advanced by
+        :class:`fnd.tui.progress.operations.PreviewProgressTracker`, which reads
+        this pipeline's own signals — so a stage that forgets to call these can
+        no longer strand the line, and a stale one can no longer retire a
+        successor's. The arguments are kept because the sixteen call sites are
+        deliberately left as they are; they describe work the tracker measures
+        for itself.
+        """
+        del total, progress, phase
+        # The pane's own scrollbar would jitter as virtual_size grows during a
+        # partial mount; the line below the layout carries the signal instead.
         with contextlib.suppress(Exception):
             self._app.query_one("#preview_pane", VerticalScroll).add_class("is-loading")
 
     def hide_progress_bar(self) -> None:
-        """Close the active session + re-enable pane scrolling. Idempotent."""
-        s = self._app._progress.active
-        if s is not None and not s.closed:
-            s.close()
-        import contextlib
-
+        """Re-enable the pane's scrollbar. Idempotent. See
+        :meth:`show_progress_bar` for why this no longer closes anything."""
         with contextlib.suppress(Exception):
             self._app.query_one("#preview_pane", VerticalScroll).remove_class("is-loading")
 
     def update_progress_bar(self, progress: int) -> None:
-        s = self._app._progress.active
-        if s is not None and not s.closed:
-            s.set_progress(progress)
+        """No-op. The tracker reads ``mounted_indices`` itself, and against the
+        mount window rather than the file's chunk count — the old denominator
+        that left the line reading ~1% on a thousand-chunk PDF."""
+        del progress
 
     def clear_pane_placeholder(self) -> None:
         """Drop the empty-state Static. Called by every activate path so the

@@ -1,12 +1,19 @@
 """Regression: a cold preview mount cancelled in its early-await phase —
-before the detached finalize task (the only thing that hides the progress
-bar + releases the in-flight latch) is spawned — must not strand the bar.
+before the detached finalize task is spawned — must not strand the in-flight
+latch.
 
-The symptom was "the loading bar gets stuck until I navigate to a different
-file and back": cancel_mount_task cancels the mount but hides nothing, the
-finally only hid on is_complete, and no finalize task existed yet — so the
-bar stayed up forever and the inflight latch kept a same-file re-load from
-re-dispatching.
+The original symptom was "the loading bar gets stuck until I navigate to a
+different file and back": cancel_mount_task cancels the mount but hid
+nothing, the finally only hid on is_complete, and no finalize task existed
+yet — so the bar stayed up forever AND the inflight latch kept a same-file
+re-load from re-dispatching.
+
+The bar half of that is now structurally impossible: the progress line is
+owned by the navigation (opened in render_full_doc, closed by the observer in
+fnd/tui/progress/operations.py), so no mount-path exit can strand or steal
+it. See test_progress_line.py::test_a_stale_holder_cannot_retire_a_newer_session
+and test_progress_navigation_session.py. What these tests still guard, and
+what is still hand-maintained in the mount path, is the LATCH.
 """
 
 from __future__ import annotations
@@ -59,9 +66,9 @@ async def test_cancel_during_early_mount_does_not_strand_progress_bar(
             total_chunks=len(chunks),
         )
 
-        # Mirror the real pre-mount state: bar shown, latch set, mount task
-        # running — then drive the structural cold mount directly so routing
-        # (flat vs structural, warm-cache) can't change the path under test.
+        # Mirror the real pre-mount state: pane scroll-locked, latch set, mount
+        # task running — then drive the structural cold mount directly so
+        # routing (flat vs structural, warm-cache) can't change the path.
         preview.show_progress_bar(total=len(chunks), phase="mounting…")
         preview.inflight_target = (g.parent_id, seq)
         task = asyncio.create_task(
@@ -73,9 +80,6 @@ async def test_cancel_during_early_mount_does_not_strand_progress_bar(
 
         # Let the task reach and park on the blocked early await.
         await safe_pause(pilot)
-        assert app._progress.active is not None, (
-            "setup — the cold mount should have the progress bar open"
-        )
         assert getattr(container, "_finalize_task", None) is None, (
             "setup — mount must be parked BEFORE the finalize task is spawned"
         )
@@ -85,10 +89,6 @@ async def test_cancel_during_early_mount_does_not_strand_progress_bar(
         await safe_pause(pilot)
         await safe_pause(pilot)
 
-        assert app._progress.active is None, (
-            "BUG: progress bar stranded after a cold mount was cancelled before "
-            "its finalize task spawned (the 'stuck loading until I switch files' bug)"
-        )
         assert preview.inflight_target is None, (
             "inflight latch not released on cancel — a same-file re-load would "
             "dedup out and never re-mount"
@@ -143,21 +143,16 @@ async def test_exception_during_early_mount_does_not_strand_progress_bar(
             await task
         await safe_pause(pilot)
 
-        assert app._progress.active is None, (
-            "BUG: progress bar stranded after a cold mount FAILED before its "
-            "finalize task spawned (mount_task is current_task path)"
-        )
         assert preview.inflight_target is None, "inflight latch not released on mount failure"
 
 
 @pytest.mark.asyncio
-async def test_early_cancel_does_not_clobber_successor_decode_bar(
+async def test_early_cancel_does_not_clobber_successor_latch(
     built_index: Path,
 ) -> None:
-    """A mount cancelled in its early-await window must NOT hide a SUCCESSOR's
-    progress bar or clear its latch. The uncached decode path cancels the old
-    mount (nulling mount_task) and opens a new "decoding…" session without
-    reassigning mount_task — so mount_task being None is NOT enough to prove
+    """A mount cancelled in its early-await window must NOT clear a SUCCESSOR's
+    latch. The uncached decode path cancels the old mount (nulling mount_task)
+    without reassigning it — so mount_task being None is NOT enough to prove
     ownership; the cleanup also checks the inflight latch still points at this
     target."""
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
@@ -204,9 +199,6 @@ async def test_early_cancel_does_not_clobber_successor_decode_bar(
         await safe_pause(pilot)
         await safe_pause(pilot)
 
-        assert app._progress.active is not None, (
-            "BUG: a cancelled early mount hid the SUCCESSOR's progress bar"
-        )
         assert preview.inflight_target == successor_target, (
             "BUG: a cancelled early mount cleared the SUCCESSOR's inflight latch"
         )
