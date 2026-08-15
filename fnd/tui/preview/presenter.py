@@ -670,15 +670,39 @@ class PreviewPresenter:
                 to_remove.append((i, w))
         if not to_remove:
             return
+        import os as _os_freeze
         import time as _time
 
         from fnd.tui import _perf
+        from fnd.tui.preview.frozen import FrozenChunkView, freeze
+
+        freeze_on_prune = _os_freeze.environ.get("_FND_FREEZE_ON_PRUNE") == "1"
 
         _pt0 = _time.perf_counter()
+        frozen_count = 0
         self.begin_reconcile_scroll()
         try:
             for i, w in to_remove:
                 seq = chunks[i].chunk_seq
+                # Freeze rather than discard where we can. Removing the chunk
+                # frees its widgets but throws away the render, so scrolling back
+                # to it rebuilds from markdown; a frozen stand-in keeps what it
+                # painted for one widget instead of ~42, and — because it is
+                # given the exact height the tree occupied — swapping it in moves
+                # nothing on screen, so it needs none of the scroll compensation
+                # below.
+                captured = freeze(w, seq) if freeze_on_prune else None
+                if captured is not None:
+                    view = FrozenChunkView(captured)
+                    try:
+                        w.parent.mount(view, before=w)  # type: ignore[union-attr]
+                    except Exception:
+                        captured = None
+                    else:
+                        above_height -= captured.height if i < keep_lo else 0
+                        container.chunk_widgets[seq] = view
+                        container.match_targets.pop(seq, None)
+                        frozen_count += 1
                 # display:none leaves the arrange immediately; remove() then frees
                 # it. (Keeping ~1000s of display:none widgets alive is worse — they
                 # still get walked by settle and inflate the next mount.)
@@ -686,9 +710,10 @@ class PreviewPresenter:
                     w.display = False
                 with contextlib.suppress(Exception):
                     w.remove()
-                container.mounted_indices.discard(i)
-                container.chunk_widgets.pop(seq, None)
-                container.match_targets.pop(seq, None)
+                if captured is None:
+                    container.mounted_indices.discard(i)
+                    container.chunk_widgets.pop(seq, None)
+                    container.match_targets.pop(seq, None)
             if above_height > 0:
                 with contextlib.suppress(Exception):
                     pane.scroll_to(y=max(0.0, vtop - above_height), animate=False, immediate=True)
@@ -698,7 +723,14 @@ class PreviewPresenter:
                     )
         finally:
             self.end_reconcile_scroll()
-        _perf.mark("prune", removed=len(to_remove), ms=(_time.perf_counter() - _pt0) * 1000.0)
+        _perf.mark(
+            "prune",
+            removed=len(to_remove),
+            frozen=frozen_count,
+            ms=(_time.perf_counter() - _pt0) * 1000.0,
+        )
+        if frozen_count:
+            self.diag_log(f"prune froze={frozen_count} removed={len(to_remove) - frozen_count}")
 
     def dispatch_mount(
         self,
@@ -1843,6 +1875,61 @@ class PreviewPresenter:
                 break
         return start
 
+    async def _freeze_backfilled_chunks(
+        self, container: PreviewContainer, chunks: list[FileChunk], win_end: int
+    ) -> None:
+        """Swap every background-filled chunk for its frozen capture.
+
+        Phase 3 exists so an intra-file jump lands on an already-mounted chunk
+        rather than rebuilding. That works, and it is expensive: a fully-filled
+        file measured 99 chunks holding 2,735 widgets, and Textual's arrange is
+        linear in widget count, so the whole file's DOM taxes every interaction.
+        Freezing keeps what Phase 3 buys and drops what it costs — the chunk is
+        still there to jump to, at one widget instead of ~28.
+
+        Runs as one pass after the fill rather than per chunk during it: a chunk
+        mounted a moment ago has not been laid out, ``size.height`` is 0, and
+        ``freeze`` rightly refuses it. Attempting it inline failed on all 72
+        chunks of a real file.
+
+        The visible window is left live — those chunks are being read, and the
+        focused one is what the scroll resolves against.
+
+        Off by default while it is measured (``_FND_FREEZE_BACKFILL=1``).
+        """
+        import contextlib
+        import os as _os
+
+        from fnd.tui.preview.frozen import FrozenChunkView, freeze
+
+        if _os.environ.get("_FND_FREEZE_BACKFILL") != "1":
+            return
+        await self.await_settled()
+        if self.active is not container:
+            return
+        frozen = 0
+        for index, chunk in enumerate(chunks):
+            if index < win_end or index not in container.mounted_indices:
+                continue
+            widget = container.chunk_widgets.get(chunk.chunk_seq)
+            if not isinstance(widget, FNDMarkdown):
+                continue
+            captured = freeze(widget, chunk.chunk_seq)
+            if captured is None:
+                continue
+            view = FrozenChunkView(captured)
+            try:
+                widget.parent.mount(view, before=widget)  # type: ignore[union-attr]
+            except Exception:
+                continue
+            container.chunk_widgets[chunk.chunk_seq] = view
+            container.match_targets.pop(chunk.chunk_seq, None)
+            with contextlib.suppress(Exception):
+                widget.remove()
+            frozen += 1
+        if frozen:
+            self.diag_log(f"backfill froze={frozen} chunks")
+
     async def _mount_chunks_async(
         self,
         parent_id: str,
@@ -2111,6 +2198,11 @@ class PreviewPresenter:
                     i += 1
                     if i % batch_size == 0:
                         await asyncio.sleep(0.006)
+                # Freeze AFTER the fill, not during it. A just-mounted chunk has
+                # not been laid out — size.height is 0 — and a capture of an
+                # unlaid-out widget is correctly refused, which is what made a
+                # per-chunk attempt here fail every single time (72 of 72).
+                await self._freeze_backfilled_chunks(container, chunks, win_end)
         finally:
             # Always reveal any widgets we hid; a cancelled task that
             # left them hidden would leak a half-displayed container
