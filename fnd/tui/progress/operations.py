@@ -72,14 +72,6 @@ INDEX = OperationPlan(
     ),
 )
 
-# Reading View's cost is the full-width reflow, which happens after the
-# action returns — so unlike the other synchronous actions there is real
-# asynchronous work here for a session to span.
-READING_VIEW = OperationPlan(
-    operation_id="reading_view",
-    phases=(Phase(key="reflow", expected_ms=350.0),),
-)
-
 
 class PreviewProgressTracker:
     """Samples the preview pipeline once per progress tick.
@@ -262,31 +254,11 @@ class IndexProgressTracker:
         return " · ".join(parts)
 
 
-class ReadingViewProgressTracker:
-    """Reading View hides the sidebar, so every mounted chunk re-wraps to the
-    full width. The toggle itself returns immediately; the reflow and the
-    position restore land over the following frames, which is the part the
-    user waits through."""
-
-    def __init__(self, app: FNDApp) -> None:
-        self._app = app
-
-    def begin(self) -> ProgressSession:
-        return self._app._progress.begin(READING_VIEW, sampler=self.sample)
-
-    def sample(self, _session: ProgressSession) -> bool:
-        preview = self._app._preview
-        scroll = self._app._preview_scroll
-        return bool(preview.pipeline_busy()) or PreviewProgressTracker._landing(preview, scroll)
-
-
 __all__ = [
     "INDEX",
     "PREVIEW_COLD",
     "PREVIEW_WARM",
-    "READING_VIEW",
     "SEARCH",
     "IndexProgressTracker",
     "PreviewProgressTracker",
-    "ReadingViewProgressTracker",
 ]

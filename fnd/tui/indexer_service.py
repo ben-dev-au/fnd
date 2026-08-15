@@ -253,6 +253,12 @@ class IndexerService:
                 run_seq=my_seq,
             )
         )
+        # Put the run on the app-level line. The modal, when it is open, sits
+        # on its own screen and hides this — which is right: it shows strictly
+        # more. What this covers is the background run (auto-resume on launch,
+        # or a modal the user dismissed with "Background"), which until now
+        # reported nothing at all after its opening toast.
+        self._app._index_progress.begin()
         if open_modal:
             chain_total = getattr(self, "chain_total", 1) or 1
             chain_pending = getattr(self, "chain_remaining", None) or []

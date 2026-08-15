@@ -60,7 +60,7 @@ from fnd.tui.preview_scroll import (
 )
 from fnd.tui.preview_scrollbar import MatchAwareScroll, ThinScrollBarRender
 from fnd.tui.progress import FNDProgressBar, ProgressFacility, ProgressSession
-from fnd.tui.progress.operations import PreviewProgressTracker
+from fnd.tui.progress.operations import IndexProgressTracker, PreviewProgressTracker
 from fnd.tui.results_labels import (
     _elide_middle_keep_suffix,
 )
@@ -413,6 +413,9 @@ class FNDApp(App[None]):
         # the mount path never has to report its own progress. See
         # fnd/tui/progress/operations.py.
         self._nav_progress = PreviewProgressTracker(self)
+        # Mirrors a running index onto the same line. A background run
+        # (auto-resume on launch) otherwise surfaces nothing but a toast.
+        self._index_progress = IndexProgressTracker(self)
         # Prefetch warming pipeline (sink queue + drainer task started in
         # on_mount); see fnd/tui/preview/prefetch.py.
         self._prefetch = PrefetchEngine(self)
