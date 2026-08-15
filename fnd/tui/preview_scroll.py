@@ -137,6 +137,8 @@ class PreviewScrollController:
         # wins. arm() bumps this; the active chain captures it and bails (no
         # scroll, no reschedule, no settled-flip) the moment it's superseded.
         self._generation = 0
+        self._epoch = 0
+        self._pending_settled: _Once | None = None
 
     @property
     def is_armed(self) -> bool:
@@ -160,6 +162,8 @@ class PreviewScrollController:
 
     def arm(self, anchor: ScrollAnchor) -> None:
         self._generation += 1  # newest navigation wins; older chains self-cancel
+        self._epoch += 1
+        self._pending_settled = None
         self._anchor = anchor
         self._armed = True
         self._settled = False
@@ -178,10 +182,16 @@ class PreviewScrollController:
         # if the strategy calls it AND then raises, the error-path call below is
         # a no-op. The latch guarantees the floor (fires on error) and the
         # ceiling (never twice).
-        base = _Once(on_settled)
+        if on_settled is not None:
+            self._pending_settled = _Once(on_settled)
+        latch = self._pending_settled
         gen = self._generation  # this commit belongs to the current navigation
+        self._epoch += 1
+        epoch = self._epoch
 
         def fire() -> None:
+            if epoch != self._epoch and gen == self._generation:
+                return
             # The scroll has committed. Honour the one-shot reveal either way (a
             # dropped call strands the container hidden) — but only flip
             # ``_settled`` (opening the lazy-mount gate) when this is STILL the
@@ -189,7 +199,8 @@ class PreviewScrollController:
             # the gate for the newer nav still in flight.
             if gen == self._generation:
                 self._settled = True
-            base()
+            if latch is not None:
+                latch()
 
         if not self._armed or self._anchor is None:
             fire()
@@ -200,7 +211,7 @@ class PreviewScrollController:
             return
         try:
             strategy.reconcile(
-                self._anchor, fire, generation=gen, current_generation=lambda: self._generation
+                self._anchor, fire, generation=epoch, current_generation=lambda: self._epoch
             )
         except Exception:
             fire()
