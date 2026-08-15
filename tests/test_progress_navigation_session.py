@@ -13,10 +13,12 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from textual.pilot import Pilot
 
 from fnd.index import build_index
+from fnd.query import FileGroup
 from fnd.tui import FNDApp
-from tests._pilot_wait import wait_until
+from tests._pilot_wait import run_search, wait_until
 
 
 @pytest.fixture
@@ -39,9 +41,8 @@ def two_file_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
     return tmp_index_dir
 
 
-async def _search(pilot: object, app: FNDApp) -> tuple[object, object]:
-    app._search.run("target")
-    await pilot.pause()  # type: ignore[attr-defined]
+async def _search(pilot: Pilot[None], app: FNDApp) -> tuple[FileGroup, FileGroup]:
+    await run_search(pilot, app, "target")
     small = next(g for g in app._search.groups if g.path.endswith("small.md"))
     big = next(g for g in app._search.groups if g.path.endswith("big.md"))
     return small, big
@@ -55,9 +56,11 @@ async def test_a_navigation_opens_a_session_straight_away(two_file_index: Path) 
     async with app.run_test() as pilot:
         await pilot.pause()
         _small, big = await _search(pilot, app)
+        # A committed search parks the cursor, which dispatches a preview load
+        # of its own — so wait for that to land before testing a navigation.
+        await wait_until(pilot, lambda: app._progress.active is None)
 
-        assert app._progress.active is None, "setup — nothing should be in flight"
-        app._preview.render_full_doc(big.parent_id, focus_chunk_seq=0)  # type: ignore[attr-defined]
+        app._preview.render_full_doc(big.parent_id, focus_chunk_seq=0)
         session = app._progress.active
         assert session is not None, "navigating did not open a progress session"
         assert session.operation_id == "preview.cold"
@@ -74,7 +77,7 @@ async def test_the_session_is_released_once_the_navigation_lands(
         await pilot.pause()
         _small, big = await _search(pilot, app)
 
-        app._preview.render_full_doc(big.parent_id, focus_chunk_seq=0)  # type: ignore[attr-defined]
+        app._preview.render_full_doc(big.parent_id, focus_chunk_seq=0)
         await wait_until(
             pilot,
             lambda: app._progress.active is None,
@@ -94,10 +97,10 @@ async def test_a_jump_inside_the_open_file_is_a_warm_navigation(
         await pilot.pause()
         _small, big = await _search(pilot, app)
 
-        app._preview.render_full_doc(big.parent_id, focus_chunk_seq=0)  # type: ignore[attr-defined]
+        app._preview.render_full_doc(big.parent_id, focus_chunk_seq=0)
         await wait_until(pilot, lambda: app._progress.active is None)
 
-        app._preview.render_full_doc(big.parent_id, focus_chunk_seq=1)  # type: ignore[attr-defined]
+        app._preview.render_full_doc(big.parent_id, focus_chunk_seq=1)
         session = app._progress.active
         assert session is not None
         assert session.operation_id == "preview.warm"
@@ -116,7 +119,7 @@ async def test_the_mount_paths_teardown_cannot_retire_the_line(
         await pilot.pause()
         _small, big = await _search(pilot, app)
 
-        app._preview.render_full_doc(big.parent_id, focus_chunk_seq=0)  # type: ignore[attr-defined]
+        app._preview.render_full_doc(big.parent_id, focus_chunk_seq=0)
         session = app._progress.active
         assert session is not None
 

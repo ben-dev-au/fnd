@@ -14,7 +14,7 @@ import pytest
 from fnd.config import Config, Defaults
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from tests._pilot_wait import safe_pause, safe_press, wait_until
+from tests._pilot_wait import run_search, safe_pause, safe_press, wait_until
 
 
 @pytest.fixture
@@ -227,7 +227,7 @@ async def test_query_change_cancels_pending_load(
         assert app._preview.load_target == ("stale-parent-id", 0)
         # Run a fresh query: this calls _refresh_results_tree, which
         # cancels pending loads.
-        app._search.run("nonsense-query-that-matches-nothing")
+        await run_search(pilot, app, "nonsense-query-that-matches-nothing")
         await wait_until(
             pilot,
             lambda: app._preview.load_target is None and app._preview.load_timer is None,

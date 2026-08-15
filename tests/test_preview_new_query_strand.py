@@ -22,7 +22,7 @@ import pytest
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.widgets.preview_container import PreviewContainer
-from tests._pilot_wait import safe_pause
+from tests._pilot_wait import run_search, safe_pause
 
 
 @pytest.fixture
@@ -72,7 +72,7 @@ async def test_new_query_during_inflight_mount_purges_stale_container(
 
         # New query arrives while the mount is parked mid-flight; it clears the
         # caches + DOM and cancels the parked mount.
-        app._search.run("results")
+        await run_search(pilot, app, "results")
         await safe_pause(pilot)
         await safe_pause(pilot)
 

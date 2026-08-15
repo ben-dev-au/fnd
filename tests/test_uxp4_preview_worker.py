@@ -14,7 +14,7 @@ from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.progress import FNDProgressBar
-from tests._pilot_wait import wait_until
+from tests._pilot_wait import run_search, wait_until
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -60,8 +60,7 @@ async def test_preview_load_dispatches_worker_on_cache_miss(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
-        await pilot.pause()
+        await run_search(pilot, app, "target")
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         # Worker dispatched in the preview-load group.
@@ -88,8 +87,7 @@ async def test_preview_clears_old_content_and_shows_progress_bar(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
-        await pilot.pause()
+        await run_search(pilot, app, "target")
         small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         # Load small file first so something is mounted.
@@ -115,8 +113,7 @@ async def test_progress_strip_runs_determinate_then_hides_on_complete(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
-        await pilot.pause()
+        await run_search(pilot, app, "target")
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         # Visible + determinate at start (decode phase).
@@ -150,8 +147,7 @@ async def test_switching_files_mid_load_cancels_mount_task(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
-        await pilot.pause()
+        await run_search(pilot, app, "target")
         small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         # Trigger big.md load and let decode complete + mount start.
@@ -187,8 +183,7 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
     app._preview.preview_cache.max_files = 8
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
-        await pilot.pause()
+        await run_search(pilot, app, "target")
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
         # First visit to big — fully mount.
@@ -232,8 +227,7 @@ async def test_rapid_file_switching_does_not_raise_duplicate_ids(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
-        await pilot.pause()
+        await run_search(pilot, app, "target")
         small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         # Toggle several times in quick succession — each call cancels
@@ -258,8 +252,7 @@ async def test_preview_title_no_longer_carries_progress_text(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
-        await pilot.pause()
+        await run_search(pilot, app, "target")
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         # During load, title must not contain 'loading' / 'chunks'.

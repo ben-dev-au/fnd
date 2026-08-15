@@ -20,6 +20,7 @@ import pytest
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import run_search
 
 
 @pytest.fixture
@@ -72,8 +73,7 @@ async def test_multi_collection_scope_hard_restricts(
     async with app.run_test() as pilot:
         await pilot.pause()
         app._scope.selection = {"Plain": FULL, "Spaced Coll": FULL}
-        app._search.run("shared topic")
-        await pilot.pause()
+        await run_search(pilot, app, "shared topic")
         names = {Path(g.path).name for g in app._search.groups}
         assert "b.md" in names, "spaced collection 'Spaced Coll' was dropped from scope"
         assert "a.md" in names, "'Plain' collection missing from scope"

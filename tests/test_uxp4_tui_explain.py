@@ -10,6 +10,7 @@ import pytest
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import run_search
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -50,8 +51,7 @@ async def test_explain_overlay_captures_trace_and_toggles(cfg: Config, small_ind
     app = FNDApp(index_dir=small_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("mitochondrion")
-        await pilot.pause()
+        await run_search(pilot, app, "mitochondrion")
         # Trace captured on the app — regime depends on corpus IDF, but
         # the trace itself must always be populated when groups exist.
         assert app._search.latest_trace is not None
@@ -95,8 +95,7 @@ async def test_dismiss_overlay_closes_explain(cfg: Config, small_index: Path) ->
     app = FNDApp(index_dir=small_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("mitochondrion")
-        await pilot.pause()
+        await run_search(pilot, app, "mitochondrion")
         app.action_show_explain_overlay()
         await pilot.pause()
         assert len(app.query("#explain_overlay")) == 1

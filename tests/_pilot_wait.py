@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from textual.pilot import Pilot, WaitForScreenTimeout
 
@@ -94,3 +95,18 @@ async def wait_until(
         else:
             await asyncio.sleep(poll)
         iters += 1
+
+
+async def run_search(pilot: Pilot[None], app: Any, query: str) -> None:
+    """Issue a query and wait for it to land.
+
+    ``SearchController.run`` returns as soon as the worker is dispatched, so
+    the old ``run(q)`` + one ``pilot.pause()`` under-waits. Gate on the
+    controller's own ``idle`` signal — a product signal, not a tick count.
+    """
+    app._search.run(query)
+    await wait_until(
+        pilot,
+        lambda: app._search.idle,
+        message=f"search for {query!r} never committed",
+    )

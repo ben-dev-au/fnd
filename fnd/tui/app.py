@@ -608,10 +608,14 @@ class FNDApp(App[None]):
             with contextlib.suppress(Exception):
                 self.query_one(f"#{panel_id}").add_class("collapsed")
         self._refresh_status()
+        # Focus the query bar first and let the search take it back: results
+        # no longer exist synchronously after ``run()``, so there is nothing to
+        # branch on here. ``_refresh_results_tree`` focuses the tree itself once
+        # groups land, and skips that when there are none — the same end state
+        # the old ``not self._search.groups`` check produced.
+        self.query_one("#query_bar", Input).focus()
         if self._initial_query:
             self._search.run(self._initial_query)
-        if not self._initial_query or not self._search.groups:
-            self.query_one("#query_bar", Input).focus()
         # Auto-resume any interrupted reindex from a previous fnd session.
         # Runs in background (no modal); user can click the footer
         # indicator or invoke `action_reindex_default` to view progress.

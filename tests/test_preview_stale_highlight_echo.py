@@ -29,7 +29,7 @@ from textual.widgets import Tree
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from tests._pilot_wait import safe_pause
+from tests._pilot_wait import run_search, safe_pause
 
 
 @pytest.fixture
@@ -114,8 +114,8 @@ async def test_two_rapid_queries_leave_the_preview_on_the_cursor_row(built_index
     app = FNDApp(index_dir=built_index, initial_query="apple")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
-        app._search.run("apples")
-        app._search.run("apple")
+        await run_search(pilot, app, "apples")
+        await run_search(pilot, app, "apple")
         for _ in range(12):
             await safe_pause(pilot)
 

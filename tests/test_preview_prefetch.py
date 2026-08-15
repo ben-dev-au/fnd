@@ -12,7 +12,7 @@ import pytest
 from fnd.config import Config, Defaults, RankingProfileConfig
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from tests._pilot_wait import wait_until
+from tests._pilot_wait import run_search, wait_until
 
 
 @pytest.fixture
@@ -70,7 +70,7 @@ async def test_prefetch_populates_prebuilt_cache_for_flat_files(
     app = FNDApp(index_dir=two_file_index, config=cfg_with_prefetch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("results")
+        await run_search(pilot, app, "results")
         await wait_until(
             pilot,
             lambda: bool(app._search.groups),
@@ -101,8 +101,7 @@ async def test_prefetch_zero_disables(two_file_index: Path) -> None:
     app = FNDApp(index_dir=two_file_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("test")
-        await pilot.pause()
+        await run_search(pilot, app, "test")
         assert not any(w.group == "preview-prefetch" for w in app.workers)
 
 
@@ -121,8 +120,7 @@ async def test_query_change_clears_prebuilt_cache(
         from fnd.tui.line_buffer import FileView, RenderedDocument
 
         app._preview.prebuilt_cache[("fake-parent", "old-sig")] = RenderedDocument(fv=FileView())
-        app._search.run("different")
-        await pilot.pause()
+        await run_search(pilot, app, "different")
         assert app._preview.prebuilt_cache == {}
 
 
@@ -138,7 +136,7 @@ async def test_prefetch_populates_flat_buffer_cache(
     app = FNDApp(index_dir=two_file_index, config=cfg_with_prefetch)
     async with app.run_test() as pilot:
         await safe_pause(pilot)
-        app._search.run("results")
+        await run_search(pilot, app, "results")
         sig = app._search.query_signature()
 
         def _flat_parents() -> set[str]:
@@ -209,7 +207,7 @@ async def test_prefetch_premounts_structural_container(multi_md_index: Path) -> 
     app._preview.preview_cache.max_files = 8
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("prefetch-anchor")
+        await run_search(pilot, app, "prefetch-anchor")
         sig = app._search.query_signature()
 
         def _non_top_done() -> bool:
@@ -266,7 +264,7 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
     app = FNDApp(index_dir=multi_md_index, config=cfg, collection="notes")
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        app._search.run("prefetch-anchor")
+        await run_search(pilot, app, "prefetch-anchor")
         await wait_until(
             pilot,
             lambda: len(app._search.groups) >= 3,
