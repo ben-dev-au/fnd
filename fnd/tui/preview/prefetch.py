@@ -316,12 +316,26 @@ class PrefetchEngine:
         focus_chunk_seq: int,
     ) -> None:
         """Queue a hidden structural pre-mount so cached clicks land
-        as a visibility flip. Safe to default-on now that W3 collapses
-        per-cell widgets — see bench_input_lag for the DOM-size
-        breakdown. Opt out with _FND_NO_PREMOUNT=1."""
+        as a visibility flip. Opt out with _FND_NO_PREMOUNT=1.
+
+        No-op while the preview cache holds a single file. The pre-mount only
+        pays off if the container it builds is still cached when the user gets
+        there, and ``PREVIEW_CACHE_MAX_FILES == 1`` means the very next ``put``
+        evicts it — so every container built here is thrown away unused. It was
+        not free: measured on a real corpus, one Down inside a single file
+        re-mounted the same four *neighbouring files* on every keypress (13
+        prefetch passes over 11 presses, each of the four rebuilt 12-13 times),
+        all of it on the event loop the navigation's own scroll is waiting on.
+
+        The decode and the flat bundles above are kept — those are cached by
+        ``chunk_cache`` / ``prebuilt_cache``, which are not bounded to one file
+        and do survive to be used.
+        """
         import os as _os
 
         if _os.environ.get("_FND_NO_PREMOUNT") == "1":
+            return
+        if self._app._preview.preview_cache.max_files <= 1:
             return
         q = self.sink_queue
         if q is None:

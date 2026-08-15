@@ -310,6 +310,10 @@ class LazyMounter:
                         self._app._preview.begin_reconcile_scroll()
                         try:
                             pane.scroll_to(y=before_scroll + delta, animate=False, immediate=True)
+                            self._app._diag_log(
+                                f"scroll site=lazy_above y={before_scroll + delta:.0f} "
+                                f"delta={delta}"
+                            )
                         finally:
                             self._app._preview.end_reconcile_scroll()
         finally:

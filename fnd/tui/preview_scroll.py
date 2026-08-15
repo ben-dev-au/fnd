@@ -43,6 +43,15 @@ _ABOVE_STABLE_TICKS = 2
 # View re-wrap, which re-lays out every chunk, and a prefetch waiting on settle).
 _ABOVE_WAIT_FLOOR = 26
 
+# Refreshes ``scroll_to_location`` keeps re-anchoring for once the layout has
+# stopped changing. The re-wrap lands in bursts, so the position can look stable
+# for a stretch and then jump — hence a tail rather than an early exit.
+_RESTORE_TAIL_REFRESHES = 12
+# Hard bound on the whole re-anchor loop, including the top-ups it takes while a
+# mount is still in flight. ~1.5s at 60fps: longer than the slowest measured
+# window mount, short enough that a wedged pipeline can't hold the loop open.
+_RESTORE_HARD_CAP = 90
+
 
 @dataclass(frozen=True, slots=True)
 class ScrollAnchor:
@@ -240,6 +249,7 @@ class StructuralHost(Protocol):
     ) -> object: ...
     def diag_log(self, msg: str) -> None: ...
     def above_window_pending(self, focus_chunk_seq: int) -> bool: ...
+    def pipeline_busy(self) -> bool: ...
 
     @property
     def chunk_widgets(self) -> dict[int, Widget]: ...
@@ -572,6 +582,7 @@ class StructuralScrollStrategy:
                 region.x, max(0, region.y - margin), region.width, region.height + margin
             )
         pane.scroll_to_region(region, top=True, animate=animate, immediate=not animate)
+        self._host.diag_log(f"scroll site=match region_y={region.y} animate={animate}")
 
     def _match_table_for(self, target: Widget) -> DataTable[Any] | None:
         """The match-bearing ``DataTable`` ``target`` is or wraps, else None.
@@ -762,9 +773,18 @@ class StructuralScrollStrategy:
     def scroll_to_location(self, location: ViewportLocation) -> None:
         if location.kind != "structural":
             return
-        self._restore_structural(location.chunk_seq, location.offset, retries=12, last_vy=None)
+        self._restore_structural(
+            location.chunk_seq, location.offset, retries=_RESTORE_TAIL_REFRESHES, last_vy=None
+        )
 
-    def _restore_structural(self, seq: int, delta: int, retries: int, last_vy: int | None) -> None:
+    def _restore_structural(
+        self,
+        seq: int,
+        delta: int,
+        retries: int,
+        last_vy: int | None,
+        cap: int = _RESTORE_HARD_CAP,
+    ) -> None:
         # A width reflow re-wraps the chunks above over several refreshes,
         # which keeps sliding the target chunk's content position. Track that
         # content position (``virtual_region.y`` — scroll-independent) and
@@ -782,6 +802,7 @@ class StructuralScrollStrategy:
         self._host.begin_reconcile_scroll()
         try:
             pane.scroll_to(y=max(0, vy + delta), animate=False, immediate=True)
+            self._host.diag_log(f"scroll site=restore y={max(0, vy + delta)} retries={retries}")
         finally:
             self._host.end_reconcile_scroll()
         # The width reflow re-wraps the chunks above asynchronously over many
@@ -790,8 +811,21 @@ class StructuralScrollStrategy:
         # early-stop: the position is stale-stable for a stretch, then jumps
         # once the re-wrap lands), re-reading it each time so the final applies
         # land on the settled layout.
-        if retries > 0:
-            self._host.call_after_refresh(self._restore_structural, seq, delta, retries - 1, vy)
+        #
+        # A fixed refresh count is only a PROXY for "until the layout stops
+        # moving", and it breaks the moment the layout moves for longer than the
+        # proxy allows: a mount still in flight keeps adding chunks above this
+        # one, so the restore ran out of refreshes and left the target off
+        # screen. Top the budget back up while the preview pipeline is still
+        # working, so the tail refreshes are spent on a layout that has actually
+        # stopped changing. Bounded by ``cap`` — a wedged pipeline must not hold
+        # a re-anchor loop open forever.
+        if cap > 0 and self._host.pipeline_busy():
+            retries = max(retries, _RESTORE_TAIL_REFRESHES)
+        if retries > 0 and cap > 0:
+            self._host.call_after_refresh(
+                self._restore_structural, seq, delta, retries - 1, vy, cap - 1
+            )
 
 
 def stop_region_for_cell(table: DataTable[Any], coord: Any) -> Region | None:

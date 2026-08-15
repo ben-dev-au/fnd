@@ -577,6 +577,39 @@ class PreviewPresenter:
             _load, thread=True, exclusive=True, group="preview-load"
         )
 
+    def sweep_stranded_containers(self, *, keep: PreviewContainer | None = None) -> int:
+        """Remove PreviewContainers that nothing owns any more; returns the count.
+
+        Stranded = not in the widget cache, not ``keep``, and not still being
+        filled by a prefetch task (removing one of those orphans the task and
+        trips a MountError on its next mount-before call).
+
+        Must run on EVERY navigation, not only cross-file ones. The same-file
+        out-of-window path builds a fresh container and returns early, and used
+        to rely on "the old container is swept on the next navigation" — which
+        never happened while the user stayed inside one file, the common case in
+        a large document. Measured over 30 in-file navigations: 23 containers,
+        270 mounted chunks and 14,551 widgets left in the pane, with navigation
+        degrading from ~1.9s to 4-7.8s and the scroll committing more than once
+        per navigation as the DOM grew.
+        """
+        import contextlib as _contextlib
+
+        cached = set(self.preview_cache._cache.values())
+        removed = 0
+        for stranded in list(self._app.query(PreviewContainer)):
+            if stranded in cached or stranded is keep or stranded is self.active:
+                continue
+            pfetch = getattr(stranded, "_prefetch_task", None)
+            if pfetch is not None and not pfetch.done():
+                continue
+            with _contextlib.suppress(Exception):
+                stranded.remove()
+                removed += 1
+        if removed:
+            self.diag_log(f"sweep removed={removed} containers")
+        return removed
+
     def prune_active_to_window(self, margin: int = 3) -> None:
         """Drop the currently-active container's off-screen chunks down to its
         visible window. Used when switching files: the outgoing container stays
@@ -659,6 +692,10 @@ class PreviewPresenter:
             if above_height > 0:
                 with contextlib.suppress(Exception):
                     pane.scroll_to(y=max(0.0, vtop - above_height), animate=False, immediate=True)
+                    self.diag_log(
+                        f"scroll site=prune y={max(0.0, vtop - above_height):.0f} "
+                        f"removed={len(to_remove)}"
+                    )
         finally:
             self.end_reconcile_scroll()
         _perf.mark("prune", removed=len(to_remove), ms=(_time.perf_counter() - _pt0) * 1000.0)
@@ -718,11 +755,20 @@ class PreviewPresenter:
             # atomic-swap to it, exactly like a between-file nav: the fresh
             # container builds invisibly (mounted below the current one, so no
             # shift), then the swap hides the old and reveals the new at the
-            # match in one tick. The old container is dropped from the cache by
-            # the fresh one's put() and swept on the next navigation.
+            # match in one tick.
             self.cancel_mount_task()
             self._app._lazy.cancel()
             self.hide_progress_bar()
+            # Sweep and prune BEFORE building the replacement. This branch used
+            # to do neither, on the assumption that the old container would be
+            # "swept on the next navigation" — but the sweep lives on the
+            # cross-file path below, which this early return never reaches. Stay
+            # inside one file (the common case in a large document) and nothing
+            # ever reclaimed anything: 30 navigations left 23 containers, 270
+            # mounted chunks and 14,551 widgets in the pane, with navigation
+            # degrading from ~1.9s to 4-7.8s as Textual's arrange scaled with it.
+            self.prune_active_to_window()
+            self.sweep_stranded_containers()
             fresh = PreviewContainer(
                 parent_doc_id=parent_id,
                 query_signature=query_sig,
@@ -746,7 +792,6 @@ class PreviewPresenter:
         # inflates the new file's mount several-fold. Prune it to its visible
         # window now (flash-free) so the incoming mount is cheap.
         self.prune_active_to_window()
-        import contextlib as _contextlib
 
         cached_containers = set(self.preview_cache._cache.values())
         # Resolve the container we intend to reuse BEFORE sweeping. The sweep
@@ -796,17 +841,7 @@ class PreviewPresenter:
                     cached = c
                     break
 
-        # Sweep stranded containers — but preserve any still being filled by
-        # a prefetch task. Removing those would orphan the task and trigger
-        # a MountError on its next mount-before call.
-        for stranded in list(self._app.query(PreviewContainer)):
-            if stranded in cached_containers or stranded is cached:
-                continue
-            pfetch = getattr(stranded, "_prefetch_task", None)
-            if pfetch is not None and not pfetch.done():
-                continue
-            with _contextlib.suppress(Exception):
-                stranded.remove()
+        self.sweep_stranded_containers(keep=cached)
         if (
             self.active is not None
             and self.active is not cached
@@ -1222,7 +1257,10 @@ class PreviewPresenter:
         pane = self._app.query_one("#preview_pane", VerticalScroll)
         outgoing.add_class("-hidden")
         pane.scroll_to(y=target_y, animate=False, immediate=True)
+        self.diag_log(f"scroll site=swap y={target_y}")
         new.remove_class("-pre-reveal")
+        # Same event as reveal()'s, on the atomic-swap path — see the note there.
+        self.diag_log(f"first_paint parent={new.parent_doc_id[:8]} path=swap")
         self.outgoing = None
         return True
 
@@ -1246,6 +1284,12 @@ class PreviewPresenter:
             outgoing.add_class("-hidden")
         self.outgoing = None
         container.remove_class("-pre-reveal")
+        # The moment the new result becomes visible. Logged because it is the
+        # only exact answer to "when did the user first see this?" — inferring
+        # it by diffing captured frames measures how MUCH of the pane changed,
+        # not when it changed, and mis-ranks any design that paints early and
+        # fills in behind it.
+        self.diag_log(f"first_paint parent={container.parent_doc_id[:8]}")
         # Revealed — the bounded-time backstop is no longer needed.
         self._cancel_reveal_watchdog()
         # The new result is now positioned — re-measure the ▲/▼ view markers.
@@ -1374,10 +1418,15 @@ class PreviewPresenter:
                 f"finalize_via_lock above mount timeout seq={focus_chunk_seq} "
                 f"expected={len(expected)} path={path}"
             )
+        # ``display=False`` widgets take no part in the arrange, so they cannot
+        # move the match and there is nothing to wait for. Skipping them is also
+        # load-bearing for ``await_match_settled``, which requires every watched
+        # height to be > 0 — a hidden widget measures 0 forever and would hold
+        # the settle to its round limit.
         above_widgets: list[FNDMarkdown] = [
             w
             for seq, w in container.chunk_widgets.items()
-            if seq < focus_chunk_seq and isinstance(w, FNDMarkdown)
+            if seq < focus_chunk_seq and isinstance(w, FNDMarkdown) and w.display
         ]
         if above_widgets:
             try:
@@ -1767,6 +1816,33 @@ class PreviewPresenter:
         except Exception:
             return False
 
+    def above_window_start(self, chunks: list[FileChunk], focus_idx: int, viewport_h: int) -> int:
+        """First chunk index to mount above ``focus_idx``.
+
+        Counted in ROWS, not chunks. Everything mounted above the focus has to
+        finish building before the match can be revealed, so this is the part of
+        the mount the user waits on — and a fixed chunk count prices it wrongly
+        for every format at once. A PDF chunk is a page (30-60 rows), so seven of
+        them is several screens of content nobody asked for; a markdown chunk is
+        one heading's section (often 2-3 rows), so seven of them is less than the
+        context margin the scroll wants to leave above the match.
+
+        So: walk up until roughly a screenful of content is covered, bounded by
+        ``VISIBLE_FIRST_ABOVE`` chunks either way. Estimated from the source line
+        count rather than measured geometry — nothing is laid out yet, and the
+        estimate only has to be good enough to stop one chunk early or late.
+        """
+        rows_wanted = max(1, int(viewport_h * tuning.VISIBLE_FIRST_ABOVE_SCREENS))
+        floor = max(0, focus_idx - tuning.VISIBLE_FIRST_ABOVE)
+        rows = 0
+        start = focus_idx
+        for i in range(focus_idx - 1, floor - 1, -1):
+            start = i
+            rows += (chunks[i].body_md or chunks[i].body_text or "").count("\n") + 1
+            if rows >= rows_wanted:
+                break
+        return start
+
     async def _mount_chunks_async(
         self,
         parent_id: str,
@@ -1868,7 +1944,7 @@ class PreviewPresenter:
                     f"chunks={len(chunks)} — falling back to the first chunk"
                 )
                 focus_idx = 0
-            win_start = max(0, focus_idx - tuning.VISIBLE_FIRST_ABOVE)
+            win_start = self.above_window_start(chunks, focus_idx, pane.size.height or 40)
             win_end = min(len(chunks), focus_idx + tuning.VISIBLE_FIRST_BELOW + 1)
 
             # Phase 1a: mount the focused chunk first and yield so it
@@ -1911,15 +1987,32 @@ class PreviewPresenter:
             self.update_progress_bar(progress=len(container.mounted_indices))
             await asyncio.sleep(0)
 
-            # Phase 1b: mount the visible window. Closest-to-focus first.
-            max_offset = max(focus_idx - win_start, win_end - 1 - focus_idx)
-            for offset in range(1, max_offset + 1):
-                below = focus_idx + offset
-                if below < win_end and below not in container.mounted_indices:
-                    self.mount_chunk_into(container, chunks[below], below, chunks)
-                above = focus_idx - offset
-                if win_start <= above and above not in container.mounted_indices:
-                    self.mount_chunk_into(container, chunks[above], above, chunks)
+            # Phase 1b: mount the visible window, ABOVE the focus first and
+            # closest-to-focus first within each side.
+            #
+            # The finalize waits only on the chunks ABOVE the focus — they are
+            # what decides where the match lands — so mounting those first lets
+            # the reveal stop waiting sooner. The ones below can arrive whenever;
+            # interleaving the two sides made the reveal wait on roughly twice
+            # the work it needed.
+            #
+            # Mounted in ONE pass. Awaiting each chunk's build before mounting
+            # the next looks attractive — Textual pumps a Markdown's blocks
+            # through the message loop, so builds started together interleave
+            # and each reports ~755ms where one alone takes ~22-30ms — but it is
+            # a trap under real use. Serialising means a navigation's mount must
+            # finish before the next one can get going, and over a sustained
+            # Down sweep on a 1018-chunk PDF that took the finalize's build wait
+            # from a 1310ms median to 2832ms (worst case 10.6s), roughly doubling
+            # end-to-end navigation. Measured over 40 presses; an 18-press sample
+            # showed the opposite, which is why the bigger sample is the one to
+            # trust here.
+            above_first = range(focus_idx - 1, win_start - 1, -1)
+            below_after = range(focus_idx + 1, win_end)
+            for i in (*above_first, *below_after):
+                if i in container.mounted_indices:
+                    continue
+                self.mount_chunk_into(container, chunks[i], i, chunks)
             self.update_progress_bar(progress=len(container.mounted_indices))
             await asyncio.sleep(0)
 

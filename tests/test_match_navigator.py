@@ -26,6 +26,11 @@ class FakeApp:
     ``call_after_refresh`` runs inline so a scheduled re-measure resolves
     synchronously within the test."""
 
+    def _diag_log(self, msg: str) -> None:
+        # Modelled, not stubbed away: _scroll_to_stop logs the scroll it commits,
+        # and a stand-in without it would hide that from these tests.
+        pass
+
     def _refresh_preview_match_indicator(self) -> None:
         pass
 

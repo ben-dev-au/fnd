@@ -19,6 +19,12 @@ class _RevealHost:
         self.active = active
         self.outgoing = outgoing
 
+    def diag_log(self, msg: str) -> None:
+        # Modelled, not stubbed away: the real presenter logs the
+        # first-paint event here, and a stand-in that lacks it would hide
+        # that from these tests.
+        pass
+
     def _cancel_reveal_watchdog(self) -> None:  # reveal disarms the watchdog
         pass
 

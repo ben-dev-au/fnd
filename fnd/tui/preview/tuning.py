@@ -17,8 +17,28 @@ PREVIEW_CACHE_MIN_CHUNKS = 1
 # Visible-first mount window — chunks are decoded already, mounting
 # focused ± these counts synchronously gives the user instant viewport
 # feedback before the background fill starts.
+#
+# ``VISIBLE_FIRST_ABOVE`` is a CAP, not a count — see
+# ``PreviewPresenter.above_window_start``. The reveal cannot happen until every
+# chunk above the focus has built (they decide where the match lands, see
+# _finalize_via_lock_body), so each one is paid for on the critical path, while
+# the ones below are not. Mounting a fixed number above therefore overpays
+# whenever the chunks are tall.
+#
+# How tall a chunk is varies enormously by format: a PDF chunk is a PAGE (30-60
+# rows), a markdown chunk is one heading's section (often 2-3 rows). Seven pages
+# is several screens of content nobody asked for; seven short sections is less
+# than the context margin. So the window is measured in ROWS and this only bounds
+# it. Measured on a 1018-chunk PDF (3x40 navigations per setting), the row-based
+# window against a flat 7: first paint 1796 -> 1493ms, the finalize's build wait
+# 1457 -> 848ms, the reconcile-to-scroll gap 731 -> 517ms.
 VISIBLE_FIRST_ABOVE = 7
 VISIBLE_FIRST_BELOW = 7
+# Rows of content to mount above the focus chunk before the reveal, as a
+# multiple of the viewport height. One full screen leaves the context margin
+# (MATCH_CONTEXT_FRACTION) satisfied with room to spare, and still lets a short
+# upward scroll happen before lazy mount has to extend the window.
+VISIBLE_FIRST_ABOVE_SCREENS = 1.0
 # Background-fill bound, applied beyond the ±VISIBLE_FIRST_* window
 # during the initial cold mount. At < VISIBLE_FIRST_* the phase 2a/2b
 # loops are no-ops; the scroll-driven lazy mount picks up from the

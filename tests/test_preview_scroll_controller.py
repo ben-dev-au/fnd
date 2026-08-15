@@ -240,6 +240,11 @@ class _FakeHost:
         # Fakes lay out synchronously, so nothing is ever still arriving above.
         return False
 
+    def pipeline_busy(self) -> bool:
+        # Same reason: there is no mount in flight behind a fake host, so the
+        # restore's re-anchor loop runs its plain tail and stops.
+        return False
+
     def diag_log(self, msg: str) -> None:
         self.diag_msgs.append(msg)
 

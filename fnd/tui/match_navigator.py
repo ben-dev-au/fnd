@@ -566,6 +566,7 @@ class MatchNavigator:
             preview.begin_reconcile_scroll()
         try:
             pane.scroll_to_region(region, top=True, animate=False, immediate=True)
+            self._app._diag_log(f"scroll site=nb_stop top_y={top_y}")
         finally:
             if preview is not None:
                 preview.end_reconcile_scroll()
