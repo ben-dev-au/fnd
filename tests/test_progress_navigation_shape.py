@@ -22,6 +22,7 @@ import pytest
 
 from fnd.tui.progress.facility import ProgressFacility
 from fnd.tui.progress.operations import PreviewProgressTracker
+from tests._progress_stubs import StubBar
 
 TICK = 1 / 20
 # The pass condition from the design: no interval longer than this where the
@@ -39,19 +40,6 @@ class FakeClock:
 
     def advance(self, seconds: float) -> None:
         self.now += seconds
-
-
-class StubBar:
-    def __init__(self) -> None:
-        self.fraction = 0.0
-        self.label = ""
-        self.visible = False
-
-    def show(self) -> None:
-        self.visible = True
-
-    def hide(self) -> None:
-        self.visible = False
 
 
 class ScriptedPipeline:

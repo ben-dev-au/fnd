@@ -20,6 +20,7 @@ from fnd.tui.progress.operations import (
     PREVIEW_WARM,
     PreviewProgressTracker,
 )
+from tests._progress_stubs import StubBar
 
 
 class StubWorker:
@@ -65,19 +66,6 @@ class StubPreview:
 class StubScroll:
     def __init__(self) -> None:
         self.is_settling = False
-
-
-class StubBar:
-    def __init__(self) -> None:
-        self.fraction = 0.0
-        self.label = ""
-        self.visible = False
-
-    def show(self) -> None:
-        self.visible = True
-
-    def hide(self) -> None:
-        self.visible = False
 
 
 class StubApp:

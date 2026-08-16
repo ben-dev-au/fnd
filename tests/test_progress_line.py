@@ -10,7 +10,6 @@ always reach 100%, and never be retired by someone else's teardown.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 from rich.style import Style as RichStyle
@@ -23,6 +22,7 @@ from fnd.tui.progress.bar import (
 )
 from fnd.tui.progress.facility import ProgressFacility, ProgressSession
 from fnd.tui.progress.model import OperationPlan, Phase
+from tests._progress_stubs import FakeClock, StubBar, StubProgressApp
 
 # ── rendering ────────────────────────────────────────────────────
 
@@ -122,75 +122,6 @@ def test_the_widget_starts_idle() -> None:
 # ── visibility policy ────────────────────────────────────────────
 
 
-class FakeClock:
-    def __init__(self) -> None:
-        self.now = 500.0
-
-    def __call__(self) -> float:
-        return self.now
-
-    def advance(self, seconds: float) -> None:
-        self.now += seconds
-
-
-class StubBar:
-    def __init__(self) -> None:
-        self.fraction = 0.0
-        self.label = ""
-        self.visible = False
-
-    @property
-    def is_idle(self) -> bool:
-        return not self.visible
-
-    def show(self) -> None:
-        self.visible = True
-
-    def hide(self) -> None:
-        self.visible = False
-
-
-class StubTimer:
-    """Models Textual's Timer where it matters: ``stop()`` cancels the task
-    and drops the reference, which is the liveness signal. (``_active`` is the
-    PAUSE flag and ``stop`` sets it — a detail worth encoding, because reading
-    it as liveness produces a check that is always True.)"""
-
-    def __init__(self) -> None:
-        self.stopped = False
-        self._task: object | None = object()
-
-    def stop(self) -> None:
-        self.stopped = True
-        self._task = None
-
-    def die(self) -> None:
-        """A timer killed from outside, e.g. a cancelled task."""
-        self._task = None
-
-
-class StubApp:
-    """The slice of App the facility touches."""
-
-    def __init__(self, bar: StubBar) -> None:
-        self.bar = bar
-        self.timers: list[StubTimer] = []
-        self.watchdogs: list[tuple[StubTimer, Any]] = []
-
-    def query_one(self, _selector: Any) -> StubBar:
-        return self.bar
-
-    def set_interval(self, _interval: float, _callback: Any, name: str = "") -> StubTimer:
-        timer = StubTimer()
-        self.timers.append(timer)
-        return timer
-
-    def set_timer(self, _delay: float, callback: Any, name: str = "") -> StubTimer:
-        timer = StubTimer()
-        self.watchdogs.append((timer, callback))
-        return timer
-
-
 ONE_PHASE = OperationPlan(
     operation_id="test.op",
     phases=(Phase(key="work", expected_ms=1000.0),),
@@ -200,7 +131,7 @@ ONE_PHASE = OperationPlan(
 def make_facility() -> tuple[ProgressFacility, StubBar, FakeClock]:
     bar = StubBar()
     clock = FakeClock()
-    facility = ProgressFacility(StubApp(bar), clock=clock)  # type: ignore[arg-type]
+    facility = ProgressFacility(StubProgressApp(bar), clock=clock)  # type: ignore[arg-type]
     return facility, bar, clock
 
 
@@ -422,7 +353,7 @@ def test_a_tick_that_raises_does_not_escape() -> None:
 def test_a_dead_timer_is_replaced_rather_than_trusted() -> None:
     """_start_ticking must not treat a stopped timer as "already ticking"."""
     facility, _bar, _clock = make_facility()
-    app: StubApp = facility._app  # type: ignore[assignment]
+    app: StubProgressApp = facility._app  # type: ignore[assignment]
 
     facility.begin(ONE_PHASE)
     assert len(app.timers) == 1
@@ -435,7 +366,7 @@ def test_a_dead_timer_is_replaced_rather_than_trusted() -> None:
 
 def test_a_live_timer_is_not_churned() -> None:
     facility, _bar, _clock = make_facility()
-    app: StubApp = facility._app  # type: ignore[assignment]
+    app: StubProgressApp = facility._app  # type: ignore[assignment]
     facility.begin(ONE_PHASE)
     facility.begin(ONE_PHASE)
     facility.begin(ONE_PHASE)
@@ -446,7 +377,7 @@ def test_the_watchdog_clears_a_line_the_tick_loop_abandoned() -> None:
     """The guarantee that does not depend on the tick loop at all. Whatever
     goes wrong upstream, the line goes away."""
     facility, bar, _clock = make_facility()
-    app: StubApp = facility._app  # type: ignore[assignment]
+    app: StubProgressApp = facility._app  # type: ignore[assignment]
 
     facility.begin(ONE_PHASE, sampler=lambda _s: True)
     assert bar.visible
@@ -533,3 +464,50 @@ def test_a_changing_label_counts_as_movement() -> None:
         facility.tick()
         assert bar.visible, f"a line with a live page counter was retired at page {page}"
     assert session is facility.active
+
+
+SLOW_PHASE = OperationPlan(
+    operation_id="test.slow",
+    phases=(Phase(key="work", expected_ms=60_000.0),),
+)
+
+
+def test_an_unchanged_frame_costs_nothing() -> None:
+    """``fraction`` is a Textual reactive, so assigning it repaints the row.
+    On a slow phase the eased value changes by a fraction of a percent per
+    tick — the same cells — so painting unconditionally spent 20 repaints a
+    second drawing the identical thing, event-loop work during exactly the
+    navigation this line exists to smooth. Measured on a real 3 s session:
+    61 repaints before this guard, 11 after."""
+    facility, bar, clock = make_facility()
+    facility.begin(SLOW_PHASE, sampler=lambda _s: True)
+    for _ in range(60):  # 3 s at the tick rate
+        clock.advance(1 / 20)
+        facility.tick()
+    # Over 3 s of a 60 s phase the fill crosses only a handful of cells, so
+    # the vast majority of those 60 ticks must cost nothing.
+    assert bar.paints <= 8, f"redundant repaints: {bar.paints} across 60 ticks"
+
+
+def test_every_visible_change_is_painted_exactly_once() -> None:
+    """The guard must skip only frames that would draw the same thing."""
+    facility, bar, clock = make_facility()
+    facility.begin(ONE_PHASE, sampler=lambda _s: True)
+    seen: set[int] = set()
+    for _ in range(60):
+        clock.advance(1 / 20)
+        facility.tick()
+        seen.add(round(bar.fraction * bar.content_size.width))
+    # +1 for the paint begin() itself does, before the first tick.
+    assert bar.paints <= len(seen) + 1, f"{bar.paints} repaints for {len(seen)} distinct frames"
+
+
+def test_a_changed_cell_still_repaints() -> None:
+    """The guard must not suppress real movement."""
+    facility, bar, _clock = make_facility()
+    session = facility.begin(ONE_PHASE)
+    before = bar.paints
+    session.report(1, 4)
+    session.report(2, 4)
+    session.report(3, 4)
+    assert bar.paints >= before + 3

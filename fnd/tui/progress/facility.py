@@ -213,6 +213,9 @@ class ProgressFacility:
         # When something real last happened. The stall cap and the watchdog
         # both measure from here.
         self._moved_at = 0.0
+        # Last (cells, label, visible) actually handed to the widget, so an
+        # unchanged frame costs nothing.
+        self._rendered: tuple[int, str, bool] | None = None
         self._displayed = 0.0
         self._floor = 0.0
         # Set when a session closes; drives the ease-to-100% + hold.
@@ -435,6 +438,17 @@ class ProgressFacility:
         widget = self._widget()
         if widget is None:
             return
+        # Only touch the widget when the CELLS would differ. ``fraction`` is a
+        # Textual reactive, and the eased value changes by a fraction of a
+        # percent on every tick, so assigning it unconditionally repainted the
+        # row 20 times a second to draw the identical thing — event-loop work
+        # during exactly the navigation this line exists to make feel smoother.
+        # Quantise against the width actually on screen.
+        width = max(1, widget.content_size.width)
+        rendered = (round(fraction * width), label, visible)
+        if rendered == self._rendered:
+            return
+        self._rendered = rendered
         widget.fraction = fraction
         widget.label = label
         if visible:

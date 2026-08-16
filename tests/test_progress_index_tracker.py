@@ -20,6 +20,7 @@ import pytest
 from fnd.tui import live_progress
 from fnd.tui.progress.facility import ProgressFacility, ProgressSession
 from fnd.tui.progress.operations import INDEX, IndexProgressTracker
+from tests._progress_stubs import StubBar
 
 
 class StubTask:
@@ -43,19 +44,6 @@ class StubService:
         self.collection: str = ""
         self.chain_total: int = 1
         self.chain_remaining: list[str] = []
-
-
-class StubBar:
-    def __init__(self) -> None:
-        self.fraction = 0.0
-        self.label = ""
-        self.visible = False
-
-    def show(self) -> None:
-        self.visible = True
-
-    def hide(self) -> None:
-        self.visible = False
 
 
 class StubApp:
