@@ -85,10 +85,8 @@ class ScrollStrategy(Protocol):
     ) -> None: ...
 
 
-# Refreshes a reflow-restore re-applies its scroll for, and the hard cap on
-# extensions granted while the layout is still moving.
+# Refreshes a reflow-restore re-applies its scroll for as the re-wrap lands.
 _RESTORE_REFRESHES = 12
-_RESTORE_CEILING = 60
 
 
 class _Once:
@@ -141,6 +139,12 @@ class PreviewScrollController:
         # arms the anchor — so ``is_settling`` says nothing about it. See
         # is_restoring.
         self._restoring = 0
+        # Restores finished since start-up. ``is_restoring`` alone cannot say
+        # "the restore has landed": a caller that schedules the restore via
+        # call_after_refresh sees False both BEFORE it starts and after it
+        # ends, so waiting on the flag can pass without anything happening.
+        # Compare this against a value read before the trigger instead.
+        self._restores_completed = 0
 
     @property
     def is_armed(self) -> bool:
@@ -163,6 +167,13 @@ class PreviewScrollController:
         a test assertion — must wait for this to clear; ``is_settling`` does not
         cover it, because a restore never arms the anchor."""
         return self._restoring > 0
+
+    @property
+    def restores_completed(self) -> int:
+        """How many reflow-restores have finished. Monotonic, so a waiter can
+        read it before triggering a restore and wait for it to exceed that —
+        the only way to tell "not started yet" from "already landed"."""
+        return self._restores_completed
 
     @property
     def anchor(self) -> ScrollAnchor | None:
@@ -254,6 +265,7 @@ class PreviewScrollController:
 
     def _restore_done(self) -> None:
         self._restoring = max(0, self._restoring - 1)
+        self._restores_completed += 1
 
 
 class StructuralHost(Protocol):
@@ -271,7 +283,6 @@ class StructuralHost(Protocol):
     ) -> object: ...
     def diag_log(self, msg: str) -> None: ...
     def above_window_pending(self, focus_chunk_seq: int) -> bool: ...
-    def layout_pending(self) -> bool: ...
 
     @property
     def chunk_widgets(self) -> dict[int, Widget]: ...
@@ -803,7 +814,6 @@ class StructuralScrollStrategy:
             location.offset,
             retries=_RESTORE_REFRESHES,
             last_vy=None,
-            spent=0,
             done=done,
         )
 
@@ -813,7 +823,6 @@ class StructuralScrollStrategy:
         delta: int,
         retries: int,
         last_vy: int | None,
-        spent: int,
         done: Callable[[], None],
     ) -> None:
         # A width reflow re-wraps the chunks above over several refreshes,
@@ -841,25 +850,13 @@ class StructuralScrollStrategy:
         # first scroll. Re-apply on every refresh for the whole budget (do NOT
         # early-stop: the position is stale-stable for a stretch, then jumps
         # once the re-wrap lands), re-reading it each time so the final applies
-        # land on the settled layout. A reflow that has NOT finished when the
-        # budget runs out earns another budget, capped by the ceiling: on a
-        # loaded machine the re-wrap outruns a fixed count, and losing the
-        # restore entirely is worse than a few more refreshes.
-        #
-        # "Not finished" must ask the screen, not the numbers. The re-wrap's
-        # progress plateaus — vy holds still for a stretch, then jumps once the
-        # wrap lands — so extending only while vy moves stops mid-plateau,
-        # exactly the trap await_settled documents.
+        # land on the settled layout.
         if retries > 0:
-            remaining = retries - 1
-        elif (vy != last_vy or self._host.layout_pending()) and spent < _RESTORE_CEILING:
-            remaining = _RESTORE_REFRESHES
+            self._host.call_after_refresh(
+                self._restore_structural, seq, delta, retries - 1, vy, done
+            )
         else:
             done()
-            return
-        self._host.call_after_refresh(
-            self._restore_structural, seq, delta, remaining, vy, spent + 1, done
-        )
 
 
 def stop_region_for_cell(table: DataTable[Any], coord: Any) -> Region | None:

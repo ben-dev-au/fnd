@@ -1149,30 +1149,6 @@ class PreviewPresenter:
     def diag_log(self, msg: str) -> None:
         self._app._diag_log(msg)
 
-    def layout_pending(self) -> bool:
-        """Does the screen still have layout work queued?
-
-        The same flags ``Screen._on_idle`` checks, and the same authority
-        :meth:`await_settled` exits on — read synchronously, because the callers
-        that need it run on a refresh boundary rather than in a coroutine.
-
-        A width reflow re-wraps over an unknown number of refreshes and its
-        progress PLATEAUS: geometry can hold still for a stretch and then jump
-        once the re-wrap lands. Anything that stops when the numbers stop moving
-        therefore stops early. These flags are what tells a settled layout from
-        a mid-reflow plateau.
-        """
-        try:
-            screen = self._app.screen
-        except Exception:
-            return False  # no screen (teardown) — nothing can still be pending
-        return bool(
-            getattr(screen, "_layout_required", False)
-            or getattr(screen, "_repaint_required", False)
-            or getattr(screen, "_recompose_required", False)
-            or getattr(screen, "_dirty_widgets", None)
-        )
-
     def above_window_pending(self, focus_chunk_seq: int) -> bool:
         """Is content still to arrive ABOVE the focus chunk?
 
