@@ -22,7 +22,7 @@ from textual.widgets import Static, Tree
 from fnd.matching import MatchSpec
 from fnd.render import render_chunk_pieces
 from fnd.tui.line_buffer import LineBufferPreview, build_rendered_document
-from fnd.tui.preview import tuning
+from fnd.tui.preview import frozen_store, tuning
 from fnd.tui.preview.frozen import (
     FrozenChunk,
     FrozenChunkView,
@@ -2012,6 +2012,17 @@ class PreviewPresenter:
         # A new query / scope change is a fresh start: the next navigation gets
         # its own repair budget rather than inheriting a spent one.
         self._paint_repair_target = None
+        # Stop warming immediately rather than at the next batch boundary. Its
+        # captures carry the OLD query's highlighting, so every chunk it builds
+        # from here is work whose result can never be served — the store key
+        # carries the query signature, so it would be stored and never read.
+        task = self._warm_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._warm_parent = None
+        # Captures for a superseded query can never be served either; holding
+        # them only spends the row budget that the new query's captures need.
+        self.document_store.clear()
 
     def cancel_mount_task(self) -> None:
         """Cancel any in-flight mount task. The cancelled task's
@@ -2255,6 +2266,11 @@ class PreviewPresenter:
 
         generation = self.reset_generation
         parent_id, query_sig = container.parent_doc_id, container.query_signature
+        # Snapshot the highlighting this document is FOR. Warming runs for
+        # seconds; reading the app's live spec per chunk meant a query change
+        # mid-batch produced chunks highlighted for the new query, appended to a
+        # document filed under the old query's key where nothing can correct it.
+        warm_spec = self._app._effective_match_spec
 
         def still_valid() -> bool:
             """Warming survives the container it started under.
@@ -2275,6 +2291,13 @@ class PreviewPresenter:
 
         async def yield_to_navigation() -> bool:
             """Wait out an in-flight landing. False if warming should stop."""
+            # Stop before the document outgrows the cache that has to hold it.
+            # Measured on the real corpus, a captured chunk is 44.5 KB, so an
+            # unbounded warm of a 1463-chunk file is 63.5 MB — and warming past
+            # the budget only earns the document an eviction.
+            if doc.total_rows >= frozen_store.MAX_TOTAL_ROWS:
+                self.diag_log(f"warm stopped at row budget rows={doc.total_rows}")
+                return False
             for _ in range(tuning.PREVIEW_WARM_YIELD_TICKS):
                 if not still_valid():
                     return False
@@ -2304,7 +2327,9 @@ class PreviewPresenter:
                 elif isinstance(widget, FNDMarkdown):
                     captured = freeze(widget, chunk.chunk_seq)
                 else:
-                    captured = await self._warm_host.capture(chunk, doc.width or width)
+                    captured = await self._warm_host.capture(
+                        chunk, doc.width or width, match_spec=warm_spec
+                    )
                 if captured is None:
                     break  # stop at the first gap; never skip past one
                 out.append(captured)
@@ -2321,9 +2346,22 @@ class PreviewPresenter:
             A put is a dict assignment; the document is the same object either
             way. Defined outside the try so the cancellation handler can call it
             even when the cancel lands on the opening sleep.
+
+            Skipped once the pane no longer matches the width these strips were
+            cut for. ``put`` evicts captures of other widths, so a warm task
+            that outlived a resize would wipe every correctly-sized document —
+            and publishing per batch turns that from one bad write into a
+            repeating one.
             """
-            if grew:
-                self.document_store.put(parent_id, query_sig, width, doc)
+            if not grew:
+                return
+            try:
+                current = self._app.query_one("#preview_pane", VerticalScroll).content_size.width
+            except Exception:
+                return
+            if current != width:
+                return
+            self.document_store.put(parent_id, query_sig, width, doc)
 
         try:
             await asyncio.sleep(tuning.PREVIEW_WARM_DELAY)

@@ -19,6 +19,8 @@ grows downward during widget-path visits only.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from pathlib import Path
 from typing import ClassVar
 
@@ -26,7 +28,7 @@ import pytest
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from fnd.tui.preview.frozen import FrozenDocumentView
+from fnd.tui.preview.frozen import FrozenDocument, FrozenDocumentView
 from tests._pilot_wait import settle, wait_until
 
 
@@ -111,6 +113,146 @@ async def test_a_captured_document_is_a_contiguous_run(
         # Row bookkeeping must agree with the strips actually held.
         assert doc.total_rows == sum(c.height for c in doc.chunks)
         assert doc.starts == [sum(c.height for c in doc.chunks[:i]) for i in range(len(doc.chunks))]
+
+
+def test_the_store_is_bounded_by_rows_not_by_document_count() -> None:
+    """The cache must bound what actually grows.
+
+    MAX_DOCUMENTS was the only cap while a document held a handful of chunks.
+    Warming grows one to the whole file, and a captured chunk measures 44.5 KB
+    on the real corpus (1670 bytes per row), so four whole-file documents is
+    254 MB — a count-based cap guarding the wrong quantity.
+
+    The document just stored is never evicted: it is the one on screen, so
+    dropping it would rebuild what the user is reading. A single oversized file
+    is therefore allowed to exceed the budget; the budget bounds the CACHE.
+    """
+    from fnd.tui.preview.frozen_store import MAX_TOTAL_ROWS, FrozenDocumentStore
+    from tests.test_preview_frozen_document import _chunk  # reuse the strip builder
+
+    store = FrozenDocumentStore()
+    rows_each = MAX_TOTAL_ROWS // 3
+    for i in range(6):
+        doc = FrozenDocument()
+        doc.append(_chunk(i, rows_each))
+        store.put(f"file{i}", "sig", 40, doc)
+        assert store.total_rows() <= MAX_TOTAL_ROWS or len(store._docs) == 1, (
+            f"store holds {store.total_rows()} rows across {len(store._docs)} "
+            f"documents, over the {MAX_TOTAL_ROWS} budget"
+        )
+    # The most recent file must still be served — it is what is on screen.
+    assert store.get("file5", "sig", 40) is not None, "evicted the document in use"
+    # And the oldest must be gone rather than accumulating.
+    assert store.get("file0", "sig", 40) is None, "nothing was evicted under pressure"
+
+
+@pytest.mark.asyncio
+async def test_a_new_query_stops_warming_and_drops_its_captures(
+    tmp_path: Path, tmp_index_dir: Path, doc_preview: None
+) -> None:
+    """Captures carry the OLD query's highlighting.
+
+    They can never be served after the query changes — the store key carries the
+    query signature — so warming that continues is building results nothing can
+    read, while holding row budget the new query's captures need. Both the task
+    and the cache must go on the reset, not at the next batch boundary.
+    """
+    index = _corpus(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups) and app._preview.active is not None,
+            timeout=20.0,
+            message="preview never became active",
+        )
+        await wait_until(
+            pilot,
+            lambda: len(app._preview.document_store._docs) > 0,
+            timeout=20.0,
+            message="nothing was harvested",
+        )
+        app._preview.bump_reset_generation()
+        await settle(pilot, ticks=4)
+
+        assert not app._preview.document_store._docs, (
+            "captures for the superseded query survived — they can never be "
+            "served and they spend the row budget"
+        )
+        task = app._preview._warm_task
+        assert task is None or task.done() or task.cancelling() > 0, (
+            "warming continued after the query changed, building captures whose "
+            "highlighting is already stale"
+        )
+
+
+def test_a_single_oversized_document_is_kept_rather_than_thrashed() -> None:
+    """One file bigger than the whole budget must still be served.
+
+    Evicting it would mean the user's current file is rebuilt on every
+    navigation — strictly worse than the memory it costs.
+    """
+    from fnd.tui.preview.frozen_store import MAX_TOTAL_ROWS, FrozenDocumentStore
+    from tests.test_preview_frozen_document import _chunk
+
+    store = FrozenDocumentStore()
+    doc = FrozenDocument()
+    doc.append(_chunk(0, MAX_TOTAL_ROWS * 2))
+    store.put("huge", "sig", 40, doc)
+    assert store.get("huge", "sig", 40) is not None
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_capture_strands_no_widgets() -> None:
+    """Cancellation is how warming normally ends, so cleanup must survive it.
+
+    ``CancelledError`` is a BaseException and it lands ON the await, so an
+    awaited removal inside ``finally`` is skipped exactly when it is needed —
+    measured at 12 stranded widget trees (~28 widgets each) across 29
+    cancellations, unbounded over a session and invisible to the row budget
+    because the strands are widgets, not rows.
+    """
+    from textual.app import App, ComposeResult
+    from textual.containers import VerticalScroll
+
+    from fnd.matching import MatchSpec
+    from fnd.tui.preview.warm_host import WarmHost
+
+    body = "## quartzfin heading\n\n" + "\n\n".join(f"Paragraph {i}." for i in range(6))
+
+    class _Chunk:
+        chunk_seq = 1
+        body_md = body
+        blocks: ClassVar[list[object]] = []
+
+    class _Host(App[None]):
+        def compose(self) -> ComposeResult:
+            yield VerticalScroll(id="pane")
+
+    app = _Host()
+    app._effective_match_spec = MatchSpec.from_query("quartzfin")  # type: ignore[attr-defined]
+    app._config = None  # type: ignore[attr-defined]
+    async with app.run_test(size=(100, 30)) as pilot:
+        host = WarmHost(app)  # type: ignore[arg-type]
+        # Prime the screen so the cancellations below land inside capture().
+        await host.capture(_Chunk(), width=60)  # type: ignore[arg-type]
+        container = host._container
+        assert container is not None
+
+        for turns in range(1, 24):
+            task = asyncio.ensure_future(host.capture(_Chunk(), width=60))  # type: ignore[arg-type]
+            for _ in range(turns):
+                await asyncio.sleep(0)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        for _ in range(8):
+            await pilot.pause()
+
+        assert len(container.children) == 0, (
+            f"{len(container.children)} widget trees stranded on the warm screen "
+            "after cancelled captures — each is a whole chunk's tree"
+        )
 
 
 @pytest.mark.asyncio

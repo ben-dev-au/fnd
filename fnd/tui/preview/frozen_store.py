@@ -37,10 +37,18 @@ if TYPE_CHECKING:
 
 __all__ = ["FrozenDocumentStore"]
 
-# How many captured documents to keep. Each is strips for a whole file, so this
-# is the memory knob; 4 covers moving between a handful of results without the
-# re-decode that PREVIEW_CACHE_MAX_FILES = 1 forces on the structural path.
+# How many captured documents to keep. Covers moving between a handful of
+# results without the re-decode that PREVIEW_CACHE_MAX_FILES = 1 forces on the
+# structural path.
 MAX_DOCUMENTS = 4
+
+# The real bound. A count of documents was the only cap while a document held a
+# handful of chunks; warming grows one to the whole file, and measured on the
+# real corpus a captured chunk costs 44.5 KB (1670 bytes per row), so a
+# 1463-chunk file is 63.5 MB and four of them 254 MB. Rows are what actually
+# grow, so rows are what is budgeted: 20,000 is roughly 33 MB, enough for one
+# large file plus neighbours.
+MAX_TOTAL_ROWS = 20_000
 
 
 class FrozenDocumentStore:
@@ -67,6 +75,15 @@ class FrozenDocumentStore:
         self._docs.move_to_end(key)
         while len(self._docs) > MAX_DOCUMENTS:
             self._docs.popitem(last=False)
+        # Evict by ROWS, oldest first, never the document just stored — it is
+        # the one on screen, and dropping it would rebuild what the user is
+        # reading. A single file over budget is therefore kept: the cap bounds
+        # the cache, not the current document.
+        while len(self._docs) > 1 and self.total_rows() > MAX_TOTAL_ROWS:
+            self._docs.popitem(last=False)
+
+    def total_rows(self) -> int:
+        return sum(d.total_rows for d in self._docs.values())
 
     def clear(self) -> None:
         self._docs.clear()

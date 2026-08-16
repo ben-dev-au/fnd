@@ -30,6 +30,7 @@ from textual.containers import VerticalScroll
 from textual.geometry import Size
 from textual.screen import Screen
 
+from fnd.matching import MatchSpec
 from fnd.tui.preview.frozen import FrozenChunk, freeze
 from fnd.tui.widgets.markdown import FNDMarkdown, _legacy_blocks_to_md
 
@@ -77,20 +78,26 @@ class WarmHost:
         self._container = container
         return container
 
-    async def capture(self, chunk: FileChunk, width: int) -> FrozenChunk | None:
+    async def capture(
+        self, chunk: FileChunk, width: int, *, match_spec: MatchSpec | None = None
+    ) -> FrozenChunk | None:
         """Build ``chunk`` off-screen at ``width`` and capture it.
 
-        The widget is constructed exactly as the on-screen path constructs it
-        (same match spec, same mermaid setting), because the capture IS that
-        widget's own output — any divergence here would show up as a preview
-        that differs from the one the widget path produces.
+        The widget is constructed exactly as the on-screen path constructs it,
+        because the capture IS that widget's own output — any divergence would
+        show up as a preview differing from the widget path's.
+
+        ``match_spec`` should be the caller's SNAPSHOT, not the app's live one.
+        Warming runs for seconds across many chunks; reading the live spec meant
+        a query change mid-batch produced chunks highlighted for the new query
+        and filed under the old query's key, where nothing can ever correct them.
         """
         container = await self.ensure()
         if container is None or self._screen is None:
             return None
         widget = FNDMarkdown(
             chunk.body_md or _legacy_blocks_to_md(chunk.blocks),
-            match_spec=self._app._effective_match_spec,
+            match_spec=match_spec if match_spec is not None else self._app._effective_match_spec,
             render_mermaid=(
                 self._app._config.defaults.render_mermaid if self._app._config else True
             ),
@@ -107,13 +114,17 @@ class WarmHost:
         except Exception:
             return None
         finally:
-            with contextlib.suppress(Exception):
-                await widget.remove()
+            # NOT awaited, and suppressing BaseException rather than Exception.
+            # Cancellation is the normal way warming ends, CancelledError is a
+            # BaseException, and it lands ON the await — so an awaited removal
+            # here is skipped exactly when it is needed. Measured: 12 whole
+            # widget trees (~28 widgets each) stranded across 29 cancellations,
+            # unbounded over a session and invisible to the row budget.
+            # ``remove()`` posts the removal and does not need awaiting.
+            with contextlib.suppress(BaseException):
+                widget.remove()
 
-    def dispose(self) -> None:
-        """Drop the screen. Safe to call when nothing was ever created."""
-        screen, self._screen, self._container = self._screen, None, None
-        if screen is None:
-            return
-        with contextlib.suppress(Exception):
-            self._app.uninstall_screen(screen)
+    # Deliberately no dispose(). One screen holding one empty container lives
+    # for the session; each captured widget is removed in the finally above, so
+    # nothing accumulates, and process exit reclaims the rest. An uncalled
+    # teardown method would only promise a cleanup nobody performs.
