@@ -20,9 +20,12 @@ an explicit size, so a chunk taller than the terminal captures in full.
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from dataclasses import dataclass, field
+from typing import Any
 
 from textual.geometry import Size
+from textual.scroll_view import ScrollView
 from textual.strip import Strip
 from textual.widget import Widget
 
@@ -173,3 +176,148 @@ class FrozenChunkView(Widget):
         if 0 <= y < len(strips):
             return strips[y].crop(0, self.size.width)
         return Strip.blank(self.size.width)
+
+
+@dataclass(slots=True)
+class FrozenDocument:
+    """Captured chunks in document order, plus the row each one starts at.
+
+    ``starts[i]`` is the first row of ``chunks[i]`` in document space, kept as a
+    parallel sorted list so row -> chunk is a bisect rather than a scan. The
+    preview asks that question on every scroll.
+    """
+
+    chunks: list[FrozenChunk] = field(default_factory=list)
+    starts: list[int] = field(default_factory=list)
+    total_rows: int = 0
+    width: int = 0
+
+    def append(self, chunk: FrozenChunk) -> None:
+        self.width = chunk.width
+        self.starts.append(self.total_rows)
+        self.chunks.append(chunk)
+        self.total_rows += chunk.height
+
+    def prepend(self, chunk: FrozenChunk) -> None:
+        self.width = chunk.width
+        self.starts = [0, *(s + chunk.height for s in self.starts)]
+        self.chunks.insert(0, chunk)
+        self.total_rows += chunk.height
+
+    def _start_of(self, chunk_seq: int) -> tuple[int, FrozenChunk] | None:
+        for start, c in zip(self.starts, self.chunks, strict=True):
+            if c.chunk_seq == chunk_seq:
+                return start, c
+        return None
+
+    def row_of_chunk(self, chunk_seq: int) -> int | None:
+        found = self._start_of(chunk_seq)
+        return None if found is None else found[0]
+
+    def match_row(self, chunk_seq: int) -> int | None:
+        """Document row of a chunk's first match — where a navigation lands."""
+        found = self._start_of(chunk_seq)
+        if found is None:
+            return None
+        start, chunk = found
+        return start + (chunk.first_match_row or 0)
+
+    def cell_row(self, chunk_seq: int, coord: tuple[int, int]) -> int | None:
+        """Document row of a matched table cell.
+
+        Recorded at capture time, so it cannot be unresolvable the way a live
+        ``DataTable`` cell region is until its rows lay out — the race behind the
+        deep-table scroll history.
+        """
+        found = self._start_of(chunk_seq)
+        if found is None:
+            return None
+        start, chunk = found
+        off = chunk.cell_rows.get(coord)
+        return None if off is None else start + off
+
+    def stop_rows(self) -> list[int]:
+        """Every match stop in document order — what n/b and the markers walk."""
+        out: list[int] = []
+        for start, c in zip(self.starts, self.chunks, strict=True):
+            out.extend(start + r for r in c.stop_rows)
+        return sorted(out)
+
+    def chunk_at_row(self, row: int) -> int | None:
+        if not self.chunks:
+            return None
+        i = bisect_right(self.starts, row) - 1
+        return None if i < 0 else self.chunks[i].chunk_seq
+
+    def line(self, row: int) -> Strip | None:
+        if not (0 <= row < self.total_rows):
+            return None
+        i = bisect_right(self.starts, row) - 1
+        return self.chunks[i].strips[row - self.starts[i]]
+
+
+class FrozenDocumentView(ScrollView):
+    """A whole file as one widget: captured strips, served by row.
+
+    Exists for a reason beyond widget count. Adding content ABOVE the viewport is
+    what makes warming a file visible, and only a widget that OWNS its
+    ``virtual_size`` can grow and scroll atomically — content, size and offset in
+    one synchronous block, with no layout pass between them and nothing to clamp
+    against. A container's virtual size is assigned BY the layout pass
+    (``Widget._size_updated``), so its compensating scroll is always validated
+    against a stale extent: measured, a 7-row error, or three frames of drift if
+    corrected afterwards.
+
+    ``ScrollView`` is built for exactly this — it discards the compositor's
+    virtual size in ``_size_updated`` and overrides ``scroll_to`` to skip the
+    ``call_after_refresh`` deferral — and every stock line-API widget (RichLog,
+    DataTable, Tree, TextArea) is the same shape.
+    """
+
+    def __init__(self, document: FrozenDocument, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.document = document
+        self.virtual_size = Size(document.width, document.total_rows)
+
+    def render_line(self, y: int) -> Strip:
+        offset = int(self.scroll_offset.y)
+        strip = self.document.line(offset + y)
+        if strip is None:
+            return Strip.blank(self.size.width)
+        x = int(self.scroll_offset.x)
+        return strip.crop(x, x + self.size.width)
+
+    def _resize(self) -> None:
+        self.virtual_size = Size(self.document.width, self.document.total_rows)
+
+    def append(self, chunk: FrozenChunk) -> None:
+        """Add below. Never shifts the view, so there is nothing to compensate."""
+        self.document.append(chunk)
+        self._resize()
+
+    def prepend(self, chunk: FrozenChunk) -> None:
+        """Add above WITHOUT the view moving.
+
+        Order is load-bearing: ``virtual_size`` first, then the scroll. Reversed,
+        ``validate_scroll_y`` clamps against the old extent and the view drifts by
+        exactly the clamp. ``scroll_to`` keeps ``scroll_y`` and ``scroll_target_y``
+        in step, so a later relative scroll starts from the right place.
+        """
+        self.document.prepend(chunk)
+        self._resize()
+        self.scroll_to(y=int(self.scroll_offset.y) + chunk.height, animate=False, immediate=True)
+
+    def scroll_to_row(self, row: int, *, context_fraction: float = 0.25) -> None:
+        """Drop ``row`` a fraction down the viewport, matching where the widget
+        path lands a match, so the two substrates look the same."""
+        margin = int(self.size.height * context_fraction)
+        self.scroll_to(y=max(0, row - margin), animate=False, immediate=True)
+
+    def scroll_to_chunk(self, chunk_seq: int, *, prefer_match: bool = True) -> bool:
+        row = self.document.match_row(chunk_seq) if prefer_match else None
+        if row is None:
+            row = self.document.row_of_chunk(chunk_seq)
+        if row is None:
+            return False
+        self.scroll_to_row(row)
+        return True
