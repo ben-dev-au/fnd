@@ -113,6 +113,7 @@ class PreviewPresenter:
         # Strong ref so the loop doesn't GC the in-flight warm task, plus the
         # file it is growing so a re-harvest of the same file doesn't restart it.
         self._warm_task: asyncio.Task[None] | None = None
+        self._warm_bootstrap: asyncio.Task[None] | None = None
         self._warm_parent: str | None = None
         # Chunks are built and captured here rather than in the visible
         # container — see warm_host for why every way of hiding a live container
@@ -1394,7 +1395,42 @@ class PreviewPresenter:
         self.hide_progress_bar()
         self.parent_id = parent_id
         self._app._refresh_status()
+        self._warm_served_document(parent_id, doc, pane.content_size.width)
         return True
+
+    def _warm_served_document(self, parent_id: str, doc: FrozenDocument, width: int) -> None:
+        """Keep growing a document that was served from the store.
+
+        Without this, warming only ran off the back of a widget-path mount, so
+        every later visit — served from the store, returning before harvest —
+        never grew. The chunk list is fetched on a worker because decoding a
+        large file's chunks is not something to do on the event loop; the whole
+        point of serving a document is that this navigation did no such work.
+        """
+        if not self.document_preview_enabled():
+            return
+        searcher = self._app._search.searcher
+        if searcher is None:
+            return
+        # Only skip while warming for this file is STILL RUNNING. Comparing
+        # _warm_parent alone latched: it keeps the last file's id after the task
+        # ends, so a file could never be warmed again.
+        task = self._warm_task
+        if self._warm_parent == parent_id and task is not None and not task.done():
+            return
+        query_sig = self._app._search.query_signature()
+
+        async def begin() -> None:
+            try:
+                chunks = await asyncio.to_thread(searcher.get_file_chunks, parent_id)
+            except Exception as exc:
+                self.diag_log(f"warm bootstrap failed: {exc!r}")
+                return
+            if len(doc.chunks) >= len(chunks):
+                return
+            self.start_warming(parent_id, query_sig, width, doc, chunks)
+
+        self._warm_bootstrap = asyncio.create_task(begin())
 
     def invalidate_documents_on_resize(self) -> None:
         """Drop captures that no longer match the pane width.
@@ -2211,26 +2247,47 @@ class PreviewPresenter:
             f"rows={doc.total_rows} width={doc.width}"
         )
         if len(doc.chunks) < len(chunks):
-            task = self._warm_task
-            if task is not None and not task.done():
-                if self._warm_parent == container.parent_doc_id:
-                    # Already growing THIS file. Restarting on every harvest is
-                    # how coverage stalled: each in-file navigation harvested
-                    # again, cancelled the task mid-batch, and started over from
-                    # the same short run.
-                    return
-                task.cancel()
-            self._warm_parent = container.parent_doc_id
-            self._warm_task = asyncio.create_task(
-                self._warm_document(container, chunks, width, doc)
+            self.start_warming(
+                container.parent_doc_id, container.query_signature, width, doc, chunks, container
             )
+
+    def start_warming(
+        self,
+        parent_id: str,
+        query_sig: str,
+        width: int,
+        doc: FrozenDocument,
+        chunks: list[FileChunk],
+        container: PreviewContainer | None = None,
+    ) -> None:
+        """Grow ``doc`` towards covering its file, in the background.
+
+        Called from BOTH paths. Harvest reaches it after a widget-path mount,
+        but the document path returns before harvest, so a file served from the
+        store could only warm if it had once been built the slow way — meaning
+        warming helped the first file of a session and no other.
+        """
+        task = self._warm_task
+        if task is not None and not task.done():
+            if self._warm_parent == parent_id:
+                # Already growing THIS file. Restarting on every navigation is
+                # how coverage stalled: each one cancelled the task mid-batch
+                # and started again from the same short run.
+                return
+            task.cancel()
+        self._warm_parent = parent_id
+        self._warm_task = asyncio.create_task(
+            self._warm_document(parent_id, query_sig, chunks, width, doc, container)
+        )
 
     async def _warm_document(
         self,
-        container: PreviewContainer,
+        parent_id: str,
+        query_sig: str,
         chunks: list[FileChunk],
         width: int,
         doc: FrozenDocument,
+        container: PreviewContainer | None = None,
     ) -> None:
         """Extend a captured run to cover the rest of the file.
 
@@ -2264,8 +2321,6 @@ class PreviewPresenter:
         """
         from fnd.tui.preview.frozen import freeze
 
-        generation = self.reset_generation
-        parent_id, query_sig = container.parent_doc_id, container.query_signature
         # Snapshot the highlighting this document is FOR. Warming runs for
         # seconds; reading the app's live spec per chunk meant a query change
         # mid-batch produced chunks highlighted for the new query, appended to a
@@ -2273,17 +2328,21 @@ class PreviewPresenter:
         warm_spec = self._app._effective_match_spec
 
         def still_valid() -> bool:
-            """Warming survives the container it started under.
+            """Warming survives everything except the query it is FOR changing.
 
-            It used to require ``is_live(container)``, which tied coverage to a
-            widget tree that navigation replaces — so warming died on the first
-            jump and never resumed. Measured, that is what capped coverage at 83
-            of 1018 chunks (~0.7s of work) when the whole file costs 12.5s: not
-            the cost, not unfreezable chunks (zero refusals in 400 real chunks),
-            just the lifetime it was pinned to. Capture is off-screen now and
-            needs nothing from the container.
+            Requiring ``is_live(container)`` tied coverage to a widget tree that
+            navigation replaces, so warming died on the first jump — that capped
+            coverage at 83 of 1018 chunks. Comparing ``reset_generation`` then
+            killed it for scope changes and highlight re-renders too, which do
+            not invalidate a capture; measured, warming then stopped before
+            capturing a single chunk. The query signature is what actually
+            decides whether these captures can ever be served, because it is
+            what the store keys on.
             """
-            return self.reset_generation == generation
+            try:
+                return self._app._search.query_signature() == query_sig
+            except Exception:
+                return False
 
         def live_view() -> FrozenDocumentView | None:
             view = self.document_view
@@ -2291,11 +2350,11 @@ class PreviewPresenter:
 
         async def yield_to_navigation() -> bool:
             """Wait out an in-flight landing. False if warming should stop."""
-            # Stop before the document outgrows the cache that has to hold it.
-            # Measured on the real corpus, a captured chunk is 44.5 KB, so an
-            # unbounded warm of a 1463-chunk file is 63.5 MB — and warming past
-            # the budget only earns the document an eviction.
-            if doc.total_rows >= frozen_store.MAX_TOTAL_ROWS:
+            # Stop before this one document exceeds what the whole cache may
+            # hold. The budget scales with system memory, so on a large machine
+            # this effectively never fires and a huge file warms whole; on a
+            # small one it degrades instead of exhausting the machine.
+            if doc.total_rows >= frozen_store.budget_rows():
                 self.diag_log(f"warm stopped at row budget rows={doc.total_rows}")
                 return False
             for _ in range(tuning.PREVIEW_WARM_YIELD_TICKS):
@@ -2315,12 +2374,16 @@ class PreviewPresenter:
             rather than rebuilt.
             """
             out: list[FrozenChunk] = []
-            alive = is_live(container)
+            alive = container is not None and is_live(container)
             for index in indices:
                 chunk = chunks[index]
                 # The container is a SHORTCUT for chunks already captured, not a
                 # requirement — it may have been swept out from under us.
-                widget = container.chunk_widgets.get(chunk.chunk_seq) if alive else None
+                widget = (
+                    container.chunk_widgets.get(chunk.chunk_seq)
+                    if alive and container is not None
+                    else None
+                )
                 captured: FrozenChunk | None = None
                 if isinstance(widget, FrozenChunkView):
                     captured = widget.frozen

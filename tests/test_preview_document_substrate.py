@@ -115,7 +115,67 @@ async def test_a_captured_document_is_a_contiguous_run(
         assert doc.starts == [sum(c.height for c in doc.chunks[:i]) for i in range(len(doc.chunks))]
 
 
-def test_the_store_is_bounded_by_rows_not_by_document_count() -> None:
+@pytest.mark.asyncio
+async def test_serving_a_partial_document_starts_warming(
+    tmp_path: Path, tmp_index_dir: Path, doc_preview: None
+) -> None:
+    """A file served from the store must still be warmed towards completeness.
+
+    Warming is started by the harvest that follows a widget-path mount, and the
+    document path returns BEFORE harvest — so a store-served file could only
+    grow if it had once been built the slow way, which meant warming helped the
+    first file of a session and no other.
+
+    Exercised at the seam rather than end-to-end: any file small enough for a
+    fast test warms to completion before a revisit can be staged, so an
+    end-to-end version silently tests nothing (an earlier one passed without the
+    fix for exactly that reason).
+    """
+    index = _corpus(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups) and app._preview.active is not None,
+            timeout=20.0,
+            message="preview never became active",
+        )
+        group = app._search.groups[0]
+        sig = app._search.query_signature()
+        width = app.query_one("#preview_pane").content_size.width
+        await wait_until(
+            pilot,
+            lambda: app._preview.document_store.get(group.parent_id, sig, width) is not None,
+            timeout=20.0,
+            message="nothing was harvested",
+        )
+        full = app._preview.document_store.get(group.parent_id, sig, width)
+        assert full is not None
+
+        partial = FrozenDocument()
+        for chunk in full.chunks[: max(2, len(full.chunks) // 2)]:
+            partial.append(chunk)
+
+        # Quiesce any warm already in flight, so the guard cannot mask the call.
+        task = app._preview._warm_task
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        app._preview._warm_parent = None
+
+        app._preview._warm_served_document(group.parent_id, partial, width)
+        await wait_until(
+            pilot,
+            lambda: app._preview._warm_parent == group.parent_id,
+            timeout=20.0,
+            message="serving a partial document did not start warming",
+        )
+
+
+def test_the_store_is_bounded_by_rows_not_by_document_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The cache must bound what actually grows.
 
     MAX_DOCUMENTS was the only cap while a document held a handful of chunks.
@@ -127,18 +187,24 @@ def test_the_store_is_bounded_by_rows_not_by_document_count() -> None:
     dropping it would rebuild what the user is reading. A single oversized file
     is therefore allowed to exceed the budget; the budget bounds the CACHE.
     """
-    from fnd.tui.preview.frozen_store import MAX_TOTAL_ROWS, FrozenDocumentStore
+    from fnd.tui.preview import frozen_store
+    from fnd.tui.preview.frozen_store import FrozenDocumentStore
     from tests.test_preview_frozen_document import _chunk  # reuse the strip builder
 
+    # Patched, not measured: the real budget scales with system RAM, so a test
+    # that allocated against it would build millions of Strips on a big machine
+    # and prove something different on every developer's laptop.
+    budget = 300
+    monkeypatch.setattr(frozen_store, "budget_rows", lambda: budget)
     store = FrozenDocumentStore()
-    rows_each = MAX_TOTAL_ROWS // 3
+    rows_each = budget // 3
     for i in range(6):
         doc = FrozenDocument()
         doc.append(_chunk(i, rows_each))
         store.put(f"file{i}", "sig", 40, doc)
-        assert store.total_rows() <= MAX_TOTAL_ROWS or len(store._docs) == 1, (
+        assert store.total_rows() <= budget or len(store._docs) == 1, (
             f"store holds {store.total_rows()} rows across {len(store._docs)} "
-            f"documents, over the {MAX_TOTAL_ROWS} budget"
+            f"documents, over the {budget} budget"
         )
     # The most recent file must still be served — it is what is on screen.
     assert store.get("file5", "sig", 40) is not None, "evicted the document in use"
@@ -186,18 +252,23 @@ async def test_a_new_query_stops_warming_and_drops_its_captures(
         )
 
 
-def test_a_single_oversized_document_is_kept_rather_than_thrashed() -> None:
+def test_a_single_oversized_document_is_kept_rather_than_thrashed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """One file bigger than the whole budget must still be served.
 
     Evicting it would mean the user's current file is rebuilt on every
     navigation — strictly worse than the memory it costs.
     """
-    from fnd.tui.preview.frozen_store import MAX_TOTAL_ROWS, FrozenDocumentStore
+    from fnd.tui.preview import frozen_store
+    from fnd.tui.preview.frozen_store import FrozenDocumentStore
     from tests.test_preview_frozen_document import _chunk
 
+    budget = 300
+    monkeypatch.setattr(frozen_store, "budget_rows", lambda: budget)
     store = FrozenDocumentStore()
     doc = FrozenDocument()
-    doc.append(_chunk(0, MAX_TOTAL_ROWS * 2))
+    doc.append(_chunk(0, budget * 2))
     store.put("huge", "sig", 40, doc)
     assert store.get("huge", "sig", 40) is not None
 

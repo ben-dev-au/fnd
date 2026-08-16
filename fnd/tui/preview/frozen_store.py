@@ -42,13 +42,85 @@ __all__ = ["FrozenDocumentStore"]
 # structural path.
 MAX_DOCUMENTS = 4
 
-# The real bound. A count of documents was the only cap while a document held a
-# handful of chunks; warming grows one to the whole file, and measured on the
-# real corpus a captured chunk costs 44.5 KB (1670 bytes per row), so a
-# 1463-chunk file is 63.5 MB and four of them 254 MB. Rows are what actually
-# grow, so rows are what is budgeted: 20,000 is roughly 33 MB, enough for one
-# large file plus neighbours.
-MAX_TOTAL_ROWS = 20_000
+# Measured on a real corpus: 44.5 KB per captured chunk, 1670 bytes per rendered
+# row. Used to price a document in bytes without walking its strips.
+BYTES_PER_ROW = 1670
+
+# Share of system memory the preview cache may hold. A document viewer is
+# expected to spend memory on the document — PDF readers and editors of this
+# kind sit in the hundreds of MB routinely — so this is not trying to be frugal,
+# only to leave the machine usable.
+CACHE_FRACTION = 0.05
+
+# Floor for machines we cannot measure, or very small ones. Below roughly this
+# the cache stops being able to hold a single large file and the feature
+# degrades to nothing.
+MIN_CACHE_BYTES = 64 * 1024 * 1024
+
+# Ceiling. 5% of a 64 GB workstation would be 3.2 GB, which is past the point of
+# being useful and into the point of being rude: a cache holds files already
+# read, and holding fifteen large ones warm is already more than a reading
+# session touches. Generous, not unbounded.
+MAX_CACHE_BYTES = 1024 * 1024 * 1024
+
+
+def _total_system_bytes() -> int | None:
+    """Physical RAM, or ``None`` when it cannot be determined."""
+    import os
+    import sys
+
+    try:
+        if hasattr(os, "sysconf") and "SC_PHYS_PAGES" in os.sysconf_names:
+            pages, page_size = os.sysconf("SC_PHYS_PAGES"), os.sysconf("SC_PAGE_SIZE")
+            if pages > 0 and page_size > 0:
+                return pages * page_size
+    except (OSError, ValueError):
+        pass
+    if sys.platform == "win32":  # pragma: no cover - platform specific
+        try:
+            import ctypes
+
+            class _MemoryStatusEx(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            status = _MemoryStatusEx()
+            status.dwLength = ctypes.sizeof(_MemoryStatusEx)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return int(status.ullTotalPhys)
+        except Exception:
+            pass
+    return None
+
+
+def budget_rows() -> int:
+    """How many captured rows the cache may hold, scaled to this machine.
+
+    A fixed number is wrong in both directions: it starves a user with a
+    5,000-page PDF and under-uses a workstation. So it scales with RAM, between
+    a floor that keeps the feature working at all and a ceiling that keeps a
+    big machine's cache from growing past any real use (1 GB is roughly fifteen
+    whole large files).
+
+    Note this bounds the CACHE, not the document on screen: ``put`` never evicts
+    the document just stored, so the file being read is served whole however
+    large it is. The budget decides how many OTHER files stay warm around it.
+    """
+    total = _total_system_bytes()
+    if total is None:
+        budget = MIN_CACHE_BYTES
+    else:
+        budget = min(MAX_CACHE_BYTES, max(MIN_CACHE_BYTES, int(total * CACHE_FRACTION)))
+    return budget // BYTES_PER_ROW
 
 
 class FrozenDocumentStore:
@@ -77,9 +149,10 @@ class FrozenDocumentStore:
             self._docs.popitem(last=False)
         # Evict by ROWS, oldest first, never the document just stored — it is
         # the one on screen, and dropping it would rebuild what the user is
-        # reading. A single file over budget is therefore kept: the cap bounds
-        # the cache, not the current document.
-        while len(self._docs) > 1 and self.total_rows() > MAX_TOTAL_ROWS:
+        # reading. A file larger than the whole budget is therefore still served
+        # whole: the budget bounds how many OTHER files stay warm around it.
+        budget = budget_rows()
+        while len(self._docs) > 1 and self.total_rows() > budget:
             self._docs.popitem(last=False)
 
     def total_rows(self) -> int:
