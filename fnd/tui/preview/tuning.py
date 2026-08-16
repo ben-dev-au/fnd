@@ -32,6 +32,11 @@ PREVIEW_CACHE_MIN_CHUNKS = 1
 # it. Measured on a 1018-chunk PDF (3x40 navigations per setting), the row-based
 # window against a flat 7: first paint 1796 -> 1493ms, the finalize's build wait
 # 1457 -> 848ms, the reconcile-to-scroll gap 731 -> 517ms.
+# Delay before warming extends a captured run to the rest of the file. Long
+# enough that the navigation the user just made has fully landed — warming is
+# for the jump AFTER this one, so it must never compete with the current paint.
+PREVIEW_WARM_DELAY = 0.35
+
 VISIBLE_FIRST_ABOVE = 7
 VISIBLE_FIRST_BELOW = 7
 # Rows of content to mount above the focus chunk before the reveal, as a

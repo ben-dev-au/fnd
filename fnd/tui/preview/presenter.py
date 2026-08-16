@@ -23,7 +23,12 @@ from fnd.matching import MatchSpec
 from fnd.render import render_chunk_pieces
 from fnd.tui.line_buffer import LineBufferPreview, build_rendered_document
 from fnd.tui.preview import tuning
-from fnd.tui.preview.frozen import FrozenDocument, FrozenDocumentView
+from fnd.tui.preview.frozen import (
+    FrozenChunk,
+    FrozenChunkView,
+    FrozenDocument,
+    FrozenDocumentView,
+)
 from fnd.tui.preview.frozen_store import FrozenDocumentStore
 from fnd.tui.preview.liveness import is_condemned, is_live
 from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
@@ -104,6 +109,8 @@ class PreviewPresenter:
         # Pane width the ON-SCREEN document was installed at, so a resize can
         # tell a stale view from one that is still painting at the right width.
         self._document_view_width: int = 0
+        # Strong ref so the loop doesn't GC the in-flight warm task.
+        self._warm_task: asyncio.Task[None] | None = None
         # Convenience aliases that point into the active container —
         # legacy code paths (_scroll_preview_to_chunk, etc.) read from
         # these instead of poking at the container directly.
@@ -2154,10 +2161,10 @@ class PreviewPresenter:
         """Keep this file's captures so the next visit is a scroll, not a rebuild.
 
         Runs straight after the freeze sweep, when most chunks are already
-        captured and the rest are laid out — the only moment the whole file is
+        captured and the rest are laid out — the only moment most of the file is
         capturable at once. The window chunks the sweep leaves live are captured
         WITHOUT being removed: the document is a shadow copy, not the thing on
-        screen, and it has to be complete or every row after a gap is wrong.
+        screen, and it must be contiguous or every row after a gap is wrong.
         """
         if not self.document_preview_enabled():
             return
@@ -2185,6 +2192,107 @@ class PreviewPresenter:
             f"harvest parent={container.parent_doc_id[:8]} chunks={len(doc.chunks)}/{len(chunks)} "
             f"rows={doc.total_rows} width={doc.width}"
         )
+        if len(doc.chunks) < len(chunks):
+            task = self._warm_task
+            if task is not None and not task.done():
+                task.cancel()
+            self._warm_task = asyncio.create_task(
+                self._warm_document(container, chunks, width, doc)
+            )
+
+    async def _warm_document(
+        self,
+        container: PreviewContainer,
+        chunks: list[FileChunk],
+        width: int,
+        doc: FrozenDocument,
+    ) -> None:
+        """Extend a captured run to cover the rest of the file.
+
+        A run typically stops short because the background fill bails the moment
+        the user takes scroll control, so the tail is missing and a jump there
+        falls back to a rebuild — the slow path the substrate exists to avoid.
+        This mounts the missing chunks into the container that is already on
+        screen, captures them, and extends the document at whichever end they
+        belong to.
+
+        Growth stays CONTIGUOUS by construction: only chunks immediately before
+        or after the run are taken, and the first failure at an end stops that
+        direction. A gap would shift every row after it.
+
+        When the document is already on screen the growth goes through the
+        view's own prepend/append, which move the extent and the scroll offset
+        in one synchronous block so the reader's position never shifts.
+        """
+        from fnd.tui.preview.frozen import freeze
+
+        generation = self.reset_generation
+
+        async def capture_at(index: int) -> FrozenChunk | None:
+            chunk = chunks[index]
+            widget = container.chunk_widgets.get(chunk.chunk_seq)
+            if widget is None:
+                with contextlib.suppress(Exception):
+                    self.mount_chunk_into(container, chunk, index, chunks)
+                await self.await_settled()
+                widget = container.chunk_widgets.get(chunk.chunk_seq)
+            if isinstance(widget, FrozenChunkView):
+                return widget.frozen
+            if isinstance(widget, FNDMarkdown):
+                return freeze(widget, chunk.chunk_seq)
+            return None
+
+        def still_valid() -> bool:
+            return is_live(container) and self.reset_generation == generation
+
+        try:
+            await asyncio.sleep(tuning.PREVIEW_WARM_DELAY)
+            seqs = [c.chunk_seq for c in chunks]
+            first = seqs.index(doc.chunks[0].chunk_seq)
+            last = seqs.index(doc.chunks[-1].chunk_seq)
+            grew = 0
+
+            def live_view() -> FrozenDocumentView | None:
+                view = self.document_view
+                return view if view is not None and view.document is doc else None
+
+            # Two directions, two loops. One loop cannot express "stop growing
+            # downwards but keep going upwards", and a `continue` in either
+            # direction would leave a hole that shifts every row past it.
+            for index in range(last + 1, len(chunks)):
+                if not still_valid():
+                    return
+                captured = await capture_at(index)
+                if captured is None:
+                    break
+                view = live_view()
+                # Appending never moves the viewport — content grows below it.
+                view.append(captured) if view else doc.append(captured)
+                grew += 1
+                await asyncio.sleep(0)
+
+            for index in range(first - 1, -1, -1):
+                if not still_valid():
+                    return
+                captured = await capture_at(index)
+                if captured is None:
+                    break
+                view = live_view()
+                # Prepending WOULD move the viewport; the view's own prepend
+                # moves extent and offset in one synchronous block so it doesn't.
+                view.prepend(captured) if view else doc.prepend(captured)
+                grew += 1
+                await asyncio.sleep(0)
+
+            if grew:
+                self.document_store.put(
+                    container.parent_doc_id, container.query_signature, width, doc
+                )
+                self.diag_log(f"warm grew={grew} chunks={len(doc.chunks)}/{len(chunks)}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - warming is best-effort
+            self.diag_log(f"warm failed: {exc!r}")
 
     async def _mount_chunks_async(
         self,
