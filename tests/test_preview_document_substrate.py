@@ -173,6 +173,57 @@ async def test_serving_a_partial_document_starts_warming(
         )
 
 
+@pytest.mark.asyncio
+async def test_a_served_document_never_paints_at_the_previous_files_offset() -> None:
+    """The in-between frame, at its source.
+
+    One widget is reused across files, so it carries the previous file's
+    ``scroll_offset``. Revealing before the new scroll lands paints a fully
+    settled frame of the right file at a position that means nothing in it —
+    then the jump. That is the "lands somewhere, then lands on the result"
+    symptom, and it is separate from the deliberate glide.
+    """
+    from textual.app import App, ComposeResult
+    from textual.containers import VerticalScroll
+
+    from tests.test_preview_frozen_document import _chunk
+
+    class _Host(App[None]):
+        def compose(self) -> ComposeResult:
+            yield VerticalScroll(id="pane")
+
+    first = FrozenDocument()
+    for seq in range(6):
+        first.append(_chunk(seq, 30, match_row=10))
+    second = FrozenDocument()
+    for seq in range(100, 106):
+        second.append(_chunk(seq, 30, match_row=10))
+
+    app = _Host()
+    async with app.run_test(size=(42, 16)) as pilot:
+        pane = app.query_one("#pane", VerticalScroll)
+        view = FrozenDocumentView(first, id="doc")
+        await pane.mount(view)
+        for _ in range(4):
+            await pilot.pause()
+
+        # Read deep into the first document, then switch files.
+        view.scroll_to_chunk(5)
+        for _ in range(4):
+            await pilot.pause()
+        deep = int(view.scroll_offset.y)
+        assert deep > 0, "fixture error: never scrolled away from the top"
+
+        view.set_document(second)
+        assert int(view.scroll_offset.y) == 0, (
+            f"the new document opened at row {int(view.scroll_offset.y)}, inherited "
+            "from the file just left — that offset addresses nothing in this file"
+        )
+        assert view.render_line(0).text.strip().startswith("c100"), (
+            "the first painted row belongs to the previous document"
+        )
+
+
 def test_the_store_is_bounded_by_rows_not_by_document_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

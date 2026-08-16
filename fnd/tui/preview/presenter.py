@@ -1379,6 +1379,13 @@ class PreviewPresenter:
             child.add_class("-hidden")
         for child in self._app.query(LineBufferPreview):
             child.add_class("-hidden")
+        # Laid out but unpainted: the scroll needs real geometry to resolve
+        # against, and revealing first paints a settled frame at the outgoing
+        # file's offset before jumping to the match — the "lands somewhere, then
+        # lands again" the user reported.
+        was_hidden = view.has_class("-hidden")
+        if was_hidden:
+            view.add_class("-pre-reveal")
         view.remove_class("-hidden")
         self._app._flat.active_buffer = None
         self.active = None
@@ -1388,6 +1395,8 @@ class PreviewPresenter:
 
         self._app._preview_scroll.arm(ScrollAnchor(parent_id, focus_chunk_seq))
         self._app._preview_scroll.reconcile()
+        if was_hidden:
+            self._reveal_document_when_positioned(view)
         self.diag_log(
             f"dispatch_document parent={parent_id[:8]} chunks={len(doc.chunks)} "
             f"rows={doc.total_rows} width={doc.width}"
@@ -1397,6 +1406,25 @@ class PreviewPresenter:
         self._app._refresh_status()
         self._warm_served_document(parent_id, doc, pane.content_size.width)
         return True
+
+    def _reveal_document_when_positioned(self, view: FrozenDocumentView, retries: int = 8) -> None:
+        """Paint the document only once its scroll has actually landed.
+
+        ``FlatScrollStrategy`` reveals on the assumption that a document scroll
+        is synchronous. It is — except on the transition INTO this substrate,
+        where the view was ``display: none`` when the scroll was issued, had no
+        height to resolve against, and deferred itself. Revealing on that
+        assumption is what paints a settled frame at the wrong offset.
+
+        Bounded, and reveals anyway when the budget runs out: a preview that is
+        one frame late is a glitch, one that never paints is a broken app.
+        """
+        if not is_live(view):
+            return
+        if view.is_positioned or retries <= 0:
+            view.remove_class("-pre-reveal")
+            return
+        self._app.call_after_refresh(self._reveal_document_when_positioned, view, retries - 1)
 
     def _warm_served_document(self, parent_id: str, doc: FrozenDocument, width: int) -> None:
         """Keep growing a document that was served from the store.

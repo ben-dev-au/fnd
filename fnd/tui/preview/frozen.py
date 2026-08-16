@@ -294,6 +294,12 @@ class FrozenDocumentView(StripDocumentView):
         scrollbar-gutter: stable;
     }
     FrozenDocumentView.-hidden { display: none; }
+    /* Laid out, scrollable, but not yet painted — the same trick the per-chunk
+       containers use. display:none gives the widget no height, so a scroll
+       issued while hidden has nothing to resolve against and defers; revealing
+       first instead paints one settled frame at the WRONG offset before the
+       jump. Opacity keeps the geometry so the scroll can land before the reveal. */
+    FrozenDocumentView.-pre-reveal { opacity: 0%; }
     """
 
     def __init__(self, document: FrozenDocument, **kwargs: Any) -> None:
@@ -309,11 +315,35 @@ class FrozenDocumentView(StripDocumentView):
     def set_document(self, document: FrozenDocument) -> None:
         """Show a different file. One widget is reused across files — mounting a
         fresh one per navigation is the DOM churn this substrate exists to
-        avoid."""
+        avoid.
+
+        Resets the scroll. Reusing the widget means it carries the PREVIOUS
+        file's offset otherwise, so the new file paints at a position that means
+        nothing in it — a settled frame at the wrong place, then the jump to the
+        match. Row 0 is not where the match is either, which is why the caller
+        keeps the view unpainted (``-pre-reveal``) until the scroll lands.
+        """
         self.document = document
         self._sync()
+        self.set_reactive(FrozenDocumentView.scroll_x, 0.0)
+        self.set_reactive(FrozenDocumentView.scroll_y, 0.0)
+        self.scroll_target_x = 0.0
+        self.scroll_target_y = 0.0
+        # set_reactive: assign without running validators or watchers, which at
+        # this moment would clamp against the OUTGOING document's extent.
         self._refresh_match_scrollbar()
         self.refresh()
+
+    @property
+    def is_positioned(self) -> bool:
+        """Whether the scroll this view was given has actually landed.
+
+        The caller reveals on this rather than assuming the scroll was
+        synchronous: while the view is hidden it has no height, so
+        ``_apply_pending_scroll`` defers itself and the "already landed" claim
+        is false exactly when it matters.
+        """
+        return self._pending_scroll_address is None
 
     # ── Substrate hooks ─────────────────────────────────────────
 
