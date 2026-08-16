@@ -28,6 +28,18 @@ from dataclasses import dataclass
 # phase (or completing the operation) retires the remaining share, so a slow
 # machine can't sit at a hard 100% mid-operation.
 _PHASE_CEILING = 0.97
+# Where a phase reads when it has run for exactly as long as expected.
+#
+# This single number balances the two halves of the original complaint. Too
+# low and a correctly-estimated operation finishes with the bar partway (at
+# 0.5 — a plain hyperbolic — the flat path completed at a median fill of
+# 0.167). Too high and there is no headroom left for a phase that overruns, so
+# the fill stops moving: at 0.9 a phase running 5x its estimate painted the
+# same cell for 1.85s, which is the freeze this exists to prevent.
+#
+# 0.8 keeps an on-time phase reading nearly four fifths, and leaves enough
+# range that a 5x overrun still advances a cell roughly every half second.
+_ON_TIME = 0.8
 # Guards a zero/negative expectation from dividing by zero.
 _MIN_EXPECTED_MS = 1.0
 
@@ -213,15 +225,24 @@ class ProgressModel:
             return run.units
         expected = max(_MIN_EXPECTED_MS, self.phase.expected_ms)
         elapsed = self.phase_elapsed_ms()
-        # Hyperbolic, not exponential. Both are monotonic and both asymptote,
-        # but an exponential's tail dies as e^-t: measured on the seeded cold
-        # budget, a phase running 1.7x its expectation left the line painting
-        # the SAME cell for 1.05 s — a visible freeze, which is the exact
-        # complaint this whole thing exists to answer. This tail dies as 1/t,
-        # so a phase that overruns keeps moving a cell at a time for as long as
-        # it runs. Reads half the phase at its expected duration, two thirds at
-        # double, four fifths at quadruple.
-        return _PHASE_CEILING * (elapsed / (elapsed + expected))
+        # Piecewise: proportional up to the expectation, asymptotic past it.
+        #
+        # A plain hyperbolic (elapsed / (elapsed + expected)) reads HALF the
+        # phase at exactly its expected duration, so even a perfectly
+        # calibrated operation finished with the bar at ~50% — measured on the
+        # flat path, median fill at completion was 0.167. That is the
+        # "it pauses partway" complaint, and no amount of fixing the
+        # expectations cures it, because the curve itself is the cause.
+        #
+        # So: while the phase is running to time, the fill is proportional and
+        # arrives at _ON_TIME (0.9) exactly when the estimate says it should.
+        # Past that the remaining headroom is consumed asymptotically, which is
+        # what keeps an overrunning phase moving a cell at a time instead of
+        # freezing (the failure an exponential tail produced).
+        if elapsed <= expected:
+            return _PHASE_CEILING * _ON_TIME * (elapsed / expected)
+        overrun = _PHASE_CEILING - _PHASE_CEILING * _ON_TIME
+        return _PHASE_CEILING * _ON_TIME + overrun * (1.0 - expected / elapsed)
 
 
 __all__ = ["OperationPlan", "Phase", "ProgressModel"]

@@ -20,7 +20,7 @@ from fnd.tui.progress.operations import (
     PREVIEW_WARM,
     PreviewProgressTracker,
 )
-from tests._progress_stubs import StubBar
+from tests._progress_stubs import StubBar, StubSearch
 
 
 class StubWorker:
@@ -81,6 +81,7 @@ class StubScroll:
 class StubApp:
     def __init__(self) -> None:
         self._preview = StubPreview()
+        self._search = StubSearch()
         self._preview_scroll = StubScroll()
         self.bar = StubBar()
         self._progress = ProgressFacility(self)  # type: ignore[arg-type]
@@ -97,9 +98,25 @@ def app() -> StubApp:
     return StubApp()
 
 
+class TrackerClock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
 @pytest.fixture
-def tracker(app: StubApp) -> PreviewProgressTracker:
-    return PreviewProgressTracker(app)  # type: ignore[arg-type]
+def clock() -> TrackerClock:
+    return TrackerClock()
+
+
+@pytest.fixture
+def tracker(app: StubApp, clock: TrackerClock) -> PreviewProgressTracker:
+    return PreviewProgressTracker(app, clock=clock)  # type: ignore[arg-type]
 
 
 # ── which plan ───────────────────────────────────────────────────
@@ -151,7 +168,7 @@ def test_an_uncommitted_scroll_puts_us_in_land(
     app: StubApp, tracker: PreviewProgressTracker
 ) -> None:
     session = tracker.begin("doc")
-    app._preview.inflight_target = ("doc", 0)
+    app._preview.active = StubContainer(parent_doc_id="doc")
     app._preview_scroll.is_settling = True
     tracker.sample(session)
     assert session.phase == "land"
@@ -175,7 +192,7 @@ def test_phases_never_run_backwards(app: StubApp, tracker: PreviewProgressTracke
     """A late decode-worker reference must not drag a landing navigation
     back to the first phase."""
     session = tracker.begin("doc")
-    app._preview.inflight_target = ("doc", 0)
+    app._preview.active = StubContainer(parent_doc_id="doc")
     app._preview_scroll.is_settling = True
     tracker.sample(session)
     landed = session.fraction
@@ -213,7 +230,7 @@ def test_an_idle_pipeline_is_not_enough_while_the_scroll_is_pending(
 ) -> None:
     session = tracker.begin("doc")
     app._preview.busy = False
-    app._preview.inflight_target = ("doc", 0)
+    app._preview.active = StubContainer(parent_doc_id="doc")
     app._preview_scroll.is_settling = True
     assert tracker.sample(session) is True
 
@@ -282,25 +299,43 @@ def test_a_reset_releases_the_line_even_though_the_scroll_never_committed(
     assert tracker.sample(session) is False
 
 
-def test_a_finished_preview_releases_the_line_even_if_the_scroll_never_commits(
-    app: StubApp, tracker: PreviewProgressTracker
+def test_a_scroll_that_never_commits_is_bounded_by_the_reveal_budget(
+    app: StubApp, tracker: PreviewProgressTracker, clock: TrackerClock
 ) -> None:
-    """The reported stall. dispatch_mount has paths that cancel and rebuild
-    without reconciling, so is_settling can stay true for good — and with the
-    pane fully loaded, active and parent_id stay set too. The in-flight latch
-    is the signal that actually ends: every completion path clears it, and the
-    reveal watchdog clears it even when no reveal happens.
+    """dispatch_mount has paths that cancel and rebuild without reconciling, so
+    is_settling can stay true for good. The land phase is therefore bounded by
+    how long the app itself allows a reveal to take — past that the navigation
+    is over whatever the scroll controller believes.
+
+    Gating this on inflight_target instead (an earlier attempt) made the land
+    phase UNREACHABLE, because reveal_active clears that latch before the
+    scroll commits — which capped every cold navigation near 20-40%.
     """
+    from fnd.tui.preview import tuning
+
     session = tracker.begin("doc")
     app._preview.busy = False
     app._preview_scroll.is_settling = True  # never commits
     app._preview.active = StubContainer(parent_doc_id="doc", total_chunks=40, mounted=40)
-    app._preview.parent_id = "doc"
-    app._preview.inflight_target = None  # ...but the navigation finished
 
+    assert tracker.sample(session) is True, "the land phase must be reachable"
+    clock.advance(tuning.REVEAL_WATCHDOG_MS / 1000.0 + 0.1)
     assert tracker.sample(session) is False, (
-        "a loaded preview held the line open on a scroll flag that never clears"
+        "a scroll that never commits held the line past the reveal budget"
     )
+
+
+def test_the_land_phase_is_reachable_at_all(app: StubApp, tracker: PreviewProgressTracker) -> None:
+    """Guards the defect directly: a phase that is never entered still keeps
+    its share of the bar, so the fill silently caps below full. 'land' carries
+    31% of PREVIEW_COLD, and gating it on a latch that clears too early made
+    every cold navigation stop around a third of the way across."""
+    session = tracker.begin("doc")
+    app._preview.busy = False
+    app._preview.active = StubContainer(parent_doc_id="doc")
+    app._preview_scroll.is_settling = True
+    tracker.sample(session)
+    assert session.phase == "land"
 
 
 # ── the flat path (PDF, TXT) ─────────────────────────────────────
@@ -321,3 +356,22 @@ def test_a_new_pdf_is_still_cold(app: StubApp, tracker: PreviewProgressTracker) 
     app._preview.active = None
     app._preview.flat_parent = "other"
     assert tracker.plan_for("doc") is PREVIEW_COLD
+
+
+def test_a_signal_from_the_other_path_does_not_retire_the_line(
+    app: StubApp, tracker: PreviewProgressTracker
+) -> None:
+    """Flat and structural plans carry different phases, and the pipeline
+    signals are not exclusive: a structural mount left over from the previous
+    navigation can still be in flight while a flat session is active. Entering
+    a phase the plan does not have would raise, and the sampler's catch-all
+    would retire the line instead of the navigation ending it."""
+    from fnd.tui.progress.operations import PREVIEW_COLD_FLAT
+
+    session = app._progress.begin(PREVIEW_COLD_FLAT, sampler=tracker.sample)
+    app._preview.mount_task = StubTask(done=False)  # structural signal
+    app._preview.active = StubContainer(total_chunks=40, mounted=3)
+    app._preview.busy = True
+
+    assert tracker.sample(session) is True, "a foreign signal retired the line"
+    assert session.phase == "decode", "the session left its own plan"

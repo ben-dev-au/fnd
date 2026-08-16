@@ -387,8 +387,16 @@ def test_the_watchdog_clears_a_line_the_tick_loop_abandoned() -> None:
     _timer, fire = app.watchdogs[-1]
     fire()
 
-    assert not bar.visible, "the watchdog did not put the line away"
+    # The backstop COMPLETES rather than just hiding: a line that vanishes
+    # part-filled is the symptom it exists to prevent, so it paints full first
+    # and schedules the clear independently of the tick loop it cannot trust.
     assert facility.active is None
+    assert bar.visible
+    assert bar.fraction == pytest.approx(1.0)
+
+    final_clear = app.watchdogs[-1][1]
+    final_clear()
+    assert not bar.visible, "the watchdog never put the line away"
 
 
 def test_a_stalled_line_is_retired_even_while_a_session_claims_to_be_working() -> None:

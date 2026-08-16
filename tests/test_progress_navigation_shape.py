@@ -22,7 +22,7 @@ import pytest
 
 from fnd.tui.progress.facility import ProgressFacility
 from fnd.tui.progress.operations import PreviewProgressTracker
-from tests._progress_stubs import FakeClock, StubBar
+from tests._progress_stubs import FakeClock, StubBar, StubSearch
 
 TICK = 1 / 20
 # The pass condition from the design: no interval longer than this where the
@@ -130,6 +130,7 @@ class StubApp:
     def __init__(self, bar: StubBar, clock: FakeClock, schedule: list[tuple[str, float]]) -> None:
         self.bar = bar
         self._preview = ScriptedPipeline(clock, schedule)
+        self._search = StubSearch()
         self._preview_scroll = StubScroll(self._preview)
         self._progress = ProgressFacility(self, clock=clock)  # type: ignore[arg-type]
 
@@ -243,8 +244,19 @@ def test_an_instant_navigation_still_shows_a_complete_line() -> None:
 # this machine ever meets such a file, nothing has been calibrated.
 OVERRUN_SCHEDULE = [("decode", 0.30), ("mount", 0.25), ("build", 3.50), ("land", 0.55)]
 # What the curve can honestly guarantee on that first, uncalibrated encounter.
-# Measured: the exponential ease this replaced froze for 1.30 s here.
-MAX_DEAD_UNCALIBRATED_S = 0.60
+#
+# Raised from 0.60s deliberately, and the trade is worth stating. The fill now
+# reads ~0.8 of a phase when it runs to its estimate rather than ~0.5, which is
+# what stopped correctly-paced operations finishing with the bar partway — the
+# reported bug. Paying for that leaves less headroom in the tail, so a phase
+# running FIVE TIMES its estimate, on a machine that has never seen that file
+# before, can hold the same cell for about a second.
+#
+# That is bounded, it only applies before calibration has a sample, and
+# test_the_second_visit_is_paced_by_the_first pins the improvement on the
+# next encounter. The alternative — more tail range — makes every on-time
+# completion read lower, which is the worse failure.
+MAX_DEAD_UNCALIBRATED_S = 1.10
 
 
 def test_a_badly_overrunning_phase_still_creeps() -> None:

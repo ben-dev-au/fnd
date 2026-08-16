@@ -73,14 +73,23 @@ def test_recalibration_keeps_seeds_for_unmeasured_phases() -> None:
 # ── easing ───────────────────────────────────────────────────────
 
 
-def test_a_timed_phase_reads_half_way_at_its_expected_duration() -> None:
-    """Deliberately not further along than that: reaching the expected
-    duration says nothing about whether the phase is nearly done, and a bar
-    that claims 80% and then sits there is the complaint."""
+def test_a_timed_phase_reads_nearly_full_when_it_runs_to_time() -> None:
+    """The estimate coming true should look like it. An earlier curve read
+    HALF the phase at its expected duration, so even a perfectly calibrated
+    operation finished with the bar around 50% — measured on the flat path,
+    a median fill at completion of 0.167. That is the "pauses partway"
+    complaint, caused by the curve rather than by the estimates."""
     clock = FakeClock()
     m = ProgressModel(plan(("only", 200.0)), clock=clock)
     clock.advance_ms(200.0)
-    assert m.tick() == pytest.approx(0.97 * 0.5, abs=1e-9)
+    assert m.tick() == pytest.approx(0.97 * 0.8, abs=1e-9)
+
+
+def test_a_timed_phase_is_proportional_while_it_runs_to_time() -> None:
+    clock = FakeClock()
+    m = ProgressModel(plan(("only", 200.0)), clock=clock)
+    clock.advance_ms(100.0)
+    assert m.tick() == pytest.approx(0.97 * 0.8 * 0.5, abs=1e-9)
 
 
 def test_a_timed_phase_keeps_a_fat_tail() -> None:
@@ -94,9 +103,11 @@ def test_a_timed_phase_keeps_a_fat_tail() -> None:
     at_2x = m.tick()
     clock.advance_ms(200.0)
     at_4x = m.tick()
-    assert at_2x == pytest.approx(0.97 * 2 / 3, abs=1e-9)
-    assert at_4x == pytest.approx(0.97 * 4 / 5, abs=1e-9)
-    assert at_4x - at_2x > 0.1
+    # Past the expectation the remaining headroom is consumed asymptotically:
+    # always moving, never arriving.
+    assert at_2x > 0.97 * 0.8
+    assert at_4x > at_2x
+    assert at_4x < 0.97
 
 
 def test_timed_phase_never_completes_on_time_alone() -> None:

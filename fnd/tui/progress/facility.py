@@ -40,8 +40,10 @@ if TYPE_CHECKING:
 # session is open.
 _TICK_S = 1 / 20
 _MIN_VISIBLE_S = 0.40
-_COMPLETE_HOLD_S = 0.25
-_COMPLETE_EASE_S = 0.12
+# How long the full line is held before it clears. This is the "done" the
+# user reads, so it has to survive a loop that may only tick a few times a
+# second — hence a hold rather than an animation.
+_COMPLETE_HOLD_S = 0.35
 # A new session starting within this long of the last one ending inherits
 # its fill (see _HANDOFF_FLOOR_CAP).
 _HANDOFF_S = 0.25
@@ -116,6 +118,10 @@ class ProgressSession:
     @property
     def operation_id(self) -> str:
         return self._model.plan.operation_id
+
+    @property
+    def plan(self) -> OperationPlan:
+        return self._model.plan
 
     @property
     def phase(self) -> str:
@@ -226,7 +232,6 @@ class ProgressFacility:
         self._floor = 0.0
         # Set when a session closes; drives the ease-to-100% + hold.
         self._completing_at: float | None = None
-        self._completing_from = 0.0
         self._completing_label = ""
         # Remembered across the handoff window.
         self._last_end = 0.0
@@ -391,8 +396,16 @@ class ProgressFacility:
         self._last_end = 0.0
         self._last_fraction = 0.0
         self._completing_at = now
-        self._completing_from = self._displayed
         self._completing_label = session.label
+        # Paint the full line NOW, synchronously, rather than easing to it over
+        # the next few ticks. The ease depended on the event loop being free —
+        # and this loop is saturated during exactly the operations the line
+        # reports on. Measured: at a 300ms tick gap (routine during a cold
+        # navigation, where the loop blocks for 400-1274ms at a stretch) the
+        # full frame was never painted at all, so the line vanished part-filled.
+        # That is the "disappears without completing" the user reported.
+        self._displayed = 1.0
+        self._paint(1.0, session.label, visible=True)
 
     def _handoff_floor(self, now: float) -> float:
         if now - self._last_end > _HANDOFF_S:
@@ -418,17 +431,19 @@ class ProgressFacility:
         self._paint(self._displayed, session.label, visible=True)
 
     def _render_completing(self, now: float) -> None:
+        """Hold the full line, then clear it.
+
+        The fill is already at 1.0 — painted synchronously when the session
+        retired — so this only decides WHEN to put it away. Holding until both
+        budgets are spent is what turns a 40 ms cache hit from a flash into a
+        legible "done".
+        """
         elapsed = now - (self._completing_at or now)
-        ease = 1.0 if _COMPLETE_EASE_S <= 0 else min(1.0, elapsed / _COMPLETE_EASE_S)
-        self._displayed = self._completing_from + (1.0 - self._completing_from) * ease
-        # Hold a completed line until BOTH the minimum-visible budget and the
-        # completion hold are spent — that is what turns a 40 ms cache hit
-        # from a flash into a legible "done".
         min_visible_left = _MIN_VISIBLE_S - (now - self._shown_at)
         if elapsed >= _COMPLETE_HOLD_S and min_visible_left <= 0:
             self._clear()
             return
-        self._paint(self._displayed, self._completing_label, visible=True)
+        self._paint(1.0, self._completing_label, visible=True)
 
     def _clear(self) -> None:
         self._completing_at = None
@@ -548,8 +563,17 @@ class ProgressFacility:
         held = self._active.operation_id if self._active is not None else "(completing)"
         self._log(f"progress watchdog fired, line held by {held}")
         if self._active is not None:
-            self._retire_active(superseded=True)
-        self._clear()
+            # Retire it as COMPLETED, not superseded: a superseded retirement
+            # skips the completion entirely, so the line would vanish
+            # part-filled — the exact symptom this whole backstop exists to
+            # prevent. We have given up, but the user reads a line that
+            # resolves; the diagnostic above records the truth.
+            self._active.close()
+        # close() paints the full line and leaves the hold to the tick loop —
+        # but this backstop exists precisely for the case where that loop is
+        # gone, so schedule the clear independently rather than trust it.
+        with contextlib.suppress(Exception):
+            self._app.set_timer(_COMPLETE_HOLD_S, self._clear, name="progress-final-clear")
 
 
 __all__ = ["ProgressFacility", "ProgressSession", "Sampler"]

@@ -18,6 +18,8 @@ from inside the pipeline. Two reasons, both load-bearing:
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from fnd.tui.progress.model import OperationPlan, Phase
@@ -40,6 +42,29 @@ PREVIEW_COLD = OperationPlan(
         Phase(key="build", expected_ms=700.0),
         Phase(key="land", expected_ms=550.0),
     ),
+)
+
+# The FLAT path (PDF, TXT) installs a prebuilt document into one shared
+# LineBufferPreview: dispatch_flat_mount never assigns a mount task and leaves
+# ``active`` as None, so ``mount`` and ``build`` are not slow on that path —
+# they are unreachable. Giving a flat navigation the structural plan handed
+# 53% of the bar to phases it could never enter, so the fill was capped there
+# and the line stopped partway every time. A plan must only contain phases the
+# path it describes can actually reach.
+# One phase, because one is all this path exposes. dispatch_flat_mount arms
+# the scroll anchor and reconciles SYNCHRONOUSLY inside the decode callback,
+# so is_settling is never observed and a `land` phase here was entered zero
+# times in 29 navigations while holding 36% of the bar. Everything after the
+# decode happens in a single unobservable step; pretending otherwise is what
+# left the fill at a median of 0.167.
+PREVIEW_COLD_FLAT = OperationPlan(
+    operation_id="preview.cold.flat",
+    phases=(Phase(key="decode", expected_ms=350.0),),
+)
+
+PREVIEW_WARM_FLAT = OperationPlan(
+    operation_id="preview.warm.flat",
+    phases=(Phase(key="decode", expected_ms=80.0),),
 )
 
 # Warm: a match jump inside the file already on screen. Same phases so the
@@ -81,24 +106,63 @@ class PreviewProgressTracker:
     simply retires it.
     """
 
-    def __init__(self, app: FNDApp) -> None:
+    def __init__(self, app: FNDApp, *, clock: Callable[[], float] = time.monotonic) -> None:
         self._app = app
+        self._clock = clock
+        # When the pipeline was last doing work, so the land phase can be
+        # bounded without depending on a flag that may never clear.
+        self._busy_at: float = 0.0
 
     # ── lifecycle ────────────────────────────────────────────────
 
     def plan_for(self, parent_id: str) -> OperationPlan:
-        """Cold unless the pane is already showing this file.
+        """Pick the plan for this navigation.
 
-        Asks ``showing_parent()`` rather than reading ``active`` directly:
-        the flat path (PDF, TXT) installs into one shared LineBufferPreview
-        and leaves ``active`` as None, so reading it classified EVERY flat
-        navigation as cold — including a jump inside an already-open PDF.
-        That is the heavy case, and it both mispriced the bar and fed warm
-        samples into the cold calibration.
+        Two axes, and both matter:
+
+        * **Warm vs cold** — asks ``showing_parent()`` rather than reading
+          ``active`` directly, because the flat path leaves ``active`` as None
+          and reading it classified every flat navigation as cold, including a
+          jump inside an already-open PDF.
+        * **Flat vs structural** — a plan must only contain phases its path can
+          reach (see PREVIEW_COLD_FLAT). Decided through
+          ``uses_markdown_renderer``, the same predicate the dispatcher routes
+          on, so the two cannot drift.
         """
-        return PREVIEW_WARM if self._app._preview.showing_parent() == parent_id else PREVIEW_COLD
+        warm = self._app._preview.showing_parent() == parent_id
+        if self._is_structural(parent_id):
+            return PREVIEW_WARM if warm else PREVIEW_COLD
+        return PREVIEW_WARM_FLAT if warm else PREVIEW_COLD_FLAT
+
+    def _is_structural(self, parent_id: str) -> bool:
+        """Whether this file will take the structural renderer.
+
+        Answered from the search hits, which satisfy the same protocol as the
+        chunks the dispatcher inspects — so this works at ``begin`` time, before
+        anything has been decoded. Unknown files are treated as structural: that
+        plan is a superset, so a wrong guess costs pacing rather than making a
+        phase unreachable.
+        """
+        import os
+
+        from fnd.tui.preview_dispatcher import uses_markdown_renderer
+
+        # Mirror the dispatcher's own escape hatch, or the plan would describe
+        # the structural path while the pane took the flat one.
+        if os.environ.get("_FND_FORCE_FLAT") == "1":
+            return False
+
+        for group in self._app._search.groups:
+            if group.parent_id != parent_id:
+                continue
+            hits = getattr(group, "hits", ()) or ()
+            if not hits:
+                return True
+            return any(uses_markdown_renderer(h) for h in hits)
+        return True
 
     def begin(self, parent_id: str) -> ProgressSession:
+        self._busy_at = self._clock()
         return self._app._progress.begin(self.plan_for(parent_id), sampler=self.sample)
 
     # ── sampling ─────────────────────────────────────────────────
@@ -108,42 +172,69 @@ class PreviewProgressTracker:
         Returns False once the navigation has landed."""
         preview = self._app._preview
         scroll = self._app._preview_scroll
+        if preview.pipeline_busy():
+            self._busy_at = self._clock()
 
         if self._decoding(preview):
-            session.enter("decode")
+            self._advance(session, "decode")
         elif self._mounting(preview):
-            session.enter("mount")
-            self._report_mount(session, preview)
+            if self._advance(session, "mount"):
+                self._report_mount(session, preview)
         elif self._building(preview):
-            session.enter("build")
+            self._advance(session, "build")
         elif self._landing(preview, scroll):
-            session.enter("land")
+            self._advance(session, "land")
 
         return bool(preview.pipeline_busy()) or self._landing(preview, scroll)
 
-    @staticmethod
-    def _landing(preview: Any, scroll: Any) -> bool:
+    def _landing(self, preview: Any, scroll: Any) -> bool:
         """A navigation whose scroll has not committed yet.
 
-        ``is_settling`` cannot carry this on its own. It is set when a
-        navigation arms its anchor and cleared only when THAT scroll commits;
-        ``PreviewScrollController.release`` has exactly one caller in the whole
-        codebase (the lazy mounter), and ``dispatch_mount`` has paths that
-        cancel and rebuild without ever reconciling. Left to it, a preview that
-        had finished loading could hold the line open until the hard cap —
-        observed as "the bar stalled part-filled until I navigated away and
-        came back".
+        This is the last phase and it carries real time — the measured
+        reconcile-to-scroll-commit window is 440-740ms — so getting it wrong
+        is expensive in both directions.
 
-        ``inflight_target`` closes that hole. It is set in exactly one place
-        (``fire_pending_load``) and cleared in five, including
-        ``reveal_active`` — which the reveal watchdog invokes within
-        ``REVEAL_WATCHDOG_MS`` even when a reveal never happens, so the latch
-        cannot stay set indefinitely the way the settling flag can. Requiring
-        BOTH means the line lives only while the two agree work is
-        outstanding, and it still ends on a reset: a committed search clears
-        the latch explicitly.
+        Gating it on ``inflight_target`` (an earlier attempt) made it
+        UNREACHABLE: ``reveal_active`` clears that latch, so by the time an
+        uncommitted scroll is the only outstanding work it is already gone.
+        Measured on a real corpus: the phase was entered zero times in sixteen
+        navigations while still holding 31% of the bar's weight, so every cold
+        navigation was capped near 20-40% and read as "it pauses halfway".
+
+        Gating on ``is_settling`` alone is the opposite failure: it is set when
+        a navigation arms its anchor and cleared only when THAT scroll
+        commits, and ``dispatch_mount`` has paths that rebuild without ever
+        reconciling, so it can stay set for good.
+
+        So: still landing while the scroll is outstanding AND there is
+        something on screen to land on (every reset path clears that) AND the
+        pipeline went idle only recently. The grace is the app's own bound on
+        how long a reveal may take — past it, the navigation is over whatever
+        the scroll controller believes.
         """
-        return bool(scroll.is_settling) and preview.inflight_target is not None
+        if not scroll.is_settling:
+            return False
+        if preview.showing_parent() is None:
+            return False
+        from fnd.tui.preview import tuning
+
+        return (self._clock() - self._busy_at) * 1000.0 < tuning.REVEAL_WATCHDOG_MS
+
+    @staticmethod
+    def _advance(session: ProgressSession, phase: str) -> bool:
+        """Enter ``phase`` if this session's plan has one.
+
+        The flat and structural plans deliberately carry different phases, and
+        the pipeline signals are not exclusive — a structural mount left over
+        from the previous navigation can still be in flight while a flat
+        session is active. Entering a phase the plan does not contain would
+        raise, and the sampler's catch-all would then retire the line rather
+        than the navigation ending it.
+        """
+        if not any(p.key == phase for p in session.plan.phases):
+            return False
+        session.enter(phase)
+        return True
 
     # ── pipeline signals ─────────────────────────────────────────
 
@@ -275,7 +366,9 @@ class IndexProgressTracker:
 __all__ = [
     "INDEX",
     "PREVIEW_COLD",
+    "PREVIEW_COLD_FLAT",
     "PREVIEW_WARM",
+    "PREVIEW_WARM_FLAT",
     "SEARCH",
     "IndexProgressTracker",
     "PreviewProgressTracker",

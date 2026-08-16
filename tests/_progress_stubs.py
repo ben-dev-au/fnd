@@ -72,11 +72,24 @@ class StubTimer:
         self._task = None
 
 
+class StubSearch:
+    """The slice of SearchController the progress trackers read.
+
+    Empty groups mean "unknown file", which PreviewProgressTracker treats as
+    structural — the superset plan, so a wrong guess costs pacing rather than
+    making a phase unreachable.
+    """
+
+    def __init__(self) -> None:
+        self.groups: list[object] = []
+
+
 class StubProgressApp:
     """The slice of ``App`` the facility touches."""
 
     def __init__(self, bar: StubBar | None = None) -> None:
         self.bar = bar if bar is not None else StubBar()
+        self._search = StubSearch()
         self.timers: list[StubTimer] = []
         self.watchdogs: list[tuple[StubTimer, Any]] = []
 
