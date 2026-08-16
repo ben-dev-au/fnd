@@ -1370,21 +1370,7 @@ class PreviewPresenter:
         self._document_view_width = pane.content_size.width
         self.clear_pane_placeholder()
         for child in self._app.query(PreviewContainer):
-            # The container for the file being warmed keeps its geometry
-            # (opacity:0), because a capture needs real layout — under
-            # display:none the widget is 0x0 and captures blank. Every other
-            # container goes fully out of flow, which is where the DOM saving is.
-            warming_this = (
-                self._warm_parent == parent_id
-                and self._warm_task is not None
-                and not self._warm_task.done()
-            )
-            if child.parent_doc_id == parent_id and warming_this:
-                child.remove_class("-hidden")
-                child.add_class("-warming")
-            else:
-                child.remove_class("-warming")
-                child.add_class("-hidden")
+            child.add_class("-hidden")
         for child in self._app.query(LineBufferPreview):
             child.add_class("-hidden")
         view.remove_class("-hidden")
@@ -2329,10 +2315,8 @@ class PreviewPresenter:
                     break
                 await asyncio.sleep(0)
 
-            # Upward only when the container cannot visibly shift. `-warming`
-            # keeps it laid out (so captures work) but invisible (so mounting
-            # above it moves nothing the user can see).
-            if container.has_class("-warming") or container.has_class("-hidden"):
+            # Upward only when the container is not the visible substrate.
+            if live_view() is not None or container.has_class("-hidden"):
                 cursor = first - 1
                 while cursor >= 0:
                     if not await yield_to_navigation():
@@ -2357,14 +2341,6 @@ class PreviewPresenter:
             raise
         except Exception as exc:  # pragma: no cover - warming is best-effort
             self.diag_log(f"warm failed: {exc!r}")
-        finally:
-            # Give the geometry back. `-warming` keeps a whole widget tree laid
-            # out, which is the cost this substrate exists to remove — it is
-            # worth paying only while something is actually being captured.
-            if container.has_class("-warming"):
-                with contextlib.suppress(Exception):
-                    container.remove_class("-warming")
-                    container.add_class("-hidden")
 
     async def _mount_chunks_async(
         self,

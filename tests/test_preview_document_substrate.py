@@ -9,12 +9,12 @@ These tests pin the two things that make that safe: the served document is a
 CONTIGUOUS run (a hole silently shifts every row after it), and navigating to it
 really does bypass the rebuild rather than merely looking fast.
 
-Capture needs real geometry, which decides how a container is hidden while its
-document is on screen: ``display: none`` reports the widget as 0x0 and captures
-blank, so warming would be impossible; ``opacity: 0`` keeps the layout and
-captures identically. The container being warmed therefore uses ``-warming``
-(opacity) and every other one uses ``-hidden`` (display), which is where the DOM
-saving comes from.
+Known limit, discovered by measurement rather than reasoning: warming can only
+run while a laid-out container exists, because capture needs real geometry.
+Serving a document hides the container (``display: none``), which zeroes layout
+and makes ``freeze`` refuse — so warming cannot run in the state where it would
+help most, and upward growth is effectively unreachable. Coverage therefore
+grows downward during widget-path visits only.
 """
 
 from __future__ import annotations
@@ -110,67 +110,6 @@ async def test_a_captured_document_is_a_contiguous_run(
         # Row bookkeeping must agree with the strips actually held.
         assert doc.total_rows == sum(c.height for c in doc.chunks)
         assert doc.starts == [sum(c.height for c in doc.chunks[:i]) for i in range(len(doc.chunks))]
-
-
-@pytest.mark.asyncio
-async def test_a_hidden_container_cannot_be_captured_but_an_invisible_one_can() -> None:
-    """Why warming hides with opacity, never display:none.
-
-    Capturing a chunk needs real geometry. ``display: none`` reports the widget
-    as 0x0 and a capture at an explicit size comes back completely blank — so
-    warming a document while its container is display:none is impossible, not
-    merely slow. ``opacity: 0`` keeps the layout and captures identically to a
-    visible container.
-
-    Pinned as a test because the difference is invisible in the source: both
-    read as "hide it", and choosing the wrong one silently disables warming
-    rather than breaking anything.
-    """
-    from textual.app import App, ComposeResult
-    from textual.containers import VerticalScroll
-
-    from fnd.matching import MatchSpec
-    from fnd.tui.preview.frozen import freeze
-    from fnd.tui.widgets.markdown import FNDMarkdown
-
-    body = (
-        "## Heading with quartzfin\n\nA paragraph mentioning quartzfin in prose.\n\n"
-        + "\n\n".join(f"Filler paragraph {i} with enough text to occupy a row." for i in range(8))
-    )
-
-    class _Host(App[None]):
-        CSS = "#gone { display: none; } #faded { opacity: 0%; }"
-
-        def compose(self) -> ComposeResult:
-            for mode in ("shown", "gone", "faded"):
-                with VerticalScroll(id=mode):
-                    yield FNDMarkdown(match_spec=MatchSpec.from_query("quartzfin"), id=f"md_{mode}")
-
-    app = _Host()
-    async with app.run_test(size=(100, 30)) as pilot:
-        mds = {m: app.query_one(f"#md_{m}", FNDMarkdown) for m in ("shown", "gone", "faded")}
-        for md in mds.values():
-            md.update(body)
-        for md in mds.values():
-            await md.build_done.wait()
-        for _ in range(16):
-            await pilot.pause()
-
-        shown = freeze(mds["shown"], chunk_seq=1)
-        assert shown is not None, "control capture failed"
-        assert shown.height > 0, "control capture was empty"
-
-        assert freeze(mds["gone"], chunk_seq=2) is None, (
-            "display:none was captured — if this ever succeeds the -warming class "
-            "is unnecessary, but a blank capture would be far worse than none"
-        )
-
-        faded = freeze(mds["faded"], chunk_seq=3)
-        assert faded is not None, "opacity:0 refused capture — warming cannot work"
-        assert faded.height == shown.height
-        assert [s.text for s in faded.strips] == [s.text for s in shown.strips], (
-            "opacity:0 captured different content from a visible container"
-        )
 
 
 @pytest.mark.asyncio

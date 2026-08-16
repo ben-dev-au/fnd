@@ -37,13 +37,6 @@ class PreviewContainer(Container):
        under visibility:hidden, which forced a reveal-at-top-then-scroll jump.
        The reveal lands only after the scroll commits (see _finalize_via_lock). */
     PreviewContainer.-pre-reveal { opacity: 0%; }
-    /* Same reason, different consumer: a container being WARMED must keep real
-       geometry, because capturing a chunk needs it laid out. Measured — under
-       display:none the widget reports size 0x0 and a capture at an explicit
-       size comes back completely blank (0 of 853 characters); under opacity:0
-       it captures identically to a visible container. Warming a document while
-       its container is display:none is therefore impossible, not merely slow. */
-    PreviewContainer.-warming { opacity: 0%; }
     """
 
     def __init__(
