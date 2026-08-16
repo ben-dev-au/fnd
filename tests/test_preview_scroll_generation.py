@@ -43,7 +43,7 @@ class _DeferStrategy:
     def locate(self) -> ViewportLocation | None:
         return None
 
-    def scroll_to_location(self, location: ViewportLocation) -> None:
+    def scroll_to_location(self, location: ViewportLocation, on_done: object = None) -> None:
         return None
 
 

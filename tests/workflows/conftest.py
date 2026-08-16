@@ -12,7 +12,6 @@ A workflow test typically wants:
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -74,16 +73,25 @@ def app_factory(built_index: Path) -> Callable[[Config], FNDApp]:
 
 
 async def wait_until(
-    pilot: Any, predicate: Callable[[], bool], *, timeout: float = 3.0, ticks: int = 60
+    pilot: Any, predicate: Callable[[], bool], *, timeout: float = 15.0, ticks: int = 60
 ) -> bool:
-    """Pump the event loop until ``predicate()`` is True or we exhaust
-    the budget. Returns True on success.
+    """Pump the event loop until ``predicate()`` is True or ``timeout`` elapses.
+    Returns True on success rather than raising, which is what this directory's
+    callers expect.
 
-    pilot.pause() drains pending work; multiple iterations let
-    ``call_later`` continuations fire."""
-    for _ in range(ticks):
-        if predicate():
-            return True
-        await pilot.pause()
-        await asyncio.sleep(0)
-    return predicate()
+    Delegates the waiting to ``tests._pilot_wait.wait_until`` so there is one
+    wait implementation: this used to loop a fixed ``ticks`` and ignore
+    ``timeout`` entirely, which under load degraded to a handful of no-op
+    yields. ``ticks`` is retained for call compatibility and unused.
+
+    The default is 15s, not the 3s this signature used to claim: the old body
+    had no wall-clock bound at all, so a real 3s budget would have been a
+    tightening. Every caller here asserts success, so a longer budget only costs
+    time on a genuine failure."""
+    from tests._pilot_wait import wait_until as _wait_until
+
+    try:
+        await _wait_until(pilot, predicate, timeout=timeout)
+    except AssertionError:
+        return False
+    return True

@@ -17,12 +17,13 @@ from typing import Any
 import pytest
 from textual.containers import VerticalScroll
 from textual.coordinate import Coordinate
+from textual.pilot import Pilot
 from textual.widgets import DataTable, Tree
 
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from tests._pilot_wait import wait_until
+from tests._pilot_wait import safe_press, wait_until
 
 
 def _write(p: Path, body: str) -> None:
@@ -80,15 +81,21 @@ def _current_stop_count(app: FNDApp) -> int:
     return len(app._match_nav._chunk_stops(pane))
 
 
-async def _walk_to_stop_count(pilot: object, app: FNDApp, want: int, key: str) -> bool:
+async def _walk_to_stop_count(pilot: Pilot[None], app: FNDApp, want: int, key: str) -> bool:
     """Press ``key`` in the results tree until the current result has ``want``
-    match stops (i.e. the multi-view table becomes the focused, mounted result)."""
+    match stops (i.e. the multi-view table becomes the focused, mounted result).
+
+    Waits on the count itself after each press, not on a run of pauses: under
+    load those degrade to no-op yields and the walk presses past the result."""
     for _ in range(10):
         if _current_stop_count(app) == want:
             return True
-        await pilot.press(key)  # type: ignore[attr-defined]
-        for _ in range(14):
-            await pilot.pause()  # type: ignore[attr-defined]
+        await safe_press(pilot, key)
+        try:
+            await wait_until(pilot, lambda: _current_stop_count(app) == want, timeout=10.0)
+        except AssertionError:
+            continue
+        return True
     return _current_stop_count(app) == want
 
 

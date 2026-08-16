@@ -30,8 +30,10 @@ class FakeStrategy:
     def locate(self) -> ViewportLocation | None:
         return ViewportLocation("flat", line=7)
 
-    def scroll_to_location(self, location: ViewportLocation) -> None:
+    def scroll_to_location(self, location: ViewportLocation, on_done: object = None) -> None:
         self.restored.append(location)
+        if callable(on_done):
+            on_done()
 
 
 def test_arm_then_reconcile_calls_strategy() -> None:
@@ -74,7 +76,7 @@ def test_is_settling_stays_true_until_deferred_on_settled_fires() -> None:
         def locate(self) -> ViewportLocation | None:
             return None
 
-        def scroll_to_location(self, location: ViewportLocation) -> None:
+        def scroll_to_location(self, location: ViewportLocation, on_done: object = None) -> None:
             return None
 
     c = PreviewScrollController(select_strategy=lambda: _DeferStrategy())
@@ -420,6 +422,64 @@ def test_structural_scroll_to_location_scrolls_to_chunk_plus_offset() -> None:
     assert pane.scrolled_to_y == 206
 
 
+def _drain(host: _FakeHost, *, limit: int = 200) -> int:
+    """Run the host's deferred callbacks (one per simulated refresh) until the
+    chain stops rescheduling. Returns how many refreshes it took."""
+    refreshes = 0
+    while host.deferred and refreshes < limit:
+        cb, args = host.deferred.pop(0)
+        assert callable(cb)
+        cb(*args)
+        refreshes += 1
+    return refreshes
+
+
+def test_controller_is_restoring_until_the_strategy_reports_done() -> None:
+    # The restore re-scrolls across many refreshes and never arms the anchor, so
+    # is_settling can't cover it. is_restoring is what a caller waits on.
+    held: list[object] = []
+
+    class _SlowStrategy(FakeStrategy):
+        def scroll_to_location(self, location: ViewportLocation, on_done: object = None) -> None:
+            self.restored.append(location)
+            held.append(on_done)  # not called — the reflow is still running
+
+    strat = _SlowStrategy()
+    c = PreviewScrollController(select_strategy=lambda: strat)
+    assert not c.is_restoring
+    c.scroll_to_location(ViewportLocation("flat", line=7))
+    assert c.is_restoring
+    done = held[0]
+    assert callable(done)
+    done()
+    assert not c.is_restoring
+
+
+def test_controller_is_restoring_clears_when_the_strategy_raises() -> None:
+    # A raising strategy must not strand the flag — nothing would ever clear it.
+    c = PreviewScrollController(select_strategy=lambda: _RaisingStrategy())
+    c.scroll_to_location(ViewportLocation("flat", line=3))
+    assert not c.is_restoring
+
+
+def test_structural_restore_reports_done_once_the_layout_settles() -> None:
+    w = _FakeWidget(Region(0, 100, 80, 40), virtual_region=Region(0, 200, 80, 40))
+    pane = _FakePane(height=40)
+    host = _FakeHost(pane, chunk_widgets={5: w}, match_targets={})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+    finished: list[bool] = []
+
+    strat.scroll_to_location(
+        ViewportLocation("structural", chunk_seq=5, offset=6),
+        lambda: finished.append(True),
+    )
+    assert finished == [], "done must not fire before the re-applies have run"
+    _drain(host)
+
+    assert finished == [True]
+    assert pane.scrolled_to_y == 206
+
+
 def test_structural_scroll_to_location_ignores_flat_location() -> None:
     pane = _FakePane()
     host = _FakeHost(pane, chunk_widgets={}, match_targets={})
@@ -463,7 +523,7 @@ class _RaisingStrategy:
     def locate(self) -> ViewportLocation | None:
         raise RuntimeError("locate boom")
 
-    def scroll_to_location(self, location: ViewportLocation) -> None:
+    def scroll_to_location(self, location: ViewportLocation, on_done: object = None) -> None:
         raise RuntimeError("scroll boom")
 
 
@@ -530,7 +590,7 @@ class _CallsThenRaisesStrategy:
     def locate(self) -> ViewportLocation | None:
         return None
 
-    def scroll_to_location(self, location: ViewportLocation) -> None:
+    def scroll_to_location(self, location: ViewportLocation, on_done: object = None) -> None:
         return None
 
 

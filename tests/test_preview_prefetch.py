@@ -41,7 +41,7 @@ async def test_prefetch_populates_chunk_cache(
     app = FNDApp(index_dir=two_file_index, config=cfg_with_prefetch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("test")
+        await run_search(pilot, app, "test")
         # Wait (wall-clock, not a fixed iteration cap) for the prefetch worker
         # to walk its targets — a fixed cap starves under full-suite CI load.
         await wait_until(
@@ -114,7 +114,7 @@ async def test_query_change_clears_prebuilt_cache(
     app = FNDApp(index_dir=two_file_index, config=cfg_with_prefetch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("test")
+        await run_search(pilot, app, "test")
         # Force a bundle into the cache directly so we don't depend
         # on prefetch timing.
         from fnd.tui.line_buffer import FileView, RenderedDocument
@@ -128,42 +128,48 @@ async def test_query_change_clears_prebuilt_cache(
 async def test_prefetch_populates_flat_buffer_cache(
     two_file_index: Path, cfg_with_prefetch: Config
 ) -> None:
-    """Prefetch stashes a RenderedDocument in _flat_buffer_cache so the next user
-    click installs into the shared widget without a fresh build."""
+    """Prefetch stashes a RenderedDocument in the flat-buffer cache
+    (``app._flat.cache``) so the next user click installs into the shared widget
+    without a fresh build."""
     from fnd.tui.line_buffer import RenderedDocument
-    from tests._pilot_wait import safe_pause, wait_until
+    from tests._pilot_wait import run_search, safe_pause, wait_until
 
     app = FNDApp(index_dir=two_file_index, config=cfg_with_prefetch)
     async with app.run_test() as pilot:
         await safe_pause(pilot)
         await run_search(pilot, app, "results")
-        sig = app._search.query_signature()
 
         def _flat_parents() -> set[str]:
             return {
                 g.parent_id for g in app._search.groups if g.path.lower().endswith((".pdf", ".txt"))
             }
 
-        def _flat_cached() -> bool:
-            fps = _flat_parents()
-            return bool(fps) and any((pid, sig) in app._flat.cache for pid in fps)
-
         # Wait for results first so a no-flat-corpus skip is immediate, not a
         # 15s timeout. Then event-gate on cache population (a fixed iteration
         # count is outrun by slow prefetch decode on a serial CI runner).
+        # 30s to match the sibling tests: a cold Tantivy search on a loaded
+        # serial runner has overrun a 5s budget.
         await wait_until(
             pilot,
             lambda: bool(app._search.groups),
-            timeout=5.0,
+            timeout=30.0,
             message="search results never populated",
         )
         if not _flat_parents():
             pytest.skip("no flat-path results in fixture corpus for this query")
+        # Read the signature only once results exist — prefetch keys its cache
+        # on the signature of the query that produced them.
+        sig = app._search.query_signature()
+
+        def _flat_cached() -> bool:
+            fps = _flat_parents()
+            return bool(fps) and any((pid, sig) in app._flat.cache for pid in fps)
+
         await wait_until(
             pilot,
             _flat_cached,
             timeout=15.0,
-            message="prefetch never populated _flat_buffer_cache",
+            message="prefetch never populated the flat-buffer cache",
         )
         flat_parents = _flat_parents()
         prefetched = [pid for pid in flat_parents if (pid, sig) in app._flat.cache]
