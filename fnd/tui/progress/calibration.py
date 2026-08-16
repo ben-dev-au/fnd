@@ -97,9 +97,7 @@ def _load() -> None:
             with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
                 data = json.loads(raw)
                 phases = {
-                    str(k): float(v)
-                    for k, v in dict(data["phases"]).items()
-                    if float(v) >= _MIN_SAMPLE_MS
+                    str(k): float(v) for k, v in dict(data["phases"]).items() if _usable(float(v))
                 }
                 if phases:
                     _store.records.append(

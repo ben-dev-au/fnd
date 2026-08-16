@@ -468,6 +468,13 @@ class SearchController:
             session.close()
             return
         self._committed_generation = request.generation
+        # Everything below runs on the loop and is real, measurable work —
+        # cache teardown, the results tree rebuild, the filters aggregation.
+        # The plan names it, so enter it: leaving the session in "query" for
+        # the whole operation capped the line at that phase's share and meant
+        # calibration never saw a "results" duration, so its weight stayed at
+        # the seed forever.
+        session.enter("results")
 
         self._clear_query_notice()
         self.latest_trace = trace

@@ -265,3 +265,32 @@ async def test_a_malformed_query_supersedes_the_search_already_running(index: Pa
             "the superseded search committed and cleared the error notice"
         )
         assert not app._search.groups, "a superseded search reached the result set"
+
+
+@pytest.mark.asyncio
+async def test_the_search_plan_uses_both_of_its_phases(index: Path) -> None:
+    """A declared phase that is never entered is dead weight: it caps the line
+    at the earlier phase's share and its duration never reaches calibration,
+    so its weight stays at the seed for good."""
+    from fnd.tui.progress.operations import SEARCH
+
+    app = FNDApp(index_dir=index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        phases: list[str] = []
+        original_enter = app._search.__class__._commit
+
+        def recording(self: Any, request: Any, groups: Any, trace: Any, session: Any) -> Any:
+            result = original_enter(self, request, groups, trace, session)
+            phases.append(session.phase)
+            return result
+
+        app._search.__class__._commit = recording  # type: ignore[method-assign]
+        try:
+            await run_search(pilot, app, "target")
+        finally:
+            app._search.__class__._commit = original_enter  # type: ignore[method-assign]
+
+    assert phases, "setup — the search never committed"
+    assert phases[-1] == "results", "the commit stage never entered its own phase"
+    assert {p.key for p in SEARCH.phases} == {"query", "results"}

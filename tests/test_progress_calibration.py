@@ -9,6 +9,7 @@ failure behaviour — telemetry must never break a caller.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -110,3 +111,37 @@ def test_history_is_bounded(isolated_progress_calibration: Path) -> None:
     calibration.flush()
     lines = isolated_progress_calibration.read_text(encoding="utf-8").splitlines()
     assert 0 < len(lines) <= 200
+
+
+def test_a_non_finite_duration_is_ignored(isolated_progress_calibration: Path) -> None:
+    """``json.loads`` accepts ``Infinity`` and ``NaN``, and an infinite value
+    sails past a bare ``>=`` filter. It then reaches ``OperationPlan.weights``,
+    where ``inf / inf`` is ``nan`` and the bar stops advancing entirely — a
+    corrupt line would freeze the line rather than be skipped.
+
+    Written after the guard was added to ``record`` but silently not to the
+    loader, which is the half this test covers.
+    """
+    calibration.record("op", {"a": 400.0})
+    calibration.flush()
+    with isolated_progress_calibration.open("a", encoding="utf-8") as fh:
+        fh.write('{"operation_id": "op", "phases": {"a": Infinity, "b": 500.0}}\n')
+        fh.write('{"operation_id": "op", "phases": {"a": NaN}}\n')
+    calibration.reset_for_tests()
+
+    expected = calibration.expected_ms("op")
+    assert math.isfinite(expected["a"])
+    assert expected["a"] == pytest.approx(400.0)
+    # A bad value drops that phase, not the whole record.
+    assert expected["b"] == pytest.approx(500.0)
+
+    plan = OperationPlan(
+        operation_id="op",
+        phases=(Phase(key="a", expected_ms=100.0), Phase(key="b", expected_ms=100.0)),
+    )
+    assert all(math.isfinite(w) for w in calibration.calibrated(plan).weights())
+
+
+def test_a_non_finite_observation_is_never_recorded() -> None:
+    calibration.record("op", {"a": float("inf"), "b": float("nan"), "c": 300.0})
+    assert calibration.expected_ms("op") == {"c": 300.0}
