@@ -1919,14 +1919,18 @@ class PreviewPresenter:
         The visible window is left live — those chunks are being read, and the
         focused one is what the scroll resolves against.
 
-        Off by default while it is measured (``_FND_FREEZE_BACKFILL=1``).
+        On by default; ``_FND_NO_FREEZE=1`` opts out. Measured on a real
+        99-chunk file: 2,735 -> 263 widgets with every chunk still mounted and
+        jumpable, and no behavioural difference in a real terminal beyond the
+        DOM. The swap is layout-neutral: across 47 real chunks the capture's
+        height matched the height the widget tree occupied every time.
         """
         import contextlib
         import os as _os
 
         from fnd.tui.preview.frozen import FrozenChunkView, freeze
 
-        if _os.environ.get("_FND_FREEZE_BACKFILL") != "1":
+        if _os.environ.get("_FND_NO_FREEZE") == "1":
             return
         await self.await_settled()
         if self.active is not container:
