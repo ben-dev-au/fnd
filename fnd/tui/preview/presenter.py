@@ -480,7 +480,12 @@ class PreviewPresenter:
         # line is up before any of the work below starts. The tracker samples
         # this pipeline and closes the session once the match has landed; no
         # stage below has to remember to hide anything.
-        self._app._nav_progress.begin(parent_id)
+        # Suppressed: the line is cosmetic, and this sits between arming the
+        # scroll anchor and arming the paint check. A raise here would strand
+        # the preview with an armed anchor and no repair timer — a decorative
+        # subsystem must never be able to do that.
+        with contextlib.suppress(Exception):
+            self._app._nav_progress.begin(parent_id)
         # Every navigation is checked once it should have settled (see
         # _arm_paint_check) — the single place that verifies the OUTCOME rather
         # than one mechanism, so no seam can strand the pane indefinitely.

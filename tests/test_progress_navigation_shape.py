@@ -22,24 +22,13 @@ import pytest
 
 from fnd.tui.progress.facility import ProgressFacility
 from fnd.tui.progress.operations import PreviewProgressTracker
-from tests._progress_stubs import StubBar
+from tests._progress_stubs import FakeClock, StubBar
 
 TICK = 1 / 20
 # The pass condition from the design: no interval longer than this where the
 # line is visible and not moving.
 MAX_DEAD_S = 0.25
 MAX_DEAD_FRAMES = int(MAX_DEAD_S / TICK)
-
-
-class FakeClock:
-    def __init__(self) -> None:
-        self.now = 100.0
-
-    def __call__(self) -> float:
-        return self.now
-
-    def advance(self, seconds: float) -> None:
-        self.now += seconds
 
 
 class ScriptedPipeline:
@@ -84,6 +73,11 @@ class ScriptedPipeline:
 
     def pipeline_busy(self) -> bool:
         return self._stage in {"decode", "mount", "build"}
+
+    def showing_parent(self) -> str | None:
+        """What the pane is displaying. The tracker asks this rather than
+        reading ``active``, because the flat path leaves ``active`` None."""
+        return self.active.parent_doc_id
 
     def sync_latch(self) -> None:
         """Clear the in-flight latch once the schedule is done, the way every

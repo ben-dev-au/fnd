@@ -57,10 +57,20 @@ class StubPreview:
         self.active: StubContainer | None = None
         self.parent_id: str | None = None
         self.inflight_target: tuple[str, int] | None = None
+        # The flat path (PDF/TXT) shows a file without setting ``active``.
+        self.flat_parent: str | None = None
         self.busy = False
 
     def pipeline_busy(self) -> bool:
         return self.busy
+
+    def showing_parent(self) -> str | None:
+        """Mirrors PreviewPresenter.showing_parent: the flat buffer wins, then
+        the active container. ``flat_parent`` stands in for the flat path,
+        which leaves ``active`` as None."""
+        if self.flat_parent is not None:
+            return self.flat_parent
+        return self.active.parent_doc_id if self.active is not None else None
 
 
 class StubScroll:
@@ -291,3 +301,23 @@ def test_a_finished_preview_releases_the_line_even_if_the_scroll_never_commits(
     assert tracker.sample(session) is False, (
         "a loaded preview held the line open on a scroll flag that never clears"
     )
+
+
+# ── the flat path (PDF, TXT) ─────────────────────────────────────
+
+
+def test_a_jump_inside_an_open_pdf_is_warm(app: StubApp, tracker: PreviewProgressTracker) -> None:
+    """The flat path installs into one shared buffer and leaves ``active`` as
+    None, so reading ``active`` classified every PDF navigation as cold —
+    including a jump inside the file already on screen. PDFs are the heavy
+    case, so that mispriced the bar and fed warm samples into the cold
+    calibration."""
+    app._preview.active = None
+    app._preview.flat_parent = "doc"
+    assert tracker.plan_for("doc") is PREVIEW_WARM
+
+
+def test_a_new_pdf_is_still_cold(app: StubApp, tracker: PreviewProgressTracker) -> None:
+    app._preview.active = None
+    app._preview.flat_parent = "other"
+    assert tracker.plan_for("doc") is PREVIEW_COLD

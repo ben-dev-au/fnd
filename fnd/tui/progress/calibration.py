@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 import statistics
 import time
@@ -65,6 +66,18 @@ class _Store:
 _store = _Store()
 
 
+def _usable(ms: float) -> bool:
+    """Whether a duration is worth learning from.
+
+    ``json.loads`` accepts ``Infinity`` and ``NaN``, and an infinite value
+    passes a bare ``>=`` comparison. It then reaches ``OperationPlan.weights``,
+    where ``inf / inf`` is ``nan`` and the fraction stops advancing at all — a
+    corrupt line in this file would freeze the bar rather than be ignored, and
+    corrupt lines are already an expected case here.
+    """
+    return math.isfinite(ms) and ms >= _MIN_SAMPLE_MS
+
+
 def _path() -> Path:
     return paths.progress_calibration_path()
 
@@ -101,7 +114,7 @@ def _load() -> None:
 def record(operation_id: str, observed_ms: Mapping[str, float]) -> None:
     """Remember one completed operation. Phases below the noise floor are
     dropped rather than recorded as near-zero."""
-    phases = {k: float(v) for k, v in observed_ms.items() if v >= _MIN_SAMPLE_MS}
+    phases = {k: float(v) for k, v in observed_ms.items() if _usable(float(v))}
     if not phases:
         return
     _load()
@@ -135,7 +148,6 @@ def flush() -> None:
     """Persist the history. Safe to call at any time; a no-op when clean."""
     if not _store.dirty:
         return
-    _store.dirty = False
     path = _path()
     with contextlib.suppress(OSError):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -147,6 +159,9 @@ def flush() -> None:
             for entry in _store.records:
                 fh.write(json.dumps(asdict(entry)) + "\n")
         os.replace(tmp_path, path)
+        # Only now: clearing it up front meant a failed write left the store
+        # marked clean, so nothing was ever retried once storage recovered.
+        _store.dirty = False
 
 
 def reset_for_tests() -> None:

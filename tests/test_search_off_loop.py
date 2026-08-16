@@ -122,15 +122,26 @@ async def test_a_superseded_search_never_reaches_the_caches(index: Path) -> None
         app._search.run("beta")  # supersedes while "alpha" is parked
         await wait_until(pilot, lambda: app._search.current_query == "beta")
 
+        committed = list(app._search.groups)
+        trace = app._search.latest_trace
+
         release.set()  # let the stale search finish and try to commit
-        for _ in range(6):
+        for _ in range(8):
             await pilot.pause()
 
+        # Assert the stale commit had NO effect, rather than asserting
+        # something the winning query satisfies on its own: the earlier
+        # `all(...) or any("beta" ...)` was true the moment "beta" landed, so
+        # it would have passed even if "alpha" had merged into the caches.
         assert app._search.current_query == "beta", (
             "a superseded search overwrote the current query"
         )
-        assert all("alpha.md" not in g.path for g in app._search.groups) or any(
-            "beta" in g.path for g in app._search.groups
+        assert [g.path for g in app._search.groups] == [g.path for g in committed], (
+            "a superseded search reached the result set"
+        )
+        assert app._search.latest_trace is trace, "a superseded search reached the explain trace"
+        assert all("alpha.md" not in g.path for g in app._search.groups), (
+            "the stale query's file is in the committed results"
         )
 
 
@@ -214,3 +225,43 @@ async def test_idle_tracks_every_issued_query(index: Path) -> None:
         assert app._search.idle
         await run_search(pilot, app, "target")
         assert app._search.idle
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_query_supersedes_the_search_already_running(index: Path) -> None:
+    """The generation has to be claimed before the parse can fail.
+
+    ``_fail`` marks the current generation committed. Allocating the
+    generation only after a successful parse meant a malformed query marked an
+    IN-FLIGHT search's generation as committed — that worker then passed the
+    guard in ``_commit``, restored its stale results, and wiped the error
+    notice the user had just been shown.
+    """
+    app = FNDApp(index_dir=index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        started = threading.Event()
+        release = threading.Event()
+        original = app._search._execute
+
+        def slow(request: Any) -> Any:
+            started.set()
+            release.wait(timeout=10.0)
+            return original(request)
+
+        app._search._execute = slow  # type: ignore[method-assign]
+        app._search.run("target")
+        await wait_until(pilot, started.is_set)
+
+        app._search.run("{60}")  # malformed, rejected on the loop
+        notice = app.query_one("#query_notice")
+        assert notice.display is True
+
+        release.set()  # the superseded search finishes and tries to commit
+        for _ in range(8):
+            await pilot.pause()
+
+        assert notice.display is True, (
+            "the superseded search committed and cleared the error notice"
+        )
+        assert not app._search.groups, "a superseded search reached the result set"

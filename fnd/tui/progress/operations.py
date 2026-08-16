@@ -87,10 +87,16 @@ class PreviewProgressTracker:
     # ── lifecycle ────────────────────────────────────────────────
 
     def plan_for(self, parent_id: str) -> OperationPlan:
-        """Cold unless the pane is already showing this file."""
-        active = self._app._preview.active
-        same_file = active is not None and active.parent_doc_id == parent_id
-        return PREVIEW_WARM if same_file else PREVIEW_COLD
+        """Cold unless the pane is already showing this file.
+
+        Asks ``showing_parent()`` rather than reading ``active`` directly:
+        the flat path (PDF, TXT) installs into one shared LineBufferPreview
+        and leaves ``active`` as None, so reading it classified EVERY flat
+        navigation as cold — including a jump inside an already-open PDF.
+        That is the heavy case, and it both mispriced the bar and fed warm
+        samples into the cold calibration.
+        """
+        return PREVIEW_WARM if self._app._preview.showing_parent() == parent_id else PREVIEW_COLD
 
     def begin(self, parent_id: str) -> ProgressSession:
         return self._app._progress.begin(self.plan_for(parent_id), sampler=self.sample)
@@ -222,8 +228,8 @@ class IndexProgressTracker:
             return False
 
         state = service.state
-        total = getattr(state, "total_files", 0) or 0
-        if state is None or total <= 0:
+        total = (getattr(state, "total_files", 0) or 0) if state is not None else 0
+        if total <= 0:
             # Still walking the sources; there is no denominator yet.
             session.enter("scan")
             return True
@@ -245,8 +251,13 @@ class IndexProgressTracker:
         if collection:
             chain_total = getattr(service, "chain_total", 1) or 1
             if chain_total > 1:
-                remaining = len(getattr(service, "chain_remaining", ()) or ())
-                parts.append(f"{collection} ({chain_total - remaining} of {chain_total})")
+                # Shared with IndexerScreen's title so the two cannot drift —
+                # and so this keeps the clamp, which it was missing: a state
+                # where chain_remaining still holds every collection rendered
+                # as "CPL (0 of 4)".
+                from fnd.tui.indexer_service import chain_position
+
+                parts.append(f"{collection} ({chain_position(service)} of {chain_total})")
             else:
                 parts.append(collection)
         parts.append(f"{done} of {total} files")

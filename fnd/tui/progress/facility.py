@@ -73,8 +73,13 @@ _STALL_CAP_S = 10.0
 # working is visibly distinct from a stall in the clear.
 _ACTIVE_CEILING = 0.97
 # Independent one-shot backstop, on its own timer, so a fault in the tick loop
-# cannot leave a line on screen. Also measured from the last painted change.
-_WATCHDOG_S = 8.0
+# cannot leave a line on screen. Measured from the same instant as the stall
+# cap, so it MUST sit clearly above it: at 8 s against a 10 s stall cap it beat
+# the tick loop to every retirement, which made the stall path dead code and
+# routed every case through _force_clear — a superseded retirement, so the
+# operation lost both its completion animation and its calibration sample.
+# The tick loop is the normal path; this only covers a tick loop that is gone.
+_WATCHDOG_S = 15.0
 
 # The legacy determinate API (``open(phase, total=...)``) maps onto a plan of
 # exactly one countable phase.
@@ -216,6 +221,7 @@ class ProgressFacility:
         # Last (cells, label, visible) actually handed to the widget, so an
         # unchanged frame costs nothing.
         self._rendered: tuple[int, str, bool] | None = None
+        self._warned_timer_probe = False
         self._displayed = 0.0
         self._floor = 0.0
         # Set when a session closes; drives the ease-to-100% + hold.
@@ -322,10 +328,15 @@ class ProgressFacility:
         self._stop_ticking()
 
     def shutdown(self) -> None:
-        """Stop the timers and flush learned durations. Called on app unmount."""
+        """Stop the timers and flush learned durations. Called on app unmount.
+
+        The flush is suppressed: it is the last thing to run on quit, and a
+        failed write of a pacing hint must not surface as a crash on exit.
+        """
         self._stop_ticking()
         self._disarm_watchdog()
-        calibration.flush()
+        with contextlib.suppress(Exception):
+            calibration.flush()
 
     def _log(self, message: str) -> None:
         with contextlib.suppress(Exception):
@@ -482,6 +493,12 @@ class ProgressFacility:
         if timer is None:
             return False
         if not hasattr(timer, "_task"):
+            # A Textual upgrade renamed or removed the attribute. Degrade to
+            # "assume alive" — the watchdog is the guarantee — but say so once,
+            # because the degraded path is silent otherwise.
+            if not self._warned_timer_probe:
+                self._warned_timer_probe = True
+                self._log("progress: Timer._task is gone; tick-loop liveness is now unchecked")
             return True
         return getattr(timer, "_task", None) is not None
 
@@ -518,7 +535,15 @@ class ProgressFacility:
         should have ended. Whatever held it, put it away."""
         self._watchdog = None
         widget = self._widget()
-        if widget is None or widget.is_idle:
+        if widget is None:
+            # The line cannot be resolved right now — a modal screen on top of
+            # the stack is the expected case, and an indexing run deliberately
+            # sits behind one. Dropping the backstop here would retire it for
+            # the rest of the session, because only real progress re-arms it
+            # and a stalled session produces none by definition. Try again.
+            self._arm_watchdog()
+            return
+        if widget.is_idle:
             return
         held = self._active.operation_id if self._active is not None else "(completing)"
         self._log(f"progress watchdog fired, line held by {held}")

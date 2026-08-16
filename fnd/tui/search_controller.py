@@ -234,15 +234,31 @@ class SearchController:
         there is nothing to execute."""
         if self.searcher is None:
             return None
+        was_idle = self.idle
+        # Claim the generation FIRST, before anything that can fail. _fail()
+        # marks the current generation committed, so allocating it after the
+        # parse meant a malformed query marked an IN-FLIGHT search's
+        # generation as committed — that worker then passed the guard in
+        # _commit, restored its stale results and wiped the error notice the
+        # user had just been shown.
+        self._generation += 1
+        generation = self._generation
+
         # Re-point the searcher at the latest committed generation so a
         # reindex (in-app or external `fnd reindex`) that landed while the
         # app is open shows up on this query — no restart. Near-free
         # (~0.1 ms) when nothing changed; ignore a vanished index dir.
-        # Stays on the loop: reload() mutates the searcher.
+        #
+        # Only while nothing is executing. reload() reassigns the Searcher's
+        # inner snapshot, and a worker mid-search reads that attribute more
+        # than once (fusion issues several sub-queries), so reloading under it
+        # could serve one search from two index generations. Skipping is free:
+        # the next idle query picks the new generation up.
         import contextlib as _contextlib
 
-        with _contextlib.suppress(FileNotFoundError, RuntimeError, ValueError):
-            self.searcher.reload()
+        if was_idle:
+            with _contextlib.suppress(FileNotFoundError, RuntimeError, ValueError):
+                self.searcher.reload()
 
         from fnd.query_errors import QueryError
         from fnd.query_plan import QueryPlan
@@ -329,14 +345,15 @@ class SearchController:
         except Exception:
             profile = self.ranking_profile
 
-        self._generation += 1
         return _SearchRequest(
-            generation=self._generation,
+            generation=generation,
             query=query,
             lexical=lexical,
             filter_prefix=" ".join(filter_clauses),
             metadata_filter=plan.metadata_filter,
-            collection=cols or None,
+            # Copied, not referenced: the scope panel mutates these lists on
+            # the event loop while the worker is reading them.
+            collection=list(cols) if cols else None,
             active_sources=list(self._app._scope.active_sources) or None,
             tag_filter=tag_filter,
             sections_per_file=cfg_defaults.sections_per_file_max if cfg_defaults else 200,

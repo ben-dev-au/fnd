@@ -511,3 +511,44 @@ def test_a_changed_cell_still_repaints() -> None:
     session.report(2, 4)
     session.report(3, 4)
     assert bar.paints >= before + 3
+
+
+def test_the_stall_cap_retires_before_the_watchdog() -> None:
+    """The tick loop is the normal retirement path; the watchdog only covers a
+    tick loop that is gone. With the watchdog set below the stall cap it beat
+    the loop to every retirement, so the stall branch was dead code and every
+    case went through _force_clear — a superseded retirement, which skips both
+    the completion animation and the calibration sample."""
+    from fnd.tui.progress import facility as facility_mod
+
+    assert facility_mod._WATCHDOG_S > facility_mod._STALL_CAP_S
+
+    facility, bar, clock = make_facility()
+    session = facility.begin(SLOW_PHASE, sampler=lambda _s: True)
+    for _ in range(int(facility_mod._STALL_CAP_S * 20) + 4):
+        clock.advance(1 / 20)
+        facility.tick()
+        if facility.active is None:
+            break
+    assert session.closed
+    # Retired by the tick loop, so the completion animation still runs.
+    assert facility._completing_at is not None
+    assert bar.visible
+
+
+def test_the_watchdog_survives_a_widget_it_cannot_resolve() -> None:
+    """query_one fails whenever a modal screen is on top — which is exactly
+    what a background index sits behind. Dropping the backstop there would
+    retire it for the rest of the session, since only real progress re-arms
+    it and a stalled session makes none."""
+    facility, _bar, _clock = make_facility()
+    app: StubProgressApp = facility._app  # type: ignore[assignment]
+    facility.begin(ONE_PHASE, sampler=lambda _s: True)
+
+    def no_widget(_selector: object) -> object:
+        raise RuntimeError("NoMatches — a modal is on top")
+
+    app.query_one = no_widget  # type: ignore[method-assign]
+    before = len(app.watchdogs)
+    facility._force_clear()
+    assert len(app.watchdogs) == before + 1, "backstop dropped on a transient failure"
