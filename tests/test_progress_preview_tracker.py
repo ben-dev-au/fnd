@@ -56,6 +56,8 @@ class StubPreview:
         self.mount_task: StubTask | None = None
         self.active: StubContainer | None = None
         self.parent_id: str | None = None
+        # The tracker reads this to tell a decode from a cache hit.
+        self.chunk_cache: dict[str, object] = {}
         self.inflight_target: tuple[str, int] | None = None
         # The flat path (PDF/TXT) shows a file without setting ``active``.
         self.flat_parent: str | None = None

@@ -32,7 +32,7 @@ Design notes:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -232,9 +232,18 @@ class RenderedDocument:
         return self.fv.structural_map
 
 
-def build_rendered_document(fv: FileView, *, wrap_width: int) -> RenderedDocument:
+# Report every N lines. Frequent enough that a slow document moves the line
+# several times a second, rare enough that the reporting is not itself a cost.
+_PROGRESS_EVERY = 64
+
+
+def build_rendered_document(
+    fv: FileView, *, wrap_width: int, on_progress: Callable[[int], None] | None = None
+) -> RenderedDocument:
     """Pure: render fv.lines to strips at wrap_width. Safe off-thread."""
-    strips, v2l, l2vs = LineBufferPreview._render_lines(fv.lines, wrap_width=wrap_width)
+    strips, v2l, l2vs = LineBufferPreview._render_lines(
+        fv.lines, wrap_width=wrap_width, on_progress=on_progress
+    )
     base_width = 1 if wrap_width > 0 else max(fv.widest_line, 1)
     return RenderedDocument(
         fv=fv,
@@ -678,9 +687,17 @@ class LineBufferPreview(ScrollView, can_focus=True):
         lines: list[Text],
         *,
         wrap_width: int,
+        on_progress: Callable[[int], None] | None = None,
     ) -> tuple[list[Strip], list[int], list[int]]:
         """Render lines to Strips. ``wrap_width=0`` disables wrapping.
-        Returns (strips, visual_to_logical, logical_to_visual_start)."""
+        Returns (strips, visual_to_logical, logical_to_visual_start).
+
+        ``on_progress`` is called with the number of lines walked so far, every
+        :data:`_PROGRESS_EVERY` lines. This is the only real unit of work the
+        flat path exposes — everything else about it is one opaque call — so
+        the progress line reads it rather than estimating a duration it cannot
+        predict. Off by default and free when unset.
+        """
         if wrap_width > 0:
             console = Console(width=wrap_width, file=None, force_terminal=False)
             opts = console.options.update(max_width=wrap_width, overflow="fold", no_wrap=False)
@@ -692,6 +709,8 @@ class LineBufferPreview(ScrollView, can_focus=True):
         v2l: list[int] = []
         l2vs: list[int] = [0] * len(lines)
         for li, line in enumerate(lines):
+            if on_progress is not None and li % _PROGRESS_EVERY == 0:
+                on_progress(li)
             l2vs[li] = len(strips)
             current: list[Segment] = []
             produced_any = False

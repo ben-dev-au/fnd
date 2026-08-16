@@ -22,7 +22,7 @@ from textual.widgets import Static, Tree
 from fnd.matching import MatchSpec
 from fnd.render import render_chunk_pieces
 from fnd.tui.line_buffer import LineBufferPreview, build_rendered_document
-from fnd.tui.preview import tuning
+from fnd.tui.preview import decode_progress, tuning
 from fnd.tui.preview.liveness import is_condemned, is_live
 from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
 from fnd.tui.preview_scroll import ScrollAnchor
@@ -144,6 +144,9 @@ class PreviewPresenter:
         # cancellation; the finally runs a tick later and would otherwise race
         # the reset and re-pollute it ("stuck mid-mount after a new query").
         self.reset_generation: int = 0
+        # Generation for the flat decode's line-count reporting, so a
+        # superseded decode cannot report onto its successor's count.
+        self.decode_token = 0
         # Bounded-time reveal backstop timer (see _arm_reveal_watchdog). Re-armed
         # on every pre-reveal activation; disarmed when the container is revealed.
         self._reveal_watchdog: object | None = None
@@ -551,6 +554,10 @@ class PreviewPresenter:
         except Exception:
             estimated_wrap_width = 0
         app = self._app
+        # Identifies this decode, so a superseded one still running cannot
+        # report onto its successor's count.
+        self.decode_token += 1
+        decode_token = self.decode_token
 
         def _load() -> None:
             try:
@@ -571,7 +578,16 @@ class PreviewPresenter:
                 if fetched and choose_preview_mode(fetched) == "flat":
                     fv = app._flat.build_file_view(fetched)
                     wrap_width = estimated_wrap_width if estimated_wrap_width > 0 else 0
-                    prebuilt = build_rendered_document(fv, wrap_width=wrap_width)
+                    # Report the render as it goes. This is the only countable
+                    # work the flat path exposes, and its duration varies by
+                    # more than 10x with nothing observable predicting it — so
+                    # the progress line is told rather than left to guess.
+                    decode_progress.begin(decode_token, len(fv.lines))
+                    prebuilt = build_rendered_document(
+                        fv,
+                        wrap_width=wrap_width,
+                        on_progress=lambda n: decode_progress.advance(decode_token, n),
+                    )
             except Exception:
                 # Best-effort; fall back to main-thread build inside the dispatcher.
                 prebuilt = None

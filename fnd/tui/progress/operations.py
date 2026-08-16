@@ -59,12 +59,12 @@ PREVIEW_COLD = OperationPlan(
 # left the fill at a median of 0.167.
 PREVIEW_COLD_FLAT = OperationPlan(
     operation_id="preview.cold.flat",
-    phases=(Phase(key="decode", expected_ms=350.0),),
+    phases=(Phase(key="decode", expected_ms=350.0, countable=True),),
 )
 
 PREVIEW_WARM_FLAT = OperationPlan(
     operation_id="preview.warm.flat",
-    phases=(Phase(key="decode", expected_ms=80.0),),
+    phases=(Phase(key="decode", expected_ms=80.0, countable=True),),
 )
 
 # Warm: a match jump inside the file already on screen. Same phases so the
@@ -129,7 +129,16 @@ class PreviewProgressTracker:
           ``uses_markdown_renderer``, the same predicate the dispatcher routes
           on, so the two cannot drift.
         """
-        warm = self._app._preview.showing_parent() == parent_id
+        # "Warm" means there is no decode to do — which is exactly what the
+        # chunk cache tells us, and it is the strongest predictor available at
+        # dispatch. Measured: only 2 of 10 navigations actually ran the decode
+        # worker; the rest were served from cache and finished almost
+        # instantly, while still being priced as though they would decode.
+        # File size, tried first, is a far weaker signal — a 54x size range
+        # produced only a 3.6x duration range, because the preview mounts a
+        # fixed window however large the file is.
+        preview = self._app._preview
+        warm = preview.showing_parent() == parent_id or parent_id in preview.chunk_cache
         if self._is_structural(parent_id):
             return PREVIEW_WARM if warm else PREVIEW_COLD
         return PREVIEW_WARM_FLAT if warm else PREVIEW_COLD_FLAT
@@ -177,6 +186,7 @@ class PreviewProgressTracker:
 
         if self._decoding(preview):
             self._advance(session, "decode")
+            self._report_decode(session, preview)
         elif self._mounting(preview):
             if self._advance(session, "mount"):
                 self._report_mount(session, preview)
@@ -268,6 +278,25 @@ class PreviewProgressTracker:
             return not task.done()
         except Exception:
             return False
+
+    @staticmethod
+    def _report_decode(session: ProgressSession, preview: Any) -> None:
+        """Real line counts from the flat renderer, when it is reporting.
+
+        The flat path's duration spans more than an order of magnitude
+        (p25 226ms, p75 3135ms on a real corpus) and nothing observable at
+        dispatch predicts it — file size scales it by roughly its fourth root,
+        because only a window is ever mounted. Estimating it was therefore
+        never going to be accurate, so the renderer counts its own lines and
+        this reads them. Falls back to the timed estimate when the count is
+        absent, which is the structural path and the pre-render moments of the
+        flat one.
+        """
+        from fnd.tui.preview import decode_progress
+
+        done, total = decode_progress.snapshot(getattr(preview, "decode_token", 0))
+        if total > 0:
+            session.report(min(done, total), total)
 
     def _report_mount(self, session: ProgressSession, preview: Any) -> None:
         """Fraction of the *window* mounted — not of the file.

@@ -45,6 +45,8 @@ class ScriptedPipeline:
         self._schedule = schedule
         self.active = _Container()
         self.parent_id = "doc"
+        # The tracker reads this to tell a decode from a cache hit.
+        self.chunk_cache: dict[str, object] = {}
         # The in-flight latch the real presenter sets in fire_pending_load and
         # clears when the navigation lands.
         self.inflight_target: tuple[str, int] | None = ("doc", 0)
