@@ -287,6 +287,15 @@ class FrozenDocumentView(StripDocumentView):
     and multi-line selection — none of which is substrate-specific.
     """
 
+    DEFAULT_CSS = """
+    FrozenDocumentView {
+        width: 1fr;
+        height: 1fr;
+        scrollbar-gutter: stable;
+    }
+    FrozenDocumentView.-hidden { display: none; }
+    """
+
     def __init__(self, document: FrozenDocument, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.document = document
@@ -296,6 +305,15 @@ class FrozenDocumentView(StripDocumentView):
         self._strips = [s for chunk in self.document.chunks for s in chunk.strips]
         self._base_width = max(self.document.width, 1)
         self._set_extent()
+
+    def set_document(self, document: FrozenDocument) -> None:
+        """Show a different file. One widget is reused across files — mounting a
+        fresh one per navigation is the DOM churn this substrate exists to
+        avoid."""
+        self.document = document
+        self._sync()
+        self._refresh_match_scrollbar()
+        self.refresh()
 
     # ── Substrate hooks ─────────────────────────────────────────
 

@@ -400,6 +400,9 @@ class FNDApp(App[None]):
         # chunk/match maps and pane back off this app via the host accessors.
         self._preview_scroll_structural = StructuralScrollStrategy(host=self._preview)
         self._preview_scroll_flat = FlatScrollStrategy(host=self._preview)
+        self._preview_scroll_document = FlatScrollStrategy(
+            host=self._preview, view=self._preview.active_document_view
+        )
         # Single source of truth for where the preview should sit: navigation
         # arms an anchor; mount/finalize events reconcile against it (idempotent
         # → the formerly racing scroll sites collapse to one target).
@@ -1040,8 +1043,14 @@ class FNDApp(App[None]):
         )
 
     def _select_scroll_strategy(self) -> ScrollStrategy | None:
-        """Pick the active preview's scroll strategy: the flat line-buffer when
-        one is showing (PDF/TXT), else the structural per-chunk strategy."""
+        """Pick the active preview's scroll strategy.
+
+        Both single-widget substrates — the flat line buffer (PDF/TXT) and the
+        frozen document — scroll the same way, so they share one strategy; only
+        the per-chunk widget tree needs the structural one.
+        """
+        if self._preview.active_document_view() is not None:
+            return self._preview_scroll_document
         if self._flat.active_buffer is not None:
             return self._preview_scroll_flat
         return self._preview_scroll_structural

@@ -327,13 +327,15 @@ class _FakeFlatBuffer:
     ) -> None:
         self.calls.append((chunk_id, prefer_first_match, context_fraction))
 
-    def top_logical_line(self) -> int | None:
+    # The strategy serves any StripDocumentView, so it addresses rows through
+    # the shared vocabulary rather than the flat buffer's own aliases.
+    def top_address(self) -> int | None:
         return self.top_line
 
-    def scroll_to_line(
-        self, line_index: int, *, center: bool = False, context_fraction: float = 0.0
+    def scroll_to_address(
+        self, address: int, *, center: bool = False, context_fraction: float = 0.0
     ) -> None:
-        self.scrolled_to.append((line_index, context_fraction))
+        self.scrolled_to.append((address, context_fraction))
 
 
 class _FakeFlatHost:

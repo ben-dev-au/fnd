@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from textual.widgets import DataTable
 
     from fnd.tui.line_buffer import LineBufferPreview
+    from fnd.tui.strip_document import StripDocumentView
     from fnd.tui.widgets.markdown import FNDMarkdown
 
 
@@ -931,22 +932,36 @@ def enumerate_stop_regions(pane: VerticalScroll, spec: MatchSpec) -> list[Region
 
 
 class FlatHost(Protocol):
-    """The slice of FNDApp the flat scroll strategy needs."""
+    """The slice of FNDApp the document scroll strategy needs."""
 
     def active_flat_buffer(self) -> LineBufferPreview | None: ...
 
 
 class FlatScrollStrategy:
-    """Scroll the flat (PDF/TXT) line-buffer preview to a match.
+    """Scroll a single-widget preview — flat line buffer or frozen document — to
+    a match.
 
-    The ``LineBufferPreview`` owns the visual line math; this strategy only
-    hands it the target chunk and the context margin. The dispatch re-arms the
-    anchor with the resolved focus chunk, so the buffer's own first-match /
-    chunk-top fallback handles the rest.
+    The widget owns the row math (:class:`~fnd.tui.strip_document.StripDocumentView`
+    and its subclasses); this strategy only hands it the target chunk and the
+    context margin. The dispatch re-arms the anchor with the resolved focus
+    chunk, so the widget's own first-match / chunk-top fallback handles the rest.
+
+    Deliberately tiny next to :class:`StructuralScrollStrategy`. A document
+    scroll is synchronous — the target row is known the moment the document
+    exists — so there is no retry chain, no settle barrier and no waiting on a
+    build. That difference is the point of the substrate, not an accident of it.
+
+    ``view`` is supplied by a getter rather than the concrete flat accessor so
+    the same instance serves whichever single-widget substrate is on screen.
     """
 
-    def __init__(self, host: FlatHost) -> None:
+    def __init__(
+        self,
+        host: FlatHost,
+        view: Callable[[], StripDocumentView | None] | None = None,
+    ) -> None:
         self._host = host
+        self._view = view if view is not None else host.active_flat_buffer
 
     def reconcile(
         self,
@@ -956,42 +971,44 @@ class FlatScrollStrategy:
         generation: int = 0,
         current_generation: Callable[[], int] | None = None,
     ) -> None:
-        # Flat scroll is synchronous within one reconcile (no retry chain), so a
-        # single entry guard is enough: a superseded call doesn't move the buffer.
+        # A document scroll is synchronous within one reconcile (no retry
+        # chain), so a single entry guard is enough: a superseded call doesn't
+        # move the view.
         if current_generation is not None and generation != current_generation():
             if on_settled is not None:
                 on_settled()
             return
-        buf = self._host.active_flat_buffer()
-        if buf is None:
+        view = self._view()
+        if view is None:
             if on_settled is not None:
                 on_settled()
             return
-        buf.scroll_to_chunk(
+        view.scroll_to_chunk(
             anchor.focus_chunk_seq,
             prefer_first_match=True,
             context_fraction=anchor.context_fraction,
         )
-        # The flat buffer scrolls synchronously, so the view has already
-        # landed — reveal immediately.
+        # The view scrolls synchronously, so it has already landed — reveal
+        # immediately.
         if on_settled is not None:
             on_settled()
 
     def locate(self) -> ViewportLocation | None:
-        """The logical line at the viewport top — exact across a width reflow
-        (the line buffer re-wraps but logical lines stay addressable)."""
-        buf = self._host.active_flat_buffer()
-        if buf is None:
+        """The address at the viewport top — exact across a width reflow, which
+        a raw visual row would not be (the flat buffer re-wraps; a frozen
+        document re-freezes)."""
+        view = self._view()
+        if view is None:
             return None
-        line = buf.top_logical_line()
-        return None if line is None else ViewportLocation("flat", line=line)
+        address = view.top_address()
+        return None if address is None else ViewportLocation("flat", line=address)
 
     def scroll_to_location(self, location: ViewportLocation) -> None:
         if location.kind != "flat":
             return
-        buf = self._host.active_flat_buffer()
-        if buf is None:
+        view = self._view()
+        if view is None:
             return
         # Exact (no context margin) — restore the *reading* position, not a
-        # match drop. scroll_to_line re-wraps for the new width first.
-        buf.scroll_to_line(location.line, context_fraction=0.0)
+        # match drop. The view re-renders for the new width first.
+        view.scroll_to_address(location.line, context_fraction=0.0)

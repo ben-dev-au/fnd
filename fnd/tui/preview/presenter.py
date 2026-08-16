@@ -23,6 +23,8 @@ from fnd.matching import MatchSpec
 from fnd.render import render_chunk_pieces
 from fnd.tui.line_buffer import LineBufferPreview, build_rendered_document
 from fnd.tui.preview import tuning
+from fnd.tui.preview.frozen import FrozenDocument, FrozenDocumentView
+from fnd.tui.preview.frozen_store import FrozenDocumentStore
 from fnd.tui.preview.liveness import is_condemned, is_live
 from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
 from fnd.tui.preview_scroll import ScrollAnchor
@@ -93,6 +95,12 @@ class PreviewPresenter:
         # invisibly (opacity:0) and only when its scroll lands do we hide this
         # one and reveal the new one in a single tick. Cleared by that swap.
         self.outgoing: PreviewContainer | None = None
+        # Captured whole-file documents, harvested from the freeze sweep, plus
+        # the single reused widget that shows them. One widget for the session
+        # rather than one per file: remounting per navigation is exactly the DOM
+        # churn this substrate exists to avoid.
+        self.document_store = FrozenDocumentStore()
+        self.document_view: FrozenDocumentView | None = None
         # Convenience aliases that point into the active container —
         # legacy code paths (_scroll_preview_to_chunk, etc.) read from
         # these instead of poking at the container directly.
@@ -759,10 +767,31 @@ class PreviewPresenter:
         # scrollbar markers). MD / DOCX / PPTX stay on the structural
         # Markdown widget below.
         if choose_preview_mode(chunks) == "flat":
+            self.hide_document_view()
             self.dispatch_flat_mount(parent_id, focus_chunk_seq, chunks, prebuilt=prebuilt)
             return
 
         query_sig = self._app._search.query_signature()
+
+        # Already captured this file at this width: serve the document and skip
+        # the build entirely. Checked before the same-file fast paths below
+        # because it beats all of them — there is nothing to settle or retry.
+        if self.document_preview_enabled():
+            try:
+                width = self._app.query_one("#preview_pane", VerticalScroll).content_size.width
+            except Exception:
+                width = 0
+            doc = self.document_store.get(parent_id, query_sig, width) if width > 0 else None
+            # Only serve when the target is INSIDE the captured run. A document
+            # is a self-consistent slice, not necessarily the whole file, so a
+            # jump past its end has to rebuild rather than land nowhere.
+            if (
+                doc is not None
+                and doc.row_of_chunk(focus_chunk_seq) is not None
+                and self.dispatch_document_mount(parent_id, focus_chunk_seq, doc)
+            ):
+                return
+        self.hide_document_view()
 
         # Same file + same query already active. Two sub-cases:
         #   (a) target chunk widget exists — just scroll, no remount.
@@ -1263,6 +1292,83 @@ class PreviewPresenter:
 
     def active_flat_buffer(self) -> LineBufferPreview | None:
         return self._app._flat.active_buffer
+
+    def active_document_view(self) -> FrozenDocumentView | None:
+        """The frozen-document preview when one is on screen, else ``None``."""
+        view = self.document_view
+        return view if view is not None and not view.has_class("-hidden") else None
+
+    def document_preview_enabled(self) -> bool:
+        """Serve captured documents instead of rebuilding chunk widgets.
+
+        Off by default: the substrate is complete but has not yet had the
+        hand-driven session on a real corpus that every other default flip on
+        this branch got. ``_FND_DOC_PREVIEW=1`` opts in.
+        """
+        import os as _os
+
+        return _os.environ.get("_FND_DOC_PREVIEW") == "1"
+
+    def dispatch_document_mount(
+        self,
+        parent_id: str,
+        focus_chunk_seq: int,
+        doc: FrozenDocument,
+    ) -> bool:
+        """Show a captured document: one widget, one synchronous scroll.
+
+        No build, no settle, no retry chain — the target row is known the moment
+        the document exists, which is the entire reason for the substrate.
+        Returns False when there is no pane to mount into (screen torn down).
+        """
+        from fnd.tui.line_buffer import LineBufferPreview
+        from fnd.tui.widgets.preview_container import PreviewContainer
+
+        self.cancel_mount_task()
+        self._app._lazy.cancel()
+        try:
+            pane = self._app.query_one("#preview_pane", VerticalScroll)
+        except Exception:
+            return False
+
+        view = self.document_view
+        if not is_live(view):
+            view = FrozenDocumentView(doc, id="preview_document")
+            self.document_view = view
+            pane.mount(view)
+        else:
+            assert view is not None
+            view.set_document(doc)
+
+        self.clear_pane_placeholder()
+        for child in self._app.query(PreviewContainer):
+            child.add_class("-hidden")
+        for child in self._app.query(LineBufferPreview):
+            child.add_class("-hidden")
+        view.remove_class("-hidden")
+        self._app._flat.active_buffer = None
+        self.active = None
+        # Straggler scrolls must not find a stale per-chunk widget to aim at.
+        self.chunk_widgets = {}
+        self.match_targets = {}
+
+        self._app._preview_scroll.arm(ScrollAnchor(parent_id, focus_chunk_seq))
+        self._app._preview_scroll.reconcile()
+        self.diag_log(
+            f"dispatch_document parent={parent_id[:8]} chunks={len(doc.chunks)} "
+            f"rows={doc.total_rows} width={doc.width}"
+        )
+        self.hide_progress_bar()
+        self.parent_id = parent_id
+        self._app._refresh_status()
+        return True
+
+    def hide_document_view(self) -> None:
+        """Take the document preview off screen when another substrate wins."""
+        view = self.document_view
+        if view is not None:
+            with contextlib.suppress(Exception):
+                view.add_class("-hidden")
 
     def begin_reconcile_scroll(self) -> None:
         self.reconciling = True
@@ -1979,6 +2085,43 @@ class PreviewPresenter:
             frozen += 1
         if frozen:
             self.diag_log(f"backfill froze={frozen} chunks")
+        self._harvest_document(container, chunks)
+
+    def _harvest_document(self, container: PreviewContainer, chunks: list[FileChunk]) -> None:
+        """Keep this file's captures so the next visit is a scroll, not a rebuild.
+
+        Runs straight after the freeze sweep, when most chunks are already
+        captured and the rest are laid out — the only moment the whole file is
+        capturable at once. The window chunks the sweep leaves live are captured
+        WITHOUT being removed: the document is a shadow copy, not the thing on
+        screen, and it has to be complete or every row after a gap is wrong.
+        """
+        if not self.document_preview_enabled():
+            return
+        try:
+            width = self._app.query_one("#preview_pane", VerticalScroll).content_size.width
+        except Exception:
+            return
+        if width <= 0:
+            return
+        doc = self.document_store.capture(container, chunks)
+        if doc is None:
+            self.diag_log(f"harvest nothing-capturable parent={container.parent_doc_id[:8]}")
+            return
+        # Keyed on the PANE width, not the capture's own width: the pane is what
+        # can be measured at serve time, and a chunk renders narrower than the
+        # pane by the container's padding (measured 63 against a 64-wide pane),
+        # so keying on doc.width would miss on every lookup.
+        existing = self.document_store.get(
+            container.parent_doc_id, container.query_signature, width
+        )
+        if existing is not None and len(existing.chunks) >= len(doc.chunks):
+            return
+        self.document_store.put(container.parent_doc_id, container.query_signature, width, doc)
+        self.diag_log(
+            f"harvest parent={container.parent_doc_id[:8]} chunks={len(doc.chunks)}/{len(chunks)} "
+            f"rows={doc.total_rows} width={doc.width}"
+        )
 
     async def _mount_chunks_async(
         self,
