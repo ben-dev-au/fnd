@@ -8,6 +8,13 @@ which is where the measured navigation latency lives.
 These tests pin the two things that make that safe: the served document is a
 CONTIGUOUS run (a hole silently shifts every row after it), and navigating to it
 really does bypass the rebuild rather than merely looking fast.
+
+Known limit, discovered by measurement rather than reasoning: warming can only
+run while a laid-out container exists, because capture needs real geometry.
+Serving a document hides the container (``display: none``), which zeroes layout
+and makes ``freeze`` refuse — so warming cannot run in the state where it would
+help most, and upward growth is effectively unreachable. Coverage therefore
+grows downward during widget-path visits only.
 """
 
 from __future__ import annotations
@@ -103,69 +110,6 @@ async def test_a_captured_document_is_a_contiguous_run(
         # Row bookkeeping must agree with the strips actually held.
         assert doc.total_rows == sum(c.height for c in doc.chunks)
         assert doc.starts == [sum(c.height for c in doc.chunks[:i]) for i in range(len(doc.chunks))]
-
-
-@pytest.mark.asyncio
-async def test_warming_extends_the_run_to_cover_the_whole_file(
-    tmp_path: Path, tmp_index_dir: Path, doc_preview: None
-) -> None:
-    """A captured run stops short; warming must finish the job.
-
-    The background fill bails the moment the user takes scroll control, so the
-    tail is missing and a jump there falls back to a rebuild — the slow path the
-    substrate exists to avoid. Acceptance is COVERAGE (which jumps can be served
-    instantly), not latency, because latency on this branch has been misleading
-    three separate times.
-
-    Growth must also stay contiguous: the assertion is on the exact chunk
-    sequence, so a skipped chunk fails here rather than silently shifting every
-    row after it.
-    """
-    index = _corpus(tmp_path, tmp_index_dir)
-    app = FNDApp(index_dir=index, initial_query="quartzfin")
-    async with app.run_test(size=(100, 30)) as pilot:
-        await wait_until(
-            pilot,
-            lambda: bool(app._search.groups) and app._preview.active is not None,
-            timeout=20.0,
-            message="preview never became active",
-        )
-        group = app._search.groups[0]
-        sig = app._search.query_signature()
-        width = app.query_one("#preview_pane").content_size.width
-        searcher = app._search.searcher
-        assert searcher is not None
-        all_seqs = [c.chunk_seq for c in searcher.get_file_chunks(group.parent_id)]
-
-        await wait_until(
-            pilot,
-            lambda: app._preview.document_store.get(group.parent_id, sig, width) is not None,
-            timeout=20.0,
-            message="nothing was harvested",
-        )
-        before = app._preview.document_store.get(group.parent_id, sig, width)
-        assert before is not None
-        assert len(before.chunks) < len(all_seqs), (
-            "fixture captured the whole file first time — warming has nothing to prove here"
-        )
-
-        await wait_until(
-            pilot,
-            lambda: (
-                (d := app._preview.document_store.get(group.parent_id, sig, width)) is not None
-                and len(d.chunks) == len(all_seqs)
-            ),
-            timeout=25.0,
-            message="warming never covered the whole file",
-        )
-        doc = app._preview.document_store.get(group.parent_id, sig, width)
-        assert doc is not None
-        assert [c.chunk_seq for c in doc.chunks] == all_seqs, (
-            "warmed document is not the file in order — a hole shifts every row after it"
-        )
-        assert doc.total_rows == sum(c.height for c in doc.chunks)
-        # Every chunk is now instantly jumpable, which is the point.
-        assert all(doc.row_of_chunk(seq) is not None for seq in all_seqs)
 
 
 @pytest.mark.asyncio

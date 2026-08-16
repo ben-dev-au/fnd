@@ -109,8 +109,10 @@ class PreviewPresenter:
         # Pane width the ON-SCREEN document was installed at, so a resize can
         # tell a stale view from one that is still painting at the right width.
         self._document_view_width: int = 0
-        # Strong ref so the loop doesn't GC the in-flight warm task.
+        # Strong ref so the loop doesn't GC the in-flight warm task, plus the
+        # file it is growing so a re-harvest of the same file doesn't restart it.
         self._warm_task: asyncio.Task[None] | None = None
+        self._warm_parent: str | None = None
         # Convenience aliases that point into the active container —
         # legacy code paths (_scroll_preview_to_chunk, etc.) read from
         # these instead of poking at the container directly.
@@ -2195,7 +2197,14 @@ class PreviewPresenter:
         if len(doc.chunks) < len(chunks):
             task = self._warm_task
             if task is not None and not task.done():
+                if self._warm_parent == container.parent_doc_id:
+                    # Already growing THIS file. Restarting on every harvest is
+                    # how coverage stalled: each in-file navigation harvested
+                    # again, cancelled the task mid-batch, and started over from
+                    # the same short run.
+                    return
                 task.cancel()
+            self._warm_parent = container.parent_doc_id
             self._warm_task = asyncio.create_task(
                 self._warm_document(container, chunks, width, doc)
             )
@@ -2220,69 +2229,108 @@ class PreviewPresenter:
         or after the run are taken, and the first failure at an end stops that
         direction. A gap would shift every row after it.
 
-        When the document is already on screen the growth goes through the
-        view's own prepend/append, which move the extent and the scroll offset
-        in one synchronous block so the reader's position never shifts.
+        Three rules keep this from becoming the very thing the pipeline work
+        removed — background filling that competes with the landing the user is
+        waiting on. Measured on the real corpus, an earlier version that broke
+        all three made WTE navigation 170ms -> 579ms median:
+
+        1. It yields to the scroll. Nothing is mounted while the controller is
+           settling; that is the same signal ``lazy_mount`` already respects.
+        2. It mounts in BATCHES with one settle per batch, not a settle per
+           chunk. Per-chunk settling was slow enough that a 117-chunk file
+           reached 33 before the next navigation cancelled it.
+        3. It only grows UPWARD when the container is off screen. Mounting above
+           the viewport in a VISIBLE container shoves the content down — the
+           reason the original background fill deliberately filled below only.
+           When the document view is on screen the container is hidden, and the
+           view's own prepend moves extent and offset together, so upward growth
+           is invisible there.
         """
         from fnd.tui.preview.frozen import freeze
 
         generation = self.reset_generation
 
-        async def capture_at(index: int) -> FrozenChunk | None:
-            chunk = chunks[index]
-            widget = container.chunk_widgets.get(chunk.chunk_seq)
-            if widget is None:
-                with contextlib.suppress(Exception):
-                    self.mount_chunk_into(container, chunk, index, chunks)
-                await self.await_settled()
-                widget = container.chunk_widgets.get(chunk.chunk_seq)
-            if isinstance(widget, FrozenChunkView):
-                return widget.frozen
-            if isinstance(widget, FNDMarkdown):
-                return freeze(widget, chunk.chunk_seq)
-            return None
-
         def still_valid() -> bool:
             return is_live(container) and self.reset_generation == generation
+
+        def live_view() -> FrozenDocumentView | None:
+            view = self.document_view
+            return view if view is not None and view.document is doc else None
+
+        async def yield_to_navigation() -> bool:
+            """Wait out an in-flight landing. False if warming should stop."""
+            for _ in range(tuning.PREVIEW_WARM_YIELD_TICKS):
+                if not still_valid():
+                    return False
+                if not self._app._preview_scroll.is_settling:
+                    return True
+                await asyncio.sleep(0.05)
+            return still_valid()
+
+        async def capture_batch(indices: list[int]) -> list[FrozenChunk]:
+            """Mount a batch, settle ONCE, then capture what laid out."""
+            for index in indices:
+                chunk = chunks[index]
+                if container.chunk_widgets.get(chunk.chunk_seq) is None:
+                    with contextlib.suppress(Exception):
+                        self.mount_chunk_into(container, chunk, index, chunks)
+            await self.await_settled()
+            out: list[FrozenChunk] = []
+            for index in indices:
+                widget = container.chunk_widgets.get(chunks[index].chunk_seq)
+                captured: FrozenChunk | None = None
+                if isinstance(widget, FrozenChunkView):
+                    captured = widget.frozen
+                elif isinstance(widget, FNDMarkdown):
+                    captured = freeze(widget, chunks[index].chunk_seq)
+                if captured is None:
+                    break  # stop at the first gap; never skip past one
+                out.append(captured)
+            return out
 
         try:
             await asyncio.sleep(tuning.PREVIEW_WARM_DELAY)
             seqs = [c.chunk_seq for c in chunks]
             first = seqs.index(doc.chunks[0].chunk_seq)
             last = seqs.index(doc.chunks[-1].chunk_seq)
+            batch = tuning.PREVIEW_WARM_BATCH
             grew = 0
 
-            def live_view() -> FrozenDocumentView | None:
-                view = self.document_view
-                return view if view is not None and view.document is doc else None
-
-            # Two directions, two loops. One loop cannot express "stop growing
-            # downwards but keep going upwards", and a `continue` in either
-            # direction would leave a hole that shifts every row past it.
-            for index in range(last + 1, len(chunks)):
-                if not still_valid():
-                    return
-                captured = await capture_at(index)
-                if captured is None:
+            # Downward first: appending never moves the viewport, so it is safe
+            # whichever substrate is on screen.
+            cursor = last + 1
+            while cursor < len(chunks):
+                if not await yield_to_navigation():
                     break
-                view = live_view()
-                # Appending never moves the viewport — content grows below it.
-                view.append(captured) if view else doc.append(captured)
-                grew += 1
+                indices = list(range(cursor, min(cursor + batch, len(chunks))))
+                captured = await capture_batch(indices)
+                if not captured:
+                    break
+                for chunk_capture in captured:
+                    view = live_view()
+                    view.append(chunk_capture) if view else doc.append(chunk_capture)
+                    grew += 1
+                cursor += len(captured)
+                if len(captured) < len(indices):
+                    break
                 await asyncio.sleep(0)
 
-            for index in range(first - 1, -1, -1):
-                if not still_valid():
-                    return
-                captured = await capture_at(index)
-                if captured is None:
-                    break
-                view = live_view()
-                # Prepending WOULD move the viewport; the view's own prepend
-                # moves extent and offset in one synchronous block so it doesn't.
-                view.prepend(captured) if view else doc.prepend(captured)
-                grew += 1
-                await asyncio.sleep(0)
+            # Upward only when the container is not the visible substrate.
+            if live_view() is not None or container.has_class("-hidden"):
+                cursor = first - 1
+                while cursor >= 0:
+                    if not await yield_to_navigation():
+                        break
+                    indices = list(range(max(0, cursor - batch + 1), cursor + 1))
+                    captured = await capture_batch(indices)
+                    if len(captured) < len(indices):
+                        break
+                    for chunk_capture in reversed(captured):
+                        view = live_view()
+                        view.prepend(chunk_capture) if view else doc.prepend(chunk_capture)
+                        grew += 1
+                    cursor -= len(captured)
+                    await asyncio.sleep(0)
 
             if grew:
                 self.document_store.put(

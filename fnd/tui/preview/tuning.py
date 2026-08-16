@@ -37,6 +37,16 @@ PREVIEW_CACHE_MIN_CHUNKS = 1
 # for the jump AFTER this one, so it must never compete with the current paint.
 PREVIEW_WARM_DELAY = 0.35
 
+# Chunks mounted per warming batch, with ONE settle per batch. Settling per
+# chunk was slow enough that a 117-chunk file reached 33 before the next
+# navigation cancelled the task.
+PREVIEW_WARM_BATCH = 8
+
+# How long warming waits for an in-flight landing before giving up its turn
+# (ticks of 50ms). Warming must never compete with the scroll the user is
+# waiting on — that competition cost 170ms -> 579ms median on a real corpus.
+PREVIEW_WARM_YIELD_TICKS = 40
+
 VISIBLE_FIRST_ABOVE = 7
 VISIBLE_FIRST_BELOW = 7
 # Rows of content to mount above the focus chunk before the reveal, as a
