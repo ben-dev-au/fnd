@@ -1,11 +1,27 @@
-"""Operation plans, and the observers that drive them.
+"""Operation plans, and the trackers that drive them.
+
+Each subsystem the line serves contributes two things and nothing else:
+
+* an :class:`~fnd.tui.progress.model.OperationPlan` — what its phases are,
+  what each is expected to cost, and whether the user is waiting on it
+  (:class:`~fnd.tui.progress.model.OperationKind`);
+* a tracker satisfying :class:`~fnd.tui.progress.facility.ProgressTracker`,
+  which reads that subsystem's own pipeline and translates whatever it
+  counts into ``enter``/``report``.
+
+That translation at the boundary is what lets one line serve operations
+with no unit in common. Rendered lines, mounted chunks and indexed files
+never meet; each tracker turns its own units into ``report(done, total)``
+and the phase weights turn the rest into one 0..1 fraction. Adding a
+subsystem means adding a plan and a tracker — the facility, the widget
+and the calibration store need no knowledge of it.
 
 Seed durations come from the measured navigation budget (see
 ``dev/audits/PREVIEW_LATENCY_INVESTIGATION.md`` and the real-terminal
 timings behind it); :mod:`fnd.tui.progress.calibration` replaces them
-with this machine's own medians after a few runs.
+with this machine's own medians after a few runs, keyed on ``operation_id``.
 
-The preview observer **reads** pipeline state rather than being called
+The preview tracker **reads** pipeline state rather than being called
 from inside the pipeline. Two reasons, both load-bearing:
 
 * The old design put a ``show``/``hide`` pair at every exit of the mount
@@ -22,7 +38,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from fnd.tui.progress.model import OperationPlan, Phase
+from fnd.tui.progress.model import OperationKind, OperationPlan, Phase
 
 if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
@@ -80,14 +96,9 @@ PREVIEW_WARM = OperationPlan(
     ),
 )
 
-SEARCH = OperationPlan(
-    operation_id="search",
-    phases=(
-        Phase(key="query", expected_ms=400.0),
-        Phase(key="results", expected_ms=120.0),
-    ),
-)
-
+# Indexing is the one AMBIENT operation: nobody asked for it just now, it
+# outlasts any navigation by orders of magnitude, and it must therefore give
+# the line up to whatever the user does next and take it back afterwards.
 INDEX = OperationPlan(
     operation_id="index",
     phases=(
@@ -95,6 +106,7 @@ INDEX = OperationPlan(
         Phase(key="files", expected_ms=60_000.0, countable=True),
         Phase(key="commit", expected_ms=3000.0),
     ),
+    kind=OperationKind.AMBIENT,
 )
 
 
@@ -328,6 +340,12 @@ class IndexProgressTracker:
     Reads ``IndexerService.state`` rather than draining the event queue: that
     queue has a single consumer (the modal), and a second reader would steal
     its events.
+
+    Its plan is AMBIENT, which is what lets a run that spans hundreds of
+    navigations survive them. It is also the only tracker that sets a label:
+    with no label the line says "something is happening", which is all a
+    navigation needs, but a background run the user did not start has to say
+    what it is.
     """
 
     def __init__(self, app: FNDApp) -> None:
@@ -398,7 +416,6 @@ __all__ = [
     "PREVIEW_COLD_FLAT",
     "PREVIEW_WARM",
     "PREVIEW_WARM_FLAT",
-    "SEARCH",
     "IndexProgressTracker",
     "PreviewProgressTracker",
 ]

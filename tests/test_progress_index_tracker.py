@@ -13,6 +13,7 @@ not move at all, which is precisely the shape of "it looks frozen".
 from __future__ import annotations
 
 from collections.abc import Generator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -165,3 +166,45 @@ def test_the_fraction_only_moves_forwards_as_files_land(
         tracker.sample(session)
         seen.append(session.fraction)
     assert seen == sorted(seen)
+
+
+# ── wiring: the service actually opens a session ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_background_run_opens_an_ambient_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Everything above tests the tracker against stand-ins, which cannot see
+    whether the service ever calls it. A background run — ``open_modal=False``,
+    which is what auto-resume starts on launch — is the case with no other
+    indication at all, so this pins the one line that connects them.
+
+    The session must be AMBIENT: an interactive one is retired by the first
+    navigation, and a reindex outlives hundreds of those.
+    """
+    from fnd.config import CollectionConfig, Config, Defaults, SourceConfig
+    from fnd.tui import FNDApp
+    from fnd.tui.progress.model import OperationKind
+
+    root = tmp_path / "corpus"
+    root.mkdir()
+    (root / "a.md").write_text("# a\n", encoding="utf-8")
+    cfg = Config(
+        defaults=Defaults(),
+        collections={"default": CollectionConfig(sources=[SourceConfig(path=root)])},
+    )
+    monkeypatch.setattr("fnd.config.load", lambda: cfg)
+
+    app = FNDApp(index_dir=tmp_path / "idx", config=cfg)
+    async with app.run_test():
+        started = app._indexer.start(
+            collection="default", config=cfg.collections["default"], open_modal=False
+        )
+        assert started, "setup — the indexer did not start"
+        session = app._progress.ambient
+        assert session is not None, "a background index reported nothing on the line"
+        assert session.operation_id == "index"
+        assert session.kind is OperationKind.AMBIENT
+        if app._indexer.cancel is not None:
+            app._indexer.cancel.set()

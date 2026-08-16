@@ -23,6 +23,7 @@ class StubBar:
     def __init__(self, width: int = 100) -> None:
         self._fraction = 0.0
         self.label = ""
+        self.ambient = False
         self.visible = False
         self.content_size = StubSize(width)
         # Textual repaints on a reactive assignment, so counting the writes
@@ -92,6 +93,10 @@ class StubProgressApp:
         self._search = StubSearch()
         self.timers: list[StubTimer] = []
         self.watchdogs: list[tuple[StubTimer, Any]] = []
+        # Kept alongside, because the watchdog's delay is no longer a
+        # constant — it tracks the stall cap of whichever class of work holds
+        # the line, and a watchdog under that cap makes the stall path dead.
+        self.timer_delays: list[float] = []
 
     def query_one(self, _selector: Any) -> StubBar:
         return self.bar
@@ -104,6 +109,7 @@ class StubProgressApp:
     def set_timer(self, _delay: float, callback: Any, name: str = "") -> StubTimer:
         timer = StubTimer()
         self.watchdogs.append((timer, callback))
+        self.timer_delays.append(_delay)
         return timer
 
 

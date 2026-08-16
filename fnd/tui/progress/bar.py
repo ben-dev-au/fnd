@@ -96,6 +96,7 @@ class FNDProgressBar(Widget):
 
     COMPONENT_CLASSES: ClassVar[set[str]] = {
         "progress--fill",
+        "progress--fill-ambient",
         "progress--track",
         "progress--label",
     }
@@ -110,6 +111,12 @@ class FNDProgressBar(Widget):
     /* visibility:hidden keeps the row, so toggling never reflows the panes above. */
     FNDProgressBar.-idle { visibility: hidden; }
     FNDProgressBar > .progress--fill  { color: $accent; }
+    /* Ambient work — a background reindex — in the same accent at half
+       strength. Two operations can never share the line, so this is what
+       separates "the thing I just asked for" from "something running on its
+       own": a line that appears without the user touching anything is
+       visibly quieter, and it is also the only one that carries a label. */
+    FNDProgressBar > .progress--fill-ambient { color: $accent 50%; }
     /* Same colour family and weight as ``border: round $primary 50%`` on the
        panes, one step dimmer so the fill reads against it. */
     FNDProgressBar > .progress--track { color: $primary 30%; }
@@ -118,6 +125,7 @@ class FNDProgressBar(Widget):
 
     fraction: reactive[float] = reactive(0.0)
     label: reactive[str] = reactive("")
+    ambient: reactive[bool] = reactive(False)
 
     def __init__(self) -> None:
         super().__init__(id="fnd_progress", classes="-idle")
@@ -135,14 +143,16 @@ class FNDProgressBar(Widget):
     def reset(self) -> None:
         self.fraction = 0.0
         self.label = ""
+        self.ambient = False
 
     def render(self) -> RenderResult:
+        fill = "progress--fill-ambient" if self.ambient else "progress--fill"
         return Segments(
             progress_line_segments(
                 width=self.content_size.width,
                 fraction=self.fraction,
                 label=self.label,
-                fill_style=self.get_component_rich_style("progress--fill"),
+                fill_style=self.get_component_rich_style(fill),
                 track_style=self.get_component_rich_style("progress--track"),
                 label_style=self.get_component_rich_style("progress--label"),
             ),

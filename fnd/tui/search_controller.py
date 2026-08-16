@@ -34,8 +34,6 @@ from textual.widgets import Static
 from fnd.matching import MatchSpec
 from fnd.query import FileGroup, Hit, Searcher
 from fnd.rerank import RankingProfile, profile_from_config
-from fnd.tui.progress.facility import ProgressSession
-from fnd.tui.progress.operations import SEARCH
 
 if TYPE_CHECKING:
     from textual.timer import Timer
@@ -199,13 +197,21 @@ class SearchController:
         return profile_from_config(self._app._config.ranking_profile(name))
 
     def run(self, query: str) -> None:
-        """Issue a query. Returns immediately; the search runs off the loop."""
+        """Issue a query. Returns immediately; the search runs off the loop.
+
+        Deliberately no progress line. A query is debounced typing, so one
+        would appear and clear on nearly every keystroke — the line's own
+        minimum-visible rule, which is what stops a fast preview load being a
+        flash, would here turn every character typed into a second of
+        movement under the panes. The reassurance a query needs is that the
+        UI stays live while it runs, and that is what moving it off the loop
+        buys; the results arriving is the completion signal.
+        """
         request = self._prepare(query)
         if request is None:
             return
-        session = self._app._progress.begin(SEARCH, sampler=self._sample)
         self._app.run_worker(
-            lambda: self._execute_and_commit(request, session),
+            lambda: self._execute_and_commit(request),
             thread=True,
             exclusive=True,
             group="search",
@@ -218,13 +224,6 @@ class SearchController:
         The signal tests should wait on — never a fixed number of pauses.
         """
         return self._committed_generation >= self._generation
-
-    def _sample(self, session: ProgressSession) -> bool:
-        """Keep the line up while this query is still the current one."""
-        if self.idle:
-            return False
-        session.enter("query")
-        return True
 
     # ── prepare (event loop) ─────────────────────────────────────
 
@@ -379,21 +378,21 @@ class SearchController:
 
     # ── execute (worker thread) ──────────────────────────────────
 
-    def _execute_and_commit(self, request: _SearchRequest, session: ProgressSession) -> None:
+    def _execute_and_commit(self, request: _SearchRequest) -> None:
         """Worker body. Marshals every outcome back to the loop — including
-        failures, so a raising search can't leave the line up forever."""
+        failures, so a raising search can't strand the results pane."""
         from fnd.filter_dsl import FilterError
         from fnd.query_errors import QueryError
 
         try:
             groups, trace = self._execute(request)
         except (QueryError, FilterError) as e:
-            self._marshal(self._commit_failure, request, e, session)
+            self._marshal(self._commit_failure, request, e)
             return
         except Exception as e:  # never strand the UI on an unexpected search bug
-            self._marshal(self._commit_failure, request, e, session)
+            self._marshal(self._commit_failure, request, e)
             return
-        self._marshal(self._commit, request, groups, trace, session)
+        self._marshal(self._commit, request, groups, trace)
 
     def _marshal(self, fn: Any, *args: Any) -> None:
         """Hop back to the event loop with the outcome.
@@ -443,21 +442,16 @@ class SearchController:
 
     # ── commit (event loop) ──────────────────────────────────────
 
-    def _commit_failure(
-        self, request: _SearchRequest, err: Exception, session: ProgressSession
-    ) -> None:
+    def _commit_failure(self, request: _SearchRequest, err: Exception) -> None:
         if request.generation != self._generation:
-            session.close()
             return
         self._fail(err)
-        session.close()
 
     def _commit(
         self,
         request: _SearchRequest,
         groups: list[FileGroup],
         trace: SearchTrace | None,
-        session: ProgressSession,
     ) -> None:
         """Land the results. Everything below has always run AFTER the search
         returned; keeping it whole here preserves that order."""
@@ -465,16 +459,8 @@ class SearchController:
         # stale search always runs to completion and arrives here — this guard
         # is what keeps it from touching anything.
         if request.generation != self._generation:
-            session.close()
             return
         self._committed_generation = request.generation
-        # Everything below runs on the loop and is real, measurable work —
-        # cache teardown, the results tree rebuild, the filters aggregation.
-        # The plan names it, so enter it: leaving the session in "query" for
-        # the whole operation capped the line at that phase's share and meant
-        # calibration never saw a "results" duration, so its weight stayed at
-        # the seed forever.
-        session.enter("results")
 
         self._clear_query_notice()
         self.latest_trace = trace
@@ -550,7 +536,6 @@ class SearchController:
         self._prefetch_timer = self._app.set_timer(
             0.5, self._app._prefetch.prefetch_top_results, name="prefetch-defer"
         )
-        session.close()
 
     def _show_query_notice(self, err: Exception) -> None:
         """Render a calm, practical line below the query bar for a malformed

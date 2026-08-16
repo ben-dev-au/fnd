@@ -21,7 +21,7 @@ from fnd.tui.progress.bar import (
     progress_line_segments,
 )
 from fnd.tui.progress.facility import ProgressFacility, ProgressSession
-from fnd.tui.progress.model import OperationPlan, Phase
+from fnd.tui.progress.model import OperationKind, OperationPlan, Phase
 from tests._progress_stubs import FakeClock, StubBar, StubProgressApp
 
 # ── rendering ────────────────────────────────────────────────────
@@ -529,7 +529,7 @@ def test_the_stall_cap_retires_before_the_watchdog() -> None:
     the completion animation and the calibration sample."""
     from fnd.tui.progress import facility as facility_mod
 
-    assert facility_mod._WATCHDOG_S > facility_mod._STALL_CAP_S
+    assert facility_mod._WATCHDOG_MARGIN_S > 0
 
     facility, bar, clock = make_facility()
     session = facility.begin(SLOW_PHASE, sampler=lambda _s: True)
@@ -560,3 +560,130 @@ def test_the_watchdog_survives_a_widget_it_cannot_resolve() -> None:
     before = len(app.watchdogs)
     facility._force_clear()
     assert len(app.watchdogs) == before + 1, "backstop dropped on a transient failure"
+
+
+# ── arbitration: one line, two classes of work ───────────────────
+
+AMBIENT_PLAN = OperationPlan(
+    operation_id="test.ambient",
+    phases=(Phase(key="work", expected_ms=60_000.0),),
+    kind=OperationKind.AMBIENT,
+)
+
+
+def settle(facility: ProgressFacility, clock: FakeClock, *, ticks: int = 40) -> None:
+    """Tick past a completion hold so whatever comes next can take the line."""
+    for _ in range(ticks):
+        clock.advance(1 / 20)
+        facility.tick()
+
+
+def test_a_navigation_takes_the_line_from_a_background_run() -> None:
+    facility, bar, _clock = make_facility()
+    facility.begin(AMBIENT_PLAN, label="CPL · 3 of 40 files", sampler=lambda _s: True)
+    assert bar.ambient is True
+
+    facility.begin(ONE_PHASE, sampler=lambda _s: True)
+    assert bar.ambient is False, (
+        "a background run painted over the operation the user is waiting on"
+    )
+
+
+def test_a_background_run_never_paints_over_a_navigation() -> None:
+    """Order reversed: the index starting mid-navigation must not grab the
+    line either, or a reindex triggered by a scope change would blank the
+    feedback for the navigation it triggered."""
+    facility, bar, _clock = make_facility()
+    facility.begin(ONE_PHASE, sampler=lambda _s: True)
+    facility.begin(AMBIENT_PLAN, label="CPL", sampler=lambda _s: True)
+    assert bar.ambient is False
+    assert bar.label == ""
+
+
+def test_a_background_run_gets_the_line_back_after_a_navigation() -> None:
+    """The defect this whole two-slot arrangement exists to fix.
+
+    With one slot, ``begin`` was last-writer-wins: every navigation retired
+    the running index permanently. A reindex spans hundreds of navigations,
+    so in practice the line showed it until the user's first keypress and
+    then never again — and at launch the initial query beat it to that.
+    """
+    facility, bar, clock = make_facility()
+    index = facility.begin(AMBIENT_PLAN, label="CPL · 3 of 40 files", sampler=lambda _s: True)
+
+    nav = facility.begin(ONE_PHASE, sampler=lambda _s: True)
+    nav.close()
+    settle(facility, clock)
+
+    assert not index.closed, "the background run was retired by an unrelated navigation"
+    assert bar.visible
+    assert bar.ambient is True
+    assert bar.label == "CPL · 3 of 40 files"
+
+
+def test_a_background_run_that_ended_unseen_does_not_come_back() -> None:
+    """Sampled before it repaints, so a run that finished while the line was
+    busy elsewhere neither flashes a stale bar nor announces itself late —
+    the same rule as one that ends while still suspended, which is what
+    keeps the two indistinguishable to the user."""
+    facility, bar, clock = make_facility()
+    alive = True
+    facility.begin(AMBIENT_PLAN, label="CPL", sampler=lambda _s: alive)
+
+    nav = facility.begin(ONE_PHASE, sampler=lambda _s: True)
+    alive = False
+    nav.close()
+    settle(facility, clock)
+
+    assert not bar.visible
+    assert bar.ambient is False
+    assert facility._completing_at is None, "a run that ended unseen announced itself late"
+
+
+def test_a_background_run_finishing_unseen_does_not_steal_the_completion() -> None:
+    """Its "done" belongs to the indexer's toast. Taking the line back to
+    flash a full bar would interrupt the navigation the user is watching."""
+    facility, bar, _clock = make_facility()
+    index = facility.begin(AMBIENT_PLAN, label="CPL", sampler=lambda _s: True)
+    facility.begin(ONE_PHASE, sampler=lambda _s: True)
+
+    index.close()
+    assert facility._completing_at is None
+    assert bar.ambient is False
+
+
+def test_a_background_run_outlasts_a_burst_of_navigation() -> None:
+    """The stall cap counts silence, and a suspended session is silent by
+    construction — so resuming has to forgive the gap it did not cause."""
+    facility, bar, clock = make_facility()
+    index = facility.begin(AMBIENT_PLAN, label="CPL", sampler=lambda _s: True)
+    for _ in range(30):
+        nav = facility.begin(ONE_PHASE, sampler=lambda _s: True)
+        clock.advance(0.5)
+        nav.close()
+        settle(facility, clock)
+    assert not index.closed
+    assert bar.visible
+    assert bar.ambient is True
+
+
+def test_the_backstops_scale_with_the_class_of_work() -> None:
+    """A source walk over an evicted cloud vault genuinely reports nothing
+    for minutes. Retiring it on the navigation budget would put the line
+    away in the middle of the longest wait in the app."""
+    from fnd.tui.progress import facility as facility_mod
+
+    assert facility_mod._AMBIENT_STALL_CAP_S > facility_mod._STALL_CAP_S * 10
+
+    for plan, cap in (
+        (ONE_PHASE, facility_mod._STALL_CAP_S),
+        (AMBIENT_PLAN, facility_mod._AMBIENT_STALL_CAP_S),
+    ):
+        facility, _bar, _clock = make_facility()
+        app: StubProgressApp = facility._app  # type: ignore[assignment]
+        facility.begin(plan, sampler=lambda _s: True)
+        assert app.timer_delays, f"{plan.operation_id}: no watchdog was armed"
+        assert app.timer_delays[-1] > cap, (
+            f"{plan.operation_id}: the watchdog beats its own stall cap, "
+            "so the stall path is dead code"
+        )

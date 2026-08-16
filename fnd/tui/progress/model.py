@@ -23,6 +23,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum
 
 # A timed phase asymptotes here rather than filling: only entering the next
 # phase (or completing the operation) retires the remaining share, so a slow
@@ -42,6 +43,21 @@ _PHASE_CEILING = 0.97
 _ON_TIME = 0.8
 # Guards a zero/negative expectation from dividing by zero.
 _MIN_EXPECTED_MS = 1.0
+
+
+class OperationKind(Enum):
+    """Whether the user is standing there waiting for this.
+
+    The distinction earns its place because the two classes have opposite
+    needs and one line to share. INTERACTIVE work answers something the
+    user just did, so it must take the line immediately. AMBIENT work runs
+    on its own schedule — a background reindex started by auto-resume —
+    and lasts orders of magnitude longer, so it must *yield* the line and
+    get it back, rather than fight for it.
+    """
+
+    INTERACTIVE = "interactive"
+    AMBIENT = "ambient"
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +80,7 @@ class Phase:
 class OperationPlan:
     operation_id: str
     phases: tuple[Phase, ...]
+    kind: OperationKind = OperationKind.INTERACTIVE
 
     def __post_init__(self) -> None:
         if not self.phases:
@@ -97,6 +114,7 @@ class OperationPlan:
                 )
                 for p in self.phases
             ),
+            kind=self.kind,
         )
 
 
@@ -235,7 +253,7 @@ class ProgressModel:
         # expectations cures it, because the curve itself is the cause.
         #
         # So: while the phase is running to time, the fill is proportional and
-        # arrives at _ON_TIME (0.9) exactly when the estimate says it should.
+        # arrives at _ON_TIME exactly when the estimate says it should.
         # Past that the remaining headroom is consumed asymptotically, which is
         # what keeps an overrunning phase moving a cell at a time instead of
         # freezing (the failure an exponential tail produced).
@@ -245,4 +263,4 @@ class ProgressModel:
         return _PHASE_CEILING * _ON_TIME + overrun * (1.0 - expected / elapsed)
 
 
-__all__ = ["OperationPlan", "Phase", "ProgressModel"]
+__all__ = ["OperationKind", "OperationPlan", "Phase", "ProgressModel"]

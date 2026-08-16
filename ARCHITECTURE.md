@@ -183,11 +183,35 @@ reads `IndexerService.state` rather than the event queue, which has a
 single consumer in the modal. The mount path therefore has no progress
 calls to keep in step, and no stale exit can strand or steal the line.
 
+Adding a subsystem means adding a plan and a tracker satisfying
+`ProgressTracker` — nothing else knows about it. Each tracker translates
+its own units (rendered lines, mounted chunks, indexed files) into
+`report(done, total)` at the boundary, and the phase weights turn the
+rest into one 0..1 fraction; that normalisation is what lets operations
+with no unit in common share a line.
+
+A plan also declares its `OperationKind`. INTERACTIVE work answers
+something the user just did and always owns the line; AMBIENT work — a
+background reindex — is *suspended* while that happens and resumes
+afterwards, so a run spanning hundreds of navigations is not retired by
+the first one. Since only one can be on screen at a time, ambient is
+also the only class that carries a label, and it paints in a dimmer
+accent: a line that appears without the user touching anything reads
+differently from one that answers a keypress. Its stall backstop is
+correspondingly looser, because its terminator (`task.done()`) is a real
+result rather than an inference.
+
+Queries deliberately have no session: a query is debounced typing, so a
+line would appear and clear on nearly every keystroke. Search runs off
+the loop instead, which is the reassurance a query actually needs.
+
 Sessions are owned: closing one that has already been superseded does
 nothing. Visibility is policy, not caller choice — a session paints on
 the frame it opens, holds a minimum visible duration, always eases to a
 full line before clearing, and hands its fill to a successor so a held
-cursor key doesn't saw the bar back to zero.
+cursor key doesn't saw the bar back to zero. Fast work is shown, not
+suppressed: a load the user can see complete is what makes the app feel
+fast.
 
 ## Concurrency rules
 

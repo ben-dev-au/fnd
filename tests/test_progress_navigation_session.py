@@ -18,6 +18,8 @@ from textual.pilot import Pilot
 from fnd.index import build_index
 from fnd.query import FileGroup
 from fnd.tui import FNDApp
+from fnd.tui.progress.bar import FNDProgressBar
+from fnd.tui.progress.operations import INDEX
 from tests._pilot_wait import run_search, wait_until
 
 
@@ -129,3 +131,47 @@ async def test_the_mount_paths_teardown_cannot_retire_the_line(
             "a mount-path teardown retired the live navigation's progress line"
         )
         assert not session.closed
+
+
+@pytest.mark.asyncio
+async def test_a_background_index_survives_a_navigation_in_the_real_app(
+    two_file_index: Path,
+) -> None:
+    """The line serves two classes of work, and only one of them is a
+    reaction to a keypress.
+
+    With a single session slot this failed in the field rather than in a
+    test: ``begin`` was last-writer-wins, so the first navigation retired a
+    running index for good. A reindex spans hundreds of navigations, which
+    made the line useless for the one operation long enough to need it.
+
+    Driven through the real app so the second visual channel is exercised
+    too — an unresolved component class raises at render time, and the
+    stub bar cannot see that.
+    """
+    app = FNDApp(index_dir=two_file_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        _small, big = await _search(pilot, app)
+        bar = app.query_one(FNDProgressBar)
+
+        running = True
+        index = app._progress.begin(
+            INDEX, label="default · 3 of 40 files", sampler=lambda _s: running
+        )
+        # The search lands a preview, and that navigation owns the line until
+        # it finishes; the index takes it over once the line is free.
+        await wait_until(pilot, lambda: bar.ambient is True, timeout=5.0)
+        assert bar.render() is not None, "the ambient fill style does not resolve"
+
+        app._preview.render_full_doc(big.parent_id, focus_chunk_seq=0)
+        assert bar.ambient is False, "background work painted over the user's navigation"
+        nav = app._progress.active
+        assert nav is not None
+        assert not index.closed, "the navigation retired the background index"
+
+        nav.close()
+        await wait_until(pilot, lambda: bar.ambient is True, timeout=5.0)
+        assert not index.closed
+        assert bar.label == "default · 3 of 40 files"
+        running = False
