@@ -31,6 +31,7 @@ from fnd.tui.preview.frozen import (
 )
 from fnd.tui.preview.frozen_store import FrozenDocumentStore
 from fnd.tui.preview.liveness import is_condemned, is_live
+from fnd.tui.preview.warm_host import WarmHost
 from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
 from fnd.tui.preview_scroll import ScrollAnchor
 from fnd.tui.preview_scrollbar import MatchAwareScroll
@@ -113,6 +114,10 @@ class PreviewPresenter:
         # file it is growing so a re-harvest of the same file doesn't restart it.
         self._warm_task: asyncio.Task[None] | None = None
         self._warm_parent: str | None = None
+        # Chunks are built and captured here rather than in the visible
+        # container — see warm_host for why every way of hiding a live container
+        # is either uncapturable or silently blank.
+        self._warm_host = WarmHost(app)
         # Convenience aliases that point into the active container —
         # legacy code paths (_scroll_preview_to_chunk, etc.) read from
         # these instead of poking at the container directly.
@@ -2249,9 +2254,20 @@ class PreviewPresenter:
         from fnd.tui.preview.frozen import freeze
 
         generation = self.reset_generation
+        parent_id, query_sig = container.parent_doc_id, container.query_signature
 
         def still_valid() -> bool:
-            return is_live(container) and self.reset_generation == generation
+            """Warming survives the container it started under.
+
+            It used to require ``is_live(container)``, which tied coverage to a
+            widget tree that navigation replaces — so warming died on the first
+            jump and never resumed. Measured, that is what capped coverage at 83
+            of 1018 chunks (~0.7s of work) when the whole file costs 12.5s: not
+            the cost, not unfreezable chunks (zero refusals in 400 real chunks),
+            just the lifetime it was pinned to. Capture is off-screen now and
+            needs nothing from the container.
+            """
+            return self.reset_generation == generation
 
         def live_view() -> FrozenDocumentView | None:
             view = self.document_view
@@ -2268,25 +2284,46 @@ class PreviewPresenter:
             return still_valid()
 
         async def capture_batch(indices: list[int]) -> list[FrozenChunk]:
-            """Mount a batch, settle ONCE, then capture what laid out."""
+            """Capture a batch OFF-SCREEN, one chunk at a time.
+
+            Nothing is mounted into the on-screen container: building there is
+            what made warming compete with the landing, and it inflated the very
+            DOM freezing exists to shrink. An already-captured chunk is reused
+            rather than rebuilt.
+            """
+            out: list[FrozenChunk] = []
+            alive = is_live(container)
             for index in indices:
                 chunk = chunks[index]
-                if container.chunk_widgets.get(chunk.chunk_seq) is None:
-                    with contextlib.suppress(Exception):
-                        self.mount_chunk_into(container, chunk, index, chunks)
-            await self.await_settled()
-            out: list[FrozenChunk] = []
-            for index in indices:
-                widget = container.chunk_widgets.get(chunks[index].chunk_seq)
+                # The container is a SHORTCUT for chunks already captured, not a
+                # requirement — it may have been swept out from under us.
+                widget = container.chunk_widgets.get(chunk.chunk_seq) if alive else None
                 captured: FrozenChunk | None = None
                 if isinstance(widget, FrozenChunkView):
                     captured = widget.frozen
                 elif isinstance(widget, FNDMarkdown):
-                    captured = freeze(widget, chunks[index].chunk_seq)
+                    captured = freeze(widget, chunk.chunk_seq)
+                else:
+                    captured = await self._warm_host.capture(chunk, doc.width or width)
                 if captured is None:
                     break  # stop at the first gap; never skip past one
                 out.append(captured)
             return out
+
+        grew = 0
+
+        def publish() -> None:
+            """Make progress usable NOW, not at the end.
+
+            Warming is routinely cancelled mid-flight by a file switch, and
+            publishing only on completion threw away everything captured up to
+            that point — the next visit then re-warmed from the same short run.
+            A put is a dict assignment; the document is the same object either
+            way. Defined outside the try so the cancellation handler can call it
+            even when the cancel lands on the opening sleep.
+            """
+            if grew:
+                self.document_store.put(parent_id, query_sig, width, doc)
 
         try:
             await asyncio.sleep(tuning.PREVIEW_WARM_DELAY)
@@ -2294,7 +2331,6 @@ class PreviewPresenter:
             first = seqs.index(doc.chunks[0].chunk_seq)
             last = seqs.index(doc.chunks[-1].chunk_seq)
             batch = tuning.PREVIEW_WARM_BATCH
-            grew = 0
 
             # Downward first: appending never moves the viewport, so it is safe
             # whichever substrate is on screen.
@@ -2311,33 +2347,36 @@ class PreviewPresenter:
                     view.append(chunk_capture) if view else doc.append(chunk_capture)
                     grew += 1
                 cursor += len(captured)
+                publish()
                 if len(captured) < len(indices):
                     break
                 await asyncio.sleep(0)
 
-            # Upward only when the container is not the visible substrate.
-            if live_view() is not None or container.has_class("-hidden"):
-                cursor = first - 1
-                while cursor >= 0:
-                    if not await yield_to_navigation():
-                        break
-                    indices = list(range(max(0, cursor - batch + 1), cursor + 1))
-                    captured = await capture_batch(indices)
-                    if len(captured) < len(indices):
-                        break
-                    for chunk_capture in reversed(captured):
-                        view = live_view()
-                        view.prepend(chunk_capture) if view else doc.prepend(chunk_capture)
-                        grew += 1
-                    cursor -= len(captured)
-                    await asyncio.sleep(0)
+            # Upward needs no gate now. The old one — "only when the container
+            # is hidden" — was inverted against capability: a hidden container
+            # is display:none, which is exactly when a capture returns None, so
+            # the loop broke immediately and coverage stalled at 11 of 1018.
+            # Building off-screen means nothing on screen can shift either way.
+            cursor = first - 1
+            while cursor >= 0:
+                if not await yield_to_navigation():
+                    break
+                indices = list(range(max(0, cursor - batch + 1), cursor + 1))
+                captured = await capture_batch(indices)
+                if len(captured) < len(indices):
+                    break
+                for chunk_capture in reversed(captured):
+                    view = live_view()
+                    view.prepend(chunk_capture) if view else doc.prepend(chunk_capture)
+                    grew += 1
+                cursor -= len(captured)
+                publish()
+                await asyncio.sleep(0)
 
             if grew:
-                self.document_store.put(
-                    container.parent_doc_id, container.query_signature, width, doc
-                )
                 self.diag_log(f"warm grew={grew} chunks={len(doc.chunks)}/{len(chunks)}")
         except asyncio.CancelledError:
+            publish()
             raise
         except Exception as exc:  # pragma: no cover - warming is best-effort
             self.diag_log(f"warm failed: {exc!r}")

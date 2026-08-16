@@ -20,6 +20,7 @@ grows downward during widget-path visits only.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -110,6 +111,83 @@ async def test_a_captured_document_is_a_contiguous_run(
         # Row bookkeeping must agree with the strips actually held.
         assert doc.total_rows == sum(c.height for c in doc.chunks)
         assert doc.starts == [sum(c.height for c in doc.chunks[:i]) for i in range(len(doc.chunks))]
+
+
+@pytest.mark.asyncio
+async def test_off_screen_capture_is_visible_and_matches_the_on_screen_one() -> None:
+    """A capture built off-screen must be INK, not invisible ink.
+
+    Checked on colour, not glyphs. An earlier attempt hid the container with
+    opacity:0 and compared ``strip.text``: every character was present and every
+    one had foreground == background, so the capture was blank and nothing
+    detected it. Comparing the palette against a visible capture is the check
+    that would have caught it.
+    """
+    from textual.app import App, ComposeResult
+    from textual.containers import VerticalScroll
+
+    from fnd.matching import MatchSpec
+    from fnd.tui.preview.frozen import freeze
+    from fnd.tui.preview.warm_host import WarmHost
+    from fnd.tui.widgets.markdown import FNDMarkdown
+
+    body = (
+        "## Heading with quartzfin\n\nA paragraph mentioning quartzfin in prose.\n\n"
+        + "\n\n".join(f"Filler paragraph {i} with text." for i in range(6))
+    )
+
+    def palette(cap) -> tuple[int, int, set[tuple[str, str]]]:  # type: ignore[no-untyped-def]
+        inked = invisible = 0
+        seen: set[tuple[str, str]] = set()
+        for strip in cap.strips:
+            for seg in strip:
+                if not seg.text.strip() or seg.style is None:
+                    continue
+                inked += 1
+                fg, bg = str(seg.style.color), str(seg.style.bgcolor)
+                seen.add((fg, bg))
+                if fg == bg:
+                    invisible += 1
+        return inked, invisible, seen
+
+    class _Host(App[None]):
+        def compose(self) -> ComposeResult:
+            with VerticalScroll(id="pane"):
+                yield FNDMarkdown(match_spec=MatchSpec.from_query("quartzfin"), id="md")
+
+    app = _Host()
+    app._effective_match_spec = MatchSpec.from_query("quartzfin")  # type: ignore[attr-defined]
+    app._config = None  # type: ignore[attr-defined]
+    async with app.run_test(size=(100, 30)) as pilot:
+        live = app.query_one("#md", FNDMarkdown)
+        live.update(body)
+        await live.build_done.wait()
+        for _ in range(12):
+            await pilot.pause()
+        control = freeze(live, chunk_seq=0)
+        assert control is not None
+        _, control_invisible, control_palette = palette(control)
+        assert control_invisible == 0, "control capture was already invisible"
+
+        class _Chunk:
+            chunk_seq = 1
+            body_md = body
+            blocks: ClassVar[list[object]] = []
+
+        host = WarmHost(app)  # type: ignore[arg-type]
+        captured = await host.capture(_Chunk(), width=live.size.width)  # type: ignore[arg-type]
+        assert captured is not None, "off-screen capture was refused"
+        inked, invisible, pal = palette(captured)
+        assert inked > 0, "off-screen capture had no inked segments"
+        assert invisible == 0, (
+            f"{invisible} of {inked} inked segments have foreground == background — "
+            "the capture is present but invisible, and would cache as a blank preview"
+        )
+        assert pal == control_palette, (
+            f"off-screen palette {sorted(pal)} differs from the visible one "
+            f"{sorted(control_palette)} — the capture would not match the widget path"
+        )
+        assert app.screen is not host._screen, "the warm screen became current"
 
 
 @pytest.mark.asyncio
