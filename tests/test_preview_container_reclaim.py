@@ -124,3 +124,58 @@ async def test_sweep_reclaims_a_stranded_container(tmp_path: Path, tmp_index_dir
         live = list(app.query(PreviewContainer))
         assert stranded not in live, "stranded container survived the sweep"
         assert active in live, "sweep removed the ACTIVE container"
+
+
+@pytest.mark.asyncio
+async def test_reclaim_runs_after_an_in_window_landing(
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reclamation must not depend on a navigation that REBUILDS.
+
+    The sweep ran on cross-file dispatch and the same-file rebuild path only, so
+    a container stranded earlier survived for as long as the user stayed inside
+    one file, where every jump is an in-window scroll and neither path runs.
+    Measured on a real file: twelve in-window navigations later, one strand still
+    held 6 live chunk trees and 169 widgets — more DOM than the 92 frozen chunks
+    of the file actually being read.
+
+    Asserts the sweep is REACHED from the in-window landing rather than that a
+    strand disappears. A first version checked the strand and passed with the fix
+    reverted, because the navigation it drove took the rebuild path after all and
+    was swept by the old call site.
+    """
+    index = _wide_doc(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups) and app._preview.active is not None,
+            timeout=20.0,
+            message="preview never became active",
+        )
+        container = app._preview.active
+        assert container is not None
+        group = app._search.groups[0]
+        mounted = sorted(container.chunk_widgets)
+        assert mounted, "nothing mounted to navigate within"
+        target = mounted[len(mounted) // 2]
+
+        calls: list[int] = []
+        original = type(app._preview).sweep_stranded_containers
+
+        def counting(self, **kwargs):  # type: ignore[no-untyped-def]
+            calls.append(1)
+            return original(self, **kwargs)
+
+        monkeypatch.setattr(type(app._preview), "sweep_stranded_containers", counting)
+
+        # In-window by construction: the target chunk is already mounted, so
+        # dispatch takes the scroll-only path.
+        assert target in container.chunk_widgets
+        app._preview.render_full_doc(group.parent_id, focus_chunk_seq=target)
+        await settle(pilot, ticks=12)
+
+        assert calls, (
+            "no reclamation ran for an in-window navigation — a container "
+            "stranded earlier would survive for the whole session"
+        )

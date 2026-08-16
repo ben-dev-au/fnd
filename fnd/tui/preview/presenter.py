@@ -598,7 +598,17 @@ class PreviewPresenter:
         cached = set(self.preview_cache._cache.values())
         removed = 0
         for stranded in list(self._app.query(PreviewContainer)):
-            if stranded in cached or stranded is keep or stranded is self.active:
+            # ``outgoing`` is the previous file, deliberately held on screen so
+            # the incoming one can build behind it and swap in without a blank
+            # frame. It is neither active nor cached, so it looks exactly like a
+            # strand — removing it mid-swap would blank the pane for the whole
+            # build.
+            if (
+                stranded in cached
+                or stranded is keep
+                or stranded is self.active
+                or stranded is self.outgoing
+            ):
                 continue
             pfetch = getattr(stranded, "_prefetch_task", None)
             if pfetch is not None and not pfetch.done():
@@ -1800,6 +1810,13 @@ class PreviewPresenter:
         win_start = focus_idx
         win_end = focus_idx + 1
         await self._freeze_chunks_outside_window(container, chunks, win_start, win_end)
+        # Reclaim here too, not only on the paths that rebuild. The sweep used to
+        # run on cross-file dispatch and the same-file rebuild alone, so a
+        # container stranded by an earlier navigation survived indefinitely while
+        # the user stayed in one file: measured twelve in-window navigations
+        # later, one strand still held 6 live chunks and 169 widgets — more DOM
+        # than the 92 frozen chunks of the file actually being read.
+        self.sweep_stranded_containers()
 
     def bump_reset_generation(self) -> None:
         """Invalidate any in-flight mount. Call from every path that clears the
