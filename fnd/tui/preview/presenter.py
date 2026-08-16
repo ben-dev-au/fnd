@@ -101,6 +101,9 @@ class PreviewPresenter:
         # churn this substrate exists to avoid.
         self.document_store = FrozenDocumentStore()
         self.document_view: FrozenDocumentView | None = None
+        # Pane width the ON-SCREEN document was installed at, so a resize can
+        # tell a stale view from one that is still painting at the right width.
+        self._document_view_width: int = 0
         # Convenience aliases that point into the active container —
         # legacy code paths (_scroll_preview_to_chunk, etc.) read from
         # these instead of poking at the container directly.
@@ -1294,9 +1297,24 @@ class PreviewPresenter:
         return self._app._flat.active_buffer
 
     def active_document_view(self) -> FrozenDocumentView | None:
-        """The frozen-document preview when one is on screen, else ``None``."""
+        """The frozen-document preview when one is on screen AND still valid.
+
+        Checked lazily rather than trusting a resize event to have fired: the
+        resize hook runs before layout and so reads the pre-resize width. Here
+        the width is whatever the pane reports at the moment of asking, which
+        makes a stale document impossible to scroll or serve regardless of what
+        the event loop did.
+        """
         view = self.document_view
-        return view if view is not None and not view.has_class("-hidden") else None
+        if view is None or view.has_class("-hidden"):
+            return None
+        try:
+            width = self._app.query_one("#preview_pane", VerticalScroll).content_size.width
+        except Exception:
+            return None
+        if width > 0 and self._document_view_width not in (0, width):
+            return None
+        return view
 
     def document_preview_enabled(self) -> bool:
         """Serve captured documents instead of rebuilding chunk widgets.
@@ -1340,6 +1358,7 @@ class PreviewPresenter:
             assert view is not None
             view.set_document(doc)
 
+        self._document_view_width = pane.content_size.width
         self.clear_pane_placeholder()
         for child in self._app.query(PreviewContainer):
             child.add_class("-hidden")
@@ -1362,6 +1381,50 @@ class PreviewPresenter:
         self.parent_id = parent_id
         self._app._refresh_status()
         return True
+
+    def invalidate_documents_on_resize(self) -> None:
+        """Drop captures that no longer match the pane width.
+
+        Captured strips cannot be re-wrapped — re-deriving them means rebuilding
+        the markdown tree, which is the cost this substrate avoids — so a width
+        change invalidates. Served documents are keyed by pane width, and a
+        stale one on screen is taken off so the next navigation rebuilds and
+        re-captures instead of painting strips cut for the old width.
+
+        Height-only changes must NOT invalidate: a vertical resize leaves every
+        capture valid, and throwing them away would turn a window drag into a
+        rebuild of everything the user had read.
+
+        Written to be idempotent and timing-independent rather than to fire once
+        on the "right" tick. ``call_after_refresh`` can still read the PRE-layout
+        width — measured, it does — so a one-shot "has the width changed since
+        last time?" guard latches the old value and then never fires again.
+        Dropping everything that does not match the width measured right now is
+        correct whenever it runs, and harmless to run repeatedly.
+        """
+        try:
+            width = self._app.query_one("#preview_pane", VerticalScroll).content_size.width
+        except Exception:
+            return
+        if width <= 0:
+            return
+        dropped = self.document_store.drop_other_widths(width)
+        view = self.document_view
+        stale_view = (
+            view is not None
+            and not view.has_class("-hidden")
+            and self._document_view_width not in (0, width)
+        )
+        if stale_view:
+            # Strips cut for the old width would paint clipped or short. Take it
+            # off screen and rebuild through the widget path, which re-captures
+            # at the new width on its way.
+            self.hide_document_view()
+            parent_id, target = self.parent_id, self.cursor_target()
+            if parent_id is not None and target is not None and target[0] == parent_id:
+                self.render_full_doc(parent_id, focus_chunk_seq=target[1])
+        if dropped or stale_view:
+            self.diag_log(f"documents invalidated width={width} dropped={dropped}")
 
     def hide_document_view(self) -> None:
         """Take the document preview off screen when another substrate wins."""

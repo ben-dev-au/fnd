@@ -106,6 +106,61 @@ async def test_a_captured_document_is_a_contiguous_run(
 
 
 @pytest.mark.asyncio
+async def test_a_width_change_invalidates_captures_but_a_height_change_does_not(
+    tmp_path: Path, tmp_index_dir: Path, doc_preview: None
+) -> None:
+    """Strips are cut for one width and cannot be re-wrapped.
+
+    Serving them after a horizontal resize paints a document at the wrong width
+    — text clipped or trailing blanks — so a width change must invalidate. A
+    HEIGHT change must not: every capture is still valid, and dropping them
+    would turn a window drag into a rebuild of everything already read.
+    """
+    index = _corpus(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups) and app._preview.active is not None,
+            timeout=20.0,
+            message="preview never became active",
+        )
+        await wait_until(
+            pilot,
+            lambda: len(app._preview.document_store._docs) > 0,
+            timeout=20.0,
+            message="nothing was harvested",
+        )
+        group = app._search.groups[0]
+        sig = app._search.query_signature()
+        captured_width = app.query_one("#preview_pane").content_size.width
+        store = app._preview.document_store
+        assert store.get(group.parent_id, sig, captured_width) is not None
+
+        # Height only: the capture is still served.
+        await pilot.resize_terminal(100, 40)
+        await settle(pilot, ticks=6)
+        width = app.query_one("#preview_pane").content_size.width
+        assert width == captured_width, "fixture error: the height change moved the width too"
+        assert store.get(group.parent_id, sig, width) is not None, (
+            "a height-only resize stopped the capture being served — a window drag "
+            "would rebuild everything the user had read"
+        )
+
+        # Width: nothing may be served for the new width until it is re-captured.
+        await pilot.resize_terminal(140, 40)
+        await settle(pilot, ticks=6)
+        width = app.query_one("#preview_pane").content_size.width
+        assert width != captured_width, (
+            "fixture error: the terminal resize did not change the pane width"
+        )
+        assert store.get(group.parent_id, sig, width) is None, (
+            "a capture cut for the old width is being served at the new one — it "
+            "would paint clipped or short"
+        )
+
+
+@pytest.mark.asyncio
 async def test_revisiting_a_file_serves_the_document_and_skips_the_rebuild(
     tmp_path: Path, tmp_index_dir: Path, doc_preview: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

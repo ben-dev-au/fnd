@@ -938,6 +938,11 @@ class FNDApp(App[None]):
         self.call_after_refresh(self._results.refit_after_resize)
         # A taller/shorter column changes every panel's fair share.
         self._reflow_sidebar()
+        # Captured document strips are width-locked and cannot be re-wrapped, so
+        # a width change invalidates rather than reflows. Deferred: the pane
+        # reports its settled width only after layout, and dropping on a
+        # mid-resize measurement would throw away captures that are still valid.
+        self.call_after_refresh(self._preview.invalidate_documents_on_resize)
 
     @on(Tree.NodeHighlighted)
     def _on_tree_highlight(self, ev: Tree.NodeHighlighted[Any]) -> None:

@@ -327,6 +327,25 @@ class FrozenDocumentView(StripDocumentView):
     def first_match_row_of_chunk(self, chunk_id: int) -> int | None:
         return self.document.match_row(chunk_id)
 
+    def _rebuild_for_width(self, width: int) -> bool:
+        """Strips are width-locked and cannot be re-wrapped.
+
+        The flat buffer re-renders its text lines at the new width; a capture
+        has no text to re-render — re-deriving it would mean rebuilding the
+        markdown widget tree, which is the cost the substrate exists to avoid.
+        So a resize invalidates rather than reflows: the view reports itself
+        stale and the presenter rebuilds through the widget path, which
+        re-captures at the new width on its way.
+
+        Returns False because nothing was re-rendered; the caller must not
+        assume the strips now match ``width``.
+        """
+        return False
+
+    def is_stale_for(self, width: int) -> bool:
+        """Whether the captured strips still match the width they must paint at."""
+        return bool(self.document.chunks) and self.document.width != width
+
     # ── Growing in either direction ─────────────────────────────
 
     def append(self, chunk: FrozenChunk) -> None:

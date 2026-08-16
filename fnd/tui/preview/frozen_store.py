@@ -57,6 +57,11 @@ class FrozenDocumentStore:
         return doc
 
     def put(self, parent_id: str, query_sig: str, width: int, doc: FrozenDocument) -> None:
+        # A put always carries a settled width, which makes it the reliable
+        # moment to evict captures cut for a different one. Doing it on the
+        # resize event instead is not reliable: that fires before layout, so the
+        # width read there is still the old one.
+        self.drop_other_widths(width)
         key = (parent_id, query_sig, width)
         self._docs[key] = doc
         self._docs.move_to_end(key)
@@ -65,6 +70,18 @@ class FrozenDocumentStore:
 
     def clear(self) -> None:
         self._docs.clear()
+
+    def drop_other_widths(self, width: int) -> int:
+        """Forget captures cut for a different width; return how many went.
+
+        They can never be served — the key carries the width, so a lookup at the
+        current width simply misses them — but they would sit in the cache
+        holding a whole file's strips and evicting captures that ARE usable.
+        """
+        stale = [k for k in self._docs if k[2] != width]
+        for key in stale:
+            del self._docs[key]
+        return len(stale)
 
     def drop_file(self, parent_id: str) -> None:
         """Forget one file — its content or its highlighting changed."""
