@@ -57,6 +57,49 @@ async def settle(pilot: Pilot[None], ticks: int = 4) -> None:
         await safe_pause(pilot)
 
 
+async def wait_stable(
+    pilot: Pilot[None],
+    sample: Callable[[], object],
+    *,
+    rounds: int = 3,
+    timeout: float = 10.0,
+    message: str = "",
+) -> None:
+    """Wait until ``sample()`` is unchanged across ``rounds`` consecutive rounds.
+
+    The event-gated replacement for ``settle(pilot, ticks=N)``: a tick count
+    assumes each ``safe_pause`` flushes a refresh, but a load spike degrades it
+    to ``asyncio.sleep(0)``, so exactly when the wait is needed it does least.
+    Sampling the thing you actually care about — a scroll offset, a virtual
+    size — is load-proof, and the wall-clock budget bounds it.
+
+    Prefer gating on a product signal (``is_restoring``, ``pipeline_busy()``)
+    where one exists; use this when the only evidence is geometry holding
+    still.
+    """
+    deadline = time.monotonic() + timeout
+    unreadable = object()
+    last: object = object()
+    stable = 0
+    while True:
+        try:
+            current = sample()
+        except Exception:
+            # Mid-rebuild the widget may not be queryable. That is "still
+            # moving", not a test failure — keep waiting.
+            current = unreadable
+        stable = stable + 1 if current == last and current is not unreadable else 0
+        last = current
+        if stable >= rounds:
+            return
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"wait_stable timed out after {timeout}s: "
+                f"{message or 'sample never held still'} (last={current!r})"
+            )
+        await safe_pause(pilot)
+
+
 async def wait_until(
     pilot: Pilot[None],
     predicate: Callable[[], bool | Awaitable[bool]],
