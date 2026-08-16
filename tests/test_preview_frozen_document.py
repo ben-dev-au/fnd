@@ -110,7 +110,7 @@ async def test_a_jump_lands_with_the_match_on_screen() -> None:
         # Forwards and backwards: the backward jump is the case that rebuilds in
         # the widget model.
         for seq in [*range(6), *reversed(range(6))]:
-            assert view.scroll_to_chunk(seq)
+            assert view.scroll_to_chunk_seq(seq)
             await pilot.pause()
             row = doc.match_row(seq)
             top = int(view.scroll_offset.y)
@@ -158,6 +158,93 @@ async def test_prepending_does_not_move_the_viewport() -> None:
             f"viewport moved while prepending: saw {sorted(set(seen))!r}, expected only {before!r}"
         )
         assert view.virtual_size.height == doc.total_rows
+
+
+@pytest.mark.asyncio
+async def test_a_document_reaches_the_same_matches_as_the_widget_path() -> None:
+    """Parity: assembling captures into a document must not gain, lose or move a
+    single match stop relative to the live widget tree.
+
+    ``freeze`` and ``enumerate_stop_regions`` derive stops independently — one
+    walks ``match_blocks`` plus ``_fnd_match_coords`` at capture time, the other
+    walks live regions — and they have already drifted once, when a table's cell
+    blocks were counted twice. Across several chunks the offsets compound, so
+    document assembly is pinned here rather than only per chunk.
+    """
+    from textual.containers import VerticalScroll
+    from textual.widgets import DataTable
+
+    from fnd.matching import MatchSpec
+    from fnd.tui.preview.frozen import freeze
+    from fnd.tui.preview_scroll import enumerate_stop_regions
+    from fnd.tui.widgets.markdown import FNDMarkdown
+
+    body = """## Section with quartzfin
+
+A paragraph mentioning quartzfin in prose, long enough to wrap across more than
+one row so the capture holds something non-trivial.
+
+| Option | Notes |
+| --- | --- |
+| `alpha` | a **quartzfin** cell |
+| beta | plain |
+
+- list item with quartzfin
+"""
+
+    class _Multi(App[None]):
+        def compose(self) -> ComposeResult:
+            with VerticalScroll(id="pane"):
+                for i in range(3):
+                    yield FNDMarkdown(match_spec=MatchSpec.from_query("quartzfin"), id=f"md{i}")
+
+    app = _Multi()
+    async with app.run_test(size=(90, 24)) as pilot:
+        pane = app.query_one("#pane", VerticalScroll)
+        chunks = [app.query_one(f"#md{i}", FNDMarkdown) for i in range(3)]
+        for md in chunks:
+            md.update(body)
+        for md in chunks:
+            await md.build_done.wait()
+        for _ in range(14):
+            await pilot.pause()
+        for md in chunks:
+            assert not any(dt.virtual_size.height > dt.size.height for dt in md.query(DataTable)), (
+                "a nested scroll region would be refused by freeze, voiding the comparison"
+            )
+
+        spec = chunks[0].match_spec
+        live_total = len(enumerate_stop_regions(pane, spec))
+        assert live_total > 0, "fixture must have match stops while live"
+
+        # First-match offset WITHIN each chunk, measured off the live tree.
+        live_first = [
+            md.first_match_block.region.y - md.region.y  # type: ignore[union-attr]
+            for md in chunks
+        ]
+
+        doc = FrozenDocument()
+        for seq, md in enumerate(chunks):
+            captured = freeze(md, chunk_seq=seq)
+            assert captured is not None, f"chunk {seq} refused capture"
+            doc.append(captured)
+
+        assert len(doc.stop_rows()) == live_total, (
+            f"{live_total} stops live but {len(doc.stop_rows())} in the assembled "
+            "document — matches were gained or lost by assembly"
+        )
+        frozen_first = [
+            doc.match_row(seq) - doc.row_of_chunk(seq)  # type: ignore[operator]
+            for seq in range(3)
+        ]
+        assert frozen_first == live_first, (
+            f"first match lands at {frozen_first} within each chunk but the live "
+            f"tree puts it at {live_first} — a jump would land off the match"
+        )
+        # Stops must be strictly ordered across the document: n/b walks this list,
+        # so a mis-offset chunk shows up as an out-of-order or duplicated row.
+        rows = doc.stop_rows()
+        assert rows == sorted(set(rows)), f"stop rows not strictly increasing: {rows}"
 
 
 @pytest.mark.asyncio

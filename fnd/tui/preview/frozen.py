@@ -25,9 +25,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from textual.geometry import Size
-from textual.scroll_view import ScrollView
 from textual.strip import Strip
 from textual.widget import Widget
+
+from fnd.tui.strip_document import StripDocumentView
 
 
 @dataclass(slots=True)
@@ -106,6 +107,13 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
             # ``_fnd_match_coords``. Counting both double-counts every table
             # match, which showed up as a frozen chunk reporting 6 stops where
             # the live one reported 5.
+            #
+            # The ``sorted(set(...))`` below masks this whenever a cell block's
+            # row equals the row derived from the DataTable — measured, that is
+            # the common case, so removing this skip does NOT fail the parity
+            # test. It stays because the two disagree once a cell spans rows,
+            # and a silent extra stop is the failure mode this whole path exists
+            # to prevent.
             if isinstance(block, FNDMarkdownTableDT | FNDMarkdownTD | FNDMarkdownTH):
                 continue
             row = _row_within(block, chunk)
@@ -256,7 +264,7 @@ class FrozenDocument:
         return self.chunks[i].strips[row - self.starts[i]]
 
 
-class FrozenDocumentView(ScrollView):
+class FrozenDocumentView(StripDocumentView):
     """A whole file as one widget: captured strips, served by row.
 
     Exists for a reason beyond widget count. Adding content ABOVE the viewport is
@@ -272,28 +280,43 @@ class FrozenDocumentView(ScrollView):
     virtual size in ``_size_updated`` and overrides ``scroll_to`` to skip the
     ``call_after_refresh`` deferral — and every stock line-API widget (RichLog,
     DataTable, Tree, TextArea) is the same shape.
+
+    A document row IS the address here: unlike the flat buffer there is no wrap
+    step between the two. What the base gives us on top of that is the viewport
+    paint, the scroll that survives being called before layout, the match markers
+    and multi-line selection — none of which is substrate-specific.
     """
 
     def __init__(self, document: FrozenDocument, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.document = document
-        self.virtual_size = Size(document.width, document.total_rows)
+        self._sync()
 
-    def render_line(self, y: int) -> Strip:
-        offset = int(self.scroll_offset.y)
-        strip = self.document.line(offset + y)
-        if strip is None:
-            return Strip.blank(self.size.width)
-        x = int(self.scroll_offset.x)
-        return strip.crop(x, x + self.size.width)
+    def _sync(self) -> None:
+        self._strips = [s for chunk in self.document.chunks for s in chunk.strips]
+        self._base_width = max(self.document.width, 1)
+        self._set_extent()
 
-    def _resize(self) -> None:
-        self.virtual_size = Size(self.document.width, self.document.total_rows)
+    # ── Substrate hooks ─────────────────────────────────────────
+
+    @property
+    def match_rows(self) -> list[int]:
+        return self.document.stop_rows()
+
+    def row_of_chunk(self, chunk_id: int) -> int | None:
+        return self.document.row_of_chunk(chunk_id)
+
+    def first_match_row_of_chunk(self, chunk_id: int) -> int | None:
+        return self.document.match_row(chunk_id)
+
+    # ── Growing in either direction ─────────────────────────────
 
     def append(self, chunk: FrozenChunk) -> None:
         """Add below. Never shifts the view, so there is nothing to compensate."""
         self.document.append(chunk)
-        self._resize()
+        self._strips.extend(chunk.strips)
+        self._base_width = max(self.document.width, 1)
+        self._set_extent()
 
     def prepend(self, chunk: FrozenChunk) -> None:
         """Add above WITHOUT the view moving.
@@ -302,18 +325,26 @@ class FrozenDocumentView(ScrollView):
         ``validate_scroll_y`` clamps against the old extent and the view drifts by
         exactly the clamp. ``scroll_to`` keeps ``scroll_y`` and ``scroll_target_y``
         in step, so a later relative scroll starts from the right place.
+
+        The compensating scroll is issued directly rather than through
+        ``scroll_to_address``: that path can defer itself to a later refresh when
+        the widget is not laid out yet, and a deferred compensation is exactly
+        the drift this method exists to avoid.
         """
         self.document.prepend(chunk)
-        self._resize()
+        self._strips[:0] = chunk.strips
+        self._base_width = max(self.document.width, 1)
+        self._set_extent()
         self.scroll_to(y=int(self.scroll_offset.y) + chunk.height, animate=False, immediate=True)
 
     def scroll_to_row(self, row: int, *, context_fraction: float = 0.25) -> None:
         """Drop ``row`` a fraction down the viewport, matching where the widget
         path lands a match, so the two substrates look the same."""
-        margin = int(self.size.height * context_fraction)
-        self.scroll_to(y=max(0, row - margin), animate=False, immediate=True)
+        self.scroll_to_address(row, context_fraction=context_fraction)
 
-    def scroll_to_chunk(self, chunk_seq: int, *, prefer_match: bool = True) -> bool:
+    def scroll_to_chunk_seq(self, chunk_seq: int, *, prefer_match: bool = True) -> bool:
+        """``scroll_to_chunk`` with a found/not-found answer, which the preview
+        needs in order to fall back when a chunk is not warmed yet."""
         row = self.document.match_row(chunk_seq) if prefer_match else None
         if row is None:
             row = self.document.row_of_chunk(chunk_seq)
