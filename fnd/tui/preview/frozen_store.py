@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from fnd.query import FileChunk
     from fnd.tui.widgets.preview_container import PreviewContainer
 
-__all__ = ["FrozenDocumentStore"]
+__all__ = ["ChunkCaptureStore", "FrozenDocumentStore"]
 
 # How many captured documents to keep. Covers moving between a handful of
 # results without the re-decode that PREVIEW_CACHE_MAX_FILES = 1 forces on the
@@ -209,3 +209,77 @@ class FrozenDocumentStore:
         if current.chunks and (best is None or len(current.chunks) > len(best.chunks)):
             best = current
         return best
+
+
+class ChunkCaptureStore:
+    """Captures held per chunk, so a mount can serve one instead of building it.
+
+    Deliberately NOT a :class:`FrozenDocument`. That type stacks chunks into a
+    single row space and so must be contiguous — a gap silently shifts every
+    position after it. This holds a sparse SET, because what coverage captures is
+    the matches scattered through a file, and nothing here does row arithmetic:
+    each capture is looked up by its own chunk_seq and mounted as its own widget.
+
+    Keyed by (file, query, width) for the same reasons as the document store: a
+    capture carries the query's highlighting baked in, and its strips are cut at
+    one width. A resize does not invalidate anything, it simply misses.
+
+    Bounded in rows against the same machine-scaled budget, evicting whole files
+    oldest-first — never the file just written to, which is the one on screen.
+    """
+
+    def __init__(self) -> None:
+        self._files: OrderedDict[tuple[str, str, int], dict[int, FrozenChunk]] = OrderedDict()
+        self._rows = 0
+
+    def get(self, parent_id: str, query_sig: str, width: int, chunk_seq: int) -> FrozenChunk | None:
+        captures = self._files.get((parent_id, query_sig, width))
+        if captures is None:
+            return None
+        return captures.get(chunk_seq)
+
+    def put(self, parent_id: str, query_sig: str, width: int, capture: FrozenChunk) -> None:
+        key = (parent_id, query_sig, width)
+        captures = self._files.get(key)
+        if captures is None:
+            captures = {}
+            self._files[key] = captures
+        previous = captures.get(capture.chunk_seq)
+        if previous is not None:
+            self._rows -= previous.height
+        captures[capture.chunk_seq] = capture
+        self._rows += capture.height
+        self._files.move_to_end(key)
+        self._evict(budget_rows())
+
+    def _evict(self, budget: int) -> None:
+        while len(self._files) > 1 and self._rows > budget:
+            _, dropped = self._files.popitem(last=False)
+            self._rows -= sum(c.height for c in dropped.values())
+
+    def count(self, parent_id: str, query_sig: str, width: int) -> int:
+        return len(self._files.get((parent_id, query_sig, width), {}))
+
+    def total_rows(self) -> int:
+        return self._rows
+
+    def clear(self) -> None:
+        self._files.clear()
+        self._rows = 0
+
+    def drop_other_widths(self, width: int) -> int:
+        """Forget captures cut for a different width; return how many files went.
+
+        They can never be served — the key carries the width, so a lookup at the
+        current width simply misses them — but they would sit here holding
+        strips and evicting captures that ARE usable.
+        """
+        stale = [k for k in self._files if k[2] != width]
+        for key in stale:
+            self._rows -= sum(c.height for c in self._files.pop(key).values())
+        return len(stale)
+
+    def drop_file(self, parent_id: str) -> None:
+        """Forget one file — its content or its highlighting changed."""
+        for key in [k for k in self._files if k[0] == parent_id]:
+            self._rows -= sum(c.height for c in self._files.pop(key).values())

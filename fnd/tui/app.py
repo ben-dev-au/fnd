@@ -301,6 +301,13 @@ class FNDApp(App[None]):
        still need to work — using ``overflow-y: hidden`` would prevent
        that, so we only suppress the bar's chrome, not scrolling. */
     #preview_pane.is-loading { scrollbar-size-vertical: 0; }
+    /* Same duplicate-bar problem as ``-reading``, for the frozen document
+       substrate: FrozenDocumentView is itself a ScrollView filling the pane and
+       carrying the match markers, so the pane's own bar is a second, inert
+       indicator sitting beside the real one — visible on files served from the
+       document store and not on files that took the widget path, which is how
+       it was reported. */
+    #preview_pane.-document { scrollbar-size-vertical: 0; }
     .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
     .chunk-section { padding: 0 0 1 0; height: auto; }
     .chunk-line { padding: 0 0 0 0; height: auto; }

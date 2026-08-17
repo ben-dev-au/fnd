@@ -224,6 +224,61 @@ async def test_a_served_document_never_paints_at_the_previous_files_offset() -> 
         )
 
 
+@pytest.mark.asyncio
+async def test_a_served_document_does_not_paint_two_scrollbars(
+    tmp_path: Path, tmp_index_dir: Path, doc_preview: None
+) -> None:
+    """One position indicator, not two.
+
+    FrozenDocumentView is a ScrollView filling #preview_pane, which is also a
+    VerticalScroll — so the pane's own bar sits beside the document's as a
+    second, inert indicator. Reported from real use as an old-looking position
+    indicator appearing "for some but not all files": the ones served from the
+    document store. The flat path already solves this for Reading View; the
+    same reasoning was never applied here.
+    """
+    index = _corpus(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups) and app._preview.active is not None,
+            timeout=20.0,
+            message="preview never became active",
+        )
+        pane = app.query_one("#preview_pane")
+        assert not pane.has_class("-document"), (
+            "the widget path must leave the pane's own scrollbar alone"
+        )
+
+        group = app._search.groups[0]
+        sig = app._search.query_signature()
+        width = pane.content_size.width
+        await wait_until(
+            pilot,
+            lambda: app._preview.document_store.get(group.parent_id, sig, width) is not None,
+            timeout=20.0,
+            message="nothing was harvested",
+        )
+        other = app._search.groups[1]
+        app._preview.render_full_doc(other.parent_id, focus_chunk_seq=other.hits[0].chunk_seq)
+        await settle(pilot, ticks=10)
+        app._preview.render_full_doc(group.parent_id, focus_chunk_seq=group.hits[0].chunk_seq)
+        await settle(pilot, ticks=10)
+
+        assert app._preview.active_document_view() is not None, (
+            "fixture error: the revisit was not served from the store"
+        )
+        assert pane.has_class("-document"), (
+            "a served document leaves the pane's scrollbar painting a second "
+            "position indicator beside the document's own"
+        )
+
+        # And it must come back when another substrate takes over.
+        app._preview.hide_document_view()
+        assert not pane.has_class("-document")
+
+
 def test_the_store_is_bounded_by_rows_not_by_document_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

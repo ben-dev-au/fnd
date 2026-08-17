@@ -23,6 +23,7 @@ capture: identical palette, correct ink, and an arbitrary capture width —
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from typing import TYPE_CHECKING
 
@@ -68,7 +69,12 @@ class WarmHost:
             # A screen must be MOUNTED before anything can be mounted into it,
             # and only a push mounts it. Popping leaves it installed and alive
             # but not current, which is the state we want.
-            await self._app.push_screen(_SCREEN_NAME)
+            #
+            # The push is NOT awaited, and the pop follows immediately in the
+            # same tick. Awaiting it lets this empty screen become current and
+            # PAINT — measured live, the whole app went blank for 35 consecutive
+            # frames (~1.75s) the first time warming ran, sidebar included.
+            self._app.push_screen(_SCREEN_NAME)
             self._app.pop_screen()
             container = VerticalScroll()
             await screen.mount(container)
@@ -109,6 +115,17 @@ class WarmHost:
             # The screen is not current, so Textual will not lay it out on its
             # own — Screen._on_timer_update gates relayout on is_current. Drive
             # it explicitly at the width the preview pane will paint at.
+            #
+            # TWICE, with a yield to the message pump in between, and the yield
+            # is the part that matters. A DataTable sizes itself in response to
+            # its own posted refresh, so after a single pass it holds its rows
+            # with NO geometry at all — measured rows=3, size=0, virtual=0 — and
+            # the capture comes back with the table's border and none of its
+            # contents. That is the "tables stopped being formatted" report:
+            # an empty box where the table was. A second pass alone does not fix
+            # it (still 0); a pump between them does (size=4, all cells present).
+            self._screen._refresh_layout(Size(width, _LAYOUT_HEIGHT))
+            await asyncio.sleep(0)
             self._screen._refresh_layout(Size(width, _LAYOUT_HEIGHT))
             return freeze(widget, chunk.chunk_seq)
         except Exception:

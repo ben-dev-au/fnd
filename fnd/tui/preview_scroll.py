@@ -302,9 +302,19 @@ class StructuralScrollStrategy:
             return
         # Move the focused-section accent band to the target chunk (FNDMarkdown
         # manages its own focus highlight internally, so skip the band there).
+        #
+        # A frozen chunk is skipped for a different reason: the band paints the
+        # widget's BACKGROUND, and a capture's strips are opaque, so the band
+        # can never tint the content. All it can reach is the one padding row
+        # the strips do not cover — which is the stray amber bar sitting above
+        # the text. It was invisible while a stand-in was sized to its strips
+        # alone, and appeared the moment the stand-in started carrying the
+        # padding it is supposed to have.
+        from fnd.tui.preview.frozen import FrozenChunkView
+
         for w in self._host.chunk_widgets.values():
             w.remove_class("chunk-section-focused")
-        if not isinstance(header, FNDMarkdown):
+        if not isinstance(header, FNDMarkdown | FrozenChunkView):
             header.add_class("chunk-section-focused")
         self._host.call_after_refresh(
             self._do_scroll_to_chunk,

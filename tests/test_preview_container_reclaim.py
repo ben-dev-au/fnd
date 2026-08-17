@@ -58,8 +58,11 @@ def _wide_doc(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_in_file_navigation_does_not_accumulate_containers(
-    tmp_path: Path, tmp_index_dir: Path
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Captures would serve these jumps without building a fresh container,
+    # which is the point of coverage but hides the leak this pins.
+    monkeypatch.setattr("fnd.tui.preview.tuning.COVERAGE_CHUNK_BUDGET", 0)
     index = _wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:

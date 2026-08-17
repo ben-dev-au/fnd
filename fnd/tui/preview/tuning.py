@@ -35,12 +35,26 @@ PREVIEW_CACHE_MIN_CHUNKS = 1
 # Delay before warming extends a captured run to the rest of the file. Long
 # enough that the navigation the user just made has fully landed — warming is
 # for the jump AFTER this one, so it must never compete with the current paint.
+# How long the freeze sweep waits for its container to be revealed before
+# giving up (ticks of 50ms). Capturing from a `-pre-reveal` container yields
+# blank strips with correct geometry — invisible to every guard, and served
+# later as an empty preview.
+FREEZE_REVEAL_WAIT_TICKS = 40
+
 PREVIEW_WARM_DELAY = 0.35
 
 # Chunks mounted per warming batch, with ONE settle per batch. Settling per
 # chunk was slow enough that a 117-chunk file reached 33 before the next
 # navigation cancelled the task.
 PREVIEW_WARM_BATCH = 8
+
+# How many NEIGHBOURING files each side of the cursor coverage captures ahead.
+# Between-file navigation is the slow case: within a file the target is already
+# mounted or served, but arriving at a file with nothing captured pays the full
+# build. Only the neighbours' HIT chunks are captured, so the cost per file is
+# its hit count rather than its size — a 1000-chunk neighbour with eight hits
+# costs eight captures, and the buffer re-plans around the cursor on every move.
+COVERAGE_NEIGHBOUR_FILES = 2
 
 # How long warming waits for an in-flight landing before giving up its turn
 # (ticks of 50ms). Warming must never compete with the scroll the user is
@@ -64,7 +78,30 @@ BACKGROUND_FILL_RADIUS = 3
 # Option C: when the active file is within this many chunks, background-fill it
 # completely so internal match-jumps land on an already-mounted chunk (instant).
 # Larger files stay windowed (radius above) to protect DOM size / input lag.
+#
+# This bounds what is MOUNTED, and it is load-bearing beyond latency: the in-file
+# match count walks the mounted subtree (``MatchNavigator._count_stops``), so a
+# file that stops being filled stops being counted in full. Measured marginal
+# cost of a frozen chunk on a fast machine: 37us of arrange, 78us of a far
+# scroll, 0.9ms to mount — linear, no cliff, with the knee for "a navigation
+# still feels instant" around 1000-2000 mounted chunks.
 FULLMOUNT_CHUNK_BUDGET = 250
+# How many chunks of a file coverage will CAPTURE ahead, so a jump outside the
+# mounted set mounts them instead of building them. Complements the mount budget
+# above rather than replacing it: on a large file the fill reaches nothing, and
+# this is the only thing standing between a far jump and a rebuild from source.
+#
+# The cap is on CAPTURES, not on mounted widgets: captures cost memory (44.5 KB
+# each, so 500 is ~22 MB against a machine-scaled cache budget) and the build
+# time to make them, while costing no arrange time at all. What stays MOUNTED is
+# still the contiguous window — see fnd/tui/preview/coverage.py for why coverage
+# must not put its scattered set into the DOM.
+COVERAGE_CHUNK_BUDGET = 500
+# Chunks captured either side of a hit, so a landing has context above and below
+# it rather than a bare match with unbuilt neighbours. Deliberately smaller than
+# VISIBLE_FIRST_ABOVE/BELOW: coverage is ordered nearest-first, so the chunks
+# around wherever the user actually is get captured before distant margins do.
+COVERAGE_MARGIN = 3
 # Prefetch mounts only the focused chunk per cached file. User-side
 # resume expands on click. Keeps prefetch DOM contribution at
 # ~1 widget per cached file.

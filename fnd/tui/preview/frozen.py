@@ -47,10 +47,21 @@ class FrozenChunk:
     first_match_row: int | None = None
     stop_rows: list[int] = field(default_factory=list)
     cell_rows: dict[tuple[int, int], int] = field(default_factory=dict)
+    # The chunk's own padding, in Textual's (top, right, bottom, left) order.
+    # Captured because the strips are the CONTENT region only: a chunk carries
+    # `.chunk-section` / `.chunk-first` padding, so a stand-in without it is a
+    # row shorter than the widget it replaces.
+    padding: tuple[int, int, int, int] = (0, 0, 0, 0)
 
     @property
     def height(self) -> int:
+        """Rows of content. The stand-in adds ``padding`` on top of this."""
         return len(self.strips)
+
+    @property
+    def outer_height(self) -> int:
+        """Rows the chunk occupied in its container, padding included."""
+        return len(self.strips) + self.padding[0] + self.padding[2]
 
     def is_valid_for(self, width: int) -> bool:
         """Strips are width-locked, so a reflow invalidates the capture."""
@@ -87,7 +98,28 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
     size = chunk.size
     if size.height == 0 or size.width == 0:
         return None
+    # Refuse anything not actually being PAINTED. A hidden widget keeps its
+    # geometry, so the size check above passes, but the compositor renders it
+    # blank — the capture then holds a correctly-sized run of empty strips and
+    # nothing downstream can tell. The background fill hides widgets while it
+    # works and restores them in a `finally` that runs AFTER the freeze sweep,
+    # so this is reachable on every file whose tail is filled that way, and it
+    # shows up as matches near the end of a file rendering blank.
+    node: Widget | None = chunk
+    while node is not None:
+        if not getattr(node, "display", True):
+            return None
+        if getattr(node, "styles", None) is not None and getattr(node.styles, "opacity", 1.0) == 0:
+            return None
+        node = node.parent if isinstance(node.parent, Widget) else None
     for dt in chunk.query(DataTable):
+        # A table that holds rows but has NO geometry has not been laid out, and
+        # capturing it yields the border with none of the contents — an empty
+        # box, indistinguishable downstream from a table that is genuinely
+        # empty. The nested-scroll check below cannot see this: an unlaid table
+        # measures 0 both ways, so `virtual > size` is `0 > 0` and passes.
+        if dt.row_count > 0 and (dt.size.height <= 0 or dt.virtual_size.height <= 0):
+            return None
         if dt.virtual_size.height > dt.size.height or dt.virtual_size.width > dt.size.width:
             return None
 
@@ -141,6 +173,7 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
     full = Size(size.width, max(size.height, chunk.virtual_size.height))
     comp = Compositor()
     comp.reflow(chunk, full)
+    pad = chunk.styles.padding
     return FrozenChunk(
         chunk_seq=chunk_seq,
         width=full.width,
@@ -148,6 +181,7 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
         first_match_row=first_match_row,
         stop_rows=stop_rows,
         cell_rows=cell_rows,
+        padding=(pad.top, pad.right, pad.bottom, pad.left),
     )
 
 
@@ -175,7 +209,18 @@ class FrozenChunkView(Widget):
         # A fixed height, equal to what the widget tree occupied — so swapping
         # the tree for this moves nothing on screen and needs no scroll
         # compensation, unlike removing the chunk outright.
-        self.styles.height = frozen.height
+        #
+        # "What it occupied" includes the chunk's padding. The strips are the
+        # CONTENT region, and a chunk carries `.chunk-section` (one row below)
+        # or `.chunk-first` (one row above), so a stand-in sized to the strips
+        # alone is a row short. That row is invisible on its own and lethal in
+        # aggregate: the sweep freezes chunks ABOVE the viewport too, and
+        # shrinking the content above without touching scroll_y slides what the
+        # user is reading upward — measured at exactly -6 rows for 6 chunks
+        # frozen above, a second or two after the navigation landed.
+        top, right, bottom, left = frozen.padding
+        self.styles.padding = (top, right, bottom, left)
+        self.styles.height = frozen.outer_height
         # Read by the scroll strategy in place of descending into a widget tree.
         self.fnd_first_match_row = frozen.first_match_row
 
@@ -294,12 +339,6 @@ class FrozenDocumentView(StripDocumentView):
         scrollbar-gutter: stable;
     }
     FrozenDocumentView.-hidden { display: none; }
-    /* Laid out, scrollable, but not yet painted — the same trick the per-chunk
-       containers use. display:none gives the widget no height, so a scroll
-       issued while hidden has nothing to resolve against and defers; revealing
-       first instead paints one settled frame at the WRONG offset before the
-       jump. Opacity keeps the geometry so the scroll can land before the reveal. */
-    FrozenDocumentView.-pre-reveal { opacity: 0%; }
     """
 
     def __init__(self, document: FrozenDocument, **kwargs: Any) -> None:
@@ -320,8 +359,7 @@ class FrozenDocumentView(StripDocumentView):
         Resets the scroll. Reusing the widget means it carries the PREVIOUS
         file's offset otherwise, so the new file paints at a position that means
         nothing in it — a settled frame at the wrong place, then the jump to the
-        match. Row 0 is not where the match is either, which is why the caller
-        keeps the view unpainted (``-pre-reveal``) until the scroll lands.
+        match; the caller scrolls to the match immediately afterwards.
         """
         self.document = document
         self._sync()
@@ -333,19 +371,6 @@ class FrozenDocumentView(StripDocumentView):
         # this moment would clamp against the OUTGOING document's extent.
         self._refresh_match_scrollbar()
         self.refresh()
-
-    @property
-    def is_positioned(self) -> bool:
-        """Whether the scroll this view was given has actually landed.
-
-        The caller reveals on this rather than assuming the scroll was
-        synchronous: while the view is hidden it has no height, so
-        ``_apply_pending_scroll`` defers itself and the "already landed" claim
-        is false exactly when it matters.
-        """
-        return self._pending_scroll_address is None
-
-    # ── Substrate hooks ─────────────────────────────────────────
 
     @property
     def match_rows(self) -> list[int]:

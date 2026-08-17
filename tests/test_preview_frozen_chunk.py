@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.containers import VerticalScroll
+from textual.containers import Container, VerticalScroll
+from textual.geometry import Size
 from textual.widgets import DataTable
 
 from fnd.matching import MatchSpec
@@ -139,6 +140,76 @@ async def test_the_stand_in_is_one_widget_of_the_same_height() -> None:
         assert "cell" in rendered
 
 
+class _PaddedHost(App[None]):
+    """A chunk as the preview actually mounts it — with the padding classes.
+
+    ``_Host`` deliberately has none, so it cannot see this: ``freeze`` captures
+    the CONTENT region, and a stand-in sized to that alone is a row shorter than
+    the padded widget it replaces.
+    """
+
+    CSS = """
+    #pane { height: 100%; }
+    #body { height: auto; }
+    .chunk-section { padding: 0 0 1 0; height: auto; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="pane"), Container(id="body"):
+            for i in range(4):
+                yield FNDMarkdown(
+                    match_spec=MatchSpec.from_query("quartzfin"),
+                    id=f"c{i}",
+                    classes="chunk-section chunk-md-body",
+                )
+
+
+@pytest.mark.asyncio
+async def test_freezing_above_the_viewport_does_not_move_the_page() -> None:
+    """The sweep freezes chunks ABOVE the viewport as well as below.
+
+    If a stand-in is even one row shorter than the chunk it replaces, the
+    content above the viewport shrinks while ``scroll_y`` stays put, and
+    everything the user is reading slides upward — a second or two after the
+    navigation landed, which is exactly when it reads as the page jumping on its
+    own. Measured before the padding was carried across: -6 rows for 6 chunks.
+    """
+    app = _PaddedHost()
+    async with app.run_test(size=(90, 24)) as pilot:
+        for i in range(4):
+            md = app.query_one(f"#c{i}", FNDMarkdown)
+            md.update(DOC)
+            await md.build_done.wait()
+        for _ in range(15):
+            await pilot.pause()
+
+        above = [app.query_one(f"#c{i}", FNDMarkdown) for i in range(3)]
+        assert all(w.outer_size.height > w.size.height for w in above), (
+            "fixture must actually have padding, or this proves nothing"
+        )
+
+        pane = app.query_one("#pane", VerticalScroll)
+        reading = app.query_one("#c3", FNDMarkdown)
+        pane.scroll_to(y=reading.virtual_region.y, animate=False)
+        for _ in range(8):
+            await pilot.pause()
+        before = reading.region.y - pane.region.y
+
+        for i, md in enumerate(above):
+            captured = freeze(md, chunk_seq=i)
+            assert captured is not None
+            md.parent.mount(FrozenChunkView(captured), before=md)  # type: ignore[union-attr]
+            md.remove()
+        for _ in range(15):
+            await pilot.pause()
+
+        after = reading.region.y - pane.region.y
+        assert after == before, (
+            f"the page moved {after - before:+d} rows when {len(above)} chunks above it "
+            "were frozen — the stand-ins are not the height of what they replaced"
+        )
+
+
 @pytest.mark.asyncio
 async def test_a_chunk_that_scrolls_inside_itself_is_refused() -> None:
     """The one thing a flat run of strips cannot represent. Nothing should hit
@@ -189,4 +260,32 @@ async def test_a_frozen_chunk_still_contributes_its_match_stops() -> None:
         assert frozen_stops == live_stops, (
             f"{live_stops} stops live but {frozen_stops} once frozen — "
             "the chunk's matches became unreachable by n/b and the markers"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_table_that_has_not_laid_out_is_refused() -> None:
+    """An unlaid table captures as a BORDER with no contents — an empty box, and
+    downstream nothing can tell it from a table that is genuinely empty.
+
+    The nested-scroll guard cannot see this: an unlaid table measures 0 both
+    ways, so ``virtual > size`` is ``0 > 0`` and passes. Measured off-screen,
+    where layout has to be driven by hand: rows=3, size=0, virtual=0, and the
+    capture came back holding the border and none of the cells.
+    """
+    app = _Host()
+    async with app.run_test(size=(90, 24)) as pilot:
+        md = await _built(pilot)
+        dt = next(iter(md.query(DataTable)), None)
+        assert dt is not None, "fixture should render a DataTable"
+        assert dt.row_count > 0
+        assert freeze(md, chunk_seq=7) is not None, "a laid-out table must be capturable"
+
+        # Exactly the state an off-screen build is in before the message pump
+        # has run: rows present, geometry not yet assigned.
+        dt._size = Size(0, 0)  # type: ignore[attr-defined]
+        dt.virtual_size = Size(0, 0)
+        assert freeze(md, chunk_seq=7) is None, (
+            "a table with rows but no geometry was captured — it would be served "
+            "as an empty box where the table should be"
         )
