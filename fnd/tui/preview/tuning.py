@@ -56,6 +56,34 @@ PREVIEW_WARM_BATCH = 8
 # costs eight captures, and the buffer re-plans around the cursor on every move.
 COVERAGE_NEIGHBOUR_FILES = 2
 
+# How long coverage must stand idle after each capture, as a multiple of what
+# that capture cost. A capture builds a real markdown widget, and Textual pumps
+# its blocks through the SAME event loop the UI runs on — so a capture in flight
+# is a frozen UI, and the yield between captures is the only place to give the
+# loop back.
+#
+# Measured without this, sitting still for 12s after opening a file: 154
+# captures, median 52ms each, 10.1 SECONDS of the 12 spent inside a capture —
+# 84% of the loop, with stalls up to 393ms. Responsive enough to open a file and
+# then find that changing focus or stepping to the next match takes a second or
+# more to answer. 2.0 leaves the loop idle twice as long as coverage used it,
+# capping coverage at roughly a third of the loop.
+# Measured share of the event loop coverage takes, over a 12s idle window on a
+# real corpus:
+#
+#   ratio   captures   loop time capturing   worst capture
+#   none        154     10.1s of 12  (84%)      384ms
+#   2.0          72      4.1s of 12  (34%)      209ms
+#   4.0          44      2.5s of 12  (21%)      169ms
+#   6.0          33      1.9s of 12  (16%)      159ms
+#
+# 4.0 because the cache is worth nothing if filling it makes the app feel slow,
+# and a fifth of the loop still fills 44 chunks in a quiet 12 seconds. Raise it
+# for a calmer app, lower it to warm faster.
+COVERAGE_IDLE_RATIO = 4.0
+# Ceiling on that idle period, so one pathological chunk cannot park coverage.
+COVERAGE_IDLE_MAX = 0.5
+
 # How long warming waits for an in-flight landing before giving up its turn
 # (ticks of 50ms). Warming must never compete with the scroll the user is
 # waiting on — that competition cost 170ms -> 579ms median on a real corpus.

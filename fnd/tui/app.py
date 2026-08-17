@@ -524,6 +524,19 @@ class FNDApp(App[None]):
         self._refresh_preview_match_indicator()
         self._refresh_footer_hints()
 
+    async def _on_exit_app(self) -> None:
+        """Stop background work before Textual tears the app down.
+
+        Textual's exit drains the message queue, and the preview's background
+        capturing holds the event loop for the length of each build — so a quit
+        issued mid-capture waits for work whose result is about to be discarded.
+        """
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self._preview.stop_background_work()
+        await super()._on_exit_app()
+
     def on_mount(self) -> None:
         # Tokyo-night theme: muted blue/teal pastel palette per user request.
         self.theme = "tokyo-night"

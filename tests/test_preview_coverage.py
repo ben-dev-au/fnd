@@ -14,6 +14,7 @@ and prefetch to zero, so it cannot reproduce the timings that motivate any of it
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import cast
 
@@ -268,3 +269,56 @@ async def test_coverage_does_not_hold_the_mount_in_flight(
                 "awaited by the mount task, which blocks lazy mount for its whole run"
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_coverage_stands_down_while_lazy_mount_runs(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Both are background mount work, and they must not overlap.
+
+    Lazy mount's above-path awaits a SETTLED message pump before it can measure
+    how far its prepend moved the anchor. Coverage feeds that pump continuously
+    — a widget mounted and removed per capture — so running both at once left an
+    upward scroll mounting nothing at all, which is a wall the user hits when
+    scrolling back up through a file.
+    """
+    index = _wide_doc(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups) and app._preview.active is not None,
+            timeout=20.0,
+            message="preview never became active",
+        )
+        presenter = app._preview
+        group = app._search.groups[0]
+        searcher = app._search.searcher
+        assert searcher is not None
+        chunks = searcher.get_file_chunks(group.parent_id)
+        width = app.query_one("#preview_pane").content_size.width
+        sig = app._search.query_signature()
+        spec = app._effective_match_spec
+
+        # A lazy-mount batch that never finishes, so the only thing that can end
+        # the wait is the check under test.
+        blocker: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        app._lazy.task = asyncio.ensure_future(blocker)
+        try:
+            targets = [i for i, c in enumerate(chunks) if c.chunk_seq == group.hits[0].chunk_seq]
+            assert targets, "need a hit chunk to try to capture"
+            before = presenter.capture_store.count(group.parent_id, sig, width)
+            job = asyncio.create_task(
+                presenter._capture_targets(group.parent_id, sig, width, chunks, targets, spec)
+            )
+            for _ in range(12):
+                await pilot.pause()
+            assert presenter.capture_store.count(group.parent_id, sig, width) == before, (
+                "coverage captured while a lazy-mount batch was in flight — the two "
+                "compete for the same message pump"
+            )
+        finally:
+            blocker.set_result(None)
+            app._lazy.task = None
+        await job

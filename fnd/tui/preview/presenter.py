@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -74,6 +75,44 @@ def target_from_node_data(data: Any) -> tuple[str, int] | None:
         top = g.hits[0] if g.hits else None
         return (g.parent_id, top.chunk_seq if top else 0)
     return None
+
+
+async def _decode_abandonable(fn: Callable[..., Any], *args: Any) -> Any:
+    """Run ``fn`` off the loop on a thread the process may exit without.
+
+    ``asyncio.to_thread`` uses the loop's default executor, and the loop drains
+    that executor before the process can exit — so quitting while a neighbour's
+    chunks are being decoded means waiting for a decode whose result is about to
+    be thrown away. Measured on a real corpus: 0.46s to quit with no neighbour
+    covering against 0.77s with it.
+
+    A daemon thread is not joined at exit, so an abandoned decode costs nothing.
+    Safe precisely because the work is a read-only query whose only effect is
+    the value it returns: dropping it mid-flight leaves nothing half-written.
+    """
+    import threading
+
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[Any] = loop.create_future()
+
+    def settle(setter: Callable[[], None]) -> None:
+        if not future.done():
+            setter()
+
+    def work() -> None:
+        try:
+            result = fn(*args)
+        except BaseException as raised:
+            # Bound to a name that OUTLIVES the except block: Python unbinds the
+            # `as` target on exit, so a lambda closing over it raises NameError
+            # on the loop thread instead of relaying the failure.
+            failure = raised
+            loop.call_soon_threadsafe(settle, lambda: future.set_exception(failure))
+        else:
+            loop.call_soon_threadsafe(settle, lambda: future.set_result(result))
+
+    threading.Thread(target=work, daemon=True, name="fnd-coverage-decode").start()
+    return await future
 
 
 class PreviewPresenter:
@@ -2365,6 +2404,19 @@ class PreviewPresenter:
                 container.parent_doc_id, container.query_signature, width, doc, chunks, container
             )
 
+    def stop_background_work(self) -> None:
+        """Cancel everything this presenter runs in the background.
+
+        Called on app exit. Without it, coverage keeps capturing while Textual
+        is trying to shut down — and since a capture holds the event loop for
+        the whole of its build, the quit has to wait its turn. Measured on a
+        real corpus: 0.49s to quit with coverage off against 1.09s with it on,
+        of which pacing the captures recovered about half and this the rest.
+        """
+        for task in (self._coverage_task, self._warm_task, self._warm_bootstrap):
+            if task is not None and not task.done():
+                task.cancel()
+
     def hit_indices(self, parent_id: str, chunks: list[FileChunk]) -> list[int]:
         """Indices of the chunks the results list can navigate to in this file.
 
@@ -2584,9 +2636,18 @@ class PreviewPresenter:
         if searcher is None:
             return []
         try:
-            return await asyncio.to_thread(searcher.get_file_chunks, parent_id)
+            chunks = await _decode_abandonable(searcher.get_file_chunks, parent_id)
         except Exception:
             return []
+        # Keep it, in the same cache the mount path reads. A neighbour decoded
+        # here would otherwise be decoded AGAIN on every later coverage run, and
+        # a THIRD time when the user actually navigates to it. Caching makes it
+        # once per file per query — which is also what stops an in-flight decode
+        # sitting between the user and a quit: measured 0.80s to quit against a
+        # 0.49s baseline while decodes were still being repeated.
+        if chunks:
+            self.chunk_cache[parent_id] = chunks
+        return chunks
 
     async def _capture_targets(
         self,
@@ -2618,16 +2679,29 @@ class PreviewPresenter:
                 # Plain-layout chunks have no off-screen builder; they stay on
                 # the live mount path and nothing here can serve them.
                 continue
-            # Never compete with a landing the user is waiting on.
+            # Never compete with a landing the user is waiting on, nor with a
+            # lazy-mount batch. Both matter, and for different reasons: the
+            # landing is what the user is watching, while lazy mount's
+            # above-path awaits a SETTLED message pump before it can measure
+            # how far its prepend moved the anchor — and coverage feeds that
+            # pump continuously, mounting and removing a widget per capture.
+            # Overlapping them left an upward scroll mounting nothing at all.
             for _ in range(tuning.PREVIEW_WARM_YIELD_TICKS):
-                if not self._app._preview_scroll.is_settling:
+                lazy = getattr(self._app._lazy, "task", None)
+                lazy_busy = lazy is not None and not lazy.done()  # type: ignore[attr-defined]
+                if not self._app._preview_scroll.is_settling and not lazy_busy:
                     break
                 await asyncio.sleep(0.05)
+            started = time.perf_counter()
             capture = await self._warm_host.capture(chunk, width, match_spec=spec)
             if capture is not None:
                 self.capture_store.put(parent_id, query_sig, width, capture)
                 captured += 1
-            await asyncio.sleep(0)
+            # Hand the loop back for longer than we just held it. Without this
+            # coverage ran flat out — measured at 84% of the event loop — and a
+            # UI that only gets a sixth of its own loop is a UI that freezes.
+            cost = time.perf_counter() - started
+            await asyncio.sleep(min(cost * tuning.COVERAGE_IDLE_RATIO, tuning.COVERAGE_IDLE_MAX))
         return captured
 
     def start_warming(
