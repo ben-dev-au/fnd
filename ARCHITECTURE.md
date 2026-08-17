@@ -191,19 +191,26 @@ rest into one 0..1 fraction; that normalisation is what lets operations
 with no unit in common share a line.
 
 A plan also declares its `OperationKind`. INTERACTIVE work answers
-something the user just did and always owns the line; AMBIENT work — a
+something the user just did and always owns the bar; AMBIENT work — a
 background reindex — is *suspended* while that happens and resumes
 afterwards, so a run spanning hundreds of navigations is not retired by
-the first one. Since only one can be on screen at a time, ambient is
-also the only class that carries a label, and it paints in a dimmer
-accent: a line that appears without the user touching anything reads
-differently from one that answers a keypress. Its stall backstop is
-correspondingly looser, because its terminator (`task.done()`) is a real
-result rather than an inference.
+the first one. It also paints in a dimmer accent, so a line that appears
+without the user touching anything reads differently from one that
+answers a keypress. Its stall backstop is correspondingly looser,
+because its terminator (`task.done()`) is a real result rather than an
+inference.
 
-Queries deliberately have no session: a query is debounced typing, so a
-line would appear and clear on nearly every keystroke. Search runs off
-the loop instead, which is the reassurance a query actually needs.
+The strip grows a **second row** for as long as ambient work is running,
+carrying that run's status text. It does two jobs. The bar can then show
+what the user is waiting on while the row beneath shows what is running
+on its own, instead of the two taking turns. And it keeps text out of
+the bar's row, which is a rendering constraint rather than a preference:
+`─` is drawn at the middle of its cell while text sits on a baseline
+near the bottom of one, so a label beside the bar reads as crowding the
+footer with a gap above it. The row is taken only while a run exists —
+reserving it permanently would cost a row of preview for something idle
+almost all the time, and a height change shifts the preview without
+re-wrapping it (only a width change re-wraps).
 
 Sessions are owned: closing one that has already been superseded does
 nothing. Visibility is policy, not caller choice — a session paints on

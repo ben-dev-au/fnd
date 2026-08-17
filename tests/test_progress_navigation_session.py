@@ -173,5 +173,41 @@ async def test_a_background_index_survives_a_navigation_in_the_real_app(
         nav.close()
         await wait_until(pilot, lambda: bar.ambient is True, timeout=5.0)
         assert not index.closed
-        assert bar.label == "default · 3 of 40 files"
+        assert bar.status == "default · 3 of 40 files"
         running = False
+
+
+@pytest.mark.asyncio
+async def test_the_status_row_appears_and_lays_out_in_the_real_app(
+    two_file_index: Path,
+) -> None:
+    """The status row changes the widget's HEIGHT, which a stub bar cannot
+    see at all. Checked here: the row appears only while background work is
+    running, the widget really becomes two rows tall, the preview gives up
+    exactly one row for it, and both rows render.
+    """
+    app = FNDApp(index_dir=two_file_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _search(pilot, app)
+        bar = app.query_one(FNDProgressBar)
+        pane = app.query_one("#preview_pane")
+        await wait_until(pilot, lambda: app._progress.active is None, timeout=5.0)
+        await pilot.pause()
+        idle_height, idle_pane = bar.size.height, pane.size.height
+        assert idle_height == 1
+
+        running = True
+        index = app._progress.begin(
+            INDEX, label="default · 13 of 43 files", sampler=lambda _s: running
+        )
+        await wait_until(pilot, lambda: bar.size.height == 2, timeout=5.0)
+        assert bar.status == "default · 13 of 43 files"
+        assert pane.size.height == idle_pane - 1, "the row came from somewhere unexpected"
+        rendered = bar.render()
+        assert len(list(rendered.renderables)) == 2  # type: ignore[attr-defined]
+
+        running = False
+        index.close()
+        await wait_until(pilot, lambda: bar.size.height == 1, timeout=5.0)
+        assert pane.size.height == idle_pane, "the preview never got its row back"

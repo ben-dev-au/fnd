@@ -74,17 +74,7 @@ async def test_a_query_returns_to_the_caller_immediately(index: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_running_search_keeps_the_ui_live_and_puts_no_line_up(index: Path) -> None:
-    """A query deliberately gets no progress line.
-
-    It is debounced typing, so one would appear and clear on nearly every
-    keystroke — and the minimum-visible rule that stops a fast preview load
-    reading as a flash would turn each character typed into most of a second
-    of movement under the panes. What a query actually needs is for the UI to
-    stay live while it runs, which is what the worker thread buys, and
-    reaching this assertion at all is the proof: with the search on the loop,
-    ``run`` would not return until it had finished.
-    """
+async def test_the_progress_line_is_up_while_the_search_runs(index: Path) -> None:
     app = FNDApp(index_dir=index)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -101,9 +91,8 @@ async def test_a_running_search_keeps_the_ui_live_and_puts_no_line_up(index: Pat
         app._search.run("target")
         await wait_until(pilot, started.is_set)
         session = app._progress.active
-        assert session is None or not session.operation_id.startswith("search"), (
-            "a query put a line up"
-        )
+        assert session is not None, "a running search shows nothing"
+        assert session.operation_id == "search"
         release.set()
         await wait_until(pilot, lambda: app._search.idle)
 
@@ -276,3 +265,32 @@ async def test_a_malformed_query_supersedes_the_search_already_running(index: Pa
             "the superseded search committed and cleared the error notice"
         )
         assert not app._search.groups, "a superseded search reached the result set"
+
+
+@pytest.mark.asyncio
+async def test_the_search_plan_uses_both_of_its_phases(index: Path) -> None:
+    """A declared phase that is never entered is dead weight: it caps the line
+    at the earlier phase's share and its duration never reaches calibration,
+    so its weight stays at the seed for good."""
+    from fnd.tui.progress.operations import SEARCH
+
+    app = FNDApp(index_dir=index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        phases: list[str] = []
+        original_enter = app._search.__class__._commit
+
+        def recording(self: Any, request: Any, groups: Any, trace: Any, session: Any) -> Any:
+            result = original_enter(self, request, groups, trace, session)
+            phases.append(session.phase)
+            return result
+
+        app._search.__class__._commit = recording  # type: ignore[method-assign]
+        try:
+            await run_search(pilot, app, "target")
+        finally:
+            app._search.__class__._commit = original_enter  # type: ignore[method-assign]
+
+    assert phases, "setup — the search never committed"
+    assert phases[-1] == "results", "the commit stage never entered its own phase"
+    assert {p.key for p in SEARCH.phases} == {"query", "results"}

@@ -377,3 +377,37 @@ def test_a_signal_from_the_other_path_does_not_retire_the_line(
 
     assert tracker.sample(session) is True, "a foreign signal retired the line"
     assert session.phase == "decode", "the session left its own plan"
+
+
+def test_a_navigation_that_ends_between_samples_still_retires_its_phases(
+    app: StubApp, tracker: PreviewProgressTracker
+) -> None:
+    """An observer only sees a phase if a tick falls inside it — and the event
+    loop is saturated during exactly the work this line reports on, so ticks
+    are dropped and the pipeline can pass through build and land between two
+    samples.
+
+    Measured on a real corpus: 7 of 31 navigations finished while the tracker
+    still believed they were mounting. ``mount`` is followed by 53% of the
+    bar, so those sat at a median fill of 0.50 and then jumped to full — the
+    "pauses halfway, then completes" report. The work being over means every
+    phase of it is over, so the last sample retires them.
+    """
+    preview = app._preview
+    preview.busy = True
+    preview.mount_task = StubTask(done=False)
+    preview.active = StubContainer(parent_doc_id="doc", total_chunks=20, mounted=3)
+
+    session = tracker.begin("doc")
+    assert tracker.sample(session) is True
+    assert session.phase == "mount"
+    fill_while_mounting = session.fraction
+
+    # Everything completes in one go, with no tick in between.
+    preview.busy = False
+    preview.mount_task = StubTask(done=True)
+    assert tracker.sample(session) is False
+    assert session.phase == "land", "the finished phases were never retired"
+    assert session.fraction > fill_while_mounting + 0.25, (
+        "the line would still jump from part-filled straight to complete"
+    )

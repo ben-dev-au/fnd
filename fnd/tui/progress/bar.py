@@ -16,8 +16,10 @@ from __future__ import annotations
 from typing import ClassVar
 
 from rich.cells import cell_len
-from rich.segment import Segment, Segments
+from rich.console import Group
+from rich.segment import Segment
 from rich.style import Style as RichStyle
+from rich.text import Text
 from textual.app import RenderResult
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -108,14 +110,21 @@ class FNDProgressBar(Widget):
         padding: 0 1;
         background: transparent;
     }
+    /* A second row, and only while background work is actually running. It
+       carries that work's status text, which is why the bar's own row never
+       has to: `─` is drawn at the middle of its cell but text sits on a
+       baseline near the bottom of one, so a label sharing the bar's row reads
+       as crowding the footer with a gap above it. That is the font, not the
+       layout, and the only fix is to keep text out of that row. */
+    FNDProgressBar.-with-status { height: 2; }
     /* visibility:hidden keeps the row, so toggling never reflows the panes above. */
     FNDProgressBar.-idle { visibility: hidden; }
     FNDProgressBar > .progress--fill  { color: $accent; }
     /* Ambient work — a background reindex — in the same accent at half
-       strength. Two operations can never share the line, so this is what
-       separates "the thing I just asked for" from "something running on its
-       own": a line that appears without the user touching anything is
-       visibly quieter, and it is also the only one that carries a label. */
+       strength. With the status row, the two can now be on screen at once:
+       the bar is whatever the user is waiting on, the row beneath it is what
+       is running on its own. The dimmer fill is what says which is which when
+       the background run has the bar to itself. */
     FNDProgressBar > .progress--fill-ambient { color: $accent 50%; }
     /* Same colour family and weight as ``border: round $primary 50%`` on the
        panes, one step dimmer so the fill reads against it. */
@@ -126,6 +135,7 @@ class FNDProgressBar(Widget):
     fraction: reactive[float] = reactive(0.0)
     label: reactive[str] = reactive("")
     ambient: reactive[bool] = reactive(False)
+    status: reactive[str] = reactive("")
 
     def __init__(self) -> None:
         super().__init__(id="fnd_progress", classes="-idle")
@@ -144,19 +154,42 @@ class FNDProgressBar(Widget):
         self.fraction = 0.0
         self.label = ""
         self.ambient = False
+        self.status = ""
+
+    def watch_status(self, status: str) -> None:
+        """The status row exists only while there is something to put in it.
+
+        Reserving it permanently would cost a row of preview for something
+        that is idle almost all the time; taking the row for the duration of
+        a background run costs one reflow at each end of a run that lasts
+        minutes. A height change does not re-wrap the preview — only a width
+        change does — so this is a shift, not a reflow of the content.
+        """
+        self.set_class(bool(status), "-with-status")
 
     def render(self) -> RenderResult:
         fill = "progress--fill-ambient" if self.ambient else "progress--fill"
-        return Segments(
-            progress_line_segments(
-                width=self.content_size.width,
-                fraction=self.fraction,
-                label=self.label,
-                fill_style=self.get_component_rich_style(fill),
-                track_style=self.get_component_rich_style("progress--track"),
-                label_style=self.get_component_rich_style("progress--label"),
+        bar = Text(no_wrap=True, overflow="crop")
+        for segment in progress_line_segments(
+            width=self.content_size.width,
+            fraction=self.fraction,
+            label=self.label,
+            fill_style=self.get_component_rich_style(fill),
+            track_style=self.get_component_rich_style("progress--track"),
+            label_style=self.get_component_rich_style("progress--label"),
+        ):
+            bar.append(segment.text, segment.style)
+        if not self.status:
+            return bar
+        return Group(
+            bar,
+            Text(
+                self.status,
+                style=self.get_component_rich_style("progress--label"),
+                no_wrap=True,
+                overflow="ellipsis",
+                end="",
             ),
-            new_lines=False,
         )
 
 

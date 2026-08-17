@@ -322,12 +322,15 @@ async def test_the_mounted_widget_renders_a_full_width_line(
         # the pane above keeps its geometry across the toggle.
         assert pane.region == idle_pane_region
 
-        segments = list(widget.render().segments)  # type: ignore[attr-defined]
-        text = "".join(s.text for s in segments)
+        # render() is a Rich Text for the bar row (and a Group once the status
+        # row exists), so read the spans rather than assuming segments.
+        rendered = widget.render()
+        text = rendered.plain  # type: ignore[attr-defined]
         assert len(text) == widget.content_size.width > 40
         assert set(text) == {FILL_GLYPH, TRACK_GLYPH}
         # The two runs must be distinguishable, or progress reads as nothing.
-        assert len({s.style for s in segments if s.text}) == 2
+        styles = {span.style for span in rendered.spans}  # type: ignore[attr-defined]
+        assert len(styles) == 2
 
         widget.hide()
         await pilot.pause()
@@ -618,7 +621,9 @@ def test_a_background_run_gets_the_line_back_after_a_navigation() -> None:
     assert not index.closed, "the background run was retired by an unrelated navigation"
     assert bar.visible
     assert bar.ambient is True
-    assert bar.label == "CPL · 3 of 40 files"
+    # Its text is on the status row, never beside the bar.
+    assert bar.label == ""
+    assert bar.status == "CPL · 3 of 40 files"
 
 
 def test_a_background_run_that_ended_unseen_does_not_come_back() -> None:
@@ -687,3 +692,59 @@ def test_the_backstops_scale_with_the_class_of_work() -> None:
             f"{plan.operation_id}: the watchdog beats its own stall cap, "
             "so the stall path is dead code"
         )
+
+
+def test_both_classes_of_work_are_visible_at_once() -> None:
+    """The bar answers the keypress; the status row says what is running on
+    its own. Before the second row they took turns, so with two things going
+    the user could only ever see one of them — and could not tell which."""
+    facility, bar, _clock = make_facility()
+    facility.begin(AMBIENT_PLAN, label="CPL · 3 of 40 files", sampler=lambda _s: True)
+    facility.begin(ONE_PHASE, sampler=lambda _s: True)
+
+    assert bar.ambient is False, "the bar should be showing the navigation"
+    assert bar.label == ""
+    assert bar.status == "CPL · 3 of 40 files", (
+        "the background run vanished the moment the user navigated"
+    )
+
+
+def test_the_status_row_keeps_up_while_it_is_suspended() -> None:
+    """A file counter that froze the instant you touched an arrow key would
+    be worse than no counter: it reads as a stalled index."""
+    facility, bar, _clock = make_facility()
+    index = facility.begin(AMBIENT_PLAN, label="CPL · 3 of 40 files", sampler=lambda _s: True)
+    facility.begin(ONE_PHASE, sampler=lambda _s: True)
+
+    index.set_label("CPL · 11 of 40 files")
+    assert bar.status == "CPL · 11 of 40 files"
+
+
+def test_the_status_row_goes_away_with_the_run_that_owns_it() -> None:
+    """It costs a row of preview height while it exists, so it may not
+    outlive the thing it reports on."""
+    facility, bar, clock = make_facility()
+    alive = True
+    facility.begin(AMBIENT_PLAN, label="CPL", sampler=lambda _s: alive)
+    assert bar.status == "CPL"
+
+    alive = False
+    settle(facility, clock)
+    assert bar.status == ""
+
+
+def test_background_text_never_lands_in_the_bars_row() -> None:
+    """`─` is drawn at the middle of its cell and text sits on a baseline near
+    the bottom of one, so a label sharing the bar's row reads as crowding the
+    footer with a gap above it. That is the font, not the layout — the fix is
+    to keep the background run's text out of that row entirely, which is what
+    the status row is for.
+
+    Checked with the ambient run holding the line on its own, since that is
+    the case that used to put its label beside the bar.
+    """
+    facility, bar, _clock = make_facility()
+    facility.begin(AMBIENT_PLAN, label="CPL · 3 of 40 files", sampler=lambda _s: True)
+    assert bar.ambient is True, "setup — the background run should hold the line"
+    assert bar.label == "", "background text is back in the bar's row"
+    assert bar.status == "CPL · 3 of 40 files"

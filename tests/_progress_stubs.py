@@ -24,6 +24,7 @@ class StubBar:
         self._fraction = 0.0
         self.label = ""
         self.ambient = False
+        self.status = ""
         self.visible = False
         self.content_size = StubSize(width)
         # Textual repaints on a reactive assignment, so counting the writes

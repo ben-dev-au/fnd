@@ -73,26 +73,57 @@ PREVIEW_COLD = OperationPlan(
 # times in 29 navigations while holding 36% of the bar. Everything after the
 # decode happens in a single unobservable step; pretending otherwise is what
 # left the fill at a median of 0.167.
+#
+# Seeded BELOW the measured median, deliberately. This phase's duration spans
+# more than an order of magnitude (p25 226 ms, median ~1080 ms, p75 3135 ms),
+# so no single expectation fits and the choice is which way to be wrong. The
+# curve is asymmetric: a phase that overruns creeps asymptotically from 0.78
+# towards 0.97, which still reads as progress, while one that finishes early
+# is capped proportionally — 55% of the expected duration means a bar that
+# stops at 0.43. For a high-variance phase, under-estimating is the graceful
+# failure. Two real-corpus runs measured medians of 1325 ms and 1767 ms.
 PREVIEW_COLD_FLAT = OperationPlan(
     operation_id="preview.cold.flat",
-    phases=(Phase(key="decode", expected_ms=350.0, countable=True),),
+    phases=(Phase(key="decode", expected_ms=1000.0, countable=True),),
 )
 
 PREVIEW_WARM_FLAT = OperationPlan(
     operation_id="preview.warm.flat",
-    phases=(Phase(key="decode", expected_ms=80.0, countable=True),),
+    phases=(Phase(key="decode", expected_ms=250.0, countable=True),),
 )
 
-# Warm: a match jump inside the file already on screen. Same phases so the
-# observer needs no special case, but its own operation id — mixing 50 ms
-# jumps into the cold medians would make both estimates useless.
+# Warm: no decode to do, because the chunks are already cached. Same phases
+# so the observer needs no special case, but its own operation id — mixing a
+# genuinely cold monster into these medians would make both estimates useless.
+#
+# These are measured, not guessed, and the first guess was badly wrong: warm
+# was seeded at 10/40/40/90 on the assumption that a cache hit is nearly free.
+# On a real corpus a warm navigation costs ~1030 ms — the cache saves the
+# decode, not the mount, the focus build or the scroll commit. Two effects,
+# and the second is the one that showed on screen: every phase ran 8-15x its
+# expectation and spent its whole life in the eased overrun region, and the
+# implied WEIGHTS were wrong besides (land held half the bar for a phase that
+# is really a seventh of the work). Fill at completion scattered between 0.35
+# and 0.97 as a result. Calibration corrects this within a few navigations,
+# but only for someone who already has a history; the seeds are what every
+# fresh install runs on.
 PREVIEW_WARM = OperationPlan(
     operation_id="preview.warm",
     phases=(
-        Phase(key="decode", expected_ms=10.0),
-        Phase(key="mount", expected_ms=40.0, countable=True),
-        Phase(key="build", expected_ms=40.0),
-        Phase(key="land", expected_ms=90.0),
+        Phase(key="decode", expected_ms=150.0),
+        Phase(key="mount", expected_ms=335.0, countable=True),
+        Phase(key="build", expected_ms=390.0),
+        Phase(key="land", expected_ms=155.0),
+    ),
+)
+
+# A query is INTERACTIVE — the user is waiting on it — even though it is the
+# one operation whose work happens entirely off the loop.
+SEARCH = OperationPlan(
+    operation_id="search",
+    phases=(
+        Phase(key="query", expected_ms=400.0),
+        Phase(key="results", expected_ms=120.0),
     ),
 )
 
@@ -207,7 +238,23 @@ class PreviewProgressTracker:
         elif self._landing(preview, scroll):
             self._advance(session, "land")
 
-        return bool(preview.pipeline_busy()) or self._landing(preview, scroll)
+        busy = bool(preview.pipeline_busy()) or self._landing(preview, scroll)
+        if not busy:
+            # The work is over — so every phase of it is over, including the
+            # ones no sample ever landed inside.
+            #
+            # This is not bookkeeping. An observer polling at 20 Hz only sees
+            # a phase if a tick falls inside it, and the event loop is
+            # saturated during exactly the navigation this line reports on
+            # (measured: it blocks for 400-1274 ms at a stretch), so ticks are
+            # dropped and the pipeline can pass through build and land between
+            # two samples. Measured on a real corpus: 7 of 31 navigations
+            # finished while the tracker still believed they were mounting,
+            # and mount is followed by 53% of the bar — so the line sat at a
+            # median of 0.50 and then jumped to full. That jump is the
+            # "pauses halfway, then completes" report.
+            self._advance(session, session.plan.phases[-1].key)
+        return busy
 
     def _landing(self, preview: Any, scroll: Any) -> bool:
         """A navigation whose scroll has not committed yet.
@@ -416,6 +463,7 @@ __all__ = [
     "PREVIEW_COLD_FLAT",
     "PREVIEW_WARM",
     "PREVIEW_WARM_FLAT",
+    "SEARCH",
     "IndexProgressTracker",
     "PreviewProgressTracker",
 ]
