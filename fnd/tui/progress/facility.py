@@ -235,7 +235,6 @@ class ProgressSession:
 
     def _touch(self) -> None:
         self._moved_at = self._facility.note_progress(self)
-        self._facility.refresh_status()
         self._facility.render(self)
 
     def __enter__(self) -> ProgressSession:
@@ -282,7 +281,6 @@ class ProgressFacility:
         self._rendered: tuple[int, str, bool, bool] | None = None
         self._warned_timer_probe = False
         self._painted = 0.0
-        self._status = ""
         # Set when a session finishes; drives the full-line hold. While this
         # is set the hold owns the line, so nothing else may paint over it.
         self._completing_at: float | None = None
@@ -389,8 +387,6 @@ class ProgressFacility:
             session._moved_at = inherited
         if not ambient:
             self._completing_at = None
-        else:
-            self.refresh_status()
         self._start_ticking()
         self.render(session)
         return session
@@ -493,7 +489,6 @@ class ProgressFacility:
         else:
             return
         session._closed = True
-        self.refresh_status()
         now = self._clock()
         if superseded:
             # Abandoned work teaches nothing. Recording its finished phases
@@ -524,8 +519,8 @@ class ProgressFacility:
             # its own completion by toast regardless.
             return
         self._completing_at = now
+        self._completing_label = session.label
         self._completing_ambient = session.kind is OperationKind.AMBIENT
-        self._completing_label = "" if self._completing_ambient else session.label
         self._completing_shown_at = session._shown_at
         # Paint the full line NOW, synchronously, rather than easing to it over
         # the next few ticks. The ease depended on the event loop being free —
@@ -560,32 +555,12 @@ class ProgressFacility:
         # stall in the clear.
         live = min(session._model.tick(), _ACTIVE_CEILING)
         session._displayed = max(session._displayed, session._floor, live)
-        ambient = session.kind is OperationKind.AMBIENT
-        # An ambient run's text lives on the status row, never beside the bar —
-        # see the note on `-with-status` in bar.py.
         self._paint(
             session._displayed,
-            "" if ambient else session.label,
-            ambient=ambient,
+            session.label,
+            ambient=session.kind is OperationKind.AMBIENT,
             visible=True,
         )
-
-    def refresh_status(self) -> None:
-        """Keep the status row in step with the background run.
-
-        Independent of :meth:`render` on purpose: the row must keep reporting
-        a suspended ambient session, which by definition is not the one
-        painting the bar. That is the whole point of the second row — the two
-        classes of work are visible at the same time instead of taking turns.
-        """
-        session = self._ambient
-        text = "" if session is None or session.closed else session.label
-        if text == self._status:
-            return
-        self._status = text
-        widget = self._widget()
-        if widget is not None:
-            widget.status = text
 
     def _render_completing(self, now: float) -> None:
         """Hold the full line, then clear it.
@@ -631,7 +606,6 @@ class ProgressFacility:
     def _clear(self) -> None:
         self._completing_at = None
         self._painted = 0.0
-        self.refresh_status()
         self._paint(0.0, "", ambient=False, visible=False)
         self._stop_ticking()
         self._disarm_watchdog()
