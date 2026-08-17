@@ -67,6 +67,7 @@ from fnd.tui.results_view import ResultsView
 from fnd.tui.scope_panel import ScopeController
 from fnd.tui.search_controller import SearchController
 from fnd.tui.sidebar_layout import Panel, allocate
+from fnd.tui.stall_watch import StallWatch
 from fnd.tui.widgets.clear_bar import ClearFiltersBar
 from fnd.tui.widgets.preview_container import (
     _HitWithQuery,
@@ -535,12 +536,21 @@ class FNDApp(App[None]):
 
         with contextlib.suppress(Exception):
             self._preview.stop_background_work()
+        watch = getattr(self, "_stall_watch", None)
+        if watch is not None:
+            with contextlib.suppress(Exception):
+                watch.stop()
         await super()._on_exit_app()
 
     def on_mount(self) -> None:
         # Tokyo-night theme: muted blue/teal pastel palette per user request.
         self.theme = "tokyo-night"
         self._prefetch.start()
+        # Opt-in diagnostic: names whatever held the event loop when it
+        # stops answering. Off unless _FND_STALL_WATCH is set.
+        self._stall_watch = StallWatch.from_env(self)
+        if self._stall_watch is not None:
+            self._stall_watch.start()
 
         # One-time: promote PDF-texture cache entries produced by the current
         # engine but under the pre-`tex-vN` key format to the coarse

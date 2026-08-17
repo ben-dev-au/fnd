@@ -149,6 +149,10 @@ class PreviewPresenter:
         self.document_view: FrozenDocumentView | None = None
         # Strong ref so the loop does not GC the in-flight coverage task.
         self._coverage_task: asyncio.Task[None] | None = None
+        # What coverage is capturing right now, for the stall watch to name
+        # when the loop stops answering. A plain string: read during a stall,
+        # when touching live widgets would be its own hazard.
+        self.coverage_activity: str | None = None
         # Cursor position the running coverage plan was built for.
         self._coverage_anchor: tuple[str, int] | None = None
         # Per-chunk captures, filled by coverage and read by every mount path.
@@ -2693,7 +2697,11 @@ class PreviewPresenter:
                     break
                 await asyncio.sleep(0.05)
             started = time.perf_counter()
-            capture = await self._warm_host.capture(chunk, width, match_spec=spec)
+            self.coverage_activity = f"{parent_id[:8]}/seq{chunk.chunk_seq}"
+            try:
+                capture = await self._warm_host.capture(chunk, width, match_spec=spec)
+            finally:
+                self.coverage_activity = None
             if capture is not None:
                 self.capture_store.put(parent_id, query_sig, width, capture)
                 captured += 1
