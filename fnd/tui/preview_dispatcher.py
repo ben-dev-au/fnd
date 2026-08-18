@@ -55,6 +55,19 @@ _MARKDOWN_RENDERED_KINDS: frozenset[str] = MARKDOWN_RENDERED_KINDS
 PreviewMode = Literal["flat", "structural"]
 
 
+# Largest chunk, in markdown characters, that the structural renderer will build.
+# Measured on a real 727-chunk PDF: a 120,123-character chunk took 4,424ms to
+# build into 7,184 rendered rows, against a 5.3ms median — a multi-second freeze,
+# observed live at 8.4s, because Textual builds the widget on the event loop.
+# Every ordinary chunk in that file was under 6,000 characters, so this sits an
+# order of magnitude clear of normal content.
+#
+# Lives here rather than in preview.tuning because this module is what every
+# path asks and it sits BELOW the preview package — importing tuning from here
+# is an import cycle.
+MARKDOWN_MAX_CHARS = 40_000
+
+
 def uses_markdown_renderer(c: PreviewBody) -> bool:
     """True when this chunk should mount through the structural Markdown
     renderer. A chunk needs both a markdown-capable kind AND non-empty
@@ -65,7 +78,23 @@ def uses_markdown_renderer(c: PreviewBody) -> bool:
     ``choose_preview_mode`` decision and ``match_evidence`` share one source
     of truth.
     """
-    return c.kind in _MARKDOWN_RENDERED_KINDS and bool(c.body_md)
+    if c.kind not in _MARKDOWN_RENDERED_KINDS or not c.body_md:
+        return False
+    # And it must be small enough to BUILD. The structural renderer's cost is
+    # superlinear in markup, and a handful of chunks in real documents are giant
+    # tables that are almost entirely markup: measured on a 727-chunk PDF, a
+    # 120,123-character chunk took 4,424ms to build into 7,184 rendered rows,
+    # against a 5.3ms median for that same file. That is a hard multi-second
+    # freeze of the whole UI — observed live at 8.4s — because Textual builds
+    # the widget on the event loop.
+    #
+    # Over the cap the chunk takes the flat per-line path instead. It still
+    # renders, and it renders in milliseconds; what is lost is the table
+    # structure of something that was never going to be usable as a 7,184-row
+    # widget anyway. Gating here rather than in the mount is deliberate: this is
+    # the one function the mount, the background warmer and match_evidence all
+    # ask, so they cannot disagree about it.
+    return len(c.body_md) <= MARKDOWN_MAX_CHARS
 
 
 def choose_preview_mode(chunks: list[FileChunk]) -> PreviewMode:

@@ -125,8 +125,11 @@ class LazyMounter:
         if len(container.mounted_indices) >= len(chunks):
             return
         # Don't compete with the initial visible-first mount task; it
-        # owns the window and will hand off once it settles.
-        if self._app._preview.user_mount_in_flight():
+        # owns the window and will hand off once it settles. Only until it has
+        # PAINTED, though: the same task then goes on to fill and freeze in the
+        # background, and waiting for that walled upward scrolling off for
+        # seconds — mounting nothing at all until the housekeeping was done.
+        if self._app._preview.mount_before_first_paint():
             return
         task = self.task
         if task is not None:

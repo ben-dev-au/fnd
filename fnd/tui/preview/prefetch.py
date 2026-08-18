@@ -35,6 +35,10 @@ class PrefetchEngine:
         self._app = app
         # Single-consumer drainer serializes prefetch widget-mounts.
         self.sink_queue: asyncio.Queue[Any] | None = None
+        # Which queued job is running right now, for the stall watch to name
+        # when the loop stops answering. Prefetch mounts widgets, so it can
+        # hold the loop, and it is invisible to every other pipeline flag.
+        self.active_job: str | None = None
         self.sink_drainer: Any | None = None
 
     def start(self) -> None:
@@ -286,6 +290,7 @@ class PrefetchEngine:
         async def _job() -> None:
             await self._mount_flat_async(parent_id, query_sig, doc, focus_chunk_seq)
 
+        _job.fnd_label = f"flat:{parent_id[:8]}"  # type: ignore[attr-defined]
         q.put_nowait(_job)
 
     async def _mount_flat_async(
@@ -356,6 +361,7 @@ class PrefetchEngine:
         async def _job() -> None:
             await self._mount_structural_async(parent_id, query_sig, chunks, focus_chunk_seq)
 
+        _job.fnd_label = f"struct:{parent_id[:8]}"  # type: ignore[attr-defined]
         q.put_nowait(_job)
 
     async def _mount_structural_async(
@@ -529,10 +535,13 @@ class PrefetchEngine:
                 await asyncio.sleep(0.05)
             if wait_iters > 0:
                 self._app._diag_log(f"drainer JOB started after {wait_iters * 50}ms wait")
+            self.active_job = getattr(job, "fnd_label", "?")
             try:
                 await job()
             except Exception as e:
                 self._app._diag_log(f"drainer JOB threw: {type(e).__name__}: {e}")
+            finally:
+                self.active_job = None
             with contextlib.suppress(Exception):
                 q.task_done()
             await asyncio.sleep(0)

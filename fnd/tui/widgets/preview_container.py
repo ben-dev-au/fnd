@@ -51,6 +51,16 @@ class PreviewContainer(Container):
         self.query_signature = query_signature
         self.total_chunks = total_chunks
         self.mounted_indices: set[int] = set()
+        # Has this container ever been revealed? Durable, unlike the
+        # `-pre-reveal` class, which is transient and can still be set for
+        # a frame or two after the reveal has been decided.
+        self.has_painted: bool = False
+        # How this container's chunks were obtained. The one number that
+        # says whether the capture cache is doing anything at all — its
+        # absence hid a cache that stored thousands of captures and served
+        # none of them.
+        self.served_chunks: int = 0
+        self.built_chunks: int = 0
         # chunk_seq → first widget for that chunk (the header / title row).
         self.chunk_widgets: dict[int, Widget] = {}
         # chunk_seq → first match-bearing widget (or header when no match).

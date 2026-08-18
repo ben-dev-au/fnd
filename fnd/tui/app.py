@@ -300,8 +300,23 @@ class FNDApp(App[None]):
        virtual size keeps growing as chunks land, so the thumb would
        jitter). Programmatic ``scroll_to_widget`` calls during phase 2b
        still need to work — using ``overflow-y: hidden`` would prevent
-       that, so we only suppress the bar's chrome, not scrolling. */
-    #preview_pane.is-loading { scrollbar-size-vertical: 0; }
+       that, so we only suppress the bar's chrome, not scrolling.
+
+       Hidden by COLOUR, not by size. ``scrollbar-size-vertical: 0`` removes
+       the gutter, which changes the pane's content width — so every chunk in
+       the document re-wraps, twice per navigation, and the class toggle has to
+       restyle the whole subtree to make that happen. Measured, that was the
+       single widest restyle in a navigation. Painting the bar in the pane's own
+       background keeps the geometry identical, so nothing below it reflows and
+       the toggle is a repaint. */
+    #preview_pane.is-loading {
+        scrollbar-color: $surface;
+        scrollbar-color-hover: $surface;
+        scrollbar-color-active: $surface;
+        scrollbar-background: $surface;
+        scrollbar-background-hover: $surface;
+        scrollbar-background-active: $surface;
+    }
     /* Same duplicate-bar problem as ``-reading``, for the frozen document
        substrate: FrozenDocumentView is itself a ScrollView filling the pane and
        carrying the match markers, so the pane's own bar is a second, inert

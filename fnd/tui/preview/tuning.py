@@ -41,6 +41,19 @@ PREVIEW_CACHE_MIN_CHUNKS = 1
 # later as an empty preview.
 FREEZE_REVEAL_WAIT_TICKS = 40
 
+# How long the freeze sweep may hold the event loop before yielding, in seconds.
+# The sweep swaps every out-of-window chunk's widget tree for its capture, and it
+# used to do the whole file in ONE synchronous loop — so the cold-to-frozen
+# transition was a hard stall of however long that took. Measured on synthetic
+# six-line chunks: 221ms at 57 mounted, 452ms at 147, 559ms at 237, and real
+# chunks (PDF pages, rich markdown) cost 46-384ms EACH rather than ~2ms.
+#
+# Sliced by TIME rather than by a chunk count because per-chunk cost varies by
+# two orders of magnitude across formats, so any fixed count is either a stall
+# on one file or needless yielding on another. One frame's worth keeps the swap
+# invisible without meaningfully lengthening it.
+FREEZE_SLICE_SECONDS = 0.016
+
 PREVIEW_WARM_DELAY = 0.35
 
 # Chunks mounted per warming batch, with ONE settle per batch. Settling per
@@ -55,6 +68,18 @@ PREVIEW_WARM_BATCH = 8
 # its hit count rather than its size — a 1000-chunk neighbour with eight hits
 # costs eight captures, and the buffer re-plans around the cursor on every move.
 COVERAGE_NEIGHBOUR_FILES = 2
+
+# How many files from the TOP of the result list to warm regardless of where the
+# cursor is. The cursor window is relative, so on a fresh query it can only warm
+# the first file's immediate neighbours — yet the opening moves of a search are
+# the most likely to be made. Seeding the head covers them. Beyond it the window
+# takes over: a cursor past the seed warms its own neighbours as before, and the
+# seeded files cost a store lookup each to skip.
+COVERAGE_SEED_FILES = 8
+
+# The structural renderer's size cap lives in fnd.tui.preview_dispatcher as
+# MARKDOWN_MAX_CHARS — that module is what every path asks, and it sits below
+# this package, so it cannot import from here.
 
 # How long coverage must stand idle after each capture, as a multiple of what
 # that capture cost. A capture builds a real markdown widget, and Textual pumps
@@ -127,9 +152,13 @@ FULLMOUNT_CHUNK_BUDGET = 250
 COVERAGE_CHUNK_BUDGET = 500
 # Chunks captured either side of a hit, so a landing has context above and below
 # it rather than a bare match with unbuilt neighbours. Deliberately smaller than
-# VISIBLE_FIRST_ABOVE/BELOW: coverage is ordered nearest-first, so the chunks
+# VISIBLE_FIRST_ABOVE/BELOW (7): coverage is ordered nearest-first, so the chunks
 # around wherever the user actually is get captured before distant margins do.
-COVERAGE_MARGIN = 3
+# Swept against the real corpus at 3, 5 and 7, twice: 5 wins both times (34%% of
+# mounted chunks served and 3 fully-served landings, against 31%%/1 at margin 3
+# and 25%%/2 at margin 7). Matching the mount window exactly is WORSE — the extra
+# captures per hit cost more files covered than they buy in completeness.
+COVERAGE_MARGIN = 5
 # Prefetch mounts only the focused chunk per cached file. User-side
 # resume expands on click. Keeps prefetch DOM contribution at
 # ~1 widget per cached file.

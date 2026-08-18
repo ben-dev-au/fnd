@@ -15,6 +15,8 @@ and prefetch to zero, so it cannot reproduce the timings that motivate any of it
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import time
 from pathlib import Path
 from typing import cast
 
@@ -297,9 +299,21 @@ async def test_coverage_stands_down_while_lazy_mount_runs(
         searcher = app._search.searcher
         assert searcher is not None
         chunks = searcher.get_file_chunks(group.parent_id)
-        width = app.query_one("#preview_pane").content_size.width
+        pane = app.query_one("#preview_pane", VerticalScroll)
+        width = pane.content_size.width
+        # Captures are FILED under the scrollbar-stable width, not the render
+        # width, so the count below has to read the same key the capture writes.
+        key_width = presenter.capture_key_width(pane)
         sig = app._search.query_signature()
         spec = app._effective_match_spec
+
+        # Stop the presenter's OWN coverage run first. It may already be inside
+        # a capture, and that capture completing would store a row this test
+        # would read as the gate having failed — the background task is not what
+        # is under test here.
+        presenter.stop_background_work()
+        for _ in range(6):
+            await pilot.pause()
 
         # A lazy-mount batch that never finishes, so the only thing that can end
         # the wait is the check under test.
@@ -308,17 +322,321 @@ async def test_coverage_stands_down_while_lazy_mount_runs(
         try:
             targets = [i for i, c in enumerate(chunks) if c.chunk_seq == group.hits[0].chunk_seq]
             assert targets, "need a hit chunk to try to capture"
-            before = presenter.capture_store.count(group.parent_id, sig, width)
+            # A pass abandons itself when the cursor moves away from the anchor
+            # it was planned around. Pass the CURRENT anchor, so that early exit
+            # cannot stand in for the gate under test and pass this vacuously.
+            before = presenter.capture_store.count(group.parent_id, sig, key_width)
             job = asyncio.create_task(
-                presenter._capture_targets(group.parent_id, sig, width, chunks, targets, spec)
+                presenter._capture_targets(
+                    group.parent_id, sig, width, chunks, targets, spec, key_width, lambda: True
+                )
             )
             for _ in range(12):
                 await pilot.pause()
-            assert presenter.capture_store.count(group.parent_id, sig, width) == before, (
+            assert presenter.capture_store.count(group.parent_id, sig, key_width) == before, (
                 "coverage captured while a lazy-mount batch was in flight — the two "
                 "compete for the same message pump"
             )
         finally:
             blocker.set_result(None)
             app._lazy.task = None
-        await job
+        # The positive control, and the whole reason this test means anything:
+        # with lazy mount finished, the SAME call must capture. Without it, any
+        # early return — a stale anchor, a changed query, an unrenderable chunk
+        # — would satisfy the assertion above while proving nothing.
+        assert await job > 0, (
+            "the same targets captured nothing once lazy mount finished, so the "
+            "assertion above proved only that some other guard fired"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_freeze_sweep_yields_between_chunks(
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cold-to-warm swap must not hold the loop for the whole file.
+
+    The sweep replaces every out-of-window chunk's widget tree with its capture.
+    Done in one synchronous loop it is a hard stall of however long that takes —
+    measured 424ms of worst-case loop block on 237 synthetic six-line chunks,
+    and real chunks cost far more each. Sliced, the same run sits at parity with
+    freezing switched off entirely (156ms against 191ms).
+
+    Asserted as "other work ran while the sweep was in progress", which is the
+    property that matters, rather than a wall-clock figure the suite cannot hold
+    steady under load.
+    """
+    from fnd.tui.preview import frozen as frozen_mod
+
+    # The sweep imports `freeze` from this module at call time, so this is the
+    # binding it will use.
+    real_freeze = frozen_mod.freeze
+
+    swept: list[int] = []
+
+    def slow_freeze(chunk, chunk_seq):  # type: ignore[no-untyped-def]
+        swept.append(chunk_seq)
+        time.sleep(0.01)
+        return real_freeze(chunk, chunk_seq)
+
+    monkeypatch.setattr(frozen_mod, "freeze", slow_freeze)
+
+    index = _wide_doc(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups) and app._preview.active is not None,
+            timeout=30.0,
+            message="preview never became active",
+        )
+        container = app._preview.active
+        assert container is not None
+        searcher = app._search.searcher
+        assert searcher is not None
+        chunks = searcher.get_file_chunks(container.parent_doc_id)
+        mounted = sorted(container.mounted_indices)
+        assert len(mounted) >= 8, f"need several mounted chunks to sweep, got {len(mounted)}"
+
+        # The LONGEST gap between turns, not a count: the sweep awaits in its
+        # prologue too, so counting turns passes whether or not the chunk loop
+        # itself ever yields — which is exactly how the first version of this
+        # test managed to be vacuous.
+        gaps: list[float] = []
+
+        async def ticker() -> None:
+            last = time.perf_counter()
+            while True:
+                await asyncio.sleep(0)
+                now = time.perf_counter()
+                gaps.append(now - last)
+                last = now
+
+        beat = asyncio.create_task(ticker())
+        await asyncio.sleep(0)
+        gaps.clear()
+        # Sweep everything: an empty window means every mounted chunk qualifies.
+        await app._preview._freeze_chunks_outside_window(
+            container, chunks, mounted[-1] + 1, mounted[-1] + 1
+        )
+        # Let the ticker have a turn BEFORE cancelling it. A gap is only recorded
+        # when the ticker next runs, so cancelling straight after the sweep threw
+        # away the very measurement this test exists to take.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        beat.cancel()
+
+    # Without this the test passes by sweeping NOTHING: the app freezes on its
+    # own during startup, so by the time this runs the chunks can already be
+    # stand-ins that the sweep skips.
+    assert len(swept) >= 8, (
+        f"the sweep only froze {len(swept)} chunks — too few to tell a blocking "
+        "sweep from a yielding one, so this would pass either way"
+    )
+    worst_ms = max(gaps) * 1000 if gaps else 0.0
+    # Each freeze is padded to 10ms, and at least 8 chunks are swept, so an
+    # unsliced sweep blocks for 80ms+ in one go. Sliced, no single block should
+    # exceed roughly one slice plus one chunk.
+    assert worst_ms < 60, (
+        "the freeze sweep held the loop through the whole swap — the "
+        f"cold-to-warm transition is one uninterruptible block ({worst_ms:.0f}ms)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_lazy_mount_is_only_walled_off_until_first_paint(
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A revealed mount is doing housekeeping, and lazy mount must not wait.
+
+    The mount task stays alive past the reveal to fill and freeze, and treating
+    that tail as "a mount is happening" walls scroll-driven lazy mount off for
+    seconds — scrolling up mounts nothing until it finishes. Slicing the sweep
+    lengthened the tail and made it plain.
+
+    The sweep is held open deliberately, because a fast tail would let this pass
+    without proving anything.
+    """
+    from fnd.tui.preview.presenter import PreviewPresenter
+
+    holding = asyncio.Event()
+
+    async def slow_sweep(self, container, chunks, win_start, win_end):  # type: ignore[no-untyped-def]
+        holding.set()
+        await asyncio.sleep(3.0)
+
+    monkeypatch.setattr(PreviewPresenter, "_freeze_chunks_outside_window", slow_sweep)
+
+    index = _wide_doc(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: holding.is_set(),
+            timeout=30.0,
+            message="the mount never reached the freeze sweep",
+        )
+        presenter = app._preview
+        assert presenter.user_mount_in_flight(), "sweep is held, so the mount is still running"
+        # The reveal is scheduled, not synchronous, so it can land AFTER the
+        # backfill has begun. Wait for it rather than sampling once: what is
+        # under test is that a PAINTED mount stops walling lazy mount off, not
+        # how many frames the reveal took to arrive.
+        await wait_until(
+            pilot,
+            lambda: not presenter.mount_before_first_paint(),
+            timeout=10.0,
+            message=(
+                "the container never registered as painted while the backfill "
+                "ran — lazy mount stays walled off for the whole of it"
+            ),
+        )
+        assert presenter.user_mount_in_flight(), "the sweep should still be held"
+
+
+@pytest.mark.asyncio
+async def test_coverage_skips_chunks_too_expensive_to_build(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """A capture runs on the UI's event loop, so an expensive one IS a freeze.
+
+    The duty cycle between captures cannot help — it has no way into a single
+    build. Measured on a real PDF, one 120,123-character chunk took 4.4s to
+    build and produced an 8.4s freeze in a live session, against a 5.3ms median.
+    So the outliers must be refused BEFORE building, which is the only point at
+    which the cost is still avoidable.
+    """
+    index = _wide_doc(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups) and app._preview.active is not None,
+            timeout=20.0,
+            message="preview never became active",
+        )
+        presenter = app._preview
+        group = app._search.groups[0]
+        searcher = app._search.searcher
+        assert searcher is not None
+        chunks = searcher.get_file_chunks(group.parent_id)
+        pane = app.query_one("#preview_pane", VerticalScroll)
+        key_width = presenter.capture_key_width(pane)
+        sig = app._search.query_signature()
+
+        presenter.stop_background_work()
+        for _ in range(6):
+            await pilot.pause()
+
+        targets = [i for i, c in enumerate(chunks) if c.chunk_seq == group.hits[0].chunk_seq]
+        assert targets, "need a hit chunk"
+        victim_index = targets[0]
+
+        # Positive control FIRST: this chunk is capturable as it stands, so a
+        # miss after the guard is the guard and not some unrelated bail-out.
+        before = presenter.capture_store.count(group.parent_id, sig, key_width)
+        assert (
+            await presenter._capture_targets(
+                group.parent_id,
+                sig,
+                pane.content_size.width,
+                chunks,
+                targets,
+                app._effective_match_spec,
+                key_width,
+                lambda: True,
+            )
+            > 0
+        ), "the chunk was not capturable to begin with; this test would prove nothing"
+        presenter.capture_store.drop_file(group.parent_id)
+
+        # Now make it oversized and confirm coverage refuses it. FileChunk is
+        # frozen, so this is a copy standing in the same position.
+        # A FIXED size, matching the 120K-character chunk measured on the real
+        # PDF — deliberately not derived from the threshold, because a body
+        # sized as a multiple of the limit scales with it and no change to the
+        # limit could ever fail this test.
+        chunks[victim_index] = dataclasses.replace(chunks[victim_index], body_md="x " * 60_000)
+        before = presenter.capture_store.count(group.parent_id, sig, key_width)
+        captured = await presenter._capture_targets(
+            group.parent_id,
+            sig,
+            pane.content_size.width,
+            chunks,
+            targets,
+            app._effective_match_spec,
+            key_width,
+            lambda: True,
+        )
+        assert captured == 0, "coverage built a chunk far over the cost threshold"
+        assert presenter.capture_store.count(group.parent_id, sig, key_width) == before
+
+
+@pytest.mark.asyncio
+async def test_the_width_sweep_keeps_captures_it_should_keep(
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The resize sweep must drop each store by the width THAT store is keyed by.
+
+    They differ by exactly the scrollbar: a document is filed under the pane's
+    content width, a capture under ``capture_key_width`` (the outer width, which
+    is deliberately scrollbar-stable so a bar appearing cannot orphan a capture).
+    Passing the content width to both made every capture's key mismatch, so the
+    sweep emptied the ENTIRE capture store every time it ran — silently, since a
+    wiped cache only ever looks like a slow one. Measured before the fix: the
+    store held 2 files where it should have held 10, and files coverage had
+    already warmed arrived cold because their captures were dropped in between.
+    """
+    index = _wide_doc(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups) and app._preview.active is not None,
+            timeout=20.0,
+            message="preview never became active",
+        )
+        presenter = app._preview
+        pane = app.query_one("#preview_pane", VerticalScroll)
+
+        # The bug only shows when the two widths differ, which in the real app
+        # is whenever a scrollbar is up. This fixture is too short to grow one,
+        # so force the difference rather than depend on the layout — the point
+        # under test is that the sweep uses each store's OWN key, not whether
+        # this particular document happens to overflow.
+        content_width = pane.content_size.width
+        key_width = content_width + 2
+        monkeypatch.setattr(
+            type(presenter), "capture_key_width", staticmethod(lambda _pane: key_width)
+        )
+        assert key_width != content_width
+
+        group = app._search.groups[0]
+        searcher = app._search.searcher
+        assert searcher is not None
+        chunks = searcher.get_file_chunks(group.parent_id)
+        sig = app._search.query_signature()
+        presenter.stop_background_work()
+        for _ in range(4):
+            await pilot.pause()
+
+        targets = [i for i, c in enumerate(chunks) if c.chunk_seq == group.hits[0].chunk_seq]
+        captured = await presenter._capture_targets(
+            group.parent_id,
+            sig,
+            content_width,
+            chunks,
+            targets,
+            app._effective_match_spec,
+            key_width,
+            lambda: True,
+        )
+        assert captured > 0, "nothing captured, so the sweep below would prove nothing"
+        held = presenter.capture_store.count(group.parent_id, sig, key_width)
+
+        presenter.invalidate_documents_on_resize()
+
+        assert presenter.capture_store.count(group.parent_id, sig, key_width) == held, (
+            "the resize sweep dropped captures taken at the CURRENT width — it is "
+            "comparing them against the content width, which differs by the scrollbar"
+        )

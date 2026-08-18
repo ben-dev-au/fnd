@@ -26,6 +26,7 @@ at. A resize does not invalidate the cache; it simply misses.
 from __future__ import annotations
 
 from collections import OrderedDict
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from fnd.tui.preview.frozen import FrozenChunk, FrozenChunkView, FrozenDocument, freeze
@@ -64,8 +65,13 @@ MIN_CACHE_BYTES = 64 * 1024 * 1024
 MAX_CACHE_BYTES = 1024 * 1024 * 1024
 
 
+@lru_cache(maxsize=1)
 def _total_system_bytes() -> int | None:
-    """Physical RAM, or ``None`` when it cannot be determined."""
+    """Physical RAM, or ``None`` when it cannot be determined.
+
+    Cached: the answer cannot change while the process runs, and it is read
+    once per stored capture — two syscalls per chunk on the sweep's hot loop.
+    """
     import os
     import sys
 
@@ -233,10 +239,20 @@ class ChunkCaptureStore:
         self._rows = 0
 
     def get(self, parent_id: str, query_sig: str, width: int, chunk_seq: int) -> FrozenChunk | None:
-        captures = self._files.get((parent_id, query_sig, width))
+        key = (parent_id, query_sig, width)
+        captures = self._files.get(key)
         if captures is None:
             return None
-        return captures.get(chunk_seq)
+        capture = captures.get(chunk_seq)
+        if capture is not None:
+            # Promote on READ, not only on write. Without this the order is
+            # purely write order, and coverage writes the current file FIRST and
+            # its neighbours after — making the file on screen the OLDEST entry
+            # and so the first one evicted. A cache that drops what you are
+            # reading in order to hold what you have not opened is worse than no
+            # cache; this makes "least recently used" mean what it says.
+            self._files.move_to_end(key)
+        return capture
 
     def put(self, parent_id: str, query_sig: str, width: int, capture: FrozenChunk) -> None:
         key = (parent_id, query_sig, width)
@@ -283,3 +299,9 @@ class ChunkCaptureStore:
         """Forget one file — its content or its highlighting changed."""
         for key in [k for k in self._files if k[0] == parent_id]:
             self._rows -= sum(c.height for c in self._files.pop(key).values())
+
+    def debug_keys(self) -> str:
+        """What the store actually holds, for diagnosing a miss."""
+        return " ".join(
+            f"{pid[:8]}/w{w}/sig{sig[:8]}/n{len(v)}" for (pid, sig, w), v in self._files.items()
+        )
