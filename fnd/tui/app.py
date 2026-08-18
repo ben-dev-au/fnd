@@ -317,13 +317,6 @@ class FNDApp(App[None]):
         scrollbar-background-hover: $surface;
         scrollbar-background-active: $surface;
     }
-    /* Same duplicate-bar problem as ``-reading``, for the frozen document
-       substrate: FrozenDocumentView is itself a ScrollView filling the pane and
-       carrying the match markers, so the pane's own bar is a second, inert
-       indicator sitting beside the real one — visible on files served from the
-       document store and not on files that took the widget path, which is how
-       it was reported. */
-    #preview_pane.-document { scrollbar-size-vertical: 0; }
     .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
     .chunk-section { padding: 0 0 1 0; height: auto; }
     .chunk-line { padding: 0 0 0 0; height: auto; }
@@ -423,9 +416,6 @@ class FNDApp(App[None]):
         # chunk/match maps and pane back off this app via the host accessors.
         self._preview_scroll_structural = StructuralScrollStrategy(host=self._preview)
         self._preview_scroll_flat = FlatScrollStrategy(host=self._preview)
-        self._preview_scroll_document = FlatScrollStrategy(
-            host=self._preview, view=self._preview.active_document_view
-        )
         # Single source of truth for where the preview should sit: navigation
         # arms an anchor; mount/finalize events reconcile against it (idempotent
         # → the formerly racing scroll sites collapse to one target).
@@ -1095,12 +1085,9 @@ class FNDApp(App[None]):
     def _select_scroll_strategy(self) -> ScrollStrategy | None:
         """Pick the active preview's scroll strategy.
 
-        Both single-widget substrates — the flat line buffer (PDF/TXT) and the
-        frozen document — scroll the same way, so they share one strategy; only
-        the per-chunk widget tree needs the structural one.
+        The flat line buffer (PDF/TXT) is a single widget and scrolls as one;
+        only the per-chunk widget tree needs the structural strategy.
         """
-        if self._preview.active_document_view() is not None:
-            return self._preview_scroll_document
         if self._flat.active_buffer is not None:
             return self._preview_scroll_flat
         return self._preview_scroll_structural

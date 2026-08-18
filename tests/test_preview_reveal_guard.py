@@ -28,12 +28,6 @@ class _RevealHost:
     def _cancel_reveal_watchdog(self) -> None:  # reveal disarms the watchdog
         pass
 
-    def hide_document_view(self) -> None:
-        # Modelled, not stubbed away: reveal() drops the served document here,
-        # because a document is the OUTGOING substrate for a structural build
-        # and hiding it any earlier blanks the pane for the whole build.
-        self.hid_document = True
-
 
 def _reveal(host: object, container: object) -> None:
     # Call PreviewPresenter.reveal as an unbound method against the stub

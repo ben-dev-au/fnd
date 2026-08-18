@@ -23,15 +23,12 @@ from textual.widgets import Static, Tree
 from fnd.matching import MatchSpec
 from fnd.render import render_chunk_pieces
 from fnd.tui.line_buffer import LineBufferPreview, build_rendered_document
-from fnd.tui.preview import frozen_store, tuning
+from fnd.tui.preview import tuning
 from fnd.tui.preview.coverage import coverage_targets, filler_targets, neighbour_order
 from fnd.tui.preview.frozen import (
-    FrozenChunk,
     FrozenChunkView,
-    FrozenDocument,
-    FrozenDocumentView,
 )
-from fnd.tui.preview.frozen_store import ChunkCaptureStore, FrozenDocumentStore
+from fnd.tui.preview.frozen_store import ChunkCaptureStore
 from fnd.tui.preview.liveness import is_condemned, is_live
 from fnd.tui.preview.visibility import set_node_class, set_preview_visibility
 from fnd.tui.preview.warm_host import WarmHost
@@ -146,8 +143,6 @@ class PreviewPresenter:
         # the single reused widget that shows them. One widget for the session
         # rather than one per file: remounting per navigation is exactly the DOM
         # churn this substrate exists to avoid.
-        self.document_store = FrozenDocumentStore()
-        self.document_view: FrozenDocumentView | None = None
         # Strong ref so the loop does not GC the in-flight coverage task.
         self._coverage_task: asyncio.Task[None] | None = None
         # Which phase of the mount is running, for the stall watch to place a
@@ -167,12 +162,8 @@ class PreviewPresenter:
         self.capture_store = ChunkCaptureStore()
         # Pane width the ON-SCREEN document was installed at, so a resize can
         # tell a stale view from one that is still painting at the right width.
-        self._document_view_width: int = 0
         # Strong ref so the loop doesn't GC the in-flight warm task, plus the
         # file it is growing so a re-harvest of the same file doesn't restart it.
-        self._warm_task: asyncio.Task[None] | None = None
-        self._warm_bootstrap: asyncio.Task[None] | None = None
-        self._warm_parent: str | None = None
         # Chunks are built and captured here rather than in the visible
         # container — see warm_host for why every way of hiding a live container
         # is either uncapturable or silently blank.
@@ -276,17 +267,6 @@ class PreviewPresenter:
         # repair below rebuilds a preview that is on screen and correct —
         # measured at 19 spurious rebuilds in a 14-navigation run, each one
         # clearing the cache and re-dispatching.
-        view = self.active_document_view()
-        if view is not None:
-            # Ask the substrate what it is actually painting. `bool(chunks)`
-            # cannot fail while a document object exists, so it silently
-            # disabled this rescue — measured, a view scrolled past its own
-            # strips paints 0 of 25 rows and still reported healthy. render_line
-            # is the line API, so this costs one terminal height, not a
-            # document.
-            if not is_live(view) or view.size.height <= 0:
-                return False
-            return any(view.render_line(y).text.strip() for y in range(view.size.height))
         buf = self._app._flat.active_buffer
         if buf is not None:
             return is_live(buf) and not buf.has_class("-hidden")
@@ -299,11 +279,6 @@ class PreviewPresenter:
 
     def showing_parent(self) -> str | None:
         """The parent_doc_id of whatever the pane is currently showing."""
-        # Same blindness as is_painted: a served document has no container and
-        # no buffer, so the check compared None against the cursor's file and
-        # concluded the pane was showing the wrong thing.
-        if self.active_document_view() is not None:
-            return self.parent_id
         buf = self._app._flat.active_buffer
         if buf is not None:
             pid = getattr(buf, "parent_doc_id", None)
@@ -872,35 +847,9 @@ class PreviewPresenter:
             # NOT hidden here: the flat buffer replaces it in the same tick, and
             # hiding first leaves the pane blank in between.
             self.dispatch_flat_mount(parent_id, focus_chunk_seq, chunks, prebuilt=prebuilt)
-            self.hide_document_view()
             return
 
         query_sig = self._app._search.query_signature()
-
-        # Already captured this file at this width: serve the document and skip
-        # the build entirely. Checked before the same-file fast paths below
-        # because it beats all of them — there is nothing to settle or retry.
-        if self.document_preview_enabled():
-            try:
-                width = self._app.query_one("#preview_pane", VerticalScroll).content_size.width
-            except Exception:
-                width = 0
-            doc = self.document_store.get(parent_id, query_sig, width) if width > 0 else None
-            # Only serve when the target is INSIDE the captured run. A document
-            # is a self-consistent slice, not necessarily the whole file, so a
-            # jump past its end has to rebuild rather than land nowhere.
-            if (
-                doc is not None
-                and doc.row_of_chunk(focus_chunk_seq) is not None
-                and self.dispatch_document_mount(parent_id, focus_chunk_seq, doc)
-            ):
-                return
-        # Deliberately NOT hidden here. A served document is the OUTGOING
-        # substrate for the structural build that follows, and that build takes
-        # 1-2s. Hiding it now leaves the pane blank for the whole of it —
-        # measured at 45 of 150 samples blank, against 0 of 150 with the
-        # substrate off. It is hidden instead when the replacement is revealed
-        # (see `reveal`), which is how the widget path has always avoided this.
 
         # Same file + same query already active. Two sub-cases:
         #   (a) target chunk widget exists — just scroll, no remount.
@@ -1400,139 +1349,6 @@ class PreviewPresenter:
     def active_flat_buffer(self) -> LineBufferPreview | None:
         return self._app._flat.active_buffer
 
-    def active_document_view(self) -> FrozenDocumentView | None:
-        """The frozen-document preview when one is on screen AND still valid.
-
-        Checked lazily rather than trusting a resize event to have fired: the
-        resize hook runs before layout and so reads the pre-resize width. Here
-        the width is whatever the pane reports at the moment of asking, which
-        makes a stale document impossible to scroll or serve regardless of what
-        the event loop did.
-        """
-        view = self.document_view
-        if view is None or view.has_class("-hidden"):
-            return None
-        try:
-            width = self._app.query_one("#preview_pane", VerticalScroll).content_size.width
-        except Exception:
-            return None
-        if width > 0 and self._document_view_width not in (0, width):
-            return None
-        return view
-
-    def document_preview_enabled(self) -> bool:
-        """Serve captured documents instead of rebuilding chunk widgets.
-
-        Off by default: the substrate is complete but has not yet had the
-        hand-driven session on a real corpus that every other default flip on
-        this branch got. ``_FND_DOC_PREVIEW=1`` opts in.
-        """
-        import os as _os
-
-        return _os.environ.get("_FND_DOC_PREVIEW") == "1"
-
-    def dispatch_document_mount(
-        self,
-        parent_id: str,
-        focus_chunk_seq: int,
-        doc: FrozenDocument,
-    ) -> bool:
-        """Show a captured document: one widget, one synchronous scroll.
-
-        No build, no settle, no retry chain — the target row is known the moment
-        the document exists, which is the entire reason for the substrate.
-        Returns False when there is no pane to mount into (screen torn down).
-        """
-        from fnd.tui.line_buffer import LineBufferPreview
-        from fnd.tui.widgets.preview_container import PreviewContainer
-
-        self.cancel_mount_task()
-        self._app._lazy.cancel()
-        try:
-            pane = self._app.query_one("#preview_pane", VerticalScroll)
-        except Exception:
-            return False
-
-        view = self.document_view
-        if not is_live(view):
-            view = FrozenDocumentView(doc, id="preview_document")
-            self.document_view = view
-            pane.mount(view)
-        else:
-            assert view is not None
-            view.set_document(doc)
-
-        self._document_view_width = pane.content_size.width
-        # The document view is itself a ScrollView filling the pane and carrying
-        # the match markers, so the pane's own bar would be a second, inert
-        # position indicator beside the real one.
-        pane.add_class("-document")
-        self.clear_pane_placeholder()
-        for child in self._app.query(PreviewContainer):
-            set_preview_visibility(child, hidden=True)
-        for child in self._app.query(LineBufferPreview):
-            set_preview_visibility(child, hidden=True)
-        # Painted immediately. An earlier version held the view unpainted until
-        # its scroll landed, to avoid one frame at the wrong offset — and
-        # stranded the pane BLANK whenever the reveal condition never arrived,
-        # with the document's scrollbar markers still painting beside an empty
-        # pane (opacity hides content, not scrollbars). A frame at the wrong
-        # offset is a glitch; an indefinitely blank preview is a broken app, and
-        # the structural path's reveal machinery exists precisely because this
-        # is hard to get right.
-        set_preview_visibility(view, hidden=False, pre_reveal=False)
-        self._app._flat.active_buffer = None
-        self.active = None
-        # Straggler scrolls must not find a stale per-chunk widget to aim at.
-        self.chunk_widgets = {}
-        self.match_targets = {}
-
-        self._app._preview_scroll.arm(ScrollAnchor(parent_id, focus_chunk_seq))
-        self._app._preview_scroll.reconcile()
-        self.diag_log(
-            f"dispatch_document parent={parent_id[:8]} chunks={len(doc.chunks)} "
-            f"rows={doc.total_rows} width={doc.width}"
-        )
-        self.hide_progress_bar()
-        self.parent_id = parent_id
-        self._app._refresh_status()
-        self._warm_served_document(parent_id, doc, pane.content_size.width)
-        return True
-
-    def _warm_served_document(self, parent_id: str, doc: FrozenDocument, width: int) -> None:
-        """Keep growing a document that was served from the store.
-
-        Without this, warming only ran off the back of a widget-path mount, so
-        every later visit — served from the store, returning before harvest —
-        never grew. The chunk list is fetched on a worker because decoding a
-        large file's chunks is not something to do on the event loop; the whole
-        point of serving a document is that this navigation did no such work.
-        """
-        if not self.document_preview_enabled():
-            return
-        searcher = self._app._search.searcher
-        if searcher is None:
-            return
-        # Only skip while warming for this file is STILL RUNNING. Comparing
-        # _warm_parent alone latched: it keeps the last file's id after the task
-        # ends, so a file could never be warmed again.
-        task = self._warm_task
-        if self._warm_parent == parent_id and task is not None and not task.done():
-            return
-        query_sig = self._app._search.query_signature()
-
-        async def begin() -> None:
-            try:
-                chunks = await asyncio.to_thread(searcher.get_file_chunks, parent_id)
-            except Exception as exc:
-                self.diag_log(f"warm bootstrap failed: {exc!r}")
-                return
-            if len(doc.chunks) >= len(chunks):
-                return
-            self.start_warming(parent_id, query_sig, width, doc, chunks)
-
-        self._warm_bootstrap = asyncio.create_task(begin())
-
     def invalidate_documents_on_resize(self) -> None:
         """Drop captures that no longer match the pane width.
 
@@ -1572,42 +1388,9 @@ class PreviewPresenter:
         key_width = self.capture_key_width(pane)
         if key_width <= 0:
             return
-        dropped = self.document_store.drop_other_widths(width)
-        dropped += self.capture_store.drop_other_widths(key_width)
-        view = self.document_view
-        stale_view = (
-            view is not None
-            and not view.has_class("-hidden")
-            and self._document_view_width not in (0, width)
-        )
-        if stale_view:
-            # Strips cut for the old width would paint clipped or short. Take it
-            # off screen and rebuild through the widget path, which re-captures
-            # at the new width on its way.
-            self.hide_document_view()
-            parent_id, target = self.parent_id, self.cursor_target()
-            if parent_id is not None and target is not None and target[0] == parent_id:
-                self.render_full_doc(parent_id, focus_chunk_seq=target[1])
-        if dropped or stale_view:
-            self.diag_log(f"documents invalidated width={width} dropped={dropped}")
-
-    def hide_document_view(self) -> None:
-        """Take the document preview off screen when another substrate wins."""
-        with contextlib.suppress(Exception):
-            self._app.query_one("#preview_pane", VerticalScroll).remove_class("-document")
-        view = self.document_view
-        if view is None:
-            return
-        # Textual does not re-home focus when the focused widget is hidden, so
-        # hiding a focused document view left `app.focused` None — measured, a
-        # subsequent key press never reached the results tree, which reads as
-        # the whole UI going dead until the user clicks.
-        had_focus = bool(getattr(view, "has_focus", False))
-        with contextlib.suppress(Exception):
-            set_preview_visibility(view, hidden=True)
-        if had_focus:
-            with contextlib.suppress(Exception):
-                self._app.query_one("#results_pane").focus()
+        dropped = self.capture_store.drop_other_widths(key_width)
+        if dropped:
+            self.diag_log(f"captures invalidated width={key_width} dropped={dropped}")
 
     def begin_reconcile_scroll(self) -> None:
         self.reconciling = True
@@ -1671,10 +1454,6 @@ class PreviewPresenter:
         if outgoing is not None and outgoing is not container:
             set_preview_visibility(outgoing, hidden=True)
         self.outgoing = None
-        # A served document is an outgoing substrate too — held on screen
-        # through the build so the pane never blanks, and dropped only now that
-        # there is something to replace it with.
-        self.hide_document_view()
         set_preview_visibility(container, pre_reveal=False)
         container.has_painted = True
         # The moment the new result becomes visible. Logged because it is the
@@ -2184,24 +1963,14 @@ class PreviewPresenter:
         # captures carry the OLD query's highlighting, so every chunk it builds
         # from here is work whose result can never be served — the store key
         # carries the query signature, so it would be stored and never read.
-        task = self._warm_task
-        if task is not None and not task.done():
-            task.cancel()
-        self._warm_parent = None
-        # Captures for a superseded query can never be served either; holding
-        # them only spends the row budget that the new query's captures need.
-        self.document_store.clear()
+        # Captures for a superseded query can never be served; holding them
+        # only spends the row budget that the new query's captures need.
         self.capture_store.clear()
         # Coverage is captures too: everything it is building carries the old
         # query's highlighting and is filed under a key nothing will read.
         cover = self._coverage_task
         if cover is not None and not cover.done():
             cover.cancel()
-        # And take the VIEW down with them. Clearing the store alone left the
-        # previous query's document painted with its old highlighting — measured
-        # to survive a no-match query, where the tree is empty and the paint
-        # check returns early because there is no cursor target to compare.
-        self.hide_document_view()
 
     def cancel_mount_task(self) -> None:
         """Cancel any in-flight mount task. The cancelled task's
@@ -2432,47 +2201,6 @@ class PreviewPresenter:
                 f"backfill froze={frozen} chunks in "
                 f"{(time.perf_counter() - sweep_started) * 1000:.0f}ms"
             )
-        self._harvest_document(container, chunks)
-
-    def _harvest_document(self, container: PreviewContainer, chunks: list[FileChunk]) -> None:
-        """Keep this file's captures so the next visit is a scroll, not a rebuild.
-
-        Runs straight after the freeze sweep, when most chunks are already
-        captured and the rest are laid out — the only moment most of the file is
-        capturable at once. The window chunks the sweep leaves live are captured
-        WITHOUT being removed: the document is a shadow copy, not the thing on
-        screen, and it must be contiguous or every row after a gap is wrong.
-        """
-        if not self.document_preview_enabled():
-            return
-        try:
-            width = self._app.query_one("#preview_pane", VerticalScroll).content_size.width
-        except Exception:
-            return
-        if width <= 0:
-            return
-        doc = self.document_store.capture(container, chunks)
-        if doc is None:
-            self.diag_log(f"harvest nothing-capturable parent={container.parent_doc_id[:8]}")
-            return
-        # Keyed on the PANE width, not the capture's own width: the pane is what
-        # can be measured at serve time, and a chunk renders narrower than the
-        # pane by the container's padding (measured 63 against a 64-wide pane),
-        # so keying on doc.width would miss on every lookup.
-        existing = self.document_store.get(
-            container.parent_doc_id, container.query_signature, width
-        )
-        if existing is not None and len(existing.chunks) >= len(doc.chunks):
-            return
-        self.document_store.put(container.parent_doc_id, container.query_signature, width, doc)
-        self.diag_log(
-            f"harvest parent={container.parent_doc_id[:8]} chunks={len(doc.chunks)}/{len(chunks)} "
-            f"rows={doc.total_rows} width={doc.width}"
-        )
-        if len(doc.chunks) < len(chunks):
-            self.start_warming(
-                container.parent_doc_id, container.query_signature, width, doc, chunks, container
-            )
 
     def stop_background_work(self) -> None:
         """Cancel everything this presenter runs in the background.
@@ -2483,7 +2211,7 @@ class PreviewPresenter:
         real corpus: 0.49s to quit with coverage off against 1.09s with it on,
         of which pacing the captures recovered about half and this the rest.
         """
-        for task in (self._coverage_task, self._warm_task, self._warm_bootstrap):
+        for task in (self._coverage_task,):
             if task is not None and not task.done():
                 task.cancel()
 
@@ -2898,237 +2626,6 @@ class PreviewPresenter:
             cost = time.perf_counter() - started
             await asyncio.sleep(min(cost * tuning.COVERAGE_IDLE_RATIO, tuning.COVERAGE_IDLE_MAX))
         return captured
-
-    def start_warming(
-        self,
-        parent_id: str,
-        query_sig: str,
-        width: int,
-        doc: FrozenDocument,
-        chunks: list[FileChunk],
-        container: PreviewContainer | None = None,
-    ) -> None:
-        """Grow ``doc`` towards covering its file, in the background.
-
-        Called from BOTH paths. Harvest reaches it after a widget-path mount,
-        but the document path returns before harvest, so a file served from the
-        store could only warm if it had once been built the slow way — meaning
-        warming helped the first file of a session and no other.
-        """
-        task = self._warm_task
-        if task is not None and not task.done():
-            if self._warm_parent == parent_id:
-                # Already growing THIS file. Restarting on every navigation is
-                # how coverage stalled: each one cancelled the task mid-batch
-                # and started again from the same short run.
-                return
-            task.cancel()
-        self._warm_parent = parent_id
-        self._warm_task = asyncio.create_task(
-            self._warm_document(parent_id, query_sig, chunks, width, doc, container)
-        )
-
-    async def _warm_document(
-        self,
-        parent_id: str,
-        query_sig: str,
-        chunks: list[FileChunk],
-        width: int,
-        doc: FrozenDocument,
-        container: PreviewContainer | None = None,
-    ) -> None:
-        """Extend a captured run to cover the rest of the file.
-
-        A run typically stops short because the background fill bails the moment
-        the user takes scroll control, so the tail is missing and a jump there
-        falls back to a rebuild — the slow path the substrate exists to avoid.
-        This mounts the missing chunks into the container that is already on
-        screen, captures them, and extends the document at whichever end they
-        belong to.
-
-        Growth stays CONTIGUOUS by construction: only chunks immediately before
-        or after the run are taken, and the first failure at an end stops that
-        direction. A gap would shift every row after it.
-
-        Three rules keep this from becoming the very thing the pipeline work
-        removed — background filling that competes with the landing the user is
-        waiting on. Measured on the real corpus, an earlier version that broke
-        all three made WTE navigation 170ms -> 579ms median:
-
-        1. It yields to the scroll. Nothing is mounted while the controller is
-           settling; that is the same signal ``lazy_mount`` already respects.
-        2. It mounts in BATCHES with one settle per batch, not a settle per
-           chunk. Per-chunk settling was slow enough that a 117-chunk file
-           reached 33 before the next navigation cancelled it.
-        3. It only grows UPWARD when the container is off screen. Mounting above
-           the viewport in a VISIBLE container shoves the content down — the
-           reason the original background fill deliberately filled below only.
-           When the document view is on screen the container is hidden, and the
-           view's own prepend moves extent and offset together, so upward growth
-           is invisible there.
-        """
-        from fnd.tui.preview.frozen import freeze
-
-        # Snapshot the highlighting this document is FOR. Warming runs for
-        # seconds; reading the app's live spec per chunk meant a query change
-        # mid-batch produced chunks highlighted for the new query, appended to a
-        # document filed under the old query's key where nothing can correct it.
-        warm_spec = self._app._effective_match_spec
-
-        def still_valid() -> bool:
-            """Warming survives everything except the query it is FOR changing.
-
-            Requiring ``is_live(container)`` tied coverage to a widget tree that
-            navigation replaces, so warming died on the first jump — that capped
-            coverage at 83 of 1018 chunks. Comparing ``reset_generation`` then
-            killed it for scope changes and highlight re-renders too, which do
-            not invalidate a capture; measured, warming then stopped before
-            capturing a single chunk. The query signature is what actually
-            decides whether these captures can ever be served, because it is
-            what the store keys on.
-            """
-            try:
-                return self._app._search.query_signature() == query_sig
-            except Exception:
-                return False
-
-        def live_view() -> FrozenDocumentView | None:
-            view = self.document_view
-            return view if view is not None and view.document is doc else None
-
-        async def yield_to_navigation() -> bool:
-            """Wait out an in-flight landing. False if warming should stop."""
-            # Stop before this one document exceeds what the whole cache may
-            # hold. The budget scales with system memory, so on a large machine
-            # this effectively never fires and a huge file warms whole; on a
-            # small one it degrades instead of exhausting the machine.
-            if doc.total_rows >= frozen_store.budget_rows():
-                self.diag_log(f"warm stopped at row budget rows={doc.total_rows}")
-                return False
-            for _ in range(tuning.PREVIEW_WARM_YIELD_TICKS):
-                if not still_valid():
-                    return False
-                if not self._app._preview_scroll.is_settling:
-                    return True
-                await asyncio.sleep(0.05)
-            return still_valid()
-
-        async def capture_batch(indices: list[int]) -> list[FrozenChunk]:
-            """Capture a batch OFF-SCREEN, one chunk at a time.
-
-            Nothing is mounted into the on-screen container: building there is
-            what made warming compete with the landing, and it inflated the very
-            DOM freezing exists to shrink. An already-captured chunk is reused
-            rather than rebuilt.
-            """
-            out: list[FrozenChunk] = []
-            alive = container is not None and is_live(container)
-            for index in indices:
-                chunk = chunks[index]
-                # The container is a SHORTCUT for chunks already captured, not a
-                # requirement — it may have been swept out from under us.
-                widget = (
-                    container.chunk_widgets.get(chunk.chunk_seq)
-                    if alive and container is not None
-                    else None
-                )
-                captured: FrozenChunk | None = None
-                if isinstance(widget, FrozenChunkView):
-                    captured = widget.frozen
-                elif isinstance(widget, FNDMarkdown):
-                    captured = freeze(widget, chunk.chunk_seq)
-                else:
-                    captured = await self._warm_host.capture(
-                        chunk, doc.width or width, match_spec=warm_spec
-                    )
-                if captured is None:
-                    break  # stop at the first gap; never skip past one
-                out.append(captured)
-            return out
-
-        grew = 0
-
-        def publish() -> None:
-            """Make progress usable NOW, not at the end.
-
-            Warming is routinely cancelled mid-flight by a file switch, and
-            publishing only on completion threw away everything captured up to
-            that point — the next visit then re-warmed from the same short run.
-            A put is a dict assignment; the document is the same object either
-            way. Defined outside the try so the cancellation handler can call it
-            even when the cancel lands on the opening sleep.
-
-            Skipped once the pane no longer matches the width these strips were
-            cut for. ``put`` evicts captures of other widths, so a warm task
-            that outlived a resize would wipe every correctly-sized document —
-            and publishing per batch turns that from one bad write into a
-            repeating one.
-            """
-            if not grew:
-                return
-            try:
-                current = self._app.query_one("#preview_pane", VerticalScroll).content_size.width
-            except Exception:
-                return
-            if current != width:
-                return
-            self.document_store.put(parent_id, query_sig, width, doc)
-
-        try:
-            await asyncio.sleep(tuning.PREVIEW_WARM_DELAY)
-            seqs = [c.chunk_seq for c in chunks]
-            first = seqs.index(doc.chunks[0].chunk_seq)
-            last = seqs.index(doc.chunks[-1].chunk_seq)
-            batch = tuning.PREVIEW_WARM_BATCH
-
-            # Downward first: appending never moves the viewport, so it is safe
-            # whichever substrate is on screen.
-            cursor = last + 1
-            while cursor < len(chunks):
-                if not await yield_to_navigation():
-                    break
-                indices = list(range(cursor, min(cursor + batch, len(chunks))))
-                captured = await capture_batch(indices)
-                if not captured:
-                    break
-                for chunk_capture in captured:
-                    view = live_view()
-                    view.append(chunk_capture) if view else doc.append(chunk_capture)
-                    grew += 1
-                cursor += len(captured)
-                publish()
-                if len(captured) < len(indices):
-                    break
-                await asyncio.sleep(0)
-
-            # Upward needs no gate now. The old one — "only when the container
-            # is hidden" — was inverted against capability: a hidden container
-            # is display:none, which is exactly when a capture returns None, so
-            # the loop broke immediately and coverage stalled at 11 of 1018.
-            # Building off-screen means nothing on screen can shift either way.
-            cursor = first - 1
-            while cursor >= 0:
-                if not await yield_to_navigation():
-                    break
-                indices = list(range(max(0, cursor - batch + 1), cursor + 1))
-                captured = await capture_batch(indices)
-                if len(captured) < len(indices):
-                    break
-                for chunk_capture in reversed(captured):
-                    view = live_view()
-                    view.prepend(chunk_capture) if view else doc.prepend(chunk_capture)
-                    grew += 1
-                cursor -= len(captured)
-                publish()
-                await asyncio.sleep(0)
-
-            if grew:
-                self.diag_log(f"warm grew={grew} chunks={len(doc.chunks)}/{len(chunks)}")
-        except asyncio.CancelledError:
-            publish()
-            raise
-        except Exception as exc:  # pragma: no cover - warming is best-effort
-            self.diag_log(f"warm failed: {exc!r}")
 
     async def _mount_chunks_async(
         self,

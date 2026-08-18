@@ -50,12 +50,6 @@ class _Host:
 
         PreviewPresenter.reveal(self, container)  # type: ignore[arg-type]
 
-    def hide_document_view(self) -> None:
-        # Modelled, not stubbed away: reveal() drops the served document here,
-        # because a document is the OUTGOING substrate for a structural build
-        # and hiding it any earlier blanks the pane for the whole build.
-        self.hid_document = True
-
     def diag_log(self, msg: str) -> None:
         # Modelled, not stubbed away: the real presenter logs the first-paint
         # event from reveal(), and a stand-in that lacks it would hide that.
