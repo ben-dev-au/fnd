@@ -20,40 +20,11 @@ from pathlib import Path
 
 import pytest
 
-from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.preview import tuning
 from fnd.tui.widgets.preview_container import PreviewContainer
 from tests._pilot_wait import settle, wait_until
-
-
-def _wide_doc(tmp_path: Path, tmp_index_dir: Path) -> Path:
-    """One file that stays WINDOWED, with matches far enough apart that
-    consecutive jumps land outside the mounted window.
-
-    Both properties are load-bearing. Above ``FULLMOUNT_CHUNK_BUDGET`` (250)
-    chunks the file is never full-mounted, so an out-of-window jump takes the
-    fresh-container rebuild path — the one that leaked. A smaller file is
-    full-mounted and every jump scrolls in place, which is why the first version
-    of this test passed with the fix reverted.
-    """
-    notes = tmp_path / "notes"
-    notes.mkdir()
-    lines: list[str] = ["# Wide doc", ""]
-    for section in range(320):
-        lines.append(f"## Section {section}")
-        # Matches every 25th section: far beyond the visible-first window, so
-        # each navigation rebuilds rather than scrolling within what is mounted.
-        lines.append(
-            f"quartzfin marker in section {section}."
-            if section % 25 == 0
-            else f"Filler prose for section {section}."
-        )
-        lines.extend([f"More filler line {i} for section {section}." for i in range(4)])
-        lines.append("")
-    (notes / "wide.md").write_text("\n".join(lines), encoding="utf-8")
-    build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
-    return tmp_index_dir
+from tests._preview_corpus import wide_doc
 
 
 @pytest.mark.asyncio
@@ -63,7 +34,7 @@ async def test_in_file_navigation_does_not_accumulate_containers(
     # Captures would serve these jumps without building a fresh container,
     # which is the point of coverage but hides the leak this pins.
     monkeypatch.setattr("fnd.tui.preview.tuning.COVERAGE_CHUNK_BUDGET", 0)
-    index = _wide_doc(tmp_path, tmp_index_dir)
+    index = wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:
         await wait_until(
@@ -103,7 +74,7 @@ async def test_in_file_navigation_does_not_accumulate_containers(
 @pytest.mark.asyncio
 async def test_sweep_reclaims_a_stranded_container(tmp_path: Path, tmp_index_dir: Path) -> None:
     """The sweep itself: a container nothing owns is removed, the active one is not."""
-    index = _wide_doc(tmp_path, tmp_index_dir)
+    index = wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:
         await wait_until(
@@ -147,7 +118,7 @@ async def test_reclaim_runs_after_an_in_window_landing(
     reverted, because the navigation it drove took the rebuild path after all and
     was swept by the old call site.
     """
-    index = _wide_doc(tmp_path, tmp_index_dir)
+    index = wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:
         await wait_until(

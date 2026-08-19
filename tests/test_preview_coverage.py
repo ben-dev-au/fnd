@@ -24,7 +24,6 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 
-from fnd.index import build_index
 from fnd.matching import MatchSpec
 from fnd.query import FileChunk
 from fnd.tui import FNDApp
@@ -35,25 +34,7 @@ from fnd.tui.preview.frozen import FrozenChunkView, freeze
 from fnd.tui.preview.warm_host import WarmHost
 from fnd.tui.widgets.markdown import FNDMarkdown
 from tests._pilot_wait import settle, wait_until
-
-
-def _wide_doc(tmp_path: Path, tmp_index_dir: Path) -> Path:
-    """A file past the full-mount budget, with hits spread far apart."""
-    notes = tmp_path / "notes"
-    notes.mkdir()
-    lines: list[str] = ["# Wide doc", ""]
-    for section in range(320):
-        lines.append(f"## Section {section}")
-        lines.append(
-            f"quartzfin marker in section {section}."
-            if section % 25 == 0
-            else f"Filler prose for section {section}."
-        )
-        lines.extend([f"More filler line {i} for section {section}." for i in range(4)])
-        lines.append("")
-    (notes / "wide.md").write_text("\n".join(lines), encoding="utf-8")
-    build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
-    return tmp_index_dir
+from tests._preview_corpus import wide_doc
 
 
 def test_targets_are_nearest_first_and_bounded() -> None:
@@ -108,7 +89,7 @@ def test_already_held_chunks_are_not_recaptured() -> None:
 async def test_a_far_jump_mounts_a_capture_instead_of_building(
     tmp_path: Path, tmp_index_dir: Path
 ) -> None:
-    index = _wide_doc(tmp_path, tmp_index_dir)
+    index = wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:
         await wait_until(
@@ -253,7 +234,7 @@ async def test_coverage_does_not_hold_the_mount_in_flight(
     long as coverage runs — tens of seconds on a large file. The mount is over
     when the preview is on screen; capturing ahead is separate work.
     """
-    index = _wide_doc(tmp_path, tmp_index_dir)
+    index = wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:
         await wait_until(
@@ -289,7 +270,7 @@ async def test_coverage_stands_down_while_lazy_mount_runs(
     upward scroll mounting nothing at all, which is a wall the user hits when
     scrolling back up through a file.
     """
-    index = _wide_doc(tmp_path, tmp_index_dir)
+    index = wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:
         await wait_until(
@@ -384,7 +365,7 @@ async def test_the_freeze_sweep_yields_between_chunks(
 
     monkeypatch.setattr(frozen_mod, "freeze", slow_freeze)
 
-    index = _wide_doc(tmp_path, tmp_index_dir)
+    index = wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:
         await wait_until(
@@ -470,7 +451,7 @@ async def test_lazy_mount_is_only_walled_off_until_first_paint(
 
     monkeypatch.setattr(PreviewPresenter, "_freeze_chunks_outside_window", slow_sweep)
 
-    index = _wide_doc(tmp_path, tmp_index_dir)
+    index = wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:
         await wait_until(
@@ -509,7 +490,7 @@ async def test_coverage_skips_chunks_too_expensive_to_build(
     So the outliers must be refused BEFORE building, which is the only point at
     which the cost is still avoidable.
     """
-    index = _wide_doc(tmp_path, tmp_index_dir)
+    index = wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:
         await wait_until(
@@ -542,7 +523,7 @@ async def test_coverage_skips_chunks_too_expensive_to_build(
             await presenter._capture_targets(
                 group.parent_id,
                 sig,
-                pane.content_size.width,
+                width,
                 chunks,
                 targets,
                 app._effective_match_spec,
@@ -563,7 +544,7 @@ async def test_coverage_skips_chunks_too_expensive_to_build(
         captured = await presenter._capture_targets(
             group.parent_id,
             sig,
-            pane.content_size.width,
+            width,
             chunks,
             targets,
             app._effective_match_spec,
@@ -592,7 +573,7 @@ async def test_a_capture_is_cut_at_the_width_it_will_be_served_into(
     asserted the writer and the sweep agreed — which they did by construction,
     whatever the function returned. It passed with the bug present.
     """
-    index = _wide_doc(tmp_path, tmp_index_dir)
+    index = wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:
         await wait_until(
@@ -640,7 +621,7 @@ async def test_a_tall_chunk_is_captured_at_the_width_it_was_asked_for(
     against a mounted chunk; this compares what came back from the jig against
     what was requested, which is the other half.
     """
-    index = _wide_doc(tmp_path, tmp_index_dir)
+    index = wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:
         await wait_until(
@@ -694,7 +675,7 @@ async def test_a_resize_does_not_leave_frozen_chunks_painting_cropped_text(
     This asserts the on-screen half — that no frozen chunk is left painting
     strips cut for a width it is no longer laid out at.
     """
-    index = _wide_doc(tmp_path, tmp_index_dir)
+    index = wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:
         await wait_until(
@@ -804,7 +785,7 @@ async def test_the_repair_re_arms_but_cannot_chain_forever(
     re-arm gives one pass, and an unbounded one never stops. The correct
     behaviour is exactly `STALE_STRIP_MAX_PASSES`.
     """
-    index = _wide_doc(tmp_path, tmp_index_dir)
+    index = wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:
         await wait_until(
@@ -880,4 +861,41 @@ async def test_the_repair_re_arms_but_cannot_chain_forever(
             f"the repair chained {passes} times against a bound of "
             f"{tuning.STALE_STRIP_MAX_PASSES}; with every capture failing it would "
             f"re-arm forever"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_mount_does_not_disable_warming_for_the_session() -> None:
+    """`ensure` installs its screen under a FIXED name.
+
+    So a first call that installs the screen and then fails to mount into it
+    leaves that name taken. Re-installing it on the retry raises on the
+    duplicate, the raise is swallowed, and `ensure` returns `None` for the rest
+    of the session — every capture missing, nothing logged, and the only symptom
+    a preview that is quietly slow forever.
+    """
+    app = _CaptureHost()
+    async with app.run_test(size=(90, 30)):
+        host = WarmHost(cast("FNDApp", app))
+
+        calls = {"n": 0}
+        real_mount = None
+
+        async def failing_mount(*args: object, **kwargs: object) -> None:
+            calls["n"] += 1
+            raise RuntimeError("mount refused")
+
+        # Fail the FIRST mount only, exactly as a transient teardown race would.
+        import textual.screen
+
+        real_mount = textual.screen.Screen.mount
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(textual.screen.Screen, "mount", failing_mount)
+            assert await host.ensure() is None, "the failing mount should yield no container"
+        assert calls["n"] == 1
+
+        textual.screen.Screen.mount = real_mount  # type: ignore[method-assign]
+        assert await host.ensure() is not None, (
+            "warming stayed dead after one failed mount — the screen name was "
+            "still taken and every retry raised on the duplicate"
         )

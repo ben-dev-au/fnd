@@ -560,6 +560,16 @@ class FNDApp(App[None]):
 
         with contextlib.suppress(Exception):
             self._preview.stop_background_work()
+        # The drainer is a raw `create_task`, so Textual's worker teardown does
+        # not know about it. Left running it can pull one more mount job off the
+        # queue while the app is already tearing down — the exact class of work
+        # the line above exists to stop.
+        drainer = getattr(self._prefetch, "sink_drainer", None)
+        if drainer is not None:
+            drainer.cancel()
+            with contextlib.suppress(Exception):
+                await drainer
+            self._prefetch.sink_drainer = None
         watch = getattr(self, "_stall_watch", None)
         if watch is not None:
             with contextlib.suppress(Exception):

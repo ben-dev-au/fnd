@@ -32,9 +32,6 @@ PREVIEW_CACHE_MIN_CHUNKS = 1
 # it. Measured on a 1018-chunk PDF (3x40 navigations per setting), the row-based
 # window against a flat 7: first paint 1796 -> 1493ms, the finalize's build wait
 # 1457 -> 848ms, the reconcile-to-scroll gap 731 -> 517ms.
-# Delay before warming extends a captured run to the rest of the file. Long
-# enough that the navigation the user just made has fully landed — warming is
-# for the jump AFTER this one, so it must never compete with the current paint.
 # How long the freeze sweep waits for its container to be revealed before
 # giving up (ticks of 50ms). Capturing from a `-pre-reveal` container yields
 # blank strips with correct geometry — invisible to every guard, and served
@@ -165,9 +162,9 @@ COVERAGE_CHUNK_BUDGET = 500
 # it rather than a bare match with unbuilt neighbours. Deliberately smaller than
 # VISIBLE_FIRST_ABOVE/BELOW (7): coverage is ordered nearest-first, so the chunks
 # around wherever the user actually is get captured before distant margins do.
-# Swept against the real corpus at 3, 5 and 7, twice: 5 wins both times (34%% of
-# mounted chunks served and 3 fully-served landings, against 31%%/1 at margin 3
-# and 25%%/2 at margin 7). Matching the mount window exactly is WORSE — the extra
+# Swept against the real corpus at 3, 5 and 7, twice: 5 wins both times (34% of
+# mounted chunks served and 3 fully-served landings, against 31%/1 at margin 3
+# and 25%/2 at margin 7). Matching the mount window exactly is WORSE — the extra
 # captures per hit cost more files covered than they buy in completeness.
 COVERAGE_MARGIN = 5
 # Prefetch mounts only the focused chunk per cached file. User-side
@@ -208,3 +205,10 @@ PAINT_CHECK_MS = 2200
 # file can mount for a while). Bounded so a genuinely wedged pipeline still
 # reaches the single repair rather than deferring forever.
 PAINT_CHECK_MAX_REARMS = 6
+
+# How long a single off-screen warm build may take before it is abandoned.
+# WarmHost is serial: an unbounded wait on one chunk's `build_done` stops every
+# later capture for the session, silently. Well above the slowest real chunk
+# measured (a 1018-page PDF's heaviest page built in ~1.3s) so it only ever
+# fires on a genuine wedge.
+WARM_BUILD_TIMEOUT = 15.0

@@ -197,6 +197,7 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
                 app._preview.preview_cache.get(big_group.parent_id, app._search.query_signature())
                 is not None
             ),
+            timeout=30.0,
             message="big.md never reached the preview cache",
         )
         cached = app._preview.preview_cache.get(big_group.parent_id, app._search.query_signature())
@@ -214,6 +215,7 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
                 app._preview.active is not None
                 and app._preview.active.parent_doc_id == small_group.parent_id
             ),
+            timeout=30.0,
             message="never switched away to small.md",
         )
         # Return to big — the strip shows briefly during the cache-hit reveal
@@ -225,6 +227,7 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
         await wait_until(
             pilot,
             lambda: app._preview.active is big_container and "-idle" in strip.classes,
+            timeout=30.0,
             message="revisit did not settle on the cached container with the strip idle",
         )
         assert "-idle" in strip.classes

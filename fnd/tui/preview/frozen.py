@@ -103,7 +103,13 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
     while node is not None:
         if not getattr(node, "display", True):
             return None
-        if getattr(node, "styles", None) is not None and getattr(node.styles, "opacity", 1.0) == 0:
+        # A threshold, not equality: Textual ANIMATES opacity, so an ancestor
+        # part-way through a fade reports a small non-zero value and captures
+        # just as blank as one at exactly zero.
+        if (
+            getattr(node, "styles", None) is not None
+            and getattr(node.styles, "opacity", 1.0) <= 0.01
+        ):
             return None
         node = node.parent if isinstance(node.parent, Widget) else None
     for dt in chunk.query(DataTable):

@@ -19,6 +19,7 @@ stall actually happens, so it is safe to leave on for a session of real use.
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import sys
 import tempfile
@@ -71,7 +72,10 @@ class StallWatch:
         except ValueError:
             threshold = _DEFAULT_THRESHOLD_MS
         # `=1` means "on", not "stall on everything over a millisecond".
-        if threshold <= 1:
+        # `isfinite` because `inf`/`nan` pass the bound below and then silently
+        # disable every report — a diagnostic that says nothing looks like a
+        # clean run.
+        if not math.isfinite(threshold) or threshold <= 1:
             threshold = _DEFAULT_THRESHOLD_MS
         return cls(app, threshold)
 

@@ -479,9 +479,9 @@ class FNDMarkdownTableDT(MarkdownTable):
     DEFAULT_CSS = """
     FNDMarkdownTableDT {
         & > DataTable {
-            /* Textual's DataTable defaults to ``max-height: 100h`` — one
-               VIEWPORT height — so a table with more rows than fit on screen
-               becomes a nested scroll region with its own vertical scrollbar:
+            /* Textual's DataTable defaults to ``max-height: 100%`` — one
+               CONTAINER height — so a table with more rows than fit in the
+               chunk becomes a nested scroll region with its own scrollbar:
                scrolling the document into it scrolls the table instead, until
                it bottoms out. No content is unreachable, but the table is a
                window onto itself rather than part of the document.
@@ -494,9 +494,10 @@ class FNDMarkdownTableDT(MarkdownTable):
                flattened, so a table capped this way is the one thing that
                cannot be captured as a flat run of Strips.
 
-               An explicit ceiling rather than a keyword: Textual rejects
-               ``none``, and ``100%`` resolves against the viewport just as
-               ``100h`` does, so both leave the cap in place. */
+               An explicit ceiling rather than a keyword: Textual's scalar
+               system has no ``none`` and rejects ``auto`` here, and both
+               ``100%`` and ``100h`` resolve against the PARENT container
+               (``vh`` is the viewport unit), so neither lifts the cap. */
             max-height: 99999;
             border: round $foreground 20%;
             margin: 0 0 1 0;

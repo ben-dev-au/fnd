@@ -14,6 +14,7 @@ from textual.containers import VerticalScroll
 from textual.widget import Widget
 
 from fnd.tui.preview import tuning
+from fnd.tui.preview.liveness import is_live
 from fnd.tui.widgets.markdown import FNDMarkdown
 
 if TYPE_CHECKING:
@@ -305,9 +306,17 @@ class LazyMounter:
             # Re-anchor: scroll by however far the anchor moved down, so the
             # prepended chunks extend the scrollable region UPWARD without moving
             # the user's view — continuous scroll instead of a wall.
-            if anchor_w is not None and before_y is not None:
+            if anchor_w is not None and before_y is not None and anchor_seq is not None:
                 await self._app._preview.await_settled()
-                if self._app._preview.active is container:
+                # Re-resolve across the await. The freeze sweep can swap this
+                # chunk's widget for its capture and remove the original while
+                # we yield; the container check does not see that, and a
+                # condemned widget's `virtual_region` yields a delta that
+                # scrolls the pane somewhere the user never asked to be.
+                anchor_w = container.chunk_widgets.get(anchor_seq)
+                if anchor_w is not None and not is_live(anchor_w):
+                    anchor_w = None
+                if anchor_w is not None and self._app._preview.active is container:
                     delta = anchor_w.virtual_region.y - before_y
                     if delta > 0:
                         self._app._preview.begin_reconcile_scroll()

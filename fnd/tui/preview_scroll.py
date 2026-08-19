@@ -94,7 +94,6 @@ class ScrollStrategy(Protocol):
     ) -> None: ...
 
 
-
 class _Once:
     """One-shot wrapper: calls the wrapped callback at most once. Used so a
     fire-once callback (e.g. the preview reveal) can be invoked defensively on

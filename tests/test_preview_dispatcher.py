@@ -103,7 +103,9 @@ def test_uses_markdown_renderer_pdf_with_body_md() -> None:
     assert uses_markdown_renderer(_chunk("txt", body_md="ignored")) is False
 
 
-def test_an_oversized_chunk_is_routed_away_from_the_markdown_renderer() -> None:
+def test_an_oversized_chunk_is_routed_away_from_the_markdown_renderer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The size cap had no test at all — neither the routing nor the fallback.
 
     A chunk over the cap must stop using the structural renderer and route to
@@ -111,8 +113,17 @@ def test_an_oversized_chunk_is_routed_away_from_the_markdown_renderer() -> None:
     """
     from fnd.tui.preview_dispatcher import MARKDOWN_MAX_CHARS
 
+    # `choose_preview_mode` short-circuits to "flat" when this is set, so the
+    # last assertion would pass whatever the routing did.
+    monkeypatch.delenv("_FND_FORCE_FLAT", raising=False)
+
     small = _chunk(kind="md", body_md="| a | b |\n|---|---|\n| 1 | 2 |")
     assert uses_markdown_renderer(small)
+
+    # Both sides of the boundary — the cap is inclusive, and a body far under
+    # and far over it cannot tell `<=` from `<`.
+    assert uses_markdown_renderer(_chunk(kind="md", body_md="x" * MARKDOWN_MAX_CHARS))
+    assert not uses_markdown_renderer(_chunk(kind="md", body_md="x" * (MARKDOWN_MAX_CHARS + 1)))
 
     row = "| kryptonwidget | beta gamma | delta |\n"
     huge = _chunk(kind="md", body_md=row * (MARKDOWN_MAX_CHARS // len(row) + 50))

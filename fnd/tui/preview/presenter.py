@@ -795,7 +795,11 @@ class PreviewPresenter:
                     except Exception:
                         captured = None
                     else:
-                        above_height -= captured.height if i < keep_lo else 0
+                        # `outer_height`, not `height`: above_height accumulates
+                        # `virtual_region` spans, which include the chunk's
+                        # padding. Subtracting the strip count alone leaves the
+                        # padding rows in the correction and the pane drifts.
+                        above_height -= captured.outer_height if i < keep_lo else 0
                         container.chunk_widgets[seq] = view
                         container.match_targets.pop(seq, None)
                         frozen_count += 1

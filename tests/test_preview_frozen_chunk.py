@@ -22,6 +22,7 @@ from textual.widgets import DataTable
 from fnd.matching import MatchSpec
 from fnd.tui.preview.frozen import FrozenChunkView, freeze
 from fnd.tui.widgets.markdown import FNDMarkdown
+from tests._pilot_wait import wait_until
 
 DOC = """## Heading with quartzfin
 
@@ -57,8 +58,15 @@ async def _built(pilot) -> FNDMarkdown:  # type: ignore[no-untyped-def]
     md = pilot.app.query_one("#md", FNDMarkdown)
     md.update(DOC)
     await md.build_done.wait()
-    for _ in range(12):
-        await pilot.pause()
+    # Geometry, not just the build: freeze needs a laid-out tree, and
+    # `build_done` is not a layout signal. A fixed tick count is a wait only
+    # while the machine is idle and degrades to a no-op under suite load.
+    await wait_until(
+        pilot,
+        lambda: md.size.height > 0 and md.virtual_size.height > 0,
+        timeout=15.0,
+        message="the chunk never laid out",
+    )
     return md
 
 
@@ -73,8 +81,13 @@ async def test_capture_holds_everything_the_tree_painted() -> None:
         text = "\n".join(s.text for s in frozen.strips)
         # Every construct, including the ones a re-implemented renderer loses.
         assert "quartzfin in prose" in text.replace("\n", " ")
-        assert "quartzfin" in text, "table cell match text missing"
-        assert "cell" in text, "table cell text missing"
+        # ONE line carrying both words. "quartzfin" alone is in the heading,
+        # the prose, the fence and the list item, so asserting it document-wide
+        # passes even when the table captures as an empty box — the exact
+        # failure the table guards exist to catch.
+        assert any("quartzfin" in line and "cell" in line for line in text.splitlines()), (
+            "the table row did not survive the capture"
+        )
         assert any(c in text for c in "─│"), "table borders missing"
         assert "quartzfin in a fence" in text, "fenced code missing"
         assert "list item with quartzfin" in text, "list item missing"
@@ -127,8 +140,12 @@ async def test_the_stand_in_is_one_widget_of_the_same_height() -> None:
         pane = app.query_one("#pane", VerticalScroll)
         view = FrozenChunkView(frozen)
         await pane.mount(view)
-        for _ in range(6):
-            await pilot.pause()
+        await wait_until(
+            pilot,
+            lambda: view.size.height > 0,
+            timeout=15.0,
+            message="the stand-in never laid out",
+        )
 
         assert len(list(view.query("*"))) == 0, "the stand-in must hold no child widgets"
         assert view.size.height == frozen.height, (
@@ -180,8 +197,12 @@ async def test_freezing_above_the_viewport_does_not_move_the_page() -> None:
             md = app.query_one(f"#c{i}", FNDMarkdown)
             md.update(DOC)
             await md.build_done.wait()
-        for _ in range(15):
-            await pilot.pause()
+        await wait_until(
+            pilot,
+            lambda: all(app.query_one(f"#c{i}", FNDMarkdown).size.height > 0 for i in range(4)),
+            timeout=15.0,
+            message="the fixture chunks never laid out",
+        )
 
         above = [app.query_one(f"#c{i}", FNDMarkdown) for i in range(3)]
         assert all(w.outer_size.height > w.size.height for w in above), (
@@ -191,8 +212,16 @@ async def test_freezing_above_the_viewport_does_not_move_the_page() -> None:
         pane = app.query_one("#pane", VerticalScroll)
         reading = app.query_one("#c3", FNDMarkdown)
         pane.scroll_to(y=reading.virtual_region.y, animate=False)
-        for _ in range(8):
-            await pilot.pause()
+        # The chunk sitting AT the pane top is the scroll having landed.
+        # `scroll_y` alone is not: with `animate=False` it is set synchronously,
+        # while `region` only moves once the compositor re-arranges — so gating
+        # on it read a stale position 174 rows out.
+        await wait_until(
+            pilot,
+            lambda: reading.region.height > 0 and reading.region.y == pane.region.y,
+            timeout=15.0,
+            message="the scroll never landed on the chunk",
+        )
         before = reading.region.y - pane.region.y
 
         for i, md in enumerate(above):
@@ -200,8 +229,15 @@ async def test_freezing_above_the_viewport_does_not_move_the_page() -> None:
             assert captured is not None
             md.parent.mount(FrozenChunkView(captured), before=md)  # type: ignore[union-attr]
             md.remove()
-        for _ in range(15):
-            await pilot.pause()
+        await wait_until(
+            pilot,
+            lambda: (
+                len(list(pane.query(FrozenChunkView))) == len(above)
+                and len(list(pane.query(FNDMarkdown))) == 1
+            ),
+            timeout=15.0,
+            message="the stand-ins never replaced the chunks above",
+        )
 
         after = reading.region.y - pane.region.y
         assert after == before, (
@@ -222,8 +258,12 @@ async def test_a_chunk_that_scrolls_inside_itself_is_refused() -> None:
         assert dt is not None, "fixture should render a DataTable"
         dt.styles.max_height = 3  # force it to become a nested viewport
         dt.refresh(layout=True)
-        for _ in range(10):
-            await pilot.pause()
+        await wait_until(
+            pilot,
+            lambda: dt.virtual_size.height > dt.size.height,
+            timeout=15.0,
+            message="failed to induce a nested scroll",
+        )
         assert dt.virtual_size.height > dt.size.height, "failed to induce a nested scroll"
         assert freeze(md, chunk_seq=7) is None, "a nested scroll region must not be flattened"
 
@@ -253,8 +293,12 @@ async def test_a_frozen_chunk_still_contributes_its_match_stops() -> None:
         view = FrozenChunkView(frozen)
         await pane.mount(view)
         await md.remove()
-        for _ in range(8):
-            await pilot.pause()
+        await wait_until(
+            pilot,
+            lambda: not list(pane.query(FNDMarkdown)) and view.size.height > 0,
+            timeout=15.0,
+            message="the live chunk never went away",
+        )
 
         frozen_stops = len(enumerate_stop_regions(pane, spec))
         assert frozen_stops == live_stops, (

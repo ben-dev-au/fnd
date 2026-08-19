@@ -32,6 +32,7 @@ from textual.geometry import Size
 from textual.screen import Screen
 
 from fnd.matching import MatchSpec
+from fnd.tui.preview import tuning
 from fnd.tui.preview.frozen import FrozenChunk, freeze
 from fnd.tui.widgets.markdown import FNDMarkdown, _legacy_blocks_to_md
 
@@ -64,18 +65,27 @@ class WarmHost:
         if self._container is not None and self._container.is_mounted:
             return self._container
         try:
-            screen: Screen[None] = Screen(id=_SCREEN_NAME)
-            self._app.install_screen(screen, name=_SCREEN_NAME)
-            # A screen must be MOUNTED before anything can be mounted into it,
-            # and only a push mounts it. Popping leaves it installed and alive
-            # but not current, which is the state we want.
-            #
-            # The push is NOT awaited, and the pop follows immediately in the
-            # same tick. Awaiting it lets this empty screen become current and
-            # PAINT — measured live, the whole app went blank for 35 consecutive
-            # frames (~1.75s) the first time warming ran, sidebar included.
-            self._app.push_screen(_SCREEN_NAME)
-            self._app.pop_screen()
+            # Reuse an already-installed screen. The name is fixed, so a retry
+            # after a partial failure (install succeeded, `mount` below raised)
+            # would otherwise raise on the duplicate name, be swallowed by the
+            # `except`, and disable warming for the rest of the session — with
+            # no error anywhere: captures simply stop and every lookup misses.
+            screen = self._screen
+            if screen is None or not self._app.is_screen_installed(_SCREEN_NAME):
+                screen = Screen(id=_SCREEN_NAME)
+                self._app.install_screen(screen, name=_SCREEN_NAME)
+                self._screen = screen
+                # A screen must be MOUNTED before anything can be mounted into
+                # it, and only a push mounts it. Popping leaves it installed and
+                # alive but not current, which is the state we want.
+                #
+                # The push is NOT awaited, and the pop follows immediately in
+                # the same tick. Awaiting it lets this empty screen become
+                # current and PAINT — measured live, the whole app went blank
+                # for 35 consecutive frames (~1.75s) the first time warming ran,
+                # sidebar included.
+                self._app.push_screen(_SCREEN_NAME)
+                self._app.pop_screen()
             container = VerticalScroll()
             # No scrollbar. This container is a measuring jig, not something
             # anyone scrolls: a chunk taller than `_LAYOUT_HEIGHT` overflows it,
@@ -118,7 +128,10 @@ class WarmHost:
         )
         try:
             await container.mount(widget)
-            await widget.build_done.wait()
+            # Bounded. WarmHost is serial, so a build that never completes stops
+            # the whole coverage pipeline for the session with nothing logged.
+            async with asyncio.timeout(tuning.WARM_BUILD_TIMEOUT):
+                await widget.build_done.wait()
             # The screen is not current, so Textual will not lay it out on its
             # own — Screen._on_timer_update gates relayout on is_current. Drive
             # it explicitly at the width the preview pane will paint at.
@@ -135,6 +148,10 @@ class WarmHost:
             await asyncio.sleep(0)
             self._screen._refresh_layout(Size(width, _LAYOUT_HEIGHT))
             return freeze(widget, chunk.chunk_seq)
+        except TimeoutError:
+            with contextlib.suppress(Exception):
+                self._app._diag_log(f"warm build timed out chunk={chunk.chunk_seq}")
+            return None
         except Exception:
             return None
         finally:

@@ -41,7 +41,9 @@ class StripDocumentView(ScrollView, can_focus=True):
       flat buffer, a document row for frozen captures.
     * :meth:`_ready_for_scroll` — whether an address can be resolved yet.
     * :meth:`_rebuild_for_width` — re-wrap, re-freeze, or nothing.
-    * :attr:`match_rows`, :meth:`row_of_chunk`, :meth:`first_match_row_of_chunk`.
+    * :attr:`match_rows` (VISUAL rows), :meth:`address_of_chunk` and
+      :meth:`first_match_address_of_chunk` (substrate ADDRESSES — not the same
+      space; mixing them scrolls to the wrong place once wrapping is on).
     * :meth:`_row_overlay_style` — optional per-row accent.
     """
 
@@ -81,10 +83,14 @@ class StripDocumentView(ScrollView, can_focus=True):
         """Sorted visual rows carrying a match — the scrollbar marker feed."""
         return []
 
-    def row_of_chunk(self, chunk_id: int) -> int | None:
+    def address_of_chunk(self, chunk_id: int) -> int | None:
+        """The chunk's first ADDRESS — the substrate's own space, not a visual
+        row. `scroll_to_address` is what converts it."""
         return None
 
-    def first_match_row_of_chunk(self, chunk_id: int) -> int | None:
+    def first_match_address_of_chunk(self, chunk_id: int) -> int | None:
+        """The chunk's first matched ADDRESS, or ``None``. Same space as
+        :meth:`address_of_chunk`."""
         return None
 
     def _row_overlay_style(self, visual_y: int) -> Any:
@@ -168,9 +174,9 @@ class StripDocumentView(ScrollView, can_focus=True):
         matched row if one exists; otherwise the chunk's first row."""
         target: int | None = None
         if prefer_first_match:
-            target = self.first_match_row_of_chunk(chunk_id)
+            target = self.first_match_address_of_chunk(chunk_id)
         if target is None:
-            target = self.row_of_chunk(chunk_id)
+            target = self.address_of_chunk(chunk_id)
         if target is not None:
             self.scroll_to_address(target, center=center, context_fraction=context_fraction)
 

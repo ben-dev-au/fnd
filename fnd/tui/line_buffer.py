@@ -316,7 +316,11 @@ class LineBufferPreview(StripDocumentView):
         renders verbatim and overflows to horizontal scroll."""
         if not (self._wrap and self._fv is not None and width > 0 and width != self._wrap_width):
             return False
-        self._rebuild_strips()
+        # Pass the width through. `_rebuild_strips` otherwise re-reads
+        # `self.size`, which on the `on_resize` path is not guaranteed to hold
+        # the width the event just reported — so the guard would compare against
+        # one value and the wrap be cut at another.
+        self._rebuild_strips(width=width)
         return True
 
     @property
@@ -326,13 +330,13 @@ class LineBufferPreview(StripDocumentView):
             return []
         return sorted({self._logical_to_visual_y(li) for li in self._fv.match_lines})
 
-    def row_of_chunk(self, chunk_id: int) -> int | None:
+    def address_of_chunk(self, chunk_id: int) -> int | None:
         if self._fv is None:
             return None
         rng = self._fv.chunk_to_range.get(chunk_id)
         return None if rng is None else rng[0]
 
-    def first_match_row_of_chunk(self, chunk_id: int) -> int | None:
+    def first_match_address_of_chunk(self, chunk_id: int) -> int | None:
         if self._fv is None:
             return None
         return self._fv.first_hit_line_in_chunk.get(chunk_id)
@@ -520,7 +524,7 @@ class LineBufferPreview(StripDocumentView):
             return self._logical_to_visual_start[-1]
         return self._logical_to_visual_start[logical_index]
 
-    def _rebuild_strips(self) -> None:
+    def _rebuild_strips(self, *, width: int | None = None) -> None:
         """Render every logical line to cached Strips for the current wrap."""
         fv = self._fv
         if fv is None:
@@ -531,7 +535,8 @@ class LineBufferPreview(StripDocumentView):
             self._set_extent()
             return
 
-        wrap_width = self.size.width if self._wrap and self.size.width > 0 else 0
+        effective = self.size.width if width is None else width
+        wrap_width = effective if self._wrap and effective > 0 else 0
         self._wrap_width = wrap_width
 
         strips, v2l, l2vs = self._render_lines(fv.lines, wrap_width=wrap_width)
