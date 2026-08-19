@@ -400,9 +400,11 @@ async def test_the_freeze_sweep_yields_between_chunks(
         await asyncio.sleep(0)
         gaps.clear()
         # Sweep everything: an empty window means every mounted chunk qualifies.
+        sweep_started = time.perf_counter()
         await app._preview._freeze_chunks_outside_window(
             container, chunks, mounted[-1] + 1, mounted[-1] + 1
         )
+        sweep_ms = (time.perf_counter() - sweep_started) * 1000
         # Let the ticker have a turn BEFORE cancelling it. A gap is only recorded
         # when the ticker next runs, so cancelling straight after the sweep threw
         # away the very measurement this test exists to take.
@@ -418,12 +420,17 @@ async def test_the_freeze_sweep_yields_between_chunks(
         "sweep from a yielding one, so this would pass either way"
     )
     worst_ms = max(gaps) * 1000 if gaps else 0.0
-    # Each freeze is padded to 10ms, and at least 8 chunks are swept, so an
-    # unsliced sweep blocks for 80ms+ in one go. Sliced, no single block should
-    # exceed roughly one slice plus one chunk.
-    assert worst_ms < 60, (
+    # A FRACTION of the sweep, not a millisecond figure. An unsliced sweep is one
+    # block, so its worst gap IS the whole sweep and the ratio is 1.0; sliced at
+    # `FREEZE_SLICE_SECONDS` over 10ms-padded chunks it is a third of that or
+    # less. Both terms scale with the machine, which an absolute bound does not:
+    # this assertion read 102ms against a 60ms cap on a loaded macOS runner while
+    # the sweep was slicing correctly.
+    assert sweep_ms > 0, "the sweep took no measurable time; nothing was proven"
+    assert worst_ms < sweep_ms * 0.5, (
         "the freeze sweep held the loop through the whole swap — the "
-        f"cold-to-warm transition is one uninterruptible block ({worst_ms:.0f}ms)"
+        f"cold-to-warm transition is one uninterruptible block "
+        f"({worst_ms:.0f}ms of a {sweep_ms:.0f}ms sweep)"
     )
 
 

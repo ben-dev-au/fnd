@@ -61,9 +61,19 @@ async def _built(pilot) -> FNDMarkdown:  # type: ignore[no-untyped-def]
     # Geometry, not just the build: freeze needs a laid-out tree, and
     # `build_done` is not a layout signal. A fixed tick count is a wait only
     # while the machine is idle and degrades to a no-op under suite load.
+    #
+    # The TABLE's geometry, not just the chunk's. A DataTable sizes itself in
+    # response to its own posted refresh, so the chunk can report a height while
+    # the table inside it is still rows-with-no-geometry — precisely what freeze
+    # refuses. Waiting on the chunk alone let CI reach the capture first and see
+    # it declined, on both macOS and Windows.
     await wait_until(
         pilot,
-        lambda: md.size.height > 0 and md.virtual_size.height > 0,
+        lambda: (
+            md.size.height > 0
+            and md.virtual_size.height > 0
+            and all(dt.size.height > 0 for dt in md.query(DataTable))
+        ),
         timeout=15.0,
         message="the chunk never laid out",
     )
