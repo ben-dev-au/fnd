@@ -29,6 +29,7 @@ from fnd.matching import MatchSpec
 from fnd.query import FileChunk
 from fnd.tui import FNDApp
 from fnd.tui.preview import tuning
+from fnd.tui.preview import warm_host as warm_host_mod
 from fnd.tui.preview.coverage import coverage_targets, filler_targets, neighbour_order
 from fnd.tui.preview.frozen import FrozenChunkView, freeze
 from fnd.tui.preview.warm_host import WarmHost
@@ -666,12 +667,217 @@ async def test_a_tall_chunk_is_captured_at_the_width_it_was_asked_for(
             tall, requested, match_spec=app._effective_match_spec
         )
         assert capture is not None, "the jig produced nothing to check"
-        assert capture.height > 400, (
-            f"chunk only rendered {capture.height} rows, so it never overflowed the "
-            f"jig's layout box and this test cannot detect the bug"
+        assert capture.height > warm_host_mod._LAYOUT_HEIGHT, (
+            f"chunk rendered {capture.height} rows against a layout box of "
+            f"{warm_host_mod._LAYOUT_HEIGHT}, so it never overflowed and this test "
+            f"cannot detect the bug"
         )
         assert capture.width == requested, (
             f"asked for {requested} columns and got {capture.width}: the off-screen "
             f"container grew a scrollbar, so the capture is cut for a width it will "
             f"not be displayed at"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_resize_does_not_leave_frozen_chunks_painting_cropped_text(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Strips are width-locked, and `render_line` crops them to the widget.
+
+    So a narrower pane does not re-wrap a frozen chunk — it removes the
+    right-hand cells of every row, and the text is simply gone until something
+    rebuilds the file. Measured before the fix on a 120-section document,
+    shrinking 100 to 80 columns left 87 chunks rendering 20 columns short.
+
+    The store sweep cannot help: those strips are on screen, not in the store.
+    This asserts the on-screen half — that no frozen chunk is left painting
+    strips cut for a width it is no longer laid out at.
+    """
+    index = _wide_doc(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups) and app._preview.active is not None,
+            timeout=20.0,
+            message="preview never became active",
+        )
+        presenter = app._preview
+
+        def frozen_views() -> list[FrozenChunkView]:
+            container = presenter.active
+            if container is None:
+                return []
+            return [w for w in container.chunk_widgets.values() if isinstance(w, FrozenChunkView)]
+
+        # Freeze one mounted chunk by hand rather than waiting for the
+        # background sweep: the sweep's timing is not what is under test, and
+        # depending on it makes this a race. This is exactly what the sweep does
+        # — capture the widget, mount the capture in its place.
+        container = presenter.active
+        assert container is not None
+        # Both dimensions: `freeze` refuses a widget with no measured geometry,
+        # and a chunk can have a width before it has a height.
+        live = next(
+            (
+                (seq, w)
+                for seq, w in container.chunk_widgets.items()
+                if isinstance(w, FNDMarkdown) and w.size.width > 0 and w.size.height > 0
+            ),
+            None,
+        )
+        assert live is not None, "no laid-out chunk to freeze"
+        seq, widget = live
+        captured = freeze(widget, seq)
+        assert captured is not None, "the chunk could not be captured"
+        view = FrozenChunkView(captured)
+        await container.mount(view, before=widget)
+        container.chunk_widgets[seq] = view
+        widget.remove()
+        for _ in range(4):
+            await pilot.pause()
+        assert frozen_views(), "the frozen chunk did not stay mounted"
+
+        def repaired_in_place() -> bool:
+            views = frozen_views()
+            # The emptiness check is part of the CONDITION, not an assert:
+            # `wait_until` swallows a raising predicate, so an assert here would
+            # be invisible and the timeout would report the wrong diagnosis. An
+            # empty list is not "nothing stale" — if the repair ever removed the
+            # view instead of re-cutting it, `any()` over nothing is False and
+            # this would pass for the wrong reason.
+            return bool(views) and not any(
+                v.size.width > 0 and v.frozen.width != v.size.width for v in views
+            )
+
+        container_before = presenter.active
+        await pilot.resize_terminal(80, 30)
+        await wait_until(
+            pilot,
+            lambda: presenter.active is not None and repaired_in_place(),
+            # Generous on purpose. The repair is deliberately unhurried — it
+            # debounces the gesture, waits out any mount in flight, and yields
+            # between captures — so under full-suite load it legitimately takes
+            # far longer than it does alone. The assertion is that it happens,
+            # not that it happens fast.
+            timeout=90.0,
+            message=(
+                "frozen chunks are still painting strips cut for the old width, "
+                "or the view was removed instead of repaired in place"
+            ),
+        )
+
+        # Repaired IN PLACE. Replacing the container instead is what blanked the
+        # pane for 90ms and made one drag cost five full rebuilds.
+        assert presenter.active is container_before, (
+            "the repair swapped the container instead of re-cutting its strips"
+        )
+
+        stale = [
+            (v.frozen.width, v.size.width)
+            for v in frozen_views()
+            if v.size.width > 0 and v.frozen.width != v.size.width
+        ]
+        assert not stale, (
+            f"{len(stale)} frozen chunks are cut for a width they are not laid out "
+            f"at {stale[:3]} — every row of those loses its right-hand cells"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_repair_re_arms_but_cannot_chain_forever(
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two halves of one guarantee, and a capture that always fails proves both.
+
+    A pass abandons whenever the width moves again mid-drag, and reports arriving
+    while a pass runs are dropped — so the pass has to re-arm itself or the tail
+    stays cropped until the next navigation. Gating that re-arm on having
+    repaired something looks safer but loses exactly the case it is needed for: a
+    pass that abandons BEFORE its first success.
+
+    Removing the gate then needs a different termination guarantee, because a
+    chunk whose capture keeps failing would re-arm forever. That is the bound.
+
+    With every capture failing, `repaired` is always zero: a `repaired`-gated
+    re-arm gives one pass, and an unbounded one never stops. The correct
+    behaviour is exactly `STALE_STRIP_MAX_PASSES`.
+    """
+    index = _wide_doc(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups) and app._preview.active is not None,
+            timeout=20.0,
+            message="preview never became active",
+        )
+        presenter = app._preview
+        presenter.stop_background_work()
+        for _ in range(4):
+            await pilot.pause()
+        container = presenter.active
+        assert container is not None
+
+        live = next(
+            (
+                (seq, w)
+                for seq, w in container.chunk_widgets.items()
+                if isinstance(w, FNDMarkdown) and w.size.width > 0 and w.size.height > 0
+            ),
+            None,
+        )
+        assert live is not None, "no laid-out chunk to freeze"
+        seq, widget = live
+        captured = freeze(widget, seq)
+        assert captured is not None
+        view = FrozenChunkView(captured)
+        await container.mount(view, before=widget)
+        container.chunk_widgets[seq] = view
+        widget.remove()
+        for _ in range(4):
+            await pilot.pause()
+
+        # Force the strips stale without a real resize, so the pass has work.
+        object.__setattr__(view.frozen, "width", view.size.width + 7)
+
+        async def always_fails(*_args: object, **_kwargs: object) -> None:
+            return None
+
+        monkeypatch.setattr(presenter._warm_host, "capture", always_fails)
+        # And empty the store, or a hit would satisfy the repair without ever
+        # reaching the failing builder.
+        presenter.capture_store.clear()
+
+        passes = 0
+        original = presenter._repair_stale_strips
+
+        async def counting(attempt: int = 0) -> None:
+            nonlocal passes
+            passes += 1
+            await original(attempt)
+
+        monkeypatch.setattr(presenter, "_repair_stale_strips", counting)
+
+        presenter.on_stale_strips()
+        await wait_until(
+            pilot,
+            lambda: (
+                presenter._stale_strip_repair is not None and presenter._stale_strip_repair.done()
+            ),
+            timeout=60.0,
+            message="the repair chain never finished",
+        )
+        for _ in range(10):
+            await pilot.pause()
+
+        assert passes > 1, (
+            "the repair ran once and stopped even though it had repaired nothing — "
+            "a pass that abandons before its first success must still re-arm"
+        )
+        assert passes <= tuning.STALE_STRIP_MAX_PASSES, (
+            f"the repair chained {passes} times against a bound of "
+            f"{tuning.STALE_STRIP_MAX_PASSES}; with every capture failing it would "
+            f"re-arm forever"
         )

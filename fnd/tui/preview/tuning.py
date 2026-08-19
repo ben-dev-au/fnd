@@ -54,6 +54,20 @@ FREEZE_REVEAL_WAIT_TICKS = 40
 # invisible without meaningfully lengthening it.
 FREEZE_SLICE_SECONDS = 0.016
 
+# How long to wait after a frozen chunk reports a stale width before re-cutting
+# its strips. A window drag emits a resize per column and every mounted frozen
+# chunk reports independently, so this coalesces a whole gesture into one repair
+# pass — and a drag that returns to its original width costs nothing at all.
+STALE_STRIP_REPAIR_DELAY = 0.25
+
+# How many repair passes may chain before giving up. A pass abandons whenever the
+# width moves again mid-drag, and reports arriving during a pass are dropped, so
+# it must be able to re-arm itself — but a chunk whose capture keeps failing
+# (`freeze` refuses an unlaid DataTable or a nested scroll region) would re-arm
+# forever without a bound. Three is enough for a drag that settles; beyond that
+# the next navigation rebuilds correctly anyway.
+STALE_STRIP_MAX_PASSES = 3
+
 # Debounce before a coverage pass starts, so a held-down arrow key does not
 # spawn a plan per keypress — a superseded plan then does no work at all.
 PREVIEW_WARM_DELAY = 0.35

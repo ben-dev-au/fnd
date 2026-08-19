@@ -48,6 +48,7 @@ from fnd.tui.indexer_service import IndexerService
 from fnd.tui.match_evidence import evidence_spec_for_pass, has_paintable_match
 from fnd.tui.match_navigator import MatchNavigator
 from fnd.tui.preview.flat_view import FlatBufferView
+from fnd.tui.preview.frozen import FrozenChunkView
 from fnd.tui.preview.lazy_mount import LazyMounter
 from fnd.tui.preview.prefetch import PrefetchEngine
 from fnd.tui.preview.presenter import PreviewPresenter, target_from_node_data
@@ -527,8 +528,26 @@ class FNDApp(App[None]):
             self.query_one("#results_pane", ResultsTree).focus()
         if location is not None:
             self.call_after_refresh(self._preview_scroll.scroll_to_location, location)
+        # Reading View changes the preview's width by more than any scrollbar:
+        # measured at 37 columns, because it drops the border, the left padding
+        # and the bar on top of widening the column. Every capture taken before
+        # the toggle is filed under the old width and can never be served, and
+        # coverage starts building a second full set against the same row budget
+        # — so this must invalidate exactly as a terminal resize does. Deferred,
+        # so the width it reads is the one after the reflow rather than before.
+        self.call_after_refresh(self._preview.invalidate_captures_on_resize)
         self._refresh_preview_match_indicator()
         self._refresh_footer_hints()
+
+    def on_frozen_chunk_view_width_stale(self, event: FrozenChunkView.WidthStale) -> None:
+        """A frozen chunk is painting strips cut for a width it no longer has.
+
+        Bubbles up from the view because only the view knows: the pane-level
+        resize hook runs before the re-layout. The presenter debounces — a drag
+        produces one of these per column per mounted chunk.
+        """
+        event.stop()
+        self._preview.on_stale_strips()
 
     async def _on_exit_app(self) -> None:
         """Stop background work before Textual tears the app down.

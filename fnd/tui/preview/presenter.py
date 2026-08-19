@@ -97,6 +97,19 @@ async def _decode_abandonable(fn: Callable[..., Any], *args: Any) -> Any:
         if not future.done():
             setter()
 
+    def _relay(target_loop: Any, settle_cb: Any, apply: Any) -> None:
+        """Hand the result back, or drop it if the loop has gone.
+
+        The thread is deliberately not joined so a quit need not wait for a
+        decode — but that is exactly the case where the loop is closed before
+        the decode finishes, and an unguarded `call_soon_threadsafe` then raises
+        on a thread with no handler, so `threading.excepthook` prints a
+        traceback onto the terminal Textual has just restored. Nothing is lost
+        by dropping it: the future belongs to a loop that is gone.
+        """
+        with contextlib.suppress(RuntimeError):
+            target_loop.call_soon_threadsafe(settle_cb, apply)
+
     def work() -> None:
         try:
             result = fn(*args)
@@ -105,9 +118,9 @@ async def _decode_abandonable(fn: Callable[..., Any], *args: Any) -> Any:
             # `as` target on exit, so a lambda closing over it raises NameError
             # on the loop thread instead of relaying the failure.
             failure = raised
-            loop.call_soon_threadsafe(settle, lambda: future.set_exception(failure))
+            _relay(loop, settle, lambda: future.set_exception(failure))
         else:
-            loop.call_soon_threadsafe(settle, lambda: future.set_result(result))
+            _relay(loop, settle, lambda: future.set_result(result))
 
     threading.Thread(target=work, daemon=True, name="fnd-coverage-decode").start()
     return await future
@@ -150,6 +163,7 @@ class PreviewPresenter:
         self.coverage_activity: str | None = None
         # Cursor position the running coverage plan was built for.
         self._coverage_anchor: tuple[str, int] | None = None
+        self._stale_strip_repair: asyncio.Task[None] | None = None
         # Per-chunk captures, filled by coverage and read by every mount path.
         # Separate from the document store because this one is SPARSE: it holds
         # the matches scattered through a file, which a contiguous document
@@ -1364,14 +1378,173 @@ class PreviewPresenter:
         # `capture_width` is the same number the captures were filed under, so
         # this drops exactly the ones cut for a width that is no longer current.
         #
-        # It only runs on a TERMINAL resize, which is its one caller. A scrollbar
+        # It runs on a terminal resize and on the Reading View toggle. A scrollbar
         # appearing inside the pane changes the width too and does not fire this,
         # so captures taken before the bar appeared are left unreachable until
         # the next real resize. They are a miss rather than a fault — the wrong
         # width can never be served — but they do hold row budget.
-        dropped = self.capture_store.drop_other_widths(width)
-        if dropped:
-            self.diag_log(f"captures invalidated width={width} dropped={dropped}")
+        self.capture_store.drop_other_widths(width)
+        # The MOUNTED captures are repaired elsewhere, and deliberately: this
+        # runs from `call_after_refresh`, which fires before the re-layout, so
+        # nothing looks stale from here. Each `FrozenChunkView` reports its own
+        # staleness once it has been laid out — see `on_stale_strips`.
+
+    def on_stale_strips(self) -> None:
+        """A frozen chunk is painting strips cut for a width it no longer has.
+
+        Repaired IN PLACE rather than by rebuilding the file. A resize changes
+        presentation, not content, so the strips are re-derived by the same
+        off-screen builder that made them and swapped into the existing widgets:
+        nothing is unmounted, so the pane cannot blank and the mounted run
+        cannot develop a hole. Rebuilding instead was measured at a 90ms blank
+        and five full rebuilds for one twelve-column drag, because a rebuild
+        lays its fresh container out at intermediate widths and so feeds its own
+        trigger.
+        """
+        if self._stale_strip_repair is not None and not self._stale_strip_repair.done():
+            return
+        self._stale_strip_repair = asyncio.create_task(self._repair_stale_strips())
+
+    async def _repair_stale_strips(self, attempt: int = 0) -> None:
+        # Let the gesture finish. A drag delivers a column at a time and every
+        # repaired chunk would be stale again by the next one.
+        await asyncio.sleep(tuning.STALE_STRIP_REPAIR_DELAY)
+        for _ in range(tuning.PREVIEW_WARM_YIELD_TICKS):
+            # Never mid-mount: the mount lays chunks out as it goes, so a repair
+            # racing it repairs to widths that are themselves transient.
+            if not self.pipeline_busy():
+                break
+            await asyncio.sleep(0.05)
+
+        container = self.active
+        if container is None or not is_live(container):
+            return
+        try:
+            pane = self._app.query_one("#preview_pane", VerticalScroll)
+        except Exception:
+            return
+        width = self.capture_width(pane)
+        if width <= 0:
+            return
+        chunks = {c.chunk_seq: c for c in self.chunk_cache.get(container.parent_doc_id) or []}
+        if not chunks:
+            return
+        generation = self.reset_generation
+        spec = self._app._effective_match_spec
+        query_sig = container.query_signature
+        parent_id = container.parent_doc_id
+
+        # Nearest the viewport first, so what the user is looking at stops being
+        # wrong before anything off screen does.
+        #
+        # `virtual_region`, never `region`: region is relative to the SCREEN and
+        # is NULL_REGION for anything the compositor has culled, so every
+        # off-screen chunk reads as y=0 — which sorted culled chunks ahead of
+        # visible ones and made the drift predicate count nine chunks BELOW the
+        # fold as above it, scrolling the pane 18 rows for nothing.
+        # `prune_active_to_window` uses virtual_region for the same reason.
+        viewport_top = pane.scroll_offset.y
+        stale = [
+            (seq, view)
+            for seq, view in container.chunk_widgets.items()
+            if isinstance(view, FrozenChunkView)
+            and view.size.width > 0
+            and view.frozen.width != width
+        ]
+        stale.sort(key=lambda item: abs(item[1].virtual_region.y - viewport_top))
+
+        # Bound the pass to the window. Re-capturing the whole mounted set cost
+        # 349 captures and 13.8s for one twelve-column drag; pruning first and
+        # repairing what survives costs 25 and 0.76s. Lazy mount refills the
+        # rest at the current width when the user scrolls there — the same path
+        # that already serves never-mounted chunks. `prune_active_to_window` is
+        # scroll-compensated and flash-free, and a no-op on small files.
+        if len(stale) > tuning.VISIBLE_FIRST_ABOVE + tuning.VISIBLE_FIRST_BELOW:
+            with contextlib.suppress(Exception):
+                self.prune_active_to_window()
+            # `is_live`, not `is_mounted`: Textual defers removal, so a widget
+            # the prune just dropped still reports itself mounted — measured,
+            # 46 of 46 pruned widgets passed `is_mounted`, so this filter
+            # removed nothing and the pass re-captured the whole stale set,
+            # which is the cost the prune exists to avoid.
+            stale = [
+                (seq, view) for seq, view in stale if is_live(view) and view.frozen.width != width
+            ]
+            # And re-read the viewport: `prune_active_to_window` SCROLLS the
+            # pane to compensate for what it removed above the fold, so the
+            # sample taken before it is stale — measured, the drift correction
+            # came out as the growth of the whole document, 126 rows applied
+            # where 9 was right, i.e. a visible jump on resize.
+            viewport_top = pane.scroll_offset.y
+
+        repaired = 0
+        drift = 0
+        # `reconciling` is NOT held across the loop. It gates lazy mount's
+        # release of the scroll anchor and the match-nav burst reset, so holding
+        # it for a pass — measured at 2.8s, and 6s on heavy content — means a
+        # genuine user scroll does neither. That is the shape of the lazy-load
+        # dead-end an uncleared gate produced before. The adopts do not scroll;
+        # only the correction below does.
+        for seq, view in stale:
+            # Abandon the moment anything the pass assumed stops holding — the
+            # width moved again mid-drag, the user navigated, the query changed.
+            if (
+                self.active is not container
+                or not is_live(container)
+                or self.reset_generation != generation
+                or self.capture_width(pane) != width
+            ):
+                break
+            chunk = chunks.get(seq)
+            if chunk is None:
+                continue
+            capture = self.capture_store.get(parent_id, query_sig, width, seq)
+            if capture is None:
+                capture = await self._warm_host.capture(chunk, width, match_spec=spec)
+                if capture is None:
+                    # Clear the latch. A view reports once per width, so leaving
+                    # it set means this chunk never asks again — measured with
+                    # injected failures, 55 chunks stayed cropped and a round
+                    # trip to another width and back did not clear them. `freeze`
+                    # refuses on purpose (unlaid DataTable, nested scroll), so
+                    # this is reachable rather than theoretical.
+                    view._reported_width = 0
+                    continue
+                self.capture_store.put(parent_id, query_sig, capture.width, capture)
+            before = view.frozen.outer_height
+            # A chunk entirely above the viewport moves what the reader is
+            # looking at when its height changes; accumulate and correct once.
+            if view.virtual_region.y + before <= viewport_top:
+                drift += capture.outer_height - before
+            view.adopt(capture)
+            repaired += 1
+            await asyncio.sleep(0)
+
+        if drift:
+            self.begin_reconcile_scroll()
+            try:
+                with contextlib.suppress(Exception):
+                    pane.scroll_to(
+                        y=max(0, pane.scroll_offset.y + drift), animate=False, immediate=True
+                    )
+            finally:
+                self.end_reconcile_scroll()
+        if repaired:
+            self.diag_log(f"stale strips repaired={repaired} width={width} drift={drift}")
+        # Re-arm explicitly. Reports arriving while a pass runs are dropped and a
+        # view reports once per width, so without this a pass that abandoned —
+        # including one that abandoned BEFORE its first success, which is why
+        # this is not gated on `repaired` — would leave the tail cropped until
+        # the next width change or navigation.
+        #
+        # Termination comes from the attempt bound rather than from progress: a
+        # chunk whose capture keeps failing would otherwise re-arm forever.
+        if attempt + 1 < tuning.STALE_STRIP_MAX_PASSES and any(
+            is_live(v) and v.size.width > 0 and v.frozen.width != self.capture_width(pane)
+            for v in container.chunk_widgets.values()
+            if isinstance(v, FrozenChunkView)
+        ):
+            self._stale_strip_repair = asyncio.create_task(self._repair_stale_strips(attempt + 1))
 
     def begin_reconcile_scroll(self) -> None:
         self.reconciling = True
@@ -2165,7 +2338,15 @@ class PreviewPresenter:
             # accounts for the bar.
             if pane_width > 0:
                 self.capture_store.put(
-                    container.parent_doc_id, container.query_signature, pane_width, captured
+                    container.parent_doc_id,
+                    container.query_signature,
+                    # The capture's OWN width, not the sample taken before this
+                    # loop began: the sweep yields every 16ms for the length of
+                    # the file, so a resize landing mid-sweep would otherwise
+                    # file strips cut at the new width under the old key. Same
+                    # rule as the coverage writer, for the same reason.
+                    captured.width,
+                    captured,
                 )
             container.chunk_widgets[chunk.chunk_seq] = view
             container.match_targets.pop(chunk.chunk_seq, None)
@@ -2191,7 +2372,7 @@ class PreviewPresenter:
         real corpus: 0.49s to quit with coverage off against 1.09s with it on,
         of which pacing the captures recovered about half and this the rest.
         """
-        for task in (self._coverage_task,):
+        for task in (self._coverage_task, self._stale_strip_repair):
             if task is not None and not task.done():
                 task.cancel()
 
@@ -2262,7 +2443,15 @@ class PreviewPresenter:
             return
         self._coverage_anchor = (parent_id, focus_chunk_seq)
         task = self._coverage_task
-        if task is not None and not task.done():
+        # `cancelling()` as well as `done()`: cancel() only REQUESTS
+        # cancellation and the task does not settle until a later loop
+        # iteration, so a caller that cancels and restarts in the same
+        # synchronous block — `rerender_current` does exactly that via
+        # `bump_reset_generation` — saw a task that was neither done nor
+        # replaced, and coverage stayed dead until the next navigation. That is
+        # the moment the cache most needs refilling, because the same call just
+        # emptied it.
+        if task is not None and not task.done() and not task.cancelling():
             return
         self._coverage_task = asyncio.create_task(self._coverage_loop())
 

@@ -22,7 +22,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from textual.events import Resize
 from textual.geometry import Size
+from textual.message import Message
 from textual.strip import Strip
 from textual.widget import Widget
 
@@ -195,6 +197,36 @@ class FrozenChunkView(Widget):
     }
     """
 
+    class WidthStale(Message):
+        """This view is painting strips cut for a width it is no longer laid
+        out at, so its rows are being cropped (or padded) rather than re-wrapped.
+
+        Posted by the view because the view is the only thing that knows. The
+        pane-level resize hook runs from ``call_after_refresh``, which fires
+        BEFORE the re-layout — measured, the pane still reports its old width
+        and every chunk its old size at that point, so nothing looks stale from
+        there and no repair ever ran. A widget's own Resize arrives after it has
+        been laid out, with the new size in hand.
+        """
+
+        def __init__(self, view: FrozenChunkView) -> None:
+            super().__init__()
+            self.view = view
+
+    def on_resize(self, event: Resize) -> None:
+        # Strips cannot be re-wrapped, so this cannot repair itself — it can
+        # only say so, and let the presenter decide.
+        #
+        # Once per width, not once per event: a window drag emits a resize per
+        # column to every mounted chunk, measured at 522 reports for a single
+        # twelve-column gesture.
+        width = event.size.width
+        if width <= 0 or width == self._reported_width:
+            return
+        self._reported_width = width
+        if width != self.frozen.width:
+            self.post_message(self.WidthStale(self))
+
     def __init__(self, frozen: FrozenChunk, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.frozen = frozen
@@ -215,6 +247,24 @@ class FrozenChunkView(Widget):
         self.styles.height = frozen.outer_height
         # Read by the scroll strategy in place of descending into a widget tree.
         self.fnd_first_match_row = frozen.first_match_row
+        # Last width this view reported as stale, so a drag reports once per
+        # column rather than once per resize event.
+        self._reported_width: int = 0
+
+    def adopt(self, frozen: FrozenChunk) -> None:
+        """Swap in strips cut at a different width, in place.
+
+        A resize changes presentation, not content — so the fix is to replace
+        the strips rather than the widget. Nothing is unmounted, so the pane
+        cannot blank and the mounted run cannot develop a hole.
+        """
+        self.frozen = frozen
+        top, right, bottom, left = frozen.padding
+        self.styles.padding = (top, right, bottom, left)
+        self.styles.height = frozen.outer_height
+        self.fnd_first_match_row = frozen.first_match_row
+        self._reported_width = frozen.width
+        self.refresh(layout=True)
 
     def render_line(self, y: int) -> Strip:
         strips = self.frozen.strips
