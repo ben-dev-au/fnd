@@ -59,10 +59,6 @@ class FrozenChunk:
         """Rows the chunk occupied in its container, padding included."""
         return len(self.strips) + self.padding[0] + self.padding[2]
 
-    def is_valid_for(self, width: int) -> bool:
-        """Strips are width-locked, so a reflow invalidates the capture."""
-        return width == self.width
-
 
 def _row_within(widget: Widget, chunk: Widget) -> int | None:
     try:

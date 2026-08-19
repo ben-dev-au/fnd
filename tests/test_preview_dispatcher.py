@@ -101,3 +101,27 @@ def test_uses_markdown_renderer_pdf_with_body_md() -> None:
     assert uses_markdown_renderer(_chunk("pdf", body_md="")) is False
     assert uses_markdown_renderer(_chunk("md", body_md="# h")) is True
     assert uses_markdown_renderer(_chunk("txt", body_md="ignored")) is False
+
+
+def test_an_oversized_chunk_is_routed_away_from_the_markdown_renderer() -> None:
+    """The size cap had no test at all — neither the routing nor the fallback.
+
+    A chunk over the cap must stop using the structural renderer, and its text
+    must still reach the flat path: routing it away is only acceptable because
+    the content still renders, so both halves are asserted here.
+    """
+    from fnd.tui.preview_dispatcher import MARKDOWN_MAX_CHARS
+
+    small = _chunk(kind="md", body_md="| a | b |\n|---|---|\n| 1 | 2 |")
+    assert uses_markdown_renderer(small)
+
+    row = "| kryptonwidget | beta gamma | delta |\n"
+    huge = _chunk(kind="md", body_md=row * (MARKDOWN_MAX_CHARS // len(row) + 50))
+    assert len(huge.body_md) > MARKDOWN_MAX_CHARS
+    assert not uses_markdown_renderer(huge), (
+        "a chunk far over the cap still routes to the structural renderer, which "
+        "is the multi-second build the cap exists to avoid"
+    )
+    # A file holding only over-cap chunks must still get a preview.
+    assert choose_preview_mode([huge]) == "flat"
+    assert "kryptonwidget" in huge.body_md

@@ -129,7 +129,10 @@ async def test_a_far_jump_mounts_a_capture_instead_of_building(
 
         target_seq = seqs[-1]
         store = app._preview.capture_store
-        pane_width = app.query_one("#preview_pane").content_size.width
+        # The width captures are FILED under, which is the width chunks lay out
+        # at — not the pane's content width, which does not shrink by the
+        # scrollbar and so misses every capture once one is showing.
+        pane_width = app._preview.capture_width(app.query_one("#preview_pane", VerticalScroll))
 
         await wait_until(
             pilot,
@@ -300,10 +303,9 @@ async def test_coverage_stands_down_while_lazy_mount_runs(
         assert searcher is not None
         chunks = searcher.get_file_chunks(group.parent_id)
         pane = app.query_one("#preview_pane", VerticalScroll)
-        width = pane.content_size.width
-        # Captures are FILED under the scrollbar-stable width, not the render
-        # width, so the count below has to read the same key the capture writes.
-        key_width = presenter.capture_key_width(pane)
+        # The width captures are filed under, which is the width chunks lay out
+        # at — the count below has to read the same key the capture writes.
+        width = presenter.capture_width(pane)
         sig = app._search.query_signature()
         spec = app._effective_match_spec
 
@@ -325,15 +327,15 @@ async def test_coverage_stands_down_while_lazy_mount_runs(
             # A pass abandons itself when the cursor moves away from the anchor
             # it was planned around. Pass the CURRENT anchor, so that early exit
             # cannot stand in for the gate under test and pass this vacuously.
-            before = presenter.capture_store.count(group.parent_id, sig, key_width)
+            before = presenter.capture_store.count(group.parent_id, sig, width)
             job = asyncio.create_task(
                 presenter._capture_targets(
-                    group.parent_id, sig, width, chunks, targets, spec, key_width, lambda: True
+                    group.parent_id, sig, width, chunks, targets, spec, lambda: True
                 )
             )
             for _ in range(12):
                 await pilot.pause()
-            assert presenter.capture_store.count(group.parent_id, sig, key_width) == before, (
+            assert presenter.capture_store.count(group.parent_id, sig, width) == before, (
                 "coverage captured while a lazy-mount batch was in flight — the two "
                 "compete for the same message pump"
             )
@@ -521,7 +523,7 @@ async def test_coverage_skips_chunks_too_expensive_to_build(
         assert searcher is not None
         chunks = searcher.get_file_chunks(group.parent_id)
         pane = app.query_one("#preview_pane", VerticalScroll)
-        key_width = presenter.capture_key_width(pane)
+        width = presenter.capture_width(pane)
         sig = app._search.query_signature()
 
         presenter.stop_background_work()
@@ -534,7 +536,7 @@ async def test_coverage_skips_chunks_too_expensive_to_build(
 
         # Positive control FIRST: this chunk is capturable as it stands, so a
         # miss after the guard is the guard and not some unrelated bail-out.
-        before = presenter.capture_store.count(group.parent_id, sig, key_width)
+        before = presenter.capture_store.count(group.parent_id, sig, width)
         assert (
             await presenter._capture_targets(
                 group.parent_id,
@@ -543,7 +545,6 @@ async def test_coverage_skips_chunks_too_expensive_to_build(
                 chunks,
                 targets,
                 app._effective_match_spec,
-                key_width,
                 lambda: True,
             )
             > 0
@@ -557,7 +558,7 @@ async def test_coverage_skips_chunks_too_expensive_to_build(
         # sized as a multiple of the limit scales with it and no change to the
         # limit could ever fail this test.
         chunks[victim_index] = dataclasses.replace(chunks[victim_index], body_md="x " * 60_000)
-        before = presenter.capture_store.count(group.parent_id, sig, key_width)
+        before = presenter.capture_store.count(group.parent_id, sig, width)
         captured = await presenter._capture_targets(
             group.parent_id,
             sig,
@@ -565,27 +566,30 @@ async def test_coverage_skips_chunks_too_expensive_to_build(
             chunks,
             targets,
             app._effective_match_spec,
-            key_width,
             lambda: True,
         )
         assert captured == 0, "coverage built a chunk far over the cost threshold"
-        assert presenter.capture_store.count(group.parent_id, sig, key_width) == before
+        assert presenter.capture_store.count(group.parent_id, sig, width) == before
 
 
 @pytest.mark.asyncio
-async def test_the_width_sweep_keeps_captures_it_should_keep(
-    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
+async def test_a_capture_is_cut_at_the_width_it_will_be_served_into(
+    tmp_path: Path, tmp_index_dir: Path
 ) -> None:
-    """The resize sweep must drop each store by the width THAT store is keyed by.
+    """A capture must be built at the width the chunk actually lays out at.
 
-    They differ by exactly the scrollbar: a document is filed under the pane's
-    content width, a capture under ``capture_key_width`` (the outer width, which
-    is deliberately scrollbar-stable so a bar appearing cannot orphan a capture).
-    Passing the content width to both made every capture's key mismatch, so the
-    sweep emptied the ENTIRE capture store every time it ran — silently, since a
-    wiped cache only ever looks like a slow one. Measured before the fix: the
-    store held 2 files where it should have held 10, and files coverage had
-    already warmed arrived cold because their captures were dropped in between.
+    Children lay out inside the pane's SCROLLABLE content region, which the
+    vertical scrollbar shrinks by a column; `size` and `content_size` are equal
+    to each other and neither moves with the bar. Building at those meant that
+    for any document long enough to need a scrollbar — which is every document
+    this feature exists for — the capture was a column wider than the slot it
+    was served into, so the last cell of every row was cropped and the strips
+    were wrapped for a width never displayed. Heights, `first_match_row` and the
+    stop rows were all off by the difference.
+
+    The earlier version of this test monkeypatched the width function and then
+    asserted the writer and the sweep agreed — which they did by construction,
+    whatever the function returned. It passed with the bug present.
     """
     index = _wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
@@ -598,45 +602,76 @@ async def test_the_width_sweep_keeps_captures_it_should_keep(
         )
         presenter = app._preview
         pane = app.query_one("#preview_pane", VerticalScroll)
+        container = presenter.active
+        assert container is not None
 
-        # The bug only shows when the two widths differ, which in the real app
-        # is whenever a scrollbar is up. This fixture is too short to grow one,
-        # so force the difference rather than depend on the layout — the point
-        # under test is that the sweep uses each store's OWN key, not whether
-        # this particular document happens to overflow.
-        content_width = pane.content_size.width
-        key_width = content_width + 2
-        monkeypatch.setattr(
-            type(presenter), "capture_key_width", staticmethod(lambda _pane: key_width)
+        # This only means anything while a scrollbar is up, because that is the
+        # only time the widths diverge. Refuse to pass quietly otherwise.
+        assert pane.show_vertical_scrollbar, (
+            "no scrollbar in this fixture, so every pane width coincides and "
+            "this test cannot tell a correct capture width from a wrong one"
         )
-        assert key_width != content_width
+        assert presenter.capture_width(pane) != pane.content_size.width
 
-        group = app._search.groups[0]
-        searcher = app._search.searcher
-        assert searcher is not None
-        chunks = searcher.get_file_chunks(group.parent_id)
-        sig = app._search.query_signature()
+        # The width a real mounted chunk was laid out at is the ground truth.
+        live = next((w for w in container.chunk_widgets.values() if w.size.width > 0), None)
+        assert live is not None, "no mounted chunk to measure against"
+        assert presenter.capture_width(pane) == live.size.width, (
+            f"captures would be cut at {presenter.capture_width(pane)} while chunks "
+            f"lay out at {live.size.width} — every served row loses its last cells"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_tall_chunk_is_captured_at_the_width_it_was_asked_for(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """The off-screen jig must not reserve a scrollbar column of its own.
+
+    `WarmHost` lays its screen out `_LAYOUT_HEIGHT` rows tall. A chunk taller
+    than that overflows the container, which then grows a vertical scrollbar, and
+    the chunk lays out one column narrower than the width asked for — so the
+    capture is cut for a width it is not filed under, and every row it is served
+    into is a column short. Measured before the fix, the boundary was exactly the
+    layout box: 300 rendered rows captured at 76, 420 rows at 75.
+
+    Nothing else detects this. The pane-width test compares the FILING width
+    against a mounted chunk; this compares what came back from the jig against
+    what was requested, which is the other half.
+    """
+    index = _wide_doc(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups) and app._preview.active is not None,
+            timeout=20.0,
+            message="preview never became active",
+        )
+        presenter = app._preview
         presenter.stop_background_work()
         for _ in range(4):
             await pilot.pause()
 
-        targets = [i for i, c in enumerate(chunks) if c.chunk_seq == group.hits[0].chunk_seq]
-        captured = await presenter._capture_targets(
-            group.parent_id,
-            sig,
-            content_width,
-            chunks,
-            targets,
-            app._effective_match_spec,
-            key_width,
-            lambda: True,
+        group = app._search.groups[0]
+        searcher = app._search.searcher
+        assert searcher is not None
+        chunk = searcher.get_file_chunks(group.parent_id)[0]
+        # Force the chunk past the jig's layout box so it would overflow.
+        tall = dataclasses.replace(
+            chunk, body_md="\n\n".join(f"paragraph {i} quartzfin" for i in range(260))
         )
-        assert captured > 0, "nothing captured, so the sweep below would prove nothing"
-        held = presenter.capture_store.count(group.parent_id, sig, key_width)
-
-        presenter.invalidate_documents_on_resize()
-
-        assert presenter.capture_store.count(group.parent_id, sig, key_width) == held, (
-            "the resize sweep dropped captures taken at the CURRENT width — it is "
-            "comparing them against the content width, which differs by the scrollbar"
+        requested = 76
+        capture = await presenter._warm_host.capture(
+            tall, requested, match_spec=app._effective_match_spec
+        )
+        assert capture is not None, "the jig produced nothing to check"
+        assert capture.height > 400, (
+            f"chunk only rendered {capture.height} rows, so it never overflowed the "
+            f"jig's layout box and this test cannot detect the bug"
+        )
+        assert capture.width == requested, (
+            f"asked for {requested} columns and got {capture.width}: the off-screen "
+            f"container grew a scrollbar, so the capture is cut for a width it will "
+            f"not be displayed at"
         )

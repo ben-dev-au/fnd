@@ -139,11 +139,6 @@ class PreviewPresenter:
         # invisibly (opacity:0) and only when its scroll lands do we hide this
         # one and reveal the new one in a single tick. Cleared by that swap.
         self.outgoing: PreviewContainer | None = None
-        # Captured whole-file documents, harvested from the freeze sweep, plus
-        # the single reused widget that shows them. One widget for the session
-        # rather than one per file: remounting per navigation is exactly the DOM
-        # churn this substrate exists to avoid.
-        # Strong ref so the loop does not GC the in-flight coverage task.
         self._coverage_task: asyncio.Task[None] | None = None
         # Which phase of the mount is running, for the stall watch to place a
         # stall INSIDE the mount. `mount=True` alone covers everything from
@@ -160,13 +155,6 @@ class PreviewPresenter:
         # the matches scattered through a file, which a contiguous document
         # cannot express. See fnd/tui/preview/coverage.py.
         self.capture_store = ChunkCaptureStore()
-        # Pane width the ON-SCREEN document was installed at, so a resize can
-        # tell a stale view from one that is still painting at the right width.
-        # Strong ref so the loop doesn't GC the in-flight warm task, plus the
-        # file it is growing so a re-harvest of the same file doesn't restart it.
-        # Chunks are built and captured here rather than in the visible
-        # container — see warm_host for why every way of hiding a live container
-        # is either uncapturable or silently blank.
         self._warm_host = WarmHost(app)
         # Convenience aliases that point into the active container —
         # legacy code paths (_scroll_preview_to_chunk, etc.) read from
@@ -262,11 +250,10 @@ class PreviewPresenter:
         The outcome the whole pipeline exists to produce: some widget that is
         live in the DOM, not hidden, not still invisible behind ``-pre-reveal``,
         and carrying displayed content."""
-        # The document substrate sets BOTH `active` and `active_buffer` to None,
-        # so without this a served document reads as an unpainted pane and the
-        # repair below rebuilds a preview that is on screen and correct —
-        # measured at 19 spurious rebuilds in a 14-navigation run, each one
-        # clearing the cache and re-dispatching.
+        # A pane showing neither a container nor a flat buffer is genuinely
+        # unpainted; anything else here would rebuild a preview that is on
+        # screen and correct — measured at 19 spurious rebuilds in a
+        # 14-navigation run, each one clearing the cache and re-dispatching.
         buf = self._app._flat.active_buffer
         if buf is not None:
             return is_live(buf) and not buf.has_class("-hidden")
@@ -1349,14 +1336,12 @@ class PreviewPresenter:
     def active_flat_buffer(self) -> LineBufferPreview | None:
         return self._app._flat.active_buffer
 
-    def invalidate_documents_on_resize(self) -> None:
-        """Drop captures that no longer match the pane width.
+    def invalidate_captures_on_resize(self) -> None:
+        """Drop captures that no longer match the width chunks lay out at.
 
         Captured strips cannot be re-wrapped — re-deriving them means rebuilding
-        the markdown tree, which is the cost this substrate avoids — so a width
-        change invalidates. Served documents are keyed by pane width, and a
-        stale one on screen is taken off so the next navigation rebuilds and
-        re-captures instead of painting strips cut for the old width.
+        the markdown tree, which is the cost capturing avoids — so a width change
+        invalidates them.
 
         Height-only changes must NOT invalidate: a vertical resize leaves every
         capture valid, and throwing them away would turn a window drag into a
@@ -1373,24 +1358,20 @@ class PreviewPresenter:
             pane = self._app.query_one("#preview_pane", VerticalScroll)
         except Exception:
             return
-        width = pane.content_size.width
+        width = self.capture_width(pane)
         if width <= 0:
             return
-        # EACH store gets the width IT is keyed by. They differ: a document is
-        # filed under the pane's content width, a capture under
-        # `capture_key_width` (the pane's outer width, which a scrollbar
-        # appearing does not change). Passing the content width to both meant
-        # every capture's key mismatched by exactly the scrollbar, so this
-        # dropped the ENTIRE capture store every time it ran — measured, the
-        # store held only the file being read plus the one being captured, and
-        # files coverage had already warmed arrived cold because their captures
-        # had been thrown away in between.
-        key_width = self.capture_key_width(pane)
-        if key_width <= 0:
-            return
-        dropped = self.capture_store.drop_other_widths(key_width)
+        # `capture_width` is the same number the captures were filed under, so
+        # this drops exactly the ones cut for a width that is no longer current.
+        #
+        # It only runs on a TERMINAL resize, which is its one caller. A scrollbar
+        # appearing inside the pane changes the width too and does not fire this,
+        # so captures taken before the bar appeared are left unreachable until
+        # the next real resize. They are a miss rather than a fault — the wrong
+        # width can never be served — but they do hold row budget.
+        dropped = self.capture_store.drop_other_widths(width)
         if dropped:
-            self.diag_log(f"captures invalidated width={key_width} dropped={dropped}")
+            self.diag_log(f"captures invalidated width={width} dropped={dropped}")
 
     def begin_reconcile_scroll(self) -> None:
         self.reconciling = True
@@ -2136,9 +2117,7 @@ class PreviewPresenter:
             self.diag_log("freeze skipped — container never revealed")
             return
         try:
-            pane_width = self.capture_key_width(
-                self._app.query_one("#preview_pane", VerticalScroll)
-            )
+            pane_width = self.capture_width(self._app.query_one("#preview_pane", VerticalScroll))
         except Exception:
             pane_width = 0
         frozen = 0
@@ -2179,10 +2158,11 @@ class PreviewPresenter:
             # built and captured moments earlier — which is why revisiting a
             # match cost exactly as much as visiting it the first time.
             #
-            # Keyed on the PANE width, not the capture's own: a chunk renders
-            # narrower than the pane by the container's padding (measured 63
-            # against a 64-wide pane), so keying on the capture's width would
-            # miss on every lookup.
+            # Keyed on the width chunks lay out at, which is what these strips
+            # were cut at — they come off an on-screen widget. The 63-against-64
+            # gap this comment used to blame on container padding was the
+            # scrollbar: PreviewContainer has no padding, and `capture_width`
+            # accounts for the bar.
             if pane_width > 0:
                 self.capture_store.put(
                     container.parent_doc_id, container.query_signature, pane_width, captured
@@ -2338,14 +2318,13 @@ class PreviewPresenter:
         # session was never covered at all.
         width = 0
         for _ in range(tuning.PREVIEW_WARM_YIELD_TICKS):
-            width = pane.content_size.width
+            width = self.capture_width(pane)
             if width > 0:
                 break
             await asyncio.sleep(0.05)
         if width <= 0:
             return
         query_sig = self._app._search.query_signature()
-        key_width = self.capture_key_width(pane)
         pass_anchor = (parent_id, focus_chunk_seq)
         # A SNAPSHOT: covering runs for seconds, and reading the live spec
         # mid-run files chunks highlighted for a new query under the old key,
@@ -2393,6 +2372,13 @@ class PreviewPresenter:
             seen_plan: set[str] = set()
             plan = [p for p in plan if not (p in seen_plan or seen_plan.add(p))]
             for pid in plan:
+                # Re-read the width per file. A pass runs for seconds and this is
+                # a copy taken at pass start, so after a terminal resize — or a
+                # scrollbar appearing — every store lookup below would miss at the
+                # stale width: `_file_needs_coverage` would report every file
+                # uncovered and pay a full decode, and `_held_indices` would come
+                # back empty and re-capture chunks already held.
+                width = self.capture_width(pane) or width
                 # Decide whether this file needs anything BEFORE decoding it.
                 # A neighbour has usually never been opened, so covering it
                 # means a full chunk decode — and re-deciding that on every
@@ -2400,7 +2386,7 @@ class PreviewPresenter:
                 # over, off the loop, competing with the landing. The listed
                 # hits carry their chunk_seq, so "already covered" is answerable
                 # from the store alone.
-                if not self._file_needs_coverage(pid, query_sig, key_width):
+                if not self._file_needs_coverage(pid, query_sig, width):
                     continue
                 chunks = await self._coverage_chunks(pid)
                 if not chunks:
@@ -2414,7 +2400,7 @@ class PreviewPresenter:
                     total=len(chunks),
                     focus_idx=focus_idx,
                     hit_indices=self.hit_indices(pid, chunks),
-                    already=self._held_indices(pid, query_sig, key_width, chunks),
+                    already=self._held_indices(pid, query_sig, width, chunks),
                     margin=tuning.COVERAGE_MARGIN,
                     budget=tuning.COVERAGE_CHUNK_BUDGET,
                 )
@@ -2438,7 +2424,7 @@ class PreviewPresenter:
                 else:
                     still_wanted = lambda pid=pid: pid in current_plan()  # noqa: E731
                 got = await self._capture_targets(
-                    pid, query_sig, width, chunks, targets, spec, key_width, still_wanted
+                    pid, query_sig, width, chunks, targets, spec, still_wanted
                 )
                 captured += got
 
@@ -2456,7 +2442,7 @@ class PreviewPresenter:
                 filler = filler_targets(
                     total=len(chunks),
                     focus_idx=focus_idx,
-                    already=self._held_indices(parent_id, query_sig, key_width, chunks),
+                    already=self._held_indices(parent_id, query_sig, width, chunks),
                     budget=tuning.COVERAGE_CHUNK_BUDGET,
                 )
                 captured += await self._capture_targets(
@@ -2466,7 +2452,6 @@ class PreviewPresenter:
                     chunks,
                     filler,
                     spec,
-                    key_width,
                     lambda: self._coverage_anchor == pass_anchor,
                 )
         except asyncio.CancelledError:
@@ -2570,7 +2555,6 @@ class PreviewPresenter:
         chunks: list[FileChunk],
         targets: list[int],
         spec: MatchSpec,
-        key_width: int,
         still_wanted: Callable[[], bool],
     ) -> int:
         """Capture ``targets`` of one file, standing down for anything on screen."""
@@ -2589,12 +2573,12 @@ class PreviewPresenter:
                 pane = self._app.query_one("#preview_pane", VerticalScroll)
             except Exception:
                 return captured
-            if pane.content_size.width != width:
+            if self.capture_width(pane) != width:
                 # ADOPT the new width rather than abandoning the pass: the
                 # pane's content width changes by a column whenever the
                 # scrollbar appears, and treating that as a reflow aborted every
                 # pass before its first capture.
-                width = pane.content_size.width
+                width = self.capture_width(pane)
                 if width <= 0:
                     return captured
             chunk = chunks[index]
@@ -2618,7 +2602,12 @@ class PreviewPresenter:
             finally:
                 self.coverage_activity = None
             if capture is not None:
-                self.capture_store.put(parent_id, query_sig, key_width, capture)
+                # Filed under the capture's OWN width, not the width requested.
+                # They should be equal — that is the point of the jig above —
+                # but a capture cut at one width and filed under another is
+                # exactly the defect this branch set out to remove, and reading
+                # it off the capture makes the two impossible to diverge.
+                self.capture_store.put(parent_id, query_sig, capture.width, capture)
                 captured += 1
             # Hand the loop back for longer than we just held it. Without this
             # coverage ran flat out — measured at 84% of the event loop — and a
@@ -3069,21 +3058,25 @@ class PreviewPresenter:
         container.mounted_indices.add(index)
 
     @staticmethod
-    def capture_key_width(pane: VerticalScroll) -> int:
-        """The width a capture is FILED under — stable, unlike the render width.
+    def capture_width(pane: VerticalScroll) -> int:
+        """The width a chunk lays out at, which is what a capture must be cut to.
 
-        ``content_size.width`` changes by a column the moment a scrollbar
-        appears, so a capture stored while one was showing could never be found
-        again once it was not, and vice versa. Measured over a full navigation
-        session: 66 captures taken, not one of them ever served, `mount
-        served=0 built=53`.
+        ``scrollable_content_region`` is the only one of the pane's widths that
+        the scrollbar moves, and it is the one children are laid out against —
+        `size` and `content_size` are the same value as each other and neither
+        shrinks by the bar. Building a capture at anything else produces strips
+        wrapped for a width they are never displayed at: measured on an 80-column
+        pane, a capture cut at 77 and served into 76 lost the last cell of every
+        row and came back a row short, so heights and `first_match_row` were
+        wrong with it.
 
-        The pane's allocated width does not move with the scrollbar, so it is
-        the stable key. Captures are still CUT at the content width — that is
-        what they have to be rendered at — this only decides where they are
-        filed.
+        Filing key and render width are deliberately the SAME number. They were
+        briefly separated on the theory that a scrollbar-stable key would stop
+        captures being orphaned when the bar appears — but a capture cut for a
+        width it cannot be displayed at is not worth finding, and one key
+        covering two real widths is worse than a miss.
         """
-        return pane.size.width
+        return pane.scrollable_content_region.width
 
     def _serve_capture(
         self, container: PreviewContainer, chunk: FileChunk, *, before: Widget | None
@@ -3101,7 +3094,7 @@ class PreviewPresenter:
         captured = self.capture_store.get(
             container.parent_doc_id,
             container.query_signature,
-            self.capture_key_width(pane),
+            self.capture_width(pane),
             chunk.chunk_seq,
         )
         if captured is None:

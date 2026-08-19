@@ -77,6 +77,13 @@ class WarmHost:
             self._app.push_screen(_SCREEN_NAME)
             self._app.pop_screen()
             container = VerticalScroll()
+            # No scrollbar. This container is a measuring jig, not something
+            # anyone scrolls: a chunk taller than `_LAYOUT_HEIGHT` overflows it,
+            # it grows a bar, and the chunk then lays out a column narrower than
+            # the width asked for — so the capture is cut for one width and
+            # filed under another. Measured, the boundary is exactly the layout
+            # box: 300 rendered rows captured at 76, 420 rows at 75.
+            container.styles.scrollbar_size_vertical = 0
             await screen.mount(container)
         except Exception:
             return None

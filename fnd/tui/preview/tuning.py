@@ -54,12 +54,9 @@ FREEZE_REVEAL_WAIT_TICKS = 40
 # invisible without meaningfully lengthening it.
 FREEZE_SLICE_SECONDS = 0.016
 
+# Debounce before a coverage pass starts, so a held-down arrow key does not
+# spawn a plan per keypress — a superseded plan then does no work at all.
 PREVIEW_WARM_DELAY = 0.35
-
-# Chunks mounted per warming batch, with ONE settle per batch. Settling per
-# chunk was slow enough that a 117-chunk file reached 33 before the next
-# navigation cancelled the task.
-PREVIEW_WARM_BATCH = 8
 
 # How many NEIGHBOURING files each side of the cursor coverage captures ahead.
 # Between-file navigation is the slow case: within a file the target is already
@@ -91,8 +88,8 @@ COVERAGE_SEED_FILES = 8
 # captures, median 52ms each, 10.1 SECONDS of the 12 spent inside a capture —
 # 84% of the loop, with stalls up to 393ms. Responsive enough to open a file and
 # then find that changing focus or stepping to the next match takes a second or
-# more to answer. 2.0 leaves the loop idle twice as long as coverage used it,
-# capping coverage at roughly a third of the loop.
+# more to answer.
+#
 # Measured share of the event loop coverage takes, over a 12s idle window on a
 # real corpus:
 #

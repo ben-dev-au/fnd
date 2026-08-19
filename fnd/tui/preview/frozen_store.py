@@ -12,9 +12,11 @@ mounted as its own widget, so nothing here does row arithmetic and a gap in the
 set costs nothing.
 
 Captures are width-locked, so the key carries the width the strips were rendered
-at. A resize does not invalidate the cache; it simply misses — and the key is the
-pane's scrollbar-stable OUTER width, not its content width, so a scrollbar
-appearing cannot orphan every capture at once.
+at — the width a chunk actually lays out at, which is the pane's scrollable
+content width and therefore moves when a scrollbar appears. A capture cut for one
+width can never be served at another, so a width change is a miss by design; the
+resize sweep drops what it can, and see `invalidate_captures_on_resize` for the
+case it cannot see.
 """
 
 from __future__ import annotations
@@ -115,13 +117,13 @@ def budget_rows() -> int:
 class ChunkCaptureStore:
     """Captures held per chunk, so a mount can serve one instead of building it.
 
-    Deliberately NOT a :class:`FrozenDocument`. That type stacks chunks into a
+    Deliberately sparse rather than a contiguous run. A run stacks chunks into a
     single row space and so must be contiguous — a gap silently shifts every
     position after it. This holds a sparse SET, because what coverage captures is
     the matches scattered through a file, and nothing here does row arithmetic:
     each capture is looked up by its own chunk_seq and mounted as its own widget.
 
-    Keyed by (file, query, width) for the same reasons as the document store: a
+    Keyed by (file, query, width): a
     capture carries the query's highlighting baked in, and its strips are cut at
     one width. A resize does not invalidate anything, it simply misses.
 
@@ -194,9 +196,3 @@ class ChunkCaptureStore:
         """Forget one file — its content or its highlighting changed."""
         for key in [k for k in self._files if k[0] == parent_id]:
             self._rows -= sum(c.height for c in self._files.pop(key).values())
-
-    def debug_keys(self) -> str:
-        """What the store actually holds, for diagnosing a miss."""
-        return " ".join(
-            f"{pid[:8]}/w{w}/sig{sig[:8]}/n{len(v)}" for (pid, sig, w), v in self._files.items()
-        )

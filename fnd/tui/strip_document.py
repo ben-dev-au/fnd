@@ -1,22 +1,17 @@
 """One widget for a whole document, painted from cached strips.
 
-Both preview substrates are the same widget at heart: a ``ScrollView`` holding
-one :class:`~textual.strip.Strip` per visual row, serving the viewport through
-the line API so cost is bounded by terminal height rather than document size.
-They differ only in where the strips come from — wrapped text lines for the flat
-(PDF/TXT) path, captured widget output for the frozen markdown path — and in how
-a row is addressed across a reflow.
+A ``ScrollView`` holding one :class:`~textual.strip.Strip` per visual row,
+serving the viewport through the line API so cost is bounded by terminal height
+rather than document size.
 
-That difference is the whole reason this is a base class rather than a shared
-concrete widget. The flat path rebuilds its strips by re-rendering
-``FileView.lines`` at the new width; doing that to a frozen document would
-re-render captured markdown as plain text and silently discard tables, fences
-and highlighting. So the width-rebuild is a subclass hook, never inherited
-behaviour, and the base can offer no path that reaches the wrong one.
+The width-rebuild is a subclass hook rather than inherited behaviour: strips are
+cut at one width, and how they are re-derived depends on where they came from —
+the flat (PDF/TXT) path re-renders ``FileView.lines`` at the new width. A base
+class that offered a default would let a subclass silently inherit the wrong one.
 
-What lives here is what genuinely does not care about the substrate: the extent,
-the viewport paint, the scroll-with-retries that survives being called before
-layout, the scrollbar match markers, and multi-line selection.
+What lives here is what does not care where the strips came from: the extent, the
+viewport paint, the scroll-with-retries that survives being called before layout,
+the scrollbar match markers, and multi-line selection.
 """
 
 from __future__ import annotations

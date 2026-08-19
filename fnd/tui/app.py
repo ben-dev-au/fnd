@@ -977,7 +977,7 @@ class FNDApp(App[None]):
         # a width change invalidates rather than reflows. Deferred: the pane
         # reports its settled width only after layout, and dropping on a
         # mid-resize measurement would throw away captures that are still valid.
-        self.call_after_refresh(self._preview.invalidate_documents_on_resize)
+        self.call_after_refresh(self._preview.invalidate_captures_on_resize)
 
     @on(Tree.NodeHighlighted)
     def _on_tree_highlight(self, ev: Tree.NodeHighlighted[Any]) -> None:

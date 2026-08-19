@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     from textual.widgets import DataTable
 
     from fnd.tui.line_buffer import LineBufferPreview
-    from fnd.tui.strip_document import StripDocumentView
     from fnd.tui.widgets.markdown import FNDMarkdown
 
 
@@ -942,36 +941,27 @@ def enumerate_stop_regions(pane: VerticalScroll, spec: MatchSpec) -> list[Region
 
 
 class FlatHost(Protocol):
-    """The slice of FNDApp the document scroll strategy needs."""
+    """The slice of FNDApp the flat scroll strategy needs."""
 
     def active_flat_buffer(self) -> LineBufferPreview | None: ...
 
 
 class FlatScrollStrategy:
-    """Scroll a single-widget preview — flat line buffer or frozen document — to
-    a match.
+    """Scroll the flat line-buffer preview to a match.
 
-    The widget owns the row math (:class:`~fnd.tui.strip_document.StripDocumentView`
-    and its subclasses); this strategy only hands it the target chunk and the
-    context margin. The dispatch re-arms the anchor with the resolved focus
-    chunk, so the widget's own first-match / chunk-top fallback handles the rest.
+    The widget owns the row math (:class:`~fnd.tui.strip_document.StripDocumentView`);
+    this strategy only hands it the target chunk and the context margin. The
+    dispatch re-arms the anchor with the resolved focus chunk, so the widget's
+    own first-match / chunk-top fallback handles the rest.
 
-    Deliberately tiny next to :class:`StructuralScrollStrategy`. A document
-    scroll is synchronous — the target row is known the moment the document
-    exists — so there is no retry chain, no settle barrier and no waiting on a
-    build. That difference is the point of the substrate, not an accident of it.
-
-    ``view`` is supplied by a getter rather than the concrete flat accessor so
-    the same instance serves whichever single-widget substrate is on screen.
+    Deliberately tiny next to :class:`StructuralScrollStrategy`: the buffer is
+    one widget that already knows every row, so the scroll is synchronous — no
+    retry chain, no settle barrier, nothing to wait on a build for.
     """
 
-    def __init__(
-        self,
-        host: FlatHost,
-        view: Callable[[], StripDocumentView | None] | None = None,
-    ) -> None:
+    def __init__(self, host: FlatHost) -> None:
         self._host = host
-        self._view = view if view is not None else host.active_flat_buffer
+        self._view = host.active_flat_buffer
 
     def reconcile(
         self,

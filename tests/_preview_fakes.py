@@ -8,8 +8,7 @@ stub is identical across them, so it lives here to keep the class-flip behaviour
 The stub mirrors the parts of Textual's API that ``preview/visibility.py`` uses,
 including the ``update`` keyword and the ``app.stylesheet`` restyle that follows
 it. Restyling means nothing to a stub that only holds a set of names, so it is
-recorded rather than performed — which also lets a test assert that the shortcut
-restyled the node itself and not its descendants.
+recorded rather than performed.
 """
 
 from __future__ import annotations

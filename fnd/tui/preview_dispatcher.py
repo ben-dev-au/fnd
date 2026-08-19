@@ -62,6 +62,16 @@ PreviewMode = Literal["flat", "structural"]
 # Every ordinary chunk in that file was under 6,000 characters, so this sits an
 # order of magnitude clear of normal content.
 #
+# The flat path this routes to is CHEAPER, not cheap. It emits one Static per
+# non-empty source line for a match-bearing chunk (the single-piece fast path
+# applies only where there is no match, and the chunk you navigate to has one),
+# and mounting those is superlinear. Measured head-to-head on a synthetic
+# 120,036-character table, 1,596 lines: flat 224ms to render plus 725ms to mount
+# and settle, against 979ms structural — near parity at that shape. The win on
+# the real chunk comes from its structural cost being far above linear (4,424ms),
+# not from the flat path being fast. Do not raise this cap expecting the flat
+# path to absorb it for free.
+#
 # Lives here rather than in preview.tuning because this module is what every
 # path asks and it sits BELOW the preview package — importing tuning from here
 # is an import cycle.
@@ -80,20 +90,12 @@ def uses_markdown_renderer(c: PreviewBody) -> bool:
     """
     if c.kind not in _MARKDOWN_RENDERED_KINDS or not c.body_md:
         return False
-    # And it must be small enough to BUILD. The structural renderer's cost is
-    # superlinear in markup, and a handful of chunks in real documents are giant
-    # tables that are almost entirely markup: measured on a 727-chunk PDF, a
-    # 120,123-character chunk took 4,424ms to build into 7,184 rendered rows,
-    # against a 5.3ms median for that same file. That is a hard multi-second
-    # freeze of the whole UI — observed live at 8.4s — because Textual builds
-    # the widget on the event loop.
-    #
-    # Over the cap the chunk takes the flat per-line path instead. It still
-    # renders, and it renders in milliseconds; what is lost is the table
-    # structure of something that was never going to be usable as a 7,184-row
-    # widget anyway. Gating here rather than in the mount is deliberate: this is
-    # the one function the mount, the background warmer and match_evidence all
-    # ask, so they cannot disagree about it.
+    # And it must be small enough to BUILD — see MARKDOWN_MAX_CHARS above for
+    # the measurements and for what the flat path over the cap actually costs.
+    # What is lost over the cap is the table structure of something that was
+    # never going to be usable as a 7,184-row widget anyway. Gating here rather
+    # than in the mount is deliberate: this is the one function the mount, the
+    # background warmer and match_evidence all ask, so they cannot disagree.
     return len(c.body_md) <= MARKDOWN_MAX_CHARS
 
 
