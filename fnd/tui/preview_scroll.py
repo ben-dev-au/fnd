@@ -89,7 +89,10 @@ class ScrollStrategy(Protocol):
         current_generation: Callable[[], int] | None = None,
     ) -> None: ...
     def locate(self) -> ViewportLocation | None: ...
-    def scroll_to_location(self, location: ViewportLocation) -> None: ...
+    def scroll_to_location(
+        self, location: ViewportLocation, on_done: Callable[[], None] | None = None
+    ) -> None: ...
+
 
 
 class _Once:
@@ -139,6 +142,17 @@ class PreviewScrollController:
         self._generation = 0
         self._epoch = 0
         self._pending_settled: _Once | None = None
+        # Outstanding reflow-restores. A restore re-applies its scroll across
+        # many refreshes as the re-wrap lands, and unlike a reconcile it never
+        # arms the anchor — so ``is_settling`` says nothing about it. See
+        # is_restoring.
+        self._restoring = 0
+        # Restores finished since start-up. ``is_restoring`` alone cannot say
+        # "the restore has landed": a caller that schedules the restore via
+        # call_after_refresh sees False both BEFORE it starts and after it
+        # ends, so waiting on the flag can pass without anything happening.
+        # Compare this against a value read before the trigger instead.
+        self._restores_completed = 0
 
     @property
     def is_armed(self) -> bool:
@@ -151,6 +165,23 @@ class PreviewScrollController:
         controller mid-settle; once the reveal lands it clears and user scrolls
         (keyboard OR unfocused wheel) extend the mounted window again."""
         return self._armed and not self._settled
+
+    @property
+    def is_restoring(self) -> bool:
+        """A reflow-restore is still re-applying its scroll. Widening the pane
+        (Reading View, a resize) re-wraps the content over an unknown number of
+        refreshes, so the restore keeps re-scrolling until the layout stops
+        moving. Anything that needs the final reading position — a measurement,
+        a test assertion — must wait for this to clear; ``is_settling`` does not
+        cover it, because a restore never arms the anchor."""
+        return self._restoring > 0
+
+    @property
+    def restores_completed(self) -> int:
+        """How many reflow-restores have finished. Monotonic, so a waiter can
+        read it before triggering a restore and wait for it to exceed that —
+        the only way to tell "not started yet" from "already landed"."""
+        return self._restores_completed
 
     @property
     def anchor(self) -> ScrollAnchor | None:
@@ -235,14 +266,23 @@ class PreviewScrollController:
     def scroll_to_location(self, location: ViewportLocation | None) -> None:
         """Scroll to a position previously read by :meth:`locate`. Best-effort:
         a failure is swallowed (position just isn't restored) so it can't
-        propagate into a UI event handler."""
+        propagate into a UI event handler. ``is_restoring`` holds until the
+        strategy reports the restore finished."""
         if location is None:
             return
         strategy = self._select_strategy()
         if strategy is None:
             return
-        with contextlib.suppress(Exception):
-            strategy.scroll_to_location(location)
+        self._restoring += 1
+        done = _Once(self._restore_done)
+        try:
+            strategy.scroll_to_location(location, done)
+        except Exception:
+            done()  # never strand the flag on a raising strategy
+
+    def _restore_done(self) -> None:
+        self._restoring = max(0, self._restoring - 1)
+        self._restores_completed += 1
 
 
 class StructuralHost(Protocol):
@@ -800,11 +840,19 @@ class StructuralScrollStrategy:
                 return ViewportLocation("structural", chunk_seq=seq, offset=top - r.y)
         return None
 
-    def scroll_to_location(self, location: ViewportLocation) -> None:
+    def scroll_to_location(
+        self, location: ViewportLocation, on_done: Callable[[], None] | None = None
+    ) -> None:
+        done = _Once(on_done)
         if location.kind != "structural":
+            done()
             return
         self._restore_structural(
-            location.chunk_seq, location.offset, retries=_RESTORE_TAIL_REFRESHES, last_vy=None
+            location.chunk_seq,
+            location.offset,
+            retries=_RESTORE_TAIL_REFRESHES,
+            last_vy=None,
+            done=done,
         )
 
     def _restore_structural(
@@ -813,6 +861,7 @@ class StructuralScrollStrategy:
         delta: int,
         retries: int,
         last_vy: int | None,
+        done: Callable[[], None],
         cap: int = _RESTORE_HARD_CAP,
     ) -> None:
         # A width reflow re-wraps the chunks above over several refreshes,
@@ -824,6 +873,7 @@ class StructuralScrollStrategy:
         # the captured in-chunk offset.
         w = self._host.chunk_widgets.get(seq)
         if w is None:
+            done()
             return
         pane = self._host.preview_pane()
         vy = w.virtual_region.y
@@ -854,8 +904,12 @@ class StructuralScrollStrategy:
             retries = max(retries, _RESTORE_TAIL_REFRESHES)
         if retries > 0 and cap > 0:
             self._host.call_after_refresh(
-                self._restore_structural, seq, delta, retries - 1, vy, cap - 1
+                self._restore_structural, seq, delta, retries - 1, vy, done, cap - 1
             )
+        else:
+            # Exhausting the budget (or the cap) still ENDS the restore — the
+            # flag must not outlive the loop that set it.
+            done()
 
 
 def stop_region_for_cell(table: DataTable[Any], coord: Any) -> Region | None:
@@ -1003,12 +1057,19 @@ class FlatScrollStrategy:
         address = view.top_address()
         return None if address is None else ViewportLocation("flat", line=address)
 
-    def scroll_to_location(self, location: ViewportLocation) -> None:
-        if location.kind != "flat":
-            return
-        view = self._view()
-        if view is None:
-            return
-        # Exact (no context margin) — restore the *reading* position, not a
-        # match drop. The view re-renders for the new width first.
-        view.scroll_to_address(location.line, context_fraction=0.0)
+    def scroll_to_location(
+        self, location: ViewportLocation, on_done: Callable[[], None] | None = None
+    ) -> None:
+        done = _Once(on_done)
+        try:
+            if location.kind != "flat":
+                return
+            view = self._view()
+            if view is None:
+                return
+            # Exact (no context margin) — restore the *reading* position, not a
+            # match drop. The view re-renders for the new width first.
+            view.scroll_to_address(location.line, context_fraction=0.0)
+        finally:
+            # The flat restore is synchronous: it is done the moment it returns.
+            done()
