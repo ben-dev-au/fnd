@@ -579,7 +579,12 @@ class PreviewPresenter:
         # from here rather than from the mount because most navigations never
         # reach a mount — a target already on screen returns early — and those
         # are precisely the moments with time to spare for capturing ahead.
-        self.start_coverage(parent_id, focus_chunk_seq)
+        # Suppressed for the same reason as the progress session above: this
+        # sits between arming the scroll anchor and arming the paint check, and
+        # a raise here would leave the preview with an armed anchor and no
+        # repair timer. Warming ahead must not be able to do that.
+        with contextlib.suppress(Exception):
+            self.start_coverage(parent_id, focus_chunk_seq)
         # Every navigation is checked once it should have settled (see
         # _arm_paint_check) — the single place that verifies the OUTCOME rather
         # than one mechanism, so no seam can strand the pane indefinitely.

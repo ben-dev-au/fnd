@@ -346,3 +346,40 @@ async def test_warming_survives_the_gap_between_captures(warm_index: Path) -> No
             f"flicker back to cold mid-file: {observed}"
         )
         assert preview.coverage_parent is None, "the marker outlived the file"
+
+
+@pytest.mark.asyncio
+async def test_the_warm_host_captures_one_at_a_time(warm_index: Path) -> None:
+    """The off-screen screen and its container are shared, and the width is set
+    on the SCREEN — so two callers interleaving at any of capture()'s awaits
+    would lay each other's widget out at the wrong width.
+
+    Coverage and the stale-strip repair are independent asyncio tasks and
+    nothing else serialises them: the repair stands down for ``pipeline_busy``,
+    which does not include coverage. ``capture``'s own comment asserted
+    "WarmHost is serial" without anything enforcing it.
+    """
+    app = FNDApp(index_dir=warm_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await run_search(pilot, app, "target")
+        host = app._preview._warm_host
+
+        overlap = 0
+        live = 0
+
+        async def watched(*a: object, **k: object) -> None:
+            nonlocal overlap, live
+            live += 1
+            overlap = max(overlap, live)
+            try:
+                await asyncio.sleep(0.02)
+            finally:
+                live -= 1
+            return None
+
+        host._capture_locked = watched  # type: ignore[assignment]
+        chunk = (await app._preview._coverage_chunks(app._search.groups[0].parent_id))[0]
+        await asyncio.gather(*(host.capture(chunk, 80) for _ in range(4)))
+
+        assert overlap == 1, f"{overlap} captures shared the off-screen screen at once"

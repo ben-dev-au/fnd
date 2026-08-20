@@ -345,3 +345,26 @@ async def test_a_malformed_query_does_not_reload_the_index_under_a_worker(
         assert not reloads, "the index was reloaded while a search was still running"
         release.set()
         await wait_until(pilot, lambda: app._search.idle)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_dispatch_does_not_disable_reload_forever(index: Path) -> None:
+    """The in-flight count has one reader — the gate on ``searcher.reload()``.
+    A count that goes up and never comes down therefore stops the app picking
+    up an external reindex for the rest of the session, silently."""
+    app = FNDApp(index_dir=index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await run_search(pilot, app, "target")
+        assert app._search._inflight == 0, "setup — a settled search left a count behind"
+
+        def boom(*_a: Any, **_k: Any) -> Any:
+            raise RuntimeError("worker pool refused the job")
+
+        app.run_worker = boom  # type: ignore[method-assign]
+        with pytest.raises(RuntimeError):
+            app._search.run("second")
+
+        assert app._search._inflight == 0, (
+            "a failed dispatch leaked the count — reload() is now off for good"
+        )

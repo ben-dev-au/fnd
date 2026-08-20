@@ -212,13 +212,22 @@ class SearchController:
         if request is None:
             return
         session = self._app._progress.begin(SEARCH, sampler=self._sample)
+        # Counted BEFORE dispatch so a commit cannot beat the increment, and
+        # unwound if the dispatch itself fails: the only reader is the reload
+        # gate, so a leaked count would silently stop the app picking up an
+        # external reindex for the rest of the session.
         self._inflight += 1
-        self._app.run_worker(
-            lambda: self._execute_and_commit(request, session),
-            thread=True,
-            exclusive=True,
-            group="search",
-        )
+        try:
+            self._app.run_worker(
+                lambda: self._execute_and_commit(request, session),
+                thread=True,
+                exclusive=True,
+                group="search",
+            )
+        except Exception:
+            self._inflight = max(0, self._inflight - 1)
+            session.close()
+            raise
 
     @property
     def idle(self) -> bool:
