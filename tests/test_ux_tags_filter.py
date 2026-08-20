@@ -350,12 +350,12 @@ async def test_tags_are_scoped_to_the_active_query(cfg: Config, tagged_index: Pa
         # 'saffron' is in all three files; 'stock' only in risotto.md.
         app._search.run("saffron")
         await pilot.pause()
-        wide = {t.value for t in app._scope.tag_catalog_for_scope()["frontmatter"]}
+        wide = {t.value for t in app._scope.tag_catalogue_for_scope()["frontmatter"]}
         assert {"recipe", "dinner", "project"} <= wide
 
         app._search.run("stock")
         await pilot.pause()
-        narrow = {t.value for t in app._scope.tag_catalog_for_scope()["frontmatter"]}
+        narrow = {t.value for t in app._scope.tag_catalogue_for_scope()["frontmatter"]}
         assert "dinner" in narrow
         assert "project" not in narrow, "tags still reflect files outside the result set"
 
@@ -369,12 +369,12 @@ async def test_selecting_a_tag_does_not_hide_its_siblings(cfg: Config, tagged_in
         await pilot.pause()
         app._search.run("saffron")
         await pilot.pause()
-        before = {t.value for t in app._scope.tag_catalog_for_scope()["frontmatter"]}
+        before = {t.value for t in app._scope.tag_catalogue_for_scope()["frontmatter"]}
 
         app._scope.tag_include = {"frontmatter": {"recipe"}}
         app._search.run("saffron")
         await pilot.pause()
-        after = {t.value for t in app._scope.tag_catalog_for_scope()["frontmatter"]}
+        after = {t.value for t in app._scope.tag_catalogue_for_scope()["frontmatter"]}
         assert after == before, "siblings vanished once a tag was selected"
 
 

@@ -17,7 +17,7 @@ from fnd.extract.pdf import extract
 from fnd.render import _chunk_header
 
 
-def _build_labeled_pdf(path: Path) -> None:
+def _build_labelled_pdf(path: Path) -> None:
     """A 5-page PDF: 2 prefatory pages labelled i, ii, then 3 body
     pages labelled 1, 2, 3 (so PDF index 3 == printed page "1")."""
     doc = pymupdf.open()
@@ -35,7 +35,7 @@ def _build_labeled_pdf(path: Path) -> None:
     doc.close()
 
 
-def _build_unlabeled_pdf(path: Path) -> None:
+def _build_unlabelled_pdf(path: Path) -> None:
     """Plain 3-page PDF without page labels — extractor should leave
     ``page_label`` empty so display falls back to the PDF index."""
     doc = pymupdf.open()
@@ -49,7 +49,7 @@ def _build_unlabeled_pdf(path: Path) -> None:
 
 def test_extract_populates_page_label_for_labeled_pdf(tmp_path: Path) -> None:
     pdf = tmp_path / "book.pdf"
-    _build_labeled_pdf(pdf)
+    _build_labelled_pdf(pdf)
 
     chunks = list(extract(pdf))
     assert len(chunks) == 5
@@ -62,7 +62,7 @@ def test_extract_populates_page_label_for_labeled_pdf(tmp_path: Path) -> None:
 
 def test_extract_leaves_page_label_empty_for_unlabeled_pdf(tmp_path: Path) -> None:
     pdf = tmp_path / "no-labels.pdf"
-    _build_unlabeled_pdf(pdf)
+    _build_unlabelled_pdf(pdf)
 
     chunks = list(extract(pdf))
     assert len(chunks) == 3
@@ -224,8 +224,8 @@ def test_page_label_survives_layered_search_pipeline(tmp_path: Path, tmp_index_d
     from fnd.layered import search_layered
     from fnd.query import Searcher
 
-    pdf = tmp_path / "labeled.pdf"
-    _build_labeled_pdf(pdf)
+    pdf = tmp_path / "labelled.pdf"
+    _build_labelled_pdf(pdf)
     build_index(roots=[tmp_path], index_dir=tmp_index_dir, collection="t")
 
     s = Searcher(index_dir=tmp_index_dir)

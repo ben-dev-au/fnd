@@ -21,7 +21,7 @@ PREVIEW_CACHE_MIN_CHUNKS = 1
 # ``VISIBLE_FIRST_ABOVE`` is a CAP, not a count — see
 # ``PreviewPresenter.above_window_start``. The reveal cannot happen until every
 # chunk above the focus has built (they decide where the match lands, see
-# _finalize_via_lock_body), so each one is paid for on the critical path, while
+# _finalise_via_lock_body), so each one is paid for on the critical path, while
 # the ones below are not. Mounting a fixed number above therefore overpays
 # whenever the chunks are tall.
 #
@@ -30,7 +30,7 @@ PREVIEW_CACHE_MIN_CHUNKS = 1
 # is several screens of content nobody asked for; seven short sections is less
 # than the context margin. So the window is measured in ROWS and this only bounds
 # it. Measured on a 1018-chunk PDF (3x40 navigations per setting), the row-based
-# window against a flat 7: first paint 1796 -> 1493ms, the finalize's build wait
+# window against a flat 7: first paint 1796 -> 1493ms, the finalise's build wait
 # 1457 -> 848ms, the reconcile-to-scroll gap 731 -> 517ms.
 # How long the freeze sweep waits for its container to be revealed before
 # giving up (ticks of 50ms). Capturing from a `-pre-reveal` container yields
@@ -181,15 +181,15 @@ LAZY_MOUNT_BATCH = 3
 # the user sees context before it, rather than pinning it to the top line.
 MATCH_CONTEXT_FRACTION = 0.25
 # Reveal watchdog: an active container mounts invisible (``-pre-reveal``) and is
-# revealed by its finalize task once the layout settles. Under rapid navigation
+# revealed by its finalise task once the layout settles. Under rapid navigation
 # that task can be cancelled before it reveals, or hang for seconds awaiting
 # above-window chunks a cancelled mount never mounted — leaving the container
 # invisible ("preview blank until I select a different result and come back").
 # This is the bounded-time backstop: if a container is still ``-pre-reveal`` this
 # long after it became active, reveal it regardless. Set well above a normal
-# finalize (~150-700ms) so it rarely pre-empts the no-flash scroll, but far below
-# the finalize's own 8s internal timeouts so a hang can't show a multi-second
-# blank. Re-armed on every navigation; a fast finalize reveals first and disarms.
+# finalise (~150-700ms) so it rarely pre-empts the no-flash scroll, but far below
+# the finalise's own 8s internal timeouts so a hang can't show a multi-second
+# blank. Re-armed on every navigation; a fast finalise reveals first and disarms.
 REVEAL_WATCHDOG_MS = 1500
 # Settle-time paint check. The reveal watchdog above fixes exactly one failure
 # mode (still ``-pre-reveal``). This one checks the OUTCOME instead: some while

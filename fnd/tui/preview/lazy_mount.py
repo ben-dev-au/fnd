@@ -35,7 +35,7 @@ class LazyMounter:
         # cleared on file switch alongside ``_preview_mount_task``.
         self.task: object | None = None
         # Monotonic-time gate. Programmatic scrolls (navigation anchor,
-        # finalize reveal) push this forward so the watcher doesn't
+        # finalise reveal) push this forward so the watcher doesn't
         # interpret their own scroll changes as user intent and fire a
         # competing mount that yanks the focused chunk off-screen.
         # Debounce timer so rapid scroll bursts collapse to a single

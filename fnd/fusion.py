@@ -114,7 +114,7 @@ STRONG_SIGNAL_MIN_NORM_SCORE: float = 0.85
 STRONG_SIGNAL_MIN_NORM_GAP: float = 0.15
 
 
-def normalize_bm25(score: float) -> float:
+def normalise_bm25(score: float) -> float:
     """Map a raw BM25 score (positive, unbounded) into ``[0, 1)``.
 
     The transform ``s / (1 + s)`` is asymptotic to 1: it preserves

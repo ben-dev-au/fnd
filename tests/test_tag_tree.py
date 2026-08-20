@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fnd.tag_catalog import TagCount, build_tag_tree
+from fnd.tag_catalogue import TagCount, build_tag_tree
 
 
 def test_flat_tags_become_roots() -> None:

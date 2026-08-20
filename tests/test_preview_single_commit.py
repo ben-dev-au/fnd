@@ -1,6 +1,6 @@
 """One navigation must commit at most one scroll.
 
-A navigation reconciles more than once: the finalize commits the landing, then
+A navigation reconciles more than once: the finalise commits the landing, then
 the background fill re-anchors after revealing the chunks it mounted above.
 ``_generation`` only cancels chains from an OLDER navigation, so both ran at the
 same generation and neither cancelled the other — two chains, two committed

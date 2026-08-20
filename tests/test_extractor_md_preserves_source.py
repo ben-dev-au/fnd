@@ -162,7 +162,7 @@ def test_body_struct_remains_plain_text_for_snippets(tmp_path: Path) -> None:
     assert len(chunks) == 1
     block_texts = [b.text for b in chunks[0].body_struct]
     # Inline tokens preserve markdown markers in their content (markdown-it
-    # behavior) — that's fine because snippets show what the user typed.
+    # behaviour) — that's fine because snippets show what the user typed.
     # The key invariant is that body_struct is *not* the preview renderer's
     # source; body_md is. Either presentation reads as expected English.
     assert any("bold" in t for t in block_texts)

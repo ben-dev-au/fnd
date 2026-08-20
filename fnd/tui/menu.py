@@ -2412,7 +2412,7 @@ def _compute_pdfs_textured() -> str:
         # Y: every PDF the indexer would actually pick up under any
         # collection's source. Uses the same walk_sources call the
         # indexer uses so includes/excludes/frontmatter filters are
-        # honored - otherwise a vault that's md-only for some
+        # honoured - otherwise a vault that's md-only for some
         # collections would inflate the total with PDFs that can
         # never be indexed under any of those collections.
         from fnd.walk import walk_sources

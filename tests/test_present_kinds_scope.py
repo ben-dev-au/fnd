@@ -8,7 +8,7 @@ import tempfile
 
 import tantivy
 
-from fnd.kind_catalog import present_kinds
+from fnd.kind_catalogue import present_kinds
 from fnd.schema import F_COLLECTION, F_KIND, F_PARENT_ID, F_SOURCE_PATH, build_schema
 
 

@@ -79,7 +79,7 @@ def test_fresh_signature_returns_fallback(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_estimate_seconds_for_scales_with_count(monkeypatch: pytest.MonkeyPatch) -> None:
-    """estimate_seconds_for honors signature gating end-to-end."""
+    """estimate_seconds_for honours signature gating end-to-end."""
     _force_signature(monkeypatch, "flat|cfg-x")
     for _ in range(3):
         ce.record_run(n_pdfs=10, cache_hits=0, cache_misses=10, elapsed_s=20.0)

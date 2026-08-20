@@ -1,7 +1,7 @@
 """Which file-type kinds exist in the active collections.
 
 Read from the index with a terms aggregation over ``F_KIND`` — the same live
-mechanism as :mod:`fnd.tag_catalog` — so the file-type filter shows only the
+mechanism as :mod:`fnd.tag_catalogue` — so the file-type filter shows only the
 kinds actually present and never drifts from what is indexed.
 
 ``F_KIND`` is ``fast=True, tokenizer_name="raw"`` (see :mod:`fnd.schema`), which

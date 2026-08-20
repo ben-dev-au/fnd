@@ -814,7 +814,7 @@ def _flat_text_blocks(page: pymupdf.Page) -> list[str]:
 _recovery_pipeline_singleton: PageRecoveryPipeline | None = None
 
 # Flat-fallback is NOT in the pipeline: it must run after the born-digital
-# docling fallback below (see _finalize_body_md), so the prose it backfills
+# docling fallback below (see _finalise_body_md), so the prose it backfills
 # is never discarded by a docling swap, and a flat-appended "Table N" can't
 # retro-trigger that docling. Stateless, so a module-level singleton is fine.
 _flat_fallback_tier = FlatFallbackTier(CoverageEvaluator(), _flat_text_blocks)
@@ -836,7 +836,7 @@ def _recovery_pipeline() -> PageRecoveryPipeline:
     return _recovery_pipeline_singleton
 
 
-def _finalize_body_md(ctx: ExtractionContext, body_md: str) -> str:
+def _finalise_body_md(ctx: ExtractionContext, body_md: str) -> str:
     """Post-recovery assembly for one structured page, in order:
 
     1. born-digital docling fallback (image-rendered tables pymupdf4llm
@@ -1144,7 +1144,7 @@ def _extract_inner(  # pyright: ignore[reportUnusedFunction]
 
             # Structured path (opt-in): populate body_md so the preview
             # dispatcher routes this page to the Markdown widget. recover()
-            # runs the tier pipeline; _finalize_body_md then adds the
+            # runs the tier pipeline; _finalise_body_md then adds the
             # born-digital docling fallback, marker stripping, and
             # flat-fallback (in that order). Empty when the pdf-structure
             # extra isn't installed, or when the run-scoped
@@ -1158,7 +1158,7 @@ def _extract_inner(  # pyright: ignore[reportUnusedFunction]
                     path=str(path),
                     flat=text,
                 )
-                body_md = _finalize_body_md(ctx, _recovery_pipeline().recover(ctx).markdown)
+                body_md = _finalise_body_md(ctx, _recovery_pipeline().recover(ctx).markdown)
             else:
                 body_md = ""
 
