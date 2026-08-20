@@ -75,8 +75,10 @@ async def test_scroll_below_boundary_triggers_lazy_mount(
     chunks below it. Disable the active-file full-mount so the file stays
     windowed — scroll-driven lazy-mount is the path for files beyond the
     full-mount budget (monster docs); for in-budget files the eager fill
-    has already mounted everything below."""
+    has already mounted everything below. Coverage is disabled too, so the
+    chunks this mounts are built here rather than served from a capture."""
     monkeypatch.setattr("fnd.tui.preview.tuning.FULLMOUNT_CHUNK_BUDGET", 0)
+    monkeypatch.setattr("fnd.tui.preview.tuning.COVERAGE_CHUNK_BUDGET", 0)
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -138,8 +140,10 @@ async def test_lazy_mount_fires_after_settle_without_explicit_release(
 
     Full-mount disabled so the file stays windowed (the >budget monster-file
     path); in-budget files eagerly fill below, leaving nothing to lazy-mount.
+    Coverage disabled so the mounted region grows only through lazy mount.
     """
     monkeypatch.setattr("fnd.tui.preview.tuning.FULLMOUNT_CHUNK_BUDGET", 0)
+    monkeypatch.setattr("fnd.tui.preview.tuning.COVERAGE_CHUNK_BUDGET", 0)
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -288,6 +292,7 @@ async def test_scroll_watcher_bridges_to_lazy_mounter(
     ``app._lazy.check()`` directly. This test exercises ONLY the bridge:
     a real scroll on the focused pane must invoke ``schedule_check``."""
     monkeypatch.setattr("fnd.tui.preview.tuning.FULLMOUNT_CHUNK_BUDGET", 0)
+    monkeypatch.setattr("fnd.tui.preview.tuning.COVERAGE_CHUNK_BUDGET", 0)
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()

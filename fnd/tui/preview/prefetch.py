@@ -35,6 +35,10 @@ class PrefetchEngine:
         self._app = app
         # Single-consumer drainer serializes prefetch widget-mounts.
         self.sink_queue: asyncio.Queue[Any] | None = None
+        # Which queued job is running right now, for the stall watch to name
+        # when the loop stops answering. Prefetch mounts widgets, so it can
+        # hold the loop, and it is invisible to every other pipeline flag.
+        self.active_job: str | None = None
         self.sink_drainer: Any | None = None
 
     def start(self) -> None:
@@ -286,6 +290,7 @@ class PrefetchEngine:
         async def _job() -> None:
             await self._mount_flat_async(parent_id, query_sig, doc, focus_chunk_seq)
 
+        _job.fnd_label = f"flat:{parent_id[:8]}"  # type: ignore[attr-defined]
         q.put_nowait(_job)
 
     async def _mount_flat_async(
@@ -316,12 +321,26 @@ class PrefetchEngine:
         focus_chunk_seq: int,
     ) -> None:
         """Queue a hidden structural pre-mount so cached clicks land
-        as a visibility flip. Safe to default-on now that W3 collapses
-        per-cell widgets — see bench_input_lag for the DOM-size
-        breakdown. Opt out with _FND_NO_PREMOUNT=1."""
+        as a visibility flip. Opt out with _FND_NO_PREMOUNT=1.
+
+        No-op while the preview cache holds a single file. The pre-mount only
+        pays off if the container it builds is still cached when the user gets
+        there, and ``PREVIEW_CACHE_MAX_FILES == 1`` means the very next ``put``
+        evicts it — so every container built here is thrown away unused. It was
+        not free: measured on a real corpus, one Down inside a single file
+        re-mounted the same four *neighbouring files* on every keypress (13
+        prefetch passes over 11 presses, each of the four rebuilt 12-13 times),
+        all of it on the event loop the navigation's own scroll is waiting on.
+
+        The decode and the flat bundles above are kept — those are cached by
+        ``chunk_cache`` / ``prebuilt_cache``, which are not bounded to one file
+        and do survive to be used.
+        """
         import os as _os
 
         if _os.environ.get("_FND_NO_PREMOUNT") == "1":
+            return
+        if self._app._preview.preview_cache.max_files <= 1:
             return
         q = self.sink_queue
         if q is None:
@@ -342,6 +361,7 @@ class PrefetchEngine:
         async def _job() -> None:
             await self._mount_structural_async(parent_id, query_sig, chunks, focus_chunk_seq)
 
+        _job.fnd_label = f"struct:{parent_id[:8]}"  # type: ignore[attr-defined]
         q.put_nowait(_job)
 
     async def _mount_structural_async(
@@ -515,10 +535,13 @@ class PrefetchEngine:
                 await asyncio.sleep(0.05)
             if wait_iters > 0:
                 self._app._diag_log(f"drainer JOB started after {wait_iters * 50}ms wait")
+            self.active_job = getattr(job, "fnd_label", "?")
             try:
                 await job()
             except Exception as e:
                 self._app._diag_log(f"drainer JOB threw: {type(e).__name__}: {e}")
+            finally:
+                self.active_job = None
             with contextlib.suppress(Exception):
                 q.task_done()
             await asyncio.sleep(0)

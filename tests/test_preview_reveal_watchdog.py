@@ -50,6 +50,11 @@ class _Host:
 
         PreviewPresenter.reveal(self, container)  # type: ignore[arg-type]
 
+    def diag_log(self, msg: str) -> None:
+        # Modelled, not stubbed away: the real presenter logs the first-paint
+        # event from reveal(), and a stand-in that lacks it would hide that.
+        pass
+
     def _cancel_reveal_watchdog(self) -> None:
         pass
 

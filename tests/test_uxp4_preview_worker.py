@@ -186,11 +186,20 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
         await run_search(pilot, app, "target")
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
-        # First visit to big — fully mount.
+        # First visit to big — fully mount. Gated on the cache entry appearing
+        # rather than on a tick count: a fixed number of pauses is a wait only
+        # while the machine is idle, and degrades to a no-op under suite load,
+        # which is exactly when this test used to fail.
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
-        for _ in range(10):
-            await pilot.pause()
-        # Should be cached now (60+ chunks, above min threshold).
+        await wait_until(
+            pilot,
+            lambda: (
+                app._preview.preview_cache.get(big_group.parent_id, app._search.query_signature())
+                is not None
+            ),
+            timeout=30.0,
+            message="big.md never reached the preview cache",
+        )
         cached = app._preview.preview_cache.get(big_group.parent_id, app._search.query_signature())
         assert cached is not None
         # Mount is radius-bounded (Phase 2a/2b cap at _BACKGROUND_FILL_RADIUS).
@@ -200,19 +209,30 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
         # Switch to small; no new mount task expected for big when we
         # come back (it's complete and cached).
         app._preview.render_full_doc(small_group.parent_id, focus_chunk_seq=0)
-        for _ in range(5):
-            await pilot.pause()
-        # Return to big — strip shows briefly during the cache-hit reveal
-        # cycle, then idles once _finalize_pre_reveal's on_done fires.
-        app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
-        strip = app.query_one(FNDProgressBar)
-        # Same reasoning as the determinate test above: the line holds a
-        # completed fill briefly, so wait for the state rather than a count.
         await wait_until(
             pilot,
-            lambda: "-idle" in strip.classes,
-            message="progress line never cleared after the cache-hit reveal",
+            lambda: (
+                app._preview.active is not None
+                and app._preview.active.parent_doc_id == small_group.parent_id
+            ),
+            timeout=30.0,
+            message="never switched away to small.md",
         )
+        # Return to big — the strip shows briefly during the cache-hit reveal
+        # cycle, then idles once _finalize_pre_reveal's on_done fires. Wait for
+        # BOTH signals together: idling is what says the reveal finished, and
+        # checking it on a tick count is what made this flaky.
+        app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
+        strip = app.query_one(FNDProgressBar)
+        # The line holds a completed fill briefly, so wait for the state
+        # rather than a tick count.
+        await wait_until(
+            pilot,
+            lambda: app._preview.active is big_container and "-idle" in strip.classes,
+            timeout=30.0,
+            message="revisit did not settle on the cached container with the strip idle",
+        )
+        assert "-idle" in strip.classes
         assert app._preview.active is big_container
 
 
