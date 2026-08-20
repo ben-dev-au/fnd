@@ -22,7 +22,7 @@ from textual.widgets import DataTable
 from fnd.matching import MatchSpec
 from fnd.tui.preview.frozen import FrozenChunkView, freeze
 from fnd.tui.widgets.markdown import FNDMarkdown
-from tests._pilot_wait import wait_until
+from tests._pilot_wait import wait_stable, wait_until
 
 DOC = """## Heading with quartzfin
 
@@ -222,16 +222,23 @@ async def test_freezing_above_the_viewport_does_not_move_the_page() -> None:
         pane = app.query_one("#pane", VerticalScroll)
         reading = app.query_one("#c3", FNDMarkdown)
         pane.scroll_to(y=reading.virtual_region.y, animate=False)
-        # The chunk sitting AT the pane top is the scroll having landed.
-        # `scroll_y` alone is not: with `animate=False` it is set synchronously,
-        # while `region` only moves once the compositor re-arranges — so gating
-        # on it read a stale position 174 rows out.
-        await wait_until(
+        # Stability, not a predicted position. Two earlier attempts guessed and
+        # both were wrong: `scroll_y == scroll_target_y` settles before the
+        # compositor re-arranges and read a position 174 rows stale, and
+        # `reading.region.y == pane.region.y` assumes the scroll lands exactly at
+        # the chunk top — it can be clamped short, and the wait then times out
+        # under load while passing on an idle machine.
+        #
+        # The assertion below needs only that the position has STOPPED moving.
+        # `before` is whatever it settled at; it never had to be 0.
+        await wait_stable(
             pilot,
-            lambda: reading.region.height > 0 and reading.region.y == pane.region.y,
+            lambda: (pane.scroll_y, reading.region.y, reading.region.height),
+            rounds=3,
             timeout=15.0,
-            message="the scroll never landed on the chunk",
+            message="the scroll never settled",
         )
+        assert reading.region.height > 0, "the chunk being read is not on screen"
         before = reading.region.y - pane.region.y
 
         for i, md in enumerate(above):
@@ -247,6 +254,14 @@ async def test_freezing_above_the_viewport_does_not_move_the_page() -> None:
             ),
             timeout=15.0,
             message="the stand-ins never replaced the chunks above",
+        )
+        # And let the swap's own re-layout settle, for the same reason.
+        await wait_stable(
+            pilot,
+            lambda: (pane.scroll_y, reading.region.y),
+            rounds=3,
+            timeout=15.0,
+            message="the layout never settled after the swap",
         )
 
         after = reading.region.y - pane.region.y

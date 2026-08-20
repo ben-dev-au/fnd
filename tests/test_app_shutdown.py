@@ -49,7 +49,7 @@ async def test_exiting_while_the_drainer_runs_completes_the_teardown(
             "CancelledError escaped and skipped the rest of the shutdown"
         )
         assert app._prefetch.sink_drainer is None
-        assert drainer.cancelled() or drainer.done()
+        assert drainer.done(), "the drainer outlived the teardown that cancelled it"
 
 
 @pytest.mark.asyncio
