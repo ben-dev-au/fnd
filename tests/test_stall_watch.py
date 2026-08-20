@@ -159,3 +159,40 @@ async def test_a_responsive_loop_reports_nothing() -> None:
     assert not [line for line in app.lines if line.startswith("STALL")], (
         f"reported a stall on an idle loop: {app.lines}"
     )
+
+
+def test_the_sample_key_survives_windows_path_separators() -> None:
+    """The sampler filters frames by path and then takes basenames.
+
+    Both assumed `/`. On Windows every filename comes back with backslashes, so
+    the filter matched nothing and every sample keyed off the same empty string:
+    unrelated stalls merged into one bucket and the diagnostic reported nothing,
+    silently, on the platform where attaching a debugger is hardest.
+    """
+    import traceback
+
+    from fnd.tui.stall_watch import stack_key
+
+    def _stack(*frames: tuple[str, str]) -> traceback.StackSummary:
+        return traceback.StackSummary.from_list(
+            [(filename, 1, name, "") for filename, name in frames]
+        )
+
+    posix = _stack(
+        ("/home/x/.venv/lib/textual/app.py", "_process_messages"),
+        ("/home/x/fnd/tui/preview/presenter.py", "_mount_chunks_async"),
+    )
+    windows = _stack(
+        (r"C:\Users\x\.venv\Lib\textual\app.py", "_process_messages"),
+        (r"C:\Users\x\fnd\tui\preview\presenter.py", "_mount_chunks_async"),
+    )
+
+    expected = "presenter.py:_mount_chunks_async < app.py:_process_messages"
+    assert stack_key(posix) == expected
+    assert stack_key(windows) == expected, (
+        "a Windows stack keyed off something other than its frames — "
+        "unnormalised separators drop every frame and collapse to ''"
+    )
+
+    # Frames outside our code are dropped on both, so the key stays readable.
+    assert stack_key(_stack((r"C:\Python\Lib\asyncio\events.py", "_run"))) == ""

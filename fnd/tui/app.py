@@ -567,7 +567,10 @@ class FNDApp(App[None]):
         drainer = getattr(self._prefetch, "sink_drainer", None)
         if drainer is not None:
             drainer.cancel()
-            with contextlib.suppress(Exception):
+            # CancelledError explicitly: it is a BaseException, so it lands ON
+            # this await and walks straight through `suppress(Exception)` —
+            # taking the stall-watch stop and `super()._on_exit_app()` with it.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await drainer
             self._prefetch.sink_drainer = None
         watch = getattr(self, "_stall_watch", None)

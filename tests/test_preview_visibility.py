@@ -18,7 +18,11 @@ import pytest
 from textual.css.model import CombinatorType, SelectorType
 
 from fnd.tui import FNDApp
-from fnd.tui.preview.visibility import NODE_ONLY_CLASSES, set_preview_visibility
+from fnd.tui.preview.visibility import (
+    NODE_ONLY_CLASSES,
+    set_node_class,
+    set_preview_visibility,
+)
 from fnd.tui.widgets.preview_container import PreviewContainer
 
 
@@ -163,3 +167,44 @@ async def test_shortcut_classes_change_visibility_only(tmp_index_dir: Path) -> N
                 f"class from NODE_ONLY_CLASSES, or move the property elsewhere."
             )
         assert checked, "no rules matched the shortcut classes; this scan proved nothing"
+
+
+def test_the_shortcut_never_asks_for_a_subtree_restyle() -> None:
+    """The invariant the whole module exists for, and the one nothing checked.
+
+    Dropping ``update=False`` costs nothing visible: the class still lands, the
+    style still applies, the no-op still no-ops — every other test here passes.
+    What comes back is `App.update_styles` walking hundreds of descendants on
+    every activation, which is the 108-of-110-samples cost this module removed.
+    """
+    from typing import cast
+
+    from textual.dom import DOMNode
+
+    from tests._preview_fakes import FakeContainer
+
+    fake = FakeContainer()
+    # Duck-typed on purpose: the stub carries only the four members these two
+    # functions touch, which is what makes the flag assertions below readable.
+    node = cast("DOMNode", fake)
+
+    set_preview_visibility(node, hidden=True, pre_reveal=True)
+    assert fake.class_calls, "nothing was flipped; this would pass on a no-op stub"
+    assert all(update is False for _, update in fake.class_calls), (
+        f"a visibility flip asked Textual to restyle the subtree: {fake.class_calls}"
+    )
+    # Both classes changed, but the restyle is paid for ONCE.
+    assert len(fake.app.stylesheet.updated) == 1, (
+        f"expected a single node-only restyle, got {fake.app.stylesheet.updated}"
+    )
+    assert fake.app.stylesheet.updated[0] == (fake,), "restyled something other than the node"
+
+    set_node_class(node, "is-loading", True)
+    assert fake.class_calls[-1] == ("is-loading", False)
+    assert len(fake.app.stylesheet.updated) == 2
+
+    # A redundant flip reaches neither.
+    before = len(fake.class_calls), len(fake.app.stylesheet.updated)
+    set_preview_visibility(node, hidden=True)
+    set_node_class(node, "is-loading", True)
+    assert (len(fake.class_calls), len(fake.app.stylesheet.updated)) == before

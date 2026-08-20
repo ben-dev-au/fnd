@@ -44,6 +44,20 @@ _SAMPLE_AFTER = 0.2
 _SAMPLE_FILE = "fnd-stall-stacks.log"
 
 
+def stack_key(stack: traceback.StackSummary) -> str:
+    """Our frames from a sampled stack, innermost last, as one line.
+
+    Separators are normalised first. Windows reports backslashes, and without
+    this the filter below matches nothing, every sample keys off the same empty
+    string, and unrelated stalls merge into one meaningless bucket — a
+    diagnostic that says nothing, on the platform where attaching a debugger is
+    hardest.
+    """
+    named = [(f.filename.replace("\\", "/"), f.name) for f in stack]
+    trimmed = [(fn, name) for fn, name in named if "/fnd/" in fn or "/textual/" in fn]
+    return " < ".join(f"{fn.rsplit('/', 1)[-1]}:{name}" for fn, name in reversed(trimmed[-14:]))
+
+
 class StallWatch:
     """Logs event-loop stalls, with the preview's state at the time."""
 
@@ -110,11 +124,7 @@ class StallWatch:
             frame = sys._current_frames().get(main_id)
             if frame is None:
                 continue
-            stack = traceback.extract_stack(frame)
-            trimmed = [f for f in stack if "/fnd/" in f.filename or "/textual/" in f.filename]
-            key = " < ".join(
-                f"{f.filename.rsplit('/', 1)[-1]}:{f.name}" for f in reversed(trimmed[-14:])
-            )
+            key = stack_key(traceback.extract_stack(frame))
             self._stacks[key] += 1
             try:
                 with self._sample_path.open("a") as fh:

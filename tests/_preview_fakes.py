@@ -7,8 +7,10 @@ stub is identical across them, so it lives here to keep the class-flip behaviour
 
 The stub mirrors the parts of Textual's API that ``preview/visibility.py`` uses,
 including the ``update`` keyword and the ``app.stylesheet`` restyle that follows
-it. Restyling means nothing to a stub that only holds a set of names, so it is
-recorded rather than performed.
+it. Restyling means nothing to a stub that only holds a set of names, so both are
+RECORDED — ``FakeContainer.class_calls`` and ``FakeStylesheet.updated`` — and
+``tests/test_preview_visibility.py`` asserts against them. Recording without an
+assertion would be decoration.
 """
 
 from __future__ import annotations
@@ -36,13 +38,19 @@ class FakeContainer:
 
     def __init__(self, parent_doc_id: str = "fake0000") -> None:
         self.classes: set[str] = set()
+        # Every flip as ``(name, update)``. The flag is the point: `update=True`
+        # is what walks the whole subtree, and nothing else in the suite would
+        # notice it coming back.
+        self.class_calls: list[tuple[str, bool]] = []
         self.parent_doc_id = parent_doc_id
         self.app = FakeApp()
 
     def add_class(self, name: str, update: bool = True) -> None:
+        self.class_calls.append((name, update))
         self.classes.add(name)
 
     def remove_class(self, name: str, update: bool = True) -> None:
+        self.class_calls.append((name, update))
         self.classes.discard(name)
 
     def has_class(self, name: str) -> bool:
