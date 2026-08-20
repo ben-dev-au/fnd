@@ -42,17 +42,18 @@ def warm_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 
 def hold_everything(app: FNDApp) -> None:
-    """Report every chunk as captured, without building real captures.
+    """Report every chunk as held, without building real captures.
 
-    The store's value is only ever tested for None on this path, so a
-    sentinel is enough — and it keeps the test off the serial warm host,
-    which captures at ~10 chunks a second.
+    Patches ``has``, which is what warmth probes with — ``get`` promotes on
+    read and warmth must never do that. Keeping the fake off the warm host
+    also keeps these tests off a serial resource that captures at ~10 chunks
+    a second.
     """
-    app._preview.capture_store.get = lambda *a, **k: object()  # type: ignore[assignment]
+    app._preview.capture_store.has = lambda *a, **k: True  # type: ignore[assignment]
 
 
 def hold_nothing(app: FNDApp) -> None:
-    app._preview.capture_store.get = lambda *a, **k: None  # type: ignore[assignment]
+    app._preview.capture_store.has = lambda *a, **k: False  # type: ignore[assignment]
 
 
 @pytest.mark.asyncio
@@ -180,3 +181,31 @@ async def test_a_new_query_does_not_inherit_the_old_arrows(warm_index: Path) -> 
 
         stale = [p for p, s in tree.warm_states.items() if s is WarmState.READY]
         assert not stale, "rows kept a READY arrow across a query that cleared the store"
+
+
+def test_probing_warmth_does_not_reorder_the_capture_store() -> None:
+    """The store promotes on READ so the file being read is never the oldest
+    entry — a cache that drops what you are looking at is worse than no cache.
+
+    Warmth probes every listed file twice a second. Asking through ``get``
+    re-promoted all of them in results-list order on every tick, which
+    neutralised that protection and left the top result — usually the file on
+    screen — as the first eviction victim. Probing is not use.
+    """
+    from fnd.tui.preview.frozen_store import ChunkCaptureStore
+
+    store = ChunkCaptureStore()
+    for name in ("onscreen", "b", "c"):
+        store._files[(name, "sig", 80)] = {0: object()}  # type: ignore[assignment]
+
+    # Serving the on-screen file promotes it, as designed.
+    store.get("onscreen", "sig", 80, 0)
+    assert list(store._files)[-1][0] == "onscreen"
+
+    # A warmth poll walks every file in results-list order.
+    for name in ("onscreen", "b", "c"):
+        store.has(name, "sig", 80, 0)
+
+    assert list(store._files)[-1][0] == "onscreen", (
+        "probing warmth reordered the store and undid the read-promotion"
+    )

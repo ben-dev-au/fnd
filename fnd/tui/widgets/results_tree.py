@@ -298,7 +298,7 @@ class ResultsTree(Tree[dict[str, Any]]):
         Nodes with no toggle get None too: an arrow that is not drawn cannot
         carry a state, and the tree's own prefix is empty there.
         """
-        if not node._allow_expand:
+        if not node.allow_expand:
             return None
         data = node.data
         if not isinstance(data, dict) or data.get("kind") != "file":

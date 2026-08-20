@@ -2711,8 +2711,17 @@ class PreviewPresenter:
             return {}
         query_sig = self._app._search.query_signature()
         warming_now = self.coverage_parent
+        # The group is already in hand, so its hits go straight through. Asking
+        # listed_hit_seqs here would re-scan every group per group, which at a
+        # result_limit of 1000 is a million comparisons a tick.
         return {
-            g.parent_id: self._warm_state(g.parent_id, query_sig, width, warming_now)
+            g.parent_id: self._warm_state(
+                g.parent_id,
+                [h.chunk_seq for h in (getattr(g, "hits", None) or [])],
+                query_sig,
+                width,
+                warming_now,
+            )
             for g in groups
         }
 
@@ -2729,25 +2738,42 @@ class PreviewPresenter:
         width = self.capture_width(pane)
         if width <= 0:
             return None
+        hit_seqs = self.listed_hit_seqs(parent_id)
+        if hit_seqs is None:
+            return None
         return self._warm_state(
             parent_id,
+            hit_seqs,
             self._app._search.query_signature(),
             width,
             self.coverage_parent,
         )
 
     def _warm_state(
-        self, parent_id: str, query_sig: str, width: int, warming_now: str | None
+        self,
+        parent_id: str,
+        hit_seqs: list[int],
+        query_sig: str,
+        width: int,
+        warming_now: str | None,
     ) -> WarmState:
+        # ``has``, not ``get``: the store promotes on read, and probing every
+        # listed file twice a second through ``get`` reordered the whole cache
+        # on results-list order.
         store = self.capture_store
         return warm_state(
-            hit_seqs=self.listed_hit_seqs(parent_id),
-            is_captured=lambda seq: store.get(parent_id, query_sig, width, seq) is not None,
+            hit_seqs=hit_seqs,
+            is_captured=lambda seq: store.has(parent_id, query_sig, width, seq),
             warming=parent_id == warming_now,
         )
 
-    def listed_hit_seqs(self, parent_id: str) -> list[int]:
-        """Chunk sequences of this file's hits AS LISTED.
+    def listed_hit_seqs(self, parent_id: str) -> list[int] | None:
+        """Chunk sequences of this file's hits AS LISTED, or None if unlisted.
+
+        The distinction matters: an empty list means "listed, nothing to jump
+        to", which is READY. None means the question does not apply, and
+        collapsing the two reported READY — the cheapest possible plan — for
+        any file the results do not contain.
 
         The same set ``_file_needs_coverage`` asks about and the same one the
         results tree steps through, so what coverage promises and what the
@@ -2756,7 +2782,7 @@ class PreviewPresenter:
         for group in getattr(self._app._search, "groups", None) or []:
             if group.parent_id == parent_id:
                 return [h.chunk_seq for h in (getattr(group, "hits", None) or [])]
-        return []
+        return None
 
     def _file_needs_coverage(self, parent_id: str, query_sig: str, width: int) -> bool:
         """Whether any listed hit of this file is still uncaptured.
@@ -2771,9 +2797,11 @@ class PreviewPresenter:
             if group.parent_id != parent_id:
                 continue
             hits = getattr(group, "hits", None) or []
+            # ``has``: deciding what to cover is a probe, not a use, and
+            # promoting here would order the store by coverage plan instead of
+            # by what is being read.
             return any(
-                self.capture_store.get(parent_id, query_sig, width, h.chunk_seq) is None
-                for h in hits
+                not self.capture_store.has(parent_id, query_sig, width, h.chunk_seq) for h in hits
             )
         return False
 

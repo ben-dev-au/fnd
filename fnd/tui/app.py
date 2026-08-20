@@ -604,11 +604,11 @@ class FNDApp(App[None]):
         self.theme = "tokyo-night"
         self._prefetch.start()
         # Repaint the results arrows as coverage warms files behind them.
-        # Polled, not pushed: warmth moves both when a capture lands and when
-        # coverage steps to the next file, and the capture loop runs off the
-        # event loop where it must not touch the DOM. Two hertz is slower than
-        # captures land (~10/s) and far faster than a file changes state, and
-        # a tick that finds nothing new costs one store lookup per listed hit.
+        # Polled, not pushed: warmth moves when a capture lands AND when
+        # coverage steps to the next file, and the second has no single write
+        # to hook. Two hertz is slower than captures land (~10/s) and far
+        # faster than a file changes state; measured at 0.08 ms a tick over a
+        # 50-file result set, which is 0.02% of the period.
         self.set_interval(0.5, self._tick_warmth, name="results-warmth")
         # Opt-in diagnostic: names whatever held the event loop when it
         # stops answering. Off unless _FND_STALL_WATCH is set.

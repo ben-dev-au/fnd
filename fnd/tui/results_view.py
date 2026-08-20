@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from textual.widgets import Tree
 
 from fnd.tui.match_evidence import evidence_spec_for_pass, has_paintable_match
+from fnd.tui.preview.warmth import WarmState
 from fnd.tui.results_labels import _format_file_label, _format_hit_label, _styled_parent_label
 from fnd.tui.widgets.results_tree import ResultsTree
 
@@ -53,12 +54,18 @@ class ResultsView:
         tree = self._app.query_one("#results_pane", Tree)
         tree.clear()
         if isinstance(tree, ResultsTree):
-            # Warmth is keyed by parent_id, and a new query CLEARS the capture
-            # store — so a file listed by both searches would keep its old
-            # READY arrow until the next poll, promising an instant jump whose
-            # captures had just been thrown away. Start unknown instead: an
-            # unknown row draws the stock arrow and claims nothing.
-            tree.warm_states = {}
+            # Every row starts COLD, which after a new query is simply true:
+            # the search reset clears the capture store, so nothing is warm.
+            #
+            # Clearing the map instead was the first attempt and it did NOT
+            # work. An unknown row falls through to the stock arrow, and
+            # Textual's ICON_NODE is byte-identical to the ready glyph — so
+            # "no claim" rendered as "instant jump" for every row until the
+            # next poll, at exactly the moment nothing was warm. Anything the
+            # tree cannot answer has to fail towards COLD, never towards READY.
+            tree.warm_states = dict.fromkeys(
+                (g.parent_id for g in self._app._search.groups), WarmState.COLD
+            )
         max_score = max((g.top_score for g in self._app._search.groups), default=0.0)
         budget = self.file_label_budget(tree)
         # Rows are never filtered on paintability — see fnd.tui.match_evidence.
@@ -149,9 +156,8 @@ class ResultsView:
 
         Polled rather than pushed. Warmth changes from two directions — a
         capture landing, and coverage moving to the next file — and the second
-        has no single write to hook. Polling one map and diffing it is both
-        simpler and safer than notifying from inside the capture loop, which
-        runs off the event loop and must not touch the DOM.
+        has no single write to hook, so a notification would have to be
+        emitted from several places and kept in step with them.
 
         Cheap enough to poll: one query-signature and one width resolution,
         then a store lookup per listed hit. The listed hits are already capped

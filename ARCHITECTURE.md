@@ -250,11 +250,18 @@ outward from the cursor rather than churn across the list. Readiness is
 judged on the listed hits alone; coverage's third tier fills the gaps
 between matches, which lazy mount already handles imperceptibly.
 
-Polled at 2 Hz and diffed, because warmth moves both when a capture lands
-and when coverage steps to the next file, and the capture loop runs off
-the event loop where it must not touch the DOM. Match rows are left
-alone — they already carry a glyph for matches the preview cannot
-highlight.
+Polled at 2 Hz and diffed, because warmth moves when a capture lands AND
+when coverage steps to the next file, and the second has no single write
+to hook. A row is repainted only when its own state moves; captures land
+at roughly ten a second and repainting the list on each would strobe it.
+Readiness is probed through `ChunkCaptureStore.has`, never `get`: `get`
+promotes on read, so probing every listed file twice a second through it
+reordered the whole cache on results-list order and left the file on
+screen first in line for eviction. Anything the tree cannot answer fails
+towards COLD, because Textual's stock arrow is byte-identical to the
+ready glyph — an unknown row would otherwise read as "instant". Match
+rows are left alone — they already carry a glyph for matches the preview
+cannot highlight.
 
 ## Concurrency rules
 
