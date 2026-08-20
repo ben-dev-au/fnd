@@ -141,14 +141,6 @@ class SearchController:
         # the user submits a :multi block.
         self.intent: str | None = None
         self.groups: list[FileGroup] = []
-        # Searches actually running, counted rather than inferred. `idle`
-        # derives from generations, and _fail marks a generation committed
-        # WITHOUT waiting for its worker — so a malformed query made an
-        # in-flight search look finished, and the next query then reloaded the
-        # index underneath it. Incremented on the loop before dispatch and
-        # decremented on the loop in both commit paths, so it is never touched
-        # from the worker thread.
-        self._inflight: int = 0
         # Handle for the deferred prefetch timer so each new search cancels the
         # previous one instead of stacking. A burst of searches (e.g. toggling
         # several file-type filters) would otherwise queue a prefetch-of-10 per
@@ -212,22 +204,39 @@ class SearchController:
         if request is None:
             return
         session = self._app._progress.begin(SEARCH, sampler=self._sample)
-        # Counted BEFORE dispatch so a commit cannot beat the increment, and
-        # unwound if the dispatch itself fails: the only reader is the reload
-        # gate, so a leaked count would silently stop the app picking up an
-        # external reindex for the rest of the session.
-        self._inflight += 1
+        self._app.run_worker(
+            lambda: self._execute_and_commit(request, session),
+            thread=True,
+            exclusive=True,
+            group="search",
+        )
+
+    def _searches_running(self) -> bool:
+        """Whether any search worker is still pending or executing.
+
+        Asked of Textual rather than counted here, because a count can drift
+        and this one cannot be allowed to. Counting was tried: `run` bumped a
+        counter and both commit paths decremented it — but `exclusive=True`
+        makes Textual cancel the previous worker SYNCHRONOUSLY inside
+        `add_worker`, before the new one starts, so a worker cancelled before
+        its coroutine ever ran reached neither commit path and the count
+        leaked. Two searches dispatched in one tick do it, which Enter
+        auto-repeat produces, and the leak is permanent: the count never
+        returns to zero, so `reload()` is dead for the rest of the session and
+        an external reindex silently stops being picked up.
+
+        The worker manager's own state cannot drift out of step with the
+        workers it owns — a cancelled worker leaves PENDING/RUNNING by itself.
+        """
+        from textual.worker import WorkerState
+
+        live = {WorkerState.PENDING, WorkerState.RUNNING}
         try:
-            self._app.run_worker(
-                lambda: self._execute_and_commit(request, session),
-                thread=True,
-                exclusive=True,
-                group="search",
-            )
+            return any(w.group == "search" and w.state in live for w in self._app.workers)
         except Exception:
-            self._inflight = max(0, self._inflight - 1)
-            session.close()
-            raise
+            # Never let a reload decision take a search down. Skipping the
+            # reload is free: the next idle query picks the new generation up.
+            return True
 
     @property
     def idle(self) -> bool:
@@ -252,8 +261,7 @@ class SearchController:
         there is nothing to execute."""
         if self.searcher is None:
             return None
-        # Nothing EXECUTING, not "nothing outstanding" — see _inflight.
-        was_idle = self._inflight == 0
+        was_idle = not self._searches_running()
         # Claim the generation FIRST, before anything that can fail. _fail()
         # marks the current generation committed, so allocating it after the
         # parse meant a malformed query marked an IN-FLIGHT search's
@@ -469,7 +477,6 @@ class SearchController:
     def _commit_failure(
         self, request: _SearchRequest, err: Exception, session: ProgressSession
     ) -> None:
-        self._inflight = max(0, self._inflight - 1)
         if request.generation != self._generation:
             session.close()
             return
@@ -485,7 +492,6 @@ class SearchController:
     ) -> None:
         """Land the results. Everything below has always run AFTER the search
         returned; keeping it whole here preserves that order."""
-        self._inflight = max(0, self._inflight - 1)
         # Superseded. Textual cancels the worker but cannot interrupt it, so a
         # stale search always runs to completion and arrives here — this guard
         # is what keeps it from touching anything.

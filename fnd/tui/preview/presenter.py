@@ -583,8 +583,14 @@ class PreviewPresenter:
         # sits between arming the scroll anchor and arming the paint check, and
         # a raise here would leave the preview with an armed anchor and no
         # repair timer. Warming ahead must not be able to do that.
-        with contextlib.suppress(Exception):
+        try:
             self.start_coverage(parent_id, focus_chunk_seq)
+        except Exception as exc:
+            # Suppressed but SAID. A raise here would leave the preview with an
+            # armed anchor and no repair timer, so it cannot propagate — but a
+            # genuine bug in coverage would then disable warming for the
+            # session with nothing recorded. Same policy as WarmHost.ensure.
+            self.diag_log(f"coverage failed to start: {exc!r}")
         # Every navigation is checked once it should have settled (see
         # _arm_paint_check) — the single place that verifies the OUTCOME rather
         # than one mechanism, so no seam can strand the pane indefinitely.

@@ -189,11 +189,27 @@ async def test_a_new_query_does_not_inherit_the_old_arrows(warm_index: Path) -> 
         app._results.refresh_warmth()
         assert set(tree.warm_states.values()) == {WarmState.READY}, "setup"
 
+        # Rebuild SYNCHRONOUSLY and look before the poll can tidy up after it.
+        # The window this guards is only as long as one tick, so any await here
+        # lets the 2 Hz poll repopulate the map and the test sees nothing.
         hold_nothing(app)
-        await run_search(pilot, app, "paragraph")
+        app._results.refresh()
 
         stale = [p for p, s in tree.warm_states.items() if s is WarmState.READY]
         assert not stale, "rows kept a READY arrow across a query that cleared the store"
+
+        # On the GLYPH, not just the map. Clearing the map instead of seeding
+        # it COLD leaves every row unknown, and an unknown row falls through to
+        # Textual's stock arrow — byte-identical to the ready one. The map
+        # assertion above passes for that case, so it cannot catch a row that
+        # fails towards READY, which is the defect the seeding exists to stop.
+        rows = [n for n in tree.root.children if isinstance(n.data, dict)]
+        assert rows, "setup — the new query produced no rows"
+        hollow = {ResultsTree.ICON_BUILDING, ResultsTree.ICON_BUILDING_EXPANDED}
+        icons = {tree.render_label(n, Style(), Style()).plain[:2] for n in rows}
+        assert icons <= hollow, (
+            f"a row painted the instant-jump arrow with an empty store: {icons - hollow}"
+        )
 
 
 def test_probing_warmth_does_not_reorder_the_capture_store() -> None:

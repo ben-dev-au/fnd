@@ -348,23 +348,42 @@ async def test_a_malformed_query_does_not_reload_the_index_under_a_worker(
 
 
 @pytest.mark.asyncio
-async def test_a_failed_dispatch_does_not_disable_reload_forever(index: Path) -> None:
-    """The in-flight count has one reader — the gate on ``searcher.reload()``.
-    A count that goes up and never comes down therefore stops the app picking
-    up an external reindex for the rest of the session, silently."""
+async def test_a_cancelled_dispatch_does_not_disable_reload_forever(index: Path) -> None:
+    """``reload()`` is what makes an external reindex show up without a
+    restart, and it runs only when no search is executing.
+
+    Deriving that from a counter was wrong. ``exclusive=True`` makes Textual
+    cancel the previous worker SYNCHRONOUSLY inside ``add_worker``, before the
+    new one starts, so a worker cancelled before its coroutine ever ran never
+    reached either commit path — and a counter incremented at dispatch was
+    never decremented. Two searches in a single tick did it, which Enter
+    auto-repeat produces, and the leak was permanent: the gate stayed shut and
+    the app silently stopped picking up reindexes for the rest of the session.
+    """
     app = FNDApp(index_dir=index)
     async with app.run_test() as pilot:
         await pilot.pause()
         await run_search(pilot, app, "target")
-        assert app._search._inflight == 0, "setup — a settled search left a count behind"
 
-        def boom(*_a: Any, **_k: Any) -> Any:
-            raise RuntimeError("worker pool refused the job")
+        # Both in ONE tick — the second cancels the first before it starts.
+        app._search.run("target")
+        app._search.run("target")
+        await wait_until(pilot, lambda: app._search.idle, timeout=10.0)
+        for _ in range(4):
+            await pilot.pause()
 
-        app.run_worker = boom  # type: ignore[method-assign]
-        with pytest.raises(RuntimeError):
-            app._search.run("second")
-
-        assert app._search._inflight == 0, (
-            "a failed dispatch leaked the count — reload() is now off for good"
+        assert not app._search._searches_running(), (
+            "a cancelled dispatch left the gate shut — reload() is off for good"
         )
+
+        assert app._search.searcher is not None
+        reloads: list[int] = []
+        original = app._search.searcher.reload
+
+        def counting_reload(*a: Any, **k: Any) -> Any:
+            reloads.append(1)
+            return original(*a, **k)
+
+        app._search.searcher.reload = counting_reload  # type: ignore[method-assign]
+        await run_search(pilot, app, "second")
+        assert reloads, "reload never fired again after a cancelled dispatch"

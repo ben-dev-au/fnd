@@ -267,7 +267,7 @@ cannot highlight.
 
 | Owner | Task / primitive | Cancelled by |
 |---|---|---|
-| `SearchController` | search worker (`search`, exclusive, thread) | a newer query — but Textual only *marks* a thread worker cancelled, so the stale search still runs to completion and is discarded by the generation guard in `_commit` |
+| `SearchController` | search worker (`search`, exclusive, thread) | a newer query. Textual cannot *interrupt* a thread worker that has STARTED, so that stale search runs to completion and is discarded by the generation guard in `_commit`. One that has not started yet is cancelled outright, inside `add_worker` and before the new worker begins — which is why "is a search running?" is asked of the worker manager rather than counted at dispatch |
 | `PreviewPresenter` | mount worker (`preview-load`, exclusive), debounce timer, in-flight coalescing latch | file switch / query change (`cancel_mount_task`, latch drop) |
 | `LazyMounter` | scroll-driven mount task + debounce timer | file switch / query change (`cancel`) |
 | `PrefetchEngine` | decode pool (`preview-prefetch`, exclusive), sink queue + drainer task | stale-query signature checks; user mount preempts |
