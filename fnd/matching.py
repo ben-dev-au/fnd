@@ -71,6 +71,7 @@ _MODIFIER_RE = re.compile(r"(?:~\d*|\^[\d.]+)")
 _PROX_PHRASE = re.compile(r'"([^"]*)"~(\d+)')
 
 
+@lru_cache(maxsize=1024)
 def glob_to_regex(glob: str) -> str:
     """Translate a shell glob (``*`` → any run, ``?`` → one char) into a regex
     matching a whole term; other chars are escaped and the glob lowercased.
@@ -107,6 +108,7 @@ def _strip_quoted_spans(query: str) -> str:
 _STEMMER_LOCAL = threading.local()
 
 
+@lru_cache(maxsize=65536)
 def _stem(word: str) -> str:
     stemmer = getattr(_STEMMER_LOCAL, "instance", None)
     if stemmer is None:

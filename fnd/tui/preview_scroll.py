@@ -43,6 +43,15 @@ _ABOVE_STABLE_TICKS = 2
 # View re-wrap, which re-lays out every chunk, and a prefetch waiting on settle).
 _ABOVE_WAIT_FLOOR = 26
 
+# Refreshes ``scroll_to_location`` keeps re-anchoring for once the layout has
+# stopped changing. The re-wrap lands in bursts, so the position can look stable
+# for a stretch and then jump — hence a tail rather than an early exit.
+_RESTORE_TAIL_REFRESHES = 12
+# Hard bound on the whole re-anchor loop, including the top-ups it takes while a
+# mount is still in flight. ~1.5s at 60fps: longer than the slowest measured
+# window mount, short enough that a wedged pipeline can't hold the loop open.
+_RESTORE_HARD_CAP = 90
+
 
 @dataclass(frozen=True, slots=True)
 class ScrollAnchor:
@@ -83,10 +92,6 @@ class ScrollStrategy(Protocol):
     def scroll_to_location(
         self, location: ViewportLocation, on_done: Callable[[], None] | None = None
     ) -> None: ...
-
-
-# Refreshes a reflow-restore re-applies its scroll for as the re-wrap lands.
-_RESTORE_REFRESHES = 12
 
 
 class _Once:
@@ -134,6 +139,8 @@ class PreviewScrollController:
         # wins. arm() bumps this; the active chain captures it and bails (no
         # scroll, no reschedule, no settled-flip) the moment it's superseded.
         self._generation = 0
+        self._epoch = 0
+        self._pending_settled: _Once | None = None
         # Outstanding reflow-restores. A restore re-applies its scroll across
         # many refreshes as the re-wrap lands, and unlike a reconcile it never
         # arms the anchor — so ``is_settling`` says nothing about it. See
@@ -185,6 +192,8 @@ class PreviewScrollController:
 
     def arm(self, anchor: ScrollAnchor) -> None:
         self._generation += 1  # newest navigation wins; older chains self-cancel
+        self._epoch += 1
+        self._pending_settled = None
         self._anchor = anchor
         self._armed = True
         self._settled = False
@@ -203,10 +212,16 @@ class PreviewScrollController:
         # if the strategy calls it AND then raises, the error-path call below is
         # a no-op. The latch guarantees the floor (fires on error) and the
         # ceiling (never twice).
-        base = _Once(on_settled)
+        if on_settled is not None:
+            self._pending_settled = _Once(on_settled)
+        latch = self._pending_settled
         gen = self._generation  # this commit belongs to the current navigation
+        self._epoch += 1
+        epoch = self._epoch
 
         def fire() -> None:
+            if epoch != self._epoch and gen == self._generation:
+                return
             # The scroll has committed. Honour the one-shot reveal either way (a
             # dropped call strands the container hidden) — but only flip
             # ``_settled`` (opening the lazy-mount gate) when this is STILL the
@@ -214,7 +229,8 @@ class PreviewScrollController:
             # the gate for the newer nav still in flight.
             if gen == self._generation:
                 self._settled = True
-            base()
+            if latch is not None:
+                latch()
 
         if not self._armed or self._anchor is None:
             fire()
@@ -225,7 +241,7 @@ class PreviewScrollController:
             return
         try:
             strategy.reconcile(
-                self._anchor, fire, generation=gen, current_generation=lambda: self._generation
+                self._anchor, fire, generation=epoch, current_generation=lambda: self._epoch
             )
         except Exception:
             fire()
@@ -283,6 +299,7 @@ class StructuralHost(Protocol):
     ) -> object: ...
     def diag_log(self, msg: str) -> None: ...
     def above_window_pending(self, focus_chunk_seq: int) -> bool: ...
+    def pipeline_busy(self) -> bool: ...
 
     @property
     def chunk_widgets(self) -> dict[int, Widget]: ...
@@ -323,9 +340,19 @@ class StructuralScrollStrategy:
             return
         # Move the focused-section accent band to the target chunk (FNDMarkdown
         # manages its own focus highlight internally, so skip the band there).
+        #
+        # A frozen chunk is skipped for a different reason: the band paints the
+        # widget's BACKGROUND, and a capture's strips are opaque, so the band
+        # can never tint the content. All it can reach is the one padding row
+        # the strips do not cover — which is the stray amber bar sitting above
+        # the text. It was invisible while a stand-in was sized to its strips
+        # alone, and appeared the moment the stand-in started carrying the
+        # padding it is supposed to have.
+        from fnd.tui.preview.frozen import FrozenChunkView
+
         for w in self._host.chunk_widgets.values():
             w.remove_class("chunk-section-focused")
-        if not isinstance(header, FNDMarkdown):
+        if not isinstance(header, FNDMarkdown | FrozenChunkView):
             header.add_class("chunk-section-focused")
         self._host.call_after_refresh(
             self._do_scroll_to_chunk,
@@ -615,6 +642,7 @@ class StructuralScrollStrategy:
                 region.x, max(0, region.y - margin), region.width, region.height + margin
             )
         pane.scroll_to_region(region, top=True, animate=animate, immediate=not animate)
+        self._host.diag_log(f"scroll site=match region_y={region.y} animate={animate}")
 
     def _match_table_for(self, target: Widget) -> DataTable[Any] | None:
         """The match-bearing ``DataTable`` ``target`` is or wraps, else None.
@@ -682,6 +710,12 @@ class StructuralScrollStrategy:
     def _match_line_offset(self, target: Widget) -> int:
         """Rows from the top of ``target`` down to its first matching line.
 
+        A frozen chunk answers this from the row recorded at capture time, while
+        its widgets still existed (``fnd_first_match_row``). Without that a
+        navigation to a frozen chunk lands on the chunk's TOP rather than its
+        match — the widget scan below finds nothing to descend into, since the
+        whole point of freezing is that there are no child widgets left.
+
         ``scroll_to_region`` anchors a widget's *top*, so a match a hundred rows
         into a long code fence landed off-screen below the viewport — the scroll
         reported success while showing the user nothing. Counting newlines is
@@ -689,6 +723,9 @@ class StructuralScrollStrategy:
         returns 0 for wrapped prose, where the block is short enough that its
         top is the match anyway.
         """
+        frozen_row = getattr(target, "fnd_first_match_row", None)
+        if isinstance(frozen_row, int):
+            return frozen_row if 0 < frozen_row < target.region.height else 0
         spec = self._host.effective_match_spec()
         if spec.is_empty:
             return 0
@@ -812,7 +849,7 @@ class StructuralScrollStrategy:
         self._restore_structural(
             location.chunk_seq,
             location.offset,
-            retries=_RESTORE_REFRESHES,
+            retries=_RESTORE_TAIL_REFRESHES,
             last_vy=None,
             done=done,
         )
@@ -824,6 +861,7 @@ class StructuralScrollStrategy:
         retries: int,
         last_vy: int | None,
         done: Callable[[], None],
+        cap: int = _RESTORE_HARD_CAP,
     ) -> None:
         # A width reflow re-wraps the chunks above over several refreshes,
         # which keeps sliding the target chunk's content position. Track that
@@ -843,6 +881,7 @@ class StructuralScrollStrategy:
         self._host.begin_reconcile_scroll()
         try:
             pane.scroll_to(y=max(0, vy + delta), animate=False, immediate=True)
+            self._host.diag_log(f"scroll site=restore y={max(0, vy + delta)} retries={retries}")
         finally:
             self._host.end_reconcile_scroll()
         # The width reflow re-wraps the chunks above asynchronously over many
@@ -851,11 +890,24 @@ class StructuralScrollStrategy:
         # early-stop: the position is stale-stable for a stretch, then jumps
         # once the re-wrap lands), re-reading it each time so the final applies
         # land on the settled layout.
-        if retries > 0:
+        #
+        # A fixed refresh count is only a PROXY for "until the layout stops
+        # moving", and it breaks the moment the layout moves for longer than the
+        # proxy allows: a mount still in flight keeps adding chunks above this
+        # one, so the restore ran out of refreshes and left the target off
+        # screen. Top the budget back up while the preview pipeline is still
+        # working, so the tail refreshes are spent on a layout that has actually
+        # stopped changing. Bounded by ``cap`` — a wedged pipeline must not hold
+        # a re-anchor loop open forever.
+        if cap > 0 and self._host.pipeline_busy():
+            retries = max(retries, _RESTORE_TAIL_REFRESHES)
+        if retries > 0 and cap > 0:
             self._host.call_after_refresh(
-                self._restore_structural, seq, delta, retries - 1, vy, done
+                self._restore_structural, seq, delta, retries - 1, vy, done, cap - 1
             )
         else:
+            # Exhausting the budget (or the cap) still ENDS the restore — the
+            # flag must not outlive the loop that set it.
             done()
 
 
@@ -882,10 +934,17 @@ def enumerate_stop_regions(pane: VerticalScroll, spec: MatchSpec) -> list[Region
     Off-screen cells of a mounted table resolve fine — the table is one
     full-height widget — so a big flashcards/glossary table is fully covered
     once its chunk is mounted. Queries descendants (chunks live inside a
-    ``PreviewContainer``), not just the pane's direct children."""
+    ``PreviewContainer``), not just the pane's direct children.
+
+    A FROZEN chunk has no blocks to walk — that is the point of freezing — so its
+    stops come from the rows recorded at capture time. Without this a frozen
+    chunk contributes nothing, and its matches become unreachable by ``n``/``b``
+    and invisible to the off-screen markers: the failure is silent, which is
+    exactly why it is handled here rather than left to the caller."""
     from textual.widgets import DataTable
 
     from fnd.render import text_has_any_match
+    from fnd.tui.preview.frozen import FrozenChunkView
     from fnd.tui.widgets.markdown import (
         FNDMarkdown,
         FNDMarkdownTableDT,
@@ -911,6 +970,18 @@ def enumerate_stop_regions(pane: VerticalScroll, spec: MatchSpec) -> list[Region
                 continue
             if block.region.height > 0:
                 regions.append(block.region)
+    # Frozen chunks: the stops were recorded as rows while the blocks still
+    # existed, so they resolve by offset from the view's own top. A table cell's
+    # row came from the same capture, which is why they need no special case
+    # here — unlike the live path above, where a cell has to be resolved against
+    # a DataTable that may not have laid its rows out yet.
+    for view in pane.query(FrozenChunkView):
+        base = view.region
+        if base.height == 0:
+            continue
+        for row in view.frozen.stop_rows:
+            if 0 <= row < base.height:
+                regions.append(Region(base.x, base.y + row, base.width, 1))
     # Plain (pdf/txt) chunks render one Static per body line; a matching line
     # is a stop.
     for line in pane.query("Static.chunk-line"):
@@ -929,16 +1000,21 @@ class FlatHost(Protocol):
 
 
 class FlatScrollStrategy:
-    """Scroll the flat (PDF/TXT) line-buffer preview to a match.
+    """Scroll the flat line-buffer preview to a match.
 
-    The ``LineBufferPreview`` owns the visual line math; this strategy only
-    hands it the target chunk and the context margin. The dispatch re-arms the
-    anchor with the resolved focus chunk, so the buffer's own first-match /
-    chunk-top fallback handles the rest.
+    The widget owns the row math (:class:`~fnd.tui.strip_document.StripDocumentView`);
+    this strategy only hands it the target chunk and the context margin. The
+    dispatch re-arms the anchor with the resolved focus chunk, so the widget's
+    own first-match / chunk-top fallback handles the rest.
+
+    Deliberately tiny next to :class:`StructuralScrollStrategy`: the buffer is
+    one widget that already knows every row, so the scroll is synchronous — no
+    retry chain, no settle barrier, nothing to wait on a build for.
     """
 
     def __init__(self, host: FlatHost) -> None:
         self._host = host
+        self._view = host.active_flat_buffer
 
     def reconcile(
         self,
@@ -948,35 +1024,37 @@ class FlatScrollStrategy:
         generation: int = 0,
         current_generation: Callable[[], int] | None = None,
     ) -> None:
-        # Flat scroll is synchronous within one reconcile (no retry chain), so a
-        # single entry guard is enough: a superseded call doesn't move the buffer.
+        # A document scroll is synchronous within one reconcile (no retry
+        # chain), so a single entry guard is enough: a superseded call doesn't
+        # move the view.
         if current_generation is not None and generation != current_generation():
             if on_settled is not None:
                 on_settled()
             return
-        buf = self._host.active_flat_buffer()
-        if buf is None:
+        view = self._view()
+        if view is None:
             if on_settled is not None:
                 on_settled()
             return
-        buf.scroll_to_chunk(
+        view.scroll_to_chunk(
             anchor.focus_chunk_seq,
             prefer_first_match=True,
             context_fraction=anchor.context_fraction,
         )
-        # The flat buffer scrolls synchronously, so the view has already
-        # landed — reveal immediately.
+        # The view scrolls synchronously, so it has already landed — reveal
+        # immediately.
         if on_settled is not None:
             on_settled()
 
     def locate(self) -> ViewportLocation | None:
-        """The logical line at the viewport top — exact across a width reflow
-        (the line buffer re-wraps but logical lines stay addressable)."""
-        buf = self._host.active_flat_buffer()
-        if buf is None:
+        """The address at the viewport top — exact across a width reflow, which
+        a raw visual row would not be (the flat buffer re-wraps; a frozen
+        document re-freezes)."""
+        view = self._view()
+        if view is None:
             return None
-        line = buf.top_logical_line()
-        return None if line is None else ViewportLocation("flat", line=line)
+        address = view.top_address()
+        return None if address is None else ViewportLocation("flat", line=address)
 
     def scroll_to_location(
         self, location: ViewportLocation, on_done: Callable[[], None] | None = None
@@ -985,12 +1063,12 @@ class FlatScrollStrategy:
         try:
             if location.kind != "flat":
                 return
-            buf = self._host.active_flat_buffer()
-            if buf is None:
+            view = self._view()
+            if view is None:
                 return
             # Exact (no context margin) — restore the *reading* position, not a
-            # match drop. scroll_to_line re-wraps for the new width first.
-            buf.scroll_to_line(location.line, context_fraction=0.0)
+            # match drop. The view re-renders for the new width first.
+            view.scroll_to_address(location.line, context_fraction=0.0)
         finally:
             # The flat restore is synchronous: it is done the moment it returns.
             done()

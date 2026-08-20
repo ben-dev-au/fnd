@@ -48,6 +48,7 @@ from fnd.tui.indexer_service import IndexerService
 from fnd.tui.match_evidence import evidence_spec_for_pass, has_paintable_match
 from fnd.tui.match_navigator import MatchNavigator
 from fnd.tui.preview.flat_view import FlatBufferView
+from fnd.tui.preview.frozen import FrozenChunkView
 from fnd.tui.preview.lazy_mount import LazyMounter
 from fnd.tui.preview.prefetch import PrefetchEngine
 from fnd.tui.preview.presenter import PreviewPresenter, target_from_node_data
@@ -67,6 +68,7 @@ from fnd.tui.results_view import ResultsView
 from fnd.tui.scope_panel import ScopeController
 from fnd.tui.search_controller import SearchController
 from fnd.tui.sidebar_layout import Panel, allocate
+from fnd.tui.stall_watch import StallWatch
 from fnd.tui.widgets.clear_bar import ClearFiltersBar
 from fnd.tui.widgets.preview_container import (
     _HitWithQuery,
@@ -146,6 +148,12 @@ def render_hint_bar(
         joined.append_text(Text("      ", style=""))
         joined.append_text(_cluster(contextual))
     return joined
+
+
+# How long quit waits for the prefetch drainer to accept its cancellation
+# before leaving it to the interpreter. Short: nothing it is doing at this
+# point produces anything the app will use.
+_DRAINER_STOP_TIMEOUT = 0.5
 
 
 class FNDApp(App[None]):
@@ -299,8 +307,23 @@ class FNDApp(App[None]):
        virtual size keeps growing as chunks land, so the thumb would
        jitter). Programmatic ``scroll_to_widget`` calls during phase 2b
        still need to work — using ``overflow-y: hidden`` would prevent
-       that, so we only suppress the bar's chrome, not scrolling. */
-    #preview_pane.is-loading { scrollbar-size-vertical: 0; }
+       that, so we only suppress the bar's chrome, not scrolling.
+
+       Hidden by COLOUR, not by size. ``scrollbar-size-vertical: 0`` removes
+       the gutter, which changes the pane's content width — so every chunk in
+       the document re-wraps, twice per navigation, and the class toggle has to
+       restyle the whole subtree to make that happen. Measured, that was the
+       single widest restyle in a navigation. Painting the bar in the pane's own
+       background keeps the geometry identical, so nothing below it reflows and
+       the toggle is a repaint. */
+    #preview_pane.is-loading {
+        scrollbar-color: $surface;
+        scrollbar-color-hover: $surface;
+        scrollbar-color-active: $surface;
+        scrollbar-background: $surface;
+        scrollbar-background-hover: $surface;
+        scrollbar-background-active: $surface;
+    }
     .preview-title { padding: 0 0 1 0; color: $accent; text-style: bold; }
     .chunk-section { padding: 0 0 1 0; height: auto; }
     .chunk-line { padding: 0 0 0 0; height: auto; }
@@ -511,13 +534,77 @@ class FNDApp(App[None]):
             self.query_one("#results_pane", ResultsTree).focus()
         if location is not None:
             self.call_after_refresh(self._preview_scroll.scroll_to_location, location)
+        # Reading View changes the preview's width by more than any scrollbar:
+        # measured at 37 columns, because it drops the border, the left padding
+        # and the bar on top of widening the column. Every capture taken before
+        # the toggle is filed under the old width and can never be served, and
+        # coverage starts building a second full set against the same row budget
+        # — so this must invalidate exactly as a terminal resize does. Deferred,
+        # so the width it reads is the one after the reflow rather than before.
+        self.call_after_refresh(self._preview.invalidate_captures_on_resize)
         self._refresh_preview_match_indicator()
         self._refresh_footer_hints()
+
+    def on_frozen_chunk_view_width_stale(self, event: FrozenChunkView.WidthStale) -> None:
+        """A frozen chunk is painting strips cut for a width it no longer has.
+
+        Bubbles up from the view because only the view knows: the pane-level
+        resize hook runs before the re-layout. The presenter debounces — a drag
+        produces one of these per column per mounted chunk.
+        """
+        event.stop()
+        self._preview.on_stale_strips()
+
+    async def _on_exit_app(self) -> None:
+        """Stop background work before Textual tears the app down.
+
+        Textual's exit drains the message queue, and the preview's background
+        capturing holds the event loop for the length of each build — so a quit
+        issued mid-capture waits for work whose result is about to be discarded.
+        """
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self._preview.stop_background_work()
+        # The drainer is a raw `create_task`, so Textual's worker teardown does
+        # not know about it. Left running it can pull one more mount job off the
+        # queue while the app is already tearing down — the exact class of work
+        # the line above exists to stop.
+        drainer = getattr(self._prefetch, "sink_drainer", None)
+        if drainer is not None:
+            drainer.cancel()
+            # BOUNDED, because `cancel()` is a request the drainer's current job
+            # can decline: `_mount_structural_async` awaits its sub-task under
+            # `except CancelledError: pass`, so the cancel is consumed there, the
+            # job returns normally and the drainer loops back to `q.get()` and
+            # blocks for ever. An unbounded await then never returns and the app
+            # cannot be quit without a kill. Reachable only if
+            # `PREVIEW_CACHE_MAX_FILES` rises above 1 — a tuning constant, which
+            # is not a thing to stake "the app can be closed" on.
+            #
+            # CancelledError is named explicitly: it is a BaseException, so it
+            # lands ON this await and walks straight through `suppress(Exception)`
+            # — taking the stall-watch stop and `super()._on_exit_app()` with it.
+            # `suppress` also swallows an OUTER cancel of the teardown itself,
+            # which is deliberate: finishing the teardown is the point.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await asyncio.wait_for(asyncio.shield(drainer), timeout=_DRAINER_STOP_TIMEOUT)
+            self._prefetch.sink_drainer = None
+        watch = getattr(self, "_stall_watch", None)
+        if watch is not None:
+            with contextlib.suppress(Exception):
+                watch.stop()
+        await super()._on_exit_app()
 
     def on_mount(self) -> None:
         # Tokyo-night theme: muted blue/teal pastel palette per user request.
         self.theme = "tokyo-night"
         self._prefetch.start()
+        # Opt-in diagnostic: names whatever held the event loop when it
+        # stops answering. Off unless _FND_STALL_WATCH is set.
+        self._stall_watch = StallWatch.from_env(self)
+        if self._stall_watch is not None:
+            self._stall_watch.start()
 
         # One-time: promote PDF-texture cache entries produced by the current
         # engine but under the pre-`tex-vN` key format to the coarse
@@ -935,6 +1022,11 @@ class FNDApp(App[None]):
         self.call_after_refresh(self._results.refit_after_resize)
         # A taller/shorter column changes every panel's fair share.
         self._reflow_sidebar()
+        # Captured document strips are width-locked and cannot be re-wrapped, so
+        # a width change invalidates rather than reflows. Deferred: the pane
+        # reports its settled width only after layout, and dropping on a
+        # mid-resize measurement would throw away captures that are still valid.
+        self.call_after_refresh(self._preview.invalidate_captures_on_resize)
 
     @on(Tree.NodeHighlighted)
     def _on_tree_highlight(self, ev: Tree.NodeHighlighted[Any]) -> None:
@@ -1040,8 +1132,11 @@ class FNDApp(App[None]):
         )
 
     def _select_scroll_strategy(self) -> ScrollStrategy | None:
-        """Pick the active preview's scroll strategy: the flat line-buffer when
-        one is showing (PDF/TXT), else the structural per-chunk strategy."""
+        """Pick the active preview's scroll strategy.
+
+        The flat line buffer (PDF/TXT) is a single widget and scrolls as one;
+        only the per-chunk widget tree needs the structural strategy.
+        """
         if self._flat.active_buffer is not None:
             return self._preview_scroll_flat
         return self._preview_scroll_structural

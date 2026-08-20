@@ -26,6 +26,11 @@ class FakeApp:
     ``call_after_refresh`` runs inline so a scheduled re-measure resolves
     synchronously within the test."""
 
+    def _diag_log(self, msg: str) -> None:
+        # Modelled, not stubbed away: _scroll_to_stop logs the scroll it commits,
+        # and a stand-in without it would hide that from these tests.
+        pass
+
     def _refresh_preview_match_indicator(self) -> None:
         pass
 
@@ -121,3 +126,52 @@ def test_no_stops_is_noop() -> None:
     assert nav._last_target is None
     assert nav.count == 0
     assert nav.position is None
+
+
+def _hint_nav(current: object, *, match_target: object = None) -> MatchNavigator:
+    """A navigator whose focused chunk is ``current``, wired only as far as
+    ``current_chunk_has_stops`` reaches."""
+    from fnd.matching import MatchSpec
+
+    class _Anchor:
+        focus_chunk_seq = 7
+
+    class _Ctrl:
+        anchor = _Anchor()
+
+    class _Preview:
+        def __init__(self) -> None:
+            self.chunk_widgets: dict[int, object] = {7: current}
+            self.match_targets: dict[int, object] = (
+                {7: match_target} if match_target is not None else {}
+            )
+
+    app = FakeApp()
+    app._effective_match_spec = MatchSpec.from_query("quartzfin")  # type: ignore[attr-defined]
+    app._preview_scroll = _Ctrl()  # type: ignore[attr-defined]
+    app._preview = _Preview()  # type: ignore[attr-defined]
+
+    nav = MatchNavigator.__new__(MatchNavigator)
+    nav._app = app  # type: ignore[assignment]
+    nav._count = 0  # the file-wide fallback must NOT be what carries this
+    return nav
+
+
+def test_a_frozen_focused_chunk_still_reports_its_stops() -> None:
+    """The footer hint must follow what ``n``/``b`` can actually reach.
+
+    Serving a capture replaces the chunk's widget tree with a ``FrozenChunkView``
+    and pops its match target. ``enumerate_stop_regions`` handles that view, so
+    ``n``/``b`` keep working — but without a matching branch here the plain-chunk
+    fallback reads the popped target, returns False, and the app hides the
+    ``n/b Matches`` hint on a chunk where both keys work.
+    """
+    from fnd.tui.preview.frozen import FrozenChunk, FrozenChunkView
+
+    with_stops = FrozenChunkView(FrozenChunk(chunk_seq=7, width=80, strips=[], stop_rows=[3, 9]))
+    assert _hint_nav(with_stops).current_chunk_has_stops()
+
+    without = FrozenChunkView(FrozenChunk(chunk_seq=7, width=80, strips=[], stop_rows=[]))
+    assert not _hint_nav(without).current_chunk_has_stops(), (
+        "a capture with no recorded stops must not advertise the hint"
+    )
