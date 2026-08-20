@@ -114,7 +114,11 @@ async def test_the_poll_repaints_the_arrows(warm_index: Path) -> None:
 
         hold_nothing(app)
         app._results.refresh_warmth()
-        assert set(tree.warm_states.values()) == {WarmState.COLD}
+        # Not "everything is COLD": coverage is running underneath, so the file
+        # it is capturing right now legitimately reads WARMING. Pinning that is
+        # a timing-dependent test — it passed on macOS and Linux and failed on
+        # Windows. What this step means is that nothing is READY yet.
+        assert WarmState.READY not in set(tree.warm_states.values())
 
         hold_everything(app)
         assert app._results.refresh_warmth() is True
