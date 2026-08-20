@@ -66,11 +66,14 @@ async def test_preview_load_dispatches_worker_on_cache_miss(
         # Worker dispatched in the preview-load group.
         worker_groups = [w.group for w in app.workers]
         assert "preview-load" in worker_groups
-        # Drain the worker + mount batches.
-        await pilot.pause()
-        await pilot.pause()
-        # Cache populated after load completes.
-        assert big_group.parent_id in app._preview.chunk_cache
+        # Wait for the OUTCOME, not for two ticks. Two bare pauses are enough
+        # on an idle machine and degrade to no-ops under a loaded one, which is
+        # how this passed alone and failed in the full suite.
+        await wait_until(
+            pilot,
+            lambda: big_group.parent_id in app._preview.chunk_cache,
+            message="the preview-load worker never populated the chunk cache",
+        )
         # Cache hit path: no new worker, no progress, no spinner.
         before_workers = len(app.workers)
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
