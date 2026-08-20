@@ -10,7 +10,6 @@ from textual import events
 from textual.binding import Binding, BindingType
 from textual.message import Message
 from textual.widgets import Tree
-from textual.widgets._tree import TOGGLE_STYLE
 from textual.widgets.tree import TreeNode
 
 from fnd.tui.preview.warmth import WarmState
@@ -271,16 +270,21 @@ class ResultsTree(Tree[dict[str, Any]]):
         icon is two cells wide, like the stock one, so ``get_label_width`` and
         the pane's name budget are unaffected.
         """
+        stock = super().render_label(node, base_style, style)
         state = self._warm_state_of(node)
         if state is None:
-            return super().render_label(node, base_style, style)
+            return stock
         building = state is not WarmState.READY
         if node.is_expanded:
             icon = self.ICON_BUILDING_EXPANDED if building else self.ICON_WARM_EXPANDED
         else:
             icon = self.ICON_BUILDING if building else self.ICON_WARM
-        icon_style = base_style + TOGGLE_STYLE
-        if state is WarmState.COLD:
+        # Inherit the stock icon's style rather than rebuilding it. It carries
+        # the meta that makes clicking the arrow expand the node, and that meta
+        # lives in a private Textual module — importing it would let a minor
+        # upgrade turn a decoration into an ImportError at app start.
+        icon_style: Any = stock.spans[0].style if stock.spans else base_style
+        if state is WarmState.COLD and isinstance(icon_style, Style):
             icon_style += Style(color=self.COLD_COLOUR)
         # process_label, not the raw attribute: a label set from a plain str
         # has not been through the tree's own conversion yet.
