@@ -78,8 +78,30 @@ class ScriptedPipeline:
 
     def showing_parent(self) -> str | None:
         """What the pane is displaying. The tracker asks this rather than
-        reading ``active``, because the flat path leaves ``active`` None."""
-        return self.active.parent_doc_id
+        reading ``active``, because the flat path leaves ``active`` None.
+
+        Flips to the target only once the schedule is done. The real pipeline
+        keeps the PREVIOUS file on screen for the whole decode and mounts the
+        new container behind ``-pre-reveal``, so the pane does not show the
+        target until the navigation actually lands.
+        """
+        return "doc" if self._stage is None else self.active.parent_doc_id
+
+    def is_painted(self) -> bool:
+        """Whether there is readable content for the target on screen.
+
+        The tracker ends a navigation on arrival, so this has to be modelled
+        or the schedule would be declared landed before it started. False
+        until the schedule is done, mirroring a container that stays invisible
+        behind ``-pre-reveal`` until its finalize reveals it.
+        """
+        return self._stage is None
+
+    def file_warm_state(self, _parent_id: str) -> Any:
+        """No capture store here, so readiness is unknowable — which is what
+        the real presenter returns before the pane has a width. The plan then
+        falls back to the chunk cache, as it did before coverage existed."""
+        return None
 
     def sync_latch(self) -> None:
         """Clear the in-flight latch once the schedule is done, the way every
