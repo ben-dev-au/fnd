@@ -168,7 +168,10 @@ class ResultsView:
         except Exception:
             return False
         states = self._app._preview.warm_states()
-        if not states:
+        if states is None:
+            # Cannot be answered right now — keep what the rows already show.
+            # An EMPTY map is different: it means there are no files, and the
+            # rows should be cleared rather than left claiming anything.
             return False
         return tree.apply_warm_states(states)
 

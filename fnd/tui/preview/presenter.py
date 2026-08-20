@@ -2684,7 +2684,7 @@ class PreviewPresenter:
                 f"rows={self.capture_store.total_rows()}"
             )
 
-    def warm_states(self) -> dict[str, WarmState]:
+    def warm_states(self) -> dict[str, WarmState] | None:
         """How ready each listed file is, for every group in one pass.
 
         Built as a whole map rather than answered per file because the callers
@@ -2697,18 +2697,18 @@ class PreviewPresenter:
         carries its chunk_seq, which is exactly the store's key. Same property
         that lets `_file_needs_coverage` re-plan on every cursor move.
         """
-        groups = getattr(self._app._search, "groups", None) or []
-        if not groups:
-            return {}
         try:
             pane = self._app.query_one("#preview_pane", VerticalScroll)
         except Exception:
-            return {}
+            return None
         width = self.capture_width(pane)
         if width <= 0:
-            # Before first layout there is no width, and every store lookup
-            # would miss — reporting the whole list cold rather than unknown.
-            return {}
+            # Before first layout there is no width, so every store lookup
+            # would miss. None means "cannot answer", which is NOT the same as
+            # an empty map meaning "no files" — conflating them let a caller
+            # treat unavailable as authoritative.
+            return None
+        groups = getattr(self._app._search, "groups", None) or []
         query_sig = self._app._search.query_signature()
         warming_now = self.coverage_parent
         # The group is already in hand, so its hits go straight through. Asking
@@ -3043,6 +3043,12 @@ class PreviewPresenter:
                 focus_idx = 0
             win_start = self.above_window_start(chunks, focus_idx, pane.size.height or 40)
             win_end = min(len(chunks), focus_idx + tuning.VISIBLE_FIRST_BELOW + 1)
+            # The progress line needs the size of THIS window as its mount
+            # denominator. It is chosen by rows, so a tall-chunk format (a PDF
+            # page is 30-60 rows) can select two chunks where the tunables
+            # would suggest fifteen — and a denominator of fifteen means the
+            # mount phase can never read as finished.
+            container.mount_window = max(0, win_end - win_start)
 
             # Phase 1a: mount the focused chunk first and yield so it
             # paints before the surrounding context mounts. On large

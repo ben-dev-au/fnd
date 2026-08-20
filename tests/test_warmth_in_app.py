@@ -69,10 +69,15 @@ async def test_readiness_is_answerable_in_a_live_app(warm_index: Path) -> None:
         hold_nothing(app)
         states = app._preview.warm_states()
         assert states, "warmth could not be answered at all in a running app"
-        assert set(states.values()) == {WarmState.COLD}
+        # Nothing is READY. Not "everything is COLD": real coverage is running
+        # underneath, so whichever file it is capturing right now legitimately
+        # reads WARMING, and pinning that would be a timing-dependent test.
+        assert WarmState.READY not in set(states.values())
 
         hold_everything(app)
-        assert set(app._preview.warm_states().values()) == {WarmState.READY}
+        warm = app._preview.warm_states()
+        assert warm is not None
+        assert set(warm.values()) == {WarmState.READY}
 
 
 @pytest.mark.asyncio
@@ -89,6 +94,7 @@ async def test_the_file_being_captured_reads_as_warming(warm_index: Path) -> Non
         target = app._search.groups[0].parent_id
         app._preview.coverage_parent = target
         states = app._preview.warm_states()
+        assert states is not None
 
         assert states[target] is WarmState.WARMING
         others = [s for pid, s in states.items() if pid != target]

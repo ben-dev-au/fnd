@@ -427,8 +427,15 @@ class PreviewProgressTracker:
             return
         from fnd.tui.preview import tuning
 
+        # The window the mount ACTUALLY chose, when it has chosen one. It is
+        # selected by rows with the chunk count only as a cap, so on a
+        # tall-chunk format it can hold two chunks where the tunables suggest
+        # fifteen — and pricing it at fifteen means this phase never reads as
+        # finished. Falls back to the tunables before the mount has picked.
+        window = getattr(container, "mount_window", 0) or (
+            tuning.VISIBLE_FIRST_ABOVE + tuning.VISIBLE_FIRST_BELOW + 1
+        )
         total_chunks = getattr(container, "total_chunks", 0) or 0
-        window = tuning.VISIBLE_FIRST_ABOVE + tuning.VISIBLE_FIRST_BELOW + 1
         denominator = min(total_chunks, window) if total_chunks else window
         mounted = len(getattr(container, "mounted_indices", ()) or ())
         session.report(min(mounted, denominator), denominator)

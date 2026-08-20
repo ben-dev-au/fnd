@@ -51,6 +51,10 @@ class PreviewContainer(Container):
         self.query_signature = query_signature
         self.total_chunks = total_chunks
         self.mounted_indices: set[int] = set()
+        # Chunk count of the window the mount actually selected, once it has
+        # chosen one. The window is picked by ROWS with the chunk count only as
+        # a cap, so it cannot be recomputed from the tunables alone.
+        self.mount_window: int = 0
         # Has this container ever been revealed? Durable, unlike the
         # `-pre-reveal` class, which is transient and can still be set for
         # a frame or two after the reveal has been decided.
