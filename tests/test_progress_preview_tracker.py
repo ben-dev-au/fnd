@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from fnd.tui.preview import tuning
+from fnd.tui.preview.warmth import WarmState
 from fnd.tui.progress.facility import ProgressFacility
 from fnd.tui.progress.operations import (
     PREVIEW_COLD,
@@ -62,6 +63,19 @@ class StubPreview:
         # The flat path (PDF/TXT) shows a file without setting ``active``.
         self.flat_parent: str | None = None
         self.busy = False
+        # Whether the pane is showing readable content — not a container still
+        # behind ``-pre-reveal``. The tracker ends a navigation on this.
+        self.painted = False
+
+        # Per-file readiness, as the presenter answers it. None means "cannot
+        # be answered yet" — before layout there is no capture width.
+        self.warm: WarmState | None = None
+
+    def is_painted(self) -> bool:
+        return self.painted
+
+    def file_warm_state(self, _parent_id: str) -> WarmState | None:
+        return self.warm
 
     def pipeline_busy(self) -> bool:
         return self.busy
@@ -411,3 +425,75 @@ def test_a_navigation_that_ends_between_samples_still_retires_its_phases(
     assert session.fraction > fill_while_mounting + 0.25, (
         "the line would still jump from part-filled straight to complete"
     )
+
+
+# ── when a navigation is over ────────────────────────────────────
+
+
+def arrive(app: StubApp, parent_id: str) -> None:
+    """The pane is showing ``parent_id`` and the scroll has committed."""
+    app._preview.active = StubContainer(parent_doc_id=parent_id)
+    app._preview.painted = True
+    app._preview_scroll.is_settling = False
+
+
+def test_a_navigation_ends_when_its_match_is_on_screen(
+    app: StubApp, tracker: PreviewProgressTracker
+) -> None:
+    """Not when the pipeline runs dry — those stopped being the same thing
+    when the capture cache landed. The mount keeps filling below the fold long
+    after the visible window has arrived, and waiting for it left the line up
+    over a second after the match was readable: measured TRAIL p90 735 ms and
+    max 1493 ms, every sample held by ``pipeline_busy`` alone.
+    """
+    session = tracker.begin("doc")
+    app._preview.busy = True  # the mount is still filling below the fold
+    app._preview.mount_task = StubTask(done=False)
+    assert tracker.sample(session) is True
+
+    arrive(app, "doc")
+    assert app._preview.pipeline_busy() is True, "setup — work must still be in flight"
+    assert tracker.sample(session) is False, "the line waited for work nobody is watching"
+
+
+def test_a_navigation_is_not_over_while_the_view_is_still_moving(
+    app: StubApp, tracker: PreviewProgressTracker
+) -> None:
+    """Arrival must not short-circuit the scroll commit. Without this the line
+    cleared while the view was still moving — the opposite failure, and the
+    one that reads as the bar vanishing before it finished."""
+    session = tracker.begin("doc")
+    arrive(app, "doc")
+    app._preview_scroll.is_settling = True
+    app._preview.busy = False
+
+    assert tracker.sample(session) is True, "the line let go mid-scroll"
+
+
+def test_showing_the_wrong_file_is_not_arrival(
+    app: StubApp, tracker: PreviewProgressTracker
+) -> None:
+    """A cold navigation leaves the PREVIOUS file painted for its whole
+    decode. Treating that as arrival would retire the line before the work
+    the user is waiting on had started."""
+    session = tracker.begin("wanted")
+    arrive(app, "previous")
+    app._preview.busy = True
+
+    assert tracker.sample(session) is True
+
+
+def test_a_pane_showing_nothing_falls_back_to_the_pipeline(
+    app: StubApp, tracker: PreviewProgressTracker
+) -> None:
+    """Arrival cannot be answered before anything is painted, so the pipeline
+    signals stay the authority there — and stay the thing that ends a
+    navigation which never manages to paint at all."""
+    session = tracker.begin("doc")
+    app._preview.painted = False
+    app._preview.busy = True
+    assert tracker.sample(session) is True
+
+    app._preview.busy = False
+    app._preview.mount_task = None
+    assert tracker.sample(session) is False

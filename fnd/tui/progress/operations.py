@@ -111,10 +111,10 @@ PREVIEW_WARM_FLAT = OperationPlan(
 PREVIEW_WARM = OperationPlan(
     operation_id="preview.warm",
     phases=(
-        Phase(key="decode", expected_ms=150.0),
-        Phase(key="mount", expected_ms=335.0, countable=True),
-        Phase(key="build", expected_ms=390.0),
-        Phase(key="land", expected_ms=155.0),
+        Phase(key="decode", expected_ms=100.0),
+        Phase(key="mount", expected_ms=280.0, countable=True),
+        Phase(key="build", expected_ms=60.0),
+        Phase(key="land", expected_ms=40.0),
     ),
 )
 
@@ -156,6 +156,9 @@ class PreviewProgressTracker:
         # When the pipeline was last doing work, so the land phase can be
         # bounded without depending on a flag that may never clear.
         self._busy_at: float = 0.0
+        # The file the navigation in flight asked for, so arrival can be
+        # recognised rather than inferred from the pipeline going quiet.
+        self._target: str | None = None
 
     # ── lifecycle ────────────────────────────────────────────────
 
@@ -225,7 +228,34 @@ class PreviewProgressTracker:
 
     def begin(self, parent_id: str) -> ProgressSession:
         self._busy_at = self._clock()
+        self._target = parent_id
         return self._app._progress.begin(self.plan_for(parent_id), sampler=self.sample)
+
+    def _arrived(self, preview: Any, scroll: Any) -> bool:
+        """Whether the match this navigation asked for is on screen and still.
+
+        Three conditions, and the third is not optional: ``is_painted``
+        excludes a container behind ``-pre-reveal``, ``showing_parent``
+        confirms it is the right file, and the scroll must have committed.
+        Without the last one, arrival short-circuited the settle and the line
+        cleared while the view was still moving — measured at 3 navigations in
+        30, which is the "it vanished before it finished" failure rather than
+        the lingering one.
+
+        A scroll that never settles cannot strand this: arrival simply stays
+        false and the fallback below bounds it — ``_landing`` gives up after
+        the app's own reveal watchdog, and ``pipeline_busy`` goes quiet.
+        """
+        if self._target is None:
+            return False
+        try:
+            return (
+                preview.showing_parent() == self._target
+                and preview.is_painted()
+                and not scroll.is_settling
+            )
+        except Exception:
+            return False
 
     # ── sampling ─────────────────────────────────────────────────
 
@@ -248,7 +278,25 @@ class PreviewProgressTracker:
         elif self._landing(preview, scroll):
             self._advance(session, "land")
 
-        busy = bool(preview.pipeline_busy()) or self._landing(preview, scroll)
+        # Done when the MATCH IS ON SCREEN — not when the pipeline runs dry.
+        #
+        # Those were the same thing until the capture cache landed. Now the
+        # mount keeps filling below the fold long after the visible window has
+        # arrived, and waiting for it left the line up over a second after the
+        # user could read the match: measured on a real corpus, TRAIL p90 735
+        # ms and max 1493 ms, against 202 ms before the merge. Every one of
+        # those samples was held by ``pipeline_busy`` alone.
+        #
+        # A full line has to mean "your match is there". Work continuing
+        # underneath is real, but it is not work the user is waiting on, and
+        # reporting it is how the line earns the "it lingers" complaint.
+        #
+        # ``pipeline_busy`` stays in as the fallback for the case ``_arrived``
+        # cannot answer: before the target is known, or when the pane is
+        # showing nothing at all.
+        busy = not self._arrived(preview, scroll) and (
+            bool(preview.pipeline_busy()) or self._landing(preview, scroll)
+        )
         if not busy:
             # The work is over — so every phase of it is over, including the
             # ones no sample ever landed inside.

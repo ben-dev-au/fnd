@@ -176,6 +176,16 @@ plan's total expected duration**, so `calibration` — which records what
 each phase actually cost and summarises the recent runs, the same shape
 as `cost_estimate.py` — reshapes the bar without any hand-tuned numbers.
 
+A navigation ends when its **match is on screen**, not when the pipeline
+runs dry. Those were the same thing until the capture cache: now the
+mount keeps filling below the fold long after the visible window has
+arrived, and waiting for it held the line over a second past the point
+the match was readable. Arrival is `showing_parent()` reaching the target
+AND `is_painted()` AND the scroll having committed — all three, because
+dropping the last one clears the line while the view is still moving.
+`pipeline_busy()` stays as the fallback for a navigation that never
+paints at all.
+
 Sessions are **observed, not reported**. `PreviewProgressTracker` reads
 the preview pipeline's own signals (`pipeline_busy()`, the mount window's
 `mounted_indices`, `inflight_target`, `is_settling`); `IndexProgressTracker`
@@ -216,6 +226,35 @@ full line before clearing, and hands its fill to a successor so a held
 cursor key doesn't saw the bar back to zero. Fast work is shown, not
 suppressed: a load the user can see complete is what makes the app feel
 fast.
+
+## Warmth in the results list
+
+Coverage makes navigation cost bimodal — a jump whose hits are captured
+is a blit, one that still has to build can be seconds — so the results
+tree's toggle arrow says which is coming. `fnd/tui/preview/warmth.py`
+holds the vocabulary; the tree paints it and the progress line picks its
+plan from it, so the arrow cannot promise a fast jump the line then
+prices as slow.
+
+Hollow (`▷`) means a jump here will build, filled (`▶`) means it will
+not. Shape carries the fact that changes a decision, because at one cell
+a change of brightness alone is hard to read; colour carries the rest,
+with cold taking the score column's accent blue so the two differ in hue
+rather than in brightness. Both cost exactly the two cells the stock
+toggle already occupies, which matters — the pane's name budget is
+`width - 2 - 7`.
+
+Three states, not two, because the warm host is **serial**: exactly one
+file is ever being captured, so WARMING is a single marker walking
+outward from the cursor rather than churn across the list. Readiness is
+judged on the listed hits alone; coverage's third tier fills the gaps
+between matches, which lazy mount already handles imperceptibly.
+
+Polled at 2 Hz and diffed, because warmth moves both when a capture lands
+and when coverage steps to the next file, and the capture loop runs off
+the event loop where it must not touch the DOM. Match rows are left
+alone — they already carry a glyph for matches the preview cannot
+highlight.
 
 ## Concurrency rules
 
