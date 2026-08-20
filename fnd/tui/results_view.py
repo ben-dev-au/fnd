@@ -52,6 +52,13 @@ class ResultsView:
         self._app._preview.cancel_pending_load()
         tree = self._app.query_one("#results_pane", Tree)
         tree.clear()
+        if isinstance(tree, ResultsTree):
+            # Warmth is keyed by parent_id, and a new query CLEARS the capture
+            # store — so a file listed by both searches would keep its old
+            # READY arrow until the next poll, promising an instant jump whose
+            # captures had just been thrown away. Start unknown instead: an
+            # unknown row draws the stock arrow and claims nothing.
+            tree.warm_states = {}
         max_score = max((g.top_score for g in self._app._search.groups), default=0.0)
         budget = self.file_label_budget(tree)
         # Rows are never filtered on paintability — see fnd.tui.match_evidence.

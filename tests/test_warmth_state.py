@@ -187,3 +187,36 @@ def test_an_unchanged_map_does_no_work_at_all(tree: ResultsTree) -> None:
     before = node._updates
     assert tree.apply_warm_states({"a": WarmState.COLD}) is False
     assert node._updates == before
+
+
+def test_a_styled_label_does_not_displace_the_icon_span(tree: ResultsTree) -> None:
+    """The icon's style is inherited from the stock render, read off the first
+    span. Real file labels are styled Text — the score column is coloured and
+    the whole row is dimmed — so if a label's own spans could land first, the
+    icon would inherit the wrong style and lose its toggle meta with it.
+    """
+    from rich.text import Text
+
+    label = Text("report.pdf", style="dim")
+    label.append("  0.87", "bold #9ece6a")
+    node = tree.root.add(label, data={"kind": "file", "group": StubGroup("a")})
+    tree.apply_warm_states({"a": WarmState.COLD})
+
+    rendered = tree.render_label(node, Style(color="white"), Style())
+    icon_span = rendered.spans[0]
+    assert icon_span.start == 0
+    assert icon_span.end == len(ResultsTree.ICON_BUILDING)
+    assert isinstance(icon_span.style, Style)
+    assert icon_span.style.meta.get("toggle") is True, "the arrow stopped being clickable"
+
+
+def test_the_icon_keeps_its_toggle_meta_in_every_state(tree: ResultsTree) -> None:
+    """It is the expander first and a warmth indicator second. Rebuilding the
+    prefix by hand would mean copying a constant out of a private Textual
+    module; inheriting it means the click behaviour follows the library."""
+    node = file_node(tree, "a")
+    for state in WarmState:
+        tree.apply_warm_states({"a": state})
+        span = tree.render_label(node, Style(color="white"), Style()).spans[0]
+        assert isinstance(span.style, Style)
+        assert span.style.meta.get("toggle") is True, state

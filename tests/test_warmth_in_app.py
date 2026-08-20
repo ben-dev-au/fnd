@@ -158,3 +158,25 @@ async def test_a_ready_file_is_priced_as_a_warm_navigation(warm_index: Path) -> 
         assert cold_plan is not warm_plan, "captures made no difference to the plan"
         assert "cold" in cold_plan.operation_id
         assert "warm" in warm_plan.operation_id
+
+
+@pytest.mark.asyncio
+async def test_a_new_query_does_not_inherit_the_old_arrows(warm_index: Path) -> None:
+    """A new query clears the capture store. Warmth is keyed by parent_id, so
+    a file listed by both searches would otherwise keep its READY arrow until
+    the next poll — promising an instant jump whose captures had just been
+    thrown away."""
+    app = FNDApp(index_dir=warm_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await run_search(pilot, app, "target")
+        tree = app.query_one("#results_pane", ResultsTree)
+        hold_everything(app)
+        app._results.refresh_warmth()
+        assert set(tree.warm_states.values()) == {WarmState.READY}, "setup"
+
+        hold_nothing(app)
+        await run_search(pilot, app, "paragraph")
+
+        stale = [p for p, s in tree.warm_states.items() if s is WarmState.READY]
+        assert not stale, "rows kept a READY arrow across a query that cleared the store"
