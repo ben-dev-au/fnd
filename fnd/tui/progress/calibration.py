@@ -94,10 +94,18 @@ def _load() -> None:
             raw = raw.strip()
             if not raw:
                 continue
-            with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
+            # KeyError too: a line can be valid JSON and still lack "phases"
+            # or "operation_id", and KeyError is a subclass of none of the
+            # others. It escaped _load, which runs from ProgressFacility.begin
+            # — and SearchController.run does not guard that call, so one
+            # corrupt history line broke the next search. The module docstring
+            # promises every parse path here is suppressed; it now is.
+            with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError, KeyError):
                 data = json.loads(raw)
                 phases = {
-                    str(k): float(v) for k, v in dict(data["phases"]).items() if _usable(float(v))
+                    str(k): float(v)
+                    for k, v in dict(data.get("phases") or {}).items()
+                    if _usable(float(v))
                 }
                 if phases:
                     _store.records.append(

@@ -145,3 +145,24 @@ def test_a_non_finite_duration_is_ignored(isolated_progress_calibration: Path) -
 def test_a_non_finite_observation_is_never_recorded() -> None:
     calibration.record("op", {"a": float("inf"), "b": float("nan"), "c": 300.0})
     assert calibration.expected_ms("op") == {"c": 300.0}
+
+
+def test_a_record_missing_a_field_is_skipped_not_raised(
+    isolated_progress_calibration: Path,
+) -> None:
+    """A line can be valid JSON and still lack a key, and KeyError is a
+    subclass of none of the other suppressed types — so it escaped ``_load``.
+
+    That path runs from ``ProgressFacility.begin``, and ``SearchController.run``
+    does not guard that call: one corrupt history line broke the next search.
+    Telemetry must never be able to do that.
+    """
+    calibration.record("op", {"a": 400.0})
+    calibration.flush()
+    with isolated_progress_calibration.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"operation_id": "op"}) + "\n")  # no "phases"
+        fh.write(json.dumps({"phases": {"a": 900.0}}) + "\n")  # no "operation_id"
+    calibration.reset_for_tests()
+
+    expected = calibration.expected_ms("op")  # must not raise
+    assert expected["a"] == pytest.approx(400.0), "a good record was lost with the bad ones"

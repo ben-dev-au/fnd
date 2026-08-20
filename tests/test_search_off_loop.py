@@ -294,3 +294,54 @@ async def test_the_search_plan_uses_both_of_its_phases(index: Path) -> None:
     assert phases, "setup — the search never committed"
     assert phases[-1] == "results", "the commit stage never entered its own phase"
     assert {p.key for p in SEARCH.phases} == {"query", "results"}
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_query_does_not_reload_the_index_under_a_worker(
+    index: Path,
+) -> None:
+    """``reload()`` reassigns the searcher's inner snapshot, and a running
+    search reads it more than once, so reloading under one could serve a
+    single search from two index generations.
+
+    The guard used to derive "nothing is running" from the generation
+    counters — but ``_fail`` marks a generation committed WITHOUT waiting for
+    its worker, so a malformed query in between reported idle while a real
+    search was still executing.
+    """
+    app = FNDApp(index_dir=index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        started = threading.Event()
+        release = threading.Event()
+        original = app._search._execute
+        reloads: list[int] = []
+
+        def slow(request: Any) -> Any:
+            started.set()
+            release.wait(timeout=10.0)
+            return original(request)
+
+        assert app._search.searcher is not None
+        original_reload = app._search.searcher.reload
+
+        def counting_reload(*a: Any, **k: Any) -> Any:
+            reloads.append(1)
+            return original_reload(*a, **k)
+
+        app._search._execute = slow  # type: ignore[method-assign]
+        app._search.searcher.reload = counting_reload  # type: ignore[method-assign]
+
+        app._search.run("target")
+        await wait_until(pilot, started.is_set)
+        # The first query reloads legitimately — nothing was running. What
+        # follows is the case under test.
+        reloads.clear()
+
+        app._search.run("{60}")  # malformed: rejected on the loop, marks committed
+        await pilot.pause()
+        app._search.run("second")  # would reload if the worker looked finished
+
+        assert not reloads, "the index was reloaded while a search was still running"
+        release.set()
+        await wait_until(pilot, lambda: app._search.idle)

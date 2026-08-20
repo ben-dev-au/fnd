@@ -141,6 +141,14 @@ class SearchController:
         # the user submits a :multi block.
         self.intent: str | None = None
         self.groups: list[FileGroup] = []
+        # Searches actually running, counted rather than inferred. `idle`
+        # derives from generations, and _fail marks a generation committed
+        # WITHOUT waiting for its worker — so a malformed query made an
+        # in-flight search look finished, and the next query then reloaded the
+        # index underneath it. Incremented on the loop before dispatch and
+        # decremented on the loop in both commit paths, so it is never touched
+        # from the worker thread.
+        self._inflight: int = 0
         # Handle for the deferred prefetch timer so each new search cancels the
         # previous one instead of stacking. A burst of searches (e.g. toggling
         # several file-type filters) would otherwise queue a prefetch-of-10 per
@@ -204,6 +212,7 @@ class SearchController:
         if request is None:
             return
         session = self._app._progress.begin(SEARCH, sampler=self._sample)
+        self._inflight += 1
         self._app.run_worker(
             lambda: self._execute_and_commit(request, session),
             thread=True,
@@ -234,7 +243,8 @@ class SearchController:
         there is nothing to execute."""
         if self.searcher is None:
             return None
-        was_idle = self.idle
+        # Nothing EXECUTING, not "nothing outstanding" — see _inflight.
+        was_idle = self._inflight == 0
         # Claim the generation FIRST, before anything that can fail. _fail()
         # marks the current generation committed, so allocating it after the
         # parse meant a malformed query marked an IN-FLIGHT search's
@@ -413,14 +423,18 @@ class SearchController:
     def _execute(self, request: _SearchRequest) -> tuple[list[FileGroup], SearchTrace | None]:
         """The blocking part, off the loop. Reads the request and the searcher;
         writes nothing."""
-        if self.searcher is None or not request.lexical.strip():
+        # Bound ONCE. Reading self.searcher again below is a time-of-check to
+        # time-of-use gap: anything on the loop that reassigns it between the
+        # reads would pass a different snapshot — or None — into the search.
+        handle = self.searcher
+        if handle is None or not request.lexical.strip():
             return [], None
         from fnd.layered import search_layered
 
         searcher = (
-            _PrefixingSearcher(self.searcher, prefix=request.filter_prefix)
+            _PrefixingSearcher(handle, prefix=request.filter_prefix)
             if request.filter_prefix
-            else self.searcher
+            else handle
         )
         groups, trace = search_layered(
             searcher,  # type: ignore[arg-type]
@@ -446,6 +460,7 @@ class SearchController:
     def _commit_failure(
         self, request: _SearchRequest, err: Exception, session: ProgressSession
     ) -> None:
+        self._inflight = max(0, self._inflight - 1)
         if request.generation != self._generation:
             session.close()
             return
@@ -461,6 +476,7 @@ class SearchController:
     ) -> None:
         """Land the results. Everything below has always run AFTER the search
         returned; keeping it whole here preserves that order."""
+        self._inflight = max(0, self._inflight - 1)
         # Superseded. Textual cancels the worker but cannot interrupt it, so a
         # stale search always runs to completion and arrives here — this guard
         # is what keeps it from touching anything.
