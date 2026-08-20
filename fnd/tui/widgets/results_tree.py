@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
+from rich.style import Style
+from rich.text import Text
 from textual import events
 from textual.binding import Binding, BindingType
 from textual.message import Message
 from textual.widgets import Tree
+from textual.widgets._tree import TOGGLE_STYLE
 from textual.widgets.tree import TreeNode
+
+from fnd.tui.preview.warmth import WarmState
 
 __all__ = ["ResultsTree"]
 
@@ -50,6 +55,12 @@ class ResultsTree(Tree[dict[str, Any]]):
             self.tree = tree
             self.node = node
             super().__init__()
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # Per-file warmth, keyed by parent_id. Read on every label render, so
+        # it is a plain dict lookup and never a scan of the result groups.
+        self.warm_states: dict[str, WarmState] = {}
 
     def on_resize(self, _event: events.Resize) -> None:
         # While collapsed-to-header the pane shows a single content row; keep
@@ -220,3 +231,105 @@ class ResultsTree(Tree[dict[str, Any]]):
             target = next_target
             safety += 1
         return current
+
+    # ── warmth on the toggle arrow ───────────────────────────────
+    #
+    # Navigation cost is bimodal: a jump into a file whose hits are captured
+    # is a blit, one into a file that still has to be built can be seconds
+    # (see fnd/tui/preview/coverage.py). The arrow says which you are about
+    # to get, on the two cells the tree already spends on it — so this costs
+    # no label width, which matters in a pane whose name budget is already
+    # `width - 2 - 7`.
+    #
+    # Shape carries the fact that changes a decision — hollow means a jump
+    # here will build, filled means it will not. Colour carries the rest:
+    # blue for cold (the score column's own accent blue, so it reads as part
+    # of the same palette), the theme accent for both warm states. Cold and
+    # warm are therefore a change of HUE, not of brightness — a muted-vs-
+    # accent version of the same glyph was tried on paper and rejected,
+    # because at one cell the two are hard to tell apart.
+    #
+    # Not on match rows. Coverage warms a file's hits nearest-first, so they
+    # are all ready within moments of landing, and those rows already carry a
+    # glyph for matches the preview cannot highlight — two unrelated marker
+    # systems on one row cost more than they tell you.
+    ICON_WARM = "▶ "
+    ICON_WARM_EXPANDED = "▼ "
+    ICON_BUILDING = "▷ "
+    ICON_BUILDING_EXPANDED = "▽ "
+
+    #: Tokyo-night's accent blue, the same step the score column uses for its
+    #: middle tier — a cold file is not a problem, so it wears a normal colour.
+    COLD_COLOUR = "#7aa2f7"
+
+    def render_label(self, node: TreeNode[Any], base_style: Style, style: Style) -> Text:
+        """The stock label, with the toggle arrow chosen by warmth.
+
+        Mirrors ``Tree.render_label`` rather than post-processing what it
+        returns: the prefix carries the toggle meta that makes clicking the
+        arrow expand the node, so it has to be assembled the same way. Every
+        icon is two cells wide, like the stock one, so ``get_label_width`` and
+        the pane's name budget are unaffected.
+        """
+        state = self._warm_state_of(node)
+        if state is None:
+            return super().render_label(node, base_style, style)
+        building = state is not WarmState.READY
+        if node.is_expanded:
+            icon = self.ICON_BUILDING_EXPANDED if building else self.ICON_WARM_EXPANDED
+        else:
+            icon = self.ICON_BUILDING if building else self.ICON_WARM
+        icon_style = base_style + TOGGLE_STYLE
+        if state is WarmState.COLD:
+            icon_style += Style(color=self.COLD_COLOUR)
+        # process_label, not the raw attribute: a label set from a plain str
+        # has not been through the tree's own conversion yet.
+        node_label = self.process_label(node.label).copy()
+        node_label.stylize(style)
+        return Text.assemble((icon, icon_style), node_label)
+
+    def _warm_state_of(self, node: TreeNode[Any]) -> WarmState | None:
+        """The node's warmth, or None for anything that is not a file row.
+
+        Nodes with no toggle get None too: an arrow that is not drawn cannot
+        carry a state, and the tree's own prefix is empty there.
+        """
+        if not node._allow_expand:
+            return None
+        data = node.data
+        if not isinstance(data, dict) or data.get("kind") != "file":
+            return None
+        group = data.get("group")
+        parent_id = getattr(group, "parent_id", None)
+        if parent_id is None:
+            return None
+        return self.warm_states.get(parent_id)
+
+    def apply_warm_states(self, states: dict[str, WarmState]) -> bool:
+        """Adopt ``states`` and repaint only the rows that changed.
+
+        Repainting the whole tree on every capture would strobe the list —
+        captures land at roughly ten a second. Diffing means a row is touched
+        only when its state actually moves, which for a given file happens
+        twice: into WARMING and into READY.
+
+        ``set_label`` with the node's own label is how a row is invalidated:
+        it bumps the node's update counter, which is part of the line-cache
+        key, so the next paint re-runs ``render_label``. Same mechanism
+        ``ResultsView.relabel_file_rows`` already relies on.
+        """
+        if states == self.warm_states:
+            return False
+        previous = self.warm_states
+        self.warm_states = states
+        changed = False
+        for node in self.root.children:
+            data = node.data
+            if not isinstance(data, dict) or data.get("kind") != "file":
+                continue
+            parent_id = getattr(data.get("group"), "parent_id", None)
+            if parent_id is None or previous.get(parent_id) == states.get(parent_id):
+                continue
+            node.set_label(node.label)
+            changed = True
+        return changed

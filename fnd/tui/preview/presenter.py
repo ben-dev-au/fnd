@@ -32,6 +32,7 @@ from fnd.tui.preview.frozen_store import ChunkCaptureStore
 from fnd.tui.preview.liveness import is_condemned, is_live
 from fnd.tui.preview.visibility import set_node_class, set_preview_visibility
 from fnd.tui.preview.warm_host import WarmHost
+from fnd.tui.preview.warmth import WarmState, warm_state
 from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
 from fnd.tui.preview_scroll import ScrollAnchor
 from fnd.tui.preview_scrollbar import MatchAwareScroll
@@ -161,6 +162,10 @@ class PreviewPresenter:
         # when the loop stops answering. A plain string: read during a stall,
         # when touching live widgets would be its own hazard.
         self.coverage_activity: str | None = None
+        # The file coverage is capturing right now, in full. Distinct from
+        # coverage_activity, which is a truncated diagnostic string for the
+        # stall watch; this one is read to paint a row, so it has to be a key.
+        self.coverage_parent: str | None = None
         # Cursor position the running coverage plan was built for.
         self._coverage_anchor: tuple[str, int] | None = None
         self._stale_strip_repair: asyncio.Task[None] | None = None
@@ -2679,6 +2684,80 @@ class PreviewPresenter:
                 f"rows={self.capture_store.total_rows()}"
             )
 
+    def warm_states(self) -> dict[str, WarmState]:
+        """How ready each listed file is, for every group in one pass.
+
+        Built as a whole map rather than answered per file because the callers
+        want it per file: the results tree asks for every visible row and the
+        capture store's key is (parent, query, width, seq), so resolving the
+        query signature and the pane width once amortises what would otherwise
+        be two lookups per row.
+
+        Answered from the results list and the store, with no decode — a hit
+        carries its chunk_seq, which is exactly the store's key. Same property
+        that lets `_file_needs_coverage` re-plan on every cursor move.
+        """
+        groups = getattr(self._app._search, "groups", None) or []
+        if not groups:
+            return {}
+        try:
+            pane = self._app.query_one("#preview_pane", VerticalScroll)
+        except Exception:
+            return {}
+        width = self.capture_width(pane)
+        if width <= 0:
+            # Before first layout there is no width, and every store lookup
+            # would miss — reporting the whole list cold rather than unknown.
+            return {}
+        query_sig = self._app._search.query_signature()
+        warming_now = self.coverage_parent
+        return {
+            g.parent_id: self._warm_state(g.parent_id, query_sig, width, warming_now)
+            for g in groups
+        }
+
+    def file_warm_state(self, parent_id: str) -> WarmState | None:
+        """One file's readiness, or None when it cannot be answered yet.
+
+        Used at dispatch to choose the navigation's progress plan, where
+        building the whole map would be wasted work.
+        """
+        try:
+            pane = self._app.query_one("#preview_pane", VerticalScroll)
+        except Exception:
+            return None
+        width = self.capture_width(pane)
+        if width <= 0:
+            return None
+        return self._warm_state(
+            parent_id,
+            self._app._search.query_signature(),
+            width,
+            self.coverage_parent,
+        )
+
+    def _warm_state(
+        self, parent_id: str, query_sig: str, width: int, warming_now: str | None
+    ) -> WarmState:
+        store = self.capture_store
+        return warm_state(
+            hit_seqs=self.listed_hit_seqs(parent_id),
+            is_captured=lambda seq: store.get(parent_id, query_sig, width, seq) is not None,
+            warming=parent_id == warming_now,
+        )
+
+    def listed_hit_seqs(self, parent_id: str) -> list[int]:
+        """Chunk sequences of this file's hits AS LISTED.
+
+        The same set ``_file_needs_coverage`` asks about and the same one the
+        results tree steps through, so what coverage promises and what the
+        arrow claims cannot drift.
+        """
+        for group in getattr(self._app._search, "groups", None) or []:
+            if group.parent_id == parent_id:
+                return [h.chunk_seq for h in (getattr(group, "hits", None) or [])]
+        return []
+
     def _file_needs_coverage(self, parent_id: str, query_sig: str, width: int) -> bool:
         """Whether any listed hit of this file is still uncaptured.
 
@@ -2812,10 +2891,12 @@ class PreviewPresenter:
                 await asyncio.sleep(0.05)
             started = time.perf_counter()
             self.coverage_activity = f"{parent_id[:8]}/seq{chunk.chunk_seq}"
+            self.coverage_parent = parent_id
             try:
                 capture = await self._warm_host.capture(chunk, width, match_spec=spec)
             finally:
                 self.coverage_activity = None
+                self.coverage_parent = None
             if capture is not None:
                 # Filed under the capture's OWN width, not the width requested.
                 # They should be equal — that is the point of the jig above —

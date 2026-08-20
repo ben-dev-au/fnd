@@ -38,6 +38,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from fnd.tui.preview.warmth import WarmState
 from fnd.tui.progress.model import OperationKind, OperationPlan, Phase
 
 if TYPE_CHECKING:
@@ -172,16 +173,25 @@ class PreviewProgressTracker:
           ``uses_markdown_renderer``, the same predicate the dispatcher routes
           on, so the two cannot drift.
         """
-        # "Warm" means there is no decode to do — which is exactly what the
-        # chunk cache tells us, and it is the strongest predictor available at
-        # dispatch. Measured: only 2 of 10 navigations actually ran the decode
-        # worker; the rest were served from cache and finished almost
-        # instantly, while still being priced as though they would decode.
+        # "Warm" means the work ahead is cheap. Three things can make it so,
+        # in descending strength:
+        #
+        # * the pane is already showing this file, so there is nothing to open;
+        # * coverage has captured every listed hit, so each mount is a blit
+        #   rather than a markdown build (see fnd/tui/preview/coverage.py) —
+        #   this is now the strongest predictor, and the chunk cache alone
+        #   cannot see it;
+        # * the chunks are decoded, so at least the decode is skipped.
+        #
         # File size, tried first, is a far weaker signal — a 54x size range
         # produced only a 3.6x duration range, because the preview mounts a
         # fixed window however large the file is.
         preview = self._app._preview
-        warm = preview.showing_parent() == parent_id or parent_id in preview.chunk_cache
+        warm = (
+            preview.showing_parent() == parent_id
+            or preview.file_warm_state(parent_id) is WarmState.READY
+            or parent_id in preview.chunk_cache
+        )
         if self._is_structural(parent_id):
             return PREVIEW_WARM if warm else PREVIEW_COLD
         return PREVIEW_WARM_FLAT if warm else PREVIEW_COLD_FLAT

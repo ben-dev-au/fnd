@@ -12,6 +12,7 @@ from textual.widgets import Tree
 
 from fnd.tui.match_evidence import evidence_spec_for_pass, has_paintable_match
 from fnd.tui.results_labels import _format_file_label, _format_hit_label, _styled_parent_label
+from fnd.tui.widgets.results_tree import ResultsTree
 
 if TYPE_CHECKING:
     from textual.widgets.tree import TreeNode
@@ -135,6 +136,28 @@ class ResultsView:
                         _format_file_label(data["group"], max_score=max_score, name_budget=budget)
                     )
                 )
+
+    def refresh_warmth(self) -> bool:
+        """Repaint any file row whose readiness changed.
+
+        Polled rather than pushed. Warmth changes from two directions — a
+        capture landing, and coverage moving to the next file — and the second
+        has no single write to hook. Polling one map and diffing it is both
+        simpler and safer than notifying from inside the capture loop, which
+        runs off the event loop and must not touch the DOM.
+
+        Cheap enough to poll: one query-signature and one width resolution,
+        then a store lookup per listed hit. The listed hits are already capped
+        per file by ``defaults.sections_per_file_max``.
+        """
+        try:
+            tree = self._app.query_one("#results_pane", ResultsTree)
+        except Exception:
+            return False
+        states = self._app._preview.warm_states()
+        if not states:
+            return False
+        return tree.apply_warm_states(states)
 
     def refit_after_resize(self) -> None:
         self._app._refresh_status()  # preview title

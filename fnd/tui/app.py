@@ -439,6 +439,16 @@ class FNDApp(App[None]):
         # Intra-file match navigation (n/b); see fnd/tui/match_navigator.py.
         self._match_nav = MatchNavigator(self)
 
+    def _tick_warmth(self) -> None:
+        """Poll per-file readiness onto the results arrows.
+
+        Suppressed whole: this is decoration on a timer, and Textual hands a
+        raising timer callback to ``App._handle_exception``, which takes the
+        app down. A cosmetic poll must never be able to do that.
+        """
+        with contextlib.suppress(Exception):
+            self._results.refresh_warmth()
+
     def open_progress(self, phase: str = "", *, total: int = 1) -> ProgressSession:
         """Open a new ProgressSession. Use as a context manager."""
         return self._progress.open(phase, total=total)
@@ -593,6 +603,13 @@ class FNDApp(App[None]):
         # Tokyo-night theme: muted blue/teal pastel palette per user request.
         self.theme = "tokyo-night"
         self._prefetch.start()
+        # Repaint the results arrows as coverage warms files behind them.
+        # Polled, not pushed: warmth moves both when a capture lands and when
+        # coverage steps to the next file, and the capture loop runs off the
+        # event loop where it must not touch the DOM. Two hertz is slower than
+        # captures land (~10/s) and far faster than a file changes state, and
+        # a tick that finds nothing new costs one store lookup per listed hit.
+        self.set_interval(0.5, self._tick_warmth, name="results-warmth")
         # Opt-in diagnostic: names whatever held the event loop when it
         # stops answering. Off unless _FND_STALL_WATCH is set.
         self._stall_watch = StallWatch.from_env(self)
