@@ -151,7 +151,7 @@ def test_cascade_fuzzy_matches_when_indexed_token_is_stemmed(
     import snowballstemmer
 
     stemmer = snowballstemmer.stemmer("english")
-    # Sanity-pin the test on stemmer behavior: if the stemmer ever stops
+    # Sanity-pin the test on stemmer behaviour: if the stemmer ever stops
     # reshaping these inputs the test stops exercising the bug.
     assert stemmer.stemWord("templates") == "templat"
     assert stemmer.stemWord("templatas") == "templata"

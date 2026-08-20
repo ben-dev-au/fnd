@@ -1,6 +1,6 @@
 """Fuzzy toggle + min-chars + explicit ~N opt-in.
 
-Pins the user-configurable behavior added in spec
+Pins the user-configurable behaviour added in spec
 ``2026-05-19-fuzzy-search-config``:
 
 * ``defaults.fuzzy_enabled = False`` disables the auto-fuzzy cascade
@@ -107,8 +107,8 @@ def test_cascade_min_term_chars_floor_blocks_short_stems(tpl_corpus: Path) -> No
     assert hits == []
 
 
-def test_cascade_default_behavior_unchanged(tpl_corpus: Path) -> None:
-    """Sanity: default params preserve existing fuzzy behavior."""
+def test_cascade_default_behaviour_unchanged(tpl_corpus: Path) -> None:
+    """Sanity: default params preserve existing fuzzy behaviour."""
     s = Searcher(index_dir=tpl_corpus)
     hits = cascade_search(s, query="templatas", threshold=1)
     paths = [Path(h.path).name for h in hits]

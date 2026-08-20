@@ -1,4 +1,4 @@
-"""Phase 2 — Settings menu UI/UX behaviors.
+"""Phase 2 — Settings menu UI/UX behaviours.
 
 Covers the redesign concerns the user raised:
 

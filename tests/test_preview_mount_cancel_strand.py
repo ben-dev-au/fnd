@@ -1,10 +1,10 @@
 """Regression: a cold preview mount cancelled in its early-await phase —
-before the detached finalize task (the only thing that hides the progress
+before the detached finalise task (the only thing that hides the progress
 bar + releases the in-flight latch) is spawned — must not strand the bar.
 
 The symptom was "the loading bar gets stuck until I navigate to a different
 file and back": cancel_mount_task cancels the mount but hides nothing, the
-finally only hid on is_complete, and no finalize task existed yet — so the
+finally only hid on is_complete, and no finalise task existed yet — so the
 bar stayed up forever and the inflight latch kept a same-file re-load from
 re-dispatching.
 """
@@ -40,7 +40,7 @@ async def test_cancel_during_early_mount_does_not_strand_progress_bar(
         from fnd.tui.widgets.preview_container import PreviewContainer
 
         # Park a cold structural mount in its EARLY-await window: cancel_task_on
-        # is awaited (presenter ~line 1304) BEFORE the finalize task is spawned
+        # is awaited (presenter ~line 1304) BEFORE the finalise task is spawned
         # (~1352). Block it on an event we never set so the mount task sits
         # exactly in the vulnerable window.
         gate = asyncio.Event()
@@ -76,18 +76,18 @@ async def test_cancel_during_early_mount_does_not_strand_progress_bar(
         assert app._progress.active is not None, (
             "setup — the cold mount should have the progress bar open"
         )
-        assert getattr(container, "_finalize_task", None) is None, (
-            "setup — mount must be parked BEFORE the finalize task is spawned"
+        assert getattr(container, "_finalise_task", None) is None, (
+            "setup — mount must be parked BEFORE the finalise task is spawned"
         )
 
-        # Cancel the mount while parked pre-finalize — the strand condition.
+        # Cancel the mount while parked pre-finalise — the strand condition.
         preview.cancel_mount_task()
         await safe_pause(pilot)
         await safe_pause(pilot)
 
         assert app._progress.active is None, (
             "BUG: progress bar stranded after a cold mount was cancelled before "
-            "its finalize task spawned (the 'stuck loading until I switch files' bug)"
+            "its finalise task spawned (the 'stuck loading until I switch files' bug)"
         )
         assert preview.inflight_target is None, (
             "inflight latch not released on cancel — a same-file re-load would "
@@ -145,7 +145,7 @@ async def test_exception_during_early_mount_does_not_strand_progress_bar(
 
         assert app._progress.active is None, (
             "BUG: progress bar stranded after a cold mount FAILED before its "
-            "finalize task spawned (mount_task is current_task path)"
+            "finalise task spawned (mount_task is current_task path)"
         )
         assert preview.inflight_target is None, "inflight latch not released on mount failure"
 
@@ -192,7 +192,7 @@ async def test_early_cancel_does_not_clobber_successor_decode_bar(
         )
         preview.mount_task = task
         await safe_pause(pilot)
-        assert getattr(container, "_finalize_task", None) is None, "setup — must be pre-finalize"
+        assert getattr(container, "_finalise_task", None) is None, "setup — must be pre-finalise"
 
         # A successor (uncached) decode now owns the loading state: a DIFFERENT
         # inflight target, and mount_task nulled — exactly what the decode path

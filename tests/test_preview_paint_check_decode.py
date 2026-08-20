@@ -2,7 +2,7 @@
 
 ``render_full_doc`` on a chunk-cache miss cancels the mount task, cancels the
 debounce timer, and hands the file to a background decode worker — so during a
-cold load none of ``load_timer`` / ``mount_task`` / ``_finalize_task`` is set.
+cold load none of ``load_timer`` / ``mount_task`` / ``_finalise_task`` is set.
 ``pipeline_busy()`` looked only at those three, so it reported *idle* while the
 decode was still running.
 

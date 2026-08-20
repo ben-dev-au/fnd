@@ -61,7 +61,7 @@ async def test_search_enter_does_not_drill_picker() -> None:
         assert lst._items[0].kind == KIND_PICKER, lst._items[0].kind
         await pilot.press("enter")
         await pilot.pause()
-        # Old behavior pushed a PickerScreen; navigate-only stays put.
+        # Old behaviour pushed a PickerScreen; navigate-only stays put.
         assert app.screen is screen, "search Enter must not drill into the picker"
         assert app.focused is lst
 

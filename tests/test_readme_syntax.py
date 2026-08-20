@@ -1,4 +1,4 @@
-"""Lock the README §"Search how-to" examples to actual behavior: every
+"""Lock the README §"Search how-to" examples to actual behaviour: every
 documented query expands to the documented form and parses in Tantivy without
 error. Keeps the docs and the engine from drifting apart."""
 

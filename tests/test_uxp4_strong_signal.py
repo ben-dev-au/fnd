@@ -76,7 +76,7 @@ def test_strong_signal_does_not_fire_for_ambiguous_query(
     from fnd.fusion import (
         STRONG_SIGNAL_MIN_NORM_GAP,
         STRONG_SIGNAL_MIN_NORM_SCORE,
-        normalize_bm25,
+        normalise_bm25,
     )
     from fnd.layered import search_layered
     from fnd.query import Searcher
@@ -101,8 +101,8 @@ def test_strong_signal_does_not_fire_for_ambiguous_query(
     )
     assert probe
     if len(probe) >= 2:
-        top_n = normalize_bm25(probe[0].score)
-        gap = top_n - normalize_bm25(probe[1].score)
+        top_n = normalise_bm25(probe[0].score)
+        gap = top_n - normalise_bm25(probe[1].score)
         assert not (top_n >= STRONG_SIGNAL_MIN_NORM_SCORE and gap >= STRONG_SIGNAL_MIN_NORM_GAP), (
             "ambiguous query incorrectly classified as strong-signal"
         )
@@ -139,15 +139,15 @@ def test_intent_disables_strong_signal_bypass(cfg: Config, unambiguous_index: Pa
     assert trace.strong_signal.disabled_by_intent is True
 
 
-def test_normalize_bm25_monotone_and_bounded() -> None:
+def test_normalise_bm25_monotone_and_bounded() -> None:
     """Sanity-check the score transform: monotone in [0, 1)."""
-    from fnd.fusion import normalize_bm25
+    from fnd.fusion import normalise_bm25
 
-    assert normalize_bm25(0.0) == 0.0
-    assert normalize_bm25(-5.0) == 0.0  # negative scores clamped to 0
-    assert 0.0 < normalize_bm25(0.1) < 1.0
-    assert normalize_bm25(1.0) == pytest.approx(0.5)
+    assert normalise_bm25(0.0) == 0.0
+    assert normalise_bm25(-5.0) == 0.0  # negative scores clamped to 0
+    assert 0.0 < normalise_bm25(0.1) < 1.0
+    assert normalise_bm25(1.0) == pytest.approx(0.5)
     # Monotone — higher input → higher output
-    assert normalize_bm25(0.5) < normalize_bm25(1.5) < normalize_bm25(5.0)
+    assert normalise_bm25(0.5) < normalise_bm25(1.5) < normalise_bm25(5.0)
     # Asymptote — large values approach but never reach 1
-    assert 0.99 < normalize_bm25(100.0) < 1.0
+    assert 0.99 < normalise_bm25(100.0) < 1.0

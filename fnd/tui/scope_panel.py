@@ -422,7 +422,7 @@ class ScopeController:
         CACHED per collection set — the aggregation runs once per scope change
         instead of on every search (which ran on every filter toggle), keeping
         the re-search cheap."""
-        from fnd.kind_catalog import present_kinds
+        from fnd.kind_catalogue import present_kinds
 
         searcher = getattr(self._app._search, "searcher", None)
         index = getattr(searcher, "_index", None)
@@ -772,13 +772,13 @@ class ScopeController:
 
     # ── Tags branch ───────────────────────────────────────────────
 
-    def tag_catalog_for_scope(self) -> dict[str, list[Any]]:
+    def tag_catalogue_for_scope(self) -> dict[str, list[Any]]:
         """Tags present in the active collections, per source.
 
         Returns empty lists when the index isn't open yet or the aggregation
         fails — the pane must still render.
         """
-        from fnd.tag_catalog import tag_catalog
+        from fnd.tag_catalogue import tag_catalogue
 
         searcher = getattr(self._app._search, "searcher", None)
         index = getattr(searcher, "_index", None)
@@ -787,7 +787,7 @@ class ScopeController:
         cfg = self._app._config
         sources = list(cfg.defaults.tag_sources) if cfg else None
         try:
-            return tag_catalog(
+            return tag_catalogue(
                 index,
                 collections=self.collections,
                 sources=sources,
@@ -904,14 +904,14 @@ class ScopeController:
         )
 
     def _render_tags_branch(self, tree: Tree[dict[str, object]]) -> None:
-        from fnd.tag_catalog import build_tag_tree
+        from fnd.tag_catalogue import build_tag_tree
 
-        catalog = self.tag_catalog_for_scope()
+        catalogue = self.tag_catalogue_for_scope()
         namespaces = self._frontmatter_namespaces()
         n_selected = len(self._distinct_tag_values(self.tag_include)) + len(
             self._distinct_tag_values(self.tag_exclude)
         )
-        n_available = sum(len(v) for v in catalog.values())
+        n_available = sum(len(v) for v in catalogue.values())
         summary = f"{n_selected} of {n_available}" if n_available else "none indexed"
         tags_node = tree.root.add(
             _styled_parent_label(f"Tags             ({summary})"),
@@ -926,7 +926,7 @@ class ScopeController:
             _styled_action_label(f"⇄  Match: {mode}", self._action_colour()),
             data={"kind": "filter_value", "category": "tag_match", "value": "toggle"},
         )
-        for source, counts in catalog.items():
+        for source, counts in catalogue.items():
             if not counts:
                 continue
             branch = tags_node.add(

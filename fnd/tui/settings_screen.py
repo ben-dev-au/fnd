@@ -1420,7 +1420,7 @@ class SettingsScreen(Screen[None]):
                 try:
                     item.toggle_setter(app, new_value)
                 except Exception as e:
-                    self.notify(_summarize(e), severity="error")
+                    self.notify(_summarise(e), severity="error")
                     return
                 self.query_one(SettingsList).refresh_values()
             return
@@ -1471,7 +1471,7 @@ class SettingsScreen(Screen[None]):
                 app._search.ranking_profile = app._search.resolve_profile()  # type: ignore[attr-defined]
                 app._refresh_status()  # type: ignore[attr-defined]
         except Exception as e:
-            self.query_one(EditBar).show_error(_summarize(e))
+            self.query_one(EditBar).show_error(_summarise(e))
             return
         self.query_one(EditBar).close()
         self.query_one(SettingsList).refresh_values()
@@ -1528,7 +1528,7 @@ def _normalise_key_label(key: str) -> str:
     }.get(key, key)
 
 
-def _summarize(exc: Exception) -> str:
+def _summarise(exc: Exception) -> str:
     """Single-line summary of an exception, with Pydantic-aware
     formatting for the common validation case."""
     try:
@@ -1682,7 +1682,7 @@ class PickerScreen(Screen[None]):
                 if v is not None:
                     self._item.picker_setter(self.app, v)  # type: ignore[arg-type]
         except Exception as e:
-            self.notify(_summarize(e), severity="error", title="Save failed")
+            self.notify(_summarise(e), severity="error", title="Save failed")
 
 
 def _includes_groups() -> list[ToggleGroup]:
@@ -1758,7 +1758,7 @@ class TreePickerScreen(Screen[None]):
         try:
             self._item.picker_setter(self.app, sorted(values))  # type: ignore[arg-type]
         except Exception as e:
-            self.notify(_summarize(e), severity="error", title="Save failed")
+            self.notify(_summarise(e), severity="error", title="Save failed")
 
 
 # ── Collection-form screens (rebuilt from CollectionsScreen) ────────
@@ -2320,7 +2320,7 @@ class SourceFormScreen(Screen[None]):
                 app_params=app_params,
             )
         except Exception as e:
-            self._show_error(_summarize(e))
+            self._show_error(_summarise(e))
             return
 
         app: FNDApp = self.app  # type: ignore[assignment]
@@ -2340,7 +2340,7 @@ class SourceFormScreen(Screen[None]):
                 collection=col,
             )
         except Exception as e:
-            self._show_error(_summarize(e))
+            self._show_error(_summarise(e))
             return
         app._config = load()  # type: ignore[attr-defined]
         app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
@@ -2561,11 +2561,11 @@ class AddCollectionWizard(Screen[None]):
             ),
         ]
 
-    def _summarize_includes(self) -> str:
+    def _summarise_includes(self) -> str:
         n = len(self._fields["includes"])
         return "all types" if n == 0 else f"{n} type{'s' if n != 1 else ''}"
 
-    def _summarize_excludes(self) -> str:
+    def _summarise_excludes(self) -> str:
         return f"{len(self._fields['excludes_presets'])} presets"
 
     def _set_follow(self, value: bool) -> None:

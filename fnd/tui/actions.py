@@ -1,4 +1,4 @@
-"""Action registry — single source of truth for the TUI's behavior surface.
+"""Action registry — single source of truth for the TUI's behaviour surface.
 
 Per plan §5 + §7: every TUI action is declared here once, with its default
 keybinding and the ``:command`` name. Footer hints, the help overlay, and the

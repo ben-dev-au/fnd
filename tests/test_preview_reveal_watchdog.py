@@ -3,7 +3,7 @@
 
 Symptom (data-reproduced under rapid navigation): selecting a result sometimes
 left its preview blank until the user navigated to a different result and back.
-Root cause: reveal is driven by one specific finalize task that rapid navigation
+Root cause: reveal is driven by one specific finalise task that rapid navigation
 can cancel before it reveals, or hang for seconds awaiting above-window chunks a
 cancelled mount never mounted — either leaves the active container invisible; and
 the scroll-only resume path (``_settled_instant_scroll``) never revealed at all.
@@ -76,7 +76,7 @@ def test_reveal_active_reveals_pre_reveal_active_container() -> None:
     assert not c.has_class("-pre-reveal"), (
         "reveal_active must lift -pre-reveal off the active container"
     )
-    # Rescuing a cut-short mount must also finish the finalize's terminal cleanup:
+    # Rescuing a cut-short mount must also finish the finalise's terminal cleanup:
     # hide the progress bar (else 'mount stuck at 49%') and clear the in-flight
     # latch (else a re-select of the same result dedups out).
     assert getattr(host, "bar_hidden", False), "reveal_active must hide the stuck progress bar"
@@ -108,8 +108,8 @@ def test_reveal_active_is_noop_with_no_active_container() -> None:
 async def test_watchdog_reveals_stranded_active_container(
     built_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A container activated invisibly with NO finalize to reveal it (the
-    cut-short / hung-finalize case) must be revealed by the bounded-time
+    """A container activated invisibly with NO finalise to reveal it (the
+    cut-short / hung-finalise case) must be revealed by the bounded-time
     watchdog — otherwise it stays invisible forever ('blank until I pick a
     different result')."""
     from fnd.tui.preview import tuning
@@ -133,7 +133,7 @@ async def test_watchdog_reveals_stranded_active_container(
         await pane.mount(container)
 
         # Activate invisibly exactly as a cold mount does, but never spawn a
-        # finalize task — the strand condition (finalize cancelled/hung).
+        # finalise task — the strand condition (finalise cancelled/hung).
         preview.activate_container(container, pre_reveal=True)
         assert container.has_class("-pre-reveal"), "setup — container should start invisible"
         assert preview.active is container

@@ -135,7 +135,7 @@ def shutdown_pool() -> None:
 
     Waits for in-flight work so the executor's internal pipes are
     released before we drop the reference, then forces a GC pass so
-    finalizers actually close the pipe FDs. The previous ``wait=False``
+    finalisers actually close the pipe FDs. The previous ``wait=False``
     plus no GC raced the next ``_get_pool()`` and left stale FDs
     visible to ``_posixsubprocess.fork_exec`` in the new worker spawn
     ("bad value(s) in fds_to_keep") — the exact symptom of the
@@ -148,7 +148,7 @@ def shutdown_pool() -> None:
         _pool.shutdown(wait=True, cancel_futures=True)
         _pool = None
     # ProcessPoolExecutor holds pipe FDs inside _processes / management
-    # thread state; the pipe finalizers release them only when those
+    # thread state; the pipe finalisers release them only when those
     # objects hit zero refcount. Force a GC pass before any next spawn.
     gc.collect()
 
