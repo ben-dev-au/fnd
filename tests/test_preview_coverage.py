@@ -30,7 +30,7 @@ from fnd.tui import FNDApp
 from fnd.tui.preview import tuning
 from fnd.tui.preview import warm_host as warm_host_mod
 from fnd.tui.preview.coverage import coverage_targets, filler_targets, neighbour_order
-from fnd.tui.preview.frozen import FrozenChunkView, freeze
+from fnd.tui.preview.frozen import FrozenChunk, FrozenChunkView, freeze
 from fnd.tui.preview.warm_host import WarmHost
 from fnd.tui.widgets.markdown import FNDMarkdown
 from tests._pilot_wait import settle, wait_until
@@ -705,20 +705,35 @@ async def test_a_resize_does_not_leave_frozen_chunks_painting_cropped_text(
         # — capture the widget, mount the capture in its place.
         container = presenter.active
         assert container is not None
-        # Both dimensions: `freeze` refuses a widget with no measured geometry,
-        # and a chunk can have a width before it has a height.
-        live = next(
-            (
-                (seq, w)
-                for seq, w in container.chunk_widgets.items()
-                if isinstance(w, FNDMarkdown) and w.size.width > 0 and w.size.height > 0
-            ),
-            None,
+        # Ask `freeze` itself which chunk is ready, rather than predicting its
+        # answer. Geometry is only one of its four refusal reasons: it also
+        # declines a hidden ancestor, an ancestor still at `-pre-reveal` opacity,
+        # and an unlaid table. Selecting on `size > 0` alone picked chunks it
+        # then refused, and the assertion below failed on the slowest CI runner
+        # while passing on the other two — the container had not been revealed
+        # yet, which the "preview is active" wait above does not cover.
+        picked: list[tuple[int, FNDMarkdown, FrozenChunk]] = []
+
+        def _capturable() -> bool:
+            live = presenter.active
+            if live is None:
+                return False
+            for seq, w in list(live.chunk_widgets.items()):
+                if not isinstance(w, FNDMarkdown):
+                    continue
+                captured = freeze(w, seq)
+                if captured is not None:
+                    picked.append((seq, w, captured))
+                    return True
+            return False
+
+        await wait_until(
+            pilot,
+            _capturable,
+            timeout=20.0,
+            message="no mounted chunk ever became capturable",
         )
-        assert live is not None, "no laid-out chunk to freeze"
-        seq, widget = live
-        captured = freeze(widget, seq)
-        assert captured is not None, "the chunk could not be captured"
+        seq, widget, captured = picked[0]
         view = FrozenChunkView(captured)
         await container.mount(view, before=widget)
         container.chunk_widgets[seq] = view
@@ -886,7 +901,6 @@ async def test_a_failed_mount_does_not_disable_warming_for_the_session() -> None
         host = WarmHost(cast("FNDApp", app))
 
         calls = {"n": 0}
-        real_mount = None
 
         async def failing_mount(*args: object, **kwargs: object) -> None:
             calls["n"] += 1
@@ -895,13 +909,13 @@ async def test_a_failed_mount_does_not_disable_warming_for_the_session() -> None
         # Fail the FIRST mount only, exactly as a transient teardown race would.
         import textual.screen
 
-        real_mount = textual.screen.Screen.mount
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(textual.screen.Screen, "mount", failing_mount)
             assert await host.ensure() is None, "the failing mount should yield no container"
-        assert calls["n"] == 1
+        # The context restored the real mount on exit — so this second call is
+        # the retry, and it is the whole test.
+        assert calls["n"] == 1, "the mount failed more than the once this models"
 
-        textual.screen.Screen.mount = real_mount  # type: ignore[method-assign]
         assert await host.ensure() is not None, (
             "warming stayed dead after one failed mount — the screen name was "
             "still taken and every retry raised on the duplicate"

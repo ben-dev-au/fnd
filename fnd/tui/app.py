@@ -151,6 +151,12 @@ def render_hint_bar(
     return joined
 
 
+# How long quit waits for the prefetch drainer to accept its cancellation
+# before leaving it to the interpreter. Short: nothing it is doing at this
+# point produces anything the app will use.
+_DRAINER_STOP_TIMEOUT = 0.5
+
+
 class FNDApp(App[None]):
     """Phase 5 shell."""
 
@@ -590,8 +596,22 @@ class FNDApp(App[None]):
         drainer = getattr(self._prefetch, "sink_drainer", None)
         if drainer is not None:
             drainer.cancel()
-            with contextlib.suppress(Exception):
-                await drainer
+            # BOUNDED, because `cancel()` is a request the drainer's current job
+            # can decline: `_mount_structural_async` awaits its sub-task under
+            # `except CancelledError: pass`, so the cancel is consumed there, the
+            # job returns normally and the drainer loops back to `q.get()` and
+            # blocks for ever. An unbounded await then never returns and the app
+            # cannot be quit without a kill. Reachable only if
+            # `PREVIEW_CACHE_MAX_FILES` rises above 1 — a tuning constant, which
+            # is not a thing to stake "the app can be closed" on.
+            #
+            # CancelledError is named explicitly: it is a BaseException, so it
+            # lands ON this await and walks straight through `suppress(Exception)`
+            # — taking the stall-watch stop and `super()._on_exit_app()` with it.
+            # `suppress` also swallows an OUTER cancel of the teardown itself,
+            # which is deliberate: finishing the teardown is the point.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await asyncio.wait_for(asyncio.shield(drainer), timeout=_DRAINER_STOP_TIMEOUT)
             self._prefetch.sink_drainer = None
         watch = getattr(self, "_stall_watch", None)
         if watch is not None:
