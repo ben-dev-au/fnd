@@ -9,10 +9,13 @@ arrow paints. All of that only exists in a running app.
 
 from __future__ import annotations
 
+import asyncio
 import textwrap
 from pathlib import Path
 
 import pytest
+from rich.style import Style
+from textual.containers import VerticalScroll
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
@@ -215,3 +218,131 @@ def test_probing_warmth_does_not_reorder_the_capture_store() -> None:
     assert list(store._files)[-1][0] == "onscreen", (
         "probing warmth reordered the store and undid the read-promotion"
     )
+
+
+@pytest.mark.asyncio
+async def test_every_state_is_actually_coloured(warm_index: Path) -> None:
+    """Each state must CARRY a colour, not merely differ from the others.
+
+    The first version of this check only asserted that cold and warm differed,
+    and it passed while the bug was live: warm inherited the stock icon style
+    and had no colour at all, so the filled arrow rendered plain white. "They
+    differ" was satisfied by one of them being unstyled.
+
+    Component styles only resolve inside a running app with the stylesheet
+    applied, which is why this cannot live beside the glyph tests.
+    """
+    app = FNDApp(index_dir=warm_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await run_search(pilot, app, "target")
+        tree = app.query_one("#results_pane", ResultsTree)
+        node = tree.root.children[0]
+        parent_id = node.data["group"].parent_id  # type: ignore[index]
+
+        # A distinctive base so "inherited the row's colour" is unmistakable.
+        # Comparing against a literal "white" string does NOT work: str(Color)
+        # is the full repr, which is how the first version of this test passed
+        # while every warm arrow was rendering plain white.
+        base = Style(color="magenta")
+        inherited = base.color
+
+        seen: dict[WarmState, object] = {}
+        for state in WarmState:
+            tree.apply_warm_states({parent_id: state})
+            span = tree.render_label(node, base, Style()).spans[0]
+            assert isinstance(span.style, Style)
+            colour = span.style.color
+            assert colour is not None, f"{state.name} arrow has no colour of its own"
+            assert colour != inherited, (
+                f"{state.name} arrow inherited the row's colour instead of its own"
+            )
+            seen[state] = colour
+
+        assert seen[WarmState.COLD] != seen[WarmState.READY], "cold and ready look the same"
+        assert seen[WarmState.WARMING] == seen[WarmState.READY], (
+            "warming and ready are both warm — they differ by glyph, not hue"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_arrow_colours_follow_the_theme(warm_index: Path) -> None:
+    """Read from component classes rather than baked-in hex, so a theme change
+    moves them. Cold is the score column's blue; warm is the theme accent —
+    the same variable the progress line's fill uses."""
+    app = FNDApp(index_dir=warm_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#results_pane", ResultsTree)
+        warm = tree.get_component_rich_style("results--warm").color
+        cold = tree.get_component_rich_style("results--cold").color
+        assert warm is not None
+        assert cold is not None
+        assert warm.triplet is not None
+        assert cold.triplet is not None
+        # Warm is the warm end of the spectrum, cold the cool end. Cheap, but
+        # it is the property the whole scheme rests on.
+        assert warm.triplet.red > warm.triplet.blue, "the warm arrow is not warm"
+        assert cold.triplet.blue > cold.triplet.red, "the cold arrow is not cold"
+
+
+@pytest.mark.asyncio
+async def test_warming_survives_the_gap_between_captures(warm_index: Path) -> None:
+    """``coverage_parent`` is what the arrows read as "being warmed now".
+
+    It used to be set around each individual capture and cleared in that
+    call's ``finally``. A capture is ~60 ms and is followed by a yield at
+    least as long, so the flag was unset more often than set, a poll twice a
+    second rarely caught it, and files appeared to go COLD straight to READY.
+
+    Sampled CONCURRENTLY, because the gap is what matters and it is invisible
+    from inside a capture: under the old code the flag was set on entry to
+    every capture and cleared the moment each one returned. Only an observer
+    running between them — which is exactly what the 2 Hz poll is — can tell
+    the two arrangements apart.
+    """
+    app = FNDApp(index_dir=warm_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await run_search(pilot, app, "target")
+        preview = app._preview
+        parent_id = app._search.groups[0].parent_id
+        chunks = await preview._coverage_chunks(parent_id)
+        assert len(chunks) >= 2, "setup — need at least two chunks to capture"
+
+        async def slow_capture(*_a: object, **_k: object) -> None:
+            # Long enough that the inter-capture backoff yields a real window.
+            await asyncio.sleep(0.03)
+            return None
+
+        preview._warm_host.capture = slow_capture  # type: ignore[assignment]
+
+        observed: list[str | None] = []
+        stop = asyncio.Event()
+
+        async def sampler() -> None:
+            while not stop.is_set():
+                observed.append(preview.coverage_parent)
+                await asyncio.sleep(0.005)
+
+        watcher = asyncio.create_task(sampler())
+        try:
+            await preview._capture_targets(
+                parent_id,
+                app._search.query_signature(),
+                preview.capture_width(app.query_one("#preview_pane", VerticalScroll)),
+                chunks,
+                [0, 1],
+                app._effective_match_spec,
+                lambda: True,
+            )
+        finally:
+            stop.set()
+            await watcher
+
+        assert observed, "setup — the sampler never ran"
+        assert None not in observed, (
+            "the warming marker was dropped between captures — the arrows would "
+            f"flicker back to cold mid-file: {observed}"
+        )
+        assert preview.coverage_parent is None, "the marker outlived the file"

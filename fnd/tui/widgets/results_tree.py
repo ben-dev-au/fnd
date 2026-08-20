@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any, ClassVar
 
 from rich.style import Style
@@ -257,9 +258,20 @@ class ResultsTree(Tree[dict[str, Any]]):
     ICON_BUILDING = "▷ "
     ICON_BUILDING_EXPANDED = "▽ "
 
-    #: Tokyo-night's accent blue, the same step the score column uses for its
-    #: middle tier — a cold file is not a problem, so it wears a normal colour.
-    COLD_COLOUR = "#7aa2f7"
+    COMPONENT_CLASSES: ClassVar[set[str]] = {
+        "results--warm",
+        "results--cold",
+    }
+
+    DEFAULT_CSS = """
+    /* Cold takes the accent blue the score column uses for its middle tier —
+       a file that has to build is not a problem, so it wears an ordinary
+       colour. Warm takes the theme accent. The two therefore differ in HUE,
+       not in brightness: at one cell a muted-versus-bright version of the
+       same glyph is very hard to read. */
+    ResultsTree > .results--cold { color: #7aa2f7; }
+    ResultsTree > .results--warm { color: $accent; }
+    """
 
     def render_label(self, node: TreeNode[Any], base_style: Style, style: Style) -> Text:
         """The stock label, with the toggle arrow chosen by warmth.
@@ -284,8 +296,19 @@ class ResultsTree(Tree[dict[str, Any]]):
         # lives in a private Textual module — importing it would let a minor
         # upgrade turn a decoration into an ImportError at app start.
         icon_style: Any = stock.spans[0].style if stock.spans else base_style
-        if state is WarmState.COLD and isinstance(icon_style, Style):
-            icon_style += Style(color=self.COLD_COLOUR)
+        # Colour EVERY state, not just cold. Inheriting the stock style for the
+        # warm ones left them in the plain foreground — the filled arrow came
+        # out white and nothing ever turned accent, which is the whole signal.
+        # Taken from a component class rather than a constant so it follows the
+        # theme, like the progress line's own fill does.
+        component = "results--cold" if state is WarmState.COLD else "results--warm"
+        colour = None
+        with contextlib.suppress(Exception):
+            # Component styles only resolve once the widget is in an app with
+            # the stylesheet applied; a tree built outside one has none.
+            colour = self.get_component_rich_style(component).color
+        if colour is not None and isinstance(icon_style, Style):
+            icon_style += Style(color=colour)
         # process_label, not the raw attribute: a label set from a plain str
         # has not been through the tree's own conversion yet.
         node_label = self.process_label(node.label).copy()

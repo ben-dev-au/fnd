@@ -134,21 +134,6 @@ def test_every_icon_is_the_width_the_tree_budgets_for(tree: ResultsTree) -> None
         assert cell_len(icon) == 2, repr(icon)
 
 
-def test_cold_and_warm_differ_in_hue_not_brightness(tree: ResultsTree) -> None:
-    """A muted-vs-accent version of the same glyph was rejected: at one cell
-    the two are hard to tell apart. Cold takes the score column's accent
-    blue, warm keeps the theme accent."""
-    node = file_node(tree, "a")
-    tree.apply_warm_states({"a": WarmState.COLD})
-    cold = tree.render_label(node, Style(), Style())
-    assert ResultsTree.COLD_COLOUR in str(cold.spans[0].style)
-
-    tree.apply_warm_states({"a": WarmState.WARMING})
-    warming = tree.render_label(node, Style(), Style())
-    assert ResultsTree.COLD_COLOUR not in str(warming.spans[0].style)
-    assert cold.spans[0].style != warming.spans[0].style
-
-
 def test_a_row_with_no_warmth_yet_renders_the_stock_arrow(tree: ResultsTree) -> None:
     """Before the first poll nothing is known. The tree must look exactly as
     it did rather than claim every file is cold."""

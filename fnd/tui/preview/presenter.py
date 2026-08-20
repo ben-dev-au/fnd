@@ -2880,6 +2880,31 @@ class PreviewPresenter:
         still_wanted: Callable[[], bool],
     ) -> int:
         """Capture ``targets`` of one file, standing down for anything on screen."""
+        # Held for the WHOLE file, not per capture. This is what the results
+        # arrows read as "being warmed right now", and a capture is ~60 ms with
+        # a yield of at least as long after it — so an attribute set only
+        # around the capture call was unset more often than set, and a poll
+        # twice a second almost never caught it. Files went cold straight to
+        # ready with the warming marker never appearing. It means "the file
+        # coverage is working on", so it lasts as long as that is true.
+        self.coverage_parent = parent_id
+        try:
+            return await self._capture_file_targets(
+                parent_id, query_sig, width, chunks, targets, spec, still_wanted
+            )
+        finally:
+            self.coverage_parent = None
+
+    async def _capture_file_targets(
+        self,
+        parent_id: str,
+        query_sig: str,
+        width: int,
+        chunks: list[FileChunk],
+        targets: list[int],
+        spec: MatchSpec,
+        still_wanted: Callable[[], bool],
+    ) -> int:
         captured = 0
         for index in targets:
             # The plan was ordered around where the cursor WAS. A pass can run
@@ -2919,12 +2944,10 @@ class PreviewPresenter:
                 await asyncio.sleep(0.05)
             started = time.perf_counter()
             self.coverage_activity = f"{parent_id[:8]}/seq{chunk.chunk_seq}"
-            self.coverage_parent = parent_id
             try:
                 capture = await self._warm_host.capture(chunk, width, match_spec=spec)
             finally:
                 self.coverage_activity = None
-                self.coverage_parent = None
             if capture is not None:
                 # Filed under the capture's OWN width, not the width requested.
                 # They should be equal — that is the point of the jig above —
