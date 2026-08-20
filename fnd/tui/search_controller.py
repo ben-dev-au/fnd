@@ -5,10 +5,28 @@ match spec, the result groups, and the search trace; ``run()`` is the
 single query entry point. Preview-cache invalidation inside ``run()``
 and ``clear_results()`` still reaches through the app while the preview
 subsystem awaits extraction.
+
+``run()`` is split three ways so the blocking part can leave the event
+loop:
+
+* **prepare** — on the loop. Parsing, validation and spec building are
+  cheap, and a malformed query has to raise its notice immediately.
+  Produces a frozen :class:`_SearchRequest`.
+* **execute** — on a worker thread. Only the actual search. It reads the
+  request and the searcher and writes nothing, which is what makes a
+  superseded search harmless rather than a race.
+* **commit** — back on the loop. Cache invalidation, DOM teardown and the
+  results rebuild, in the order they have always run, and skipped
+  entirely if a newer query has been issued since.
+
+Textual cancels a superseded thread worker but cannot interrupt it, so
+the generation guard at the top of ``_commit`` is the actual mechanism
+that keeps a stale result out, not a belt-and-braces extra.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from textual.widgets import Static
@@ -16,6 +34,8 @@ from textual.widgets import Static
 from fnd.matching import MatchSpec
 from fnd.query import FileGroup, Hit, Searcher
 from fnd.rerank import RankingProfile, profile_from_config
+from fnd.tui.progress.facility import ProgressSession
+from fnd.tui.progress.operations import SEARCH
 
 if TYPE_CHECKING:
     from textual.timer import Timer
@@ -26,6 +46,33 @@ if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
 
 __all__ = ["SearchController"]
+
+
+@dataclass(frozen=True, slots=True)
+class _SearchRequest:
+    """Everything the worker needs, frozen at prepare time.
+
+    Deliberately holds no reference to the app or the controller: the
+    thread must not be able to observe or mutate state that the loop is
+    concurrently changing.
+    """
+
+    generation: int
+    query: str
+    lexical: str
+    filter_prefix: str
+    metadata_filter: str | None
+    collection: str | list[str] | None
+    active_sources: list[str] | None
+    tag_filter: TagFilter | None
+    sections_per_file: int
+    sections_score_threshold: float
+    auto_fuzzy_enabled: bool
+    min_term_chars: int
+    match_spec: MatchSpec
+    evidence_spec: MatchSpec
+    profile: RankingProfile
+    intent: str | None
 
 
 class _PrefixingSearcher:
@@ -124,6 +171,12 @@ class SearchController:
         # collection's ``ranking_profile`` field once the scope exists;
         # default profile (all-zero) is the BM25 identity.
         self.ranking_profile: RankingProfile = RankingProfile()
+        # Monotonic query counter. ``_prepare`` bumps it; ``_commit`` refuses
+        # any result that does not carry the current value. This is the whole
+        # of the staleness defence — a superseded thread worker still runs to
+        # completion and still arrives, it just finds its generation gone.
+        self._generation: int = 0
+        self._committed_generation: int = 0
 
     def resolve_profile(self) -> RankingProfile:
         """Pick the ranking profile to apply to search results.
@@ -146,22 +199,94 @@ class SearchController:
         return profile_from_config(self._app._config.ranking_profile(name))
 
     def run(self, query: str) -> None:
-        if self.searcher is None:
+        """Issue a query. Returns immediately; the search runs off the loop."""
+        request = self._prepare(query)
+        if request is None:
             return
+        session = self._app._progress.begin(SEARCH, sampler=self._sample)
+        self._app.run_worker(
+            lambda: self._execute_and_commit(request, session),
+            thread=True,
+            exclusive=True,
+            group="search",
+        )
+
+    def _searches_running(self) -> bool:
+        """Whether any search worker is still pending or executing.
+
+        Asked of Textual rather than counted here, because a count can drift
+        and this one cannot be allowed to. Counting was tried: `run` bumped a
+        counter and both commit paths decremented it — but `exclusive=True`
+        makes Textual cancel the previous worker SYNCHRONOUSLY inside
+        `add_worker`, before the new one starts, so a worker cancelled before
+        its coroutine ever ran reached neither commit path and the count
+        leaked. Two searches dispatched in one tick do it, which Enter
+        auto-repeat produces, and the leak is permanent: the count never
+        returns to zero, so `reload()` is dead for the rest of the session and
+        an external reindex silently stops being picked up.
+
+        The worker manager's own state cannot drift out of step with the
+        workers it owns — a cancelled worker leaves PENDING/RUNNING by itself.
+        """
+        from textual.worker import WorkerState
+
+        live = {WorkerState.PENDING, WorkerState.RUNNING}
+        try:
+            return any(w.group == "search" and w.state in live for w in self._app.workers)
+        except Exception:
+            # Never let a reload decision take a search down. Skipping the
+            # reload is free: the next idle query picks the new generation up.
+            return True
+
+    @property
+    def idle(self) -> bool:
+        """True when every issued query has been committed or discarded.
+
+        The signal tests should wait on — never a fixed number of pauses.
+        """
+        return self._committed_generation >= self._generation
+
+    def _sample(self, session: ProgressSession) -> bool:
+        """Keep the line up while this query is still the current one."""
+        if self.idle:
+            return False
+        session.enter("query")
+        return True
+
+    # ── prepare (event loop) ─────────────────────────────────────
+
+    def _prepare(self, query: str) -> _SearchRequest | None:
+        """Parse and validate on the loop, so a malformed query raises its
+        notice immediately rather than a thread-hop later. Returns None when
+        there is nothing to execute."""
+        if self.searcher is None:
+            return None
+        was_idle = not self._searches_running()
+        # Claim the generation FIRST, before anything that can fail. _fail()
+        # marks the current generation committed, so allocating it after the
+        # parse meant a malformed query marked an IN-FLIGHT search's
+        # generation as committed — that worker then passed the guard in
+        # _commit, restored its stale results and wiped the error notice the
+        # user had just been shown.
+        self._generation += 1
+        generation = self._generation
+
         # Re-point the searcher at the latest committed generation so a
         # reindex (in-app or external `fnd reindex`) that landed while the
         # app is open shows up on this query — no restart. Near-free
         # (~0.1 ms) when nothing changed; ignore a vanished index dir.
+        #
+        # Only while nothing is executing. reload() reassigns the Searcher's
+        # inner snapshot, and a worker mid-search reads that attribute more
+        # than once (fusion issues several sub-queries), so reloading under it
+        # could serve one search from two index generations. Skipping is free:
+        # the next idle query picks the new generation up.
         import contextlib as _contextlib
 
-        with _contextlib.suppress(FileNotFoundError, RuntimeError, ValueError):
-            self.searcher.reload()
-        # A new query must always re-render the first result, even when it
-        # lands on the same (parent, seq) as the last one — release the
-        # in-flight coalescing latch so this query's dispatch isn't
-        # mistaken for a redundant same-tick duplicate of the previous.
-        self._app._preview.inflight_target = None
-        from fnd.filter_dsl import FilterError
+        if was_idle:
+            with _contextlib.suppress(FileNotFoundError, RuntimeError, ValueError):
+                self.searcher.reload()
+
         from fnd.query_errors import QueryError
         from fnd.query_plan import QueryPlan
 
@@ -170,24 +295,18 @@ class SearchController:
         try:
             plan = QueryPlan.from_user_text(query)
         except QueryError as e:
-            self._show_query_notice(e)
-            self.groups = []
-            # Drop the last good trace so :explain can't show a stale plan (#61).
-            self.latest_trace = None
-            self._app._results.refresh()
-            return
+            self._fail(e)
+            return None
         self._clear_query_notice()
         lexical = plan.lexical
-        metadata_filter = plan.metadata_filter
 
-        self.current_query = query  # save the original (with [...]) for history
+        defaults = self._app._config.defaults if self._app._config else None
         # Build a comprehensive MatchSpec covering literal stems +
         # fuzzy-AUTO variants + synonym expansions, mirroring the
         # cascade's match semantics. Every preview render this query
         # drives reads from this single spec so the highlight rules
         # never drift from the search rules.
-        defaults = self._app._config.defaults if self._app._config else None
-        self.match_spec = MatchSpec.from_query(
+        match_spec = MatchSpec.from_query(
             lexical,
             synonyms=self.synonyms,
             auto_fuzzy=defaults.fuzzy_enabled if defaults else True,
@@ -204,12 +323,13 @@ class SearchController:
         # while the user stares at a paragraph with none of their term in it.
         # An explicit ``term~N`` survives here: the user asked for fuzzy, so a
         # fuzzy hit IS what they searched for.
-        self.evidence_spec = MatchSpec.from_query(
+        evidence_spec = MatchSpec.from_query(
             lexical,
             synonyms=self.synonyms,
             auto_fuzzy=False,
             multicolour=defaults.multicolour_highlights if defaults else True,
         )
+
         # Phase F: build the filter scaffolding (kind:, mtime:) and
         # multi-collection scope (c:) as a SEPARATE prefix. The lexical
         # part stays clean so the §9d fusion phrase-pass can wrap it
@@ -245,31 +365,161 @@ class SearchController:
         # collection names on spaces, so a multi-collection scope leaked
         # other collections and dropped spaced names like ``SSD Exam``.
         cols = self._app._scope.collections
-        collection_scope: str | list[str] | None = cols or None
-        filter_prefix = " ".join(filter_clauses)
         cfg_defaults = self._app._config.defaults if self._app._config else None
-        sections_cap = cfg_defaults.sections_per_file_max if cfg_defaults else 200
-        sections_threshold = cfg_defaults.sections_score_threshold if cfg_defaults else 0.5
+
         try:
-            self.groups = self._search_layered(
-                lexical=lexical,
-                filter_prefix=filter_prefix,
-                limit=50,
-                sections_per_file=sections_cap,
-                sections_score_threshold=sections_threshold,
-                collection=collection_scope,
-                metadata_filter=metadata_filter,
-                active_sources=list(self._app._scope.active_sources) or None,
-                tag_filter=tag_filter,
-            )
+            profile = self.resolve_profile()
+        except Exception:
+            profile = self.ranking_profile
+
+        return _SearchRequest(
+            generation=generation,
+            query=query,
+            lexical=lexical,
+            filter_prefix=" ".join(filter_clauses),
+            metadata_filter=plan.metadata_filter,
+            # Copied, not referenced: the scope panel mutates these lists on
+            # the event loop while the worker is reading them.
+            collection=list(cols) if cols else None,
+            active_sources=list(self._app._scope.active_sources) or None,
+            tag_filter=tag_filter,
+            sections_per_file=cfg_defaults.sections_per_file_max if cfg_defaults else 200,
+            sections_score_threshold=(
+                cfg_defaults.sections_score_threshold if cfg_defaults else 0.5
+            ),
+            auto_fuzzy_enabled=defaults.fuzzy_enabled if defaults else True,
+            min_term_chars=defaults.fuzzy_min_term_chars if defaults else 0,
+            match_spec=match_spec,
+            evidence_spec=evidence_spec,
+            profile=profile,
+            intent=self.intent,
+        )
+
+    def _fail(self, err: Exception) -> None:
+        """A query that cannot run: show the notice and drop the stale trace
+        so :explain can't display a plan for a query that never executed."""
+        self._show_query_notice(err)
+        self.groups = []
+        self.latest_trace = None
+        self._committed_generation = self._generation
+        self._app._results.refresh()
+
+    # ── execute (worker thread) ──────────────────────────────────
+
+    def _execute_and_commit(self, request: _SearchRequest, session: ProgressSession) -> None:
+        """Worker body. Marshals every outcome back to the loop — including
+        failures, so a raising search can't leave the line up forever."""
+        from fnd.filter_dsl import FilterError
+        from fnd.query_errors import QueryError
+
+        try:
+            groups, trace = self._execute(request)
         except (QueryError, FilterError) as e:
-            self._show_query_notice(e)
-            self.groups = []
-            # Drop the last good trace so :explain can't show a stale plan (#61).
-            self.latest_trace = None
-            self._app._results.refresh()
+            self._marshal(self._commit_failure, request, e, session)
             return
+        except Exception as e:  # never strand the UI on an unexpected search bug
+            self._marshal(self._commit_failure, request, e, session)
+            return
+        self._marshal(self._commit, request, groups, trace, session)
+
+    def _marshal(self, fn: Any, *args: Any) -> None:
+        """Hop back to the event loop with the outcome.
+
+        A search can still be in flight when the app shuts down — the user
+        quits mid-query, or a test leaves its ``run_test`` block — and the
+        commit then has no DOM left to write to. That is not an error, and it
+        must not surface as a failed worker. A failure while the app IS still
+        running is a real bug, so it still propagates.
+        """
+        try:
+            self._app.call_from_thread(fn, *args)
+        except Exception:
+            if getattr(self._app, "is_running", False):
+                raise
+
+    def _execute(self, request: _SearchRequest) -> tuple[list[FileGroup], SearchTrace | None]:
+        """The blocking part, off the loop. Reads the request and the searcher;
+        writes nothing."""
+        # Bound ONCE. Reading self.searcher again below is a time-of-check to
+        # time-of-use gap: anything on the loop that reassigns it between the
+        # reads would pass a different snapshot — or None — into the search.
+        handle = self.searcher
+        if handle is None or not request.lexical.strip():
+            return [], None
+        from fnd.layered import search_layered
+
+        searcher = (
+            _PrefixingSearcher(handle, prefix=request.filter_prefix)
+            if request.filter_prefix
+            else handle
+        )
+        groups, trace = search_layered(
+            searcher,  # type: ignore[arg-type]
+            query=request.lexical,
+            limit=50,
+            sections_per_file=request.sections_per_file,
+            sections_score_threshold=request.sections_score_threshold,
+            collection=request.collection,
+            synonyms=self.synonyms,
+            metadata_filter=request.metadata_filter,
+            active_sources=request.active_sources,
+            tag_filter=request.tag_filter,
+            intent=request.intent,
+            profile=request.profile,
+            auto_fuzzy_enabled=request.auto_fuzzy_enabled,
+            min_term_chars=request.min_term_chars,
+            with_trace=True,
+        )
+        return groups, trace
+
+    # ── commit (event loop) ──────────────────────────────────────
+
+    def _commit_failure(
+        self, request: _SearchRequest, err: Exception, session: ProgressSession
+    ) -> None:
+        if request.generation != self._generation:
+            session.close()
+            return
+        self._fail(err)
+        session.close()
+
+    def _commit(
+        self,
+        request: _SearchRequest,
+        groups: list[FileGroup],
+        trace: SearchTrace | None,
+        session: ProgressSession,
+    ) -> None:
+        """Land the results. Everything below has always run AFTER the search
+        returned; keeping it whole here preserves that order."""
+        # Superseded. Textual cancels the worker but cannot interrupt it, so a
+        # stale search always runs to completion and arrives here — this guard
+        # is what keeps it from touching anything.
+        if request.generation != self._generation:
+            session.close()
+            return
+        self._committed_generation = request.generation
+        # Everything below runs on the loop and is real, measurable work —
+        # cache teardown, the results tree rebuild, the filters aggregation.
+        # The plan names it, so enter it: leaving the session in "query" for
+        # the whole operation capped the line at that phase's share and meant
+        # calibration never saw a "results" duration, so its weight stayed at
+        # the seed forever.
+        session.enter("results")
+
         self._clear_query_notice()
+        self.latest_trace = trace
+        self.groups = groups
+        self.match_spec = request.match_spec
+        self.evidence_spec = request.evidence_spec
+        self.current_query = request.query  # the original (with [...]) for history
+
+        # A new query must always re-render the first result, even when it
+        # lands on the same (parent, seq) as the last one — release the
+        # in-flight coalescing latch so this query's dispatch isn't
+        # mistaken for a redundant same-tick duplicate of the previous.
+        self._app._preview.inflight_target = None
+
         # New query → invalidate BOTH caches:
         # * _chunk_cache (decoded chunk data; rebuilt by next decode)
         # * _preview_cache (mounted widgets; their highlights were baked
@@ -331,6 +581,7 @@ class SearchController:
         self._prefetch_timer = self._app.set_timer(
             0.5, self._app._prefetch.prefetch_top_results, name="prefetch-defer"
         )
+        session.close()
 
     def _show_query_notice(self, err: Exception) -> None:
         """Render a calm, practical line below the query bar for a malformed
@@ -359,58 +610,6 @@ class SearchController:
         if notice.display:
             notice.update("")
             notice.display = False
-
-    def _search_layered(
-        self,
-        *,
-        lexical: str,
-        filter_prefix: str,
-        limit: int,
-        sections_per_file: int,
-        sections_score_threshold: float = 0.0,
-        collection: str | list[str] | None,
-        metadata_filter: str | None,
-        active_sources: list[str] | None,
-        tag_filter: TagFilter | None = None,
-    ) -> list[FileGroup]:
-        """Master plan §9c + §9d wiring + UX-pass-4 §1 strong-signal regime.
-
-        Delegates the regime decision to :func:`fnd.layered.search_layered`
-        so the TUI and CLI share one entry point. ``filter_prefix`` is
-        applied via :class:`_PrefixingSearcher` so fusion + cascade +
-        the regime probe all see the same effective query without any
-        signature changes.
-        """
-        if self.searcher is None or not lexical.strip():
-            self.latest_trace = None
-            return []
-        from fnd.layered import search_layered
-
-        searcher = (
-            _PrefixingSearcher(self.searcher, prefix=filter_prefix)
-            if filter_prefix
-            else self.searcher
-        )
-        defaults = self._app._config.defaults if self._app._config else None
-        groups, trace = search_layered(
-            searcher,  # type: ignore[arg-type]
-            query=lexical,
-            limit=limit,
-            sections_per_file=sections_per_file,
-            sections_score_threshold=sections_score_threshold,
-            collection=collection,
-            synonyms=self.synonyms,
-            metadata_filter=metadata_filter,
-            active_sources=active_sources,
-            tag_filter=tag_filter,
-            intent=self.intent,
-            profile=self.ranking_profile,
-            auto_fuzzy_enabled=defaults.fuzzy_enabled if defaults else True,
-            min_term_chars=defaults.fuzzy_min_term_chars if defaults else 0,
-            with_trace=True,
-        )
-        self.latest_trace = trace
-        return groups
 
     def query_signature(self) -> str:
         """Stable signature for the current query — match-bearing

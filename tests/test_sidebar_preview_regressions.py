@@ -21,7 +21,7 @@ from textual.widgets import Tree
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from tests._pilot_wait import safe_pause, safe_press, settle, wait_until
+from tests._pilot_wait import run_search, safe_pause, safe_press, settle, wait_until
 
 
 @pytest.fixture
@@ -70,8 +70,7 @@ async def test_preview_loads_after_back_to_back_queries(built_index: Path) -> No
         await pilot.pause()
         assert app._search.groups, "test setup — initial query produced no results"
         assert app._preview.parent_id is not None
-        app._search.run("penguin")
-        await pilot.pause()
+        await run_search(pilot, app, "penguin")
         assert app._search.groups, "test setup — second query produced no results"
         assert app._preview.parent_id is not None, (
             "preview pane stayed empty on the second query — the cursor "

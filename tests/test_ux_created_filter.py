@@ -17,6 +17,7 @@ from textual.widgets.tree import TreeNode
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import run_search
 
 
 @pytest.fixture
@@ -125,8 +126,7 @@ async def test_created_composes_into_the_query(
 
         searcher._filtered_raw_hits = spy  # type: ignore[method-assign]
         app._scope.filter_created = "week"
-        app._search.run("glimmer")
-        await pilot.pause()
+        await run_search(pilot, app, "glimmer")
         assert any("created:" in q for q in seen), seen
 
 

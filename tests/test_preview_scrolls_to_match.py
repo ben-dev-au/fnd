@@ -11,7 +11,7 @@ from textual.widgets import Tree
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.line_buffer import LineBufferPreview
-from tests._pilot_wait import safe_pause, settle, wait_until
+from tests._pilot_wait import run_search, safe_pause, settle, wait_until
 
 
 @pytest.fixture
@@ -54,7 +54,7 @@ async def test_flat_preview_scrolls_after_second_query(built_index: Path) -> Non
         # this token the predicate can match the first query's already-
         # scrolled buffer before the second query has rewired it.
         pre_fv = app._flat.active_buffer._fv  # type: ignore[union-attr]
-        app._search.run("blue penguin sandwich")
+        await run_search(pilot, app, "blue penguin sandwich")
         await wait_until(
             pilot,
             lambda: (

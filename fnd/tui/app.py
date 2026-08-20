@@ -61,6 +61,7 @@ from fnd.tui.preview_scroll import (
 )
 from fnd.tui.preview_scrollbar import MatchAwareScroll, ThinScrollBarRender
 from fnd.tui.progress import FNDProgressBar, ProgressFacility, ProgressSession
+from fnd.tui.progress.operations import IndexProgressTracker, PreviewProgressTracker
 from fnd.tui.results_labels import (
     _elide_middle_keep_suffix,
 )
@@ -431,15 +432,37 @@ class FNDApp(App[None]):
         # fnd/tui/preview/lazy_mount.py.
         self._lazy = LazyMounter(self)
         self._progress = ProgressFacility(self)
+        # Watches the preview pipeline and drives the progress line from it, so
+        # the mount path never has to report its own progress. See
+        # fnd/tui/progress/operations.py.
+        self._nav_progress = PreviewProgressTracker(self)
+        # Mirrors a running index onto the same line. A background run
+        # (auto-resume on launch) otherwise surfaces nothing but a toast.
+        self._index_progress = IndexProgressTracker(self)
         # Prefetch warming pipeline (sink queue + drainer task started in
         # on_mount); see fnd/tui/preview/prefetch.py.
         self._prefetch = PrefetchEngine(self)
         # Intra-file match navigation (n/b); see fnd/tui/match_navigator.py.
         self._match_nav = MatchNavigator(self)
 
+    def _tick_warmth(self) -> None:
+        """Poll per-file readiness onto the results arrows.
+
+        Suppressed whole: this is decoration on a timer, and Textual hands a
+        raising timer callback to ``App._handle_exception``, which takes the
+        app down. A cosmetic poll must never be able to do that.
+        """
+        with contextlib.suppress(Exception):
+            self._results.refresh_warmth()
+
     def open_progress(self, phase: str = "", *, total: int = 1) -> ProgressSession:
         """Open a new ProgressSession. Use as a context manager."""
         return self._progress.open(phase, total=total)
+
+    def on_unmount(self) -> None:
+        """Stop the progress tick loop and persist what the phases actually
+        cost, so the next session's pacing starts calibrated."""
+        self._progress.shutdown()
 
     # ── Layout ────────────────────────────────────────────────────
 
@@ -600,6 +623,13 @@ class FNDApp(App[None]):
         # Tokyo-night theme: muted blue/teal pastel palette per user request.
         self.theme = "tokyo-night"
         self._prefetch.start()
+        # Repaint the results arrows as coverage warms files behind them.
+        # Polled, not pushed: warmth moves when a capture lands AND when
+        # coverage steps to the next file, and the second has no single write
+        # to hook. Two hertz is slower than captures land (~10/s) and far
+        # faster than a file changes state; measured at 0.08 ms a tick over a
+        # 50-file result set, which is 0.02% of the period.
+        self.set_interval(0.5, self._tick_warmth, name="results-warmth")
         # Opt-in diagnostic: names whatever held the event loop when it
         # stops answering. Off unless _FND_STALL_WATCH is set.
         self._stall_watch = StallWatch.from_env(self)
@@ -682,10 +712,14 @@ class FNDApp(App[None]):
             with contextlib.suppress(Exception):
                 self.query_one(f"#{panel_id}").add_class("collapsed")
         self._refresh_status()
+        # Focus the query bar first and let the search take it back: results
+        # no longer exist synchronously after ``run()``, so there is nothing to
+        # branch on here. ``_refresh_results_tree`` focuses the tree itself once
+        # groups land, and skips that when there are none — the same end state
+        # the old ``not self._search.groups`` check produced.
+        self.query_one("#query_bar", Input).focus()
         if self._initial_query:
             self._search.run(self._initial_query)
-        if not self._initial_query or not self._search.groups:
-            self.query_one("#query_bar", Input).focus()
         # Auto-resume any interrupted reindex from a previous fnd session.
         # Runs in background (no modal); user can click the footer
         # indicator or invoke `action_reindex_default` to view progress.

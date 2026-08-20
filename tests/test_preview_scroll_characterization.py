@@ -25,7 +25,7 @@ from fnd.query import FileGroup
 from fnd.tui import FNDApp
 from fnd.tui.line_buffer import LineBufferPreview
 from fnd.tui.preview.presenter import PreviewPresenter
-from tests._pilot_wait import safe_pause, settle, wait_stable, wait_until
+from tests._pilot_wait import run_search, safe_pause, settle, wait_stable, wait_until
 
 
 @pytest.fixture
@@ -69,7 +69,7 @@ async def test_requery_same_flat_file_lands_on_new_match(built_index: Path) -> N
         # this token the predicate can match the first query's already-
         # scrolled buffer before the second has rewired it.
         pre_fv = app._flat.active_buffer._fv  # type: ignore[union-attr]
-        app._search.run("blue penguin sandwich")
+        await run_search(pilot, app, "blue penguin sandwich")
         await wait_until(
             pilot,
             lambda: (
@@ -294,7 +294,7 @@ async def _coldnav_run_query_and_prefetch(app: FNDApp, pilot: Pilot[None]) -> Fi
     """Run the query, wait for >=3 result groups, then wait for the rank-1
     (non-first) file to be prefetched + pre-mounted so navigation hits the
     cold/prefetched-container code path. Returns the rank-1 group."""
-    app._search.run("quartzfin")
+    await run_search(pilot, app, "quartzfin")
     sig = app._search.query_signature()
     await wait_until(
         pilot,

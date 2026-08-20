@@ -12,6 +12,7 @@ from textual.widgets import Static
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import run_search
 
 
 def _write(p: Path, body: str) -> None:
@@ -46,14 +47,14 @@ async def test_malformed_proximity_notice_then_clears(cfg: Config, md_index: Pat
     app = FNDApp(index_dir=md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("{60}")
-        await pilot.pause()
+        # A malformed query never reaches the worker: prepare rejects it on
+        # the loop so the notice is up on the same frame.
+        await run_search(pilot, app, "{60}")
         notice = app.query_one("#query_notice", Static)
         assert notice.display is True
         assert "proximity" in str(notice.render()).lower()
 
-        app._search.run("templates")
-        await pilot.pause()
+        await run_search(pilot, app, "templates")
         assert app.query_one("#query_notice", Static).display is False
 
 
@@ -64,11 +65,9 @@ async def test_malformed_query_resets_explain_trace(cfg: Config, md_index: Path)
     app = FNDApp(index_dir=md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("templates")
-        await pilot.pause()
+        await run_search(pilot, app, "templates")
         assert app._search.latest_trace is not None
         app._search.run("{60}")  # malformed → rejected at QueryPlan
-        await pilot.pause()
         assert app._search.latest_trace is None
 
 
@@ -83,14 +82,14 @@ async def test_layered_error_resets_explain_trace(
     app = FNDApp(index_dir=md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("templates")
-        await pilot.pause()
+        await run_search(pilot, app, "templates")
         assert app._search.latest_trace is not None
 
-        def _boom(**_kwargs: object) -> list[object]:
+        def _boom(_request: object) -> tuple[list[object], object]:
             raise QuerySyntaxError("boom")
 
-        monkeypatch.setattr(app._search, "_search_layered", _boom)
-        app._search.run("anything")
-        await pilot.pause()
+        # The search itself now runs on a worker thread, so this is where a
+        # layered-path error surfaces; _commit_failure marshals it back.
+        monkeypatch.setattr(app._search, "_execute", _boom)
+        await run_search(pilot, app, "anything")
         assert app._search.latest_trace is None

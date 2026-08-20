@@ -11,7 +11,9 @@ from typing import TYPE_CHECKING, Any
 from textual.widgets import Tree
 
 from fnd.tui.match_evidence import evidence_spec_for_pass, has_paintable_match
+from fnd.tui.preview.warmth import WarmState
 from fnd.tui.results_labels import _format_file_label, _format_hit_label, _styled_parent_label
+from fnd.tui.widgets.results_tree import ResultsTree
 
 if TYPE_CHECKING:
     from textual.widgets.tree import TreeNode
@@ -51,6 +53,19 @@ class ResultsView:
         self._app._preview.cancel_pending_load()
         tree = self._app.query_one("#results_pane", Tree)
         tree.clear()
+        if isinstance(tree, ResultsTree):
+            # Every row starts COLD, which after a new query is simply true:
+            # the search reset clears the capture store, so nothing is warm.
+            #
+            # Clearing the map instead was the first attempt and it did NOT
+            # work. An unknown row falls through to the stock arrow, and
+            # Textual's ICON_NODE is byte-identical to the ready glyph — so
+            # "no claim" rendered as "instant jump" for every row until the
+            # next poll, at exactly the moment nothing was warm. Anything the
+            # tree cannot answer has to fail towards COLD, never towards READY.
+            tree.warm_states = dict.fromkeys(
+                (g.parent_id for g in self._app._search.groups), WarmState.COLD
+            )
         max_score = max((g.top_score for g in self._app._search.groups), default=0.0)
         budget = self.file_label_budget(tree)
         # Rows are never filtered on paintability — see fnd.tui.match_evidence.
@@ -135,6 +150,30 @@ class ResultsView:
                         _format_file_label(data["group"], max_score=max_score, name_budget=budget)
                     )
                 )
+
+    def refresh_warmth(self) -> bool:
+        """Repaint any file row whose readiness changed.
+
+        Polled rather than pushed. Warmth changes from two directions — a
+        capture landing, and coverage moving to the next file — and the second
+        has no single write to hook, so a notification would have to be
+        emitted from several places and kept in step with them.
+
+        Cheap enough to poll: one query-signature and one width resolution,
+        then a store lookup per listed hit. The listed hits are already capped
+        per file by ``defaults.sections_per_file_max``.
+        """
+        try:
+            tree = self._app.query_one("#results_pane", ResultsTree)
+        except Exception:
+            return False
+        states = self._app._preview.warm_states()
+        if states is None:
+            # Cannot be answered right now — keep what the rows already show.
+            # An EMPTY map is different: it means there are no files, and the
+            # rows should be cleared rather than left claiming anything.
+            return False
+        return tree.apply_warm_states(states)
 
     def refit_after_resize(self) -> None:
         self._app._refresh_status()  # preview title

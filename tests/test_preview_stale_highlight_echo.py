@@ -29,7 +29,7 @@ from textual.widgets import Tree
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from tests._pilot_wait import safe_pause
+from tests._pilot_wait import safe_pause, wait_until
 
 
 @pytest.fixture
@@ -114,8 +114,12 @@ async def test_two_rapid_queries_leave_the_preview_on_the_cursor_row(built_index
     app = FNDApp(index_dir=built_index, initial_query="apple")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
+        # Both issued WITHOUT waiting in between: the interleaving of the two
+        # tree rebuilds' highlight events is the whole point of this test, and
+        # gating the first one on idle serialises them and tests nothing.
         app._search.run("apples")
         app._search.run("apple")
+        await wait_until(pilot, lambda: app._search.idle, message="searches never settled")
         for _ in range(12):
             await safe_pause(pilot)
 

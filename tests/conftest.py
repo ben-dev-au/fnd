@@ -236,6 +236,27 @@ def isolated_indexer_resume_state(  # pyright: ignore[reportUnusedFunction]
 
 
 @pytest.fixture(autouse=True)
+def isolated_progress_calibration(  # pyright: ignore[reportUnusedFunction]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Generator[Path]:
+    """Point the progress line's phase-duration log at a per-test temp file.
+
+    The calibrator learns from every completed operation, so without this any
+    test that drives a preview load would write the developer's real
+    calibration — and read it back, making the bar's pacing (and therefore
+    these tests) depend on whatever the last interactive session measured.
+    Reset the in-memory store on both sides: it is module-global, so a stale
+    one leaks between tests just as readily as the file does."""
+    from fnd.tui.progress import calibration
+
+    target = tmp_path / "progress_calibration.jsonl"
+    monkeypatch.setattr("fnd.paths.progress_calibration_path", lambda: target)
+    calibration.reset_for_tests()
+    yield target
+    calibration.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _quiet_preview_load_paths() -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
     """Pin debounce + prefetch to 0 so cold-load assertions don't race
     the background worker. Pydantic v2 caches validators at class

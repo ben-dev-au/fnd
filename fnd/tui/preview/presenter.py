@@ -23,7 +23,7 @@ from textual.widgets import Static, Tree
 from fnd.matching import MatchSpec
 from fnd.render import render_chunk_pieces
 from fnd.tui.line_buffer import LineBufferPreview, build_rendered_document
-from fnd.tui.preview import tuning
+from fnd.tui.preview import decode_progress, tuning
 from fnd.tui.preview.coverage import coverage_targets, filler_targets, neighbour_order
 from fnd.tui.preview.frozen import (
     FrozenChunkView,
@@ -32,6 +32,7 @@ from fnd.tui.preview.frozen_store import ChunkCaptureStore
 from fnd.tui.preview.liveness import is_condemned, is_live
 from fnd.tui.preview.visibility import set_node_class, set_preview_visibility
 from fnd.tui.preview.warm_host import WarmHost
+from fnd.tui.preview.warmth import WarmState, warm_state
 from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
 from fnd.tui.preview_scroll import ScrollAnchor
 from fnd.tui.preview_scrollbar import MatchAwareScroll
@@ -161,6 +162,10 @@ class PreviewPresenter:
         # when the loop stops answering. A plain string: read during a stall,
         # when touching live widgets would be its own hazard.
         self.coverage_activity: str | None = None
+        # The file coverage is capturing right now, in full. Distinct from
+        # coverage_activity, which is a truncated diagnostic string for the
+        # stall watch; this one is read to paint a row, so it has to be a key.
+        self.coverage_parent: str | None = None
         # Cursor position the running coverage plan was built for.
         self._coverage_anchor: tuple[str, int] | None = None
         self._stale_strip_repair: asyncio.Task[None] | None = None
@@ -221,6 +226,9 @@ class PreviewPresenter:
         # cancellation; the finally runs a tick later and would otherwise race
         # the reset and re-pollute it ("stuck mid-mount after a new query").
         self.reset_generation: int = 0
+        # Generation for the flat decode's line-count reporting, so a
+        # superseded decode cannot report onto its successor's count.
+        self.decode_token = 0
         # Bounded-time reveal backstop timer (see _arm_reveal_watchdog). Re-armed
         # on every pre-reveal activation; disarmed when the container is revealed.
         self._reveal_watchdog: object | None = None
@@ -556,11 +564,33 @@ class PreviewPresenter:
         self._app._preview_scroll.arm(
             ScrollAnchor(parent_id, focus_chunk_seq, animate=target_mounted)
         )
+        # One progress session spans the whole navigation, opened here because
+        # arming is the single event every navigation passes through — so the
+        # line is up before any of the work below starts. The tracker samples
+        # this pipeline and closes the session once the match has landed; no
+        # stage below has to remember to hide anything.
+        # Suppressed: the line is cosmetic, and this sits between arming the
+        # scroll anchor and arming the paint check. A raise here would strand
+        # the preview with an armed anchor and no repair timer — a decorative
+        # subsystem must never be able to do that.
+        with contextlib.suppress(Exception):
+            self._app._nav_progress.begin(parent_id)
         # Re-plan what to capture ahead around the NEW cursor position. Driven
         # from here rather than from the mount because most navigations never
         # reach a mount — a target already on screen returns early — and those
         # are precisely the moments with time to spare for capturing ahead.
-        self.start_coverage(parent_id, focus_chunk_seq)
+        # Suppressed for the same reason as the progress session above: this
+        # sits between arming the scroll anchor and arming the paint check, and
+        # a raise here would leave the preview with an armed anchor and no
+        # repair timer. Warming ahead must not be able to do that.
+        try:
+            self.start_coverage(parent_id, focus_chunk_seq)
+        except Exception as exc:
+            # Suppressed but SAID. A raise here would leave the preview with an
+            # armed anchor and no repair timer, so it cannot propagate — but a
+            # genuine bug in coverage would then disable warming for the
+            # session with nothing recorded. Same policy as WarmHost.ensure.
+            self.diag_log(f"coverage failed to start: {exc!r}")
         # Every navigation is checked once it should have settled (see
         # _arm_paint_check) — the single place that verifies the OUTCOME rather
         # than one mechanism, so no seam can strand the pane indefinitely.
@@ -626,6 +656,10 @@ class PreviewPresenter:
         except Exception:
             estimated_wrap_width = 0
         app = self._app
+        # Identifies this decode, so a superseded one still running cannot
+        # report onto its successor's count.
+        self.decode_token += 1
+        decode_token = self.decode_token
 
         def _load() -> None:
             try:
@@ -646,7 +680,16 @@ class PreviewPresenter:
                 if fetched and choose_preview_mode(fetched) == "flat":
                     fv = app._flat.build_file_view(fetched)
                     wrap_width = estimated_wrap_width if estimated_wrap_width > 0 else 0
-                    prebuilt = build_rendered_document(fv, wrap_width=wrap_width)
+                    # Report the render as it goes. This is the only countable
+                    # work the flat path exposes, and its duration varies by
+                    # more than 10x with nothing observable predicting it — so
+                    # the progress line is told rather than left to guess.
+                    decode_progress.begin(decode_token, len(fv.lines))
+                    prebuilt = build_rendered_document(
+                        fv,
+                        wrap_width=wrap_width,
+                        on_progress=lambda n: decode_progress.advance(decode_token, n),
+                    )
             except Exception:
                 # Best-effort; fall back to main-thread build inside the dispatcher.
                 prebuilt = None
@@ -1153,41 +1196,36 @@ class PreviewPresenter:
         progress: int = 0,
         phase: str | None = None,
     ) -> None:
-        """Open or update the progress session for a preview load. Determinate
-        only — ``total=None`` is treated as ``total=1`` so the indeterminate
-        red pulse never paints."""
-        total_eff = total if (total is not None and total > 0) else 1
-        s = self._app._progress.active
-        if s is None or s.closed:
-            s = self._app._progress.open(phase or "loading…", total=total_eff)
-        else:
-            if phase is not None:
-                s.set_phase(phase)
-            s.set_total(total_eff)
-        s.set_progress(progress)
-        import contextlib
+        """Suppress the pane's own scrollbar while a mount is in flight.
 
-        # Pane's own scrollbar would jitter as virtual_size grows; the strip
-        # below the layout carries the loading signal instead.
+        These three methods no longer drive the progress line. A navigation's
+        session is opened once by :meth:`render_full_doc` and advanced by
+        :class:`fnd.tui.progress.operations.PreviewProgressTracker`, which reads
+        this pipeline's own signals — so a stage that forgets to call these can
+        no longer strand the line, and a stale one can no longer retire a
+        successor's. The arguments are kept because the sixteen call sites are
+        deliberately left as they are; they describe work the tracker measures
+        for itself.
+        """
+        del total, progress, phase
+        # The pane's own scrollbar would jitter as virtual_size grows during a
+        # partial mount; the line below the layout carries the signal instead.
         with contextlib.suppress(Exception):
             set_node_class(self._app.query_one("#preview_pane", VerticalScroll), "is-loading", True)
 
     def hide_progress_bar(self) -> None:
-        """Close the active session + re-enable pane scrolling. Idempotent."""
-        s = self._app._progress.active
-        if s is not None and not s.closed:
-            s.close()
-        import contextlib
-
+        """Re-enable the pane's scrollbar. Idempotent. See
+        :meth:`show_progress_bar` for why this no longer closes anything."""
         with contextlib.suppress(Exception):
             set_node_class(
                 self._app.query_one("#preview_pane", VerticalScroll), "is-loading", False
             )
 
     def update_progress_bar(self, progress: int) -> None:
-        s = self._app._progress.active
-        if s is not None and not s.closed:
-            s.set_progress(progress)
+        """No-op. The tracker reads ``mounted_indices`` itself, and against the
+        mount window rather than the file's chunk count — the old denominator
+        that left the line reading ~1% on a thousand-chunk PDF."""
+        del progress
 
     def clear_pane_placeholder(self) -> None:
         """Drop the empty-state Static. Called by every activate path so the
@@ -2657,6 +2695,106 @@ class PreviewPresenter:
                 f"rows={self.capture_store.total_rows()}"
             )
 
+    def warm_states(self) -> dict[str, WarmState] | None:
+        """How ready each listed file is, for every group in one pass.
+
+        Built as a whole map rather than answered per file because the callers
+        want it per file: the results tree asks for every visible row and the
+        capture store's key is (parent, query, width, seq), so resolving the
+        query signature and the pane width once amortises what would otherwise
+        be two lookups per row.
+
+        Answered from the results list and the store, with no decode — a hit
+        carries its chunk_seq, which is exactly the store's key. Same property
+        that lets `_file_needs_coverage` re-plan on every cursor move.
+        """
+        try:
+            pane = self._app.query_one("#preview_pane", VerticalScroll)
+        except Exception:
+            return None
+        width = self.capture_width(pane)
+        if width <= 0:
+            # Before first layout there is no width, so every store lookup
+            # would miss. None means "cannot answer", which is NOT the same as
+            # an empty map meaning "no files" — conflating them let a caller
+            # treat unavailable as authoritative.
+            return None
+        groups = getattr(self._app._search, "groups", None) or []
+        query_sig = self._app._search.query_signature()
+        warming_now = self.coverage_parent
+        # The group is already in hand, so its hits go straight through. Asking
+        # listed_hit_seqs here would re-scan every group per group, which at a
+        # result_limit of 1000 is a million comparisons a tick.
+        return {
+            g.parent_id: self._warm_state(
+                g.parent_id,
+                [h.chunk_seq for h in (getattr(g, "hits", None) or [])],
+                query_sig,
+                width,
+                warming_now,
+            )
+            for g in groups
+        }
+
+    def file_warm_state(self, parent_id: str) -> WarmState | None:
+        """One file's readiness, or None when it cannot be answered yet.
+
+        Used at dispatch to choose the navigation's progress plan, where
+        building the whole map would be wasted work.
+        """
+        try:
+            pane = self._app.query_one("#preview_pane", VerticalScroll)
+        except Exception:
+            return None
+        width = self.capture_width(pane)
+        if width <= 0:
+            return None
+        hit_seqs = self.listed_hit_seqs(parent_id)
+        if hit_seqs is None:
+            return None
+        return self._warm_state(
+            parent_id,
+            hit_seqs,
+            self._app._search.query_signature(),
+            width,
+            self.coverage_parent,
+        )
+
+    def _warm_state(
+        self,
+        parent_id: str,
+        hit_seqs: list[int],
+        query_sig: str,
+        width: int,
+        warming_now: str | None,
+    ) -> WarmState:
+        # ``has``, not ``get``: the store promotes on read, and probing every
+        # listed file twice a second through ``get`` reordered the whole cache
+        # on results-list order.
+        store = self.capture_store
+        return warm_state(
+            hit_seqs=hit_seqs,
+            is_captured=lambda seq: store.has(parent_id, query_sig, width, seq),
+            warming=parent_id == warming_now,
+        )
+
+    def listed_hit_seqs(self, parent_id: str) -> list[int] | None:
+        """Chunk sequences of this file's hits AS LISTED, or None if unlisted.
+
+        The distinction matters: an empty list means "listed, nothing to jump
+        to", which is READY. None means the question does not apply, and
+        collapsing the two reported READY — the cheapest possible plan — for
+        any file the results do not contain.
+
+        The same set ``_file_needs_coverage`` asks about and the same one the
+        results tree steps through, so what coverage promises and what the
+        arrow claims cannot drift.
+        """
+        for group in getattr(self._app._search, "groups", None) or []:
+            if group.parent_id == parent_id:
+                return [h.chunk_seq for h in (getattr(group, "hits", None) or [])]
+        return None
+
     def _file_needs_coverage(self, parent_id: str, query_sig: str, width: int) -> bool:
         """Whether any listed hit of this file is still uncaptured.
 
@@ -2670,9 +2808,11 @@ class PreviewPresenter:
             if group.parent_id != parent_id:
                 continue
             hits = getattr(group, "hits", None) or []
+            # ``has``: deciding what to cover is a probe, not a use, and
+            # promoting here would order the store by coverage plan instead of
+            # by what is being read.
             return any(
-                self.capture_store.get(parent_id, query_sig, width, h.chunk_seq) is None
-                for h in hits
+                not self.capture_store.has(parent_id, query_sig, width, h.chunk_seq) for h in hits
             )
         return False
 
@@ -2751,6 +2891,31 @@ class PreviewPresenter:
         still_wanted: Callable[[], bool],
     ) -> int:
         """Capture ``targets`` of one file, standing down for anything on screen."""
+        # Held for the WHOLE file, not per capture. This is what the results
+        # arrows read as "being warmed right now", and a capture is ~60 ms with
+        # a yield of at least as long after it — so an attribute set only
+        # around the capture call was unset more often than set, and a poll
+        # twice a second almost never caught it. Files went cold straight to
+        # ready with the warming marker never appearing. It means "the file
+        # coverage is working on", so it lasts as long as that is true.
+        self.coverage_parent = parent_id
+        try:
+            return await self._capture_file_targets(
+                parent_id, query_sig, width, chunks, targets, spec, still_wanted
+            )
+        finally:
+            self.coverage_parent = None
+
+    async def _capture_file_targets(
+        self,
+        parent_id: str,
+        query_sig: str,
+        width: int,
+        chunks: list[FileChunk],
+        targets: list[int],
+        spec: MatchSpec,
+        still_wanted: Callable[[], bool],
+    ) -> int:
         captured = 0
         for index in targets:
             # The plan was ordered around where the cursor WAS. A pass can run
@@ -2912,6 +3077,12 @@ class PreviewPresenter:
                 focus_idx = 0
             win_start = self.above_window_start(chunks, focus_idx, pane.size.height or 40)
             win_end = min(len(chunks), focus_idx + tuning.VISIBLE_FIRST_BELOW + 1)
+            # The progress line needs the size of THIS window as its mount
+            # denominator. It is chosen by rows, so a tall-chunk format (a PDF
+            # page is 30-60 rows) can select two chunks where the tunables
+            # would suggest fifteen — and a denominator of fifteen means the
+            # mount phase can never read as finished.
+            container.mount_window = max(0, win_end - win_start)
 
             # Phase 1a: mount the focused chunk first and yield so it
             # paints before the surrounding context mounts. On large

@@ -14,7 +14,7 @@ from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.progress import FNDProgressBar
-from tests._pilot_wait import wait_until
+from tests._pilot_wait import run_search, wait_until
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -60,18 +60,20 @@ async def test_preview_load_dispatches_worker_on_cache_miss(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
-        await pilot.pause()
+        await run_search(pilot, app, "target")
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         # Worker dispatched in the preview-load group.
         worker_groups = [w.group for w in app.workers]
         assert "preview-load" in worker_groups
-        # Drain the worker + mount batches.
-        await pilot.pause()
-        await pilot.pause()
-        # Cache populated after load completes.
-        assert big_group.parent_id in app._preview.chunk_cache
+        # Wait for the OUTCOME, not for two ticks. Two bare pauses are enough
+        # on an idle machine and degrade to no-ops under a loaded one, which is
+        # how this passed alone and failed in the full suite.
+        await wait_until(
+            pilot,
+            lambda: big_group.parent_id in app._preview.chunk_cache,
+            message="the preview-load worker never populated the chunk cache",
+        )
         # Cache hit path: no new worker, no progress, no spinner.
         before_workers = len(app.workers)
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
@@ -88,8 +90,7 @@ async def test_preview_clears_old_content_and_shows_progress_bar(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
-        await pilot.pause()
+        await run_search(pilot, app, "target")
         small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         # Load small file first so something is mounted.
@@ -115,8 +116,7 @@ async def test_progress_strip_runs_determinate_then_hides_on_complete(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
-        await pilot.pause()
+        await run_search(pilot, app, "target")
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         # Visible + determinate at start (decode phase).
@@ -125,11 +125,16 @@ async def test_progress_strip_runs_determinate_then_hides_on_complete(
         active_session = app._progress.active
         assert active_session is not None
         assert active_session.total >= 1
-        # Drain decode + mount completely.
-        for _ in range(8):
-            await pilot.pause()
-        # After mount completes, strip hides and pane scroll lock lifts.
-        assert "-idle" in strip.classes
+        # The line now holds a completed fill for a minimum duration before it
+        # clears (so short loads read as "done" rather than flashing), so a
+        # fixed number of pauses is no longer a sound way to wait for it —
+        # under load it under-waits, and it says nothing about WHY it cleared.
+        # Gate on the widget's own state instead.
+        await wait_until(
+            pilot,
+            lambda: "-idle" in strip.classes,
+            message="progress line never cleared after the mount completed",
+        )
         pane = app.query_one("#preview_pane")
         assert "is-loading" not in pane.classes
         # Chunks landed in a PreviewContainer in the pane.
@@ -145,8 +150,7 @@ async def test_switching_files_mid_load_cancels_mount_task(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
-        await pilot.pause()
+        await run_search(pilot, app, "target")
         small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         # Trigger big.md load and let decode complete + mount start.
@@ -182,8 +186,7 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
     app._preview.preview_cache.max_files = 8
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
-        await pilot.pause()
+        await run_search(pilot, app, "target")
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
         # First visit to big — fully mount. Gated on the cache entry appearing
@@ -224,6 +227,8 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
         # checking it on a tick count is what made this flaky.
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         strip = app.query_one(FNDProgressBar)
+        # The line holds a completed fill briefly, so wait for the state
+        # rather than a tick count.
         await wait_until(
             pilot,
             lambda: app._preview.active is big_container and "-idle" in strip.classes,
@@ -245,8 +250,7 @@ async def test_rapid_file_switching_does_not_raise_duplicate_ids(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
-        await pilot.pause()
+        await run_search(pilot, app, "target")
         small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         # Toggle several times in quick succession — each call cancels
@@ -271,8 +275,7 @@ async def test_preview_title_no_longer_carries_progress_text(
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
-        await pilot.pause()
+        await run_search(pilot, app, "target")
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         # During load, title must not contain 'loading' / 'chunks'.

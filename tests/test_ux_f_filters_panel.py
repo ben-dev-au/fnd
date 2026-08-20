@@ -23,7 +23,7 @@ from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.scope_panel import ScopeController
 from fnd.tui.widgets.results_tree import ResultsTree
-from tests._pilot_wait import wait_until
+from tests._pilot_wait import run_search, wait_until
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -380,8 +380,7 @@ async def test_filters_compose_into_query(cfg_one_collection: Config, mixed_inde
         # Activate kind=md filter.
         app._scope.filter_kinds = ["md"]
         app._scope.filter_date = "week"
-        app._search.run("glimmer")
-        await pilot.pause()
+        await run_search(pilot, app, "glimmer")
         joined = " || ".join(captured_queries)
         assert "kind:md" in joined, joined
         assert "mtime:week" in joined, joined
@@ -408,8 +407,7 @@ async def test_kind_multi_select_uses_or_group(
 
         searcher._filtered_raw_hits = spy  # type: ignore[method-assign]
         app._scope.filter_kinds = ["pdf", "md"]
-        app._search.run("glimmer")
-        await pilot.pause()
+        await run_search(pilot, app, "glimmer")
         joined = " || ".join(captured_queries)
         # Order-independent check across all sub-queries.
         assert "kind:(" in joined, joined
@@ -500,8 +498,7 @@ async def test_filetype_filter_pruned_to_present_kinds(
     async with app.run_test() as pilot:
         await pilot.pause()
         # Ensure a search has run so the present-kind aggregation is computed.
-        app._search.run("glimmer")
-        await pilot.pause()
+        await run_search(pilot, app, "glimmer")
         app._scope.refresh_filters_panel()
         await pilot.pause()
         tree = app.query_one("#filters_panel_tree", Tree)

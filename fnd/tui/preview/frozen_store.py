@@ -151,6 +151,17 @@ class ChunkCaptureStore:
             self._files.move_to_end(key)
         return capture
 
+    def has(self, parent_id: str, query_sig: str, width: int, chunk_seq: int) -> bool:
+        """Is this chunk held? Deliberately does NOT promote.
+
+        Probing readiness is not using a capture. The results list asks this
+        for every file twice a second to paint the warmth arrows, and answering
+        through :meth:`get` re-ordered the whole store on results-list order —
+        neutralising the read-promotion above and leaving the file on screen,
+        usually the top result, as the first eviction victim.
+        """
+        return chunk_seq in self._files.get((parent_id, query_sig, width), {})
+
     def put(self, parent_id: str, query_sig: str, width: int, capture: FrozenChunk) -> None:
         key = (parent_id, query_sig, width)
         captures = self._files.get(key)

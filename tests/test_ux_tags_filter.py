@@ -13,6 +13,7 @@ from textual.widgets.tree import TreeNode
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import run_search
 
 
 @pytest.fixture
@@ -171,14 +172,12 @@ async def test_selection_filters_the_results(cfg: Config, tagged_index: Path) ->
     app = FNDApp(index_dir=tagged_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("saffron")
-        await pilot.pause()
+        await run_search(pilot, app, "saffron")
         before = {Path(g.path).name for g in app._search.groups}
         assert before == {"risotto.md", "steak.md", "trip.md"}
 
         app._scope.tag_include = {"frontmatter": {"recipe"}}
-        app._search.run("saffron")
-        await pilot.pause()
+        await run_search(pilot, app, "saffron")
         after = {Path(g.path).name for g in app._search.groups}
         assert after == {"risotto.md", "steak.md"}
 
@@ -189,8 +188,7 @@ async def test_exclusion_filters_the_results(cfg: Config, tagged_index: Path) ->
     async with app.run_test() as pilot:
         await pilot.pause()
         app._scope.tag_exclude = {"frontmatter": {"recipe"}}
-        app._search.run("saffron")
-        await pilot.pause()
+        await run_search(pilot, app, "saffron")
         assert {Path(g.path).name for g in app._search.groups} == {"trip.md"}
 
 
@@ -202,8 +200,7 @@ async def test_selecting_a_nested_parent_matches_its_children(
     async with app.run_test() as pilot:
         await pilot.pause()
         app._scope.tag_include = {"frontmatter": {"project"}}
-        app._search.run("saffron")
-        await pilot.pause()
+        await run_search(pilot, app, "saffron")
         assert {Path(g.path).name for g in app._search.groups} == {"steak.md", "trip.md"}
 
 
@@ -314,8 +311,7 @@ async def test_toggling_a_tag_keeps_cursor_and_focus(cfg: Config, tagged_index: 
     app = FNDApp(index_dir=tagged_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("saffron")
-        await pilot.pause()
+        await run_search(pilot, app, "saffron")
 
         tree = app.query_one("#filters_panel_tree", Tree)
         tags = _branch(tree, "Tags")
@@ -348,13 +344,11 @@ async def test_tags_are_scoped_to_the_active_query(cfg: Config, tagged_index: Pa
     async with app.run_test() as pilot:
         await pilot.pause()
         # 'saffron' is in all three files; 'stock' only in risotto.md.
-        app._search.run("saffron")
-        await pilot.pause()
+        await run_search(pilot, app, "saffron")
         wide = {t.value for t in app._scope.tag_catalogue_for_scope()["frontmatter"]}
         assert {"recipe", "dinner", "project"} <= wide
 
-        app._search.run("stock")
-        await pilot.pause()
+        await run_search(pilot, app, "stock")
         narrow = {t.value for t in app._scope.tag_catalogue_for_scope()["frontmatter"]}
         assert "dinner" in narrow
         assert "project" not in narrow, "tags still reflect files outside the result set"
@@ -367,13 +361,11 @@ async def test_selecting_a_tag_does_not_hide_its_siblings(cfg: Config, tagged_in
     app = FNDApp(index_dir=tagged_index, config=cfg)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("saffron")
-        await pilot.pause()
+        await run_search(pilot, app, "saffron")
         before = {t.value for t in app._scope.tag_catalogue_for_scope()["frontmatter"]}
 
         app._scope.tag_include = {"frontmatter": {"recipe"}}
-        app._search.run("saffron")
-        await pilot.pause()
+        await run_search(pilot, app, "saffron")
         after = {t.value for t in app._scope.tag_catalogue_for_scope()["frontmatter"]}
         assert after == before, "siblings vanished once a tag was selected"
 

@@ -127,7 +127,7 @@ FNDApp
 ├── PrefetchEngine     fnd/tui/preview/prefetch.py    background warming
 ├── LazyMounter        fnd/tui/preview/lazy_mount.py  scroll-driven mounting
 ├── PreviewScrollController  fnd/tui/preview_scroll.py  scroll positioning
-└── ProgressFacility   fnd/tui/progress.py            preview progress sessions
+└── ProgressFacility   fnd/tui/progress/              the progress line
 ```
 
 Textual-specific surfaces stay on the app: `@on` message handlers and
@@ -165,10 +165,109 @@ to the user-side mount.
 Mount-window tunables live in `fnd/tui/preview/tuning.py` and are read
 at call time.
 
+## The progress line
+
+One row under the panes, blank at rest, driven by `fnd/tui/progress/`.
+An operation opens a session against an `OperationPlan` — an ordered set
+of phases, each with an expected duration. Phases with real units report
+them; phases with nothing to count (a single `await build_done`, a layout
+settle) ease on elapsed time. A phase's **weight is its share of the
+plan's total expected duration**, so `calibration` — which records what
+each phase actually cost and summarises the recent runs, the same shape
+as `cost_estimate.py` — reshapes the bar without any hand-tuned numbers.
+
+A navigation ends when its **match is on screen**, not when the pipeline
+runs dry. Those were the same thing until the capture cache: now the
+mount keeps filling below the fold long after the visible window has
+arrived, and waiting for it held the line over a second past the point
+the match was readable. Arrival is `showing_parent()` reaching the target
+AND `is_painted()` AND the scroll having committed — all three, because
+dropping the last one clears the line while the view is still moving.
+`pipeline_busy()` stays as the fallback for a navigation that never
+paints at all.
+
+Sessions are **observed, not reported**. `PreviewProgressTracker` reads
+the preview pipeline's own signals (`pipeline_busy()`, the mount window's
+`mounted_indices`, `inflight_target`, `is_settling`); `IndexProgressTracker`
+reads `IndexerService.state` rather than the event queue, which has a
+single consumer in the modal. The mount path therefore has no progress
+calls to keep in step, and no stale exit can strand or steal the line.
+
+Adding a subsystem means adding a plan and a tracker satisfying
+`ProgressTracker` — nothing else knows about it. Each tracker translates
+its own units (rendered lines, mounted chunks, indexed files) into
+`report(done, total)` at the boundary, and the phase weights turn the
+rest into one 0..1 fraction; that normalisation is what lets operations
+with no unit in common share a line.
+
+A plan also declares its `OperationKind`. INTERACTIVE work answers
+something the user just did and always owns the line; AMBIENT work — a
+background reindex — is *suspended* while that happens and resumes
+afterwards, so a run spanning hundreds of navigations is not retired by
+the first one. Since only one can be on screen at a time, ambient is
+also the only class that carries a label, and it paints in a dimmer
+accent: a line that appears without the user touching anything reads
+differently from one that answers a keypress. Its stall backstop is
+correspondingly looser, because its terminator (`task.done()`) is a real
+result rather than an inference.
+
+One known rough edge, left alone deliberately: the ambient label shares
+the bar's single row, and `─` is drawn at the middle of its cell while
+text sits on a baseline near the bottom of one, so the label reads as
+sitting lower than the rule beside it. That is font metrics, not layout —
+no alignment rule reaches inside a cell. Every fix costs either a row of
+preview height or a second place for status text, and neither is worth
+it for a label that only appears during a background index.
+
+Sessions are owned: closing one that has already been superseded does
+nothing. Visibility is policy, not caller choice — a session paints on
+the frame it opens, holds a minimum visible duration, always eases to a
+full line before clearing, and hands its fill to a successor so a held
+cursor key doesn't saw the bar back to zero. Fast work is shown, not
+suppressed: a load the user can see complete is what makes the app feel
+fast.
+
+## Warmth in the results list
+
+Coverage makes navigation cost bimodal — a jump whose hits are captured
+is a blit, one that still has to build can be seconds — so the results
+tree's toggle arrow says which is coming. `fnd/tui/preview/warmth.py`
+holds the vocabulary; the tree paints it and the progress line picks its
+plan from it, so the arrow cannot promise a fast jump the line then
+prices as slow.
+
+Hollow (`▷`) means a jump here will build, filled (`▶`) means it will
+not. Shape carries the fact that changes a decision, because at one cell
+a change of brightness alone is hard to read; colour carries the rest,
+with cold taking the score column's accent blue so the two differ in hue
+rather than in brightness. Both cost exactly the two cells the stock
+toggle already occupies, which matters — the pane's name budget is
+`width - 2 - 7`.
+
+Three states, not two, because the warm host is **serial**: exactly one
+file is ever being captured, so WARMING is a single marker walking
+outward from the cursor rather than churn across the list. Readiness is
+judged on the listed hits alone; coverage's third tier fills the gaps
+between matches, which lazy mount already handles imperceptibly.
+
+Polled at 2 Hz and diffed, because warmth moves when a capture lands AND
+when coverage steps to the next file, and the second has no single write
+to hook. A row is repainted only when its own state moves; captures land
+at roughly ten a second and repainting the list on each would strobe it.
+Readiness is probed through `ChunkCaptureStore.has`, never `get`: `get`
+promotes on read, so probing every listed file twice a second through it
+reordered the whole cache on results-list order and left the file on
+screen first in line for eviction. Anything the tree cannot answer fails
+towards COLD, because Textual's stock arrow is byte-identical to the
+ready glyph — an unknown row would otherwise read as "instant". Match
+rows are left alone — they already carry a glyph for matches the preview
+cannot highlight.
+
 ## Concurrency rules
 
 | Owner | Task / primitive | Cancelled by |
 |---|---|---|
+| `SearchController` | search worker (`search`, exclusive, thread) | a newer query. Textual cannot *interrupt* a thread worker that has STARTED, so that stale search runs to completion and is discarded by the generation guard in `_commit`. One that has not started yet is cancelled outright, inside `add_worker` and before the new worker begins — which is why "is a search running?" is asked of the worker manager rather than counted at dispatch |
 | `PreviewPresenter` | mount worker (`preview-load`, exclusive), debounce timer, in-flight coalescing latch | file switch / query change (`cancel_mount_task`, latch drop) |
 | `LazyMounter` | scroll-driven mount task + debounce timer | file switch / query change (`cancel`) |
 | `PrefetchEngine` | decode pool (`preview-prefetch`, exclusive), sink queue + drainer task | stale-query signature checks; user mount preempts |

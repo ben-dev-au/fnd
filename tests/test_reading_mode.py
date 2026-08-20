@@ -203,9 +203,9 @@ async def _wait_preview_settled(app: FNDApp, pilot: Pilot[None], *, min_mounted:
 
 
 async def _load_full(app: FNDApp, pilot: Pilot[None], *, min_mounted: int = 30) -> None:
-    from tests._pilot_wait import wait_until
+    from tests._pilot_wait import run_search, wait_until
 
-    app._search.run("target")
+    await run_search(pilot, app, "target")
     await wait_until(
         pilot, lambda: bool(app._search.groups), timeout=15.0, message="no search results"
     )
@@ -268,7 +268,7 @@ async def test_reading_view_scroll_step_is_larger(tmp_path: Path, tmp_index_dir:
     """
     from fnd.config import load
     from fnd.index import build_index
-    from tests._pilot_wait import wait_until
+    from tests._pilot_wait import run_search, wait_until
 
     notes = tmp_path / "notes"
     notes.mkdir()
@@ -289,7 +289,7 @@ async def test_reading_view_scroll_step_is_larger(tmp_path: Path, tmp_index_dir:
     app = FNDApp(index_dir=Path(tmp_index_dir), config=load(cfg_path), collection="notes")
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        app._search.run("target")
+        await run_search(pilot, app, "target")
         await wait_until(
             pilot, lambda: bool(app._search.groups), timeout=15.0, message="no search results"
         )

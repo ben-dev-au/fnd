@@ -20,6 +20,7 @@ from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.query import Searcher
 from fnd.tui import FNDApp
+from tests._pilot_wait import run_search
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -133,8 +134,7 @@ async def test_new_file_appears_on_next_query_without_restart(
     app = FNDApp(index_dir=tmp_index_dir, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("alpha")
-        await pilot.pause()
+        await run_search(pilot, app, "alpha")
         assert app._search.groups, "baseline doc should be found"
 
         # Index a new file while the app is running (mirrors an in-app or
@@ -142,7 +142,6 @@ async def test_new_file_appears_on_next_query_without_restart(
         _write_md(docs / "second.md", "# Second\nbravo zero seconds marker.\n")
         build_index(roots=[docs], index_dir=tmp_index_dir, collection="notes")
 
-        app._search.run("bravo")
-        await pilot.pause()
+        await run_search(pilot, app, "bravo")
         assert app._search.groups, "newly-indexed file must appear on the next query"
         assert app._search.groups[0].path.endswith("second.md")

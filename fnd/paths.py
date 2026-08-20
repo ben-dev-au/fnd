@@ -66,6 +66,11 @@ def throughput_log_path() -> Path:
     return app_data_dir() / "indexer_throughput.jsonl"
 
 
+def progress_calibration_path() -> Path:
+    """Observed per-phase durations behind the progress line's pacing."""
+    return app_data_dir() / "progress_calibration.jsonl"
+
+
 def failure_log_path() -> Path:
     """Per-(collection, file) extraction failure log."""
     return app_data_dir() / "indexer_failures.toml"

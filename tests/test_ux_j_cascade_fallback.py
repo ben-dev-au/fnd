@@ -15,6 +15,7 @@ import pytest
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import run_search
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -56,8 +57,7 @@ async def test_typo_query_falls_back_to_cascade(cfg: Config, fuzzy_index: Path) 
     app = FNDApp(index_dir=fuzzy_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("glimer")
-        await pilot.pause()
+        await run_search(pilot, app, "glimer")
         assert app._search.groups, (
             f"fusion+cascade should surface notes.md via fuzzy~1; got {app._search.groups!r}"
         )
@@ -74,8 +74,7 @@ async def test_exact_query_uses_fusion_path(cfg: Config, fuzzy_index: Path) -> N
     app = FNDApp(index_dir=fuzzy_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("glimmer")
-        await pilot.pause()
+        await run_search(pilot, app, "glimmer")
         assert app._search.groups
         top = app._search.groups[0].hits[0]
         assert top.pass_index == 0

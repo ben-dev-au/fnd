@@ -20,7 +20,7 @@ from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.preview.tuning import LAZY_MOUNT_BATCH
-from tests._pilot_wait import settle, wait_until
+from tests._pilot_wait import run_search, settle, wait_until
 
 
 def _write_md(p: Path, body: str) -> None:
@@ -82,7 +82,7 @@ async def test_scroll_below_boundary_triggers_lazy_mount(
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
+        await run_search(pilot, app, "target")
         pane = app.query_one("#preview_pane", VerticalScroll)
         # Wait for the initial mount AND the focus-chunk scroll to land.
         await wait_until(
@@ -147,7 +147,7 @@ async def test_lazy_mount_fires_after_settle_without_explicit_release(
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
+        await run_search(pilot, app, "target")
         pane = app.query_one("#preview_pane", VerticalScroll)
         await wait_until(
             pilot,
@@ -249,7 +249,7 @@ async def test_far_in_file_nav_lands_in_fresh_contiguous_region(
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
+        await run_search(pilot, app, "target")
         await wait_until(
             pilot,
             lambda: app._preview.active is not None and bool(app._preview.active.mounted_indices),
@@ -296,7 +296,7 @@ async def test_scroll_watcher_bridges_to_lazy_mounter(
     app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
+        await run_search(pilot, app, "target")
         pane = app.query_one("#preview_pane", VerticalScroll)
         await wait_until(
             pilot,
@@ -348,7 +348,7 @@ async def test_file_switch_cancels_lazy_mount(
     app = FNDApp(index_dir=tmp_index_dir, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._search.run("target")
+        await run_search(pilot, app, "target")
         await _drain(pilot, 8)
         a = next(g for g in app._search.groups if g.path.endswith("a.md"))
         b = next(g for g in app._search.groups if g.path.endswith("b.md"))

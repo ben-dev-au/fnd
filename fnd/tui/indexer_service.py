@@ -23,6 +23,18 @@ if TYPE_CHECKING:
 __all__ = ["IndexerService"]
 
 
+def chain_position(service: object) -> int:
+    """Which collection of an update-all chain is running, 1-based.
+
+    Shared by the IndexerScreen title and the progress line's label so the
+    two cannot drift. Clamped: a state where ``chain_remaining`` still holds
+    every collection would otherwise read as "(0 of 4)".
+    """
+    total = getattr(service, "chain_total", 1) or 1
+    pending = len(getattr(service, "chain_remaining", None) or [])
+    return max(1, total - pending)
+
+
 class IndexerService:
     """Owns the indexer task/cancel/event state and the reindex entry
     points; one instance lives on the app for the session."""
@@ -132,8 +144,7 @@ class IndexerService:
                 # "(N of M)" title instead of dropping to a single-run one.
                 if open_modal and _bump_seq:
                     chain_total = getattr(self, "chain_total", 1) or 1
-                    chain_pending = getattr(self, "chain_remaining", None) or []
-                    chain_index = max(1, chain_total - len(chain_pending))
+                    chain_index = chain_position(self)
                     # Say so. Otherwise the user confirms Update all,
                     # gets a modal titled with a DIFFERENT collection,
                     # and reads the run they asked for as "did nothing".
@@ -253,10 +264,19 @@ class IndexerService:
                 run_seq=my_seq,
             )
         )
+        # Put the run on the app-level line. The modal, when it is open, sits
+        # on its own screen and hides this — which is right: it shows strictly
+        # more. What this covers is the background run (auto-resume on launch,
+        # or a modal the user dismissed with "Background"), which until now
+        # reported nothing at all after its opening toast.
+        # Suppressed for the same reason as the preview's: this runs after
+        # self.task is assigned, so a raise would leave an indexer running
+        # while start() reported failure and skipped the modal.
+        with contextlib.suppress(Exception):
+            self._app._index_progress.begin()
         if open_modal:
             chain_total = getattr(self, "chain_total", 1) or 1
-            chain_pending = getattr(self, "chain_remaining", None) or []
-            chain_index = max(1, chain_total - len(chain_pending))
+            chain_index = chain_position(self)
             self._app.push_screen(
                 IndexerScreen(
                     collection,

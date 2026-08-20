@@ -58,6 +58,14 @@ class WarmHost:
         self._app = app
         self._screen: Screen[None] | None = None
         self._container: VerticalScroll | None = None
+        # One capture at a time. The screen and the container are shared, and
+        # the width is set on the SCREEN — so two callers interleaving at any
+        # of the awaits below would lay each other's widget out at the wrong
+        # width. Coverage and the stale-strip repair are independent tasks and
+        # nothing else serialises them: the repair waits on `pipeline_busy`,
+        # which does not include coverage. The comment in `capture` already
+        # asserted "WarmHost is serial"; this is what makes that true.
+        self._lock = asyncio.Lock()
 
     async def ensure(self) -> VerticalScroll | None:
         """The off-screen container, created on first use. ``None`` if the app
@@ -95,7 +103,12 @@ class WarmHost:
             # box: 300 rendered rows captured at 76, 420 rows at 75.
             container.styles.scrollbar_size_vertical = 0
             await screen.mount(container)
-        except Exception:
+        except Exception as exc:
+            # Say so. A failure here disables warming for the rest of the
+            # session, and silently: captures simply stop and every lookup
+            # misses, which reads as coverage never having worked.
+            with contextlib.suppress(Exception):
+                self._app._diag_log(f"warm host unavailable: {exc!r}")
             return None
         self._screen = screen
         self._container = container
@@ -115,6 +128,12 @@ class WarmHost:
         a query change mid-batch produced chunks highlighted for the new query
         and filed under the old query's key, where nothing can ever correct them.
         """
+        async with self._lock:
+            return await self._capture_locked(chunk, width, match_spec=match_spec)
+
+    async def _capture_locked(
+        self, chunk: FileChunk, width: int, *, match_spec: MatchSpec | None = None
+    ) -> FrozenChunk | None:
         container = await self.ensure()
         if container is None or self._screen is None:
             return None
