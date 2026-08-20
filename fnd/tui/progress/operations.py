@@ -388,7 +388,7 @@ class PreviewProgressTracker:
     @staticmethod
     def _building(preview: Any) -> bool:
         container = preview.active
-        task = getattr(container, "_finalize_task", None) if container is not None else None
+        task = getattr(container, "_finalise_task", None) if container is not None else None
         if task is None:
             return False
         try:

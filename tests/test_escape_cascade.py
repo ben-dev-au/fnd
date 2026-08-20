@@ -22,7 +22,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 
 def test_focus_context_without_screen_stack_returns_global(built_index: Path) -> None:
-    """A background mount task can finalize and refresh the footer after the
+    """A background mount task can finalise and refresh the footer after the
     app tears down, when the screen stack is empty. ``_focus_context`` must
     degrade to ``"global"`` instead of raising ScreenStackError (the
     "No screens on stack" crash seen on quit mid-mount)."""

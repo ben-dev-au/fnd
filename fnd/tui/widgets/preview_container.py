@@ -35,7 +35,7 @@ class PreviewContainer(Container):
     /* opacity:0 (not visibility:hidden) so the pane can be scrolled to the
        match WHILE the container is invisible — scroll_to_region is a no-op
        under visibility:hidden, which forced a reveal-at-top-then-scroll jump.
-       The reveal lands only after the scroll commits (see _finalize_via_lock). */
+       The reveal lands only after the scroll commits (see _finalise_via_lock). */
     PreviewContainer.-pre-reveal { opacity: 0%; }
     """
 

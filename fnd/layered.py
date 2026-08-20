@@ -28,7 +28,7 @@ from fnd.fusion import (
     STRONG_SIGNAL_MIN_NORM_GAP,
     STRONG_SIGNAL_MIN_NORM_SCORE,
     fusion_search,
-    normalize_bm25,
+    normalise_bm25,
 )
 from fnd.query import FileGroup, Hit, Searcher, group_by_file
 
@@ -233,11 +233,11 @@ def _evaluate_strong_signal(probe: list[Hit], *, intent_present: bool) -> Strong
 
     A single uncontested hit (``len(probe) == 1``) treats the runner-up
     score as 0 — the gap then equals the top score, so any top above
-    the score threshold fires. Mirrors QMD's behavior where
+    the score threshold fires. Mirrors QMD's behaviour where
     ``secondScore`` defaults to 0 when no runner-up exists.
     """
-    top_n = normalize_bm25(probe[0].score) if probe else 0.0
-    second_n = normalize_bm25(probe[1].score) if len(probe) > 1 else 0.0
+    top_n = normalise_bm25(probe[0].score) if probe else 0.0
+    second_n = normalise_bm25(probe[1].score) if len(probe) > 1 else 0.0
     gap = top_n - second_n
     if intent_present or not probe:
         return StrongSignalTrace(

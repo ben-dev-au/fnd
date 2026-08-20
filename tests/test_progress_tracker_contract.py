@@ -42,7 +42,7 @@ PRESENTER_SIGNALS = {
     "showing_parent": "which file the pane is on — warm vs cold, and landing",
     "decode_worker": "the decode phase",
     "mount_task": "the mount phase",
-    "active": "the container carrying mounted_indices / _finalize_task",
+    "active": "the container carrying mounted_indices / _finalise_task",
     "chunk_cache": "warm vs cold: is there a decode to do?",
     "decode_token": "generation guard for the flat renderer's line counts",
 }
@@ -53,7 +53,7 @@ PRESENTER_SIGNALS = {
 CONTAINER_SIGNALS = {
     "mounted_indices": "how much of the mount window has landed",
     "total_chunks": "clamps the window against a short file",
-    "_finalize_task": "the build phase",
+    "_finalise_task": "the build phase",
 }
 
 # The mount window's size, and the bound on how long a reveal may take.

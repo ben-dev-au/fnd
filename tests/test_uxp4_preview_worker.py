@@ -39,7 +39,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
 @pytest.fixture
 def two_file_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
     """Two files: a small one and a many-section one, so we can switch
-    between them and observe worker behavior."""
+    between them and observe worker behaviour."""
     a = tmp_path / "notes"
     body_lines = ["# Big Book", ""]
     for i in range(60):
@@ -219,7 +219,7 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
             message="never switched away to small.md",
         )
         # Return to big — the strip shows briefly during the cache-hit reveal
-        # cycle, then idles once _finalize_pre_reveal's on_done fires. Wait for
+        # cycle, then idles once _finalise_pre_reveal's on_done fires. Wait for
         # BOTH signals together: idling is what says the reveal finished, and
         # checking it on a tick count is what made this flaky.
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)

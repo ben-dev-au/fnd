@@ -444,7 +444,7 @@ class Defaults(BaseModel):
     fuzzy_enabled: bool = True
     # Minimum post-stem length for auto-fuzzy. Below this, the term is
     # exact-only. Lucene-AUTO already returns distance 0 for ≤2 char
-    # stems, so values 0-3 are no-ops vs current behavior; 4+ extends
+    # stems, so values 0-3 are no-ops vs current behaviour; 4+ extends
     # the floor.
     fuzzy_min_term_chars: int = 3
     # Auto-resume an interrupted reindex on app launch. Default False:

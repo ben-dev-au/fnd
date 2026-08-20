@@ -463,7 +463,7 @@ class StructuralScrollStrategy:
         # * the window's chunks have to EXIST. Navigating backwards into a file
         #   mounts them after this first runs, so inspecting only what is
         #   currently mounted sees nothing pending (the trap
-        #   ``_finalize_via_lock``'s ``expected_above_seqs`` exists to avoid);
+        #   ``_finalise_via_lock``'s ``expected_above_seqs`` exists to avoid);
         # * their HEIGHT has to stop changing. ``build_done`` is not that
         #   signal — measured on p.24, the seven chunks above were all mounted
         #   with build_done set and still grew 142 → 159 rows afterwards.

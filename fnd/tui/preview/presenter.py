@@ -244,12 +244,12 @@ class PreviewPresenter:
         """(Re)start the bounded-time reveal backstop for the active container.
 
         The active container mounts invisible (``-pre-reveal``) and is revealed by
-        its finalize task once the layout settles. If that task is cancelled
+        its finalise task once the layout settles. If that task is cancelled
         before it reveals, or hangs awaiting chunks a cancelled mount never
         mounted, the container would stay invisible. This timer guarantees the
         invariant "an active container becomes visible within a bounded time":
         when it fires, :meth:`reveal_active` reveals the still-invisible active
-        container. A fast finalize reveals first and calls :meth:`reveal` which
+        container. A fast finalise reveals first and calls :meth:`reveal` which
         disarms this, so the common path never hits the timer (no flash)."""
         self._cancel_reveal_watchdog()
         self._reveal_watchdog = self._app.set_timer(
@@ -296,7 +296,7 @@ class PreviewPresenter:
         return container.parent_doc_id if container is not None else None
 
     def pipeline_busy(self) -> bool:
-        """True while a decode / load / mount / finalize for the preview is
+        """True while a decode / load / mount / finalise for the preview is
         still in flight — i.e. the pane not yet showing the cursor's file is
         expected right now, not a strand."""
         if self.load_timer is not None:
@@ -319,10 +319,10 @@ class PreviewPresenter:
                 if not task.done():  # type: ignore[attr-defined]
                     return True
         container = self.active
-        finalize = getattr(container, "_finalize_task", None) if container is not None else None
-        if finalize is not None:
+        finalise = getattr(container, "_finalise_task", None) if container is not None else None
+        if finalise is not None:
             with contextlib.suppress(Exception):
-                if not finalize.done():
+                if not finalise.done():
                     return True
         return False
 
@@ -545,7 +545,7 @@ class PreviewPresenter:
         if self._app._search.searcher is None:
             return
 
-        # Arm the scroll controller for this navigation. Every mount/finalize
+        # Arm the scroll controller for this navigation. Every mount/finalise
         # event below reconciles against this one anchor instead of issuing its
         # own scroll, so call order can no longer change where the preview lands.
         # Glide smoothly only when the target match is ALREADY mounted (the
@@ -996,7 +996,7 @@ class PreviewPresenter:
                 # cursor and continually mounts/evicts/removes its own containers
                 # for the hot file; adopting one for a user mount races that
                 # removal — the adopted widget is detached mid-mount and the
-                # finalize reveals a zero-region ghost (blank pane). Build a
+                # finalise reveals a zero-region ghost (blank pane). Build a
                 # fresh, user-owned container instead, which prefetch won't touch
                 # (and eviction can't drop while it is the protected active one).
                 if getattr(c, "_prefetch_task", None) is not None:
@@ -1069,7 +1069,7 @@ class PreviewPresenter:
             self.activate_container(cached, pre_reveal=True, keep_outgoing=True)
             self.refresh_match_scrollbar(chunks)
             self.show_progress_bar(total=1, progress=0, phase="rendering…")
-            self._app.call_after_refresh(self.finalize_pre_reveal, cached, focus_chunk_seq)
+            self._app.call_after_refresh(self.finalise_pre_reveal, cached, focus_chunk_seq)
             return
 
         # Either no container yet OR a partially-mounted one (resume).
@@ -1289,7 +1289,7 @@ class PreviewPresenter:
         self.chunk_widgets = container.chunk_widgets
         self.match_targets = container.match_targets
         # A container activated invisibly is on the clock: arm the bounded-time
-        # reveal backstop so a cancelled/hung finalize can't leave it stranded.
+        # reveal backstop so a cancelled/hung finalise can't leave it stranded.
         # A visible (non-pre-reveal) activation cancels any pending watchdog.
         if pre_reveal:
             self._arm_reveal_watchdog()
@@ -1316,7 +1316,7 @@ class PreviewPresenter:
         from under an in-flight mount. Either leaves ``self.active`` pointing at a
         detached widget; revealing it would surface a blank pane. The widget's
         chunk tree travels with it, so re-mounting the SAME instance restores the
-        built content. Called just before the finalize reveals, so the reveal
+        built content. Called just before the finalise reveals, so the reveal
         always lands on an attached container. A no-op unless the container is
         both the active preview and detached."""
         if container is not self.active or is_live(container):
@@ -1327,7 +1327,7 @@ class PreviewPresenter:
             # active reference instead so the reveal no-ops and the settle-time
             # paint check (:meth:`_verify_painted`) rebuilds from scratch.
             self.diag_log(
-                f"finalize re-attach SKIPPED (condemned) parent={container.parent_doc_id[:8]}"
+                f"finalise re-attach SKIPPED (condemned) parent={container.parent_doc_id[:8]}"
             )
             self.active = None
             return
@@ -1336,10 +1336,10 @@ class PreviewPresenter:
         except Exception as exc:
             # Teardown race (app quitting) or an un-remountable widget: the reveal
             # then no-ops on the still-detached container. Log the real outcome.
-            self.diag_log(f"finalize re-attach FAILED parent={container.parent_doc_id[:8]}: {exc}")
+            self.diag_log(f"finalise re-attach FAILED parent={container.parent_doc_id[:8]}: {exc}")
             return
         self.diag_log(
-            f"finalize re-attach parent={container.parent_doc_id[:8]} (was detached mid-mount)"
+            f"finalise re-attach parent={container.parent_doc_id[:8]} (was detached mid-mount)"
         )
 
     def effective_match_spec(self) -> MatchSpec:
@@ -1358,7 +1358,7 @@ class PreviewPresenter:
         happen to be mounted sees nothing pending and commits a scroll the
         arriving content then pushes down.
 
-        This is the same guarantee ``_finalize_via_lock`` gets from its
+        This is the same guarantee ``_finalise_via_lock`` gets from its
         ``expected_above_seqs``; the difference is only that the scroll strategy
         can't know the window, so it asks the presenter, which does.
         """
@@ -1631,11 +1631,11 @@ class PreviewPresenter:
         match resolved, or no outgoing) — a no-op for the class already lifted
         by the swap.
 
-        Guard: a finalize/reveal callback is queued via ``call_after_refresh``
+        Guard: a finalise/reveal callback is queued via ``call_after_refresh``
         and runs a tick later. If a newer navigation superseded this mount in
         the meantime, ``container`` is no longer ``_active_preview`` — revealing
         it would surface the wrong file and clobber the new nav's outgoing
-        reference. Detached finalize tasks aren't cancelled, so this staleness
+        reference. Detached finalise tasks aren't cancelled, so this staleness
         check (not task cancellation) is the single point that makes a
         superseded reveal a no-op."""
         if container is not self.active:
@@ -1664,13 +1664,13 @@ class PreviewPresenter:
     def reveal_active(self) -> None:
         """Invariant backstop: the active container must not stay ``-pre-reveal``
         (invisible) once its navigation has settled. Reveal is normally driven by
-        one specific finalize task, but rapid navigation can cut that task short
+        one specific finalise task, but rapid navigation can cut that task short
         before it reveals — and the scroll-only resume path
         (:meth:`_settled_instant_scroll`) never reveals at all. Either leaves the
         active container built-but-invisible: the "preview blank until I select a
         different result and come back" strand. Calling this whenever a
         navigation settles closes every such gap, and also finishes the cut-short
-        finalize's bar/latch cleanup (below). A no-op only when nothing is active."""
+        finalise's bar/latch cleanup (below). A no-op only when nothing is active."""
         container = self.active
         if container is None:
             return
@@ -1681,23 +1681,23 @@ class PreviewPresenter:
         # loading for the active container. A cut-short or superseded mount can
         # still leave the SHARED progress bar open (a prior mount opened it and
         # the winning path never closed it) and the in-flight latch set. Finish
-        # the finalize's terminal cleanup so the bar can't stick ("mount stuck at
+        # the finalise's terminal cleanup so the bar can't stick ("mount stuck at
         # 49%") and a re-select of the same result isn't deduped out.
         self.hide_progress_bar()
         self.inflight_target = None
 
-    def finalize_pre_reveal(self, container: PreviewContainer, focus_chunk_seq: int) -> None:
+    def finalise_pre_reveal(self, container: PreviewContainer, focus_chunk_seq: int) -> None:
         """Lift ``-pre-reveal`` once focused chunk's compose is ready, then scroll."""
         import time
 
         t0 = time.perf_counter()
         self._app._diag_log(
-            f"finalize_pre_reveal start seq={focus_chunk_seq} parent_id={container.parent_doc_id}"
+            f"finalise_pre_reveal start seq={focus_chunk_seq} parent_id={container.parent_doc_id}"
         )
 
-        self._do_finalize_pre_reveal(container, focus_chunk_seq, retries=10, t0=t0)
+        self._do_finalise_pre_reveal(container, focus_chunk_seq, retries=10, t0=t0)
 
-    async def _finalize_via_lock(
+    async def _finalise_via_lock(
         self,
         container: PreviewContainer,
         focus_chunk_seq: int,
@@ -1706,7 +1706,7 @@ class PreviewPresenter:
         expected_above_seqs: list[int] | None = None,
         path: str = "cold_via_lock",
     ) -> None:
-        """Reveal-safe wrapper around :meth:`_finalize_via_lock_body`.
+        """Reveal-safe wrapper around :meth:`_finalise_via_lock_body`.
 
         The body reveals by scheduling ``reconcile`` at its very end; if rapid
         navigation CANCELS this task at any earlier await (build/settle wait), it
@@ -1717,19 +1717,19 @@ class PreviewPresenter:
         no-op (and never reveals early, preserving the no-flash-at-top scroll)."""
         reveal_scheduled = False
         try:
-            reveal_scheduled = await self._finalize_via_lock_body(
+            reveal_scheduled = await self._finalise_via_lock_body(
                 container, focus_chunk_seq, t0, expected_above_seqs=expected_above_seqs, path=path
             )
         finally:
-            # Only repair the container THIS finalize owns. On a supersede
+            # Only repair the container THIS finalise owns. On a supersede
             # cancellation self.active is already the successor; revealing it
             # here would lift its -pre-reveal before its own scroll settled (a
             # content flash) and clear the successor's shared bar/latch. When a
-            # successor has taken over, its own finalize/watchdog reveals it.
+            # successor has taken over, its own finalise/watchdog reveals it.
             if not reveal_scheduled and container is self.active:
                 self.reveal_active()
 
-    async def _finalize_via_lock_body(
+    async def _finalise_via_lock_body(
         self,
         container: PreviewContainer,
         focus_chunk_seq: int,
@@ -1761,7 +1761,7 @@ class PreviewPresenter:
                     await header.build_done.wait()
         except TimeoutError:
             self._app._diag_log(
-                f"finalize_via_lock focus build_done timeout seq={focus_chunk_seq} path={path}"
+                f"finalise_via_lock focus build_done timeout seq={focus_chunk_seq} path={path}"
             )
         # Step 2: wait for the above-window chunks to be MOUNTED, then built.
         # We cannot just read chunk_widgets now: when the focus chunk was
@@ -1777,7 +1777,7 @@ class PreviewPresenter:
                     await asyncio.sleep(0)
         except TimeoutError:
             self._app._diag_log(
-                f"finalize_via_lock above mount timeout seq={focus_chunk_seq} "
+                f"finalise_via_lock above mount timeout seq={focus_chunk_seq} "
                 f"expected={len(expected)} path={path}"
             )
         # ``display=False`` widgets take no part in the arrange, so they cannot
@@ -1796,7 +1796,7 @@ class PreviewPresenter:
                     await asyncio.gather(*(w.build_done.wait() for w in above_widgets))
             except TimeoutError:
                 self._app._diag_log(
-                    f"finalize_via_lock above build_done timeout "
+                    f"finalise_via_lock above build_done timeout "
                     f"seq={focus_chunk_seq} above_count={len(above_widgets)} path={path}"
                 )
         # Wait for the screen to FULLY settle before scrolling. build_done only
@@ -1809,7 +1809,7 @@ class PreviewPresenter:
         # only once every widget has processed its pending layout, so the geometry
         # the scroll reads is final.
         _perf.mark(
-            "finalize_buildwait",
+            "finalise_buildwait",
             ms=(time.perf_counter() - _fin_t0) * 1000.0,
             above=len(above_widgets),
             path=path,
@@ -1847,12 +1847,12 @@ class PreviewPresenter:
         # latch so a later genuine re-render of the same target can run.
         self.inflight_target = None
         self._app._diag_log(
-            f"finalize_via_lock done seq={focus_chunk_seq} path={path} "
+            f"finalise_via_lock done seq={focus_chunk_seq} path={path} "
             f"wait_ms={wait_ms:.1f} above_waited={len(above_widgets)}"
         )
         return True
 
-    def _do_finalize_pre_reveal(
+    def _do_finalise_pre_reveal(
         self,
         container: PreviewContainer,
         focus_chunk_seq: int,
@@ -1869,7 +1869,7 @@ class PreviewPresenter:
             compose_done = header.first_match_block is not None  # pyright: ignore[reportAttributeAccessIssue]
         if not compose_done and retries > 0:
             self._app.call_after_refresh(
-                self._do_finalize_pre_reveal,
+                self._do_finalise_pre_reveal,
                 container,
                 focus_chunk_seq,
                 retries - 1,
@@ -1889,13 +1889,13 @@ class PreviewPresenter:
         def _reveal_when_landed() -> None:
             self.reveal(container)
             self._app._diag_log(
-                f"finalize_pre_reveal done seq={focus_chunk_seq} "
+                f"finalise_pre_reveal done seq={focus_chunk_seq} "
                 f"wait_ms={wait_ms:.1f} elapsed_ms={(time.perf_counter() - t0) * 1000:.1f} "
                 f"compose_done={compose_done}"
             )
 
         # Wait for the screen to fully settle, THEN scroll once + reveal — same
-        # deterministic settle the cold path uses (see _finalize_via_lock). The
+        # deterministic settle the cold path uses (see _finalise_via_lock). The
         # warm reveal is sync, so run the await in a task.
         import asyncio as _asyncio
 
@@ -1911,10 +1911,10 @@ class PreviewPresenter:
         # and a redundant (generation-guarded) reconcile. Safe to cancel: this
         # task does no cleanup, so CancelledError just unwinds the await. Held on
         # the container so GC can't collect the new one mid-await (RUF006).
-        _prior = getattr(container, "_finalize_task", None)
+        _prior = getattr(container, "_finalise_task", None)
         if _prior is not None and not _prior.done():
             _prior.cancel()
-        container._finalize_task = _asyncio.create_task(_settled_reconcile())  # type: ignore[attr-defined]
+        container._finalise_task = _asyncio.create_task(_settled_reconcile())  # type: ignore[attr-defined]
 
     async def await_settled(self, max_rounds: int = 10) -> None:
         """Deterministically wait until the screen has processed all pending
@@ -3037,7 +3037,7 @@ class PreviewPresenter:
         hidden_widgets: list[Widget] = []
 
         # The try MUST cover the early awaits below (container mount,
-        # cancel_task_on): they run BEFORE the detached finalize task is
+        # cancel_task_on): they run BEFORE the detached finalise task is
         # spawned, and a cancellation here would otherwise skip the finally
         # entirely — stranding the progress bar with no task left to hide it.
         try:
@@ -3087,7 +3087,7 @@ class PreviewPresenter:
             self.mount_phase = "1a-focus"
             if focus_idx not in container.mounted_indices:
                 self.mount_chunk_into(container, chunks[focus_idx], focus_idx, chunks)
-            # Event-based finalize: parallel task awaits the focused
+            # Event-based finalise: parallel task awaits the focused
             # chunk widget's lock (Markdown.update build-done signal)
             # before scrolling. Replaces the polling retry chain which
             # raced layout on heavy md (cold) AND lost the scroll on
@@ -3099,15 +3099,15 @@ class PreviewPresenter:
 
                 # Reference held on the container so GC doesn't collect
                 # the task mid-await (RUF006). Cleared once it completes.
-                # The above-window chunks Phase 1b will mount. finalize must
+                # The above-window chunks Phase 1b will mount. finalise must
                 # wait for THESE to exist + build, not just whatever is in
                 # chunk_widgets when it first looks — a prefetched focus chunk
-                # has build_done already set, so finalize would otherwise run
+                # has build_done already set, so finalise would otherwise run
                 # before Phase 1b mounts the window and scroll to a stale
                 # (focus-at-top) position, then settle-scroll once they land.
                 expected_above_seqs = [chunks[i].chunk_seq for i in range(win_start, focus_idx)]
-                _finalize_task = asyncio.create_task(
-                    self._finalize_via_lock(
+                _finalise_task = asyncio.create_task(
+                    self._finalise_via_lock(
                         container,
                         focus_chunk_seq,
                         _time.perf_counter(),
@@ -3115,14 +3115,14 @@ class PreviewPresenter:
                         path="cold_via_lock" if cold_mount else "warm_via_lock",
                     )
                 )
-                container._finalize_task = _finalize_task  # type: ignore[attr-defined]
+                container._finalise_task = _finalise_task  # type: ignore[attr-defined]
             self.update_progress_bar(progress=len(container.mounted_indices))
             await asyncio.sleep(0)
 
             # Phase 1b: mount the visible window, ABOVE the focus first and
             # closest-to-focus first within each side.
             #
-            # The finalize waits only on the chunks ABOVE the focus — they are
+            # The finalise waits only on the chunks ABOVE the focus — they are
             # what decides where the match lands — so mounting those first lets
             # the reveal stop waiting sooner. The ones below can arrive whenever;
             # interleaving the two sides made the reveal wait on roughly twice
@@ -3134,7 +3134,7 @@ class PreviewPresenter:
             # and each reports ~755ms where one alone takes ~22-30ms — but it is
             # a trap under real use. Serialising means a navigation's mount must
             # finish before the next one can get going, and over a sustained
-            # Down sweep on a 1018-chunk PDF that took the finalize's build wait
+            # Down sweep on a 1018-chunk PDF that took the finalise's build wait
             # from a 1310ms median to 2832ms (worst case 10.6s), roughly doubling
             # end-to-end navigation. Measured over 40 presses; an 18-press sample
             # showed the opposite, which is why the bigger sample is the one to
@@ -3198,7 +3198,7 @@ class PreviewPresenter:
                     with contextlib.suppress(Exception):
                         self._app._preview_scroll.reconcile()
 
-            # Phase 3 (Option C): the first view has now painted (finalize
+            # Phase 3 (Option C): the first view has now painted (finalise
             # revealed during Phase 1/2). Fill the REST of the file in the
             # background so internal match-jumps land on an already-mounted
             # chunk. Strictly AFTER the reveal so it never delays first paint;
@@ -3207,10 +3207,10 @@ class PreviewPresenter:
             # starves interaction; budget-capped so monster files stay windowed;
             # bails the instant the user navigates away.
             self.mount_phase = "await-first-paint"
-            # Wait for finalize to actually reveal (first paint) before adding
+            # Wait for finalise to actually reveal (first paint) before adding
             # any DOM — otherwise this fill runs on the same coroutine and
-            # starves the finalize task, delaying first paint several-fold.
-            _ft = getattr(container, "_finalize_task", None)
+            # starves the finalise task, delaying first paint several-fold.
+            _ft = getattr(container, "_finalise_task", None)
             if _ft is not None:
                 with contextlib.suppress(Exception):
                     await _ft
@@ -3283,12 +3283,12 @@ class PreviewPresenter:
                     f"mount superseded gen={my_generation}->{self.reset_generation} "
                     f"parent={container.parent_doc_id[:8]} — dropping stale container"
                 )
-                # The cold path spawns a DETACHED _finalize_via_lock task that, on
+                # The cold path spawns a DETACHED _finalise_via_lock task that, on
                 # completion, unconditionally hides the progress bar and clears
                 # inflight_target. Cancelling the mount task does NOT cancel it, so
                 # a superseded mount's finaliser would later clobber the SUCCESSOR
                 # query's bar + latch. Cancel it here before dropping the widget.
-                _ft = getattr(container, "_finalize_task", None)
+                _ft = getattr(container, "_finalise_task", None)
                 if _ft is not None and not _ft.done():
                     _ft.cancel()
                 with contextlib.suppress(Exception):
@@ -3339,15 +3339,15 @@ class PreviewPresenter:
             if container.is_complete and not superseded:
                 self.hide_progress_bar()
             elif (
-                getattr(container, "_finalize_task", None) is None
+                getattr(container, "_finalise_task", None) is None
                 and (self.mount_task is None or self.mount_task is asyncio.current_task())
                 and self.inflight_target in (None, (parent_id, focus_chunk_seq))
             ):
-                # Ended in the early-await phase — before the detached finalize
+                # Ended in the early-await phase — before the detached finalise
                 # task (the ONLY thing that hides the bar + releases the in-flight
                 # latch on success) was spawned — and no successor took over the
                 # loading state. Three ownership checks, all required:
-                #   * ``_finalize_task is None``: no detached finalize will clear it.
+                #   * ``_finalise_task is None``: no detached finalise will clear it.
                 #   * ``mount_task is None`` (cancel_mount_task nulled it) OR
                 #     ``is current_task()`` (exception / other-path end, where it
                 #     still points at this now-dead task) — a successor MOUNT would

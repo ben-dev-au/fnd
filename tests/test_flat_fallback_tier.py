@@ -132,7 +132,7 @@ def test_no_op_when_nothing_missing() -> None:
 
 
 def test_flat_fallback_is_not_a_pipeline_tier() -> None:
-    """Flat-fallback runs in _finalize_body_md AFTER the born-digital
+    """Flat-fallback runs in _finalise_body_md AFTER the born-digital
     docling fallback, not inside the recovery pipeline — so the prose it
     backfills can't be discarded by a later docling swap, and a
     flat-appended 'Table N' can't retro-trigger that docling."""
@@ -143,7 +143,7 @@ def test_flat_fallback_is_not_a_pipeline_tier() -> None:
     assert isinstance(pdf._flat_fallback_tier, FlatFallbackTier)
 
 
-def test_finalize_runs_docling_check_before_flat_backfill(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_finalise_runs_docling_check_before_flat_backfill(monkeypatch: pytest.MonkeyPatch) -> None:
     """The born-digital docling decision must see the structured markdown
     BEFORE flat-fallback appends — otherwise a backfilled 'Table 1' block
     could retro-trigger docling. Assert the markdown handed to
@@ -170,7 +170,7 @@ def test_finalize_runs_docling_check_before_flat_backfill(monkeypatch: pytest.Mo
     flat = "heading only " + "Table 1 lists the dropped prose tokens " + _distinct_words(0, 30)
     ctx = ExtractionContext(doc=object(), page=FakePage(), page_index=0, path="x.pdf", flat=flat)
 
-    result = pdf._finalize_body_md(ctx, "## Heading only")
+    result = pdf._finalise_body_md(ctx, "## Heading only")
 
     assert "Table 1" not in seen["md"]  # docling inspected the pre-backfill md
     assert "dropped prose tokens" in result  # flat-fallback ran afterwards

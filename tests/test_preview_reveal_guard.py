@@ -1,6 +1,6 @@
 """Guard tests for PreviewPresenter.reveal (PR #22 review #2/#3).
 
-A finalize/reveal callback is queued a tick late; if a newer navigation
+A finalise/reveal callback is queued a tick late; if a newer navigation
 superseded the mount, revealing the captured (now stale) container would
 surface the wrong file and clobber the new nav's outgoing reference. The
 guard makes a superseded reveal a no-op."""
@@ -49,7 +49,7 @@ def test_reveal_preview_reveals_active_container_and_drops_outgoing() -> None:
 
 
 def test_reveal_preview_is_noop_for_superseded_container() -> None:
-    # A finalize callback fires a tick late after a newer nav swapped in
+    # A finalise callback fires a tick late after a newer nav swapped in
     # ``current``. Revealing the stale ``superseded`` would surface the wrong
     # file and clobber the new nav's outgoing reference — must be a no-op.
     superseded = _FakeContainer()

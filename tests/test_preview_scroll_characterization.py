@@ -409,7 +409,7 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
     The original flake was the test asserting on a fixed-tick settle that
     expired before this late scroll committed (``scroll_y > 0`` + a mounted
     match widget are both true well before THIS nav scrolls — see the sibling
-    test's docstring). Here the finalize settle is delayed so the correcting
+    test's docstring). Here the finalise settle is delayed so the correcting
     scroll is guaranteed late; gating on ``not is_settling`` waits it out. We
     assert only the post-settle invariant (match in viewport): the pre-landing
     intermediate position is a transient, and sampling it in-suite would itself
@@ -418,10 +418,10 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
     """
     app = _build_coldnav_app(tmp_path, tmp_index_dir)
 
-    # Delay finalize's pre-scroll settle so the correcting match scroll commits
+    # Delay finalise's pre-scroll settle so the correcting match scroll commits
     # well after the focus chunk has mounted — forcing the lagging-landing path
     # deterministically instead of relying on load timing. ``await_match_settled``
-    # is the settle the cold finalize awaits before its single match scroll.
+    # is the settle the cold finalise awaits before its single match scroll.
     # Scoped to the TARGET nav only (enabled after prefetch): a global delay also
     # slows the rank-0 auto-load and starves the prefetch-wait under load.
     delay_target_landing = False
@@ -468,7 +468,7 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
         delay_target_landing = True
         rtree.move_cursor(rtree.root.children[1])
 
-        # Phase 1: prove the delayed-finalize path actually armed — the nav must
+        # Phase 1: prove the delayed-finalise path actually armed — the nav must
         # enter the settling state on the target before we wait for it to clear,
         # so a swap-in of the prefetched container can't satisfy phase 2 without
         # the controller ever settling. Gate on the latch (not a live is_settling
@@ -506,7 +506,7 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
         assert region is not None, "content match widget never laid out"
         top, bottom = pane.region.y, pane.region.y + pane.region.height
         assert top <= region.y < bottom, (
-            f"with a delayed finalize, the match at y={region.y} is outside "
+            f"with a delayed finalise, the match at y={region.y} is outside "
             f"viewport [{top}, {bottom}) after the controller settled "
             f"(pane.scroll_y={pane.scroll_y}) — gating on is_settling did not "
             f"wait for the real landing"

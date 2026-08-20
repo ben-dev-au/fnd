@@ -113,7 +113,7 @@ class ScriptedPipeline:
         the container; the tracker reads that to know it is in the build
         phase. Model it, or the build stage is invisible and the tracker
         retires it early."""
-        self.active._finalize_task = _Task() if self._stage == "build" else None
+        self.active._finalise_task = _Task() if self._stage == "build" else None
 
 
 class _Worker:
@@ -135,7 +135,7 @@ class _Container:
         self.parent_doc_id = parent_doc_id
         self.total_chunks = 1018
         self.mounted_indices: set[int] = set()
-        self._finalize_task: Any = None
+        self._finalise_task: Any = None
 
     def advance_mount(self) -> None:
         self.mounted_indices.add(len(self.mounted_indices))

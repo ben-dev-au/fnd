@@ -77,7 +77,7 @@ def test_vscode_handles_text_kinds_and_wildcard() -> None:
     assert {"md", "markdown", "txt", "*"} <= set(h)
 
 
-def test_skim_available_honors_has_skim_stub(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_skim_available_honours_has_skim_stub(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(apps, "_skim_app_exists", lambda: False)
     assert apps.BUILTIN_APPS["skim"].available() is False
     monkeypatch.setattr(apps, "_skim_app_exists", lambda: True)

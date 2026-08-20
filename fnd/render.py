@@ -352,7 +352,7 @@ def _highlight(text: str, terms: list[str]) -> str:
     """Wrap each whole-word occurrence of any term in Markdown bold (**…**).
 
     Stem-aware: "penfold" highlights both "penfold" and "penfolds", matching
-    Tantivy's ``en_stem`` tokenizer behavior. Used by the legacy Markdown
+    Tantivy's ``en_stem`` tokenizer behaviour. Used by the legacy Markdown
     render path (kept for export use; the TUI takes the Rich-Text path).
     """
     if not terms:

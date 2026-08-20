@@ -6,7 +6,7 @@ sidecar, so the list can never drift from what is actually indexed.
 Counts are FILE counts, not document counts. A tantivy document is a chunk, so
 a 40-chunk PDF tagged ``report`` would otherwise report as 40. The aggregation
 buckets by file and tallies tags within each, which is exact — see the note in
-:func:`tag_catalog` for why the cardinality approach was abandoned.
+:func:`tag_catalogue` for why the cardinality approach was abandoned.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import tantivy
 
 from fnd.schema import F_COLLECTION, F_PARENT_ID, TAG_FIELD_BY_SOURCE
 
-__all__ = ["TagCount", "TagNode", "build_tag_tree", "tag_catalog"]
+__all__ = ["TagCount", "TagNode", "build_tag_tree", "tag_catalogue"]
 
 # Enough to cover a large vault's tag vocabulary in one pass.
 _DEFAULT_LIMIT = 500
@@ -62,7 +62,7 @@ def _scope_query(
     return tantivy.Query.boolean_query(clauses)
 
 
-def tag_catalog(
+def tag_catalogue(
     index: tantivy.Index,
     *,
     collections: Sequence[str],

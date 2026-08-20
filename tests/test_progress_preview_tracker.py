@@ -48,7 +48,7 @@ class StubContainer:
         self.parent_doc_id = parent_doc_id
         self.total_chunks = total_chunks
         self.mounted_indices = set(range(mounted))
-        self._finalize_task = finalize
+        self._finalise_task = finalize
 
 
 class StubPreview:
@@ -172,7 +172,7 @@ def test_the_mount_task_puts_us_in_mount(app: StubApp, tracker: PreviewProgressT
     assert session.phase == "mount"
 
 
-def test_the_finalize_task_puts_us_in_build(app: StubApp, tracker: PreviewProgressTracker) -> None:
+def test_the_finalise_task_puts_us_in_build(app: StubApp, tracker: PreviewProgressTracker) -> None:
     session = tracker.begin("doc")
     app._preview.active = StubContainer(finalize=StubTask(done=False))
     app._preview.busy = True

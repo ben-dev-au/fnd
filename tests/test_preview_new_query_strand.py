@@ -66,9 +66,9 @@ async def test_new_query_during_inflight_mount_purges_stale_container(
             )
         )
         preview.mount_task = task
-        await safe_pause(pilot)  # park on the gate — container now mounted, pre-finalize
+        await safe_pause(pilot)  # park on the gate — container now mounted, pre-finalise
         assert stale.parent is not None, "setup — parked container should be mounted in DOM"
-        assert getattr(stale, "_finalize_task", None) is None, "setup — must be pre-finalize"
+        assert getattr(stale, "_finalise_task", None) is None, "setup — must be pre-finalise"
 
         # New query arrives while the mount is parked mid-flight; it clears the
         # caches + DOM and cancels the parked mount.
@@ -95,11 +95,11 @@ async def test_new_query_during_inflight_mount_purges_stale_container(
 
 
 @pytest.mark.asyncio
-async def test_superseded_mount_cancels_detached_finalizer(built_index: Path) -> None:
+async def test_superseded_mount_cancels_detached_finaliser(built_index: Path) -> None:
     """A superseded mount must cancel its detached finaliser so it can't later
     clobber the SUCCESSOR query's progress bar + inflight latch.
 
-    The cold path spawns ``container._finalize_task`` (``_finalize_via_lock``),
+    The cold path spawns ``container._finalise_task`` (``_finalise_via_lock``),
     which on completion unconditionally hides the bar and clears
     ``inflight_target``. Cancelling the mount task does not cancel that detached
     task — so without the generation-guarded cancel, a stale finaliser fires
@@ -127,21 +127,21 @@ async def test_superseded_mount_cancels_detached_finalizer(built_index: Path) ->
             total_chunks=len(chunks),
         )
 
-        # Stand-in for the detached _finalize_via_lock: parked on a gate; if it
+        # Stand-in for the detached _finalise_via_lock: parked on a gate; if it
         # ever completes it hides the bar + clears the latch — the clobber the
         # fix must prevent. Attached to the container exactly as the cold path
         # attaches the real one.
-        finalize_gate = asyncio.Event()
+        finalise_gate = asyncio.Event()
         clobbered = {"ran": False}
 
-        async def _fake_finalizer() -> None:
-            await finalize_gate.wait()
+        async def _fake_finaliser() -> None:
+            await finalise_gate.wait()
             clobbered["ran"] = True
             preview.hide_progress_bar()
             preview.inflight_target = None
 
-        fin_task = asyncio.create_task(_fake_finalizer())
-        container._finalize_task = fin_task  # type: ignore[attr-defined]
+        fin_task = asyncio.create_task(_fake_finaliser())
+        container._finalise_task = fin_task  # type: ignore[attr-defined]
 
         preview.show_progress_bar(total=len(chunks), phase="mounting…")
         preview.inflight_target = (g.parent_id, seq)
@@ -172,7 +172,7 @@ async def test_superseded_mount_cancels_detached_finalizer(built_index: Path) ->
 
         # Release the finaliser's gate; the fix already cancelled it, so it must
         # not run and clobber the successor's bar / latch.
-        finalize_gate.set()
+        finalise_gate.set()
         await safe_pause(pilot)
         await safe_pause(pilot)
 

@@ -425,7 +425,7 @@ class FNDApp(App[None]):
         self._preview_scroll_structural = StructuralScrollStrategy(host=self._preview)
         self._preview_scroll_flat = FlatScrollStrategy(host=self._preview)
         # Single source of truth for where the preview should sit: navigation
-        # arms an anchor; mount/finalize events reconcile against it (idempotent
+        # arms an anchor; mount/finalise events reconcile against it (idempotent
         # → the formerly racing scroll sites collapse to one target).
         self._preview_scroll = PreviewScrollController(select_strategy=self._select_scroll_strategy)
         # Scroll-driven lazy mounting (task + debounce timer); see
@@ -859,7 +859,7 @@ class FNDApp(App[None]):
         Returns one of ``"query"``, ``"results"``, ``"preview"``, or
         ``"global"`` (when nothing app-relevant is focused, e.g. an
         overlay)."""
-        # A background mount task can finalize and refresh the footer
+        # A background mount task can finalise and refresh the footer
         # after the app has begun tearing down — at which point the screen
         # stack is empty and ``self.focused`` (→ ``self.screen``) raises
         # ScreenStackError. No screen means no focus context to resolve.
