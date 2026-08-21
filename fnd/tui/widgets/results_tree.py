@@ -56,6 +56,11 @@ class ResultsTree(Tree[dict[str, Any]]):
             self.node = node
             super().__init__()
 
+    class GeometryChanged(Message):
+        """Posted when the pane's own size settles, so the app can re-elide the
+        file rows. The app-level resize handler reads the tree a layout too
+        early and re-elides against the previous width."""
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         # Per-file warmth, keyed by parent_id. Read on every label render, so
@@ -63,6 +68,7 @@ class ResultsTree(Tree[dict[str, Any]]):
         self.warm_states: dict[str, WarmState] = {}
 
     def on_resize(self, _event: events.Resize) -> None:
+        self.post_message(self.GeometryChanged())
         # While collapsed-to-header the pane shows a single content row; keep
         # the cursor (the file driving the preview) parked in it, else the
         # strip snaps back to the top result. Fires when add-class shrinks the

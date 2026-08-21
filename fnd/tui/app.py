@@ -227,6 +227,11 @@ class FNDApp(App[None]):
         width: 100%; height: 1fr;
         border: round $primary 50%;
         overflow-x: hidden;
+        /* `scroll`, not `auto`: file rows are elided to the pane's content
+           width, and that budget is measured before the rows exist — under
+           `auto` the rows then bring the scrollbar back and every label runs a
+           cell long, losing the last character of the extension. */
+        overflow-y: scroll;
     }
     /* Class-toggled focus border (not :focus-within) so it survives a
        terminal blur — Textual clears :focus-within when the app loses focus,
@@ -1605,6 +1610,11 @@ class FNDApp(App[None]):
         if not node.children:
             return
         tree.move_cursor_to_line(node.line + 1)
+
+    @on(ResultsTree.GeometryChanged)
+    def _on_results_geometry_changed(self, _ev: ResultsTree.GeometryChanged) -> None:
+        """Re-elide the file rows against the width the tree has settled at."""
+        self._results.relabel_file_rows()
 
     @on(ResultsTree.ReopenRequested)
     def _on_results_reopen_requested(self, ev: ResultsTree.ReopenRequested) -> None:
