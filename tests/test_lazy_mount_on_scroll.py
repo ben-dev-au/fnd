@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import textwrap
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from textual.containers import VerticalScroll
@@ -19,7 +20,10 @@ from textual.pilot import Pilot
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from fnd.tui.preview import tuning
 from fnd.tui.preview.tuning import LAZY_MOUNT_BATCH
+from fnd.tui.preview.warmth import WarmState
+from fnd.tui.widgets.preview_container import PreviewContainer
 from tests._pilot_wait import run_search, settle, wait_until
 
 
@@ -360,3 +364,173 @@ async def test_file_switch_cancels_lazy_mount(
         task = app._lazy.task
         if task is not None:
             assert task.done()  # type: ignore[attr-defined]
+
+
+def _batch_settled(app: FNDApp) -> bool:
+    """Whether the lazy mounter has no batch in flight, as the mounter checks it."""
+    task = app._lazy.task
+    return task is None or bool(task.done())  # type: ignore[attr-defined]
+
+
+async def _settled_preview(
+    app: FNDApp, pilot: Pilot[None]
+) -> tuple[VerticalScroll, PreviewContainer]:
+    """Run the search and wait for the initial windowed mount to land."""
+    app._search.run("target")
+    pane = app.query_one("#preview_pane", VerticalScroll)
+    await wait_until(
+        pilot,
+        lambda: (
+            app._preview.active is not None
+            and bool(app._preview.active.mounted_indices)
+            and pane.scroll_y > 0
+        ),
+        timeout=15.0,
+        message="initial mount + focus scroll never landed",
+    )
+    container = app._preview.active
+    assert container is not None, "the preview never became active"
+    return pane, container
+
+
+@pytest.mark.asyncio
+async def test_a_fully_warmed_file_fills_downward_and_never_prepends_unattended(
+    cfg: Config, long_md_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A warmed file fills the rest of itself BELOW the reader, never above.
+
+    Content inserted above the viewport shoves the reader down and the scroll
+    can only re-pin it a layout later, so an unattended above-fill jitters for
+    as long as it runs — measured at 19 of 21 painted frames showing the wrong
+    part of the document. Upward stays user-driven, one batch per scroll.
+    """
+    app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        _pane, container = await _settled_preview(app, pilot)
+        chunks = app._preview.chunk_cache.get(container.parent_doc_id) or []
+        assert len(container.mounted_indices) < len(chunks), "setup: needs a windowed mount"
+
+        monkeypatch.setattr(
+            type(app._preview), "file_warm_state", lambda _self, _pid: WarmState.FULL
+        )
+        top_before = min(container.mounted_indices)
+        assert top_before > 0, "setup: needs unmounted chunks above the reader"
+        app._preview_scroll.release()
+        app._lazy.check()
+        await settle(pilot)
+        for _ in range(3):
+            await settle(pilot)
+
+        assert min(container.mounted_indices) == top_before, (
+            f"the fill prepended above the reader unattended ({top_before} -> "
+            f"{min(container.mounted_indices)}), which shoves the viewport down "
+            f"until the scroll re-pins it a layout later"
+        )
+        assert len(container.mounted_indices) < len(chunks), (
+            "the whole file was mounted without the reader asking for it"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_warmed_file_over_the_mount_ceiling_stays_windowed(
+    cfg: Config, long_md_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mounted frozen chunk costs arrange whether or not it is on screen."""
+    app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        pane, container = await _settled_preview(app, pilot)
+        assert container is not None
+        chunks = app._preview.chunk_cache.get(container.parent_doc_id) or []
+        monkeypatch.setattr(
+            type(app._preview), "file_warm_state", lambda _self, _pid: WarmState.FULL
+        )
+        monkeypatch.setattr(tuning, "FULLWARM_MOUNT_MAX_CHUNKS", 1)
+        before = set(container.mounted_indices)
+        app._preview_scroll.release()
+        pane.scroll_to(y=0, animate=False, immediate=True)
+        app._lazy.check()
+        # Gate on the batch this check spawned, not a tick count: a fixed wait
+        # degrades to a no-op under load and would pass without the ceiling.
+        await wait_until(
+            pilot,
+            lambda: _batch_settled(app),
+            timeout=15.0,
+            message="the windowed batch never finished",
+        )
+        assert len(container.mounted_indices) < len(chunks), (
+            "the ceiling did not hold: a file over it mounted whole"
+        )
+        # Only meaningful if a batch actually ran — if the scroll left the
+        # viewport inside the mounted region no batch is spawned and a size
+        # assertion would hold trivially.
+        grew = len(container.mounted_indices) - len(before)
+        assert grew == 0 or grew <= LAZY_MOUNT_BATCH, (
+            f"over the ceiling a windowed batch should stay small, grew by {grew}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_completion_mount_refuses_while_a_navigation_is_settling(
+    cfg: Config, long_md_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A warm finishing inside a landing must not start a large prepend.
+
+    The scroll-driven path refuses while the controller still owns the
+    position; the completion path reached `fill_all` directly and did not.
+    """
+    app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        _pane, container = await _settled_preview(app, pilot)
+        chunks = app._preview.chunk_cache.get(container.parent_doc_id) or []
+        app._lazy.task = None
+        monkeypatch.setattr(type(app._preview_scroll), "is_settling", property(lambda _self: True))
+        app._preview.mount_warmed_file(container.parent_doc_id, chunks)
+        assert app._lazy.task is None, (
+            "the completion mount started a prepend underneath a settling navigation"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_completion_mount_refuses_over_the_ceiling(
+    cfg: Config, long_md_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mounted frozen chunks cost arrange whether or not they are on screen."""
+    app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        _pane, container = await _settled_preview(app, pilot)
+        chunks = app._preview.chunk_cache.get(container.parent_doc_id) or []
+        assert chunks, "setup: needs a decoded file"
+        app._lazy.task = None
+        monkeypatch.setattr(tuning, "FULLWARM_MOUNT_MAX_CHUNKS", 1)
+        app._preview.mount_warmed_file(container.parent_doc_id, chunks)
+        assert app._lazy.task is None, "a file over the ceiling was mounted whole"
+
+
+def _stub_lazy(all_captured: bool) -> tuple[Any, Any, list[Any]]:
+    """A mounter whose only live edge is whether a run is in the capture store."""
+    from fnd.tui.preview.lazy_mount import LazyMounter
+
+    lazy = cast("Any", LazyMounter.__new__(LazyMounter))
+    preview = type("_P", (), {"all_captured": lambda _s, _p, _q: all_captured})()
+    lazy._app = type("_A", (), {"_preview": preview})()
+    container = type("_C", (), {"parent_doc_id": "A"})()
+    chunks = [type("_K", (), {"chunk_seq": i})() for i in range(200)]
+    return lazy, container, chunks
+
+
+def test_a_run_already_in_the_store_gets_the_served_batch() -> None:
+    lazy, container, chunks = _stub_lazy(all_captured=True)
+    assert lazy._served_batch(container, chunks, 50, -1) == tuning.LAZY_MOUNT_BATCH_SERVED
+
+
+def test_a_run_that_must_be_built_gets_the_small_batch() -> None:
+    """FULL is counted over CAPTURABLE chunks, so a mostly flat-path file reads
+    FULL with almost none of it in the store — and the served batch is ten times
+    what a build batch can afford."""
+    lazy, container, chunks = _stub_lazy(all_captured=False)
+    assert lazy._served_batch(container, chunks, 50, -1) == tuning.LAZY_MOUNT_BATCH
+    assert lazy._served_batch(container, chunks, 50, 1) == tuning.LAZY_MOUNT_BATCH

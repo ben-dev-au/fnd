@@ -20,6 +20,7 @@ from textual.containers import VerticalScroll
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.preview.warmth import WarmState
+from fnd.tui.preview_scrollbar import MatchAwareScroll
 from fnd.tui.widgets.results_tree import ResultsTree
 from tests._pilot_wait import run_search, wait_until
 
@@ -48,15 +49,17 @@ def hold_everything(app: FNDApp) -> None:
     """Report every chunk as held, without building real captures.
 
     Patches ``has``, which is what warmth probes with — ``get`` promotes on
-    read and warmth must never do that. Keeping the fake off the warm host
-    also keeps these tests off a serial resource that captures at ~10 chunks
-    a second.
+    read and warmth must never do that. ``count`` too, or the double
+    contradicts itself: whole-file readiness is counted rather than probed, so
+    a file could read fully warmed while this claims to hold nothing.
     """
     app._preview.capture_store.has = lambda *a, **k: True  # type: ignore[assignment]
+    app._preview.capture_store.count = lambda *a, **k: 1_000_000  # type: ignore[assignment]
 
 
 def hold_nothing(app: FNDApp) -> None:
     app._preview.capture_store.has = lambda *a, **k: False  # type: ignore[assignment]
+    app._preview.capture_store.count = lambda *a, **k: 0  # type: ignore[assignment]
 
 
 @pytest.mark.asyncio
@@ -75,12 +78,12 @@ async def test_readiness_is_answerable_in_a_live_app(warm_index: Path) -> None:
         # Nothing is READY. Not "everything is COLD": real coverage is running
         # underneath, so whichever file it is capturing right now legitimately
         # reads WARMING, and pinning that would be a timing-dependent test.
-        assert WarmState.READY not in set(states.values())
+        assert not any(st.is_served for st in states.values())
 
         hold_everything(app)
         warm = app._preview.warm_states()
         assert warm is not None
-        assert set(warm.values()) == {WarmState.READY}
+        assert all(st.is_served for st in warm.values())
 
 
 @pytest.mark.asyncio
@@ -118,11 +121,11 @@ async def test_the_poll_repaints_the_arrows(warm_index: Path) -> None:
         # it is capturing right now legitimately reads WARMING. Pinning that is
         # a timing-dependent test — it passed on macOS and Linux and failed on
         # Windows. What this step means is that nothing is READY yet.
-        assert WarmState.READY not in set(tree.warm_states.values())
+        assert not any(st.is_served for st in tree.warm_states.values())
 
         hold_everything(app)
         assert app._results.refresh_warmth() is True
-        assert set(tree.warm_states.values()) == {WarmState.READY}
+        assert all(st.is_served for st in tree.warm_states.values())
 
 
 @pytest.mark.asyncio
@@ -144,7 +147,7 @@ async def test_the_timer_drives_the_poll_without_being_asked(warm_index: Path) -
             timeout=10.0,
             message="nothing ever polled warmth onto the results tree",
         )
-        assert set(tree.warm_states.values()) == {WarmState.READY}
+        assert all(st.is_served for st in tree.warm_states.values())
 
 
 @pytest.mark.asyncio
@@ -187,7 +190,7 @@ async def test_a_new_query_does_not_inherit_the_old_arrows(warm_index: Path) -> 
         tree = app.query_one("#results_pane", ResultsTree)
         hold_everything(app)
         app._results.refresh_warmth()
-        assert set(tree.warm_states.values()) == {WarmState.READY}, "setup"
+        assert all(st.is_served for st in tree.warm_states.values()), "setup"
 
         # Rebuild SYNCHRONOUSLY and look before the poll can tidy up after it.
         # The window this guards is only as long as one tick, so any await here
@@ -195,7 +198,7 @@ async def test_a_new_query_does_not_inherit_the_old_arrows(warm_index: Path) -> 
         hold_nothing(app)
         app._results.refresh()
 
-        stale = [p for p, s in tree.warm_states.items() if s is WarmState.READY]
+        stale = [p for p, s in tree.warm_states.items() if s.is_served]
         assert not stale, "rows kept a READY arrow across a query that cleared the store"
 
         # On the GLYPH, not just the map. Clearing the map instead of seeding
@@ -403,3 +406,73 @@ async def test_the_warm_host_captures_one_at_a_time(warm_index: Path) -> None:
         await asyncio.gather(*(host.capture(chunk, 80) for _ in range(4)))
 
         assert overlap == 1, f"{overlap} captures shared the off-screen screen at once"
+
+
+@pytest.mark.asyncio
+async def test_a_fully_warmed_file_is_priced_as_a_warm_navigation(warm_index: Path) -> None:
+    """FULL is strictly warmer than READY, and the two readers must not drift.
+
+    Selecting the warm plan by comparing against READY alone prices the most
+    warmed file in the app as a cold navigation — every phase of the jump
+    overstated for the one file that has nothing left to build.
+    """
+    app = FNDApp(index_dir=warm_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await run_search(pilot, app, "target")
+        other = next(
+            g.parent_id for g in app._search.groups if g.parent_id != app._preview.showing_parent()
+        )
+        app._preview.chunk_cache.pop(other, None)
+
+        hold_nothing(app)
+        cold_plan = app._nav_progress.plan_for(other)
+
+        app._preview._capturable_total[other] = 1
+        hold_everything(app)
+        assert app._preview.file_warm_state(other) is WarmState.FULL, "setup: expected FULL"
+        full_plan = app._nav_progress.plan_for(other)
+
+        assert full_plan is not cold_plan, "a fully warmed file was priced with the cold plan"
+
+
+@pytest.mark.asyncio
+async def test_a_new_query_retires_a_whole_file_warm(warm_index: Path) -> None:
+    """A request must not outlive the query that motivated it.
+
+    Left standing it keeps the coverage loop alive with margin work suppressed,
+    and the next press of the key is spent cancelling a warm the user can no
+    longer see rather than starting the one they asked for.
+    """
+    app = FNDApp(index_dir=warm_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await run_search(pilot, app, "target")
+        pid = app._search.groups[0].parent_id
+        app._preview.request_full_warm(pid, 0)
+        assert app._preview.full_warm_in_progress, "setup: a warm should be requested"
+
+        app._preview.bump_reset_generation()
+        assert not app._preview.full_warm_in_progress, (
+            "the whole-file warm request survived a query reset"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_query_reset_drops_an_unconsumed_prepend_claim(warm_index: Path) -> None:
+    """The claim lives on the pane, which outlives every container.
+
+    Left standing, the next document's mount is absorbed as though it were
+    content added above the reader, and the pane scrolls by a whole file.
+    """
+    app = FNDApp(index_dir=warm_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await run_search(pilot, app, "target")
+        pane = app.query_one("#preview_pane", MatchAwareScroll)
+        pane.absorb_anchor = (pane, 0)
+
+        app._preview.bump_reset_generation()
+        assert pane.absorb_anchor is None, (
+            "a prepend claim survived the query that invalidated its container"
+        )

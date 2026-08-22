@@ -38,7 +38,6 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from fnd.tui.preview.warmth import WarmState
 from fnd.tui.progress.model import OperationKind, OperationPlan, Phase
 
 if TYPE_CHECKING:
@@ -142,6 +141,19 @@ INDEX = OperationPlan(
 )
 
 
+# Warming one file whole, on request. AMBIENT for the same reason indexing is:
+# it outlasts any navigation by orders of magnitude, so it has to give the line
+# up to whatever the user does next and take it back afterwards. Countable
+# because the unit is a chunk and there are hundreds — a fraction alone would
+# read as a stalled bar. Measured on a real corpus: 69s for an 854-chunk book,
+# 167s for a 719-chunk PDF, so the seed is an order of magnitude, not a promise.
+WARM_WHOLE_FILE = OperationPlan(
+    operation_id="preview.warm_whole",
+    phases=(Phase(key="capture", expected_ms=100_000.0, countable=True),),
+    kind=OperationKind.AMBIENT,
+)
+
+
 class PreviewProgressTracker:
     """Samples the preview pipeline once per progress tick.
 
@@ -190,9 +202,10 @@ class PreviewProgressTracker:
         # produced only a 3.6x duration range, because the preview mounts a
         # fixed window however large the file is.
         preview = self._app._preview
+        state = preview.file_warm_state(parent_id)
         warm = (
             preview.showing_parent() == parent_id
-            or preview.file_warm_state(parent_id) is WarmState.READY
+            or (state is not None and state.is_served)
             or parent_id in preview.chunk_cache
         )
         if self._is_structural(parent_id):
@@ -529,6 +542,7 @@ __all__ = [
     "PREVIEW_WARM",
     "PREVIEW_WARM_FLAT",
     "SEARCH",
+    "WARM_WHOLE_FILE",
     "IndexProgressTracker",
     "PreviewProgressTracker",
 ]

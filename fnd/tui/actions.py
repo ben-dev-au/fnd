@@ -177,6 +177,19 @@ REGISTRY: tuple[Action, ...] = (
         show_in_footer=False,  # discoverable via help (?)
     ),
     Action(
+        id="warm_whole_file",
+        description=(
+            "Warm the focused file completely, so scrolling anywhere in it is "
+            "instant — not just jumping between its matches. Runs in the "
+            "background; press again on the same file to stop."
+        ),
+        default_key="w",
+        command="warm",
+        footer_label="Warm file",
+        show_in_footer=False,
+        contexts=("results", "preview"),
+    ),
+    Action(
         id="focus_results_pane",
         description="Focus the results tree.",
         default_key="r",

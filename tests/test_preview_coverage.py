@@ -15,10 +15,11 @@ and prefetch to zero, so it cannot reproduce the timings that motivate any of it
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import time
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from textual.app import App, ComposeResult
@@ -29,9 +30,10 @@ from fnd.query import FileChunk
 from fnd.tui import FNDApp
 from fnd.tui.preview import tuning
 from fnd.tui.preview import warm_host as warm_host_mod
-from fnd.tui.preview.coverage import coverage_targets, filler_targets, neighbour_order
+from fnd.tui.preview.coverage import coverage_targets, neighbour_order
 from fnd.tui.preview.frozen import FrozenChunk, FrozenChunkView, freeze
 from fnd.tui.preview.warm_host import WarmHost
+from fnd.tui.preview_dispatcher import uses_markdown_renderer
 from fnd.tui.widgets.markdown import FNDMarkdown
 from tests._pilot_wait import settle, wait_until
 from tests._preview_corpus import wide_doc
@@ -60,13 +62,6 @@ def test_only_hits_and_their_margin_are_captured() -> None:
         total=20, focus_idx=0, hit_indices=[5], already=set(), margin=1, budget=500
     )
     assert sorted(targets) == [4, 5, 6]
-
-
-def test_the_filler_tier_covers_what_the_hits_did_not() -> None:
-    held = {4, 5, 6}
-    filler = filler_targets(total=20, focus_idx=0, already=held, budget=500)
-    assert sorted(filler) == [i for i in range(20) if i not in held]
-    assert filler[0] == 0, "filler is nearest-first too"
 
 
 def test_neighbours_alternate_outward_from_the_cursor() -> None:
@@ -920,3 +915,603 @@ async def test_a_failed_mount_does_not_disable_warming_for_the_session() -> None
             "warming stayed dead after one failed mount — the screen name was "
             "still taken and every retry raised on the duplicate"
         )
+
+
+# --- Tier order under a moving cursor -------------------------------------
+#
+# What a pass DOES with the cursor is only visible in the order files are
+# worked, and that order is decided in `_run_coverage` from the anchor, the
+# navigation order and the store — none of which need a real corpus, a real
+# capture, or a real widget. Driving the real method against stubbed edges
+# gives the trace directly; a full app test would have to infer the order from
+# store contents after the fact, and could not tell "covered late" from
+# "covered and evicted".
+
+
+@dataclasses.dataclass
+class _StubChunk:
+    chunk_seq: int
+    # Enough for `uses_markdown_renderer` to accept it. Coverage skips any
+    # chunk the off-screen builder cannot build, so a stub without these is
+    # uncapturable and every file in the plan gets silently skipped — the
+    # tests below would then assert about an ordering that never happened.
+    kind: str = "md"
+    body_md: str = "stub body"
+
+
+class _StubSession:
+    """Enough ProgressSession for a whole-file warm to report into.
+
+    ``closed`` is modelled because the presenter reads it to decide whether its
+    session was retired under it, and ``close`` because a stub without one turns
+    every retirement into a suppressed AttributeError.
+    """
+
+    def __init__(self) -> None:
+        self.closed = False
+        self.abandoned = False
+        self.reports: list[tuple[float, float]] = []
+        #: Reports that arrived after retirement — the real session silently
+        #: drops these, so nothing else could show they were being sent.
+        self.reports_after_close: list[tuple[float, float]] = []
+
+    def enter(self, _phase: str) -> None: ...
+
+    def report(self, done: float, total: float) -> None:
+        target = self.reports_after_close if self.closed else self.reports
+        target.append((done, total))
+
+    def close(self) -> None:
+        self.closed = True
+
+    def abandon(self) -> None:
+        """Retire without claiming the work finished."""
+        self.closed = True
+        self.abandoned = True
+
+
+class _StubProgress:
+    """The facility's single AMBIENT slot, which the warm must not steal.
+
+    ``begin`` takes the slot and retires whoever held it, as the real facility
+    does — a stub that merely handed back a session could not model the
+    collision these tests exist to pin.
+    """
+
+    def __init__(self) -> None:
+        self.ambient: _StubSession | None = None
+        self.sessions: list[_StubSession] = []
+
+    def begin(self, _plan: object, *, label: str = "") -> _StubSession:
+        if self.ambient is not None:
+            self.ambient.close()
+        session = _StubSession()
+        self.ambient = session
+        self.sessions.append(session)
+        return session
+
+
+class _StubCoverageApp:
+    """Just enough app for `_run_coverage` to run its plan."""
+
+    def __init__(self) -> None:
+        # No config, so coverage falls back to the tuning defaults.
+        self._config = None
+        self._progress = _StubProgress()
+        self._preview_scroll = cast("object", type("_S", (), {"is_settling": False})())
+        self._search = cast("object", type("_Q", (), {"query_signature": lambda self: "sig"})())
+        self._effective_match_spec = MatchSpec()
+        self._lazy = type("_L", (), {"task": None})()
+
+    def query_one(self, *_args: object, **_kwargs: object) -> object:
+        return object()
+
+
+class _CoverageTrace:
+    """A presenter wired to record which file each tier works, and for how long.
+
+    Captures are stubbed to a fixed sleep so the trace is about ORDER, not
+    speed: the real host is serial at ~10 chunks a second, which is exactly why
+    order is the whole design (see `fnd.tui.preview.coverage`).
+    """
+
+    def __init__(
+        self,
+        ids: list[str],
+        *,
+        chunks_per_file: int = 20,
+        hits_by_file: dict[str, list[int]] | None = None,
+    ) -> None:
+        from fnd.tui.preview.presenter import PreviewPresenter
+
+        self.ids = ids
+        self.events: list[tuple[str, str, int]] = []
+        self.warming_seen: list[str | None] = []
+        # A gate, not a sleep. Coverage's own pace is what these tests are
+        # about, so a fixed wait for "tier 1 has started" is a precondition
+        # weaker than the code it guards: hits-first finishes a stub file's
+        # three hit captures in ~15ms, and a 30ms wait then lands in the NEXT
+        # file and asserts the setup it meant to establish had failed.
+        self.covered: set[str] = set()
+        self.pause_after: tuple[str, int] | None = None
+        self.paused = asyncio.Event()
+        self.resume = asyncio.Event()
+        p = cast("Any", PreviewPresenter.__new__(PreviewPresenter))
+        p._app = _StubCoverageApp()
+        # The scheduler's own state, from the product's initialiser rather than
+        # mirrored here: it grows, and a copy goes stale without saying so.
+        p.init_coverage_state()
+        # Real code reads this on the warm's completion path. Left unset, that
+        # path raised AttributeError into `_run_coverage`'s blanket except and
+        # the tests passed without ever exercising it.
+        p.active = None
+        p.chunk_cache = {}
+        # `count` as well as `total_rows`: the whole-file warm reads it to
+        # place the progress line, and a stub missing it raises into
+        # `_run_coverage`'s blanket except, which reads as "nothing to do".
+        p.capture_store = type(
+            "_S",
+            (),
+            {"total_rows": lambda self: 0, "count": lambda self, *_a, **_k: 0},
+        )()
+        p.capture_width = lambda _pane: 80
+        p.diag_log = lambda _msg: None
+        p.navigation_order = lambda: [(f, 0) for f in ids]
+        # Honest, because preemption reads it: background work stands down
+        # while the CURSOR's file still needs covering. A stub that answers
+        # "yes" forever starves every neighbour and seed file, which is the
+        # stub being unreal rather than the product being wrong.
+        p._file_needs_coverage = lambda pid, *_a: pid not in self.covered
+        p._landing_index = lambda *_a: 0
+        hits = hits_by_file or {}
+        p.hit_indices = lambda pid, _chunks: hits.get(pid, [0, 5, 10])
+        p._held_indices = lambda *_a: set()
+
+        async def _chunks(_pid: str) -> list[_StubChunk]:
+            return [_StubChunk(i) for i in range(chunks_per_file)]
+
+        p._coverage_chunks = _chunks
+        p._capture_file_targets = self._record
+        self.presenter = p
+
+    async def _record(
+        self,
+        parent_id: str,
+        _query_sig: str,
+        _width: int,
+        _chunks: list[_StubChunk],
+        targets: list[int],
+        _spec: MatchSpec,
+        still_wanted: Any,
+        on_capture: Any = None,
+    ) -> int:
+        done = 0
+        for _ in targets:
+            if not still_wanted():
+                self.events.append(("abandoned", parent_id, done))
+                return done
+            await asyncio.sleep(0.005)
+            done += 1
+            if on_capture is not None:
+                # (walked, captured) — the stub captures everything it walks.
+                on_capture(done, done)
+            if self.pause_after == (parent_id, done):
+                # Hold this file mid-capture so the test can move the cursor at
+                # a known point, then let it go.
+                self.paused.set()
+                await self.resume.wait()
+        self.events.append(("covered", parent_id, done))
+        self.covered.add(parent_id)
+        return done
+
+    def files_worked(self) -> list[str]:
+        """Files that actually got captures, in the order they got them."""
+        out: list[str] = []
+        for kind, pid, n in self.events:
+            if kind == "covered" or n:
+                if not out or out[-1] != pid:
+                    out.append(pid)
+        return out
+
+
+async def _drain(trace: _CoverageTrace, *, limit: float = 8.0) -> None:
+    task = trace.presenter._coverage_task
+    assert task is not None
+    deadline = time.perf_counter() + limit
+    while not task.done() and time.perf_counter() < deadline:
+        await asyncio.sleep(0.01)
+    if not task.done():
+        task.cancel()
+        with contextlib.suppress(BaseException):
+            await task
+
+
+@pytest.mark.asyncio
+async def test_moving_within_a_file_keeps_warming_that_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The file the user is IN must not be shunted behind its neighbours.
+
+    Tier 1's order is nearest-first around the cursor, so a move inside the file
+    does invalidate the ORDER — but not the file, which is still the only one
+    that can serve the next keypress. Abandoning the pass on that basis handed
+    the serial host to the neighbours for the rest of it: the file was dropped
+    part-covered, both neighbours were covered whole, and it was only picked up
+    a pass later. The results arrow reported it faithfully, going from warming
+    to cold the moment the neighbour's first capture started.
+    """
+    monkeypatch.setattr(tuning, "PREVIEW_WARM_DELAY", 0.0)
+    trace = _CoverageTrace(["A", "B", "C", "D", "E"])
+    p = trace.presenter
+    trace.pause_after = ("A", 1)
+    p.start_coverage("A", 0)
+    # Hold tier 1 mid-file, then move to another match IN THE SAME FILE.
+    await asyncio.wait_for(trace.paused.wait(), timeout=5.0)
+    assert p.coverage_parent == "A", "setup: tier 1 should be on the current file"
+    p.start_coverage("A", 10)
+    # Checked with no await in between, so no event-loop turn has passed: the
+    # marker must survive the move itself. Sleeping first would race tier 1
+    # finishing this stub file's three captures, which is a question about the
+    # fixture's speed rather than about the marker.
+    assert p.coverage_parent == "A", (
+        "the file the cursor is in stopped being warmed the moment the cursor "
+        "moved inside it — the results arrow paints this as cold"
+    )
+    trace.resume.set()
+    await _drain(trace)
+    worked = trace.files_worked()
+    assert worked[0] == "A", f"expected the current file first, got {worked}"
+    assert worked.index("A") < worked.index("B"), (
+        f"the current file was covered after its neighbours: {worked}"
+    )
+    covered = [pid for kind, pid, _n in trace.events if kind == "covered"]
+    assert covered.index("A") < covered.index("B"), (
+        f"the current file finished after a neighbour: {trace.events}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_leaving_a_file_stands_its_coverage_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-planning in place must not become "never let go".
+
+    Tier 1 following the cursor WITHIN a file is the fix above; tier 1 holding
+    on after the cursor has left it would be a worse bug than the one it
+    replaces, because the pass planned around the new current file then queues
+    behind a whole pass for a file nobody is reading.
+
+    A property guard, not a red-then-green test: two things enforce this — the
+    per-round predicate is bound to the file, and the loop ends when the cursor
+    stops moving within it — so removing either one alone still passes. What it
+    pins is the outcome, which is what a later change to either would break.
+    """
+    monkeypatch.setattr(tuning, "PREVIEW_WARM_DELAY", 0.0)
+    trace = _CoverageTrace(["A", "B", "C", "D", "E"])
+    p = trace.presenter
+    trace.pause_after = ("A", 1)
+    p.start_coverage("A", 0)
+    await asyncio.wait_for(trace.paused.wait(), timeout=5.0)
+    # A different file AND a different chunk: leaving on the same chunk seq
+    # would be stood down by the "cursor stopped moving" test alone, so it
+    # cannot tell whether the file is being checked at all.
+    p.start_coverage("C", 10)
+    trace.resume.set()
+    await asyncio.sleep(0.05)
+
+    assert p.coverage_parent != "A", (
+        "coverage stayed on the file the cursor had left; the new current "
+        "file now waits behind a whole pass of work nobody asked for"
+    )
+    await _drain(trace)
+    abandoned = [pid for kind, pid, _n in trace.events if kind == "abandoned"]
+    assert "A" in abandoned, f"the departed file should have stood down: {trace.events}"
+
+
+@pytest.mark.asyncio
+async def test_the_seed_files_are_actually_covered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The head of the result list is seeded, not just planned.
+
+    The staleness test a file is judged by has to be built from the same parts
+    as the plan it is judged against. Judging seed files by the neighbour window
+    alone made the whole tier inert: a seed file outside that window is never
+    "still wanted", so every one of them paid a full off-loop chunk decode and
+    was then abandoned before its first capture — with a stationary cursor as
+    much as a moving one.
+    """
+    monkeypatch.setattr(tuning, "PREVIEW_WARM_DELAY", 0.0)
+    monkeypatch.setattr(tuning, "COVERAGE_NEIGHBOUR_FILES", 1)
+    monkeypatch.setattr(tuning, "COVERAGE_SEED_FILES", 4)
+    trace = _CoverageTrace(["A", "B", "C", "D", "E"])
+    trace.presenter.start_coverage("A", 0)
+    await _drain(trace)
+    covered = {pid for kind, pid, _n in trace.events if kind == "covered"}
+    # C and D are seed files only: with a span of 1 the neighbours of A are B
+    # alone, so nothing but the seed tier can reach them.
+    assert {"C", "D"} <= covered, (
+        f"the seed tier captured nothing for files outside the neighbour window: {trace.events}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_context_work_yields_to_a_file_the_cursor_moved_towards(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Margins are context; a hit is what a jump lands on.
+
+    A pass is only re-planned when it ENDS, and the plan is the only place a
+    newly neighbouring file can appear — so a margin walk that runs to
+    completion holds off every landing the cursor has just moved towards. The
+    walk could not be stood down either: its test was plan membership, and the
+    seed is in every plan. Measured on the real index, the file two below the
+    cursor waited 31.0s for its first capture, 26.3s of it the previous plan's
+    margins over files already covered.
+    """
+    monkeypatch.setattr(tuning, "PREVIEW_WARM_DELAY", 0.0)
+    monkeypatch.setattr(tuning, "COVERAGE_NEIGHBOUR_FILES", 2)
+    monkeypatch.setattr(tuning, "COVERAGE_SEED_FILES", 3)
+    trace = _CoverageTrace(["A", "B", "C", "D", "E", "F"])
+    p = trace.presenter
+    # Only a MARGIN call has this many targets: the stub's three hits give a
+    # three-target list on the hits walk and sixteen on the margin walk.
+    trace.pause_after = ("B", 4)
+    p.start_coverage("A", 0)
+    await asyncio.wait_for(trace.paused.wait(), timeout=5.0)
+    # E is outside the running plan (A, B, C) and has nothing captured.
+    p.start_coverage("E", 0)
+    trace.resume.set()
+    await _drain(trace)
+
+    abandoned = [pid for kind, pid, _n in trace.events if kind == "abandoned"]
+    assert "B" in abandoned, (
+        f"margin work carried on while a file the cursor moved towards had "
+        f"nothing to land on: {trace.events}"
+    )
+    covered = {pid for kind, pid, _n in trace.events if kind == "covered"}
+    assert "E" in covered, f"the file the cursor moved to was never covered: {trace.events}"
+
+
+@pytest.mark.asyncio
+async def test_a_request_arriving_late_in_a_pass_is_still_served(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pass checks for a request once, before its margin walk.
+
+    So a request that lands DURING that walk has already been missed, and the
+    cursor has not moved — the loop would call itself finished and the file
+    would never warm. The outstanding request is what keeps it going.
+    """
+    monkeypatch.setattr(tuning, "PREVIEW_WARM_DELAY", 0.0)
+    monkeypatch.setattr(tuning, "COVERAGE_NEIGHBOUR_FILES", 2)
+    monkeypatch.setattr(tuning, "COVERAGE_SEED_FILES", 3)
+    trace = _CoverageTrace(["A", "B", "C"], chunks_per_file=20)
+    p = trace.presenter
+    # Only a margin call is this long, so this pauses after the request check.
+    trace.pause_after = ("B", 4)
+    p.start_coverage("A", 0)
+    await asyncio.wait_for(trace.paused.wait(), timeout=5.0)
+    p.request_full_warm("A", 0)
+    trace.resume.set()
+    await _drain(trace)
+
+    whole = [e for e in trace.events if e[0] == "covered" and e[1] == "A" and e[2] == 20]
+    assert whole, f"the requested file was never warmed whole: {trace.events}"
+    assert not p.full_warm_in_progress, "a finished warm should retire its request"
+
+
+@pytest.mark.asyncio
+async def test_context_work_stands_down_for_a_requested_warm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Margins are background context; a requested warm is being waited on."""
+    monkeypatch.setattr(tuning, "PREVIEW_WARM_DELAY", 0.0)
+    monkeypatch.setattr(tuning, "COVERAGE_NEIGHBOUR_FILES", 2)
+    monkeypatch.setattr(tuning, "COVERAGE_SEED_FILES", 3)
+    trace = _CoverageTrace(["A", "B", "C"])
+    p = trace.presenter
+    trace.pause_after = ("B", 4)  # only a margin call has this many targets
+    p.start_coverage("A", 0)
+    await asyncio.wait_for(trace.paused.wait(), timeout=5.0)
+    p.request_full_warm("A", 0)
+    trace.resume.set()
+    await _drain(trace)
+
+    abandoned = [pid for kind, pid, _n in trace.events if kind == "abandoned"]
+    assert "B" in abandoned, (
+        f"margin work carried on while the user waited on a whole-file warm: {trace.events}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancelling_only_stops_the_file_it_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The key toggles per FILE, and the caller needs to know which it did.
+
+    Unnamed, pressing it on a second file stopped the warm on the first and
+    started nothing — the one press that could not do what it looked like.
+    """
+    monkeypatch.setattr(tuning, "PREVIEW_WARM_DELAY", 0.0)
+    trace = _CoverageTrace(["A", "B"])
+    p = trace.presenter
+    assert p.cancel_full_warm("A") is False, "nothing running yet"
+    p.request_full_warm("A", 0)
+    assert p.cancel_full_warm("B") is False, "a request for another file is not this one"
+    assert p.full_warm_in_progress, "cancelling B must leave A's warm running"
+    assert p.cancel_full_warm("A") is True
+    assert p.cancel_full_warm("A") is False
+    await _drain(trace)
+
+
+@pytest.mark.asyncio
+async def test_a_finished_warm_closes_its_progress_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One line per request, retired when the request is."""
+    monkeypatch.setattr(tuning, "PREVIEW_WARM_DELAY", 0.0)
+    trace = _CoverageTrace(["A", "B"])
+    p = trace.presenter
+    p.request_full_warm("A", 0)
+    await _drain(trace)
+    progress = p._app._progress
+    assert progress.sessions, "the warm never opened a line"
+    assert all(s.closed for s in progress.sessions), (
+        "a finished warm left its progress line open, holding the ambient slot"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_warm_never_takes_the_line_from_an_ambient_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The facility has ONE ambient slot and ``begin`` retires whatever holds it.
+
+    Indexing is the other ambient operation and can run for minutes, so a warm
+    that opened unconditionally left the machine indexing with no indication —
+    the exact regression the index line exists to prevent.
+    """
+    monkeypatch.setattr(tuning, "PREVIEW_WARM_DELAY", 0.0)
+    trace = _CoverageTrace(["A", "B"])
+    p = trace.presenter
+    progress = p._app._progress
+    indexing = _StubSession()
+    progress.ambient = indexing
+
+    p.request_full_warm("A", 0)
+    await _drain(trace)
+    assert not indexing.closed, "the warm evicted the index's progress line"
+    assert not progress.sessions, "the warm opened a line while the slot was taken"
+
+
+@pytest.mark.asyncio
+async def test_warming_a_second_file_does_not_inherit_the_first_ones_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first walk stands down without finishing, so nothing retires its
+    line; reusing it would report the second file's counts under the first
+    file's name, and file one calibration sample spanning two files."""
+    monkeypatch.setattr(tuning, "PREVIEW_WARM_DELAY", 0.0)
+    trace = _CoverageTrace(["A", "B"])
+    p = trace.presenter
+    # Inside the WHOLE-FILE walk, not the hits walk: only it runs past three
+    # targets for this file, and only it has opened a line by then.
+    trace.pause_after = ("A", 4)
+    p.request_full_warm("A", 0)
+    await asyncio.wait_for(trace.paused.wait(), timeout=5.0)
+    first = list(p._app._progress.sessions)
+    assert first, "setup: the first warm should have opened a line"
+
+    p.request_full_warm("B", 0)
+    # Checked at the moment of the switch, with no await in between. Later, the
+    # same session object is closed when B's warm finishes — so a test that
+    # looked afterwards could not tell reuse from retirement.
+    assert all(s.closed for s in first), (
+        "the second file's warm inherited the first file's progress line"
+    )
+    trace.resume.set()
+    await _drain(trace)
+
+
+@pytest.mark.asyncio
+async def test_a_warm_drops_a_line_that_was_taken_from_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An index starting mid-warm retires the warm's session.
+
+    Holding on to the closed object made every later report a silent no-op, so
+    the warm ran to completion with no line and no way to see it was running.
+    """
+    monkeypatch.setattr(tuning, "PREVIEW_WARM_DELAY", 0.0)
+    trace = _CoverageTrace(["A", "B"])
+    p = trace.presenter
+    trace.pause_after = ("A", 4)
+    p.request_full_warm("A", 0)
+    await asyncio.wait_for(trace.paused.wait(), timeout=5.0)
+    progress = p._app._progress
+    taken = progress.ambient
+    assert taken is not None, "setup: the warm should hold the line"
+
+    progress.begin(object())  # an index takes the ambient slot
+    assert taken.closed, "setup: the real facility retires the previous holder"
+
+    trace.resume.set()
+    await _drain(trace)
+    assert not taken.reports_after_close, (
+        "the warm kept reporting into a line that had been retired under it"
+    )
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_warm_does_not_claim_it_finished(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Closing paints the bar full and files the run for calibration.
+
+    Three of the four retirement paths are abandonments — cancel, query reset
+    and switching file — and a cancelled warm filled its bar to 100% beside a
+    toast saying it had been stopped.
+    """
+    monkeypatch.setattr(tuning, "PREVIEW_WARM_DELAY", 0.0)
+    trace = _CoverageTrace(["A", "B"])
+    p = trace.presenter
+    trace.pause_after = ("A", 4)
+    p.request_full_warm("A", 0)
+    await asyncio.wait_for(trace.paused.wait(), timeout=5.0)
+    session = p._app._progress.ambient
+    assert session is not None, "setup: the warm should hold a line"
+
+    assert p.cancel_full_warm("A") is True
+    assert session.abandoned, "a stopped warm was retired as though it had completed"
+    trace.resume.set()
+    await _drain(trace)
+
+
+@pytest.mark.asyncio
+async def test_a_chunk_the_builder_cannot_take_is_walked_but_not_counted() -> None:
+    """The progress line's denominator counts CAPTURABLE chunks only.
+
+    Counting every target walked mixed two units: a file whose chunks are half
+    flat-path reached 100% halfway through and then sat motionless for the rest
+    of the run.
+    """
+    trace = _CoverageTrace(["A"])
+    p = trace.presenter
+    del p._capture_file_targets  # the real one, not the trace's recorder
+
+    chunks = [
+        _StubChunk(0),
+        _StubChunk(1, kind="pdf", body_md=""),
+        _StubChunk(2),
+        _StubChunk(3, kind="pdf", body_md=""),
+    ]
+    servable = [uses_markdown_renderer(cast("Any", c)) for c in chunks]
+    assert servable == [True, False, True, False], "setup: needs a mix of both paths"
+
+    class _Cap:
+        def __init__(self, seq: int) -> None:
+            self.chunk_seq = seq
+            self.width = 80
+            self.height = 1
+
+    async def _capture(chunk: Any, width: int, **_kw: Any) -> _Cap:
+        return _Cap(chunk.chunk_seq)
+
+    p._warm_host = type("_H", (), {"capture": staticmethod(_capture)})()
+    p.capture_store.put = lambda *_a, **_k: None  # type: ignore[attr-defined]
+
+    seen: list[tuple[int, int]] = []
+    await p._capture_file_targets(
+        "A",
+        "sig",
+        80,
+        chunks,
+        list(range(len(chunks))),
+        MatchSpec(),
+        lambda: True,
+        on_capture=lambda walked, captured: seen.append((walked, captured)),
+    )
+    assert seen == [(1, 1), (2, 1), (3, 2), (4, 2)], (
+        f"a flat-path chunk was counted as captured progress: {seen}"
+    )

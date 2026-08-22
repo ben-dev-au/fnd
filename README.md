@@ -184,6 +184,7 @@ and the [query language](#search-how-to) works exactly as it does from the CLI.
 | `?`            | Keybindings cheat sheet (press again to dismiss).                                                                                                                                  |
 | `Ctrl+F`       | Toggle auto-fuzzy matching (persists to your config).                                                                                                                              |
 | `h`            | Toggle search-term highlighting in the preview.                                                                                                                                    |
+| `w`            | Warm the focused file completely, so scrolling anywhere in it is instant. Asks first on a large file; press again on that file to stop.                                                          |
 | `q` / `Ctrl+C` | Quit. `Esc` backs out of any overlay or nested screen.                                                                                                                             |
 
 Inside the Settings menu (`:`) navigate with `↑↓` (or `j`/`k`), press `Enter` to

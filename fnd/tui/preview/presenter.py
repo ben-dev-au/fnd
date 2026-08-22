@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,7 +25,7 @@ from fnd.matching import MatchSpec
 from fnd.render import render_chunk_pieces
 from fnd.tui.line_buffer import LineBufferPreview, build_rendered_document
 from fnd.tui.preview import decode_progress, tuning
-from fnd.tui.preview.coverage import coverage_targets, filler_targets, neighbour_order
+from fnd.tui.preview.coverage import coverage_targets, neighbour_order
 from fnd.tui.preview.frozen import (
     FrozenChunkView,
 )
@@ -45,8 +46,28 @@ if TYPE_CHECKING:
     from fnd.query import FileChunk, FileGroup, Hit
     from fnd.tui.app import FNDApp
     from fnd.tui.line_buffer import RenderedDocument
+    from fnd.tui.progress import ProgressSession
 
 __all__ = ["PreviewPresenter", "target_from_node_data"]
+
+
+@dataclasses.dataclass(frozen=True)
+class _CoveragePass:
+    """One coverage pass's fixed context: what to cover, and under which key.
+
+    ``width`` is the pane width at pass start and ``width_now`` re-reads it: a
+    pass runs for seconds, and captures are filed under the width they were cut
+    at, so a resize mid-pass would make every store lookup miss.
+    """
+
+    parent_id: str
+    query_sig: str
+    spec: MatchSpec
+    plan: list[str]
+    width: int
+    width_now: Callable[[], int]
+    #: The plan as it stands NOW — what the cursor has moved to since.
+    live_plan: Callable[[], list[str]]
 
 
 def target_from_node_data(data: Any) -> tuple[str, int] | None:
@@ -153,21 +174,11 @@ class PreviewPresenter:
         # invisibly (opacity:0) and only when its scroll lands do we hide this
         # one and reveal the new one in a single tick. Cleared by that swap.
         self.outgoing: PreviewContainer | None = None
-        self._coverage_task: asyncio.Task[None] | None = None
         # Which phase of the mount is running, for the stall watch to place a
         # stall INSIDE the mount. `mount=True` alone covers everything from
         # the first chunk to the freeze sweep, which is too coarse to act on.
         self.mount_phase: str | None = None
-        # What coverage is capturing right now, for the stall watch to name
-        # when the loop stops answering. A plain string: read during a stall,
-        # when touching live widgets would be its own hazard.
-        self.coverage_activity: str | None = None
-        # The file coverage is capturing right now, in full. Distinct from
-        # coverage_activity, which is a truncated diagnostic string for the
-        # stall watch; this one is read to paint a row, so it has to be a key.
-        self.coverage_parent: str | None = None
-        # Cursor position the running coverage plan was built for.
-        self._coverage_anchor: tuple[str, int] | None = None
+        self.init_coverage_state()
         self._stale_strip_repair: asyncio.Task[None] | None = None
         # Per-chunk captures, filled by coverage and read by every mount path.
         # Separate from the document store because this one is SPARSE: it holds
@@ -2162,6 +2173,20 @@ class PreviewPresenter:
         # Captures for a superseded query can never be served; holding them
         # only spends the row budget that the new query's captures need.
         self.capture_store.clear()
+        # Same lifetime as the store: which hits a file HAS is a property of
+        # the query's result set, so a new query has to re-establish it.
+        self._unservable.clear()
+        self._capturable_total.clear()
+        # The request too, or it outlives the query that motivated it: the loop
+        # stays alive with margins suppressed, and the next keypress is eaten
+        # cancelling a warm the user cannot see.
+        self._full_warm_target = None
+        self._retire_full_warm_session(completed=False)
+        # And any unconsumed prepend claim — the container it was made against
+        # is about to be replaced, and the next document's mount would be
+        # absorbed as though it were content added above the reader.
+        with contextlib.suppress(Exception):
+            self._app.query_one("#preview_pane", MatchAwareScroll).absorb_anchor = None
         # Coverage is captures too: everything it is building carries the old
         # query's highlighting and is filed under a key nothing will read.
         cover = self._coverage_task
@@ -2497,6 +2522,67 @@ class PreviewPresenter:
             return
         self._coverage_task = asyncio.create_task(self._coverage_loop())
 
+    def request_full_warm(self, parent_id: str, focus_chunk_seq: int) -> None:
+        """Warm one file whole, after every planned file's hits.
+
+        Retires any request for a DIFFERENT file first: the previous walk stands
+        down at its next check and so never finishes, leaving its line to be
+        reused under the new file's counts and the old file's name.
+        """
+        if self._full_warm_target is not None and self._full_warm_target != parent_id:
+            self._retire_full_warm_session(completed=False)
+        self._full_warm_target = parent_id
+        self.start_coverage(parent_id, focus_chunk_seq)
+
+    async def full_warm_estimate(self, parent_id: str) -> tuple[int, int]:
+        """Chunks a whole-file warm would capture, and their character total.
+
+        Zero means the off-screen builder can take nothing here — a wholly
+        flat-path file, which the capture store never serves.
+        """
+        chunks = await self._coverage_chunks(parent_id)
+        able = [c for c in chunks if uses_markdown_renderer(c)]
+        return len(able), sum(len(c.body_md or "") for c in able)
+
+    def cancel_full_warm(self, parent_id: str) -> bool:
+        """Stop a whole-file warm of ``parent_id``, if that is the one running.
+
+        Named rather than global: the key toggles, and an unnamed cancel meant
+        pressing it on a second file stopped the first and warmed neither.
+
+        Clearing the target is the whole abort — every capture is preceded by
+        the test that reads it, so the walk returns through its ordinary path
+        within one capture.
+        """
+        running = self._full_warm_target
+        if running is None or running != parent_id:
+            return False
+        self._full_warm_target = None
+        self._retire_full_warm_session(completed=False)
+        return True
+
+    def _retire_full_warm_session(self, *, completed: bool) -> None:
+        """Retire the progress line a whole-file warm holds, once.
+
+        Only a finished warm CLOSES: closing paints the bar full and files the
+        run for calibration, which of the four retirement paths is true of one.
+        """
+        session, self._full_warm_session = self._full_warm_session, None
+        if session is None:
+            return
+        with contextlib.suppress(Exception):
+            session.close() if completed else session.abandon()
+
+    def _finish_full_warm(self, parent_id: str, chunks: list[FileChunk]) -> None:
+        """Retire a completed request, then put the file entirely in the DOM."""
+        self._full_warm_target = None
+        self._retire_full_warm_session(completed=True)
+        self.mount_warmed_file(parent_id, chunks)
+
+    @property
+    def full_warm_in_progress(self) -> bool:
+        return self._full_warm_target is not None
+
     async def _coverage_loop(self) -> None:
         """Run passes until the cursor stops moving.
 
@@ -2507,7 +2593,12 @@ class PreviewPresenter:
         done_for: tuple[str, int] | None = None
         while True:
             anchor = self._coverage_anchor
-            if anchor is None or anchor == done_for:
+            if anchor is None:
+                return
+            # An outstanding request keeps the loop alive past a settled
+            # cursor: one arriving after this pass checked would otherwise
+            # never be picked up, the anchor not having moved.
+            if anchor == done_for and self._full_warm_target is None:
                 return
             done_for = anchor
             await self._run_coverage(*anchor)
@@ -2556,7 +2647,6 @@ class PreviewPresenter:
         if width <= 0:
             return
         query_sig = self._app._search.query_signature()
-        pass_anchor = (parent_id, focus_chunk_seq)
         # A SNAPSHOT: covering runs for seconds, and reading the live spec
         # mid-run files chunks highlighted for a new query under the old key,
         # where nothing will ever read them.
@@ -2575,15 +2665,32 @@ class PreviewPresenter:
         here = ids.index(parent_id) if parent_id in ids else -1
 
         def current_plan() -> list[str]:
-            """The plan as it stands NOW, for deciding whether work is stale."""
+            """The plan as it stands NOW, for deciding whether work is stale.
+
+            Built from the SAME parts as the plan being walked, seed included.
+            Omitting the seed made the tier inert: a seed file outside the
+            neighbour window is never in this list, so every one of them paid a
+            full off-loop chunk decode to be dropped before its first capture.
+            """
             live = self._coverage_anchor
             if live is None:
                 return []
             live_parent = live[0]
             live_here = ids.index(live_parent) if live_parent in ids else -1
+            seed = ids[: tuning.COVERAGE_SEED_FILES]
             if live_here < 0:
-                return [live_parent]
-            return [live_parent, *neighbour_order(ids, live_here, tuning.COVERAGE_NEIGHBOUR_FILES)]
+                return [live_parent, *seed]
+            return [
+                live_parent,
+                *neighbour_order(ids, live_here, tuning.COVERAGE_NEIGHBOUR_FILES),
+                *seed,
+            ]
+
+        def width_now() -> int:
+            try:
+                return self.capture_width(pane)
+            except Exception:
+                return 0
 
         captured = 0
         try:
@@ -2593,98 +2700,37 @@ class PreviewPresenter:
             plan = [parent_id]
             if here >= 0:
                 plan += neighbour_order(ids, here, tuning.COVERAGE_NEIGHBOUR_FILES)
-            # Then seed the head of the result list. The cursor window alone
-            # only ever warms what is already beside you, so the opening moves
-            # of a search — the ones most likely to be made, and made fast —
-            # are the ones it cannot help. The seed is appended rather than
-            # prepended so it never delays the files adjacent to the cursor,
-            # and files already covered cost only a store lookup to skip.
+            # Then the head of the result list, where the opening moves of a
+            # search are — appended, so it never delays the files beside the
+            # cursor.
             plan += ids[: tuning.COVERAGE_SEED_FILES]
             seen_plan: set[str] = set()
             plan = [p for p in plan if not (p in seen_plan or seen_plan.add(p))]
-            for pid in plan:
-                # Re-read the width per file. A pass runs for seconds and this is
-                # a copy taken at pass start, so after a terminal resize — or a
-                # scrollbar appearing — every store lookup below would miss at the
-                # stale width: `_file_needs_coverage` would report every file
-                # uncovered and pay a full decode, and `_held_indices` would come
-                # back empty and re-capture chunks already held.
-                width = self.capture_width(pane) or width
-                # Decide whether this file needs anything BEFORE decoding it.
-                # A neighbour has usually never been opened, so covering it
-                # means a full chunk decode — and re-deciding that on every
-                # cursor move meant decoding the same four neighbours over and
-                # over, off the loop, competing with the landing. The listed
-                # hits carry their chunk_seq, so "already covered" is answerable
-                # from the store alone.
-                if not self._file_needs_coverage(pid, query_sig, width):
-                    continue
-                chunks = await self._coverage_chunks(pid)
-                if not chunks:
-                    continue
-                focus_idx = (
-                    next((i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq), 0)
-                    if pid == parent_id
-                    else self._landing_index(pid, chunks)
-                )
-                targets = coverage_targets(
-                    total=len(chunks),
-                    focus_idx=focus_idx,
-                    hit_indices=self.hit_indices(pid, chunks),
-                    already=self._held_indices(pid, query_sig, width, chunks),
-                    margin=tuning.COVERAGE_MARGIN,
-                    budget=tuning.COVERAGE_CHUNK_BUDGET,
-                )
-                tier = 1 if pid == parent_id else 2
-                # What makes this work stale differs by tier, and treating both
-                # the same threw away most of the neighbour warming: 54 of 61
-                # neighbour passes captured NOTHING because any cursor move
-                # abandoned them.
-                #
-                # Tier 1 is ordered nearest-first around the CURSOR, so a move
-                # really does invalidate the order — that is the bug that had it
-                # warming chunks 4-15 while every lookup asked for 679.
-                #
-                # Tier 2 is ordered around each neighbour's own first hit, which
-                # is where a jump into that file lands. It does not depend on
-                # the cursor at all, so the only thing that can make it pointless
-                # is the file dropping out of the window — and moving TOWARDS a
-                # neighbour makes its captures more useful, not less.
-                if tier == 1:
-                    still_wanted = lambda: self._coverage_anchor == pass_anchor  # noqa: E731
+            ctx = _CoveragePass(
+                parent_id=parent_id,
+                query_sig=query_sig,
+                spec=spec,
+                plan=plan,
+                width=width,
+                width_now=width_now,
+                live_plan=current_plan,
+            )
+            # Landings everywhere, then the file the user asked for whole,
+            # then context — see fnd/tui/preview/coverage.py for why, and for
+            # what taking them in any other order cost.
+            captured += await self._cover_plan(ctx, margin=0)
+            if (wanted := self._full_warm_target) is not None:
+                # The file the user asked for, not the one the cursor is on:
+                # they are free to move away while it warms.
+                whole = await self._coverage_chunks(wanted)
+                if whole:
+                    captured += await self._warm_whole_file(ctx, wanted, whole)
                 else:
-                    still_wanted = lambda pid=pid: pid in current_plan()  # noqa: E731
-                got = await self._capture_targets(
-                    pid, query_sig, width, chunks, targets, spec, still_wanted
-                )
-                captured += got
-
-            # Tier 3: the rest of the CURRENT file, and only now. Covering a
-            # file whole spends ~30s of the one serial host on chunks no jump
-            # lands on, while the neighbours — the buffer the cursor actually
-            # needs — get nothing. Its only prize is that a scroll into the gaps
-            # between matches finds them ready, and lazy mount already handles
-            # that fast enough. So it earns its place strictly as idle work.
-            chunks = await self._coverage_chunks(parent_id)
-            if chunks:
-                focus_idx = next(
-                    (i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq), 0
-                )
-                filler = filler_targets(
-                    total=len(chunks),
-                    focus_idx=focus_idx,
-                    already=self._held_indices(parent_id, query_sig, width, chunks),
-                    budget=tuning.COVERAGE_CHUNK_BUDGET,
-                )
-                captured += await self._capture_targets(
-                    parent_id,
-                    query_sig,
-                    width,
-                    chunks,
-                    filler,
-                    spec,
-                    lambda: self._coverage_anchor == pass_anchor,
-                )
+                    # Through the same door as every other retirement, or the
+                    # line is orphaned holding the ambient slot until its cap.
+                    self.cancel_full_warm(wanted)
+            if margin := self._warm_margin():
+                captured += await self._cover_plan(ctx, margin=margin)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # pragma: no cover - best effort
@@ -2776,6 +2822,9 @@ class PreviewPresenter:
             hit_seqs=hit_seqs,
             is_captured=lambda seq: store.has(parent_id, query_sig, width, seq),
             warming=parent_id == warming_now,
+            unservable=self._unservable.get(parent_id, frozenset()),
+            capturable_total=self._capturable_total.get(parent_id, 0),
+            captured_total=store.count(parent_id, query_sig, width),
         )
 
     def listed_hit_seqs(self, parent_id: str) -> list[int] | None:
@@ -2798,21 +2847,27 @@ class PreviewPresenter:
     def _file_needs_coverage(self, parent_id: str, query_sig: str, width: int) -> bool:
         """Whether any listed hit of this file is still uncaptured.
 
+        A file already established as uncapturable answers False: its hits have
+        no off-screen builder, so every pass over it decodes and captures
+        nothing.
+
         Answered from the results list and the store, with no decode: a hit
         carries its chunk_seq, which is exactly the store's key. That is what
-        makes re-planning on every cursor move cheap — without it, each move
-        re-decoded every neighbour just to discover there was nothing to do.
+        makes re-planning on every cursor move cheap.
         """
+        unservable = self._unservable.get(parent_id, frozenset())
         groups = getattr(self._app._search, "groups", None) or []
         for group in groups:
             if group.parent_id != parent_id:
                 continue
             hits = getattr(group, "hits", None) or []
-            # ``has``: deciding what to cover is a probe, not a use, and
-            # promoting here would order the store by coverage plan instead of
-            # by what is being read.
+            # ``has``, not ``get``: this is a probe, and promoting would order
+            # the store by coverage plan rather than by what is being read.
+            # Unservable hits are excluded, or the answer is yes forever.
             return any(
-                not self.capture_store.has(parent_id, query_sig, width, h.chunk_seq) for h in hits
+                h.chunk_seq not in unservable
+                and not self.capture_store.has(parent_id, query_sig, width, h.chunk_seq)
+                for h in hits
             )
         return False
 
@@ -2862,6 +2917,7 @@ class PreviewPresenter:
         """
         cached = self.chunk_cache.get(parent_id)
         if cached:
+            self._note_capturable(parent_id, cached)
             return cached
         searcher = self._app._search.searcher
         if searcher is None:
@@ -2878,7 +2934,366 @@ class PreviewPresenter:
         # 0.49s baseline while decodes were still being repeated.
         if chunks:
             self.chunk_cache[parent_id] = chunks
+            self._note_capturable(parent_id, chunks)
         return chunks
+
+    def all_captured(self, parent_id: str, chunk_seqs: Iterable[int]) -> bool:
+        """Whether mounting these chunks will be served rather than built.
+
+        FULL does not imply it: readiness is counted over the CAPTURABLE chunks,
+        so a file of mostly flat-path pages reads FULL with almost none of it in
+        the store, and a batch sized for blits would have to build them.
+        """
+        try:
+            pane = self._app.query_one("#preview_pane", VerticalScroll)
+        except Exception:
+            return False
+        width = self.capture_width(pane)
+        if width <= 0:
+            return False
+        sig = self._app._search.query_signature()
+        return all(self.capture_store.has(parent_id, sig, width, seq) for seq in chunk_seqs)
+
+    def _note_capturable(self, parent_id: str, chunks: list[FileChunk]) -> None:
+        """Record how many of a file's chunks the off-screen builder can take.
+
+        On BOTH paths out of ``_coverage_chunks``: the mount path fills the same
+        chunk cache, so a file the user has already opened returns early, and
+        recording only on the decode left it unable to ever report FULL.
+        """
+        if parent_id not in self._capturable_total:
+            self._capturable_total[parent_id] = sum(1 for c in chunks if uses_markdown_renderer(c))
+
+    async def _cover_plan(self, ctx: _CoveragePass, margin: int) -> int:
+        """Walk the plan once at one margin, current file first then neighbours.
+
+        Called once for the hits (``margin=0``) and once for their context, so
+        no file's margins are taken before another file has anything to land on.
+        """
+        captured = 0
+        width = ctx.width
+        for pid in ctx.plan:
+            if margin and self._context_yields(ctx):
+                return captured
+            width = ctx.width_now() or width
+            # Answerable from the store alone, so a neighbour that needs
+            # nothing is skipped without the full chunk decode covering it
+            # would otherwise cost. Hits pass only: the margin pass asks about
+            # chunks carrying no hit, and falls through to `_held_indices`.
+            if margin == 0 and not self._file_needs_coverage(pid, ctx.query_sig, width):
+                continue
+            chunks = await self._coverage_chunks(pid)
+            if not chunks:
+                continue
+            # Established where the chunks are in hand: a hit that can never
+            # be captured never satisfies "all hits captured", so the file is
+            # re-planned every pass and its row never leaves cold.
+            hit_idx = self.hit_indices(pid, chunks)
+            unservable = {
+                chunks[i].chunk_seq for i in hit_idx if not uses_markdown_renderer(chunks[i])
+            }
+            if unservable:
+                self._unservable.setdefault(pid, set()).update(unservable)
+            if hit_idx and len(unservable) == len(hit_idx):
+                continue
+            if pid == ctx.parent_id:
+                # Re-plans in place: a move within the file invalidates the
+                # order, not the file, which is still the only one that can
+                # serve the next keypress.
+                captured += await self._cover_current_file(ctx, chunks, margin)
+                continue
+
+            # Ordered around the neighbour's own first hit, where a jump into
+            # it lands — so only leaving the plan makes it pointless. Treating
+            # it like tier 1 lost 54 of 61 neighbour passes to cursor moves.
+            def still_wanted(pid: str = pid) -> bool:
+                return pid in ctx.live_plan() and not (margin and self._context_yields(ctx))
+
+            targets = coverage_targets(
+                total=len(chunks),
+                focus_idx=self._landing_index(pid, chunks),
+                hit_indices=hit_idx,
+                already=self._held_indices(pid, ctx.query_sig, width, chunks),
+                margin=margin,
+                budget=tuning.COVERAGE_CHUNK_BUDGET,
+            )
+            captured += await self._capture_targets(
+                pid, ctx.query_sig, width, chunks, targets, ctx.spec, still_wanted
+            )
+        return captured
+
+    def init_coverage_state(self) -> None:
+        """Every field the coverage scheduler owns, in one place.
+
+        Called from ``__init__``, and by any harness that drives coverage
+        against a presenter it did not fully construct — this state grows, and
+        a caller mirroring it by hand goes stale silently.
+        """
+        # What coverage is capturing right now, for the stall watch to name
+        # when the loop stops answering. A plain string: read during a stall,
+        # when touching live widgets would be its own hazard.
+        self.coverage_activity: str | None = None
+        # The file coverage is capturing right now, in full. Distinct from
+        # coverage_activity, which is a truncated diagnostic string for the
+        # stall watch; this one is read to paint a row, so it has to be a key.
+        self.coverage_parent: str | None = None
+        # Cursor position the running coverage plan was built for.
+        self._coverage_anchor: tuple[str, int] | None = None
+        self._coverage_task: asyncio.Task[None] | None = None
+        # Per file, the HIT chunks the off-screen builder cannot take: a
+        # plain-layout kind, or one over the renderer's size cap. Per hit, not
+        # per file — a 37-hit PDF with 36 captured reported cold forever over
+        # one 46,266-character chunk against the 40,000 cap.
+        self._unservable: dict[str, set[int]] = {}
+        # Per file, how many chunks the off-screen builder can capture. Same
+        # lifetime as the store: a new query re-establishes it.
+        self._capturable_total: dict[str, int] = {}
+        # The file the user asked to warm whole, if any, and whether that walk
+        # is the one running — the duty cycle differs for work being watched.
+        self._full_warm_target: str | None = None
+        self._full_warm_active = False
+        self._full_warm_session: ProgressSession | None = None
+
+    async def _warm_whole_file(
+        self, ctx: _CoveragePass, parent_id: str, chunks: list[FileChunk]
+    ) -> int:
+        """Capture every chunk of one file, because the user asked for it.
+
+        Deliberately not bounded by ``COVERAGE_CHUNK_BUDGET``: a half-warmed
+        file delivers none of what was asked for. Stopping is a flag rather
+        than a cancellation — ``_capture_file_targets`` tests before every
+        capture, so an abort lands within one and unwinds through the ordinary
+        return path.
+        """
+        width = ctx.width_now() or ctx.width
+        targets = coverage_targets(
+            total=len(chunks),
+            focus_idx=self._landing_index(parent_id, chunks),
+            hit_indices=self.hit_indices(parent_id, chunks),
+            already=self._held_indices(parent_id, ctx.query_sig, width, chunks),
+            margin=len(chunks),
+            budget=len(chunks),
+        )
+        if not targets:
+            self._finish_full_warm(parent_id, chunks)
+            return 0
+        # One line per REQUEST, not per pass: standing down for a landing is a
+        # pause, and closing the session there completed the line and reopened
+        # it at a smaller total next pass, filing the abandoned segment as work
+        # for calibration to learn from.
+        #
+        # Counted in CAPTURES against the file's capturable chunks. Counting
+        # targets walked instead mixed two units — a file whose chunks are half
+        # flat-path reached 100% halfway through and then sat motionless.
+        total = max(1, self._capturable_total.get(parent_id, len(targets)))
+        held = self.capture_store.count(parent_id, ctx.query_sig, width)
+        session = self._session_for_warm(parent_id)
+        if session is not None:
+            session.report(min(held, total), total)
+        self.coverage_parent = parent_id
+        self._full_warm_active = True
+        walked = 0
+        try:
+
+            def tick(processed: int, captures: int) -> None:
+                nonlocal walked
+                walked = processed
+                # Re-read rather than close over the session: the ambient slot
+                # can be taken mid-pass, and a session bound once kept being
+                # reported into after it had been retired.
+                live = self._full_warm_session
+                if live is None:
+                    return
+                if live.closed:
+                    self._full_warm_session = None
+                    return
+                live.report(min(held + captures, total), total)
+
+            captured = await self._capture_file_targets(
+                parent_id,
+                ctx.query_sig,
+                width,
+                chunks,
+                targets,
+                ctx.spec,
+                lambda: self._full_warm_target == parent_id and not self._unplanned_landings(ctx),
+                on_capture=tick,
+            )
+        finally:
+            self._full_warm_active = False
+            self.coverage_parent = None
+        # Outside the finally so it runs only on the path that finished — a
+        # `finally` also fires on the cancelled and failed ones, where mounting
+        # a half-warmed file is wrong.
+        #
+        # Walked to the end, not "captured everything": a chunk the host
+        # refuses is never captured, and waiting for a count that cannot be
+        # reached would leave the request outstanding for the rest of the
+        # session with margin work suppressed behind it.
+        if walked >= len(targets):
+            self._finish_full_warm(parent_id, chunks)
+        return captured
+
+    def _session_for_warm(self, parent_id: str) -> ProgressSession | None:
+        """The progress line for this warm, if one can be had.
+
+        The facility holds a single AMBIENT slot and ``begin`` retires whatever
+        is in it, so opening one unconditionally killed a running index's line.
+        This yields: no line while the index owns the slot, and one taken when
+        it is free. The reverse is not prevented — an index begun mid-warm does
+        evict the warm — so the session is re-read per report and dropped once
+        retired, rather than reported into for the rest of the run.
+        """
+        from fnd.tui.progress.operations import WARM_WHOLE_FILE
+
+        session = self._full_warm_session
+        if session is not None and session.closed:
+            session = self._full_warm_session = None
+        if session is None and self._app._progress.ambient is None:
+            session = self._app._progress.begin(WARM_WHOLE_FILE, label=self._file_label(parent_id))
+            session.enter("capture")
+            self._full_warm_session = session
+        return session
+
+    def mount_warmed_file(self, parent_id: str, chunks: list[FileChunk]) -> None:
+        """Put a fully warmed file entirely in the DOM, so no scroll builds.
+
+        Capturing every chunk is only half of what a warmed file promises: the
+        windowed mount still fills three chunks at a time, and only when a
+        scroll event fires the debounced check — so at the top of the mounted
+        region the user has to scroll DOWN to get more content ABOVE.
+
+        Bounded, because a mounted frozen chunk costs arrange time whether or
+        not it is on screen. Above the bound the file stays windowed and the
+        captures still make each of those mounts a blit.
+        """
+        container = self.active
+        if container is None or container.parent_doc_id != parent_id:
+            return
+        if len(chunks) > tuning.FULLWARM_MOUNT_MAX_CHUNKS:
+            self.diag_log(f"warm mount skipped parent={parent_id[:8]} chunks={len(chunks)}")
+            return
+        # The same gates the scroll-driven path applies: a warm finishing
+        # inside a landing would otherwise start a large prepend, with its
+        # scroll absorb, underneath the navigation still settling.
+        if self._app._preview_scroll.is_settling or self.mount_before_first_paint():
+            return
+        lazy = self._app._lazy
+        task = getattr(lazy, "task", None)
+        if task is not None and not task.done():
+            return
+        lazy.task = asyncio.create_task(lazy.fill_all(container, chunks))
+
+    def _file_label(self, parent_id: str) -> str:
+        """The file's name, for the progress line."""
+        for group in getattr(self._app._search, "groups", None) or []:
+            if group.parent_id == parent_id:
+                return Path(getattr(group, "path", "") or "").name
+        return ""
+
+    def _idle_ratio(self) -> float:
+        """How long coverage yields for after each capture.
+
+        Background work must never be felt; a warm the user asked for and is
+        watching is the thing being waited on.
+        """
+        if self._full_warm_active:
+            return tuning.COVERAGE_FOREGROUND_IDLE_RATIO
+        return tuning.COVERAGE_IDLE_RATIO
+
+    def _warm_margin(self) -> int:
+        """Chunks captured either side of a match, from ``[defaults]``.
+
+        ``tuning.COVERAGE_MARGIN`` is the fallback for an app with no config,
+        which is every headless test.
+        """
+        cfg = self._app._config
+        if cfg is None:
+            return tuning.COVERAGE_MARGIN
+        return max(0, int(cfg.defaults.preview_warm_margin))
+
+    def _context_yields(self, ctx: _CoveragePass) -> bool:
+        """Whether margin work should stand down right now.
+
+        Margins are context. They yield to a landing the cursor has moved
+        towards, and to a whole-file warm the user has asked for — the two
+        things somebody is actually waiting on.
+        """
+        return self._full_warm_target is not None or self._unplanned_landings(ctx)
+
+    def _unplanned_landings(self, ctx: _CoveragePass) -> bool:
+        """Whether the live plan wants a file this pass never planned for.
+
+        Margin work is context; a hit is what a jump lands on. Why that ordering
+        needs enforcing across passes, and what it cost when it was not, is in
+        :mod:`fnd.tui.preview.coverage`.
+
+        Scoped to files OUTSIDE this pass's plan, which is what makes yielding
+        progress rather than spin: a planned file has already had its hits
+        attempted this pass, so yielding for one still uncaptured — a failed
+        decode, a capture the host refused — would starve margins entirely. It
+        also means this can only fire once the cursor has moved, since a plan
+        built from an unchanged anchor is the plan being walked.
+        """
+        width = ctx.width_now() or ctx.width
+        walked = set(ctx.plan)
+        return any(
+            pid not in walked and self._file_needs_coverage(pid, ctx.query_sig, width)
+            for pid in ctx.live_plan()
+        )
+
+    async def _cover_current_file(
+        self, ctx: _CoveragePass, chunks: list[FileChunk], margin: int
+    ) -> int:
+        """Tier 1: capture the current file's hits, re-planning as the cursor moves.
+
+        A move inside the file changes only the ORDER — nearest-first is taken
+        around the cursor — so the plan is rebuilt around the new position and
+        the same file carries on. Returning instead put the file the user is
+        reading behind every neighbour in the plan, which is the one ordering
+        the design rules out.
+
+        Ends when the cursor stops moving inside the file, or leaves it — which
+        IS a reason to stand down, because the pass planned around the file it
+        went to supersedes this one.
+
+        Holds the warming marker for the whole loop, not per round: it is what
+        the results arrow paints, and clearing it between rounds would blink the
+        file back to cold on every move the user makes within it.
+        """
+        self.coverage_parent = ctx.parent_id
+        try:
+            captured = 0
+            planned_for: int | None = None
+            width = ctx.width
+            while True:
+                anchor = self._coverage_anchor
+                if anchor is None or anchor[0] != ctx.parent_id or anchor[1] == planned_for:
+                    return captured
+                if margin and self._context_yields(ctx):
+                    return captured
+                planned_for = anchor[1]
+                width = ctx.width_now() or width
+                focus_idx = next((i for i, c in enumerate(chunks) if c.chunk_seq == planned_for), 0)
+
+                def still_wanted(seq: int = planned_for) -> bool:
+                    return self._coverage_anchor == (ctx.parent_id, seq) and not (
+                        margin and self._context_yields(ctx)
+                    )
+
+                targets = coverage_targets(
+                    total=len(chunks),
+                    focus_idx=focus_idx,
+                    hit_indices=self.hit_indices(ctx.parent_id, chunks),
+                    already=self._held_indices(ctx.parent_id, ctx.query_sig, width, chunks),
+                    margin=margin,
+                    budget=tuning.COVERAGE_CHUNK_BUDGET,
+                )
+                captured += await self._capture_file_targets(
+                    ctx.parent_id, ctx.query_sig, width, chunks, targets, ctx.spec, still_wanted
+                )
+        finally:
+            self.coverage_parent = None
 
     async def _capture_targets(
         self,
@@ -2915,9 +3330,10 @@ class PreviewPresenter:
         targets: list[int],
         spec: MatchSpec,
         still_wanted: Callable[[], bool],
+        on_capture: Callable[[int, int], None] | None = None,
     ) -> int:
         captured = 0
-        for index in targets:
+        for processed, index in enumerate(targets, 1):
             # The plan was ordered around where the cursor WAS. A pass can run
             # for hundreds of chunks, so without this it keeps warming the part
             # of the file the user has already left — measured, it captured
@@ -2942,7 +3358,11 @@ class PreviewPresenter:
             chunk = chunks[index]
             if not uses_markdown_renderer(chunk):
                 # Plain-layout chunks have no off-screen builder; nothing here
-                # can serve them.
+                # can serve them. Counted as walked but never as captured: the
+                # denominator excludes them, so counting them as progress ran
+                # the bar to 100% halfway through a mixed file.
+                if on_capture is not None:
+                    on_capture(processed, captured)
                 continue
             # Never compete with a landing the user is waiting on, nor with a
             # lazy-mount batch: its above-path awaits a SETTLED message pump,
@@ -2970,8 +3390,10 @@ class PreviewPresenter:
             # Hand the loop back for longer than we just held it. Without this
             # coverage ran flat out — measured at 84% of the event loop — and a
             # UI that only gets a sixth of its own loop is a UI that freezes.
+            if on_capture is not None:
+                on_capture(processed, captured)
             cost = time.perf_counter() - started
-            await asyncio.sleep(min(cost * tuning.COVERAGE_IDLE_RATIO, tuning.COVERAGE_IDLE_MAX))
+            await asyncio.sleep(min(cost * self._idle_ratio(), tuning.COVERAGE_IDLE_MAX))
         return captured
 
     async def _mount_chunks_async(

@@ -8,8 +8,15 @@ large files with nothing. A 1018-chunk PDF mounts a window and throws it away on
 the next jump, so every far jump rebuilds from source whether or not the target
 was visited moments earlier.
 
-Coverage fills that gap without touching what is mounted. What navigation
-actually visits is the MATCHES, so those are captured ahead, under two rules:
+Coverage fills that gap without touching what is mounted — with one exception.
+A file the user has asked to warm WHOLE is mounted whole once its captures are
+in, up to ``FULLWARM_MOUNT_MAX_CHUNKS``: capturing every chunk is only half of
+what that promises, because the windowed fill adds three chunks per scroll event
+and only when one fires, so at the top of the mounted region there is nothing
+left to move and no more content arrives above.
+
+What navigation actually visits is the MATCHES, so those are captured ahead,
+under two rules:
 
 * coverage fills a CACHE, not the pane. Mounting scattered hit chunks would put
   chunk 12 directly above chunk 20 with the document between them silently
@@ -21,17 +28,38 @@ actually visits is the MATCHES, so those are captured ahead, under two rules:
   because memory is the only thing it spends.
 
 The scarce resource is neither memory nor DOM but TIME: captures run serially on
-one off-screen host at roughly ten chunks a second. So order is the whole design,
-and it is strictly by what a navigation is most likely to need next:
+one off-screen host, measured at roughly six chunks a second. So order is the
+whole design, and it is strictly by what a navigation is most likely to need:
 
-1. the current file's hit chunks, nearest first from the cursor;
-2. the neighbouring files' hit chunks, outward from the cursor's place in the
-   results list — this is the step that makes moving BETWEEN files served;
-3. the current file's remaining chunks, and only once 1 and 2 are drained.
+1. every planned file's HIT chunks — the current file first, nearest to the
+   cursor, then the neighbours outward, then the head of the result list;
+2. one file WHOLE, if the user has asked for that (see
+   ``PreviewPresenter.request_full_warm``);
+3. the margin either side of the hits, which is context and yields to both.
 
-Tier 3 last is the point. Covering a file whole spends ~30 seconds of the one
-serial host on chunks no jump lands on, while the neighbours get nothing — which
-is precisely the buffer the cursor needs. It earns its place only as idle work.
+Landings before context, across the whole plan. Taking one file's margins before
+the next file has anything to land on cost 0.7/0.7/0.7/2.5/3.6s to five READY
+files, against 0.6s for all five in this order.
+
+A requested whole file sits between them: somebody is waiting on it, so it
+outranks context — but not landings, which are what keeps every other file's
+jump served. Measured, it costs nothing to be second: on a warmed session the
+request starts within a capture, and only on a cold store does it wait.
+
+A pass is only re-planned when it ENDS, so the margin walk also stands down for
+a file the cursor has moved towards that the running plan never listed. Without
+that, the file two below the cursor waited 31.0s for its first capture — 26.3s
+of it the previous plan's margins, over files whose hits were already captured.
+
+Whole-file coverage used to run automatically, after the rest drained: 438
+captures over 80 seconds on one already-served file while 42 other result files
+had nothing, to save a scroll lazy mount already handles. Being last did not
+stop it taking everything, which is why it is now asked for rather than assumed
+— and why what it costs goes to the user, who can watch it and stop it.
+
+Moving the cursor re-plans; it does not demote. Tier 1's order is taken around
+the cursor, so a move within the file invalidates the order but not the file,
+which is still the only one that can serve the next keypress.
 """
 
 from __future__ import annotations
@@ -39,7 +67,7 @@ from __future__ import annotations
 from collections.abc import Container as ContainerABC
 from collections.abc import Iterable, Sequence
 
-__all__ = ["coverage_targets", "filler_targets", "neighbour_order"]
+__all__ = ["coverage_targets", "neighbour_order"]
 
 
 def _nearest_first(wanted: Iterable[int], focus_idx: int, already: ContainerABC[int]) -> list[int]:
@@ -69,21 +97,6 @@ def coverage_targets(
         if 0 <= i < total:
             wanted.update(range(max(0, i - margin), min(total, i + margin + 1)))
     return _nearest_first(wanted, focus_idx, already)[:budget]
-
-
-def filler_targets(
-    *, total: int, focus_idx: int, already: ContainerABC[int], budget: int
-) -> list[int]:
-    """Everything not already held, nearest first — the idle-time tier.
-
-    Only worth running once every hit of the current file AND its neighbours is
-    captured. Its sole benefit is that a scroll into the gaps between matches
-    finds them ready, and scroll-driven lazy mount is already fast enough that
-    this is a small prize for the one serial resource coverage has.
-    """
-    if total <= 0 or budget <= 0:
-        return []
-    return _nearest_first(range(total), focus_idx, already)[:budget]
 
 
 def neighbour_order(ids: Sequence[str], here: int, span: int) -> list[str]:

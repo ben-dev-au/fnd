@@ -20,7 +20,7 @@ the list, and it is what tells the user their wait is buying something.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from enum import Enum
 
 __all__ = ["WarmState", "warm_state"]
@@ -35,6 +35,18 @@ class WarmState(Enum):
     WARMING = "warming"
     #: Every listed hit is captured; a jump to any of them is a blit.
     READY = "ready"
+    #: Every capturable chunk is captured, not just the hits — so a scroll
+    #: anywhere in the file is a blit too, not only a jump to a match.
+    FULL = "full"
+
+    @property
+    def is_served(self) -> bool:
+        """Whether a jump into this file is a blit rather than a build.
+
+        Asked instead of comparing against READY: FULL is strictly warmer, and
+        a caller testing for READY alone prices the warmest files as cold.
+        """
+        return self in (WarmState.READY, WarmState.FULL)
 
 
 def warm_state(
@@ -42,6 +54,9 @@ def warm_state(
     hit_seqs: Iterable[int],
     is_captured: Callable[[int], bool],
     warming: bool,
+    unservable: Collection[int] = frozenset(),
+    capturable_total: int = 0,
+    captured_total: int = 0,
 ) -> WarmState:
     """Classify one file.
 
@@ -53,13 +68,30 @@ def warm_state(
     there is nothing to wait for. Reporting it cold would paint every
     zero-hit row as a warning about a jump that cannot happen.
 
-    Readiness is judged on the HITS alone, never on whole-file coverage.
-    Coverage's third tier fills the gaps between matches, but scroll-driven
-    lazy mount already handles those fast enough that the user cannot tell —
-    so counting them would leave a file showing cold for the ~30 s of idle
-    work that changes nothing they will notice.
+    Readiness is judged on the HITS alone, never on whole-file coverage. The
+    chunks around a hit are captured too, but a jump lands on the hit and lazy
+    mount fills the rest — counting them would leave a file showing cold for
+    idle work the user cannot see.
+
+    ``unservable`` holds hits coverage cannot capture at all: a plain-layout
+    kind, or a chunk over the markdown renderer's size cap. Both take the flat
+    path, which has no off-screen builder, so "captured" is unreachable for them
+    and judging readiness over them can never come true. An excluded hit reports
+    READY for the same reason a file with no hits does — there is nothing here
+    for a jump to wait on.
+
+    Per HIT, not per file: a 37-hit PDF with 36 hits captured reported cold
+    indefinitely over one 46,266-character chunk against the 40,000 cap.
+
+    FULL outranks READY because it is strictly stronger — every hit is covered
+    by every chunk being covered. It is counted against the CAPTURABLE total,
+    never the chunk count: a file whose chunks all take the flat path has no
+    off-screen builder, and measuring it against zero would paint it fully warm
+    having captured nothing.
     """
-    seqs = list(hit_seqs)
+    if capturable_total > 0 and captured_total >= capturable_total:
+        return WarmState.FULL
+    seqs = [seq for seq in hit_seqs if seq not in unservable]
     if not seqs:
         return WarmState.READY
     if all(is_captured(seq) for seq in seqs):

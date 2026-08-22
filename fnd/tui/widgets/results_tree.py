@@ -267,6 +267,16 @@ class ResultsTree(Tree[dict[str, Any]]):
     COMPONENT_CLASSES: ClassVar[set[str]] = {
         "results--warm",
         "results--cold",
+        "results--full",
+    }
+
+    #: Colour per warmth. The ICON carries building-versus-done; this carries
+    #: how much of the file is served, so the two are independent.
+    WARM_COMPONENTS: ClassVar[dict[WarmState, str]] = {
+        WarmState.COLD: "results--cold",
+        WarmState.WARMING: "results--warm",
+        WarmState.READY: "results--warm",
+        WarmState.FULL: "results--full",
     }
 
     DEFAULT_CSS = """
@@ -277,6 +287,11 @@ class ResultsTree(Tree[dict[str, Any]]):
        same glyph is very hard to read. */
     ResultsTree > .results--cold { color: #7aa2f7; }
     ResultsTree > .results--warm { color: $accent; }
+    /* Whole file served, not just its matches. Red reads as hotter than the
+       amber accent, so the three states run cold blue -> warm amber -> hot
+       red, and it is a hue step like the other two rather than a brightness
+       one. */
+    ResultsTree > .results--full { color: #c0392b; }
     """
 
     def render_label(self, node: TreeNode[Any], base_style: Style, style: Style) -> Text:
@@ -292,7 +307,7 @@ class ResultsTree(Tree[dict[str, Any]]):
         state = self._warm_state_of(node)
         if state is None:
             return stock
-        building = state is not WarmState.READY
+        building = state in (WarmState.COLD, WarmState.WARMING)
         if node.is_expanded:
             icon = self.ICON_BUILDING_EXPANDED if building else self.ICON_WARM_EXPANDED
         else:
@@ -307,7 +322,7 @@ class ResultsTree(Tree[dict[str, Any]]):
         # out white and nothing ever turned accent, which is the whole signal.
         # Taken from a component class rather than a constant so it follows the
         # theme, like the progress line's own fill does.
-        component = "results--cold" if state is WarmState.COLD else "results--warm"
+        component = self.WARM_COMPONENTS.get(state, "results--warm")
         colour = None
         with contextlib.suppress(Exception):
             # Component styles only resolve once the widget is in an app with

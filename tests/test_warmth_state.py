@@ -52,10 +52,9 @@ def test_a_file_with_no_listed_hits_is_ready() -> None:
 
 
 def test_whole_file_coverage_is_not_required() -> None:
-    """Coverage's third tier fills the gaps between matches. Scroll-driven
-    lazy mount already handles those fast enough to be imperceptible, so
-    counting them would leave a file reading cold through ~30 s of idle work
-    that changes nothing."""
+    """The margin around a hit is captured too, but a jump lands on the hit
+    and lazy mount fills the rest — counting whole-file coverage here would
+    leave a file reading cold through work the user cannot see."""
     assert state([5], {5}) is WarmState.READY
 
 
@@ -205,3 +204,136 @@ def test_the_icon_keeps_its_toggle_meta_in_every_state(tree: ResultsTree) -> Non
         span = tree.render_label(node, Style(color="white"), Style()).spans[0]
         assert isinstance(span.style, Style)
         assert span.style.meta.get("toggle") is True, state
+
+
+def test_a_file_coverage_cannot_capture_is_not_left_cold_forever() -> None:
+    """A hit with no off-screen builder can never satisfy "all hits captured".
+
+    Plain kinds take the flat path, and so does a markdown chunk over
+    ``MARKDOWN_MAX_CHARS`` — measured live, a 48,414-character seminar
+    transcript against the 40,000 cap. Coverage skips those chunks, so the
+    file's row sat cold for the whole session while the user waited for warming
+    that could not happen, and every pass re-planned it.
+
+    READY for the same reason the no-hits case is: there is nothing here for a
+    jump to wait on.
+    """
+    state = warm_state(
+        hit_seqs=[0],
+        is_captured=lambda _seq: False,
+        warming=False,
+        unservable={0},
+    )
+    assert state is WarmState.READY, (
+        f"a file coverage cannot capture reported {state}; the arrow then shows "
+        f"a wait that will never end"
+    )
+
+
+def test_one_unservable_hit_does_not_condemn_an_otherwise_warm_file() -> None:
+    """The exclusion is per HIT, and this is why.
+
+    Measured live: a 37-hit PDF sat cold indefinitely with THIRTY-SIX of its
+    hits captured, because chunk 687 was 46,266 characters against the 40,000
+    renderer cap. Every jump but one was already instant. A per-file flag would
+    not rescue this — the file is mostly capturable, so it would never be
+    flagged, and the readiness test would keep waiting on the one chunk that
+    can never come.
+    """
+    held = set(range(36))
+    state = warm_state(
+        hit_seqs=[*range(36), 687],
+        is_captured=lambda seq: seq in held,
+        warming=False,
+        unservable={687},
+    )
+    assert state is WarmState.READY, (
+        f"36 of 37 hits captured and the 37th uncapturable reported {state}; "
+        f"the row claims a wait that no amount of warming can end"
+    )
+
+
+def test_an_unservable_hit_does_not_mask_real_waiting() -> None:
+    """Excluding the impossible must not excuse the merely unfinished."""
+    state = warm_state(
+        hit_seqs=[1, 2, 687],
+        is_captured=lambda seq: seq == 1,
+        warming=False,
+        unservable={687},
+    )
+    assert state is WarmState.COLD, f"hit 2 is still uncaptured; got {state}"
+
+
+def test_capturable_files_still_report_honestly() -> None:
+    """The escape hatch must not swallow the ordinary states."""
+    assert state([0], set()) is WarmState.COLD
+    assert state([0], set(), warming=True) is WarmState.WARMING
+    assert state([0], {0}) is WarmState.READY
+
+
+# ── fully warmed ─────────────────────────────────────────────────
+
+
+def test_a_file_with_every_chunk_captured_reads_as_full() -> None:
+    assert (
+        warm_state(
+            hit_seqs=[3, 9],
+            is_captured=lambda s: s in {3, 9},
+            warming=False,
+            capturable_total=40,
+            captured_total=40,
+        )
+        is WarmState.FULL
+    )
+
+
+def test_full_outranks_ready() -> None:
+    """Every hit is covered by every chunk being covered, so the stronger
+    claim wins — otherwise the arrow would never leave the hits-only colour."""
+    assert (
+        warm_state(
+            hit_seqs=[3],
+            is_captured=lambda _s: True,
+            warming=False,
+            capturable_total=12,
+            captured_total=12,
+        )
+        is WarmState.FULL
+    )
+
+
+def test_hits_warmed_is_not_full() -> None:
+    assert (
+        warm_state(
+            hit_seqs=[3, 9],
+            is_captured=lambda s: s in {3, 9},
+            warming=False,
+            capturable_total=40,
+            captured_total=2,
+        )
+        is WarmState.READY
+    )
+
+
+def test_a_file_the_builder_cannot_take_is_never_full() -> None:
+    """Counted against the CAPTURABLE total, not the chunk count: a wholly
+    flat-path file would otherwise satisfy 0 >= 0 having captured nothing."""
+    assert (
+        warm_state(
+            hit_seqs=[3],
+            is_captured=lambda _s: False,
+            warming=False,
+            capturable_total=0,
+            captured_total=0,
+        )
+        is WarmState.COLD
+    )
+
+
+def test_the_full_arrow_is_filled_and_its_own_colour(tree: ResultsTree) -> None:
+    """Filled like READY (nothing left to build), coloured unlike it."""
+    assert ResultsTree.WARM_COMPONENTS[WarmState.FULL] == "results--full"
+    assert ResultsTree.WARM_COMPONENTS[WarmState.FULL] not in {
+        ResultsTree.WARM_COMPONENTS[WarmState.READY],
+        ResultsTree.WARM_COMPONENTS[WarmState.COLD],
+    }
