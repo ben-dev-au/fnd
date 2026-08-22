@@ -25,4 +25,5 @@ the change (`removed rather than deprioritised`), no recap of the symptom that
 prompted it — those belong in the commit message. Architecture rationale lives
 in the module docstring once; functions point at it rather than restating it.
 
-The same applies to docstrings and to tests: one line stating the contract.
+The same applies to function and method docstrings, and to tests: one line
+stating the contract.

@@ -8,13 +8,13 @@ magnitude on some files, so the estimate goes to the user with the decision.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Static
+from textual.widgets import OptionList, Static
 
 from fnd.tui.preview import tuning
 
@@ -55,7 +55,6 @@ class FullWarmConfirmScreen(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         from rich.text import Text
-        from textual.widgets import OptionList
         from textual.widgets.option_list import Option
 
         from fnd.tui.settings_screen import build_confirm_body
@@ -85,13 +84,9 @@ class FullWarmConfirmScreen(ModalScreen[bool]):
             )
 
     def on_mount(self) -> None:
-        from textual.widgets import OptionList
-
         self.query_one("#full_warm_list", OptionList).focus()
 
     def action_cursor(self, direction: int) -> None:
-        from textual.widgets import OptionList
-
         lst = self.query_one("#full_warm_list", OptionList)
         if direction > 0:
             lst.action_cursor_down()
@@ -99,12 +94,10 @@ class FullWarmConfirmScreen(ModalScreen[bool]):
             lst.action_cursor_up()
 
     def action_activate(self) -> None:
-        from textual.widgets import OptionList
-
         self.query_one("#full_warm_list", OptionList).action_select()
 
     def action_cancel(self) -> None:
         self.dismiss(False)
 
-    def on_option_list_option_selected(self, ev: Any) -> None:
+    def on_option_list_option_selected(self, ev: OptionList.OptionSelected) -> None:
         self.dismiss(ev.option.id == "warm")

@@ -760,31 +760,34 @@ class PreviewPresenter:
             self.diag_log(f"sweep removed={removed} containers")
         return removed
 
-    def prune_active_to_window(self, margin: int = 3) -> None:
+    def prune_active_to_window(self, margin: int = 3) -> float:
         """Drop the currently-active container's off-screen chunks down to its
         visible window. Used when switching files: the outgoing container stays
         on screen while the incoming one builds, so its full-mounted DOM would
         otherwise inflate the incoming mount's arrange (Option C's inter-file
-        cost). Flash-free — the visible window stays put; chunks removed ABOVE
-        the viewport are scroll-compensated so the on-screen content doesn't
-        shift while the outgoing container is still visible during the swap."""
+        cost). Flash-free — the visible window stays put: the first kept chunk is
+        claimed as the pane's absorb anchor, so whatever the removal actually
+        takes off the top is corrected by the layout that applies it.
+
+        Returns the height taken off the top, which a caller sampling the
+        viewport must subtract: the correction lands with a later layout."""
         import contextlib
 
         container = self.active
         if container is None:
-            return
+            return 0.0
         window = tuning.VISIBLE_FIRST_ABOVE + tuning.VISIBLE_FIRST_BELOW + 2 * margin + 1
         if len(container.mounted_indices) <= window:
-            return  # not enough off-screen DOM to be worth pruning
+            return 0.0  # not enough off-screen DOM to be worth pruning
         try:
-            pane = self._app.query_one("#preview_pane", VerticalScroll)
+            pane = self._app.query_one("#preview_pane", MatchAwareScroll)
         except Exception:
-            return
+            return 0.0
         if pane.size.height <= 0:
-            return
+            return 0.0
         chunks = self.chunk_cache.get(container.parent_doc_id)
         if not chunks:
-            return
+            return 0.0
         vtop = float(pane.scroll_y)
         vbot = vtop + float(pane.size.height)
         ranges: list[tuple[int, Widget, float, float]] = []
@@ -805,10 +808,10 @@ class PreviewPresenter:
                 vr = w.virtual_region  # type: ignore[attr-defined]
                 ranges.append((i, w, float(vr.y), float(vr.y + vr.height)))
             except Exception:
-                return  # geometry not ready — skip rather than risk a bad scroll
+                return 0.0  # geometry not ready — skip rather than risk a bad scroll
         visible = [i for (i, _w, y0, y1) in ranges if y1 > vtop and y0 < vbot]
         if not visible:
-            return
+            return 0.0
         keep_lo, keep_hi = min(visible) - margin, max(visible) + margin
         above_height = 0.0
         to_remove: list[tuple[int, Widget]] = []
@@ -819,7 +822,14 @@ class PreviewPresenter:
             elif i > keep_hi:
                 to_remove.append((i, w))
         if not to_remove:
-            return
+            return 0.0
+        # Removal is DEFERRED by Textual, so compensating here scrolls against a
+        # virtual size that still counts the chunks — measured 439-680 rows out.
+        # The anchor is the reader's own content: absorbing its movement needs no
+        # prediction, and prices the frozen stand-ins for free.
+        kept = [(i, w, y0) for (i, w, y0, _y1) in ranges if keep_lo <= i <= keep_hi]
+        if kept:
+            pane.absorb_anchor = (kept[0][1], int(kept[0][2]))
         import os as _os_freeze
         import time as _time
 
@@ -869,12 +879,7 @@ class PreviewPresenter:
                     container.chunk_widgets.pop(seq, None)
                     container.match_targets.pop(seq, None)
             if above_height > 0:
-                with contextlib.suppress(Exception):
-                    pane.scroll_to(y=max(0.0, vtop - above_height), animate=False, immediate=True)
-                    self.diag_log(
-                        f"scroll site=prune y={max(0.0, vtop - above_height):.0f} "
-                        f"removed={len(to_remove)}"
-                    )
+                self.diag_log(f"prune anchored above={above_height:.0f} removed={len(to_remove)}")
         finally:
             self.end_reconcile_scroll()
         _perf.mark(
@@ -885,6 +890,7 @@ class PreviewPresenter:
         )
         if frozen_count:
             self.diag_log(f"prune froze={frozen_count} removed={len(to_remove) - frozen_count}")
+        return above_height
 
     def dispatch_mount(
         self,
@@ -1513,8 +1519,9 @@ class PreviewPresenter:
         # that already serves never-mounted chunks. `prune_active_to_window` is
         # scroll-compensated and flash-free, and a no-op on small files.
         if len(stale) > tuning.VISIBLE_FIRST_ABOVE + tuning.VISIBLE_FIRST_BELOW:
+            pruned = 0.0
             with contextlib.suppress(Exception):
-                self.prune_active_to_window()
+                pruned = self.prune_active_to_window()
             # `is_live`, not `is_mounted`: Textual defers removal, so a widget
             # the prune just dropped still reports itself mounted — measured,
             # 46 of 46 pruned widgets passed `is_mounted`, so this filter
@@ -1523,12 +1530,12 @@ class PreviewPresenter:
             stale = [
                 (seq, view) for seq, view in stale if is_live(view) and view.frozen.width != width
             ]
-            # And re-read the viewport: `prune_active_to_window` SCROLLS the
-            # pane to compensate for what it removed above the fold, so the
-            # sample taken before it is stale — measured, the drift correction
-            # came out as the growth of the whole document, 126 rows applied
-            # where 9 was right, i.e. a visible jump on resize.
-            viewport_top = pane.scroll_offset.y
+            # And move the viewport sample with what the prune removed above
+            # the fold: the chunk positions below read post-removal, so leaving
+            # the sample where it was classifies chunks at the fold as above it
+            # — measured, the drift correction came out as the growth of the
+            # whole document, 126 rows applied where 9 was right.
+            viewport_top = max(0, pane.scroll_offset.y - int(pruned))
 
         repaired = 0
         drift = 0
@@ -3178,11 +3185,14 @@ class PreviewPresenter:
         # scroll absorb, underneath the navigation still settling.
         if self._app._preview_scroll.is_settling or self.mount_before_first_paint():
             return
+        # ``fill_task``, not ``task``: the latter gates the reader-driven
+        # fills, and holding it for a whole-file mount drops every scroll
+        # request for its duration.
         lazy = self._app._lazy
-        task = getattr(lazy, "task", None)
-        if task is not None and not task.done():
+        fill = getattr(lazy, "fill_task", None)
+        if fill is not None and not fill.done():
             return
-        lazy.task = asyncio.create_task(lazy.fill_all(container, chunks))
+        lazy.fill_task = asyncio.create_task(lazy.fill_all(container, chunks))
 
     def _file_label(self, parent_id: str) -> str:
         """The file's name, for the progress line."""

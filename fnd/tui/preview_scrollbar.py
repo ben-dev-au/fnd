@@ -41,11 +41,15 @@ from typing import TYPE_CHECKING, Any
 from rich.color import Color as RichColor
 from rich.segment import Segment, Segments
 from rich.style import Style as RichStyle
-from textual._animator import SimpleAnimation
 from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.geometry import Size
 from textual.scrollbar import ScrollBar, ScrollBarRender
+
+try:  # private: an empty tuple is isinstance-safe, so its loss only costs the
+    from textual._animator import SimpleAnimation  # animation retarget below
+except ImportError:  # pragma: no cover
+    SimpleAnimation = ()  # type: ignore[assignment,misc]
 
 if TYPE_CHECKING:
     from rich.console import Console, ConsoleOptions, RenderResult
@@ -353,7 +357,7 @@ class MatchAwareScroll(VerticalScroll):
     absorb_anchor: tuple[object, int] | None = None
 
     def watch_virtual_size(self, old_value: Size, new_value: Size) -> None:
-        """Absorb a prepend as the layout that caused it lands.
+        """Absorb a shift above the anchor as the layout that caused it lands.
 
         The one moment the new size exists and nothing has painted with it.
         Correcting after a settle paints ~120ms at up to 760 rows off;
@@ -374,8 +378,8 @@ class MatchAwareScroll(VerticalScroll):
             self.absorb_anchor = None
             return
         grew = now_y - before_y
-        if grew <= 0:
-            return
+        if grew == 0:
+            return  # signed: a prune removing content above shrinks it
         self.absorb_anchor = (widget, now_y)
         # Reconcile-guarded: an unguarded write reads as a user scroll and
         # releases the navigation's anchor. Saved and restored rather than

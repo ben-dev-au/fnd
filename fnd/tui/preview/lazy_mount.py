@@ -213,7 +213,8 @@ class LazyMounter:
             fill = self.fill_task
             if fill is None or fill.done():  # type: ignore[attr-defined]
                 self.fill_task = asyncio.create_task(self.fill_all(container, chunks))
-            return
+            # No return: the directional checks below are what serve the
+            # reader, and the fill runs for 3.6s on a 727-chunk file.
 
         bottom_cover = _covering(viewport_bottom - 1) or chunk_ranges[-1]
         bottom_idx, _, bottom_chunk_y1 = bottom_cover

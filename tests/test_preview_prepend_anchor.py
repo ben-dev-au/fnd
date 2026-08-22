@@ -7,15 +7,18 @@ virtual size that has not grown and lands short. The pane compensates as the
 layout lands instead.
 
 Anchored on a widget rather than counting the height change: only content
-inserted ABOVE the anchor moves it, so a background fill appending BELOW is
-correctly ignored, and a prepend that arrives in instalments — built chunks
-resolve their heights over successive layouts — is absorbed in full.
+ABOVE the anchor moves it, so a background fill appending BELOW is correctly
+ignored, and a prepend that arrives in instalments — built chunks resolve their
+heights over successive layouts — is absorbed in full. The claim is signed: a
+prune removing chunks above the reader moves them by exactly the same rule.
 """
 
 from __future__ import annotations
 
 import pytest
+from textual._animator import SimpleAnimation
 from textual.app import App, ComposeResult
+from textual.pilot import Pilot
 from textual.widgets import Static
 
 from fnd.tui.preview_scrollbar import MatchAwareScroll
@@ -30,15 +33,15 @@ class _PaneApp(App[None]):
             yield Static("anchor", id="anchor")
 
 
-async def _ready(pilot: object, app: _PaneApp) -> tuple[MatchAwareScroll, Static, Static]:
+async def _ready(pilot: Pilot[None], app: _PaneApp) -> tuple[MatchAwareScroll, Static, Static]:
     pane = app.query_one("#preview_pane", MatchAwareScroll)
     filler = app.query_one("#filler", Static)
     anchor = app.query_one("#anchor", Static)
     filler.styles.height = 500
     anchor.styles.height = 40
-    await pilot.pause()  # type: ignore[attr-defined]
+    await pilot.pause()
     pane.scroll_y = 100
-    await pilot.pause()  # type: ignore[attr-defined]
+    await pilot.pause()
     return pane, filler, anchor
 
 
@@ -107,7 +110,13 @@ async def test_content_added_below_the_anchor_is_not_absorbed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_shrink_does_not_move_the_reader() -> None:
+async def test_content_removed_above_the_anchor_is_absorbed() -> None:
+    """What a prune takes off the top, the reader is scrolled back by.
+
+    Compensating in the prune itself cannot work: Textual defers ``remove()``,
+    so the scroll is applied against a virtual size that still counts the
+    removed chunks.
+    """
     app = _PaneApp()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -115,7 +124,42 @@ async def test_a_shrink_does_not_move_the_reader() -> None:
         before = pane.scroll_y
 
         _claim(pane, anchor)
-        filler.styles.height = 400
+        filler.styles.height = 460
         await pilot.pause()
 
-        assert pane.scroll_y == before, f"a shrink moved the reader: {before} -> {pane.scroll_y}"
+        assert pane.scroll_y == before - 40, (
+            f"the reader did not follow the removal: {before} -> {pane.scroll_y}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_in_flight_scroll_animation_is_retargeted_not_stopped() -> None:
+    """Force-stopping COMPLETES an animation, teleporting the reader to its end.
+
+    The animation's endpoints are in pre-prepend coordinates, so absorbing
+    without moving them lets it drive scroll_y back and undo the absorb.
+    """
+    app = _PaneApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        pane, filler, anchor = await _ready(pilot, app)
+
+        pane.scroll_to(y=300, animate=True, duration=5.0)
+        await pilot.pause()
+        key = (id(pane), "scroll_y")
+        animation = app.animator._animations.get(key)
+        assert isinstance(animation, SimpleAnimation), "setup: no animation in flight"
+        end_before = animation.end_value
+        assert isinstance(end_before, (int, float)), "setup: a scroll animation ends on a number"
+
+        _claim(pane, anchor)
+        filler.styles.height = 560
+        await pilot.pause()
+
+        assert app.animator._animations.get(key) is animation, (
+            "the animation was dropped; force-stopping completes it and teleports the reader"
+        )
+        assert animation.end_value == end_before + 60, (
+            f"the destination was not moved with the document: "
+            f"{end_before} -> {animation.end_value}"
+        )

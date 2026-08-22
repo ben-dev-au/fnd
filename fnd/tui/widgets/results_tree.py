@@ -359,7 +359,7 @@ class ResultsTree(Tree[dict[str, Any]]):
         Repainting the whole tree on every capture would strobe the list —
         captures land at roughly ten a second. Diffing means a row is touched
         only when its state actually moves, which for a given file happens
-        twice: into WARMING and into READY.
+        at most three times: into WARMING, into READY, then into FULL.
 
         ``set_label`` with the node's own label is how a row is invalidated:
         it bumps the node's update counter, which is part of the line-cache

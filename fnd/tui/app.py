@@ -1321,13 +1321,19 @@ class FNDApp(App[None]):
         from fnd.tui.full_warm_confirm import FullWarmConfirmScreen
         from fnd.tui.preview import tuning
 
+        # The estimate decodes an uncached file and the app stays live for
+        # all of it, so the query can change before the answer arrives — and
+        # a request made after that reset outlives it.
+        asked_under = self._search.query_signature()
         count, chars = await self._preview.full_warm_estimate(group.parent_id)
+        if self._search.query_signature() != asked_under:
+            return
         if not count:
             self.notify("This file previews as plain text — nothing to warm.", timeout=4)
             return
 
         def _go(confirmed: bool | None) -> None:
-            if confirmed:
+            if confirmed and self._search.query_signature() == asked_under:
                 self._preview.request_full_warm(group.parent_id, hit.chunk_seq)
 
         if count > tuning.FULL_WARM_CONFIRM_CHUNKS:

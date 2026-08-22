@@ -1124,6 +1124,7 @@ async def _drain(trace: _CoverageTrace, *, limit: float = 8.0) -> None:
         task.cancel()
         with contextlib.suppress(BaseException):
             await task
+        pytest.fail(f"the coverage pass did not finish within {limit}s")
 
 
 @pytest.mark.asyncio

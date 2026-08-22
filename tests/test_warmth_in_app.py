@@ -476,3 +476,28 @@ async def test_a_query_reset_drops_an_unconsumed_prepend_claim(warm_index: Path)
         assert pane.absorb_anchor is None, (
             "a prepend claim survived the query that invalidated its container"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_query_change_during_the_estimate_abandons_the_offer(warm_index: Path) -> None:
+    """The estimate decodes an uncached file and the app stays live throughout.
+
+    A request landing after the reset outlives the query it was asked under, so
+    the serial host spends itself on a file the user can no longer see.
+    """
+    app = FNDApp(index_dir=warm_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await run_search(pilot, app, "target")
+        group = app._search.groups[0]
+
+        async def _estimate_across_a_reset(_pid: str) -> tuple[int, int]:
+            app._search.current_query = "something else"
+            return 5, 1000
+
+        app._preview.full_warm_estimate = _estimate_across_a_reset  # type: ignore[method-assign]
+        await app._offer_full_warm(group, group.hits[0])
+
+        assert not app._preview.full_warm_in_progress, (
+            "a warm was started for a file the new query may not list"
+        )

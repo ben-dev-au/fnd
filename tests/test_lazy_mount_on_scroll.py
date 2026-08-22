@@ -9,6 +9,7 @@ the next ``LAZY_MOUNT_BATCH`` chunks in the scroll direction.
 
 from __future__ import annotations
 
+import asyncio
 import textwrap
 from pathlib import Path
 from typing import Any, cast
@@ -433,6 +434,44 @@ async def test_a_fully_warmed_file_fills_downward_and_never_prepends_unattended(
 
 
 @pytest.mark.asyncio
+async def test_a_reader_scrolling_up_is_served_while_the_fill_runs(
+    cfg: Config, long_md_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The background fill must not wall the reader for its own duration.
+
+    It runs downward for seconds — 3.6s on a 727-chunk file — and upward is
+    reachable only on demand, so standing the reader down until it finishes is
+    the wall the windowed mount was built to remove.
+    """
+    app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        pane, container = await _settled_preview(app, pilot)
+        monkeypatch.setattr(
+            type(app._preview), "file_warm_state", lambda _self, _pid: WarmState.FULL
+        )
+        min_initial = min(container.mounted_indices)
+        assert min_initial > 0, "setup: needs unmounted chunks above the reader"
+
+        fill = asyncio.create_task(asyncio.sleep(30))
+        app._lazy.fill_task = fill
+        try:
+            app._preview_scroll.release()
+            if pane.scroll_y == 0:
+                pane.scroll_to(y=1, animate=False, immediate=True)
+            pane.scroll_to(y=0, animate=False, immediate=True)
+            app._lazy.check()
+            await wait_until(
+                pilot,
+                lambda: min(container.mounted_indices) < min_initial,
+                timeout=15.0,
+                message=f"the in-flight fill walled the scroll up from {min_initial}",
+            )
+        finally:
+            fill.cancel()
+
+
+@pytest.mark.asyncio
 async def test_a_warmed_file_over_the_mount_ceiling_stays_windowed(
     cfg: Config, long_md_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -485,10 +524,10 @@ async def test_the_completion_mount_refuses_while_a_navigation_is_settling(
         await pilot.pause()
         _pane, container = await _settled_preview(app, pilot)
         chunks = app._preview.chunk_cache.get(container.parent_doc_id) or []
-        app._lazy.task = None
+        app._lazy.fill_task = None
         monkeypatch.setattr(type(app._preview_scroll), "is_settling", property(lambda _self: True))
         app._preview.mount_warmed_file(container.parent_doc_id, chunks)
-        assert app._lazy.task is None, (
+        assert app._lazy.fill_task is None, (
             "the completion mount started a prepend underneath a settling navigation"
         )
 
@@ -504,10 +543,29 @@ async def test_the_completion_mount_refuses_over_the_ceiling(
         _pane, container = await _settled_preview(app, pilot)
         chunks = app._preview.chunk_cache.get(container.parent_doc_id) or []
         assert chunks, "setup: needs a decoded file"
-        app._lazy.task = None
+        app._lazy.fill_task = None
         monkeypatch.setattr(tuning, "FULLWARM_MOUNT_MAX_CHUNKS", 1)
         app._preview.mount_warmed_file(container.parent_doc_id, chunks)
-        assert app._lazy.task is None, "a file over the ceiling was mounted whole"
+        assert app._lazy.fill_task is None, "a file over the ceiling was mounted whole"
+
+
+@pytest.mark.asyncio
+async def test_the_completion_mount_uses_the_fill_handle_not_the_scroll_one(
+    cfg: Config, long_md_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Holding `task` for a whole-file mount drops every scroll-driven batch."""
+    app = FNDApp(index_dir=long_md_index, config=cfg, collection="notes")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        _pane, container = await _settled_preview(app, pilot)
+        chunks = app._preview.chunk_cache.get(container.parent_doc_id) or []
+        assert chunks, "setup: needs a decoded file"
+        app._lazy.task = None
+        app._lazy.fill_task = None
+        app._preview.mount_warmed_file(container.parent_doc_id, chunks)
+        assert app._lazy.task is None, "the completion mount claimed the scroll handle"
+        assert app._lazy.fill_task is not None, "the completion mount never started"
+        app._lazy.fill_task.cancel()
 
 
 def _stub_lazy(all_captured: bool) -> tuple[Any, Any, list[Any]]:

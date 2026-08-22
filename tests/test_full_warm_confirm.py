@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.pilot import Pilot
 from textual.widgets import Static
 
 from fnd.tui.full_warm_confirm import FullWarmConfirmScreen, estimate_capture_mb
@@ -19,15 +20,15 @@ class _Harness(App[None]):
         yield Static("host")
 
 
-async def _answer(pilot: object, app: _Harness, key: str) -> list[bool | None]:
+async def _answer(pilot: Pilot[None], app: _Harness, key: str) -> list[bool | None]:
     got: list[bool | None] = []
     app.push_screen(
         FullWarmConfirmScreen(name="Design Patterns.pdf", chunks=719, chars=1_195_575),
         callback=got.append,
     )
-    await pilot.pause()  # type: ignore[attr-defined]
-    await pilot.press(key)  # type: ignore[attr-defined]
-    await pilot.pause()  # type: ignore[attr-defined]
+    await pilot.pause()
+    await pilot.press(key)
+    await pilot.pause()
     return got
 
 
