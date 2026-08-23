@@ -140,3 +140,27 @@ def test_block_id_is_revealed_when_it_matches() -> None:
 
 def test_caret_mid_sentence_is_not_a_block_id() -> None:
     assert collect_edits("2^10 is 1024", protected=set(), spec=EMPTY, list_item=False) == []
+
+
+def test_ordinary_prose_and_code_punctuation_survives() -> None:
+    """Negative guard: the rules must not fire on everyday text."""
+    for src in (
+        "C# and F# are languages",
+        "colour #fff and #ff0000",
+        "2^10 is 1024",
+        "a == b and c == d",
+        "see https://x.com/a#frag now",
+    ):
+        assert _render(src) == src, src
+
+
+def test_known_false_positives_match_obsidian() -> None:
+    """Accepted: bracket/equals pairs in prose render as Obsidian renders them."""
+    # R/Julia list indexing in prose is indistinguishable from a wikilink, and
+    # Obsidian resolves it the same way. Inline code (protected) is the escape.
+    assert _render("array[[0]][1]") == "array0[1]"
+    assert _render("x ==2 and y== 3") == "x 2 and y 3"
+
+
+def test_multiline_comment_inside_one_paragraph_is_hidden() -> None:
+    assert _render("before %%a b c%% after") == "before  after"

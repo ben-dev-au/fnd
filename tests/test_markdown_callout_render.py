@@ -25,6 +25,12 @@ class _Host(App[None]):
         with VerticalScroll():
             yield FNDMarkdown(self._md, match_spec=self._spec)
 
+    def on_mount(self) -> None:
+        # The theme app.py sets. Under the default textual-dark, $accent and
+        # $warning are the same colour, so a note<->warning token swap would
+        # resolve identically and the per-type assertions would go blind.
+        self.theme = "tokyo-night"
+
 
 @pytest.mark.asyncio
 async def test_callout_blockquote_carries_type_classes() -> None:
@@ -83,11 +89,14 @@ async def test_match_inside_a_callout_title_still_highlights() -> None:
         await widget.update(md)
         await pilot.pause()
         title = next(iter(app.query(FNDMarkdownParagraph).results()))
-        assert title._content.plain == "◆  Cap the rows"
-        # The highlight must land on "rows", i.e. after the icon prefix.
-        hit = [s for s in title._content.spans if s.start >= 3]
+        plain = title._content.plain
+        assert plain == "◆  Cap the rows"
+        # The highlight must land on "rows" in the PREFIXED plain, so its offset
+        # is the icon prefix plus the word's position in the title.
+        want = plain.index("rows")
+        hit = [s for s in title._content.spans if s.start == want]
         assert hit, title._content.spans
-        assert title._content.plain[hit[0].start : hit[0].end] == "rows"
+        assert plain[hit[0].start : hit[0].end] == "rows"
         assert widget.first_match_block is title
 
 

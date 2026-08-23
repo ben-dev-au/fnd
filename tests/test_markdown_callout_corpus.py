@@ -90,3 +90,18 @@ async def test_fenced_code_is_untouched_by_the_inline_pass() -> None:
         rendered = "\n".join(str(f._content.plain) for f in fences)
         assert "a[[0]]" in rendered
         assert "==not a mark==" in rendered
+
+
+@pytest.mark.asyncio
+async def test_unknown_callout_type_falls_back_to_note_styling() -> None:
+    """An unrecognised ``[!type]`` keeps its word and renders as a note."""
+    md = "> [!frobnicate] Unknown kind\n> Body.\n"
+    app = _Host(md)
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app.query_one(FNDMarkdown).update(md)
+        await pilot.pause()
+        quote = app.query_one(FNDMarkdownBlockQuote)
+        assert quote.has_class("callout")
+        assert quote.has_class("callout-note")
+        first = next(iter(app.query(FNDMarkdownParagraph).results()))
+        assert first._content.plain == "●  Unknown kind"
