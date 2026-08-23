@@ -28,6 +28,8 @@ from textual.message import Message
 from textual.strip import Strip
 from textual.widget import Widget
 
+from fnd.tui.preview.match_row import rows_to_first_match
+
 
 @dataclass(slots=True)
 class FrozenChunk:
@@ -129,8 +131,15 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
     cell_rows: dict[tuple[int, int], int] = {}
     if isinstance(chunk, FNDMarkdown):
         inner = chunk.first_match_block
-        if inner is not None:
-            first_match_row = _row_within(inner, chunk)
+        # The chunk's own spec, so this asks exactly what enumerate_stop_regions
+        # asks of the live blocks — a block whose spans were cleared after it
+        # registered would otherwise get a scanned row live and row 0 frozen.
+        spec = chunk.match_spec
+        if inner is not None and (block_row := _row_within(inner, chunk)) is not None:
+            # Down to the row the match PAINTS on, not the block's top: 32 rows
+            # apart on a wrapped contents page, and the live scroll counts the
+            # same way, so the substrates cannot disagree.
+            first_match_row = block_row + rows_to_first_match(inner, spec)
         from fnd.tui.widgets.markdown import FNDMarkdownTableDT, FNDMarkdownTD, FNDMarkdownTH
 
         for block in chunk.match_blocks:
@@ -150,7 +159,7 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
                 continue
             row = _row_within(block, chunk)
             if row is not None:
-                stop_rows.append(row)
+                stop_rows.append(row + rows_to_first_match(block, spec))
         for dt in chunk.query(DataTable):
             base = _row_within(dt, chunk)
             if base is None:

@@ -404,7 +404,10 @@ class StructuralScrollStrategy:
         target: Widget = self._host.match_targets.get(focus_chunk_seq) or header
         path = "match_targets" if focus_chunk_seq in self._host.match_targets else "header"
         fallback_fired = False
-        first_match_seen = False
+        # A frozen chunk lands via its captured row, not a match block, so
+        # without this it forfeits the context margin below and puts the match
+        # on the viewport's top line.
+        first_match_seen = getattr(target, "fnd_first_match_row", None) is not None
         chunk_md = target if hasattr(target, "first_match_block") else None
         if chunk_md is not None:
             inner = chunk_md.first_match_block  # pyright: ignore[reportAttributeAccessIssue]
@@ -565,12 +568,10 @@ class StructuralScrollStrategy:
                 f"target={type(target).__name__} path={path}"
             )
             anchor = match_table.region if match_table is not None else target.region
-        if match_table is None and (line_offset := self._match_line_offset(target)):
-            # Drop the anchor onto the matching line inside a tall block rather
-            # than the block's first row.
-            anchor = Region(
-                anchor.x, anchor.y + line_offset, anchor.width, max(1, anchor.height - line_offset)
-            )
+        if match_table is None:
+            from fnd.tui.preview.match_row import region_at_row
+
+            anchor = region_at_row(anchor, self._match_line_offset(target))
         # Generation guard (immediately before the commit): the resolution above
         # spanned refreshes, during which a newer navigation may have superseded
         # this chain. Re-check freshness right before the side effect — the
@@ -692,58 +693,22 @@ class StructuralScrollStrategy:
         # no internal scroll, but honour its offset defensively).
         return cell.translate(table.region.offset - table.scroll_offset)
 
-    @staticmethod
-    def _widget_plain(w: Widget) -> str | None:
-        """A widget's rendered text, however it happens to store it.
-
-        ``MarkdownFence`` renders a ``rich.syntax.Syntax`` and keeps its text on
-        ``.code`` instead of ``._content``; everything else carries ``_content``.
-        """
-        try:
-            plain = w._content.plain  # type: ignore[attr-defined]
-        except Exception:
-            plain = None
-        if plain is None:
-            return getattr(w, "code", None)
-        return plain
-
     def _match_line_offset(self, target: Widget) -> int:
-        """Rows from the top of ``target`` down to its first matching line.
+        """Rows from the top of ``target`` down to the row its first match
+        paints on — see :mod:`fnd.tui.preview.match_row` for the counting.
 
         A frozen chunk answers this from the row recorded at capture time, while
         its widgets still existed (``fnd_first_match_row``). Without that a
         navigation to a frozen chunk lands on the chunk's TOP rather than its
         match — the widget scan below finds nothing to descend into, since the
         whole point of freezing is that there are no child widgets left.
-
-        ``scroll_to_region`` anchors a widget's *top*, so a match a hundred rows
-        into a long code fence landed off-screen below the viewport — the scroll
-        reported success while showing the user nothing. Counting newlines is
-        exact for those blocks (a fence renders one source line per row) and
-        returns 0 for wrapped prose, where the block is short enough that its
-        top is the match anyway.
         """
         frozen_row = getattr(target, "fnd_first_match_row", None)
         if isinstance(frozen_row, int):
             return frozen_row if 0 < frozen_row < target.region.height else 0
-        spec = self._host.effective_match_spec()
-        if spec.is_empty:
-            return 0
-        plain = self._widget_plain(target)
-        if not plain or "\n" not in plain:
-            return 0
-        from fnd.matching import phrase_char_spans
-        from fnd.render import match_word_spans
+        from fnd.tui.preview.match_row import rows_to_first_match
 
-        starts = [a for a, _b, _style in match_word_spans(plain, spec)]
-        starts += [a for a, _b in phrase_char_spans(plain, spec)]
-        if not starts:
-            return 0
-        offset = plain.count("\n", 0, min(starts))
-        # Never push the anchor past the widget: an offset that large means the
-        # newline count and the rendered rows have diverged (wrapping), and the
-        # widget top is the safer answer.
-        return offset if 0 < offset < target.region.height else 0
+        return rows_to_first_match(target, self._host.effective_match_spec())
 
     def _fallback_match_target(self, chunk: FNDMarkdown) -> Widget:
         """Scan ``chunk``'s descendants for the first widget whose plain text
@@ -753,11 +718,12 @@ class StructuralScrollStrategy:
         if spec.is_empty:
             return chunk
         from fnd.render import text_has_any_match
+        from fnd.tui.preview.match_row import block_plain
 
         for w in chunk.query("*"):
             if w is chunk:
                 continue
-            plain = self._widget_plain(w)
+            plain = block_plain(w)
             if plain and text_has_any_match(plain, spec) and w.region.height > 0:
                 return w
         return chunk
@@ -945,6 +911,7 @@ def enumerate_stop_regions(pane: VerticalScroll, spec: MatchSpec) -> list[Region
 
     from fnd.render import text_has_any_match
     from fnd.tui.preview.frozen import FrozenChunkView
+    from fnd.tui.preview.match_row import region_at_row, rows_to_first_match
     from fnd.tui.widgets.markdown import (
         FNDMarkdown,
         FNDMarkdownTableDT,
@@ -964,12 +931,14 @@ def enumerate_stop_regions(pane: VerticalScroll, spec: MatchSpec) -> list[Region
                 r = stop_region_for_cell(dt, coord)
                 if r is not None:
                     regions.append(r)
-        # Non-table match blocks (paragraphs / headings / fences).
+        # Non-table match blocks, on the row the match PAINTS on: a stop on the
+        # block's top row sends n/b, and the ▲▼ markers that read this, to a row
+        # with no match on it.
         for block in md.match_blocks:
             if isinstance(block, FNDMarkdownTableDT | FNDMarkdownTD | FNDMarkdownTH):
                 continue
             if block.region.height > 0:
-                regions.append(block.region)
+                regions.append(region_at_row(block.region, rows_to_first_match(block, spec)))
     # Frozen chunks: the stops were recorded as rows while the blocks still
     # existed, so they resolve by offset from the view's own top. A table cell's
     # row came from the same capture, which is why they need no special case

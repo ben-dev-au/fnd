@@ -11,7 +11,7 @@ from textual.widgets import Tree
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.line_buffer import LineBufferPreview
-from tests._pilot_wait import run_search, safe_pause, settle, wait_until
+from tests._pilot_wait import run_search, safe_pause, settle, wait_stable, wait_until
 
 
 @pytest.fixture
@@ -421,4 +421,67 @@ async def test_flat_match_lands_a_quarter_down_not_at_top(
         assert on_screen_row == margin, (
             f"flat match at on-screen row {on_screen_row}, expected {margin} (~25% down); "
             f"scroll_y={buf.scroll_offset.y} match_visual={match_visual}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_md_preview_scrolls_to_the_row_a_wrapped_match_paints_on(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Regression: one source line that WRAPS across the viewport several times
+    over, with its match late in it — a PDF contents page's shape.
+
+    ``scroll_y > 0`` is not a sufficient assertion: anchoring on the block's top
+    row satisfies it while leaving the match below the fold, which is the defect.
+    So the match's own painted row is resolved from the block's strips (not from
+    the production row count) and asserted to be inside the viewport.
+    """
+    from textual._compositor import Compositor
+    from textual.geometry import Size
+
+    from fnd.tui.widgets.markdown import FNDMarkdown
+
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    entries = [
+        f"Step {i:02d} - a deployment guide entry, dotted to a page number" for i in range(90)
+    ]
+    entries[70] = "Step 70 - Launch Determinism and Auto Scaling Group"
+    (notes / "contents.md").write_text(
+        "# Contents\n\n" + " ".join(entries) + "\n", encoding="utf-8"
+    )
+    build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
+
+    def painted_screen_y() -> int | None:
+        for md in app.query(FNDMarkdown):
+            block = md.first_match_block
+            if block is None or block.size.height <= 0:
+                continue
+            size = Size(block.size.width, max(block.size.height, block.virtual_size.height))
+            comp = Compositor()
+            comp.reflow(block, size)
+            for i, strip in enumerate(comp.render_strips(size)):
+                if "Determinism" in strip.text:
+                    return block.region.y + i
+        return None
+
+    app = FNDApp(index_dir=tmp_index_dir, initial_query="Determinism")
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one("#preview_pane", VerticalScroll)
+        await wait_until(
+            pilot,
+            lambda: painted_screen_y() is not None,
+            timeout=15.0,
+            message="the wrapped chunk never laid out",
+        )
+        # The landing, not a tick count: without a scroll the block's top IS the
+        # viewport top, so a scroll_y gate would time out instead of asserting.
+        await wait_stable(pilot, lambda: pane.scroll_y, rounds=4, timeout=15.0)
+        y = painted_screen_y()
+        assert y is not None
+        top, bottom = pane.region.y, pane.region.y + pane.region.height
+        assert top <= y < bottom, (
+            f"the match paints at screen y={y}, outside the preview viewport "
+            f"[{top}, {bottom}) — anchored on the block's top row, not the "
+            f"match's (pane.scroll_y={pane.scroll_y})"
         )

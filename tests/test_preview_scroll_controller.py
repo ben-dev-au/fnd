@@ -730,3 +730,43 @@ def test_a_frozen_chunk_does_not_get_the_focus_band() -> None:
         "a frozen chunk was given the focus band — it can only paint the padding "
         "row the capture does not cover, which is the stray bar above the text"
     )
+
+
+def _frozen_landing(first_match_row: int | None) -> Region | None:
+    """Where the strategy scrolls for a chunk standing in for a capture.
+
+    ``fnd_first_match_row`` is what a ``FrozenChunkView`` carries; a served
+    capture also pops ``match_targets``, so the strategy meets it as the header.
+    """
+    target = _FakeWidget(Region(0, 40, 80, 3))
+    if first_match_row is not None:
+        target.fnd_first_match_row = first_match_row  # type: ignore[attr-defined]
+    pane = _FakePane()
+    host = _FakeHost(pane, chunk_widgets={3: target}, match_targets={})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+
+    strat._do_scroll_to_chunk(3, retries=21, on_done=None)
+
+    return pane.captured
+
+
+def test_a_frozen_chunk_lands_its_match_a_quarter_down_not_on_the_top_line() -> None:
+    """A capture reaches its match through the recorded row, never through a
+    match block, so it must claim the context margin some other way."""
+    landing = _frozen_landing(first_match_row=2)
+
+    assert landing is not None
+    # The chunk sits at y=40 and its match two rows in, so a quarter-viewport
+    # of context above the match starts at 42 - 10.
+    assert landing.y == 42 - int(40 * 0.25), (
+        f"landed at y={landing.y}: the captured match row was pinned to the "
+        f"viewport top instead of a quarter down"
+    )
+
+
+def test_a_chunk_with_no_captured_row_keeps_the_chunk_top_landing() -> None:
+    """No recorded row means no match in the chunk — no margin, no context."""
+    landing = _frozen_landing(first_match_row=None)
+
+    assert landing is not None
+    assert landing.y == 40, "a match-free chunk was moved off its own top"
