@@ -37,6 +37,7 @@ from fnd.render import (
 from fnd.tui.mermaid_render import MermaidRenderer
 from fnd.tui.syntax_theme import highlight_fenced, inline_code_spans
 from fnd.tui.widgets.callouts import rewrite_callouts
+from fnd.tui.widgets.md_inline import apply_obsidian_inline
 
 if TYPE_CHECKING:
     from rich.text import Text
@@ -279,6 +280,8 @@ class _HighlightingBlockMixin:
     def build_from_token(self, token):  # type: ignore[override]
         super().build_from_token(token)  # type: ignore[misc]
         _apply_inline_code_highlights(self)  # type: ignore[arg-type]
+        md = self._markdown  # type: ignore[attr-defined]
+        apply_obsidian_inline(self, getattr(md, "match_spec", None) or MatchSpec())  # type: ignore[arg-type]
         _apply_highlights_after_build(self)  # type: ignore[arg-type]
 
 
