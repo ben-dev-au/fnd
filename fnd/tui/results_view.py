@@ -176,8 +176,9 @@ class ResultsView:
         return tree.apply_warm_states(states)
 
     def refit_after_resize(self) -> None:
+        # Result rows are re-elided from ``ResultsTree.GeometryChanged``, not
+        # here: this runs a layout early and would elide against the old width.
         self._app._refresh_status()  # preview title
-        self.relabel_file_rows()  # result rows
 
     @staticmethod
     def target_for_node(node: TreeNode[Any]) -> tuple[FileGroup, Hit] | None:

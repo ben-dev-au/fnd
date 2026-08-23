@@ -43,7 +43,13 @@ from rich.segment import Segment, Segments
 from rich.style import Style as RichStyle
 from textual.binding import Binding
 from textual.containers import VerticalScroll
+from textual.geometry import Size
 from textual.scrollbar import ScrollBar, ScrollBarRender
+
+try:  # private: an empty tuple is isinstance-safe, so its loss only costs the
+    from textual._animator import SimpleAnimation  # animation retarget below
+except ImportError:  # pragma: no cover
+    SimpleAnimation = ()  # type: ignore[assignment,misc]
 
 if TYPE_CHECKING:
     from rich.console import Console, ConsoleOptions, RenderResult
@@ -343,6 +349,75 @@ class MatchAwareScroll(VerticalScroll):
             self.scroll_to(y=self.scroll_target_y - self._READING_SCROLL_LINES, animate=False)
             return
         super().action_scroll_up()
+
+    #: ``(widget, virtual_y)`` for a chunk just below content being revealed
+    #: ABOVE the viewport. Every layout that pushes that widget further down is
+    #: the prepend landing, and the pane scrolls by exactly that so the document
+    #: does not move under the reader. See ``watch_virtual_size``.
+    absorb_anchor: tuple[object, int] | None = None
+
+    def watch_virtual_size(self, old_value: Size, new_value: Size) -> None:
+        """Absorb a shift above the anchor as the layout that caused it lands.
+
+        The one moment the new size exists and nothing has painted with it.
+        Correcting after a settle paints ~120ms at up to 760 rows off;
+        correcting before it clamps against the old size and lands short.
+        """
+        claim = self.absorb_anchor
+        if claim is None:
+            return
+        # Measured from the ANCHOR, not from the height change: only content
+        # inserted above it moves it, so a background fill appending BELOW is
+        # correctly ignored. And the stored position advances each time, so a
+        # prepend arriving in instalments — built chunks resolve their heights
+        # over successive layouts — is absorbed in full rather than once.
+        widget, before_y = claim
+        try:
+            now_y = int(widget.virtual_region.y)  # type: ignore[attr-defined]
+        except Exception:
+            self.absorb_anchor = None
+            return
+        grew = now_y - before_y
+        if grew == 0:
+            return  # signed: a prune removing content above shrinks it
+        self.absorb_anchor = (widget, now_y)
+        # Reconcile-guarded: an unguarded write reads as a user scroll and
+        # releases the navigation's anchor. Saved and restored rather than
+        # begun/ended, because this can land inside another such region.
+        preview = getattr(self.app, "_preview", None)
+        outer = bool(getattr(preview, "reconciling", False))
+        if preview is not None and not outer:
+            preview.begin_reconcile_scroll()
+        try:
+            # An in-flight animation is RETARGETED, not stopped: it holds
+            # start and end values in pre-prepend coordinates and would
+            # otherwise drive scroll_y back and undo the absorb, while
+            # force-stopping COMPLETES it — Textual sets the attribute to
+            # the end value — teleporting the reader to their destination.
+            with contextlib.suppress(Exception):
+                animator = self.app.animator
+                animation = animator._animations.get((id(self), "scroll_y"))
+                start, end = None, None
+                if isinstance(animation, SimpleAnimation):
+                    start = animation.start_value
+                    end = animation.end_value
+                if isinstance(start, (int, float)) and isinstance(end, (int, float)):
+                    assert isinstance(animation, SimpleAnimation)
+                    animation.start_value = float(start) + grew
+                    animation.end_value = float(end) + grew
+                    if isinstance(animation.final_value, (int, float)):
+                        animation.final_value = float(animation.final_value) + grew
+                elif animation is not None:
+                    # A shape we cannot retarget: stop it rather than let it
+                    # drive scroll_y back and undo the absorb. That completes
+                    # their scroll, which is the lesser artefact.
+                    animator.force_stop_animation(self, "scroll_y")
+            current = float(self.scroll_y)
+            self.scroll_y = current + grew
+            self.scroll_target_y = self.scroll_y
+        finally:
+            if preview is not None and not outer:
+                preview.end_reconcile_scroll()
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         # Bubble to the app so it can extend the mounted chunk window

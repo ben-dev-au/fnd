@@ -423,6 +423,10 @@ class Defaults(BaseModel):
     # fallback). Bump for very large PDFs; lower if CPU contention shows
     # up in profiles.
     preview_decode_workers: int = 4
+    # Chunks captured either side of a match when warming ahead, so a jump
+    # lands with context already built. 0 warms the matches alone. See
+    # fnd/tui/preview/tuning.py for the measurements behind the default.
+    preview_warm_margin: int = 2
     # Idle delay before a results-tree cursor move triggers a preview
     # load. Rapid arrow-key sweeps no longer kick off a decode at each
     # intermediate row — only the final position loads, so scrolling
@@ -944,6 +948,10 @@ sections_per_file_max    = 200    # Hard cap (1-2000)
 # Preview decode parallelism. tantivy releases the GIL for doc reads, so
 # threads help on huge PDFs. 1 = serial; raise (4-8) for big files.
 preview_decode_workers   = 4      # 1-16
+# Chunks captured either side of a match when warming ahead. Larger values
+# warm more context per file and fewer files per second; 0 warms the matches
+# alone and leaves the gaps to scroll-driven lazy mount.
+preview_warm_margin      = 2      # 0-20
 # Idle delay before a results-tree cursor move triggers a preview load.
 # Rapid arrow-key sweeps skip intermediate rows; only the final position
 # loads. 0 = load instantly. Typical range 100-250.

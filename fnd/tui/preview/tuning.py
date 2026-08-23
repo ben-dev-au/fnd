@@ -116,6 +116,23 @@ COVERAGE_SEED_FILES = 8
 COVERAGE_IDLE_RATIO = 4.0
 # Ceiling on that idle period, so one pathological chunk cannot park coverage.
 COVERAGE_IDLE_MAX = 0.5
+# Duty cycle for a warm the USER asked for and is watching on the progress
+# line. Background coverage must never be felt, so it yields four times what it
+# takes; a foreground warm is the thing being waited on, and the earlier sweep
+# put p95 keypress at 10.2ms here against 8.7ms at 4.0 — indistinguishable,
+# while a 33s file finishes in ~100s instead of ~167s.
+COVERAGE_FOREGROUND_IDLE_RATIO = 2.0
+# Above this many capturable chunks, a requested whole-file warm asks first.
+# Cost is not predictable from anything known in advance — measured across real
+# files, time per chunk varies 6x and memory per chunk 9x — so the honest move
+# is to show the estimate and let the user decide, not to guess a gate.
+FULL_WARM_CONFIRM_CHUNKS = 500
+# Capture bytes per 1000 characters of chunk text, for that estimate. Observed
+# across real files between 31 and 87 KB, varying with how much a chunk renders
+# to rather than how much text it holds. Deliberately near the TOP of that
+# range, not its middle: the number exists to warn, and the midpoint (59)
+# reads a 719-chunk PDF measured at ~104 MB as 70 MB, a third under.
+FULL_WARM_KB_PER_1K_CHARS = 87
 
 # How long warming waits for an in-flight landing before giving up its turn
 # (ticks of 50ms). Warming must never compete with the scroll the user is
@@ -159,14 +176,22 @@ FULLMOUNT_CHUNK_BUDGET = 250
 # must not put its scattered set into the DOM.
 COVERAGE_CHUNK_BUDGET = 500
 # Chunks captured either side of a hit, so a landing has context above and below
-# it rather than a bare match with unbuilt neighbours. Deliberately smaller than
-# VISIBLE_FIRST_ABOVE/BELOW (7): coverage is ordered nearest-first, so the chunks
-# around wherever the user actually is get captured before distant margins do.
-# Swept against the real corpus at 3, 5 and 7, twice: 5 wins both times (34% of
-# mounted chunks served and 3 fully-served landings, against 31%/1 at margin 3
-# and 25%/2 at margin 7). Matching the mount window exactly is WORSE — the extra
-# captures per hit cost more files covered than they buy in completeness.
-COVERAGE_MARGIN = 5
+# it rather than a bare match with unbuilt neighbours.
+#
+# Margins are the lowest-priority work: they run only after every planned file's
+# hits are captured, and stand down for a file the cursor has moved towards (see
+# ``_unplanned_landings``). So the size trades background captures against how
+# much of a landing is served, and nothing else. Measured on the real corpus
+# with coverage drained first, nine file-to-file landings, run twice:
+#
+#     margin 2 -> 245 captures, idle at 40s, 42.7% / 39.5% served
+#     margin 3 -> 276 captures, idle at 52s, 41.1% / 41.1% served
+#     margin 5 -> 332 captures, idle at 70s, 43.5% / 42.7% served
+#
+# The served fraction is flat inside the run-to-run spread, so the smallest wins
+# on the only axis that separates them. An earlier 3/5/7 sweep chose 5, under a
+# scheduler where margins still competed with hits for the host.
+COVERAGE_MARGIN = 2
 # Prefetch mounts only the focused chunk per cached file. User-side
 # resume expands on click. Keeps prefetch DOM contribution at
 # ~1 widget per cached file.
@@ -176,7 +201,37 @@ PREFETCH_MOUNT_RADIUS = 0
 # mounted on demand. Lets long files behave like a continuous document
 # without forcing the initial mount to cover everything.
 LAZY_MOUNT_TRIGGER_MARGIN = 30
+# Chunks of lead time for the upward fill, in ADDITION to the row margin above.
+# Rows are the wrong unit on a PDF: a chunk is 100-150 of them, so 30 rows fires
+# only once the reader is at the seam and the mount lands under them.
+LAZY_MOUNT_TRIGGER_CHUNKS = 2
+# Ticks (10ms each) the reveal will hold painting while waiting for its layout
+# and the scroll compensation. Bounded: if the growth never comes, painting
+# resumes rather than the pane freezing.
+LAZY_MOUNT_ABSORB_TICKS = 25
+# Consecutive quiet ticks (10ms each) that count as the growth having
+# finished. A prepend lands in instalments as built chunks resolve their
+# heights, and painting must stay suspended past the LAST one. Measured on
+# a real PDF, the trailing instalment arrives 40-57ms after the first, so a
+# 30ms window released just before it every time and it painted
+# uncompensated: 76 then 7 rows, 64 then 9, 57 then 11, 42 then 13.
+LAZY_MOUNT_ABSORB_QUIET = 7
 LAZY_MOUNT_BATCH = 3
+# Batch size for a run already in the capture store, which only ``fill_all``
+# asks for — and it checks per batch, because FULL does not imply it.
+# The scroll-driven path keeps LAZY_MOUNT_BATCH: it cannot know the next chunks
+# are served without checking, and a cold batch this size is a freeze. A mount
+# that is served is a
+# blit; one that is built is a parse and a message-pump round, and the batch
+# above is sized for the latter. Measured on a real file, an above-batch costs
+# 0.07s at 3 and 0.14s at 32 when served — the cost is the settle and the
+# re-anchor, not the chunks — against 5.5s at 32 when it has to build them.
+LAZY_MOUNT_BATCH_SERVED = 32
+# Above this many chunks a fully warmed file stays windowed. Mounted frozen
+# chunks cost arrange time whether or not they are on screen: measured, 727
+# mounted chunks hold PageUp at 119ms and mount in 3.6s, and the recorded knee
+# for "a navigation still feels instant" is 1000-2000.
+FULLWARM_MOUNT_MAX_CHUNKS = 1000
 # Scroll-to-match leaves this fraction of the viewport above the match so
 # the user sees context before it, rather than pinning it to the top line.
 MATCH_CONTEXT_FRACTION = 0.25

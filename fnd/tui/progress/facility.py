@@ -233,6 +233,19 @@ class ProgressSession:
         self._closed = True
         self._facility._on_close(self)
 
+    def abandon(self) -> None:
+        """Give up this operation without claiming it finished.
+
+        Closing paints the line to full and records the run for calibration,
+        which is right for work that completed and a lie about work the user
+        stopped — a cancelled warm filled its bar to 100% next to a toast
+        saying it had been stopped.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        self._facility._on_abandon(self)
+
     def _touch(self) -> None:
         self._moved_at = self._facility.note_progress(self)
         self._facility.render(self)
@@ -478,6 +491,12 @@ class ProgressFacility:
             # someone else — leave it alone.
             return
         self._retire(session, superseded=False)
+
+    def _on_abandon(self, session: ProgressSession) -> None:
+        """Retire without the completion paint or the calibration record."""
+        if session is not self._active and session is not self._ambient:
+            return
+        self._retire(session, superseded=True)
 
     def _retire(self, session: ProgressSession, *, superseded: bool) -> None:
         # Read this before clearing the slot.

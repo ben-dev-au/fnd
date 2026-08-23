@@ -828,6 +828,22 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             keywords=("preview", "decode", "workers", "threads", "parallel"),
         ),
         MenuItem(
+            id="pref.preview_warm_margin",
+            label="Warm context around matches",
+            description=(
+                "Chunks captured either side of a match when warming ahead, so "
+                "a jump lands with context already built. 0 warms the matches "
+                "alone and leaves the gaps to scroll. Higher values warm more "
+                "of each file and fewer files per second."
+            ),
+            kind=KIND_SCALAR,
+            setting_path="defaults.preview_warm_margin",
+            hint="0-20",
+            coerce=int,
+            value_getter=_get_int_default("preview_warm_margin", 2),
+            keywords=("warm", "margin", "context", "preview", "cache", "ahead"),
+        ),
+        MenuItem(
             id="pref.fuzzy_enabled",
             label="Auto-fuzzy matching",
             description=(

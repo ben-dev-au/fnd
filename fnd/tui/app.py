@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 if TYPE_CHECKING:
     from rich.text import Text
 
+    from fnd.query import FileGroup, Hit
+
 
 from textual import events, on
 from textual.app import App, ComposeResult
@@ -227,6 +229,11 @@ class FNDApp(App[None]):
         width: 100%; height: 1fr;
         border: round $primary 50%;
         overflow-x: hidden;
+        /* `scroll`, not `auto`: file rows are elided to the pane's content
+           width, and that budget is measured before the rows exist — under
+           `auto` the rows then bring the scrollbar back and every label runs a
+           cell long, losing the last character of the extension. */
+        overflow-y: scroll;
     }
     /* Class-toggled focus border (not :focus-within) so it survives a
        terminal blur — Textual clears :focus-within when the app loses focus,
@@ -294,6 +301,17 @@ class FNDApp(App[None]):
         width: 100%; height: 1fr;
         border: round $primary 50%;
         padding: 0 0 0 1;
+        /* `scroll`, not `auto`: the gutter is reserved whether or not there is
+           anything to scroll, so the pane's content width does not depend on
+           its content HEIGHT. Under `auto` it does — a file short enough to
+           drop the bar widens the pane by a column — and that width is part of
+           the capture key, so every warmed capture taken at the old width goes
+           unreachable in a single navigation. Measured on the real index, the
+           width flipped 76 -> 77 mid-session and READY files collapsed 6 -> 1;
+           with the gutter stable the store holds one width and READY only ever
+           climbs. Same reasoning that made `is-loading` hide the bar by COLOUR
+           rather than by size: changing the gutter re-wraps the document. */
+        overflow-y: scroll;
     }
     /* Class-toggled focus border — :focus-within would re-style every descendant. */
     #preview_pane.-focused { border: round $accent; }
@@ -1273,6 +1291,59 @@ class FNDApp(App[None]):
         _, hit = target
         opener.open_default(Path(hit.path))
 
+    def action_warm_whole_file(self) -> None:
+        """Warm the focused file completely, or stop a warm already running."""
+        tree = self.query_one("#results_pane", Tree)
+        if tree.cursor_node is None:
+            return
+        target = self._results.target_for_node(tree.cursor_node)
+        if target is None:
+            return
+        group, hit = target
+        # Resolve the row BEFORE cancelling: the key toggles per file, so
+        # pressing it on a second file must start that one, not stop the first.
+        if self._preview.cancel_full_warm(group.parent_id):
+            self.notify(f"Stopped warming {Path(group.path).name}.", timeout=2)
+            return
+        # Off the dispatch: sizing the file decodes it when it is not cached,
+        # and an action is awaited inside the pump that delivered the key.
+        # exit_on_error=False: a worker raise is handed to the app's exception
+        # handler, and sizing a file is not worth taking the app down for.
+        self.run_worker(
+            self._offer_full_warm(group, hit),
+            group="full-warm",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _offer_full_warm(self, group: FileGroup, hit: Hit) -> None:
+        """Size the file, ask if it is large, and start the warm if accepted."""
+        from fnd.tui.full_warm_confirm import FullWarmConfirmScreen
+        from fnd.tui.preview import tuning
+
+        # The estimate decodes an uncached file and the app stays live for
+        # all of it, so the query can change before the answer arrives — and
+        # a request made after that reset outlives it.
+        asked_under = self._search.query_signature()
+        count, chars = await self._preview.full_warm_estimate(group.parent_id)
+        if self._search.query_signature() != asked_under:
+            return
+        if not count:
+            self.notify("This file previews as plain text — nothing to warm.", timeout=4)
+            return
+
+        def _go(confirmed: bool | None) -> None:
+            if confirmed and self._search.query_signature() == asked_under:
+                self._preview.request_full_warm(group.parent_id, hit.chunk_seq)
+
+        if count > tuning.FULL_WARM_CONFIRM_CHUNKS:
+            self.push_screen(
+                FullWarmConfirmScreen(name=Path(group.path).name, chunks=count, chars=chars),
+                callback=_go,
+            )
+            return
+        _go(True)
+
     def action_reveal_in_file_manager(self) -> None:
         """Show the focused result in the platform file manager, no app launch.
         Fire-and-forget via the launcher seam (macOS ``open -R`` · Windows
@@ -1605,6 +1676,11 @@ class FNDApp(App[None]):
         if not node.children:
             return
         tree.move_cursor_to_line(node.line + 1)
+
+    @on(ResultsTree.GeometryChanged)
+    def _on_results_geometry_changed(self, _ev: ResultsTree.GeometryChanged) -> None:
+        """Re-elide the file rows against the width the tree has settled at."""
+        self._results.relabel_file_rows()
 
     @on(ResultsTree.ReopenRequested)
     def _on_results_reopen_requested(self, ev: ResultsTree.ReopenRequested) -> None:

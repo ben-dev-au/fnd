@@ -244,11 +244,14 @@ rather than in brightness. Both cost exactly the two cells the stock
 toggle already occupies, which matters — the pane's name budget is
 `width - 2 - 7`.
 
-Three states, not two, because the warm host is **serial**: exactly one
+More than two states because the warm host is **serial**: exactly one
 file is ever being captured, so WARMING is a single marker walking
 outward from the cursor rather than churn across the list. Readiness is
-judged on the listed hits alone; coverage's third tier fills the gaps
-between matches, which lazy mount already handles imperceptibly.
+judged on the listed hits alone — the margin around them is captured too,
+but a jump lands on a hit and lazy mount fills the rest. FULL is the
+stronger claim that every capturable chunk is held, which is what lets a
+warmed file be mounted whole; ask `WarmState.is_served` rather than
+comparing against READY, or the warmest files price as cold.
 
 Polled at 2 Hz and diffed, because warmth moves when a capture lands AND
 when coverage steps to the next file, and the second has no single write
