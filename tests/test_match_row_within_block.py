@@ -69,8 +69,7 @@ def test_a_fence_still_counts_one_row_per_source_line() -> None:
 
 
 def test_no_offset_when_the_model_disagrees_with_the_laid_out_height() -> None:
-    """A height the wrap model cannot reproduce means the block does not lay out
-    the way this counts, and a wrong row is worse than the block's top."""
+    """A height no model reproduces falls back to the block's top."""
     assert rows_to_first_match(_wrapped(120, height=50), _SPEC) == 0
 
 

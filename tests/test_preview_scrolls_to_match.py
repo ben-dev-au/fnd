@@ -468,14 +468,19 @@ async def test_md_preview_scrolls_to_the_row_a_wrapped_match_paints_on(
     app = FNDApp(index_dir=tmp_index_dir, initial_query="Determinism")
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one("#preview_pane", VerticalScroll)
+        # The controller's own landed signal, never a scroll_y proxy: a
+        # tick-based settle degrades to a no-op under load, and a scroll that
+        # does not move is indistinguishable from one that has not run.
         await wait_until(
             pilot,
-            lambda: painted_screen_y() is not None,
+            lambda: (
+                painted_screen_y() is not None
+                and app._preview_scroll.is_armed
+                and not app._preview_scroll.is_settling
+            ),
             timeout=15.0,
-            message="the wrapped chunk never laid out",
+            message="the landing never settled on the wrapped chunk",
         )
-        # The landing, not a tick count: without a scroll the block's top IS the
-        # viewport top, so a scroll_y gate would time out instead of asserting.
         await wait_stable(pilot, lambda: pane.scroll_y, rounds=4, timeout=15.0)
         y = painted_screen_y()
         assert y is not None

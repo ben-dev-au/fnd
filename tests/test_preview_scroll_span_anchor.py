@@ -94,8 +94,7 @@ def test_no_offset_for_short_wrapped_prose() -> None:
 
 
 def test_offset_never_exceeds_the_widget() -> None:
-    """A height no wrap model reproduces means the block does not lay out the
-    way this counts, and its top is the safer answer."""
+    """A height no model reproduces falls back to the block's top."""
     fence = _long_fence(87)
     fence.region = Region(0, 0, 200, 40)
     fence.content_region = Region(0, 0, 200, 40)

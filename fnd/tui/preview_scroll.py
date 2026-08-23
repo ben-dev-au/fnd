@@ -694,15 +694,9 @@ class StructuralScrollStrategy:
         return cell.translate(table.region.offset - table.scroll_offset)
 
     def _match_line_offset(self, target: Widget) -> int:
-        """Rows from the top of ``target`` down to the row its first match
-        paints on — see :mod:`fnd.tui.preview.match_row` for the counting.
-
-        A frozen chunk answers this from the row recorded at capture time, while
-        its widgets still existed (``fnd_first_match_row``). Without that a
-        navigation to a frozen chunk lands on the chunk's TOP rather than its
-        match — the widget scan below finds nothing to descend into, since the
-        whole point of freezing is that there are no child widgets left.
-        """
+        """Rows from ``target``'s top down to its first match's row, taken from
+        the capture's recorded row when the widgets it was measured from are
+        gone (see :mod:`fnd.tui.preview.match_row`)."""
         frozen_row = getattr(target, "fnd_first_match_row", None)
         if isinstance(frozen_row, int):
             return frozen_row if 0 < frozen_row < target.region.height else 0

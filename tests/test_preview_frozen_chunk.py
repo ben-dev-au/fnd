@@ -377,8 +377,7 @@ class _WrappedHost(App[None]):
 
 @pytest.mark.asyncio
 async def test_a_wrapped_block_captures_the_row_its_match_paints_on() -> None:
-    """The row is the match's, not the block's — they differ by dozens of rows
-    on a paragraph that wraps, which is what put the match below the fold."""
+    """A capture records the row its match paints on, not the block's top."""
     app = _WrappedHost()
     async with app.run_test(size=(60, 24)) as pilot:
         md = pilot.app.query_one("#md", FNDMarkdown)

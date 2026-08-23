@@ -32,12 +32,8 @@ def region_at_row(region: Region, row: int) -> Region:
 
 
 def block_plain(widget: Widget) -> str | None:
-    """A widget's rendered text.
-
-    ``_content`` for every ``MarkdownBlock`` a mounted chunk holds, fences
-    included. The ``.code`` fallback is for the arbitrary descendants
-    ``_fallback_match_target`` scans, which are not all markdown blocks.
-    """
+    """A widget's rendered text — ``_content`` for every ``MarkdownBlock``, and
+    ``.code`` for the non-block descendants ``_fallback_match_target`` scans."""
     try:
         plain = widget._content.plain  # type: ignore[attr-defined]
     except Exception:
@@ -48,12 +44,8 @@ def block_plain(widget: Widget) -> str | None:
 
 
 def _first_match_offset(block: Widget, plain: str, spec: MatchSpec | None) -> int | None:
-    """Character offset of the block's first match within ``plain``.
-
-    Prefers the highlight spans the block already carries: those are what the
-    user can see, and their tiering matches ``first_match_block``'s, so a
-    proximity-dimmed stray never wins over a real hit.
-    """
+    """Character offset of the block's first match, preferring the baked
+    highlight spans and their full-over-dimmed tiering to a scan of ``spec``."""
     spans = getattr(block, "_fnd_match_spans", None)
     if spans:
         from fnd.render import DIM_STYLES
@@ -72,20 +64,17 @@ def _first_match_offset(block: Widget, plain: str, spec: MatchSpec | None) -> in
 
 def _row_for_offset(plain: str, offset: int, width: int, height: int) -> int | None:
     """The rendered row ``offset`` falls on, or ``None`` when neither model
-    reproduces ``height`` — the block does not lay out the way this counts, and
-    a wrong row is worse than none.
+    reproduces ``height``.
 
-    Wrapping only ever ADDS rows, so a height equal to the source-line count
-    proves nothing wrapped: trying that model first settles every unwrapped
-    block without touching the wrap engine, which costs 4.9ms on a paragraph at
-    the structural build cap.
+    Wrapping only ADDS rows, so a height equal to the source-line count proves
+    nothing wrapped — and the unwrapped model costs nothing against 4.9ms for
+    the wrap engine on a paragraph at the structural build cap.
 
-    Exact except for tabs, which Textual expands before dividing and this does
-    not: measured 2 rows wrong in 4,000 tab-indented fences, by 1 row. Fences
-    reach the wrapped model at all only because ``FNDApp.CSS`` zeroes
-    ``MarkdownFence > Label``'s padding; with stock padding the block's content
-    width is not the width the text wraps at, no model reproduces the height,
-    and this correctly declines.
+    Exact but for tabs, which Textual expands before dividing and this does not:
+    2 rows wrong in 4,000 tab-indented fences, by 1. Fences reach the wrapped
+    model only because ``FNDApp.CSS`` zeroes ``MarkdownFence > Label``'s
+    padding; under stock padding no model reproduces the height and this
+    declines.
     """
     from rich._wrap import divide_line
 
@@ -105,9 +94,8 @@ def _row_for_offset(plain: str, offset: int, width: int, height: int) -> int | N
 
 
 def rows_to_first_match(block: Widget, spec: MatchSpec | None = None) -> int:
-    """Rendered rows from ``block``'s top down to the row its first match paints
-    on. ``0`` whenever that cannot be established — the block's top is then the
-    safe anchor, and the caller's clamp treats both the same."""
+    """Rendered rows from ``block``'s top down to its first match's row, or
+    ``0`` when that cannot be established — the block's top is the safe anchor."""
     plain = block_plain(block)
     if not plain:
         return 0

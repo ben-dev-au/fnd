@@ -60,9 +60,7 @@ WRAPPED_MD = "# Contents\n\n" + " ".join(
 
 @pytest.mark.asyncio
 async def test_a_wrapped_block_stops_on_the_row_its_match_paints_on() -> None:
-    """A stop on the block's TOP row makes n/b jump to a row with no match on
-    it, and makes the ▲▼ markers report a match off-screen while it is in view —
-    both read this enumeration."""
+    """A wrapped block's stop sits on its match's row, not the block's top."""
     from textual._compositor import Compositor
     from textual.geometry import Size
 

@@ -733,11 +733,8 @@ def test_a_frozen_chunk_does_not_get_the_focus_band() -> None:
 
 
 def _frozen_landing(first_match_row: int | None) -> Region | None:
-    """Where the strategy scrolls for a chunk standing in for a capture.
-
-    ``fnd_first_match_row`` is what a ``FrozenChunkView`` carries; a served
-    capture also pops ``match_targets``, so the strategy meets it as the header.
-    """
+    """Where the strategy scrolls for a served capture: it carries
+    ``fnd_first_match_row`` and has no ``match_targets`` entry."""
     target = _FakeWidget(Region(0, 40, 80, 3))
     if first_match_row is not None:
         target.fnd_first_match_row = first_match_row  # type: ignore[attr-defined]
