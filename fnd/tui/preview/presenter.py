@@ -572,8 +572,9 @@ class PreviewPresenter:
             and active.parent_doc_id == parent_id
             and (active.is_complete or focus_chunk_seq in active.chunk_widgets)
         )
+        glide = self._app._config is None or self._app._config.defaults.preview_scroll_animation
         self._app._preview_scroll.arm(
-            ScrollAnchor(parent_id, focus_chunk_seq, animate=target_mounted)
+            ScrollAnchor(parent_id, focus_chunk_seq, animate=target_mounted and glide)
         )
         # One progress session spans the whole navigation, opened here because
         # arming is the single event every navigation passes through — so the
@@ -1641,6 +1642,16 @@ class PreviewPresenter:
         pane = self._app.query_one("#preview_pane", VerticalScroll)
         set_preview_visibility(outgoing, hidden=True)
         pane.scroll_to(y=target_y, animate=False, immediate=True)
+        # Re-seat the claim on what the reader was just positioned on. Both
+        # ``target_y`` and ``virtual_region`` are already in post-removal
+        # coordinates, so the outgoing container's departure moves this anchor
+        # by nothing and is not absorbed a second time — absorbing it again cost
+        # a measured 162 rows, which is what left a match below the fold.
+        # Re-seated rather than cleared: prepends arriving after this DO move
+        # the anchor, and must still be absorbed or the reader jumps.
+        with contextlib.suppress(Exception):
+            scroll = self._app.query_one("#preview_pane", MatchAwareScroll)
+            scroll.absorb_anchor = (target, int(target.virtual_region.y))
         self.diag_log(f"scroll site=swap y={target_y}")
         set_preview_visibility(new, pre_reveal=False)
         new.has_painted = True
