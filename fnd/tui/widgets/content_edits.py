@@ -12,33 +12,28 @@ __all__ = ["Edit", "apply_edits"]
 
 @dataclass(frozen=True, slots=True)
 class Edit:
-    """Replace ``plain[start:end]`` with ``replacement``.
-
-    ``styles`` are ``(offset, length, style)`` triples relative to
-    ``replacement``.
-    """
+    """Replace ``plain[start:end]`` with ``replacement``."""
 
     start: int
     end: int
     replacement: str
+    # ``(offset, length, style)`` triples relative to ``replacement``.
     styles: tuple[tuple[int, int, str], ...] = ()
+    # Sub-range of ``plain`` the replacement reproduces verbatim (a marker strip
+    # such as ``==x==`` -> ``x``). Spans over it survive instead of collapsing.
+    kept: tuple[int, int] | None = None
 
 
 def apply_edits(content: Content, edits: Sequence[Edit]) -> Content:
-    """Apply ``edits`` to ``content``, carrying its existing spans across.
-
-    A span wholly inside an edit is dropped, a partial overlap excludes
-    the replacement, and a span that wholly contains an edit still spans
-    it. Edits must not overlap.
-    """
+    """Apply ``edits`` to ``content``, remapping its spans. Edits must not overlap."""
     if not edits:
         return content
     ordered = sorted(edits, key=lambda e: e.start)
     plain = content.plain
     pieces: list[str] = []
     spans: list[Span] = []
-    # (old_start, old_end, new_start, new_len) per edit, in order.
-    table: list[tuple[int, int, int, int]] = []
+    # (old_start, old_end, new_start, new_len, kept) per edit, in order.
+    table: list[tuple[int, int, int, int, tuple[int, int] | None]] = []
     cursor = 0
     delta = 0
     for edit in ordered:
@@ -51,7 +46,7 @@ def apply_edits(content: Content, edits: Sequence[Edit]) -> Content:
         pieces.append(edit.replacement)
         for offset, length, style in edit.styles:
             spans.append(Span(new_start + offset, new_start + offset + length, style))
-        table.append((edit.start, edit.end, new_start, len(edit.replacement)))
+        table.append((edit.start, edit.end, new_start, len(edit.replacement), edit.kept))
         delta += len(edit.replacement) - (edit.end - edit.start)
         cursor = edit.end
     pieces.append(plain[cursor:])
@@ -59,10 +54,15 @@ def apply_edits(content: Content, edits: Sequence[Edit]) -> Content:
     def remap(pos: int, *, is_end: bool) -> int:
         """Map a span boundary, excluding replaced text a span did not wholly contain."""
         shift = 0
-        for old_start, old_end, new_start, new_len in table:
+        for old_start, old_end, new_start, new_len, kept in table:
             if pos < old_start:
                 break
             if old_start < pos < old_end or pos == old_start == old_end:
+                if kept is not None:
+                    keep_start, keep_end = kept
+                    if keep_start <= pos <= keep_end:
+                        return new_start + (pos - keep_start)
+                    return new_start if pos < keep_start else new_start + new_len
                 return new_start if is_end else new_start + new_len
             if pos == old_start:
                 return new_start

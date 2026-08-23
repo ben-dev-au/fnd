@@ -103,3 +103,18 @@ def test_span_starting_at_an_insertion_point_moves_after_it() -> None:
     out = apply_edits(c, [Edit(1, 1, "XYZ")])
     assert out.plain == "aXYZb"
     assert [(s.start, s.end) for s in out.spans] == [(4, 5)]
+
+
+def test_kept_range_preserves_spans_over_the_reproduced_text() -> None:
+    """``kept`` marks text the replacement reproduces verbatim, so spans survive."""
+    content = Content("==a b c==", spans=[Span(4, 5, "bold")])
+    out = apply_edits(content, [Edit(0, 9, "a b c", kept=(2, 7))])
+    assert out.plain == "a b c"
+    assert [(s.start, s.end, str(s.style)) for s in out.spans] == [(2, 3, "bold")]
+
+
+def test_kept_range_still_clamps_spans_over_removed_delimiters() -> None:
+    content = Content("==a b c==", spans=[Span(0, 5, "bold")])
+    out = apply_edits(content, [Edit(0, 9, "a b c", kept=(2, 7))])
+    assert out.plain == "a b c"
+    assert [(s.start, s.end) for s in out.spans] == [(0, 3)]

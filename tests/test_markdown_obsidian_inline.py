@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from textual.content import Content
+from textual.content import Content, Span
 
 from fnd.matching import MatchSpec
 from fnd.tui.widgets.content_edits import apply_edits
@@ -163,4 +163,38 @@ def test_known_false_positives_match_obsidian() -> None:
 
 
 def test_multiline_comment_inside_one_paragraph_is_hidden() -> None:
-    assert _render("before %%a b c%% after") == "before  after"
+    """A real newline, so the ``re.S`` flag on _COMMENT is actually exercised."""
+    assert _render("before %%a\nb\nc%% after") == "before  after"
+
+
+def test_comment_containing_nested_syntax_is_still_hidden() -> None:
+    """A comment claims its range before wikilink/tag/mark rules can take it."""
+    assert _render("%%a [[b]] c%%") == ""
+    assert _render("%%a #tag b%%") == ""
+    assert _render("%%a ==m== b%%") == ""
+
+
+def test_revealed_comment_keeps_its_nested_syntax_literal() -> None:
+    spec = MatchSpec.from_query("secret", auto_fuzzy=False)
+    assert _render("%%a [[b]] secret%%", spec=spec) == "a [[b]] secret"
+
+
+def test_inline_formatting_inside_a_mark_survives() -> None:
+    """Stripping ``==`` must shift inner spans, not collapse them."""
+    plain = "==a b c=="
+    content = Content(plain, spans=[Span(4, 5, ".strong")])
+    out = apply_edits(content, collect_edits(plain, protected=set(), spec=EMPTY, list_item=False))
+    strong = [s for s in out.spans if str(s.style) == ".strong"]
+    assert strong, out.spans
+    assert out.plain[strong[0].start : strong[0].end] == "b"
+
+
+def test_inline_formatting_inside_a_wikilink_survives() -> None:
+    for plain, span in (("[[a b c]]", (4, 5)), ("[[t|a b c]]", (6, 7))):
+        content = Content(plain, spans=[Span(*span, ".strong")])
+        out = apply_edits(
+            content, collect_edits(plain, protected=set(), spec=EMPTY, list_item=False)
+        )
+        strong = [s for s in out.spans if str(s.style) == ".strong"]
+        assert strong, (plain, out.spans)
+        assert out.plain[strong[0].start : strong[0].end] == "b"

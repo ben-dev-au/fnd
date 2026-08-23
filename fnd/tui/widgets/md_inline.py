@@ -55,6 +55,13 @@ def has_match(text: str, spec: MatchSpec) -> bool:
     return bool(match_word_spans(text, spec))
 
 
+def _kept_span(m: re.Match[str], group: int) -> tuple[int, int]:
+    """Span of ``m.group(group)`` after ``strip()``, in ``plain`` coordinates."""
+    raw = m.group(group)
+    start = m.start(group) + (len(raw) - len(raw.lstrip()))
+    return start, start + len(raw.strip())
+
+
 def _protected(block: MarkdownBlock) -> set[int]:
     """Character positions covered by an inline-code span."""
     out: set[int] = set()
@@ -81,11 +88,35 @@ def collect_edits(
             edits.append(Edit(box.start(), box.end(), glyph))
             taken.update(range(box.start(), box.end()))
 
+    # Comments claim their range FIRST: a nested wikilink or tag would otherwise
+    # take it and leave the surrounding %% markers rendered literally.
+    for m in _COMMENT.finditer(plain):
+        if not free(m.start(), m.end()):
+            continue
+        inner = m.group(1)
+        # Comments reach F_BODY, so one holding a match stays visible rather than
+        # being hidden the way Obsidian hides it.
+        if has_match(inner, spec):
+            edits.append(
+                Edit(
+                    m.start(),
+                    m.end(),
+                    inner,
+                    ((0, len(inner), REVEAL_STYLE),),
+                    kept=m.span(1),
+                )
+            )
+        else:
+            edits.append(Edit(m.start(), m.end(), ""))
+        taken.update(range(m.start(), m.end()))
+
     for m in _MARK.finditer(plain):
         if not free(m.start(), m.end()):
             continue
         inner = m.group(1)
-        edits.append(Edit(m.start(), m.end(), inner, ((0, len(inner), MARK_STYLE),)))
+        edits.append(
+            Edit(m.start(), m.end(), inner, ((0, len(inner), MARK_STYLE),), kept=m.span(1))
+        )
         taken.update(range(m.start(), m.end()))
 
     for m in _EMBED.finditer(plain):
@@ -101,8 +132,10 @@ def collect_edits(
             continue
         target, alias = m.group(1).strip(), (m.group(2) or "").strip()
         styles: tuple[tuple[int, int, str], ...]
+        kept: tuple[int, int] | None
         if not alias:
             shown, styles = target, ((0, len(target), WIKILINK_STYLE),)
+            kept = _kept_span(m, 1)
         elif has_match(target, spec) and not has_match(alias, spec):
             # The target reaches F_BODY, so a match in it must stay visible even
             # though Obsidian hides it behind the alias.
@@ -111,28 +144,18 @@ def collect_edits(
                 (0, len(alias), WIKILINK_STYLE),
                 (len(alias) + 1, len(target) + 2, REVEAL_STYLE),
             )
+            kept = None
         else:
             shown, styles = alias, ((0, len(alias), WIKILINK_STYLE),)
-        edits.append(Edit(m.start(), m.end(), shown, styles))
+            kept = _kept_span(m, 2)
+        edits.append(Edit(m.start(), m.end(), shown, styles, kept=kept))
         taken.update(range(m.start(), m.end()))
 
     for m in _TAG.finditer(plain):
         if not free(m.start(), m.end()):
             continue
         text = m.group(0)
-        edits.append(Edit(m.start(), m.end(), text, ((0, len(text), TAG_STYLE),)))
-        taken.update(range(m.start(), m.end()))
-
-    for m in _COMMENT.finditer(plain):
-        if not free(m.start(), m.end()):
-            continue
-        inner = m.group(1)
-        # Comments reach F_BODY, so one holding a match stays visible rather than
-        # being hidden the way Obsidian hides it.
-        if has_match(inner, spec):
-            edits.append(Edit(m.start(), m.end(), inner, ((0, len(inner), REVEAL_STYLE),)))
-        else:
-            edits.append(Edit(m.start(), m.end(), ""))
+        edits.append(Edit(m.start(), m.end(), text, ((0, len(text), TAG_STYLE),), kept=m.span(0)))
         taken.update(range(m.start(), m.end()))
 
     for m in _BLOCK_ID.finditer(plain):
@@ -140,8 +163,9 @@ def collect_edits(
             continue
         if has_match(m.group(0).lstrip("^"), spec):
             continue
-        edits.append(Edit(max(m.start() - 1, 0), m.end(), ""))
-        taken.update(range(m.start(), m.end()))
+        start = max(m.start() - 1, 0)
+        edits.append(Edit(start, m.end(), ""))
+        taken.update(range(start, m.end()))
 
     return edits
 
