@@ -1642,16 +1642,15 @@ class PreviewPresenter:
         pane = self._app.query_one("#preview_pane", VerticalScroll)
         set_preview_visibility(outgoing, hidden=True)
         pane.scroll_to(y=target_y, animate=False, immediate=True)
-        # Re-seat the claim on what the reader was just positioned on. Both
-        # ``target_y`` and ``virtual_region`` are already in post-removal
-        # coordinates, so the outgoing container's departure moves this anchor
-        # by nothing and is not absorbed a second time — absorbing it again cost
-        # a measured 162 rows, which is what left a match below the fold.
-        # Re-seated rather than cleared: prepends arriving after this DO move
-        # the anchor, and must still be absorbed or the reader jumps.
+        # ``target_y`` already accounts for the outgoing container leaving;
+        # absorbing that departure as well moved the reader a measured 162 rows.
+        # Re-seated a refresh later, once that layout has landed.
+        anchor = self._app._preview_scroll.anchor
         with contextlib.suppress(Exception):
-            scroll = self._app.query_one("#preview_pane", MatchAwareScroll)
-            scroll.absorb_anchor = (target, int(target.virtual_region.y))
+            self._app.query_one("#preview_pane", MatchAwareScroll).absorb_anchor = None
+        self._app.call_after_refresh(
+            self._reseat_absorb_claim, new, anchor.focus_chunk_seq if anchor else None
+        )
         self.diag_log(f"scroll site=swap y={target_y}")
         set_preview_visibility(new, pre_reveal=False)
         new.has_painted = True
@@ -1659,6 +1658,23 @@ class PreviewPresenter:
         self.diag_log(f"first_paint parent={new.parent_doc_id[:8]} path=swap")
         self.outgoing = None
         return True
+
+    def _reseat_absorb_claim(self, container: PreviewContainer, seq: int | None) -> None:
+        """Claim the focus chunk so a prepend arriving after a swap is absorbed.
+
+        A chunk widget, because ``virtual_region`` is measured against a
+        widget's immediate parent: only a direct child of the container moves
+        when the container gains content above the reader. A block inside a
+        chunk reports chunk-local coordinates and never sees it.
+        """
+        if seq is None or container is not self.active:
+            return
+        widget = container.chunk_widgets.get(seq)
+        if widget is None:
+            return
+        with contextlib.suppress(Exception):
+            pane = self._app.query_one("#preview_pane", MatchAwareScroll)
+            pane.absorb_anchor = (widget, int(widget.virtual_region.y))
 
     def reveal(self, container: PreviewContainer) -> None:
         """Reveal ``container`` and drop any still-held outgoing preview.

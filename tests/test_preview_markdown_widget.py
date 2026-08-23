@@ -30,12 +30,9 @@ from tests._pilot_wait import settle, wait_until
 
 
 async def _settle(pilot) -> None:  # type: ignore[no-untyped-def]
-    """Wait until every mounted FNDMarkdown has finished BUILDING.
-
-    ``build_done``, not existence: the block tree these tests assert on is
-    populated asynchronously, so the widget is queryable a tick before its
-    paragraphs are. Four tests here landed in that tick on Windows CI.
-    """
+    """Wait until every mounted FNDMarkdown has finished BUILDING — ``build_done``,
+    not existence: the block tree these tests assert on is populated
+    asynchronously, so the widget is queryable a tick before its paragraphs."""
 
     def built() -> bool:
         mds = list(pilot.app.query(FNDMarkdown))
