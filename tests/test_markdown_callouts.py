@@ -93,3 +93,10 @@ def test_title_keeps_inline_markup_children() -> None:
 def test_marker_inside_a_fence_is_not_a_callout() -> None:
     tokens = _tokens("```\n> [!tip] not a callout\n```\n")
     assert not any(t.meta.get("fnd_callout") for t in tokens)
+
+
+@pytest.mark.parametrize("suffix", ["  ", "\\"])
+def test_hard_line_break_also_splits_title_from_body(suffix: str) -> None:
+    """A trailing double-space or backslash makes a hardbreak, not a softbreak."""
+    tokens = _tokens(f"> [!tip] Title{suffix}\n> Body text.\n")
+    assert _inlines(tokens) == ["Title", "Body text."]

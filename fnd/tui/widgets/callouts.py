@@ -71,9 +71,9 @@ def resolve_callout(kind: str) -> CalloutStyle:
 
 
 def _split_children(children: list[Token]) -> tuple[list[Token], list[Token]]:
-    """Children before / after the first softbreak."""
+    """Children before / after the first line break of either kind."""
     for i, child in enumerate(children):
-        if child.type == "softbreak":
+        if child.type in {"softbreak", "hardbreak"}:
             return children[:i], children[i + 1 :]
     return children, []
 
