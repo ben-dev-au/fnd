@@ -931,7 +931,9 @@ class FNDMarkdown(Markdown):
     FNDMarkdown .callout-bug > .callout-title { color: $error; }
     FNDMarkdown .callout-example { border-left: outer $primary; background: $primary 12%; }
     FNDMarkdown .callout-example > .callout-title { color: $primary; }
-    FNDMarkdown .callout-quote { border-left: outer $foreground 50%; background: $boost; }
+    /* A neutral wash, not $boost: that resolves fully transparent in
+       tokyo-night, leaving quote callouts with no fill at all. */
+    FNDMarkdown .callout-quote { border-left: outer $foreground 50%; background: $foreground 12%; }
     FNDMarkdown .callout-quote > .callout-title { color: $foreground 70%; }
     """
 

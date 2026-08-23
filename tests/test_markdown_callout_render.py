@@ -126,7 +126,7 @@ async def test_each_callout_type_resolves_to_its_own_theme_colour() -> None:
 
 
 @pytest.mark.asyncio
-async def test_quote_callout_keeps_the_plain_blockquote_fill() -> None:
+async def test_every_callout_type_is_tinted_apart_from_plain_blockquotes() -> None:
     md = "> [!quote] Quoted\n> Body.\n\n> [!example] Sampled\n> Body.\n\n> ordinary quote\n"
     app = _Host(md)
     async with app.run_test(size=(80, 30)) as pilot:
@@ -136,10 +136,12 @@ async def test_quote_callout_keeps_the_plain_blockquote_fill() -> None:
         assert quoted.has_class("callout-quote")
         assert sampled.has_class("callout-example")
         assert not plain.has_class("callout")
-        assert quoted.styles.background == plain.styles.background
-        assert sampled.styles.background != plain.styles.background
+        # $boost resolves fully transparent here, so a callout that inherits it
+        # renders with no fill — every callout type must carry its own tint.
+        assert plain.styles.background.a == 0
+        assert quoted.styles.background.a > 0
+        assert sampled.styles.background.a > 0
         assert sampled.styles.background != quoted.styles.background
-        # A quote callout is set apart from a plain blockquote by its bar alone.
         assert quoted.styles.border_left != plain.styles.border_left
 
 
