@@ -920,6 +920,25 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             keywords=("scrollbar", "marker", "match", "highlight", "position"),
         ),
         MenuItem(
+            id="pref.preview_scroll_animation",
+            label="Glide to matches",
+            description=(
+                "Glide the preview to a match inside the file already on screen, "
+                "instead of cutting to it. Off makes every landing an instant jump — "
+                "also the way to tell a mislanding from the glide passing over it."
+            ),
+            kind=KIND_TOGGLE,
+            toggle_getter=lambda app: (  # type: ignore[arg-type]
+                app._config.defaults.preview_scroll_animation  # type: ignore[attr-defined]
+                if app._config  # type: ignore[attr-defined]
+                else True
+            ),
+            toggle_setter=lambda app, v: _setting_writer("defaults.preview_scroll_animation")(
+                app, v
+            ),
+            keywords=("scroll", "animation", "glide", "slide", "smooth", "jump", "motion"),
+        ),
+        MenuItem(
             id="pref.render_mermaid",
             label="Render mermaid diagrams (in development)",
             description=(
