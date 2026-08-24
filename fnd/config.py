@@ -484,6 +484,12 @@ class Defaults(BaseModel):
     # orange variance colour (typos, stem suffixes, wildcard-filled chars) is
     # unaffected either way.
     multicolour_highlights: bool = True
+    # Glide the preview to a match within the file it is already showing,
+    # instead of cutting straight to it. Off makes every landing an instant
+    # jump, which is also how to tell a mislanding from the glide passing
+    # over it. A cross-file reveal is always a cut — there is nothing on
+    # screen to glide over.
+    preview_scroll_animation: bool = True
     # IN DEVELOPMENT — render ``mermaid`` code fences as terminal text-art
     # diagrams (via termaid) instead of source. Any unsupported / garbage /
     # oversized diagram falls back to the syntax-highlighted source. Default
@@ -952,6 +958,10 @@ preview_decode_workers   = 4      # 1-16
 # warm more context per file and fewer files per second; 0 warms the matches
 # alone and leaves the gaps to scroll-driven lazy mount.
 preview_warm_margin      = 2      # 0-20
+# Glide the preview to a match inside the file already on screen, instead of
+# cutting to it. Off makes every landing an instant jump — also the way to tell
+# a mislanding from the glide passing over the match.
+preview_scroll_animation = true
 # Idle delay before a results-tree cursor move triggers a preview load.
 # Rapid arrow-key sweeps skip intermediate rows; only the final position
 # loads. 0 = load instantly. Typical range 100-250.

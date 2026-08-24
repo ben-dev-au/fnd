@@ -15,10 +15,15 @@ prune removing chunks above the reader moves them by exactly the same rule.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import cast
+
 import pytest
 from textual._animator import SimpleAnimation
 from textual.app import App, ComposeResult
+from textual.containers import Vertical
 from textual.pilot import Pilot
+from textual.widget import Widget
 from textual.widgets import Static
 
 from fnd.tui.preview_scrollbar import MatchAwareScroll
@@ -162,4 +167,151 @@ async def test_an_in_flight_scroll_animation_is_retargeted_not_stopped() -> None
         assert animation.end_value == end_before + 60, (
             f"the destination was not moved with the document: "
             f"{end_before} -> {animation.end_value}"
+        )
+
+
+class _NestedApp(App[None]):
+    """The topology a preview swap claims against: pane -> container -> chunk,
+    with the match block one level further in."""
+
+    CSS = """
+    #container { height: auto; }
+    #chunk { height: auto; }
+    #block { height: 40; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with MatchAwareScroll(id="preview_pane"), Vertical(id="container"):
+            yield Static("above", id="filler")
+            with Vertical(id="chunk"):
+                yield Static("match", id="block")
+
+
+async def _nested(pilot: Pilot[None], app: _NestedApp):  # type: ignore[no-untyped-def]
+    pane = app.query_one("#preview_pane", MatchAwareScroll)
+    app.query_one("#filler", Static).styles.height = 500
+    await pilot.pause()
+    pane.scroll_y = 100
+    await pilot.pause()
+    return pane, app.query_one("#chunk", Vertical), app.query_one("#block", Static)
+
+
+@pytest.mark.asyncio
+async def test_a_chunk_claim_absorbs_a_prepend_in_its_container() -> None:
+    """What the swap re-seats: a direct child of the container is the only depth
+    a container-level prepend moves."""
+    app = _NestedApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane, chunk, _block = await _nested(pilot, app)
+        pane.absorb_anchor = (chunk, int(chunk.virtual_region.y))
+
+        app.query_one("#filler", Static).styles.height = 560
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pane.scroll_y == 160, (
+            f"scroll_y {pane.scroll_y} — a 60-row prepend above the claimed chunk "
+            f"was not absorbed, so the reader was pushed down by it"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_block_claim_cannot_see_that_prepend() -> None:
+    """``virtual_region`` is measured against the immediate parent, so a claim on
+    a block inside the chunk is inert — the reason the swap does not use one."""
+    app = _NestedApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane, _chunk, block = await _nested(pilot, app)
+        pane.absorb_anchor = (block, int(block.virtual_region.y))
+
+        app.query_one("#filler", Static).styles.height = 560
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pane.scroll_y == 100, (
+            f"scroll_y {pane.scroll_y} — a block-level claim moved the pane, so the "
+            f"coordinate space this test pins has changed"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_swap_leaves_the_claim_on_a_chunk_of_the_revealed_file(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """After a cross-file reveal the claim must be a DIRECT child of the incoming
+    container: the swap drops the old one (its scroll already accounts for the
+    outgoing container leaving) and re-seats at a depth a prepend can move."""
+    from fnd.index import build_index
+    from fnd.tui import FNDApp
+    from fnd.tui.widgets.preview_container import PreviewContainer
+    from tests._pilot_wait import wait_until
+
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    body = "\n\n".join(f"Paragraph {i} mentioning templates." for i in range(60))
+    for name in ("a.md", "b.md"):
+        (notes / name).write_text(f"# {name}\n\n{body}\n", encoding="utf-8")
+    build_index(roots=[notes], index_dir=tmp_index_dir, collection="notes")
+
+    app = FNDApp(index_dir=tmp_index_dir, collection="notes", initial_query="templates")
+    async with app.run_test(size=(100, 30)) as pilot:
+        pane = app.query_one("#preview_pane", MatchAwareScroll)
+        await wait_until(
+            pilot,
+            lambda: app._preview.active is not None,
+            timeout=15.0,
+            message="no preview ever activated",
+        )
+        first = app._preview.active
+        tree = app.query_one("#results_pane")
+        tree.focus()
+        await pilot.press("down")
+        await wait_until(
+            pilot,
+            lambda: app._preview.active is not None and app._preview.active is not first,
+            timeout=15.0,
+            message="never navigated to the second file",
+        )
+        container = app._preview.active
+        await wait_until(
+            pilot,
+            lambda: pane.absorb_anchor is not None,
+            timeout=15.0,
+            message="the swap never re-seated a claim",
+        )
+        claim = pane.absorb_anchor
+        assert claim is not None
+        claimed = cast(Widget, claim[0])
+        assert isinstance(container, PreviewContainer)
+        assert claimed.parent is container, (
+            f"claim sits on {type(claimed).__name__} whose parent is "
+            f"{type(claimed.parent).__name__} — only a direct child of the container "
+            f"moves when a prepend lands, so this claim is inert"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_claim_on_content_that_left_the_layout_is_dropped_not_absorbed() -> None:
+    """``virtual_region`` reports ``Region()`` — y=0, no exception — for a widget
+    whose ancestor is ``display: none``. Read as movement, that scrolls the pane
+    backwards by the stored offset: measured 117-187 rows on a real swap."""
+    app = _NestedApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane, chunk, _block = await _nested(pilot, app)
+        pane.absorb_anchor = (chunk, int(chunk.virtual_region.y))
+        claim = pane.absorb_anchor
+        assert claim is not None
+        assert claim[1] > 0, "the claim must sit at a non-zero offset to prove anything"
+        before = pane.scroll_y
+
+        # Only the claimed chunk leaves; the filler keeps the pane scrollable, so
+        # any movement is the absorb's and not Textual clamping an empty pane.
+        chunk.display = False
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pane.absorb_anchor is None, "a claim on content out of the layout was kept"
+        assert pane.scroll_y == before, (
+            f"scroll_y {pane.scroll_y} (was {before}) — the pane moved for content "
+            f"that is no longer laid out"
         )

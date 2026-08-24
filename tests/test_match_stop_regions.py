@@ -49,3 +49,47 @@ async def test_two_stops_at_distinct_y() -> None:
         # both CRC cells enumerated, card 32 above card 47, distinct positions
         assert len(regions) == 2, ys
         assert ys[0] < ys[1]
+
+
+# One source line wrapping over several screenfuls, its match late in it — a PDF
+# contents page's shape, and the case where a block's top is nowhere near it.
+WRAPPED_MD = "# Contents\n\n" + " ".join(
+    f"Step {i:02d} - a deployment guide entry dotted to a page number" for i in range(90)
+).replace("Step 70", "Step 70 quartzfin")
+
+
+@pytest.mark.asyncio
+async def test_a_wrapped_block_stops_on_the_row_its_match_paints_on() -> None:
+    """A wrapped block's stop sits on its match's row, not the block's top."""
+    from textual._compositor import Compositor
+    from textual.geometry import Size
+
+    class _Harness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield VerticalScroll(id="preview_pane")
+
+        async def on_mount(self) -> None:
+            pane = self.query_one("#preview_pane", VerticalScroll)
+            await pane.mount(FNDMarkdown(WRAPPED_MD, match_spec=MatchSpec.from_query("quartzfin")))
+
+    async with _Harness().run_test(size=(80, 24)) as pilot:
+        md = pilot.app.query_one(FNDMarkdown)
+        await md.build_done.wait()
+        await pilot.pause()
+        block = md.first_match_block
+        assert block is not None
+        assert block.size.height > 20, "the fixture must wrap for this to prove anything"
+
+        size = Size(block.size.width, max(block.size.height, block.virtual_size.height))
+        comp = Compositor()
+        comp.reflow(block, size)
+        painted = [i for i, s in enumerate(comp.render_strips(size)) if "quartzfin" in s.text]
+        assert painted, "the match never painted"
+
+        pane = pilot.app.query_one("#preview_pane", VerticalScroll)
+        regions = enumerate_stop_regions(pane, MatchSpec.from_query("quartzfin"))
+        assert len(regions) == 1, [r.y for r in regions]
+        assert regions[0].y == block.region.y + painted[0], (
+            f"stop at y={regions[0].y} is the block's top ({block.region.y}), not the "
+            f"row its match paints on ({block.region.y + painted[0]})"
+        )

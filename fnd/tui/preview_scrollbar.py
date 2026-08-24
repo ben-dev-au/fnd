@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import contextlib
 from math import ceil
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from rich.color import Color as RichColor
 from rich.segment import Segment, Segments
@@ -53,6 +53,7 @@ except ImportError:  # pragma: no cover
 
 if TYPE_CHECKING:
     from rich.console import Console, ConsoleOptions, RenderResult
+    from textual.widget import Widget
 
 # Match markers use the same yellow accent as the inline body-text
 # highlights so the scrollbar visually rhymes with the matched words.
@@ -309,6 +310,20 @@ class MatchAwareScrollBar(ScrollBar):
         )
 
 
+def _is_displayed(widget: Widget) -> bool:
+    """Whether ``widget`` still occupies layout — an ancestor with
+    ``display: none`` takes it out without detaching it."""
+    from textual.widget import Widget as _Widget
+
+    node: Widget | None = widget
+    while node is not None:
+        if not getattr(node, "display", True):
+            return False
+        parent = node.parent
+        node = parent if isinstance(parent, _Widget) else None
+    return True
+
+
 class MatchAwareScroll(VerticalScroll):
     """VerticalScroll whose vertical scrollbar paints chunk-match markers.
 
@@ -372,6 +387,16 @@ class MatchAwareScroll(VerticalScroll):
         # prepend arriving in instalments — built chunks resolve their heights
         # over successive layouts — is absorbed in full rather than once.
         widget, before_y = claim
+        # A widget whose container has left the layout reports virtual_region
+        # ``Region()`` — y=0, no exception — so a stranded claim would read as a
+        # prepend of -before_y and really scroll the pane: measured 117-187 rows
+        # backwards on a cross-file navigation. Liveness is the only thing that
+        # tells that apart from a genuine y=0.
+        from fnd.tui.preview.liveness import is_live
+
+        if not is_live(cast("Widget", widget)) or not _is_displayed(cast("Widget", widget)):
+            self.absorb_anchor = None
+            return
         try:
             now_y = int(widget.virtual_region.y)  # type: ignore[attr-defined]
         except Exception:

@@ -310,8 +310,11 @@ async def test_a_frozen_chunk_still_contributes_its_match_stops() -> None:
         pane = app.query_one("#pane", VerticalScroll)
         spec = md.match_spec
 
-        live_stops = len(enumerate_stop_regions(pane, spec))
-        assert live_stops > 0, "fixture should have match stops while live"
+        # ROWS, not just a count: a count cannot see a stop sitting on a block's
+        # top row instead of on its match, which is what sends n/b and the ▲▼
+        # markers to a row with nothing on it.
+        live_rows = sorted(r.y - md.region.y for r in enumerate_stop_regions(pane, spec))
+        assert live_rows, "fixture should have match stops while live"
 
         frozen = freeze(md, chunk_seq=7)
         assert frozen is not None
@@ -325,10 +328,10 @@ async def test_a_frozen_chunk_still_contributes_its_match_stops() -> None:
             message="the live chunk never went away",
         )
 
-        frozen_stops = len(enumerate_stop_regions(pane, spec))
-        assert frozen_stops == live_stops, (
-            f"{live_stops} stops live but {frozen_stops} once frozen — "
-            "the chunk's matches became unreachable by n/b and the markers"
+        frozen_rows = sorted(r.y - view.region.y for r in enumerate_stop_regions(pane, spec))
+        assert frozen_rows == live_rows, (
+            f"stops at rows {live_rows} live but {frozen_rows} once frozen — "
+            "n/b and the markers move when a chunk is captured"
         )
 
 
@@ -357,4 +360,91 @@ async def test_a_table_that_has_not_laid_out_is_refused() -> None:
         assert freeze(md, chunk_seq=7) is None, (
             "a table with rows but no geometry was captured — it would be served "
             "as an empty box where the table should be"
+        )
+
+
+# One paragraph, one source line, wrapping to many rows with its match late —
+# the shape a PDF contents page has, and the one a block-top row gets wrong.
+_WRAPPED = "Step %02d - a deployment guide entry with no newline in it. " * 40 % tuple(range(40))
+_WRAPPED_DOC = _WRAPPED.replace("Step 30", "Step 30 quartzfin")
+
+
+class _WrappedHost(App[None]):
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="pane"):
+            yield FNDMarkdown(match_spec=MatchSpec.from_query("quartzfin"), id="md")
+
+
+@pytest.mark.asyncio
+async def test_a_wrapped_block_captures_the_row_its_match_paints_on() -> None:
+    """A capture records the row its match paints on, not the block's top."""
+    app = _WrappedHost()
+    async with app.run_test(size=(60, 24)) as pilot:
+        md = pilot.app.query_one("#md", FNDMarkdown)
+        md.update(_WRAPPED_DOC)
+        await md.build_done.wait()
+        await wait_until(
+            pilot,
+            lambda: md.size.height > 0 and md.virtual_size.height > 0,
+            timeout=15.0,
+            message="the chunk never laid out",
+        )
+        block = md.first_match_block
+        assert block is not None
+        block_row = block.region.y - md.region.y
+
+        frozen = freeze(md, chunk_seq=3)
+        assert frozen is not None
+        assert frozen.first_match_row is not None
+        assert frozen.first_match_row > block_row + 5, (
+            f"row {frozen.first_match_row} is the block's top ({block_row}), not the match's"
+        )
+        painted = [i for i, s in enumerate(frozen.strips) if "quartzfin" in s.text]
+        assert painted, "the match did not survive the capture"
+        assert frozen.first_match_row == painted[0] + frozen.padding[0], (
+            f"captured row {frozen.first_match_row} != painted row {painted[0]}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_wrapped_chunk_keeps_its_stop_rows_through_a_capture() -> None:
+    """The stop rows of ``_Host``'s chunk all sit on their blocks' first row, so
+    that fixture cannot tell a block-top stop from a match-row one. This one
+    wraps, which is where the two diverge."""
+    from fnd.tui.preview_scroll import enumerate_stop_regions
+
+    spec = MatchSpec.from_query("quartzfin")
+    app = _WrappedHost()
+    async with app.run_test(size=(60, 24)) as pilot:
+        md = pilot.app.query_one("#md", FNDMarkdown)
+        md.update(_WRAPPED_DOC)
+        await md.build_done.wait()
+        await wait_until(
+            pilot,
+            lambda: md.size.height > 0 and md.virtual_size.height > 0,
+            timeout=15.0,
+            message="the chunk never laid out",
+        )
+        pane = app.query_one("#pane", VerticalScroll)
+        live_rows = sorted(r.y - md.region.y for r in enumerate_stop_regions(pane, spec))
+        assert live_rows, "no match stops while live"
+        assert live_rows[0] > 5, (
+            f"stops at {live_rows}: the fixture must wrap for this to prove anything"
+        )
+
+        frozen = freeze(md, chunk_seq=3)
+        assert frozen is not None
+        view = FrozenChunkView(frozen)
+        await pane.mount(view)
+        await md.remove()
+        await wait_until(
+            pilot,
+            lambda: not list(pane.query(FNDMarkdown)) and view.size.height > 0,
+            timeout=15.0,
+            message="the live chunk never went away",
+        )
+
+        frozen_rows = sorted(r.y - view.region.y for r in enumerate_stop_regions(pane, spec))
+        assert frozen_rows == live_rows, (
+            f"stops at rows {live_rows} live but {frozen_rows} once frozen"
         )

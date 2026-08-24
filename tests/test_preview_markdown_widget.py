@@ -30,15 +30,20 @@ from tests._pilot_wait import settle, wait_until
 
 
 async def _settle(pilot) -> None:  # type: ignore[no-untyped-def]
-    """Wait for: results tree rebuilt, preview mount finished, at least
-    one FNDMarkdown present. Tolerant of suite-load timing — falls back
-    to a longer drain if the first idle drain doesn't surface widgets."""
+    """Wait until every mounted FNDMarkdown has finished BUILDING — ``build_done``,
+    not existence: the block tree these tests assert on is populated
+    asynchronously, so the widget is queryable a tick before its paragraphs."""
+
+    def built() -> bool:
+        mds = list(pilot.app.query(FNDMarkdown))
+        return bool(mds) and all(md.build_done.is_set() for md in mds)
+
     try:
         await wait_until(
             pilot,
-            lambda: bool(pilot.app.query(FNDMarkdown)),
+            built,
             timeout=15.0,
-            message="no FNDMarkdown mounted after focus",
+            message="no built FNDMarkdown mounted after focus",
         )
     except AssertionError:
         # Some tests (fence, table) mount via different paths; fall

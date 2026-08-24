@@ -572,8 +572,9 @@ class PreviewPresenter:
             and active.parent_doc_id == parent_id
             and (active.is_complete or focus_chunk_seq in active.chunk_widgets)
         )
+        glide = self._app._config is None or self._app._config.defaults.preview_scroll_animation
         self._app._preview_scroll.arm(
-            ScrollAnchor(parent_id, focus_chunk_seq, animate=target_mounted)
+            ScrollAnchor(parent_id, focus_chunk_seq, animate=target_mounted and glide)
         )
         # One progress session spans the whole navigation, opened here because
         # arming is the single event every navigation passes through — so the
@@ -1641,6 +1642,12 @@ class PreviewPresenter:
         pane = self._app.query_one("#preview_pane", VerticalScroll)
         set_preview_visibility(outgoing, hidden=True)
         pane.scroll_to(y=target_y, animate=False, immediate=True)
+        # Replace the claim, which is usually held on a chunk of the OUTGOING
+        # container: once that container leaves the layout its widgets report
+        # ``virtual_region`` y=0, and the pane absorbs the difference as real
+        # movement — measured 117-187 rows backwards.
+        anchor = self._app._preview_scroll.anchor
+        self._reseat_absorb_claim(new, anchor.focus_chunk_seq if anchor else None)
         self.diag_log(f"scroll site=swap y={target_y}")
         set_preview_visibility(new, pre_reveal=False)
         new.has_painted = True
@@ -1648,6 +1655,18 @@ class PreviewPresenter:
         self.diag_log(f"first_paint parent={new.parent_doc_id[:8]} path=swap")
         self.outgoing = None
         return True
+
+    def _reseat_absorb_claim(self, container: PreviewContainer, seq: int | None) -> None:
+        """Claim ``seq``'s chunk widget, the depth a prepend into ``container``
+        moves and its container's siblings do not."""
+        if seq is None or container is not self.active:
+            return
+        widget = container.chunk_widgets.get(seq)
+        if widget is None:
+            return
+        with contextlib.suppress(Exception):
+            pane = self._app.query_one("#preview_pane", MatchAwareScroll)
+            pane.absorb_anchor = (widget, int(widget.virtual_region.y))
 
     def reveal(self, container: PreviewContainer) -> None:
         """Reveal ``container`` and drop any still-held outgoing preview.
