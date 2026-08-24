@@ -36,6 +36,8 @@ from fnd.render import (
 )
 from fnd.tui.mermaid_render import MermaidRenderer
 from fnd.tui.syntax_theme import highlight_fenced, inline_code_spans
+from fnd.tui.widgets.callouts import rewrite_callouts
+from fnd.tui.widgets.md_inline import apply_obsidian_inline
 
 if TYPE_CHECKING:
     from rich.text import Text
@@ -278,6 +280,8 @@ class _HighlightingBlockMixin:
     def build_from_token(self, token):  # type: ignore[override]
         super().build_from_token(token)  # type: ignore[misc]
         _apply_inline_code_highlights(self)  # type: ignore[arg-type]
+        md = self._markdown  # type: ignore[attr-defined]
+        apply_obsidian_inline(self, getattr(md, "match_spec", None) or MatchSpec())  # type: ignore[arg-type]
         _apply_highlights_after_build(self)  # type: ignore[arg-type]
 
 
@@ -299,6 +303,19 @@ class _HeadingMarkerMixin:
 
         marker = ("#" * self.LEVEL) + " "  # type: ignore[attr-defined]
         self.set_content(Content.assemble(marker, self._content))  # type: ignore[attr-defined]
+
+
+class _CalloutTitleMixin:
+    """Prefix a callout title with its icon and the open-fold marker."""
+
+    def build_from_token(self, token):  # type: ignore[override]
+        super().build_from_token(token)  # type: ignore[misc]
+        meta = self._token.meta.get("fnd_callout_title")  # type: ignore[attr-defined]
+        if meta is None:
+            return
+        _key, icon, foldable = meta
+        prefix = f"{'▾ ' if foldable else ''}{icon}  "
+        self.set_content(Content.assemble(prefix, self._content))  # type: ignore[attr-defined]
 
 
 class FNDMarkdownH1(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH1):
@@ -325,12 +342,19 @@ class FNDMarkdownH6(_HighlightingBlockMixin, _HeadingMarkerMixin, MarkdownH6):
     pass
 
 
-class FNDMarkdownParagraph(_HighlightingBlockMixin, MarkdownParagraph):
-    pass
+class FNDMarkdownParagraph(_HighlightingBlockMixin, _CalloutTitleMixin, MarkdownParagraph):
+    def __init__(self, markdown: Markdown, token: Any, *args: Any, **kwargs: Any) -> None:
+        super().__init__(markdown, token, *args, **kwargs)
+        if "fnd_callout_title" in token.meta:
+            self.add_class("callout-title")
 
 
 class FNDMarkdownBlockQuote(_HighlightingBlockMixin, MarkdownBlockQuote):
-    pass
+    def __init__(self, markdown: Markdown, token: Any, *args: Any, **kwargs: Any) -> None:
+        super().__init__(markdown, token, *args, **kwargs)
+        key = token.meta.get("fnd_callout")
+        if key:
+            self.add_class("callout", f"callout-{key}")
 
 
 class FNDMarkdownOrderedListItem(_HighlightingBlockMixin, MarkdownOrderedListItem):
@@ -878,6 +902,39 @@ class FNDMarkdown(Markdown):
        is still visible. */
     FNDMarkdown MarkdownBlock > .strong { color: $primary; text-style: bold; }
     FNDMarkdown MarkdownBlock > .em { color: $secondary; text-style: italic; }
+    /* Callouts: typed left bar plus a 12% tint of the same colour. ``outer``
+       is a half-block glyph — the only border style that tiles solid in every
+       terminal font we tested, SF Mono included. */
+    FNDMarkdown .callout { border-left: outer $primary; background: $primary 12%; }
+    FNDMarkdown .callout > .callout-title { color: $primary; text-style: bold; }
+    FNDMarkdown .callout-note { border-left: outer $accent; background: $accent 12%; }
+    FNDMarkdown .callout-note > .callout-title { color: $accent; }
+    FNDMarkdown .callout-info { border-left: outer $accent; background: $accent 12%; }
+    FNDMarkdown .callout-info > .callout-title { color: $accent; }
+    FNDMarkdown .callout-todo { border-left: outer $accent; background: $accent 12%; }
+    FNDMarkdown .callout-todo > .callout-title { color: $accent; }
+    FNDMarkdown .callout-abstract { border-left: outer $primary; background: $primary 12%; }
+    FNDMarkdown .callout-abstract > .callout-title { color: $primary; }
+    FNDMarkdown .callout-tip { border-left: outer $success; background: $success 12%; }
+    FNDMarkdown .callout-tip > .callout-title { color: $success; }
+    FNDMarkdown .callout-success { border-left: outer $success; background: $success 12%; }
+    FNDMarkdown .callout-success > .callout-title { color: $success; }
+    FNDMarkdown .callout-question { border-left: outer $secondary; background: $secondary 12%; }
+    FNDMarkdown .callout-question > .callout-title { color: $secondary; }
+    FNDMarkdown .callout-warning { border-left: outer $warning; background: $warning 12%; }
+    FNDMarkdown .callout-warning > .callout-title { color: $warning; }
+    FNDMarkdown .callout-failure { border-left: outer $error; background: $error 12%; }
+    FNDMarkdown .callout-failure > .callout-title { color: $error; }
+    FNDMarkdown .callout-danger { border-left: outer $error; background: $error 12%; }
+    FNDMarkdown .callout-danger > .callout-title { color: $error; }
+    FNDMarkdown .callout-bug { border-left: outer $error; background: $error 12%; }
+    FNDMarkdown .callout-bug > .callout-title { color: $error; }
+    FNDMarkdown .callout-example { border-left: outer $primary; background: $primary 12%; }
+    FNDMarkdown .callout-example > .callout-title { color: $primary; }
+    /* A neutral wash, not $boost: that resolves fully transparent in
+       tokyo-night, leaving quote callouts with no fill at all. */
+    FNDMarkdown .callout-quote { border-left: outer $foreground 50%; background: $foreground 12%; }
+    FNDMarkdown .callout-quote > .callout-title { color: $foreground 70%; }
     """
 
     BLOCKS: dict[str, type[MarkdownBlock]] = {  # noqa: RUF012
@@ -977,6 +1034,8 @@ class FNDMarkdown(Markdown):
         return aw
 
     def _parse_markdown(self, tokens):  # type: ignore[no-untyped-def, override]
+        tokens = list(tokens)
+        rewrite_callouts(tokens)
         # Materialise the block tree before yielding any of it: the two-tier
         # proximity decision needs the whole chunk's text at once, and right here
         # every block — including the TH/TD cells the table later composes away —
