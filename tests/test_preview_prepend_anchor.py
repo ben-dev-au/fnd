@@ -288,3 +288,30 @@ async def test_a_swap_leaves_the_claim_on_a_chunk_of_the_revealed_file(
             f"{type(claimed.parent).__name__} — only a direct child of the container "
             f"moves when a prepend lands, so this claim is inert"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_claim_on_content_that_left_the_layout_is_dropped_not_absorbed() -> None:
+    """``virtual_region`` reports ``Region()`` — y=0, no exception — for a widget
+    whose ancestor is ``display: none``. Read as movement, that scrolls the pane
+    backwards by the stored offset: measured 117-187 rows on a real swap."""
+    app = _NestedApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane, chunk, _block = await _nested(pilot, app)
+        pane.absorb_anchor = (chunk, int(chunk.virtual_region.y))
+        claim = pane.absorb_anchor
+        assert claim is not None
+        assert claim[1] > 0, "the claim must sit at a non-zero offset to prove anything"
+        before = pane.scroll_y
+
+        # Only the claimed chunk leaves; the filler keeps the pane scrollable, so
+        # any movement is the absorb's and not Textual clamping an empty pane.
+        chunk.display = False
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pane.absorb_anchor is None, "a claim on content out of the layout was kept"
+        assert pane.scroll_y == before, (
+            f"scroll_y {pane.scroll_y} (was {before}) — the pane moved for content "
+            f"that is no longer laid out"
+        )

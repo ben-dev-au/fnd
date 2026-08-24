@@ -1642,15 +1642,12 @@ class PreviewPresenter:
         pane = self._app.query_one("#preview_pane", VerticalScroll)
         set_preview_visibility(outgoing, hidden=True)
         pane.scroll_to(y=target_y, animate=False, immediate=True)
-        # ``target_y`` already accounts for the outgoing container leaving;
-        # absorbing that departure as well moved the reader a measured 162 rows.
-        # Re-seated a refresh later, once that layout has landed.
+        # Replace the claim, which is usually held on a chunk of the OUTGOING
+        # container: once that container leaves the layout its widgets report
+        # ``virtual_region`` y=0, and the pane absorbs the difference as real
+        # movement — measured 117-187 rows backwards.
         anchor = self._app._preview_scroll.anchor
-        with contextlib.suppress(Exception):
-            self._app.query_one("#preview_pane", MatchAwareScroll).absorb_anchor = None
-        self._app.call_after_refresh(
-            self._reseat_absorb_claim, new, anchor.focus_chunk_seq if anchor else None
-        )
+        self._reseat_absorb_claim(new, anchor.focus_chunk_seq if anchor else None)
         self.diag_log(f"scroll site=swap y={target_y}")
         set_preview_visibility(new, pre_reveal=False)
         new.has_painted = True
@@ -1660,13 +1657,8 @@ class PreviewPresenter:
         return True
 
     def _reseat_absorb_claim(self, container: PreviewContainer, seq: int | None) -> None:
-        """Claim the focus chunk so a prepend arriving after a swap is absorbed.
-
-        A chunk widget, because ``virtual_region`` is measured against a
-        widget's immediate parent: only a direct child of the container moves
-        when the container gains content above the reader. A block inside a
-        chunk reports chunk-local coordinates and never sees it.
-        """
+        """Claim ``seq``'s chunk widget, the depth a prepend into ``container``
+        moves and its container's siblings do not."""
         if seq is None or container is not self.active:
             return
         widget = container.chunk_widgets.get(seq)
