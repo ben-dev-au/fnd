@@ -121,6 +121,11 @@ def _pane_state(app: Any) -> str:
     )
 
 
+def _viewport(pane: Any) -> str:
+    top = pane.scroll_offset.y
+    return f"[{top},{top + pane.scrollable_content_region.height})"
+
+
 def _match_nav_state(app: Any) -> str:
     nav = getattr(app, "_match_nav", None)
     if nav is None:
@@ -132,8 +137,14 @@ def _match_nav_state(app: Any) -> str:
             ("above", lambda: nav.above),
             ("below", lambda: nav.below),
             ("position", lambda: nav.position),
-            ("chunk_stops", lambda: len(nav._chunk_stops(nav._pane()))),
             ("measure_pending", lambda: nav._measure_pending),
+            # The rows themselves, not just how many. above/below is derived
+            # from these against the viewport, so a disagreement between where
+            # the scroll landed and where the stops are is only readable here.
+            ("chunk_stops", lambda: nav._chunk_stops(nav._pane())),
+            ("all_stops", lambda: nav._region_stops(nav._pane())),
+            ("chunk_extent", lambda: nav._current_chunk_extent(nav._pane())),
+            ("viewport", lambda: _viewport(nav._pane())),
         ],
     )
 
