@@ -59,6 +59,13 @@ def _view_buckets(ys: list[int], vh: int) -> int:
     return views
 
 
+# Re-measures a navigation gets after its first, and the gap between them. Three
+# at 150ms covers a reflow landing up to ~0.5s after the scroll did, which is
+# what a loaded runner produces; the cap is what stops it becoming a poll.
+_CONFIRMATIONS = 3
+_CONFIRM_DELAY = 0.15
+
+
 def offscreen_views(ys: list[int], top: int, bottom: int, vh: int) -> tuple[int, int]:
     """``(matching views above the viewport, matching views below)`` — the
     awareness signal behind the ``▲a ▼b`` border. ``ys`` are the current
@@ -166,6 +173,13 @@ class MatchNavigator:
         # the in-flight poll can land on the PRE-scroll layout, so the request
         # it swallows is the one that would have caught the real position.
         self._measure_again = False
+        # Confirmation passes left for this navigation. The counts are derived
+        # from LAYOUT, but every trigger that refreshes them is a scroll or a
+        # mount — so a late reflow (a table sizing its rows, a capture swapped
+        # in) leaves the border describing a layout that is gone, with nothing
+        # watching. Rather than enumerate the events that can move a stop, the
+        # measurement re-confirms itself a bounded number of times.
+        self._confirmations_left = 0
         self._last_target: int | None = None
         # Bumped per rebuild() so a superseded count tick self-cancels.
         self._refresh_gen = 0
@@ -403,6 +417,7 @@ class MatchNavigator:
         # deferred request it swallowed belongs to that generation too.
         self._measure_pending = False
         self._measure_again = False
+        self._confirmations_left = _CONFIRMATIONS
         self._notify()
         self._await_mount(self._refresh_gen, retries=60)
 
@@ -499,6 +514,20 @@ class MatchNavigator:
             on_landed=self._measure_offscreen,
         )
 
+    def _arm_confirmation(self) -> None:
+        """Re-measure once more after the layout has had time to stop moving."""
+        import contextlib
+
+        gen = self._refresh_gen
+        # A stand-in app with no timer facility simply forgoes the re-confirm,
+        # which is the pre-existing behaviour.
+        with contextlib.suppress(Exception):
+            self._app.set_timer(
+                _CONFIRM_DELAY,
+                lambda: self._schedule_measure() if gen == self._refresh_gen else None,
+                name="match-nav-confirm",
+            )
+
     def _measure_offscreen(self) -> None:
         """Re-derive the cached ▲/▼ view counts (current result, above/below the
         viewport) and refresh the border only when they changed. Reads regions —
@@ -524,6 +553,7 @@ class MatchNavigator:
         Clear the old markers now, reset the burst memory (a new result is a
         fresh nav), and re-measure once the reveal position settles."""
         self._last_target = None
+        self._confirmations_left = _CONFIRMATIONS
         if (self._above, self._below) != (0, 0):
             self._above = self._below = 0
             self._notify()
@@ -560,6 +590,9 @@ class MatchNavigator:
             if self._measure_again:
                 self._measure_again = False
                 self._schedule_measure()
+            elif self._confirmations_left > 0:
+                self._confirmations_left -= 1
+                self._arm_confirmation()
 
         self._poll_until_landed(
             30, None, is_valid=lambda: gen == self._refresh_gen, on_landed=_landed

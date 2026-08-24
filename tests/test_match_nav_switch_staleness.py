@@ -121,3 +121,36 @@ async def test_markers_track_current_result_across_switches(
             timeout=30.0,
             message="▼ did not return on revisiting the multi-view result",
         )
+
+
+@pytest.mark.asyncio
+async def test_the_markers_never_describe_a_layout_that_is_gone(
+    cfg: Config, two_result_index: Path
+) -> None:
+    """The counts are a cache of a LAYOUT read, refreshed only by scroll and
+    mount events — so a reflow landing after the last scroll can strand it.
+
+    Asserted as the invariant rather than as a particular arrow: whatever the
+    border says must be what a fresh measurement of the current viewport says.
+    A stale cache and a bad landing produce the same wrong arrow, and only this
+    tells them apart.
+    """
+    app = FNDApp(index_dir=two_result_index, config=cfg, collection="notes", initial_query="CRC")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await safe_pause(pilot)
+        app.query_one("#results_pane", Tree).focus()
+        nav = app._match_nav
+        pane = app.query_one("#preview_pane", MatchAwareScroll)
+
+        for want, key in (
+            (lambda n: n >= 2, "down"),
+            (lambda n: n == 1, "up"),
+            (lambda n: n >= 2, "down"),
+        ):
+            assert await _walk_to(pilot, app, want, key)
+            await wait_until(
+                pilot,
+                lambda: (nav.above, nav.below) == nav._offscreen_views(pane),
+                timeout=30.0,
+                message="the border kept counts a fresh measurement disagrees with",
+            )

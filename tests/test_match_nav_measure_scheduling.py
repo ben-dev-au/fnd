@@ -14,17 +14,27 @@ import pytest
 from fnd.tui.match_navigator import MatchNavigator
 
 
-class _Nav(MatchNavigator):
-    """A navigator with the poll and the region read replaced by hand-driven
-    stand-ins, so the scheduling can be tested without a laid-out preview."""
+class _App:
+    """Just the timer facility the confirmation pass needs."""
 
     def __init__(self) -> None:
-        self._above = 0
-        self._below = 0
-        self._measure_pending = False
-        self._measure_again = False
-        self._last_target: int | None = None
-        self._refresh_gen = 0
+        self.timers: list[Any] = []
+
+    def set_timer(self, delay: float, callback: Any, *, name: str = "") -> None:
+        self.timers.append(callback)
+
+
+class _Nav(MatchNavigator):
+    """A navigator with the poll and the region read replaced by hand-driven
+    stand-ins, so the scheduling can be tested without a laid-out preview.
+
+    The real ``__init__`` runs against ``_App``: copying its fields here is what
+    turned every new piece of navigator state into a failure in this file rather
+    than in whatever forgot it.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(_App())  # type: ignore[arg-type]
         self.pending: list[Any] = []
         self.measured = 0
 
@@ -39,6 +49,14 @@ class _Nav(MatchNavigator):
     def land(self) -> None:
         """Fire the oldest in-flight poll, as a landed scroll would."""
         self.pending.pop(0)()
+
+    def fire_timers(self) -> int:
+        """Fire every armed confirmation timer; returns how many ran."""
+        timers = list(self._app.timers)  # type: ignore[attr-defined]
+        self._app.timers.clear()  # type: ignore[attr-defined]
+        for cb in timers:
+            cb()
+        return len(timers)
 
 
 def test_a_request_during_an_in_flight_poll_still_measures() -> None:
@@ -102,3 +120,43 @@ def test_the_scheduler_always_settles(rounds: int) -> None:
         drained += 1
     assert not nav.pending
     assert drained <= 2, f"a burst of {rounds} cost {drained} polls"
+
+
+def test_a_late_reflow_is_caught_by_a_confirmation_pass() -> None:
+    """The counts come from LAYOUT, but every trigger is a scroll or a mount, so
+    a reflow that lands after the last scroll would otherwise leave the border
+    describing a layout that is gone — with nothing pending to notice."""
+    nav = _Nav()
+    nav._confirmations_left = 3
+    nav._schedule_measure()
+    nav.land()
+    assert nav.measured == 1
+    assert nav.fire_timers() == 1, "no confirmation was armed after the measure"
+    nav.land()
+    assert nav.measured == 2, "the confirmation did not re-measure"
+
+
+def test_confirmations_are_bounded() -> None:
+    """Bounded, so the confirmation can never degrade into a poll."""
+    nav = _Nav()
+    nav._confirmations_left = 3
+    nav._schedule_measure()
+    rounds = 0
+    while nav.pending or nav._app.timers:  # type: ignore[attr-defined]
+        if nav.pending:
+            nav.land()
+        else:
+            nav.fire_timers()
+        rounds += 1
+        assert rounds < 20, "the confirmation pass never stopped"
+    assert nav.measured == 4, f"expected the measure plus 3 confirmations, got {nav.measured}"
+
+
+def test_a_rebuild_cancels_pending_confirmations() -> None:
+    nav = _Nav()
+    nav._confirmations_left = 3
+    nav._schedule_measure()
+    nav.land()
+    nav._refresh_gen += 1  # a new preview owns the measurement now
+    nav.fire_timers()
+    assert not nav.pending, "a confirmation from the previous preview still fired"
