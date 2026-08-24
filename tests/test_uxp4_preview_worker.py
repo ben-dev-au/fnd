@@ -56,12 +56,16 @@ def two_file_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 async def test_preview_load_dispatches_worker_on_cache_miss(
     cfg: Config, two_file_index: Path
 ) -> None:
-    """First-time _render_full_doc dispatches a preview-load worker."""
+    """A cache MISS dispatches a preview-load worker."""
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         await run_search(pilot, app, "target")
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
+        # Make the miss, don't hope for it: the coverage sweep the cursor-park
+        # load starts decodes NEIGHBOURS into this same cache, and once it wins
+        # ``render_full_doc`` takes the cached path and dispatches nothing.
+        app._preview.chunk_cache.pop(big_group.parent_id, None)
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         # Worker dispatched in the preview-load group.
         worker_groups = [w.group for w in app.workers]

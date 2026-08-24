@@ -3088,14 +3088,14 @@ class DeleteCollectionScreen(Screen[None]):
         index_dir = app._index_dir  # type: ignore[attr-defined]
 
         def _drop() -> str | None:
-            from fnd.index import _ensure_index
+            from fnd.index import _ensure_index, commit
             from fnd.schema import F_COLLECTION
 
             try:
                 index = _ensure_index(index_dir)
                 writer = index.writer(heap_size=50_000_000)
                 writer.delete_documents(F_COLLECTION, name)
-                writer.commit()
+                commit(writer)
                 writer.wait_merging_threads()
             except Exception as e:
                 return str(e)

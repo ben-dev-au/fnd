@@ -88,6 +88,30 @@ def _default_pdf_flat_when_extras_present(  # pyright: ignore[reportUnusedFuncti
         monkeypatch.setenv("_FND_FORCE_FLAT", "pdf")
 
 
+@pytest.fixture(autouse=True)
+def _capture_preview_diagnostics(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[None]:
+    """Tee ``FNDApp._diag_log`` into the ring buffer a failed wait prints.
+
+    The breadcrumbs are otherwise gated behind ``_FND_PREVIEW_DIAG`` and written
+    to a temp file CI neither sets nor collects. The arguments at the 66 call
+    sites are built either way; this only appends them."""
+    from fnd.tui import FNDApp
+    from tests import _failure_state
+
+    original = FNDApp._diag_log
+
+    def _tee(self: FNDApp, msg: str) -> None:
+        _failure_state.record_diag(msg)
+        original(self, msg)
+
+    _failure_state.reset_diag()
+    monkeypatch.setattr(FNDApp, "_diag_log", _tee)
+    yield
+    _failure_state.reset_diag()
+
+
 @pytest.fixture(scope="session")
 def fixtures_dir() -> Path:
     """Path to the small mixed-format test corpus."""

@@ -51,6 +51,52 @@ _WRITER_HEAP = 50_000_000
 # Commit every N chunks so partial-progress is queryable mid-index.
 _COMMIT_BATCH = 500
 
+# Backoff before re-attempting a commit Windows refused. Totals 3.15s across
+# six waits, which covers a scanner's hold on a file it has just seen.
+_COMMIT_RETRY_DELAYS: tuple[float, ...] = (0.05, 0.1, 0.2, 0.4, 0.8, 1.6)
+
+
+def _commit_is_retryable(exc: BaseException) -> bool:
+    """Windows' refusal to replace a file another handle has open.
+
+    Both messages are Win32 text Tantivy passes through verbatim, so matching
+    them cannot fire on POSIX, where the same errno means a real IO fault."""
+    text = str(exc)
+    return "Access is denied" in text or "being used by another process" in text
+
+
+def _commit_attempts(writer: IndexWriter) -> Iterable[float]:
+    """Commit; yield the delay to wait before each re-attempt.
+
+    Tantivy replaces ``meta.json`` by renaming a temp file over it; on Windows
+    that rename gives ``os error 5`` while another handle holds the destination.
+    A failed commit leaves the writer usable with its documents still pending."""
+    for delay in _COMMIT_RETRY_DELAYS:
+        try:
+            writer.commit()
+            return
+        except ValueError as exc:
+            if not _commit_is_retryable(exc):
+                raise
+            yield delay
+    writer.commit()
+
+
+def commit(writer: IndexWriter) -> None:
+    """Commit, waiting out a transient Windows lock on the index metadata."""
+    import time
+
+    for delay in _commit_attempts(writer):
+        time.sleep(delay)
+
+
+async def commit_async(writer: IndexWriter) -> None:
+    """:func:`commit` for the async runner — yields the loop between attempts."""
+    import asyncio
+
+    for delay in _commit_attempts(writer):
+        await asyncio.sleep(delay)
+
 
 def _skip_stamp() -> str:
     """ISO-8601 UTC second-precision timestamp for the [fnd skip ...]
@@ -222,7 +268,7 @@ def build_index(
 
     if rebuild:
         writer.delete_documents(F_COLLECTION, collection)
-        writer.commit()
+        commit(writer)
 
     written = 0
     live_parent_ids: set[str] = set()
@@ -257,16 +303,16 @@ def build_index(
                 )
                 written += 1
                 if written % _COMMIT_BATCH == 0:
-                    writer.commit()
+                    commit(writer)
         except ExtractError as err:
             writer.delete_documents_by_query(_delete_q)
             print(f"[fnd skip {_skip_stamp()}] {err}", file=sys.stderr)
-    writer.commit()
+    commit(writer)
     # See build_index_from_config: skip the prune when a root is missing, or
     # an offline volume would read as "every file was deleted".
     if not rebuild and sources_are_enumerable(Path(r) for r in roots):
         prune_removed_files(index, writer, collection=collection, live_parent_ids=live_parent_ids)
-        writer.commit()
+        commit(writer)
     writer.wait_merging_threads()
     return written
 
@@ -295,7 +341,7 @@ def build_index_from_config(
     writer = index.writer(heap_size=_WRITER_HEAP)
     if rebuild:
         writer.delete_documents(F_COLLECTION, collection)
-        writer.commit()
+        commit(writer)
     written = 0
     live_parent_ids: set[str] = set()
     # Walk per-source so each chunk carries an identifier of which
@@ -324,14 +370,14 @@ def build_index_from_config(
                     )
                     written += 1
                     if written % _COMMIT_BATCH == 0:
-                        writer.commit()
+                        commit(writer)
             except ExtractError as err:
                 # See build_index above — re-stage the same scoped
                 # delete so an extractor crash mid-iteration doesn't
                 # leave partial chunks indexed.
                 writer.delete_documents_by_query(_delete_q)
                 print(f"[fnd skip {_skip_stamp()}] {err}", file=sys.stderr)
-    writer.commit()
+    commit(writer)
     # Rebuild already wiped the collection, so nothing can be stale.
     if not rebuild:
         roots = [Path(s.path).expanduser() for s in config.sources]
@@ -339,7 +385,7 @@ def build_index_from_config(
             prune_removed_files(
                 index, writer, collection=collection, live_parent_ids=live_parent_ids
             )
-            writer.commit()
+            commit(writer)
         else:
             missing = ", ".join(str(r) for r in roots if not r.exists())
             print(
