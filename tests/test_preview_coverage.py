@@ -1516,3 +1516,50 @@ async def test_a_chunk_the_builder_cannot_take_is_walked_but_not_counted() -> No
     assert seen == [(1, 1), (2, 1), (3, 2), (4, 2)], (
         f"a flat-path chunk was counted as captured progress: {seen}"
     )
+
+
+@pytest.mark.asyncio
+async def test_the_freeze_sweep_asks_the_markers_to_re_measure(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """The sweep rewrites ``chunk_widgets`` / ``match_targets``, which is where
+    the ▲▼ markers get their stops — so the counts it invalidates must be
+    re-derived, not left describing the tree it just removed."""
+    index = wide_doc(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups) and app._preview.active is not None,
+            timeout=30.0,
+            message="preview never became active",
+        )
+        container = app._preview.active
+        assert container is not None
+        searcher = app._search.searcher
+        assert searcher is not None
+        chunks = searcher.get_file_chunks(container.parent_doc_id)
+        mounted = sorted(container.mounted_indices)
+        assert len(mounted) >= 2, "need mounted chunks for the sweep to have anything to do"
+
+        asked = 0
+        original = app._match_nav.on_preview_scrolled
+
+        def counted() -> None:
+            nonlocal asked
+            asked += 1
+            original()
+
+        app._match_nav.on_preview_scrolled = counted  # type: ignore[method-assign]
+        before = len(container.chunk_widgets)
+        await app._preview._freeze_chunks_outside_window(
+            container, chunks, mounted[-1] + 1, mounted[-1] + 1
+        )
+        # The positive control: a sweep that froze nothing proves nothing, and
+        # the app freezes on its own during startup.
+        swapped = sum(
+            1 for w in container.chunk_widgets.values() if type(w).__name__ == "FrozenChunkView"
+        )
+        assert swapped, "the sweep froze nothing, so the notification proves nothing"
+        assert before == len(container.chunk_widgets)
+        assert asked, "the sweep swapped chunks without asking the markers to re-measure"

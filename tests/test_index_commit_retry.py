@@ -1,15 +1,7 @@
 """Committing survives Windows' transient refusal to replace the index metadata.
 
-Tantivy replaces ``meta.json`` by renaming a temp file over it. On Windows that
-rename fails with ``ValueError: An IO error occurred: 'Access is denied.
-(os error 5)'`` whenever another handle holds the destination — a scanner
-touching the file it has just seen is enough. It hit nine CI runs between
-2026-08-07 and 2026-08-20, always on Windows, always at a ``commit()``, and a
-different test each time, because any test that indexes can be the one holding
-the file when it happens.
-
-The fault is injected here rather than reproduced: it is another process's
-timing, so no platform can be made to produce it on demand.
+The fault is injected rather than reproduced: it is another process's timing,
+so no platform can be made to produce it on demand.
 """
 
 from __future__ import annotations

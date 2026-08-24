@@ -59,8 +59,8 @@ _COMMIT_RETRY_DELAYS: tuple[float, ...] = (0.05, 0.1, 0.2, 0.4, 0.8, 1.6)
 def _commit_is_retryable(exc: BaseException) -> bool:
     """Windows' refusal to replace a file another handle has open.
 
-    Both messages are Win32 text Tantivy passes through verbatim, so matching
-    them cannot fire on POSIX, where the same errno means a real IO fault."""
+    Win32 text Tantivy passes through verbatim, so this cannot fire on POSIX,
+    where the same errno means a real IO fault."""
     text = str(exc)
     return "Access is denied" in text or "being used by another process" in text
 

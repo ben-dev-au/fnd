@@ -2446,6 +2446,13 @@ class PreviewPresenter:
             with contextlib.suppress(Exception):
                 widget.remove()
             frozen += 1
+        if frozen:
+            # The sweep rewrote ``chunk_widgets`` / ``match_targets`` — the dicts
+            # the ▲▼ markers derive their stops from — so the cached counts were
+            # measured against a layout that no longer exists. Coalesced and
+            # settle-gated inside; a no-op when nothing moved.
+            with contextlib.suppress(Exception):
+                self._app._match_nav.on_preview_scrolled()
         self.diag_log(
             f"mount served={container.served_chunks} built={container.built_chunks} "
             f"parent={container.parent_doc_id[:8]}"

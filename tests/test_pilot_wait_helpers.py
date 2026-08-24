@@ -1,9 +1,7 @@
 """The wait helpers every timing test rests on, tested without an app.
 
-They are the suite's load-proofing, so a defect in them is invisible: the tests
-that use them still pass, they just stop proving anything. Driven here by a
-stand-in Pilot whose ``pause`` is free — the shape ``safe_pause`` degrades to
-when Textual's internal screen wait times out on a saturated runner.
+Driven by a stand-in Pilot whose ``pause`` is free — the shape ``safe_pause``
+degrades to when Textual's internal screen wait times out on a loaded runner.
 """
 
 from __future__ import annotations

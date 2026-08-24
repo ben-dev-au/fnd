@@ -24,6 +24,7 @@ from fnd.index import build_index
 from fnd.query import FileGroup
 from fnd.tui import FNDApp
 from fnd.tui.line_buffer import LineBufferPreview
+from fnd.tui.preview.frozen import FrozenChunkView
 from fnd.tui.preview.presenter import PreviewPresenter
 from tests._pilot_wait import run_search, safe_pause, settle, wait_stable, wait_until
 
@@ -279,6 +280,16 @@ def _coldnav_match_region(
         chunk = ap.match_targets.get(focus_seq) or ap.chunk_widgets.get(focus_seq)
         if chunk is None:
             return None
+        # A frozen chunk has no child widgets to walk — that is what freezing
+        # is — so its match resolves from the row recorded at capture time, the
+        # way ``enumerate_stop_regions`` resolves one. Walking children only
+        # made this probe answer None for good once the sweep reached the focus
+        # chunk, and every wait gated on it then ran out its whole budget.
+        if isinstance(chunk, FrozenChunkView):
+            row = chunk.frozen.first_match_row
+            if row is None or chunk.region.height == 0:
+                return None
+            return Region(chunk.region.x, chunk.region.y + row, chunk.region.width, 1)
         for w in chunk.query("*"):
             if w is chunk:
                 continue
@@ -511,6 +522,49 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
             f"(pane.scroll_y={pane.scroll_y}) — gating on is_settling did not "
             f"wait for the real landing"
         )
+
+
+@pytest.mark.asyncio
+async def test_the_landing_probe_survives_the_focus_chunk_freezing(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """Freezing must not blind the two cold-nav tests above.
+
+    Their waits end in ``match_region() is not None``. A frozen chunk has no
+    child widgets, so a probe that walks children answers None for good the
+    moment the sweep reaches the focus chunk — and the wait then burns its whole
+    budget on a preview that is correct.
+    """
+    app = _build_coldnav_app(tmp_path, tmp_index_dir)
+    async with app.run_test(size=(120, 40)) as pilot:
+        rtree = app.query_one("#results_pane", Tree)
+        target_group = await _coldnav_run_query_and_prefetch(app, pilot)
+        focus_seq = target_group.hits[0].chunk_seq
+        match_region = _coldnav_match_region(app, target_group.parent_id, focus_seq)
+        rtree.focus()
+        await safe_pause(pilot)
+        rtree.move_cursor(rtree.root.children[1])
+        await wait_until(
+            pilot,
+            lambda: (
+                app._preview.active is not None
+                and app._preview.active.parent_doc_id == target_group.parent_id
+                and match_region() is not None
+            ),
+            timeout=20.0,
+            message="cold-nav target never activated",
+        )
+        container = app._preview.active
+        assert container is not None
+        chunks = app._preview.chunk_cache[target_group.parent_id]
+        mounted = sorted(container.mounted_indices)
+        await app._preview._freeze_chunks_outside_window(
+            container, chunks, mounted[-1] + 1, mounted[-1] + 1
+        )
+        await safe_pause(pilot)
+        frozen = sum(1 for w in container.chunk_widgets.values() if isinstance(w, FrozenChunkView))
+        assert frozen, "the sweep froze nothing, so this proves nothing"
+        assert match_region() is not None, "the probe went blind once the focus chunk froze"
 
 
 def _reading_doc(tmp_path: Path, tmp_index_dir: Path) -> Path:

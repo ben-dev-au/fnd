@@ -14,11 +14,10 @@ class _StubApp:
 
 
 def test_manual_scroll_clears_last_target() -> None:
-    nav = MatchNavigator.__new__(MatchNavigator)
-    nav._app = _StubApp()  # type: ignore[assignment]
+    # The real constructor against a stub app: hand-copying its fields made
+    # every new piece of navigator state fail here rather than where it was
+    # forgotten.
+    nav = MatchNavigator(_StubApp())  # type: ignore[arg-type]
     nav._last_target = 3
-    nav._measure_pending = False
-    nav._above = nav._below = 0  # set by __init__; bypassed by __new__ here
-    nav._refresh_gen = 0  # measurement polls are generation-tied
     nav.on_manual_scroll()
     assert nav._last_target is None

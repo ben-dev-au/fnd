@@ -161,6 +161,11 @@ class MatchNavigator:
         self._above = 0
         self._below = 0
         self._measure_pending = False
+        # A re-measure asked for while one was already in flight. Dropping it
+        # is what leaves the border showing a viewport the preview has left:
+        # the in-flight poll can land on the PRE-scroll layout, so the request
+        # it swallows is the one that would have caught the real position.
+        self._measure_again = False
         self._last_target: int | None = None
         # Bumped per rebuild() so a superseded count tick self-cancels.
         self._refresh_gen = 0
@@ -394,8 +399,10 @@ class MatchNavigator:
         self._above = self._below = self._count = 0
         # Release the coalescing latch: the in-flight poll (if any) belongs to
         # the previous generation and will now exit without measuring, so
-        # leaving the latch set would drop every request for THIS preview.
+        # leaving the latch set would drop every request for THIS preview. The
+        # deferred request it swallowed belongs to that generation too.
         self._measure_pending = False
+        self._measure_again = False
         self._notify()
         self._await_mount(self._refresh_gen, retries=60)
 
@@ -536,15 +543,23 @@ class MatchNavigator:
         preview were dropped as duplicates.
         """
         if self._measure_pending:
+            self._measure_again = True
             return
         self._measure_pending = True
         gen = self._refresh_gen
 
         def _landed() -> None:
-            if gen != self._refresh_gen:
-                return  # superseded; the newer rebuild owns the measurement
+            # Cleared BEFORE the generation check: returning with it still set
+            # left the flag true forever, and every later request then returned
+            # at the guard above — the markers stopped updating for the session.
             self._measure_pending = False
+            if gen != self._refresh_gen:
+                self._measure_again = False
+                return  # superseded; the newer rebuild owns the measurement
             self._measure_offscreen()
+            if self._measure_again:
+                self._measure_again = False
+                self._schedule_measure()
 
         self._poll_until_landed(
             30, None, is_valid=lambda: gen == self._refresh_gen, on_landed=_landed

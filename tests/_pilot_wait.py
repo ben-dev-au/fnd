@@ -149,6 +149,7 @@ async def wait_until(
             # A predicate that raises every round reads identically to one that
             # is merely False, and the two want opposite fixes.
             last_error = exc
+        iters += 1
         if time.monotonic() >= deadline:
             raised = f" (predicate last raised {last_error!r})" if last_error is not None else ""
             raise AssertionError(
@@ -160,11 +161,10 @@ async def wait_until(
         # Alternate idle drains and short sleeps. ``safe_pause`` flushes
         # call_later queues (when load allows); ``sleep(poll)`` keeps
         # progress when the drain itself times out.
-        if iters % 2 == 0:
+        if iters % 2 == 1:
             await safe_pause(pilot)
         else:
             await asyncio.sleep(poll)
-        iters += 1
 
 
 async def run_search(pilot: Pilot[None], app: Any, query: str, *, timeout: float = 10.0) -> None:

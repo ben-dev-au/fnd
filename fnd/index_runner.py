@@ -908,10 +908,9 @@ async def run_indexer(
         for path, source_id in paths:
             if cancel is not None and cancel.is_set():
                 # Save everything we processed before cancel fired so
-                # the user doesn't lose those files on the next launch. Sync, so
-                # a cancel arriving during the retry backoff cannot abandon it.
+                # the user doesn't lose those files on the next launch.
                 with contextlib.suppress(Exception):
-                    commit(writer)
+                    await commit_async(writer)
                 yield _emit("cancelled")
                 # Leave state file in place so we can resume.
                 return
@@ -962,7 +961,7 @@ async def run_indexer(
                 # outstanding. It is not a failure — commit what the run
                 # already wrote and end on the truthful terminal event.
                 with contextlib.suppress(Exception):
-                    commit(writer)
+                    await commit_async(writer)
                 yield _emit("cancelled")
                 return
             file_elapsed_ms = (time.perf_counter() - t_file) * 1000.0

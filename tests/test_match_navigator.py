@@ -42,16 +42,12 @@ class FakeApp:
 
 
 def _nav(stops: list[int], vh: int = 20) -> MatchNavigator:
-    nav = MatchNavigator.__new__(MatchNavigator)  # bypass app wiring
-    nav._app = FakeApp()  # type: ignore[assignment]
-    nav._last_target = None
+    # The real ``__init__`` against a fake app, not a hand-copied set of its
+    # fields: it only stores ``app`` and zeroes plain attributes, and copying it
+    # here made every new piece of navigator state an AttributeError in these
+    # tests instead of in the code that forgot it.
+    nav = MatchNavigator(FakeApp())  # type: ignore[arg-type]
     nav._count = len(stops)
-    nav._above = 0
-    nav._below = 0
-    nav._measure_pending = False
-    # Measurement polls are tied to the rebuild generation so a superseded one
-    # can't repopulate a newer preview's counts; the stand-in has to carry it.
-    nav._refresh_gen = 0
     pane = FakePane(vh)
     # Inject the pane + a fixed region-stop list so _go/next use them, plus a
     # wide chunk extent so scoping keeps every stop (the app derives this from
@@ -151,8 +147,7 @@ def _hint_nav(current: object, *, match_target: object = None) -> MatchNavigator
     app._preview_scroll = _Ctrl()  # type: ignore[attr-defined]
     app._preview = _Preview()  # type: ignore[attr-defined]
 
-    nav = MatchNavigator.__new__(MatchNavigator)
-    nav._app = app  # type: ignore[assignment]
+    nav = MatchNavigator(app)  # type: ignore[arg-type]
     nav._count = 0  # the file-wide fallback must NOT be what carries this
     return nav
 

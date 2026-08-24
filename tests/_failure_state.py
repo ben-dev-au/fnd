@@ -136,6 +136,9 @@ def _match_nav_state(app: Any) -> str:
             ("count", lambda: nav.count),
             ("above", lambda: nav.above),
             ("below", lambda: nav.below),
+            # The cache against the truth. They disagree only when a re-measure
+            # was lost, which reads identically to a bad landing without this.
+            ("fresh", lambda: nav._offscreen_views(nav._pane())),
             ("position", lambda: nav.position),
             ("measure_pending", lambda: nav._measure_pending),
             # The rows themselves, not just how many. above/below is derived
