@@ -14,11 +14,21 @@ import pytest
 from fnd.tui.match_navigator import MatchNavigator
 
 
+class _Ctrl:
+    def __init__(self, nav: Any) -> None:
+        self._nav = nav
+
+    @property
+    def is_settling(self) -> bool:
+        return bool(self._nav.settling)
+
+
 class _App:
-    """Just the timer facility the confirmation pass needs."""
+    """Just the timer facility and the settle flag a confirmation consults."""
 
     def __init__(self) -> None:
         self.timers: list[Any] = []
+        self._preview_scroll: Any = None
 
     def set_timer(self, delay: float, callback: Any, *, name: str = "") -> None:
         self.timers.append(callback)
@@ -35,11 +45,13 @@ class _Nav(MatchNavigator):
 
     def __init__(self) -> None:
         super().__init__(_App())  # type: ignore[arg-type]
+        self._app._preview_scroll = _Ctrl(self)  # type: ignore[attr-defined]
         self.pending: list[Any] = []
         self.measured = 0
         # Successive values the region read yields, so a layout that is still
         # moving can be scripted; the last one repeats once exhausted.
         self.readings: list[tuple[int, int]] = []
+        self.settling = False
 
     def _poll_until_landed(  # type: ignore[override]
         self, retries: int, last_scroll: int | None, *, is_valid: Any, on_landed: Any
@@ -135,14 +147,28 @@ def test_a_late_reflow_is_caught_by_a_confirmation_pass() -> None:
     describing a layout that is gone — with nothing pending to notice."""
     nav = _Nav()
     nav._open_confirmation_window()
-    nav.readings = [(0, 0), (0, 1), (0, 1)]
+    nav.readings = [(0, 0), (0, 1)]
     nav._schedule_measure()
     nav.land()
     assert nav.measured == 1
     assert nav.fire_timers() == 1, "no confirmation was armed after the measure"
-    nav.land()
     assert nav.measured == 2, "the confirmation did not re-measure"
     assert (nav.above, nav.below) == (0, 1), "the late reading was not adopted"
+
+
+def test_a_confirmation_skips_a_settling_navigation() -> None:
+    """A confirmation must never read regions while a navigation is landing —
+    that is the one path the surrounding code requires be left clear."""
+    nav = _Nav()
+    nav._open_confirmation_window()
+    nav.settling = True
+    nav.readings = [(1, 1)]
+    nav._schedule_measure()
+    nav.land()
+    before = nav.measured
+    assert nav.fire_timers() == 1
+    assert nav.measured == before, "a confirmation read regions mid-settle"
+    assert nav._app.timers, "a skipped tick must still arm the next one"  # type: ignore[attr-defined]
 
 
 def test_confirmation_cannot_outlive_its_window() -> None:
@@ -177,10 +203,8 @@ def test_the_window_keeps_re_measuring_until_it_closes() -> None:
     nav.land()
     for _ in range(3):
         assert nav.fire_timers() == 1, "the loop stopped while its window was open"
-        nav.land()
     nav.readings = [(0, 1)]
     assert nav.fire_timers() == 1
-    nav.land()
     assert (nav.above, nav.below) == (0, 1), "a late change was not picked up"
 
 

@@ -532,10 +532,25 @@ class MatchNavigator:
         # which is the pre-existing behaviour.
         with contextlib.suppress(Exception):
             self._app.set_timer(
-                _CONFIRM_DELAY,
-                lambda: self._schedule_measure() if gen == self._refresh_gen else None,
-                name="match-nav-confirm",
+                _CONFIRM_DELAY, lambda: self._confirm_tick(gen), name="match-nav-confirm"
             )
+
+    def _confirm_tick(self, gen: int) -> None:
+        """One confirmation: read now unless a navigation is mid-settle.
+
+        Deliberately NOT routed through :meth:`_schedule_measure`. That waits
+        for a landing by rescheduling itself on every refresh, and a window's
+        worth of those is per-frame work on the one path the surrounding code
+        says must stay clear — the cold-nav settle. A skipped tick costs
+        nothing; the next one is 250ms away.
+        """
+        if gen != self._refresh_gen:
+            return
+        ctrl = getattr(self._app, "_preview_scroll", None)
+        if ctrl is None or not ctrl.is_settling:
+            self._measure_offscreen()
+        if time.monotonic() < self._confirm_until:
+            self._arm_confirmation()
 
     def _measure_offscreen(self) -> None:
         """Re-derive the cached ▲/▼ view counts (current result, above/below the
