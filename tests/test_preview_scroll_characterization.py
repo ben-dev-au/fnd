@@ -564,10 +564,17 @@ async def test_the_landing_probe_survives_the_focus_chunk_freezing(
         await app._preview._freeze_chunks_outside_window(
             container, chunks, mounted[-1] + 1, mounted[-1] + 1
         )
-        await safe_pause(pilot)
         frozen = sum(1 for w in container.chunk_widgets.values() if isinstance(w, FrozenChunkView))
         assert frozen, "the sweep froze nothing, so this proves nothing"
-        assert match_region() is not None, "the probe went blind once the focus chunk froze"
+        # The stand-in has to lay out before it can resolve a row, and one pause
+        # is a wait only while the machine is idle — the defect this whole file
+        # is about.
+        await wait_until(
+            pilot,
+            lambda: match_region() is not None,
+            timeout=20.0,
+            message="the probe went blind once the focus chunk froze",
+        )
 
 
 def _reading_doc(tmp_path: Path, tmp_index_dir: Path) -> Path:
