@@ -60,12 +60,13 @@ def _view_buckets(ys: list[int], vh: int) -> int:
     return views
 
 
-# Re-measure spacing, and the wall-clock window a navigation keeps re-measuring
-# in. Convergence decides when to stop — two readings that agree — because a
-# fixed number of passes is the same fixed-tick guess this cache already got
-# wrong once, just spelled differently. The window only bounds the worst case.
-_CONFIRM_DELAY = 0.15
-_CONFIRM_BUDGET = 3.0
+# Re-measure spacing, and the window a navigation keeps re-measuring in. The
+# window is what stops it, not agreement between readings: two equal samples
+# prove only that two samples matched, and this cache has already been wrong
+# that way twice. Measured at 1.6ms a read over 45 mounted chunks, so the ~40
+# reads spread across the window cost ~60ms of CPU, and nothing once it closes.
+_CONFIRM_DELAY = 0.25
+_CONFIRM_BUDGET = 10.0
 
 
 def offscreen_views(ys: list[int], top: int, bottom: int, vh: int) -> tuple[int, int]:
@@ -595,13 +596,11 @@ class MatchNavigator:
                 self._measure_again = False
                 return  # superseded; the newer rebuild owns the measurement
             self._measure_offscreen()
-            reading = (self._above, self._below)
-            settled = reading == self._last_measured
-            self._last_measured = reading
+            self._last_measured = (self._above, self._below)
             if self._measure_again:
                 self._measure_again = False
                 self._schedule_measure()
-            elif not settled and time.monotonic() < self._confirm_until:
+            elif time.monotonic() < self._confirm_until:
                 self._arm_confirmation()
 
         self._poll_until_landed(

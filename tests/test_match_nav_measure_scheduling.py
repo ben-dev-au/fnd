@@ -145,22 +145,6 @@ def test_a_late_reflow_is_caught_by_a_confirmation_pass() -> None:
     assert (nav.above, nav.below) == (0, 1), "the late reading was not adopted"
 
 
-def test_confirmation_stops_as_soon_as_two_readings_agree() -> None:
-    """Convergence, not a count: it keeps looking while the layout moves and
-    stops the moment it holds still."""
-    nav = _Nav()
-    nav._open_confirmation_window()
-    nav.readings = [(0, 0), (1, 0), (0, 1), (0, 1), (9, 9)]
-    nav._schedule_measure()
-    rounds = 0
-    while nav.pending or nav._app.timers:  # type: ignore[attr-defined]
-        nav.land() if nav.pending else nav.fire_timers()
-        rounds += 1
-        assert rounds < 20, "the confirmation pass never stopped"
-    assert nav.measured == 4, f"expected to stop on the repeat, took {nav.measured} reads"
-    assert (nav.above, nav.below) == (0, 1)
-
-
 def test_confirmation_cannot_outlive_its_window() -> None:
     """A layout that never holds still must not keep the loop open."""
     nav = _Nav()
@@ -181,3 +165,30 @@ def test_a_rebuild_cancels_pending_confirmations() -> None:
     nav._refresh_gen += 1  # a new preview owns the measurement now
     nav.fire_timers()
     assert not nav.pending, "a confirmation from the previous preview still fired"
+
+
+def test_the_window_keeps_re_measuring_until_it_closes() -> None:
+    """Agreement between two samples is not evidence the layout has stopped —
+    it has been wrong that way twice. The window is what stops the loop."""
+    nav = _Nav()
+    nav._open_confirmation_window()
+    nav.readings = [(1, 0)]  # a reading that repeats, then changes late
+    nav._schedule_measure()
+    nav.land()
+    for _ in range(3):
+        assert nav.fire_timers() == 1, "the loop stopped while its window was open"
+        nav.land()
+    nav.readings = [(0, 1)]
+    assert nav.fire_timers() == 1
+    nav.land()
+    assert (nav.above, nav.below) == (0, 1), "a late change was not picked up"
+
+
+def test_the_window_closes() -> None:
+    nav = _Nav()
+    nav._open_confirmation_window()
+    nav._confirm_until = 0.0
+    nav.readings = [(1, 0)]
+    nav._schedule_measure()
+    nav.land()
+    assert not nav._app.timers, "a closed window still armed a confirmation"  # type: ignore[attr-defined]
