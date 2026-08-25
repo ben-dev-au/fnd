@@ -176,7 +176,7 @@ def test_confirmation_cannot_outlive_its_window() -> None:
     nav = _Nav()
     nav._open_confirmation_window()
     nav._app.timers.clear()  # type: ignore[attr-defined]
-    nav._confirm_armed = False
+    nav._confirm_armed_gen = None
     nav._confirm_until = 0.0  # window already closed
     nav.readings = [(i, i) for i in range(20)]
     nav._schedule_measure()
@@ -214,12 +214,25 @@ def test_the_window_closes() -> None:
     nav = _Nav()
     nav._open_confirmation_window()
     nav._app.timers.clear()  # type: ignore[attr-defined]
-    nav._confirm_armed = False
+    nav._confirm_armed_gen = None
     nav._confirm_until = 0.0
     nav.readings = [(1, 0)]
     nav._schedule_measure()
     nav.land()
     assert not nav._app.timers, "a closed window still armed a confirmation"  # type: ignore[attr-defined]
+
+
+def test_a_rebuild_leaves_the_new_navigation_with_a_chain() -> None:
+    """A chain armed under the previous generation is dead on arrival, and a
+    bare "a chain exists" guard cannot say so — it just declines to arm the one
+    the new navigation needs, leaving an open window with nothing running."""
+    nav = _Nav()
+    nav._open_confirmation_window()  # generation 0 arms a chain
+    nav._refresh_gen += 1  # a rebuild supersedes it, timer still pending
+    nav._open_confirmation_window()
+    assert len(nav._app.timers) == 2, "the new generation was refused a chain"  # type: ignore[attr-defined]
+    nav.fire_timers()  # the stale one no-ops, the live one measures and re-arms
+    assert nav._app.timers, "the navigation was left with an open window and no chain"  # type: ignore[attr-defined]
 
 
 def test_only_one_confirmation_chain_runs_at_a_time() -> None:

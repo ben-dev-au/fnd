@@ -107,3 +107,21 @@ async def test_commit_async_retries_without_blocking_the_loop(
         counter.cancel()
     assert writer.attempts == 3
     assert ticks > 0, "commit_async blocked the loop instead of yielding"
+
+
+_STORE_WRITE_DEAD = ValueError(
+    "Failed to open file for write: 'IoError { io_error: Custom { kind: "
+    'PermissionDenied, error: "Access is denied." }, filepath: "...store" }\''
+)
+
+
+def test_a_store_write_refusal_is_never_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """It carries the same ``Access is denied.`` as the rename failure and is
+    not recoverable: measured against tantivy 0.26.0, the writer is dead after
+    it and every later commit returns success while discarding its documents.
+    Retrying turns a loud abort into a silent one."""
+    _fast_backoff(monkeypatch)
+    writer = _FlakyWriter(fail_times=99, error=_STORE_WRITE_DEAD)
+    with pytest.raises(ValueError, match="Failed to open file for write"):
+        commit(writer)  # type: ignore[arg-type]
+    assert writer.attempts == 1

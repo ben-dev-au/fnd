@@ -287,7 +287,10 @@ def _coldnav_match_region(
         # chunk, and every wait gated on it then ran out its whole budget.
         if isinstance(chunk, FrozenChunkView):
             row = chunk.frozen.first_match_row
-            if row is None or chunk.region.height == 0:
+            # Same bounds check as ``enumerate_stop_regions``: a clipped view
+            # resolves nothing there, and a probe that answers anyway is
+            # claiming a parity it does not have.
+            if row is None or not (0 <= row < chunk.region.height):
                 return None
             return Region(chunk.region.x, chunk.region.y + row, chunk.region.width, 1)
         for w in chunk.query("*"):

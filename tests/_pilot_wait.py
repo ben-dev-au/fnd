@@ -127,8 +127,13 @@ async def wait_until(
     timeout: float = 10.0,
     poll: float = 0.02,
     message: str = "",
+    quiet: bool = False,
 ) -> None:
     """Poll ``predicate`` until truthy or ``timeout`` (wall-clock) elapses.
+
+    ``quiet`` skips the state snapshot for callers that CATCH the timeout and
+    carry on — there the snapshot is three region walks fired mid-navigation,
+    in the files most sensitive to exactly that.
 
     Each iteration: evaluate predicate, then yield the event loop via
     ``safe_pause`` (idle drain) or a small sleep so background tasks
@@ -155,8 +160,8 @@ async def wait_until(
             raise AssertionError(
                 f"wait_until gave up after {time.monotonic() - started:.1f}s "
                 f"(budget {timeout}s, {iters} polls): "
-                f"{message or 'predicate stayed False'}{raised}\n"
-                f"{describe(pilot)}"
+                f"{message or 'predicate stayed False'}{raised}"
+                f"{'' if quiet else chr(10) + describe(pilot)}"
             )
         # Alternate idle drains and short sleeps. ``safe_pause`` flushes
         # call_later queues (when load allows); ``sleep(poll)`` keeps

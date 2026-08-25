@@ -44,6 +44,7 @@ async def _settle(pilot) -> None:  # type: ignore[no-untyped-def]
             built,
             timeout=15.0,
             message="no built FNDMarkdown mounted after focus",
+            quiet=True,  # caught below as control flow
         )
     except AssertionError:
         # Some tests (fence, table) mount via different paths; fall

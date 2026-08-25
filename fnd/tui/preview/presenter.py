@@ -2447,11 +2447,9 @@ class PreviewPresenter:
                 widget.remove()
             frozen += 1
         if frozen:
-            # The sweep rewrote ``chunk_widgets`` / ``match_targets`` — the dicts
-            # the ▲▼ markers derive their stops from — so the cached counts were
-            # measured against a layout that no longer exists. Deferred, because
-            # the request can resolve to a full region walk inline and the sweep
-            # is measured for how long it holds the loop.
+            # The sweep rewrote the dicts the ▲▼ stops come from. Deferred:
+            # the request can resolve to a full region walk inline, and the
+            # sweep is measured for how long it holds the loop.
             with contextlib.suppress(Exception):
                 self._app.call_after_refresh(self._app._match_nav.on_preview_scrolled)
         self.diag_log(

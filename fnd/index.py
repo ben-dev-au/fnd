@@ -59,9 +59,13 @@ _COMMIT_RETRY_DELAYS: tuple[float, ...] = (0.05, 0.1, 0.2, 0.4, 0.8, 1.6)
 def _commit_is_retryable(exc: BaseException) -> bool:
     """Windows' refusal to replace a file another handle has open.
 
-    Win32 text Tantivy passes through verbatim, so this cannot fire on POSIX,
-    where the same errno means a real IO fault."""
+    The prefix is what makes this safe, not the Win32 text: a store-write
+    refusal (``Failed to open file for write:``) prints the same
+    ``Access is denied.`` and leaves the writer DEAD — measured, every later
+    commit then returns success and discards its documents in silence."""
     text = str(exc)
+    if not text.startswith("An IO error occurred:"):
+        return False
     return "Access is denied" in text or "being used by another process" in text
 
 

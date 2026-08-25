@@ -92,7 +92,11 @@ async def _walk_to_stop_count(pilot: Pilot[None], app: FNDApp, want: int, key: s
             return True
         await safe_press(pilot, key)
         try:
-            await wait_until(pilot, lambda: _current_stop_count(app) == want, timeout=10.0)
+            # Caught below as control flow, so no snapshot: it is three
+            # region walks fired mid-navigation.
+            await wait_until(
+                pilot, lambda: _current_stop_count(app) == want, timeout=10.0, quiet=True
+            )
         except AssertionError:
             continue
         return True

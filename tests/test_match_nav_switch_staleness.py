@@ -74,7 +74,9 @@ async def _walk_to(pilot: Pilot[None], app: FNDApp, want: Callable[[int], bool],
             return True
         await safe_press(pilot, key)
         try:
-            await wait_until(pilot, lambda: want(_stops(app)), timeout=10.0)
+            # Caught below as control flow, so no snapshot: it is three
+            # region walks fired mid-navigation.
+            await wait_until(pilot, lambda: want(_stops(app)), timeout=10.0, quiet=True)
         except AssertionError:
             continue
         return True
