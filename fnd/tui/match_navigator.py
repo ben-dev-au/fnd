@@ -11,6 +11,7 @@ resolution + scrolling live on :class:`MatchNavigator` below.
 from __future__ import annotations
 
 import contextlib
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -59,11 +60,12 @@ def _view_buckets(ys: list[int], vh: int) -> int:
     return views
 
 
-# Re-measures a navigation gets after its first, and the gap between them. Three
-# at 150ms covers a reflow landing up to ~0.5s after the scroll did, which is
-# what a loaded runner produces; the cap is what stops it becoming a poll.
-_CONFIRMATIONS = 3
+# Re-measure spacing, and the wall-clock window a navigation keeps re-measuring
+# in. Convergence decides when to stop — two readings that agree — because a
+# fixed number of passes is the same fixed-tick guess this cache already got
+# wrong once, just spelled differently. The window only bounds the worst case.
 _CONFIRM_DELAY = 0.15
+_CONFIRM_BUDGET = 3.0
 
 
 def offscreen_views(ys: list[int], top: int, bottom: int, vh: int) -> tuple[int, int]:
@@ -173,13 +175,14 @@ class MatchNavigator:
         # the in-flight poll can land on the PRE-scroll layout, so the request
         # it swallows is the one that would have caught the real position.
         self._measure_again = False
-        # Confirmation passes left for this navigation. The counts are derived
-        # from LAYOUT, but every trigger that refreshes them is a scroll or a
-        # mount — so a late reflow (a table sizing its rows, a capture swapped
-        # in) leaves the border describing a layout that is gone, with nothing
-        # watching. Rather than enumerate the events that can move a stop, the
-        # measurement re-confirms itself a bounded number of times.
-        self._confirmations_left = 0
+        # The counts are derived from LAYOUT, but every trigger that refreshes
+        # them is a scroll or a mount — so a late reflow (a table sizing its
+        # rows, a capture swapped in) leaves the border describing a layout that
+        # is gone, with nothing watching. Rather than enumerate the events that
+        # can move a stop, the measurement re-confirms itself until two readings
+        # agree, inside this deadline.
+        self._confirm_until = 0.0
+        self._last_measured: tuple[int, int] | None = None
         self._last_target: int | None = None
         # Bumped per rebuild() so a superseded count tick self-cancels.
         self._refresh_gen = 0
@@ -417,7 +420,7 @@ class MatchNavigator:
         # deferred request it swallowed belongs to that generation too.
         self._measure_pending = False
         self._measure_again = False
-        self._confirmations_left = _CONFIRMATIONS
+        self._open_confirmation_window()
         self._notify()
         self._await_mount(self._refresh_gen, retries=60)
 
@@ -514,6 +517,11 @@ class MatchNavigator:
             on_landed=self._measure_offscreen,
         )
 
+    def _open_confirmation_window(self) -> None:
+        """A navigation starts the layout moving; re-measure until it stops."""
+        self._confirm_until = time.monotonic() + _CONFIRM_BUDGET
+        self._last_measured = None
+
     def _arm_confirmation(self) -> None:
         """Re-measure once more after the layout has had time to stop moving."""
         import contextlib
@@ -553,7 +561,7 @@ class MatchNavigator:
         Clear the old markers now, reset the burst memory (a new result is a
         fresh nav), and re-measure once the reveal position settles."""
         self._last_target = None
-        self._confirmations_left = _CONFIRMATIONS
+        self._open_confirmation_window()
         if (self._above, self._below) != (0, 0):
             self._above = self._below = 0
             self._notify()
@@ -587,11 +595,13 @@ class MatchNavigator:
                 self._measure_again = False
                 return  # superseded; the newer rebuild owns the measurement
             self._measure_offscreen()
+            reading = (self._above, self._below)
+            settled = reading == self._last_measured
+            self._last_measured = reading
             if self._measure_again:
                 self._measure_again = False
                 self._schedule_measure()
-            elif self._confirmations_left > 0:
-                self._confirmations_left -= 1
+            elif not settled and time.monotonic() < self._confirm_until:
                 self._arm_confirmation()
 
         self._poll_until_landed(

@@ -37,6 +37,9 @@ class _Nav(MatchNavigator):
         super().__init__(_App())  # type: ignore[arg-type]
         self.pending: list[Any] = []
         self.measured = 0
+        # Successive values the region read yields, so a layout that is still
+        # moving can be scripted; the last one repeats once exhausted.
+        self.readings: list[tuple[int, int]] = []
 
     def _poll_until_landed(  # type: ignore[override]
         self, retries: int, last_scroll: int | None, *, is_valid: Any, on_landed: Any
@@ -44,6 +47,10 @@ class _Nav(MatchNavigator):
         self.pending.append(on_landed)
 
     def _measure_offscreen(self) -> None:  # type: ignore[override]
+        if self.readings:
+            self._above, self._below = self.readings[0]
+            if len(self.readings) > 1:
+                self.readings.pop(0)
         self.measured += 1
 
     def land(self) -> None:
@@ -127,34 +134,48 @@ def test_a_late_reflow_is_caught_by_a_confirmation_pass() -> None:
     a reflow that lands after the last scroll would otherwise leave the border
     describing a layout that is gone — with nothing pending to notice."""
     nav = _Nav()
-    nav._confirmations_left = 3
+    nav._open_confirmation_window()
+    nav.readings = [(0, 0), (0, 1), (0, 1)]
     nav._schedule_measure()
     nav.land()
     assert nav.measured == 1
     assert nav.fire_timers() == 1, "no confirmation was armed after the measure"
     nav.land()
     assert nav.measured == 2, "the confirmation did not re-measure"
+    assert (nav.above, nav.below) == (0, 1), "the late reading was not adopted"
 
 
-def test_confirmations_are_bounded() -> None:
-    """Bounded, so the confirmation can never degrade into a poll."""
+def test_confirmation_stops_as_soon_as_two_readings_agree() -> None:
+    """Convergence, not a count: it keeps looking while the layout moves and
+    stops the moment it holds still."""
     nav = _Nav()
-    nav._confirmations_left = 3
+    nav._open_confirmation_window()
+    nav.readings = [(0, 0), (1, 0), (0, 1), (0, 1), (9, 9)]
     nav._schedule_measure()
     rounds = 0
     while nav.pending or nav._app.timers:  # type: ignore[attr-defined]
-        if nav.pending:
-            nav.land()
-        else:
-            nav.fire_timers()
+        nav.land() if nav.pending else nav.fire_timers()
         rounds += 1
         assert rounds < 20, "the confirmation pass never stopped"
-    assert nav.measured == 4, f"expected the measure plus 3 confirmations, got {nav.measured}"
+    assert nav.measured == 4, f"expected to stop on the repeat, took {nav.measured} reads"
+    assert (nav.above, nav.below) == (0, 1)
+
+
+def test_confirmation_cannot_outlive_its_window() -> None:
+    """A layout that never holds still must not keep the loop open."""
+    nav = _Nav()
+    nav._open_confirmation_window()
+    nav._confirm_until = 0.0  # window already closed
+    nav.readings = [(i, i) for i in range(20)]
+    nav._schedule_measure()
+    nav.land()
+    assert not nav._app.timers, "a closed window still armed a confirmation"  # type: ignore[attr-defined]
 
 
 def test_a_rebuild_cancels_pending_confirmations() -> None:
     nav = _Nav()
-    nav._confirmations_left = 3
+    nav._open_confirmation_window()
+    nav.readings = [(0, 0), (1, 1)]
     nav._schedule_measure()
     nav.land()
     nav._refresh_gen += 1  # a new preview owns the measurement now
