@@ -207,6 +207,14 @@ async def test_n_stays_within_the_current_result(cfg: Config, flashcards_index: 
         assert len(nav._chunk_stops(pane)) == 2, "scoped stops should be the table's two matches"
         # The adjacent Summary result's match is mounted too, so the UNSCOPED set
         # is larger — proving the scope is actively excluding another result.
+        # That neighbour arrives on the background fill, so it is waited for:
+        # asserting it straight away tested how fast the runner mounts.
+        await wait_until(
+            pilot,
+            lambda: len(nav._region_stops(pane)) > len(nav._chunk_stops(pane)),
+            timeout=30.0,
+            message="the neighbouring result's match never mounted, so scope excludes nothing",
+        )
         assert len(nav._region_stops(pane)) > len(nav._chunk_stops(pane)), (
             "expected a neighbouring result's match to be mounted and excluded by scope"
         )

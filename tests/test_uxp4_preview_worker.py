@@ -81,6 +81,8 @@ async def test_preview_load_dispatches_worker_on_cache_miss(
         # Cache hit path: no new worker, no progress, no spinner.
         before_workers = len(app.workers)
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
+        # A cache hit dispatches nothing, so there is no outcome to wait for —
+        # one drain is the whole point, and the assertions are about absence.
         await pilot.pause()
         assert app._preview.load_progress is None
         assert len(app.workers) <= before_workers
@@ -294,10 +296,13 @@ async def test_preview_title_no_longer_carries_progress_text(
         title = app._preview_title()
         assert "loading" not in title.lower()
         assert "chunks" not in title.lower()
-        # Drain.
-        await pilot.pause()
-        await pilot.pause()
-        await pilot.pause()
-        # After load the title shows the file basename.
-        title = app._preview_title()
-        assert "big.md" in title
+        # After load the title shows the file basename. Gated on that, not on
+        # three pauses: the load is a decode worker and a mount, and Windows
+        # finished neither in three ticks — four attempts, four failures, the
+        # title still naming the cursor-parked file.
+        await wait_until(
+            pilot,
+            lambda: "big.md" in app._preview_title(),
+            timeout=30.0,
+            message="the preview title never named the loaded file",
+        )
