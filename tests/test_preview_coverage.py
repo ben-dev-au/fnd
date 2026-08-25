@@ -353,8 +353,13 @@ async def test_the_freeze_sweep_yields_between_chunks(
 
     swept: list[int] = []
 
+    # Ticker turns seen at each freeze, so the yields can be counted BETWEEN the
+    # first and last chunk rather than across the whole sweep.
+    turns_at_freeze: list[int] = []
+
     def slow_freeze(chunk, chunk_seq):  # type: ignore[no-untyped-def]
         swept.append(chunk_seq)
+        turns_at_freeze.append(len(gaps))
         time.sleep(0.01)
         return real_freeze(chunk, chunk_seq)
 
@@ -415,17 +420,20 @@ async def test_the_freeze_sweep_yields_between_chunks(
         "sweep from a yielding one, so this would pass either way"
     )
     worst_ms = max(gaps) * 1000 if gaps else 0.0
-    # A FRACTION of the sweep, not a millisecond figure. An unsliced sweep is one
-    # block, so its worst gap IS the whole sweep and the ratio is 1.0; sliced at
-    # `FREEZE_SLICE_SECONDS` over 10ms-padded chunks it is a third of that or
-    # less. Both terms scale with the machine, which an absolute bound does not:
-    # this assertion read 102ms against a 60ms cap on a loaded macOS runner while
-    # the sweep was slicing correctly.
+    # Turns the ticker got BETWEEN the first chunk and the last, which is the
+    # only window the chunk loop controls. Counting across the whole sweep is
+    # vacuous — the prologue awaits regardless — and the single worst gap cannot
+    # tell a blocking sweep from one OS deschedule: it read 483ms against a
+    # 249ms sweep on a Windows runner that was slicing correctly, a gap longer
+    # than the sweep it was meant to describe.
     assert sweep_ms > 0, "the sweep took no measurable time; nothing was proven"
-    assert worst_ms < sweep_ms * 0.5, (
+    assert len(turns_at_freeze) >= 8, "too few chunks swept to measure the cadence"
+    turns_in_loop = turns_at_freeze[-1] - turns_at_freeze[0]
+    assert turns_in_loop >= len(turns_at_freeze) // 4, (
         "the freeze sweep held the loop through the whole swap — the "
-        f"cold-to-warm transition is one uninterruptible block "
-        f"({worst_ms:.0f}ms of a {sweep_ms:.0f}ms sweep)"
+        f"cold-to-warm transition is one uninterruptible block ({turns_in_loop} yields "
+        f"across {len(turns_at_freeze)} chunks, {sweep_ms:.0f}ms sweep, "
+        f"worst gap {worst_ms:.0f}ms)"
     )
 
 
@@ -1520,11 +1528,16 @@ async def test_a_chunk_the_builder_cannot_take_is_walked_but_not_counted() -> No
 
 @pytest.mark.asyncio
 async def test_the_freeze_sweep_asks_the_markers_to_re_measure(
-    tmp_path: Path, tmp_index_dir: Path
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The sweep rewrites ``chunk_widgets`` / ``match_targets``, which is where
     the ▲▼ markers get their stops — so the counts it invalidates must be
     re-derived, not left describing the tree it just removed."""
+    # The app sweeps on its own during startup, and under load it wins: this
+    # sweep then has nothing to freeze, owes no notification, and the test
+    # would be waiting for something that is correctly not coming. Hold the
+    # automatic sweep off until the explicit one below.
+    monkeypatch.setenv("_FND_NO_FREEZE", "1")
     index = wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:
@@ -1552,14 +1565,19 @@ async def test_the_freeze_sweep_asks_the_markers_to_re_measure(
 
         app._match_nav.on_preview_scrolled = counted  # type: ignore[method-assign]
         before = len(container.chunk_widgets)
+        monkeypatch.delenv("_FND_NO_FREEZE")
         await app._preview._freeze_chunks_outside_window(
             container, chunks, mounted[-1] + 1, mounted[-1] + 1
         )
-        # The positive control: a sweep that froze nothing proves nothing, and
-        # the app freezes on its own during startup.
-        swapped = sum(
-            1 for w in container.chunk_widgets.values() if type(w).__name__ == "FrozenChunkView"
-        )
+        # The positive control, and it must count what THIS sweep froze: chunks
+        # that were already stand-ins prove nothing about the notification.
+        swapped = sum(1 for w in container.chunk_widgets.values() if isinstance(w, FrozenChunkView))
         assert swapped, "the sweep froze nothing, so the notification proves nothing"
         assert before == len(container.chunk_widgets)
-        assert asked, "the sweep swapped chunks without asking the markers to re-measure"
+        # Deferred off the sweep, so let the refresh it was posted to run.
+        await wait_until(
+            pilot,
+            lambda: asked > 0,
+            timeout=15.0,
+            message="the sweep swapped chunks without asking the markers to re-measure",
+        )
