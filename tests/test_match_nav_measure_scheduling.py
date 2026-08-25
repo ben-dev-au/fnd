@@ -175,6 +175,8 @@ def test_confirmation_cannot_outlive_its_window() -> None:
     """A layout that never holds still must not keep the loop open."""
     nav = _Nav()
     nav._open_confirmation_window()
+    nav._app.timers.clear()  # type: ignore[attr-defined]
+    nav._confirm_armed = False
     nav._confirm_until = 0.0  # window already closed
     nav.readings = [(i, i) for i in range(20)]
     nav._schedule_measure()
@@ -211,8 +213,39 @@ def test_the_window_keeps_re_measuring_until_it_closes() -> None:
 def test_the_window_closes() -> None:
     nav = _Nav()
     nav._open_confirmation_window()
+    nav._app.timers.clear()  # type: ignore[attr-defined]
+    nav._confirm_armed = False
     nav._confirm_until = 0.0
     nav.readings = [(1, 0)]
     nav._schedule_measure()
     nav.land()
     assert not nav._app.timers, "a closed window still armed a confirmation"  # type: ignore[attr-defined]
+
+
+def test_only_one_confirmation_chain_runs_at_a_time() -> None:
+    """``on_result_revealed`` opens a window without bumping the generation, so
+    a sweep down the results list would otherwise leave one chain per row alive,
+    every one of them reading regions."""
+    nav = _Nav()
+    for _ in range(10):
+        nav._open_confirmation_window()
+    assert len(nav._app.timers) == 1, (  # type: ignore[attr-defined]
+        f"{len(nav._app.timers)} chains armed for one preview"  # type: ignore[attr-defined]
+    )
+    nav.readings = [(0, 1)]
+    nav.fire_timers()
+    assert len(nav._app.timers) == 1, "a tick armed more than its own successor"  # type: ignore[attr-defined]
+
+
+def test_a_raising_read_does_not_escape_the_timer() -> None:
+    """Textual hands a raising timer callback to ``App._handle_exception``,
+    which takes the app down; these counts are decoration."""
+    nav = _Nav()
+
+    def boom() -> None:
+        raise RuntimeError("preview torn down mid-read")
+
+    nav._measure_offscreen = boom  # type: ignore[method-assign]
+    nav._open_confirmation_window()
+    nav.fire_timers()  # must not raise
+    assert nav._app.timers, "the chain died on a read that raised"  # type: ignore[attr-defined]

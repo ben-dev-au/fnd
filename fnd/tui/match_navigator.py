@@ -183,6 +183,7 @@ class MatchNavigator:
         # can move a stop, the measurement re-confirms itself until two readings
         # agree, inside this deadline.
         self._confirm_until = 0.0
+        self._confirm_armed = False
         self._last_measured: tuple[int, int] | None = None
         self._last_target: int | None = None
         # Bumped per rebuild() so a superseded count tick self-cancels.
@@ -522,18 +523,25 @@ class MatchNavigator:
         """A navigation starts the layout moving; re-measure until it stops."""
         self._confirm_until = time.monotonic() + _CONFIRM_BUDGET
         self._last_measured = None
+        self._arm_confirmation()
 
     def _arm_confirmation(self) -> None:
-        """Re-measure once more after the layout has had time to stop moving."""
-        import contextlib
+        """Re-measure once more after the layout has had time to stop moving.
 
+        One chain at a time. ``on_result_revealed`` opens a window without
+        bumping the generation, so an arm per switch would leave a sweep of the
+        results list running a chain per row, all of them reading regions.
+        """
+        if self._confirm_armed:
+            return
         gen = self._refresh_gen
-        # A stand-in app with no timer facility simply forgoes the re-confirm,
-        # which is the pre-existing behaviour.
-        with contextlib.suppress(Exception):
+        try:
             self._app.set_timer(
                 _CONFIRM_DELAY, lambda: self._confirm_tick(gen), name="match-nav-confirm"
             )
+        except Exception:
+            return  # a stand-in app with no timer facility forgoes the re-confirm
+        self._confirm_armed = True
 
     def _confirm_tick(self, gen: int) -> None:
         """One confirmation: read now unless a navigation is mid-settle.
@@ -544,11 +552,18 @@ class MatchNavigator:
         says must stay clear — the cold-nav settle. A skipped tick costs
         nothing; the next one is 250ms away.
         """
+        import contextlib
+
+        self._confirm_armed = False
         if gen != self._refresh_gen:
             return
-        ctrl = getattr(self._app, "_preview_scroll", None)
-        if ctrl is None or not ctrl.is_settling:
-            self._measure_offscreen()
+        # Textual hands a raising timer callback to ``App._handle_exception``,
+        # which takes the app down. A region read on a preview mid-teardown is
+        # exactly where that would come from, and the counts are decoration.
+        with contextlib.suppress(Exception):
+            ctrl = getattr(self._app, "_preview_scroll", None)
+            if ctrl is None or not ctrl.is_settling:
+                self._measure_offscreen()
         if time.monotonic() < self._confirm_until:
             self._arm_confirmation()
 
