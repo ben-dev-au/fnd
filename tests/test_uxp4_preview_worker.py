@@ -97,11 +97,15 @@ async def test_preview_clears_old_content_and_shows_progress_bar(
         await run_search(pilot, app, "target")
         small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
-        # Load small file first so something is mounted.
+        # Load small file first so something is mounted. Gated on the outcome:
+        # the switch below only means anything once this one has landed.
         app._preview.render_full_doc(small_group.parent_id, focus_chunk_seq=0)
-        await pilot.pause()
-        await pilot.pause()
-        assert app._preview.parent_id == small_group.parent_id
+        await wait_until(
+            pilot,
+            lambda: app._preview.parent_id == small_group.parent_id,
+            timeout=30.0,
+            message="small.md never became the active preview",
+        )
         # Switch to the big file. Strip should become visible immediately.
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         strip = app.query_one(FNDProgressBar)
@@ -170,10 +174,14 @@ async def test_switching_files_mid_load_cancels_mount_task(
         # is the race-free postcondition. None covers the helper nilling
         # the field; done() covers a mount that already completed.
         assert first_task is None or first_task.done() or first_task.cancelling() > 0
-        # Drain the small load.
-        await pilot.pause()
-        await pilot.pause()
-        # Final state reflects small.md, not big.md.
+        # Gate on the outcome: two pauses cover the switch only while the
+        # machine is idle, and the assertion below is what they are for.
+        await wait_until(
+            pilot,
+            lambda: app._preview.parent_id == small_group.parent_id,
+            timeout=30.0,
+            message="the preview never settled on small.md after the switch",
+        )
         assert app._preview.parent_id == small_group.parent_id
 
 

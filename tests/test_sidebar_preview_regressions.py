@@ -67,15 +67,26 @@ def _first_collection_node(ctree: Tree[dict[str, object]]):
 async def test_preview_loads_after_back_to_back_queries(built_index: Path) -> None:
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
-        await pilot.pause()
-        assert app._search.groups, "test setup — initial query produced no results"
-        assert app._preview.parent_id is not None
+        # ``run_search`` gates on the SEARCH controller going idle; the preview
+        # load the cursor park dispatches is a separate chain (debounce, decode,
+        # mount), so ``parent_id`` lands after it, not with it.
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups) and app._preview.parent_id is not None,
+            timeout=30.0,
+            message="test setup — the initial query never produced a preview",
+        )
         await run_search(pilot, app, "penguin")
         assert app._search.groups, "test setup — second query produced no results"
-        assert app._preview.parent_id is not None, (
-            "preview pane stayed empty on the second query — the cursor "
-            "landed on the same line as the previous query and the "
-            "NodeHighlighted event was suppressed"
+        await wait_until(
+            pilot,
+            lambda: app._preview.parent_id is not None,
+            timeout=30.0,
+            message=(
+                "preview pane stayed empty on the second query — the cursor "
+                "landed on the same line as the previous query and the "
+                "NodeHighlighted event was suppressed"
+            ),
         )
 
 
