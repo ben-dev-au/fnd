@@ -10,6 +10,7 @@ from textual.widgets import Tree
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import preview_landed
 
 
 @pytest.fixture
@@ -58,7 +59,7 @@ async def test_preview_pane_title_shows_file_name_when_focused(built_index: Path
         await pilot.pause()
         tree.focus()
         await pilot.press("down")
-        await pilot.pause()
+        await preview_landed(pilot, app)
 
         preview = app.query_one("#preview_pane", VerticalScroll)
         title = str(preview.border_title or "")

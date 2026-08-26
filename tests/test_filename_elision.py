@@ -12,6 +12,7 @@ from textual.widgets import Tree
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.results_labels import _elide_middle_keep_suffix
+from tests._pilot_wait import preview_landed
 
 # ── Pure helper ──────────────────────────────────────────────────────
 
@@ -88,7 +89,7 @@ async def test_preview_title_keeps_extension_when_narrow(long_name_index: Path) 
         await pilot.pause()
         tree.focus()
         await pilot.press("down")
-        await pilot.pause()
+        await preview_landed(pilot, app)
 
         preview = app.query_one("#preview_pane", VerticalScroll)
         title = str(preview.border_title or "")
@@ -122,7 +123,7 @@ async def test_wide_terminal_shows_full_name(long_name_index: Path) -> None:
         await pilot.pause()
         tree.focus()
         await pilot.press("down")
-        await pilot.pause()
+        await preview_landed(pilot, app)
         preview = app.query_one("#preview_pane", VerticalScroll)
         title = str(preview.border_title or "")
         assert _LONG_STEM in title, title  # full stem fits, no elision

@@ -17,6 +17,7 @@ from textual.widgets import Tree
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import wait_until
 
 
 @pytest.fixture
@@ -104,7 +105,13 @@ async def test_clicking_expanded_filters_pane_is_not_swallowed(cfg: Config, idx:
         assert "collapsed" not in app.query_one("#filters_pane").classes
 
         await pilot.click("#filters_panel_tree")
-        await pilot.pause()
-
+        # A click posts its way to focus; one pause is a wait for that only
+        # while the machine is idle. Windows landed on the results tree.
+        await wait_until(
+            pilot,
+            lambda: app.focused is app.query_one("#filters_panel_tree", Tree),
+            timeout=30.0,
+            message="clicking the expanded filters pane never moved focus to its tree",
+        )
         assert "collapsed" not in app.query_one("#filters_pane").classes
         assert app.focused is app.query_one("#filters_panel_tree", Tree)

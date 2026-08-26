@@ -42,6 +42,73 @@ the OS calls things), and `fnd/cloud_files.py` (cloud-backed placeholder files).
 Keep PRs scoped to one change; match the surrounding code's style and comment
 density.
 
+## Writing tests against the TUI
+
+Almost every flaky test this project has had was the same mistake: using a
+number of event-loop turns as a proxy for "the async work finished".
+`pilot.pause()` means one pump cycle happened, not that a decode and a mount are
+done — and how many cycles that takes is a property of the machine. So
+`await pilot.pause()` followed by an assertion on state that lands
+asynchronously is a race whose odds are set by the runner. Windows loses it
+most often because it is the slowest, not because it is Windows.
+
+**Gate on the outcome you are about to assert.**
+
+```python
+# No: a guess about how fast this machine is.
+rtree.move_cursor(node)
+await pilot.pause()
+assert app._preview.parent_id == want
+
+# Yes: the product signal, with the budget as a safety net.
+rtree.move_cursor(node)
+await wait_until(
+    pilot,
+    lambda: app._preview.parent_id == want,
+    timeout=30.0,
+    message="the cursor move never produced a preview",
+)
+```
+
+A generous budget costs nothing when the test passes — `wait_until` returns the
+moment the predicate holds — and only spends time on a genuine failure. Adding
+pauses or raising a sleep is never the fix; it moves the odds without removing
+the guess. If there is no product signal to gate on, that is a gap in the
+product, not in the test.
+
+Three more shapes worth recognising, all of which have shipped here:
+
+- **A precondition that depends on LOSING a race.** "The cache is still cold"
+  was true locally and false on a differently-timed runner, because the
+  cursor-park load starts a coverage sweep that decodes neighbours. Make the
+  state and assert you made it, rather than hoping for it.
+- **A boolean "in progress" flag used as a completion signal.** "Not started"
+  and "finished" read the same. Compare a monotonic counter against a value read
+  before the trigger.
+- **A derived cache with no invalidation event.** Assert the invariant (the
+  cache agrees with a fresh reading), not just the value — a stale cache and a
+  wrong computation produce identical symptoms.
+
+### Reproducing a slow runner locally
+
+A green local run says little; the runners are slower and Windows is slowest.
+In rough order of fidelity:
+
+- `docker run --cpus=2` against `ubuntu-latest` — closest to the real thing,
+  and the only option here that is a real constrained Linux rather than a
+  simulation. Untested so far: it needs a container runtime started first.
+- Run the suite under CPU contention (busy loops on most cores). This is what
+  reproduced a live CI flake on unmodified `main`.
+- Inject a delay into the preview decode — models background work taking
+  longer, which is the Windows shape.
+- Shorten Textual's internal `_wait_for_screen` bound to ~0 — models a starved
+  pump, and enumerates every test that needs a pause to do real work.
+
+The last two have opposite blind spots: shortening the wait removes *waiting*
+without adding *work*, so a test that needs real wall-clock passes there and
+still fails on CI. Neither models Windows; for that, see `dev/docs/DEV_VMS.md`
+or CI itself.
+
 ## Adding an app to the "Open with…" catalogue
 
 Third-party app integrations live in [`docs/apps.md`](docs/apps.md). To
