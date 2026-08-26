@@ -9,6 +9,7 @@ import pytest
 from fnd.config import CollectionConfig, Config, SourceConfig
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import settings_ready
 
 
 @pytest.fixture
@@ -87,7 +88,7 @@ async def test_search_on_root_finds_preferences_leaf(built_index: Path, fixtures
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         search = screen.query_one("#settings_search", Input)
@@ -144,7 +145,7 @@ async def test_search_enter_navigates_only_then_second_enter_acts(
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         search = screen.query_one("#settings_search", Input)
@@ -212,7 +213,7 @@ async def test_zero_match_shows_empty_state_hint(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         search = screen.query_one("#settings_search", Input)
@@ -239,7 +240,7 @@ def test_filter_haystack_excludes_description() -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
             app.action_open_command_palette()
-            await pilot.pause()
+            await settings_ready(pilot, app)
             screen = app.screen
             assert isinstance(screen, SettingsScreen)
             filtered, _bc = screen._filter_items("muddies")

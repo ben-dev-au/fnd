@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._pilot_wait import wait_until
+from tests._pilot_wait import settings_ready, wait_until
 
 
 def test_indexer_filetypes_exposed_and_complete() -> None:
@@ -104,7 +104,7 @@ async def test_root_rows_show_trailing_summaries(
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         lst = screen.query_one(SettingsList)
@@ -214,7 +214,7 @@ async def test_detail_strip_updates_on_cursor_move(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         strip = screen.query_one(DetailStrip)
@@ -249,7 +249,7 @@ async def test_hint_bar_appends_reveal_when_cursor_on_reveal_capable_row(
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         # Bridge focus from the filter Input → list so the hint cluster
@@ -303,7 +303,7 @@ async def test_hint_bar_search_focused_variant(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         screen.query_one("#settings_search", Input).focus()
@@ -365,7 +365,7 @@ async def test_root_screen_shows_version_status_line(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         status = screen.query_one("#settings_status", Static)

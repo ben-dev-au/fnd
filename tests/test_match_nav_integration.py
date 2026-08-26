@@ -223,6 +223,16 @@ async def test_n_stays_within_the_current_result(cfg: Config, flashcards_index: 
         # the stop set never grows and the burst cursor never indexes a foreign
         # stop (which is how crossing into another result would manifest).
         for _ in range(5):
+            # `_go` early-returns when the chunk's stops are not resolvable yet,
+            # which leaves `_last_target` unset — so wait for the scope BEFORE
+            # pressing. Gating after the press would make the assertion about
+            # the layout's timing rather than about n.
+            await wait_until(
+                pilot,
+                lambda: len(nav._chunk_stops(pane)) == 2,
+                timeout=30.0,
+                message="the table's two scoped stops never resolved",
+            )
             app.action_nav_next_match()
             await pilot.pause()
             await pilot.pause()

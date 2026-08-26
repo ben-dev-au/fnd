@@ -15,6 +15,7 @@ from fnd.tui.actions import (
     resolve_command,
     validate_keymap,
 )
+from tests._pilot_wait import settings_ready, wait_until
 
 # ── Registry sanity ─────────────────────────────────────────────────────
 
@@ -107,13 +108,20 @@ async def test_open_command_palette_pushes_settings_menu(built_index: Path) -> N
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         assert isinstance(app.screen, SettingsScreen)
         # Reachable root — the menu's top level shows every section.
         assert app.screen._breadcrumb == ()
         # Second press closes the stack.
         app.action_open_command_palette()
-        await pilot.pause()
+        # This press CLOSES the stack, so wait for it to go rather than for a
+        # list to populate — the same action toggles both ways.
+        await wait_until(
+            pilot,
+            lambda: not isinstance(app.screen, SettingsScreen),
+            timeout=30.0,
+            message="a second press never closed the settings stack",
+        )
         assert not isinstance(app.screen, SettingsScreen)
 
 
@@ -131,7 +139,7 @@ async def test_root_menu_search_is_cross_section(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         search = screen.query_one("#settings_search", Input)

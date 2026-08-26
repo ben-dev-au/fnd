@@ -15,12 +15,13 @@ from textual.widgets import Input
 from fnd.tui import FNDApp
 from fnd.tui.menu import KIND_PICKER, KIND_SUBMENU, KIND_TOGGLE
 from fnd.tui.settings_screen import SettingsList, SettingsScreen
+from tests._pilot_wait import settings_ready
 
 
 async def _open_settings(app: FNDApp, pilot: Pilot[None]) -> SettingsScreen:
     await pilot.pause()
     app.action_open_command_palette()
-    await pilot.pause()
+    await settings_ready(pilot, app)
     screen = app.screen
     assert isinstance(screen, SettingsScreen)
     return screen

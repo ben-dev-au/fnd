@@ -16,6 +16,7 @@ from textual.widgets import OptionList, Static
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import settings_ready
 
 
 @pytest.fixture
@@ -244,7 +245,7 @@ async def test_search_finds_pdf_structure(built_index: Path, cfg: Config) -> Non
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         search = screen.query_one("#settings_search", Input)

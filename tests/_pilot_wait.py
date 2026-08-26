@@ -205,3 +205,24 @@ async def preview_landed(pilot: Pilot[None], app: Any, *, timeout: float = 30.0)
         timeout=timeout,
         message="the cursor move never produced a preview",
     )
+
+
+async def settings_ready(pilot: Pilot[None], app: Any, *, timeout: float = 30.0) -> Any:
+    """Wait until the settings screen is pushed AND its list has populated.
+
+    Pushing the screen and composing its rows are separate frames, so a single
+    pause reads an empty list on a machine that has not got to the second one.
+    Returns the screen.
+    """
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
+
+    def _ready() -> bool:
+        screen = app.screen
+        if not isinstance(screen, SettingsScreen):
+            return False
+        return bool(screen.query_one(SettingsList)._items)
+
+    await wait_until(
+        pilot, _ready, timeout=timeout, message="the settings screen never populated its list"
+    )
+    return app.screen

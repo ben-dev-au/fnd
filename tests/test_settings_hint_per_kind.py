@@ -14,6 +14,7 @@ from textual.widgets import Static
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import settings_ready
 
 
 @pytest.fixture
@@ -141,7 +142,7 @@ async def test_hint_says_open_in_editor_on_external_app(built_index: Path, cfg: 
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         lst = screen.query_one(SettingsList)
