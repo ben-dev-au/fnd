@@ -24,6 +24,7 @@ from fnd.matching import MatchSpec, word_matches
 from fnd.synonyms import SynonymTable
 from fnd.tui import FNDApp
 from fnd.tui.widgets.markdown import FNDMarkdown
+from tests._pilot_wait import wait_until
 
 # ── Unit: MatchSpec covers all three pass semantics ──────────────────
 
@@ -214,9 +215,15 @@ async def test_fuzzy_match_chunk_highlights_the_actual_word(
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        for _ in range(8):
-            await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
+        # Eight ticks is a wait for the mount only while the machine is idle;
+        # the decode and build behind it are real work, not pump cycles.
+        await wait_until(
+            pilot,
+            lambda: bool(list(pane.query(FNDMarkdown))),
+            timeout=30.0,
+            message="the matched chunk never mounted an FNDMarkdown",
+        )
         md_widgets = list(pane.query(FNDMarkdown))
         assert md_widgets, "expected fuzzy-hit chunk to mount"
         # The chars of the doc word "templates" must be COVERED by
