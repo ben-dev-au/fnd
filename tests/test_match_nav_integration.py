@@ -234,11 +234,15 @@ async def test_n_stays_within_the_current_result(cfg: Config, flashcards_index: 
                 message="the table's two scoped stops never resolved",
             )
             app.action_nav_next_match()
+            # `_go` records the landing synchronously, so read it before
+            # yielding: a background mount completing later fires a result
+            # reveal, which CLEARS `_last_target`. Asserting after the drain
+            # was racing that reset rather than the press.
+            assert nav._last_target is not None, "n did not record a landing stop"
             await pilot.pause()
             await pilot.pause()
             stops = nav._chunk_stops(pane)
             assert len(stops) == 2, "n changed the scoped stop set — it left the current result"
-            assert nav._last_target is not None, "n did not record a landing stop"
             assert nav._last_target < len(stops), (
                 "n's cursor indexed outside the current result's stops"
             )
