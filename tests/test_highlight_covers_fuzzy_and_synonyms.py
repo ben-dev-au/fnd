@@ -216,13 +216,24 @@ async def test_fuzzy_match_chunk_highlights_the_actual_word(
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
         pane = app.query_one("#preview_pane", VerticalScroll)
-        # Eight ticks is a wait for the mount only while the machine is idle;
-        # the decode and build behind it are real work, not pump cycles.
+        word_lower = "templates"
+
+        def word_rendered() -> bool:
+            """The widget existing is not the word being in it — Windows mounted
+            the FNDMarkdown a frame before its blocks carried any content, and
+            the search below then read -1."""
+            for md in pane.query(FNDMarkdown):
+                for block in md.query("MarkdownBlock"):
+                    content = getattr(block, "_content", None)
+                    if content is not None and word_lower in content.plain.lower():
+                        return True
+            return False
+
         await wait_until(
             pilot,
-            lambda: bool(list(pane.query(FNDMarkdown))),
+            word_rendered,
             timeout=30.0,
-            message="the matched chunk never mounted an FNDMarkdown",
+            message="the matched chunk never rendered the word",
         )
         md_widgets = list(pane.query(FNDMarkdown))
         assert md_widgets, "expected fuzzy-hit chunk to mount"
@@ -231,7 +242,6 @@ async def test_fuzzy_match_chunk_highlights_the_actual_word(
         # is split into yellow / orange runs, so a single span won't
         # span the whole word).
         all_styled_chars: set[int] = set()
-        word_lower = "templates"
         word_start = -1
         for md in md_widgets:
             for block in md.query("MarkdownBlock"):

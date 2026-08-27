@@ -8,7 +8,7 @@ import pytest
 
 from fnd.tui import FNDApp
 from fnd.tui.indexer_service import IndexerService
-from tests._pilot_wait import settings_ready
+from tests._pilot_wait import settings_ready, wait_until
 
 
 @pytest.fixture
@@ -155,17 +155,29 @@ async def test_path_validation_inline(tmp_path: Path, built_index: Path) -> None
         await pilot.press("enter")
         await pilot.pause()
         bar = wiz.query_one(EditBar)
-        # Type a path that does not exist. Path validation is debounced
-        # to avoid a per-keystroke disk walk, so wait past the timer.
+
+        def error_text() -> str:
+            return str(bar.query_one(".-edit-error", Static).render())
+
+        # Path validation is debounced to avoid a per-keystroke disk walk. The
+        # debounce plus the walk plus the repaint is real work, and sleeping the
+        # debounce is a wait for it only while the machine is idle — on Windows
+        # the second read returned the FIRST path's verdict.
         bar.query_one("#editor_input", Input).value = str(tmp_path / "nope")
-        await pilot.pause(EditBar._PATH_VALIDATE_DEBOUNCE_S + 0.05)
-        err = bar.query_one(".-edit-error", Static).render()
-        assert "does not exist" in str(err).lower()
+        await wait_until(
+            pilot,
+            lambda: "does not exist" in error_text().lower(),
+            timeout=30.0,
+            message="a missing path never reported itself missing",
+        )
         # Type a path that does exist.
         bar.query_one("#editor_input", Input).value = str(real_dir)
-        await pilot.pause(EditBar._PATH_VALIDATE_DEBOUNCE_S + 0.05)
-        err = bar.query_one(".-edit-error", Static).render()
-        assert "✓" in str(err) or "1 file" in str(err).lower()
+        await wait_until(
+            pilot,
+            lambda: "✓" in error_text() or "1 file" in error_text().lower(),
+            timeout=30.0,
+            message="an existing path never validated",
+        )
 
 
 @pytest.mark.asyncio
