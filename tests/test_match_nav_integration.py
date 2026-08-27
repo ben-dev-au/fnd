@@ -77,8 +77,16 @@ def flashcards_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 
 def _current_stop_count(app: FNDApp) -> int:
+    """Scoped stops for the focused result, or -1 while the scope is unresolved.
+
+    ``_chunk_stops`` falls back to the UNSCOPED set when the chunk extent is
+    unknown, so a bare count stops the walk on a transient match between two
+    different sets — and the extent assertion below it then fails."""
     pane = app.query_one("#preview_pane", VerticalScroll)
-    return len(app._match_nav._chunk_stops(pane))
+    nav = app._match_nav
+    if nav._current_chunk_extent(pane) is None:
+        return -1
+    return len(nav._chunk_stops(pane))
 
 
 async def _walk_to_stop_count(pilot: Pilot[None], app: FNDApp, want: int, key: str) -> bool:

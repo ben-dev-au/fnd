@@ -11,7 +11,6 @@ from fnd.index import build_index
 from fnd.query import FileChunk, Searcher
 from fnd.render import render_document
 from fnd.tui import FNDApp
-from tests._pilot_wait import preview_landed
 
 
 @pytest.fixture
@@ -169,7 +168,7 @@ async def test_tui_renders_full_document_when_section_focused(built_index: Path)
         await pilot.pause()
         tree.focus()
         await pilot.press("down")
-        await preview_landed(pilot, app)
+        await pilot.pause()
 
         # The PDF takes the flat-buffer path; an active LineBufferPreview
         # holds the whole file.

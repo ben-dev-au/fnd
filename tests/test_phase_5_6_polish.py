@@ -14,7 +14,7 @@ from fnd.index import build_index
 from fnd.query import FileChunk
 from fnd.render import render_document_rich
 from fnd.tui import FNDApp
-from tests._pilot_wait import preview_landed, settings_ready
+from tests._pilot_wait import settings_ready
 
 # ── Visible highlights via Rich Text styling ─────────────────────────
 
@@ -264,7 +264,7 @@ async def test_chunk_widgets_mounted_per_pdf_page(
         await pilot.pause()
         tree.focus()
         await pilot.press("down")
-        await preview_landed(pilot, app)
+        await pilot.pause()
 
         buf = app._flat.active_buffer
         assert buf is not None, "PDF should mount the flat-buffer preview"

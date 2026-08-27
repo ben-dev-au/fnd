@@ -49,8 +49,16 @@ number of event-loop turns as a proxy for "the async work finished".
 `pilot.pause()` means one pump cycle happened, not that a decode and a mount are
 done — and how many cycles that takes is a property of the machine. So
 `await pilot.pause()` followed by an assertion on state that lands
-asynchronously is a race whose odds are set by the runner. Windows loses it
-most often because it is the slowest, not because it is Windows.
+asynchronously is a race whose odds are set by the runner.
+
+Do not extend that into "the runner is starved, so wait longer" — it was the
+working theory here for a week and the numbers refute it. Across 185 CI pytest
+jobs, a failing job ran +0.3 / -1.0 / +0.1 minutes against the median passing job
+on macOS / Ubuntu / Windows: failures do not cluster in slow jobs. Windows fails
+about four times as often as either other OS for reasons that are its own, and
+every timed-out wait that printed its poll count showed the poller alive
+(1400-plus polls in 30s) with the product simply not finished. More budget would
+never have helped any of them.
 
 **Gate on the outcome you are about to assert.**
 
@@ -66,7 +74,7 @@ await wait_until(
     pilot,
     lambda: app._preview.parent_id == want,
     timeout=30.0,
-    message="the cursor move never produced a preview",
+    message="the cursor move never previewed the file it moved to",
 )
 ```
 
@@ -75,6 +83,27 @@ moment the predicate holds — and only spends time on a genuine failure. Adding
 pauses or raising a sleep is never the fix; it moves the odds without removing
 the guess. If there is no product signal to gate on, that is a gap in the
 product, not in the test.
+
+**A gate that cannot fail is a deleted pause.** `wait_until` evaluates its
+predicate before the first pause, so a predicate that is already true returns
+without yielding. A helper here asked whether *any* preview existed — which the
+app's own cursor-park load makes permanently true — and 14 sites that had each
+replaced a real `pilot.pause()` returned in 0.0ms. Gate on the thing you are
+about to assert, named specifically: the file you navigated to, the count you
+expect, the row that must exist. `dev/tools/flake/waitprobe_plugin.py` reports
+which gates were already true on entry. Read it as a shortlist and argue from
+the predicate — a gate on a real race is won locally every time and still earns
+its place on a loaded runner.
+
+**Do not change a test that has not failed.** Every regression this repo has
+shipped while fixing flakes came from sweeping a change across sites chosen by
+pattern-match rather than by evidence: the 14 gates above landed in six files
+with zero CI failures between them, and a regex before that hit two
+`action_open_command_palette()` calls where the action *closes* the menu. Get the
+frequency table first — `flake-hunt` on GitHub, `dev/tools/flake/localhunt.sh`
+locally — fix what it names, and prove the fix on the same instrument. One green
+run is not evidence: a head that failed four of six attempts displays as green,
+because re-running overwrites a run's conclusion.
 
 Three more shapes worth recognising, all of which have shipped here:
 

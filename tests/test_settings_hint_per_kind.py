@@ -84,13 +84,7 @@ async def test_hint_says_run_on_action_row(built_index: Path, cfg: Config) -> No
             if it.id == "pdf_texture.cache_prune":
                 lst.cursor_index = i
                 break
-        # The hint bar repaints on the frame AFTER the cursor moves.
-        await wait_until(
-            pilot,
-            lambda: "Run" in _hint_text(app),
-            timeout=30.0,
-            message="the hint bar never showed 'Run' for this row",
-        )
+        await pilot.pause()
         text = _hint_text(app)
         assert "Run" in text
         assert "Open" not in text

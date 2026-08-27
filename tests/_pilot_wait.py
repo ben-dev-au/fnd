@@ -192,21 +192,6 @@ async def run_search(pilot: Pilot[None], app: Any, query: str, *, timeout: float
     )
 
 
-async def preview_landed(pilot: Pilot[None], app: Any, *, timeout: float = 30.0) -> None:
-    """Wait until a cursor move has actually produced a preview.
-
-    A move dispatches a debounced load, a decode worker and a mount. A pause is
-    a wait for that only while the machine is idle — on the slowest runner it is
-    not, which is what put a dozen of these on CI.
-    """
-    await wait_until(
-        pilot,
-        lambda: app._flat.active_buffer is not None or app._preview.active is not None,
-        timeout=timeout,
-        message="the cursor move never produced a preview",
-    )
-
-
 async def settings_ready(pilot: Pilot[None], app: Any, *, timeout: float = 30.0) -> Any:
     """Wait until the settings screen is pushed AND its list has populated.
 

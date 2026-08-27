@@ -1,0 +1,106 @@
+name: flake-hunt
+
+# Runs the suite N times per OS and reports which tests failed and how
+# often. A single CI run cannot tell a flake from a fix; this can.
+# Manual dispatch only — it costs N times a normal run.
+
+on:
+  # `workflow_dispatch` only fires for workflows already on the default
+  # branch, so until this is merged the push trigger is the way to run it:
+  # `git push origin HEAD:flake-hunt/<name>` hunts that ref at the defaults.
+  push:
+    branches: ['flake-hunt/**']
+  workflow_dispatch:
+    inputs:
+      repeats:
+        description: "Suite runs per OS"
+        type: choice
+        default: "5"
+        options: ["3", "5", "8", "10"]
+      target_ref:
+        description: "Ref to test (blank = the dispatch ref). Use to baseline main."
+        type: string
+        default: ""
+      pytest_args:
+        description: "Extra pytest args (e.g. -k settings)"
+        type: string
+        default: ""
+      os_filter:
+        description: "Which OSes to hunt on"
+        type: choice
+        default: "all"
+        options: ["all", "macos-14", "ubuntu-latest", "windows-latest"]
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      indices: ${{ steps.gen.outputs.indices }}
+      oses: ${{ steps.gen.outputs.oses }}
+    steps:
+      - id: gen
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          n = int("${{ inputs.repeats }}" or "5")
+          sel = "${{ inputs.os_filter }}" or "all"
+          oses = ["macos-14", "ubuntu-latest", "windows-latest"] if sel == "all" else [sel]
+          print("indices=" + json.dumps(list(range(1, n + 1))))
+          print("oses=" + json.dumps(oses))
+          PY
+
+  hunt:
+    name: "${{ matrix.os }} #${{ matrix.index }}"
+    needs: plan
+    # A failing run is the DATA, not an error: never let it stop the matrix
+    # or redden the workflow, or the aggregate step never runs.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.plan.outputs.oses) }}
+        index: ${{ fromJSON(needs.plan.outputs.indices) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+      - name: Sync deps (frozen lockfile)
+        run: uv sync --frozen
+      - name: Test
+        # Same invocation as ci.yml, so what this measures is what ci runs.
+        run: uv run pytest -q -m "not slow" --junitxml=junit.xml ${{ inputs.pytest_args }}
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ matrix.os }}-${{ matrix.index }}
+          path: junit.xml
+          retention-days: 7
+
+  aggregate:
+    name: rank flakes
+    needs: [plan, hunt]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      # The aggregator runs from the dispatch ref, not the ref under test, so a
+      # baseline hunt against a branch that predates it still gets ranked.
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: junit-*
+          path: reports
+      - name: Rank
+        run: python3 .github/scripts/aggregate_junit.py reports >> "$GITHUB_STEP_SUMMARY"

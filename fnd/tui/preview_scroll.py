@@ -593,6 +593,7 @@ class StructuralScrollStrategy:
             # Flag this as the controller's own scroll so the resulting scroll-
             # watcher trip isn't mistaken for a user scroll and doesn't self-release
             # the anchor.
+            unscrollable = False
             self._host.begin_reconcile_scroll()
             try:
                 # If an outgoing preview is being held on screen, hand the
@@ -613,9 +614,31 @@ class StructuralScrollStrategy:
                     region = anchor.translate(
                         pane.scroll_offset - pane.scrollable_content_region.offset
                     )
-                    self._scroll_pane_to_match_region(pane, region, margin, animate=animate)
+                    # ``scroll_to_region`` clamps its delta against ``max_scroll_y``,
+                    # which is 0 until the pane recomputes ``virtual_size`` for the
+                    # laid-out content: the scroll lands nowhere and reports success.
+                    # ``focus_chunk_seq`` 0 arrives with no settle spent — every gate
+                    # above needs chunks ABOVE the match, and there are none.
+                    unscrollable = (
+                        retries > 0 and region.y + region.height > pane.virtual_size.height
+                    )
+                    if not unscrollable:
+                        self._scroll_pane_to_match_region(pane, region, margin, animate=animate)
             finally:
                 self._host.end_reconcile_scroll()
+            if unscrollable:
+                self._host.call_after_refresh(
+                    self._do_scroll_to_chunk,
+                    focus_chunk_seq,
+                    retries - 1,
+                    on_done,
+                    margin_from,
+                    animate,
+                    generation,
+                    current_generation,
+                )
+                on_done = None  # the retried chain owns the reveal
+                return
             self._host.diag_log(
                 f"do_scroll seq={focus_chunk_seq} target={type(target).__name__} "
                 f"path={path} first_match={first_match_seen} fallback={fallback_fired} "

@@ -20,7 +20,6 @@ from fnd.index import build_index
 from fnd.query import FileChunk
 from fnd.render import render_chunk_pieces
 from fnd.tui import FNDApp
-from tests._pilot_wait import preview_landed
 
 # ── render_chunk_pieces unit tests ──────────────────────────────────
 
@@ -137,7 +136,7 @@ async def test_match_target_is_a_line_widget_not_the_header(
         await pilot.pause()
         tree.focus()
         await pilot.press("down")
-        await preview_landed(pilot, app)
+        await pilot.pause()
 
         buf = app._flat.active_buffer
         assert buf is not None, "PDF should mount the flat-buffer preview"
@@ -173,7 +172,7 @@ async def test_match_target_falls_back_to_header_when_no_match_in_chunk(
         await pilot.pause()
         tree.focus()
         await pilot.press("down")
-        await preview_landed(pilot, app)
+        await pilot.pause()
 
         buf = app._flat.active_buffer
         assert buf is not None

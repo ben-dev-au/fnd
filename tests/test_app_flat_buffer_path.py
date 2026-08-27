@@ -27,7 +27,7 @@ from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.line_buffer import LineBufferPreview
 from fnd.tui.preview_scrollbar import MatchAwareScrollBar
-from tests._pilot_wait import preview_landed, safe_pause, safe_press, wait_until
+from tests._pilot_wait import safe_pause, safe_press, wait_until
 
 
 @pytest.fixture
@@ -136,7 +136,7 @@ async def test_pdf_preview_uses_line_buffer(pdf_index: Path) -> None:
         await safe_pause(pilot)
         tree.focus()
         await safe_press(pilot, "down")
-        await preview_landed(pilot, app)
+        await safe_pause(pilot)
         assert app._flat.active_buffer is not None
         assert app._preview.active is None
         pane = app.query_one("#preview_pane")
@@ -166,7 +166,7 @@ async def test_flat_buffer_scrollbar_carries_line_precise_markers(
         await safe_pause(pilot)
         tree.focus()
         await safe_press(pilot, "down")
-        await preview_landed(pilot, app)
+        await safe_pause(pilot)
         buf = app._flat.active_buffer
         assert buf is not None
         bar = buf.vertical_scrollbar
@@ -200,7 +200,7 @@ async def test_cursor_between_sections_calls_scroll_to_chunk_each_time(
         tree.focus()
         # Cursor down once to land on the first section.
         await safe_press(pilot, "down")
-        await preview_landed(pilot, app)
+        await safe_pause(pilot)
         buf = app._flat.active_buffer
         assert buf is not None
         # The file should have multiple section children — bail clearly
@@ -224,7 +224,7 @@ async def test_cursor_between_sections_calls_scroll_to_chunk_each_time(
 
         # Move to the next section, and the one after.
         await safe_press(pilot, "down")
-        await preview_landed(pilot, app)
+        await safe_pause(pilot)
         await safe_press(pilot, "down")
         await safe_pause(pilot)
 
@@ -258,7 +258,7 @@ async def test_only_one_flat_buffer_is_visible_at_a_time(
         tree.focus()
         for _ in range(3):
             await safe_press(pilot, "down")
-            await preview_landed(pilot, app)
+            await safe_pause(pilot)
         pane = app.query_one("#preview_pane")
         # Count buffers that are actually rendered (not display:none).
         visible_buffers = [b for b in pane.query(LineBufferPreview) if b.display]
@@ -350,14 +350,14 @@ async def test_flat_buffer_cache_hit_reuses_widget(pdf_index: Path) -> None:
         await safe_pause(pilot)
         tree.focus()
         await safe_press(pilot, "down")
-        await preview_landed(pilot, app)
+        await safe_pause(pilot)
         buf_first_visit = app._flat.active_buffer
         assert buf_first_visit is not None
         # Move the cursor away then back to the same file.
         await safe_press(pilot, "up")
         await safe_pause(pilot)
         await safe_press(pilot, "down")
-        await preview_landed(pilot, app)
+        await safe_pause(pilot)
         assert app._flat.active_buffer is buf_first_visit, (
             "cache hit should reuse the existing buffer, not remount a fresh one"
         )

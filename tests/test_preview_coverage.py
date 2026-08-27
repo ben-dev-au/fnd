@@ -360,7 +360,12 @@ async def test_the_freeze_sweep_yields_between_chunks(
     def slow_freeze(chunk, chunk_seq):  # type: ignore[no-untyped-def]
         swept.append(chunk_seq)
         turns_at_freeze.append(len(gaps))
-        time.sleep(0.01)
+        # Longer than FREEZE_SLICE_SECONDS, so the slice budget is spent by every
+        # single chunk and the sweep owes a yield at every boundary. Deriving the
+        # owed count from elapsed time instead cannot work: the sweep's wall clock
+        # includes the time it spends YIELDED, which grows under load while the
+        # number of slice boundaries does not.
+        time.sleep(tuning.FREEZE_SLICE_SECONDS + 0.004)
         return real_freeze(chunk, chunk_seq)
 
     monkeypatch.setattr(frozen_mod, "freeze", slow_freeze)
@@ -429,10 +434,14 @@ async def test_the_freeze_sweep_yields_between_chunks(
     assert sweep_ms > 0, "the sweep took no measurable time; nothing was proven"
     assert len(turns_at_freeze) >= 8, "too few chunks swept to measure the cadence"
     turns_in_loop = turns_at_freeze[-1] - turns_at_freeze[0]
-    assert turns_in_loop >= len(turns_at_freeze) // 4, (
+    # Every chunk overspends the slice budget, so the sweep owes one yield per
+    # boundary. Two of slack: the first slice starts mid-prologue and the last
+    # boundary has no chunk after it. `// 4` passed on two yields in eighty.
+    owed = len(turns_at_freeze) - 2
+    assert turns_in_loop >= owed, (
         "the freeze sweep held the loop through the whole swap — the "
         f"cold-to-warm transition is one uninterruptible block ({turns_in_loop} yields "
-        f"across {len(turns_at_freeze)} chunks, {sweep_ms:.0f}ms sweep, "
+        f"against {owed} owed, {len(turns_at_freeze)} chunks, {sweep_ms:.0f}ms sweep, "
         f"worst gap {worst_ms:.0f}ms)"
     )
 
