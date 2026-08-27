@@ -8,6 +8,7 @@ distinction the workflow exists to make.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from collections import defaultdict
@@ -38,7 +39,7 @@ def _detail(case: ElementTree.Element) -> str:
     return ""
 
 
-def main(root: Path) -> int:
+def main(root: Path, expect_oses: list[str] | None = None, expect_runs: int = 0) -> int:
     runs: dict[str, set[str]] = defaultdict(set)
     fails: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     reruns: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
@@ -73,6 +74,23 @@ def main(root: Path) -> int:
 
     total = sum(len(v) for v in runs.values())
     out = [f"## Flake hunt — {total} suite runs\n"]
+
+    # A job that dies before uploading leaves no directory at all, so a smaller
+    # count is the ONLY trace of it. Say so loudly: a table that silently
+    # describes fewer runs than were asked for reads as a clean result.
+    if expect_oses and expect_runs:
+        absent = [
+            f"{o} #{i}"
+            for o in expect_oses
+            for i in range(1, expect_runs + 1)
+            if str(i) not in runs.get(o, set())
+        ]
+        if absent:
+            out.append(
+                f"> **{len(absent)} of {len(expect_oses) * expect_runs} suites reported "
+                f"nothing** — {', '.join(absent)}. Still running, or the job died before "
+                "uploading. Everything below describes only the suites that reported.\n"
+            )
     out.append("| OS | runs | runs with a failure |")
     out.append("| --- | ---: | ---: |")
     for os_name in sorted(runs):
@@ -118,5 +136,18 @@ def main(root: Path) -> int:
     return 0
 
 
+def _json_list(arg: str) -> list[str]:
+    """A GitHub matrix output, tolerating the bare comma-separated form too."""
+    try:
+        return [str(v) for v in json.loads(arg)]
+    except (ValueError, TypeError):
+        return [v.strip() for v in arg.strip("[]").replace('"', "").split(",") if v.strip()]
+
+
 if __name__ == "__main__":
-    raise SystemExit(main(Path(sys.argv[1] if len(sys.argv) > 1 else "reports")))
+    # argv: <reports-dir> [oses-json] [indices-json] — the matrix that was ASKED
+    # for, so a suite that never reported is named rather than silently missing.
+    _dir = Path(sys.argv[1] if len(sys.argv) > 1 else "reports")
+    _oses = _json_list(sys.argv[2]) if len(sys.argv) > 2 else None
+    _runs = len(_json_list(sys.argv[3])) if len(sys.argv) > 3 else 0
+    raise SystemExit(main(_dir, _oses, _runs))

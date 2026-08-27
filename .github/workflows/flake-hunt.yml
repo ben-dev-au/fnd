@@ -103,4 +103,10 @@ jobs:
           pattern: junit-*
           path: reports
       - name: Rank
-        run: python3 .github/scripts/aggregate_junit.py reports >> "$GITHUB_STEP_SUMMARY"
+        # The matrix that was ASKED for, so a suite that never reported is named
+        # rather than silently shrinking the sample.
+        run: |
+          python3 .github/scripts/aggregate_junit.py reports \
+            '${{ needs.plan.outputs.oses }}' \
+            '${{ needs.plan.outputs.indices }}' \
+            >> "$GITHUB_STEP_SUMMARY"
