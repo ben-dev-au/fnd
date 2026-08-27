@@ -80,6 +80,18 @@ def test_already_held_chunks_are_not_recaptured() -> None:
     assert all(i >= 10 for i in targets), targets
 
 
+def _laid_out_chunk(app: FNDApp) -> object | None:
+    """A mounted chunk that has actually been through layout.
+
+    ``_preview.active`` only says the container exists; its children report
+    size 0 until the next layout pass, so a width read between the two is a
+    race the fast machine always wins."""
+    container = app._preview.active
+    if container is None:
+        return None
+    return next((w for w in container.chunk_widgets.values() if w.size.width > 0), None)
+
+
 @pytest.mark.asyncio
 async def test_a_far_jump_mounts_a_capture_instead_of_building(
     tmp_path: Path, tmp_index_dir: Path
@@ -595,11 +607,14 @@ async def test_a_capture_is_cut_at_the_width_it_will_be_served_into(
     index = wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:
+        # `active` is the CONTAINER existing; its children are size-zero until
+        # layout runs, and every assertion below is about a laid-out width.
+        # Windows reported "no mounted chunk to measure against" on that gap.
         await wait_until(
             pilot,
-            lambda: bool(app._search.groups) and app._preview.active is not None,
+            lambda: bool(app._search.groups) and _laid_out_chunk(app) is not None,
             timeout=20.0,
-            message="preview never became active",
+            message="no chunk in the preview was ever laid out",
         )
         presenter = app._preview
         pane = app.query_one("#preview_pane", VerticalScroll)
@@ -829,6 +844,14 @@ async def test_the_repair_re_arms_but_cannot_chain_forever(
             message="preview never became active",
         )
         presenter = app._preview
+        # Same gap as above: wait for a chunk that has been through layout
+        # before stopping the work that would produce one.
+        await wait_until(
+            pilot,
+            lambda: _laid_out_chunk(app) is not None,
+            timeout=20.0,
+            message="no chunk in the preview was ever laid out",
+        )
         presenter.stop_background_work()
         for _ in range(4):
             await pilot.pause()

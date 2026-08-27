@@ -63,6 +63,29 @@ def test_commit_gives_up_and_raises_once_the_ladder_is_spent(
     assert writer.attempts == 7
 
 
+def test_commit_retries_a_localised_windows_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The English phrases are FormatMessage output and are localised; the
+    `os error N` codes are not. CI runs English-only and cannot see this."""
+    _fast_backoff(monkeypatch)
+    localised = ValueError("An IO error occurred: 'Zugriff verweigert. (os error 5)'")
+    writer = _FlakyWriter(fail_times=1, error=localised)
+    commit(writer)  # type: ignore[arg-type]
+    assert writer.attempts == 2
+
+
+def test_commit_does_not_retry_a_localised_error_that_is_not_a_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Matching the code must not widen the predicate to every IO error: a
+    store-write refusal leaves the writer dead and retrying discards documents."""
+    _fast_backoff(monkeypatch)
+    other = ValueError("An IO error occurred: 'Datei nicht gefunden. (os error 2)'")
+    writer = _FlakyWriter(fail_times=99, error=other)
+    with pytest.raises(ValueError, match="os error 2"):
+        commit(writer)  # type: ignore[arg-type]
+    assert writer.attempts == 1
+
+
 def test_commit_does_not_retry_an_unrelated_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """A schema mismatch or a full disk must surface on the first attempt."""
     _fast_backoff(monkeypatch)

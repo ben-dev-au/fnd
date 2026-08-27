@@ -90,20 +90,25 @@ without yielding. A helper here asked whether *any* preview existed — which th
 app's own cursor-park load makes permanently true — and 14 sites that had each
 replaced a real `pilot.pause()` returned in 0.0ms. Gate on the thing you are
 about to assert, named specifically: the file you navigated to, the count you
-expect, the row that must exist. `dev/tools/flake/waitprobe_plugin.py` reports
-which gates were already true on entry. Read it as a shortlist and argue from
-the predicate — a gate on a real race is won locally every time and still earns
-its place on a loaded runner.
+expect, the row that must exist.
+
+To find these, wrap `tests._pilot_wait.wait_until` from a `-p` plugin and record,
+per call site, whether the predicate was already true on its first evaluation.
+Patch it in `pytest_configure`: test modules bind the name at import, so an
+autouse fixture is too late and silently measures nothing. Read the output as a
+shortlist, not a verdict — the question is whether the predicate was already
+satisfied *at that call site* by state that predates the trigger, which is a
+per-site fact, not a property of the predicate.
 
 **Do not change a test that has not failed.** Every regression this repo has
 shipped while fixing flakes came from sweeping a change across sites chosen by
 pattern-match rather than by evidence: the 14 gates above landed in six files
 with zero CI failures between them, and a regex before that hit two
 `action_open_command_palette()` calls where the action *closes* the menu. Get the
-frequency table first — `flake-hunt` on GitHub, `dev/tools/flake/localhunt.sh`
-locally — fix what it names, and prove the fix on the same instrument. One green
-run is not evidence: a head that failed four of six attempts displays as green,
-because re-running overwrites a run's conclusion.
+frequency table first (see *Measuring a flake* below), fix what it names, and
+prove the fix on the same instrument. One green run is not evidence: a head that
+failed four of six attempts displays as green, because re-running overwrites a
+run's conclusion.
 
 Three more shapes worth recognising, all of which have shipped here:
 
@@ -135,8 +140,7 @@ In rough order of fidelity:
 
 The last two have opposite blind spots: shortening the wait removes *waiting*
 without adding *work*, so a test that needs real wall-clock passes there and
-still fails on CI. Neither models Windows; for that, see `dev/docs/DEV_VMS.md`
-or CI itself.
+still fails on CI. Neither models Windows; for that, use CI itself.
 
 ## Measuring a flake
 
@@ -157,7 +161,8 @@ conflates — red in **every** run of an OS is a real platform failure and
 belongs in the gate; red in **some** is a flake, listed by frequency. It also
 names any suite that reported nothing, because a job that dies before uploading
 leaves no artifact and would otherwise just shrink the sample silently.
-Locally, `dev/tools/flake/localhunt.sh` drives the same aggregator.
+`.github/scripts/aggregate_junit.py` also runs standalone over a directory of
+downloaded artifacts.
 
 **Pick the sample size before you see the result.** Five clean runs bound a
 failure rate under roughly 45%, not at zero — that is not enough to clear a
@@ -165,11 +170,9 @@ failure rate under roughly 45%, not at zero — that is not enough to clear a
 same commit came back 5/5 and then 4/5, and the round that would have been
 called "fixed" was the one that happened to be clean.
 
-**Do not change a test that has not failed.** Every regression this repo has
-shipped while fixing flakes came from sweeping a change across sites chosen by
-pattern-match rather than by evidence. Get the table first, fix what it names,
-and prove the fix with something that makes it fail on demand — a fix with no
-such control is unverified, however green it looks.
+**Prove a fix with something that makes it fail on demand.** A fix with no such
+control is unverified however green it looks, and "it passes now" is equally
+consistent with "the test never exercised the change".
 
 ## Adding an app to the "Open with…" catalogue
 

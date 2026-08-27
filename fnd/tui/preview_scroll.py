@@ -594,6 +594,7 @@ class StructuralScrollStrategy:
             # watcher trip isn't mistaken for a user scroll and doesn't self-release
             # the anchor.
             unscrollable = False
+            defer_note = ""
             self._host.begin_reconcile_scroll()
             try:
                 # If an outgoing preview is being held on screen, hand the
@@ -622,11 +623,19 @@ class StructuralScrollStrategy:
                     unscrollable = (
                         retries > 0 and region.y + region.height > pane.virtual_size.height
                     )
-                    if not unscrollable:
+                    if unscrollable:
+                        defer_note = (
+                            f"region_bottom={region.y + region.height} "
+                            f"vsize_h={pane.virtual_size.height}"
+                        )
+                    else:
                         self._scroll_pane_to_match_region(pane, region, margin, animate=animate)
             finally:
                 self._host.end_reconcile_scroll()
             if unscrollable:
+                # Carry the settle gate's accumulated state, as `_wait` does:
+                # dropping it restarts the height-stability counter and pays
+                # refreshes re-establishing what this call already knew.
                 self._host.call_after_refresh(
                     self._do_scroll_to_chunk,
                     focus_chunk_seq,
@@ -636,6 +645,15 @@ class StructuralScrollStrategy:
                     animate,
                     generation,
                     current_generation,
+                    above_height,
+                    stable_ticks,
+                )
+                # The suite never reaches this path (A/B against main is
+                # identical), so a field trace is the only way this guard is
+                # ever confirmed or refuted.
+                self._host.diag_log(
+                    f"do_scroll seq={focus_chunk_seq} defer=unscrollable "
+                    f"{defer_note} retries_left={retries - 1}"
                 )
                 on_done = None  # the retried chain owns the reveal
                 return

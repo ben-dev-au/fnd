@@ -66,7 +66,18 @@ def _commit_is_retryable(exc: BaseException) -> bool:
     text = str(exc)
     if not text.startswith("An IO error occurred:"):
         return False
-    return "Access is denied" in text or "being used by another process" in text
+    # `os error 5` / `32` are the numeric forms; the English phrases are
+    # FormatMessage output and are localised, so a German or Japanese Windows
+    # would fail the text test and never retry. CI is English and cannot see it.
+    return any(
+        marker in text
+        for marker in (
+            "os error 5",
+            "os error 32",
+            "Access is denied",
+            "being used by another process",
+        )
+    )
 
 
 def _commit_attempts(writer: IndexWriter) -> Iterable[float]:
