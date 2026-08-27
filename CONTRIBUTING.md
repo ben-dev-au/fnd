@@ -138,6 +138,39 @@ without adding *work*, so a test that needs real wall-clock passes there and
 still fails on CI. Neither models Windows; for that, see `dev/docs/DEV_VMS.md`
 or CI itself.
 
+## Measuring a flake
+
+One CI run is one sample. It cannot tell "fixed" from "lucky", and re-running
+makes it worse: `gh run rerun` re-runs the SAME run id and overwrites its
+conclusion, so a run that failed four times and passed once displays as green.
+Read attempt history with
+`gh api repos/<owner>/<repo>/actions/runs/<id>/attempts/<n> --jq .conclusion`.
+
+Run the suite many times instead:
+
+```
+git push origin HEAD:flake-hunt/<name>     # 15 suites, 5 per OS, ~60 min
+```
+
+The workflow ranks every failure and separates the two cases a single run
+conflates — red in **every** run of an OS is a real platform failure and
+belongs in the gate; red in **some** is a flake, listed by frequency. It also
+names any suite that reported nothing, because a job that dies before uploading
+leaves no artifact and would otherwise just shrink the sample silently.
+Locally, `dev/tools/flake/localhunt.sh` drives the same aggregator.
+
+**Pick the sample size before you see the result.** Five clean runs bound a
+failure rate under roughly 45%, not at zero — that is not enough to clear a
+1-in-15 flake. This suite has been measured at 60 runs: two rounds on the very
+same commit came back 5/5 and then 4/5, and the round that would have been
+called "fixed" was the one that happened to be clean.
+
+**Do not change a test that has not failed.** Every regression this repo has
+shipped while fixing flakes came from sweeping a change across sites chosen by
+pattern-match rather than by evidence. Get the table first, fix what it names,
+and prove the fix with something that makes it fail on demand — a fix with no
+such control is unverified, however green it looks.
+
 ## Adding an app to the "Open with…" catalogue
 
 Third-party app integrations live in [`docs/apps.md`](docs/apps.md). To

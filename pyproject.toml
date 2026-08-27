@@ -91,11 +91,11 @@ dev = [
     "pytest>=8",
     "pytest-textual-snapshot>=1.0",
     "pytest-asyncio>=0.24",
-    # Reruns flake-marked tests under pytest.mark.flaky(reruns=N). The
-    # four sidebar-regression tests in test_sidebar_preview_regressions.py
-    # hit a pilot.pause()-blocks-for-full-timeout pathology under macOS
-    # CI's full-suite load; they pass solo every time. Reruns let CI
-    # distinguish that flake from a real regression.
+    # INERT: no `pytest.mark.flaky` marker exists, `flaky` is not registered
+    # in [tool.pytest.ini_options] markers, and no `--reruns` is passed
+    # anywhere. It has never rerun anything. Kept only pending a decision on
+    # whether to wire it or drop it — and note that rerunning HIDES a flake,
+    # which is the opposite of what `flake-hunt` is for.
     "pytest-rerunfailures>=14",
     "hypothesis>=6.110",
     # Type stubs for lxml (used by the epub/web/odf extractors) so pyright
