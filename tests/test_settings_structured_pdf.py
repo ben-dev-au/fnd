@@ -66,7 +66,7 @@ async def test_indexing_screen_has_pdf_rows(built_index: Path, cfg: Config) -> N
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PDF_TEXTURE)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         lst = app.screen.query_one(SettingsList)
         ids = [it.id for it in lst._items]
         assert "pdf_texture.engine_status" in ids
@@ -83,7 +83,7 @@ async def test_status_row_not_installed(built_index: Path, cfg: Config) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PDF_TEXTURE)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         # Trailing value goes through lazy_trailing; wait a tick for the
         # worker thread to populate it.
         from fnd.tui.lazy_trailing import invalidate
@@ -115,7 +115,7 @@ async def test_install_label_flips_when_installed(built_index: Path, cfg: Config
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PDF_TEXTURE)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         lst = app.screen.query_one(SettingsList)
         row = next(it for it in lst._items if it.id == "pdf_texture.install")
         assert "Uninstall" in row.label

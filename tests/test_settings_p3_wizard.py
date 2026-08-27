@@ -8,6 +8,7 @@ import pytest
 
 from fnd.tui import FNDApp
 from fnd.tui.indexer_service import IndexerService
+from tests._pilot_wait import settings_ready
 
 
 @pytest.fixture
@@ -48,7 +49,7 @@ async def test_add_collection_pushes_wizard_with_expected_fields(built_index: Pa
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_COLLECTIONS)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         lst = screen.query_one(SettingsList)

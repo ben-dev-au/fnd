@@ -332,7 +332,7 @@ async def test_hint_bar_edit_bar_open_variant(built_index: Path) -> None:
         )
 
         open_settings_section(app, SECTION_PREFERENCES)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         lst = screen.query_one(SettingsList)
@@ -421,7 +421,7 @@ async def test_preferences_refreshes_trailing_after_picker_pops(
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PREFERENCES)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         lst = screen.query_one(SettingsList)
@@ -644,7 +644,7 @@ async def test_cursor_move_does_not_call_render_all(
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_KEYBINDINGS)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         lst = screen.query_one(SettingsList)

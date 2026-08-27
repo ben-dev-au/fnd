@@ -83,7 +83,7 @@ async def test_cursor_skips_headers_on_keybindings(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_KEYBINDINGS)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         assert isinstance(app.screen, SettingsScreen)
         lst = app.screen.query_one(SettingsList)
         # Sanity: there ARE headers on this sub-screen.
@@ -133,7 +133,7 @@ async def test_right_arrow_only_drills(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PREFERENCES)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         lst = screen.query_one(SettingsList)

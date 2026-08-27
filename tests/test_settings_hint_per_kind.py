@@ -14,7 +14,7 @@ from textual.widgets import Static
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from tests._pilot_wait import settings_ready
+from tests._pilot_wait import settings_ready, wait_until
 
 
 @pytest.fixture
@@ -49,13 +49,19 @@ async def test_hint_says_toggle_on_toggle_row(built_index: Path, cfg: Config) ->
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_INDEXING)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         lst = app.screen.query_one(SettingsList)
         for i, it in enumerate(lst._items):
             if it.id == "indexing.auto_resume":
                 lst.cursor_index = i
                 break
-        await pilot.pause()
+        # The hint bar repaints on the frame AFTER the cursor moves.
+        await wait_until(
+            pilot,
+            lambda: "Toggle" in _hint_text(app),
+            timeout=30.0,
+            message="the hint bar never showed 'Toggle' for this row",
+        )
         text = _hint_text(app)
         assert "Toggle" in text
         assert "Open" not in text
@@ -72,13 +78,19 @@ async def test_hint_says_run_on_action_row(built_index: Path, cfg: Config) -> No
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_INDEXING)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         lst = app.screen.query_one(SettingsList)
         for i, it in enumerate(lst._items):
             if it.id == "pdf_texture.cache_prune":
                 lst.cursor_index = i
                 break
-        await pilot.pause()
+        # The hint bar repaints on the frame AFTER the cursor moves.
+        await wait_until(
+            pilot,
+            lambda: "Run" in _hint_text(app),
+            timeout=30.0,
+            message="the hint bar never showed 'Run' for this row",
+        )
         text = _hint_text(app)
         assert "Run" in text
         assert "Open" not in text
@@ -94,7 +106,7 @@ async def test_hint_omits_enter_on_display_row(built_index: Path, cfg: Config) -
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PDF_TEXTURE)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         lst = app.screen.query_one(SettingsList)
         # Move cursor to a KIND_DISPLAY row.
         for i, it in enumerate(lst._items):
@@ -119,7 +131,7 @@ async def test_display_row_enter_does_nothing(built_index: Path, cfg: Config) ->
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_INDEXING)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         lst = app.screen.query_one(SettingsList)
         for i, it in enumerate(lst._items):
             if it.id == "pdf_texture.cache_size":
@@ -155,7 +167,13 @@ async def test_hint_says_open_in_editor_on_external_app(built_index: Path, cfg: 
             if it.id == "root.open_config_file":
                 lst.cursor_index = i
                 break
-        await pilot.pause()
+        # The hint bar repaints on the frame AFTER the cursor moves.
+        await wait_until(
+            pilot,
+            lambda: "Open in editor" in _hint_text(app),
+            timeout=30.0,
+            message="the hint bar never showed 'Open in editor' for this row",
+        )
         text = _hint_text(app)
         assert "Open in editor" in text
         assert "Reveal" in text

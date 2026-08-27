@@ -21,6 +21,7 @@ from fnd.tui.settings_screen import (
     open_settings_section,
 )
 from fnd.tui.widgets.detail_strip import DetailStrip as DetailStripWidget
+from tests._pilot_wait import settings_ready
 
 
 def test_detail_strip_has_top_border_and_wraps_description() -> None:
@@ -126,7 +127,7 @@ async def test_detail_strip_renders_obsidian_advisory_under_picker_row() -> None
     async with app.run_test(size=(80, 28)) as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PREFERENCES)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         lst = screen.query_one(SettingsList)

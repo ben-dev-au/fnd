@@ -52,7 +52,7 @@ async def test_submenu_open_focuses_list_not_input(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PREFERENCES)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         assert screen._breadcrumb != ()  # sanity: this is a sub-screen
@@ -182,7 +182,7 @@ async def test_up_below_top_moves_cursor_only(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PREFERENCES)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         # Sub-menu on_mount focuses the list directly.
