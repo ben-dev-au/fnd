@@ -104,12 +104,24 @@ async def test_clicking_expanded_filters_pane_is_not_swallowed(cfg: Config, idx:
         await pilot.pause()
         assert "collapsed" not in app.query_one("#filters_pane").classes
 
-        await pilot.click("#filters_panel_tree")
-        # A click posts its way to focus; one pause is a wait for that only
-        # while the machine is idle. Windows landed on the results tree.
+        tree = app.query_one("#filters_panel_tree", Tree)
+        # Click the centre of a widget that has been through layout: clicking a
+        # zero-region one sends the event somewhere else entirely, and waiting
+        # for focus afterwards can only ever time out.
         await wait_until(
             pilot,
-            lambda: app.focused is app.query_one("#filters_panel_tree", Tree),
+            lambda: tree.region.width > 0 and tree.region.height > 0,
+            timeout=30.0,
+            message="the filters tree never laid out, so a click cannot target it",
+        )
+        landed = await pilot.click("#filters_panel_tree")
+        assert landed, (
+            f"click missed the filters tree (region={tree.region}); focus could never have followed"
+        )
+        # Focus is posted, not synchronous.
+        await wait_until(
+            pilot,
+            lambda: app.focused is tree,
             timeout=30.0,
             message="clicking the expanded filters pane never moved focus to its tree",
         )
