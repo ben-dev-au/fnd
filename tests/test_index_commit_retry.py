@@ -73,15 +73,17 @@ def test_commit_retries_a_localised_windows_lock(monkeypatch: pytest.MonkeyPatch
     assert writer.attempts == 2
 
 
-def test_commit_does_not_retry_a_localised_error_that_is_not_a_lock(
+def test_commit_does_not_retry_a_neighbouring_error_code(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Matching the code must not widen the predicate to every IO error: a
-    store-write refusal leaves the writer dead and retrying discards documents."""
+    """The numeric markers must be anchored: bare `os error 5` also matches
+    50-59, six of which are network-share failures that a NAS-hosted index will
+    really see. `os error 2` cannot detect that — it is rejected by the narrow
+    predicate and the wide one alike, so it pins the string, not the contract."""
     _fast_backoff(monkeypatch)
-    other = ValueError("An IO error occurred: 'Datei nicht gefunden. (os error 2)'")
-    writer = _FlakyWriter(fail_times=99, error=other)
-    with pytest.raises(ValueError, match="os error 2"):
+    network = ValueError("An IO error occurred: 'The network path was not found. (os error 53)'")
+    writer = _FlakyWriter(fail_times=99, error=network)
+    with pytest.raises(ValueError, match="os error 53"):
         commit(writer)  # type: ignore[arg-type]
     assert writer.attempts == 1
 

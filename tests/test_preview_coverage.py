@@ -24,6 +24,7 @@ from typing import Any, cast
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
+from textual.widget import Widget
 
 from fnd.matching import MatchSpec
 from fnd.query import FileChunk
@@ -80,7 +81,7 @@ def test_already_held_chunks_are_not_recaptured() -> None:
     assert all(i >= 10 for i in targets), targets
 
 
-def _laid_out_chunk(app: FNDApp) -> object | None:
+def _laid_out_chunk(app: FNDApp) -> Widget | None:
     """A mounted chunk that has actually been through layout.
 
     ``_preview.active`` only says the container exists; its children report
@@ -630,7 +631,7 @@ async def test_a_capture_is_cut_at_the_width_it_will_be_served_into(
         assert presenter.capture_width(pane) != pane.content_size.width
 
         # The width a real mounted chunk was laid out at is the ground truth.
-        live = next((w for w in container.chunk_widgets.values() if w.size.width > 0), None)
+        live = _laid_out_chunk(app)
         assert live is not None, "no mounted chunk to measure against"
         assert presenter.capture_width(pane) == live.size.width, (
             f"captures would be cut at {presenter.capture_width(pane)} while chunks "

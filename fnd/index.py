@@ -66,14 +66,15 @@ def _commit_is_retryable(exc: BaseException) -> bool:
     text = str(exc)
     if not text.startswith("An IO error occurred:"):
         return False
-    # `os error 5` / `32` are the numeric forms; the English phrases are
-    # FormatMessage output and are localised, so a German or Japanese Windows
-    # would fail the text test and never retry. CI is English and cannot see it.
+    # The English phrases are FormatMessage output and are localised, so a
+    # German or Japanese Windows would never retry on text alone. The numeric
+    # forms are anchored on the closing paren: bare "os error 5" also matches
+    # 50-59, six of which are network-share failures.
     return any(
         marker in text
         for marker in (
-            "os error 5",
-            "os error 32",
+            "(os error 5)",
+            "(os error 32)",
             "Access is denied",
             "being used by another process",
         )

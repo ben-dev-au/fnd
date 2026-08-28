@@ -292,6 +292,13 @@ def test_a_pane_that_has_not_sized_its_content_retries_rather_than_scrolling_now
     strat._do_scroll_to_chunk(5, margin_from=0.25)
     assert pane.captured is None, "committed a scroll the pane would clamp to nothing"
     assert host.deferred, "the scroll was dropped instead of retried"
+    # The deferral must NOT carry `above_height`/`stable_ticks`: we are here
+    # because the pane has not sized its content, so stability samples taken
+    # before now describe a layout that was still growing.
+    assert len(host.deferred[0][1]) == 7, (
+        f"deferral passed {len(host.deferred[0][1])} args; 7 restarts the "
+        "settle gate, 9 carries samples taken while layout was in flight"
+    )
 
     # Bounded: a pane that never sizes its content still lands, as before.
     strat._do_scroll_to_chunk(5, retries=0, margin_from=0.25)

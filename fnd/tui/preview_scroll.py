@@ -633,9 +633,10 @@ class StructuralScrollStrategy:
             finally:
                 self._host.end_reconcile_scroll()
             if unscrollable:
-                # Carry the settle gate's accumulated state, as `_wait` does:
-                # dropping it restarts the height-stability counter and pays
-                # refreshes re-establishing what this call already knew.
+                # Deliberately does NOT carry `above_height`/`stable_ticks`: we
+                # are here because the pane has not sized its content, which is
+                # evidence layout is still in flight, so samples taken before
+                # this point must not count toward the stability gate.
                 self._host.call_after_refresh(
                     self._do_scroll_to_chunk,
                     focus_chunk_seq,
@@ -645,12 +646,9 @@ class StructuralScrollStrategy:
                     animate,
                     generation,
                     current_generation,
-                    above_height,
-                    stable_ticks,
                 )
-                # The suite never reaches this path (A/B against main is
-                # identical), so a field trace is the only way this guard is
-                # ever confirmed or refuted.
+                # The app-level suite never reaches this branch, so a field
+                # trace is the only evidence the guard ever fires in anger.
                 self._host.diag_log(
                     f"do_scroll seq={focus_chunk_seq} defer=unscrollable "
                     f"{defer_note} retries_left={retries - 1}"
