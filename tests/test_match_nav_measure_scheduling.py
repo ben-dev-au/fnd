@@ -52,6 +52,15 @@ class _Nav(MatchNavigator):
         # moving can be scripted; the last one repeats once exhausted.
         self.readings: list[tuple[int, int]] = []
         self.settling = False
+        # What a subtree walk would find. 0 models a chunk that has not
+        # composed yet, which is the state the count ladder can strand on.
+        self.stops = 0
+
+    def _pane(self):  # type: ignore[override]
+        return object()
+
+    def _count_stops(self, pane) -> int:  # type: ignore[override]
+        return self.stops
 
     def _poll_until_landed(  # type: ignore[override]
         self, retries: int, last_scroll: int | None, *, is_valid: Any, on_landed: Any
@@ -262,3 +271,34 @@ def test_a_raising_read_does_not_escape_the_timer() -> None:
     nav._open_confirmation_window()
     nav.fire_timers()  # must not raise
     assert nav._app.timers, "the chain died on a read that raised"  # type: ignore[attr-defined]
+
+
+def test_a_chunk_that_composes_late_still_gets_a_count() -> None:
+    """``_count_tick``'s ladder is three refreshes and then stops if the count
+    is still 0. A chunk that composes after that left the count stuck at 0 with
+    nothing pending — a real Windows failure, 30s of polling against
+    `chunk_stops=[3, 5, 7]` that the navigator never counted."""
+    nav = _Nav()
+    nav._open_confirmation_window()
+    assert nav.count == 0
+
+    nav.fire_timers()  # the window ticks while the chunk is still empty
+    assert nav.count == 0, "counted stops that do not exist yet"
+
+    nav.stops = 3  # the chunk composes, long after the ladder gave up
+    nav.fire_timers()
+    assert nav.count == 3, "the confirmation window never re-derived the count"
+
+
+def test_the_recount_stops_once_the_count_is_real() -> None:
+    """The walk is only paid while the count reads zero — a window ticking 40
+    times must not re-walk the subtree once it has an answer."""
+    nav = _Nav()
+    nav.stops = 2
+    nav._open_confirmation_window()
+    nav.fire_timers()
+    assert nav.count == 2
+
+    nav.stops = 99  # a later walk would see this; the recount must not run
+    nav.fire_timers()
+    assert nav.count == 2, "re-walked the subtree after the count was populated"

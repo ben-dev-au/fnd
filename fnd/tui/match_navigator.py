@@ -565,8 +565,21 @@ class MatchNavigator:
             ctrl = getattr(self._app, "_preview_scroll", None)
             if ctrl is None or not ctrl.is_settling:
                 self._measure_offscreen()
+                self._recount_if_empty()
         if time.monotonic() < self._confirm_until:
             self._arm_confirmation()
+
+    def _recount_if_empty(self) -> None:
+        """``_count_tick``'s ladder is three refreshes; a chunk that composes
+        later leaves the count at 0 with nothing pending to fix it. Walk only
+        while it reads zero, so the cost is paid in the broken state alone."""
+        if self._count:
+            return
+        pane = self._pane()
+        found = 0 if pane is None else self._count_stops(pane)
+        if found:
+            self._count = found
+            self._notify()
 
     def _measure_offscreen(self) -> None:
         """Re-derive the cached ▲/▼ view counts (current result, above/below the
