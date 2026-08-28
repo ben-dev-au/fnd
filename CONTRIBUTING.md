@@ -110,6 +110,14 @@ prove the fix on the same instrument. One green run is not evidence: a head that
 failed four of six attempts displays as green, because re-running overwrites a
 run's conclusion.
 
+The rule bans a *speculative* sweep, not a grep. Once a failure has proved a
+shape, grepping for that exact shape and fixing every instance is evidence-driven
+and is how the mount-gated family here was closed in one pass instead of one
+flake at a time. The line is whether a real failure established the shape: three
+of those instances had never failed on their own, and fixing them was right. If
+nothing has failed, you have a hunch, and a hunch is what the fourteen gates
+were.
+
 Three more shapes worth recognising, all of which have shipped here:
 
 - **A precondition that depends on LOSING a race.** "The cache is still cold"
