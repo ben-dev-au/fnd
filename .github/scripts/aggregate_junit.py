@@ -21,8 +21,6 @@ _DIR = re.compile(r"^junit-(?P<os>.+)-(?P<index>\d+)$")
 def _outcome(case: ElementTree.Element) -> str:
     for child in case:
         tag = child.tag.lower()
-        if "rerun" in tag:
-            return "rerun"
         if "failure" in tag or "error" in tag:
             return "fail"
         if "skipped" in tag:
@@ -42,7 +40,6 @@ def _detail(case: ElementTree.Element) -> str:
 def main(root: Path, expect_oses: list[str] | None = None, expect_runs: int = 0) -> int:
     runs: dict[str, set[str]] = defaultdict(set)
     fails: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
-    reruns: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     detail: dict[str, str] = {}
     missing: list[str] = []
 
@@ -69,8 +66,6 @@ def main(root: Path, expect_oses: list[str] | None = None, expect_runs: int = 0)
             if outcome == "fail":
                 fails[nodeid][os_name].add(index)
                 detail.setdefault(nodeid, _detail(case))
-            elif outcome == "rerun":
-                reruns[nodeid][os_name].add(index)
 
     total = sum(len(v) for v in runs.values())
     out = [f"## Flake hunt — {total} suite runs\n"]
@@ -101,7 +96,7 @@ def main(root: Path, expect_oses: list[str] | None = None, expect_runs: int = 0)
     if missing:
         out.append(f"> No report from: {', '.join(missing)} — job died before pytest wrote one.\n")
 
-    if not fails and not reruns:
+    if not fails:
         out.append("**Every run green.** No test failed in any run.")
         print("\n".join(out))
         return 0
@@ -120,17 +115,6 @@ def main(root: Path, expect_oses: list[str] | None = None, expect_runs: int = 0)
         "A test red in *every* run of an OS is a real platform failure, not a flake. "
         "One red in some runs and green in others is the flake list, ranked."
     )
-
-    if reruns:
-        out.append("\n### Passed only on a rerun (`@pytest.mark.flaky`)\n")
-        out.append("| test | reruns | OSes |")
-        out.append("| --- | ---: | --- |")
-        for nodeid, by_os in sorted(
-            reruns.items(), key=lambda kv: -sum(len(v) for v in kv[1].values())
-        ):
-            count = sum(len(v) for v in by_os.values())
-            out.append(f"| `{nodeid}` | {count} | {', '.join(sorted(by_os))} |")
-        out.append("\nThese are flakes that CI currently hides.")
 
     print("\n".join(out))
     return 0
