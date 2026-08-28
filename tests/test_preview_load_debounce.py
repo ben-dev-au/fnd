@@ -14,6 +14,7 @@ import pytest
 from fnd.config import Config, Defaults
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from fnd.tui.widgets.preview_container import PreviewContainer
 from tests._pilot_wait import run_search, safe_pause, safe_press, wait_until
 
 
@@ -161,8 +162,6 @@ async def test_return_to_cancelled_target_redispatches(
     mistaken for "already in flight" and the only dispatch that would mount it
     was dedup-skipped, hanging the preview until an unrelated nav reset it.
     """
-    import types
-
     app = FNDApp(index_dir=built_index, config=cfg_with_debounce, initial_query="results")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
@@ -184,13 +183,14 @@ async def test_return_to_cancelled_target_redispatches(
 
         app._preview.inflight_target = ("target", 0)
         app._preview.mount_task = _LiveTask()
-        # A genuinely on-screen container carries neither -pre-reveal nor -hidden;
-        # has_class must answer False. Windows' ProactorEventLoop orders the mount
-        # so the reveal reads this stub as `prior`, where the SelectorEventLoop on
-        # macOS/Linux short-circuits before has_class — so the stub needs it.
-        app._preview.active = types.SimpleNamespace(  # type: ignore[assignment]
-            parent_doc_id="onscreen", has_class=lambda _cls: False
+        # The real container: which attributes the reveal reads depends on
+        # event-loop ordering (Proactor reaches `is_complete` where Selector
+        # short-circuits), so a partial double raises AttributeError on Windows.
+        onscreen = PreviewContainer(
+            parent_doc_id="onscreen", query_signature=app._search.query_signature(), total_chunks=1
         )
+        onscreen.has_painted = True
+        app._preview.active = onscreen
 
         # Overshoot to a neighbour (cancels the in-flight "target" mount) …
         app._preview.schedule_load("neighbour", 0)

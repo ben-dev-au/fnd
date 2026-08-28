@@ -28,6 +28,7 @@ from fnd.tui.lazy_trailing import (
     invalidate,
     invalidate_all,
 )
+from tests._pilot_wait import settings_ready
 
 
 class _StubApp:
@@ -179,7 +180,7 @@ async def test_cache_size_row_shows_placeholder_then_value(
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PDF_TEXTURE)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         lst = app.screen.query_one(SettingsList)
         row = next(it for it in lst._items if it.id == "pdf_texture.cache_size")
 

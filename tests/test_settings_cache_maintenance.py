@@ -17,6 +17,7 @@ from fnd.config import Config, load
 from fnd.extract.base import Block, Chunk
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import settings_ready
 
 
 @pytest.fixture
@@ -110,7 +111,7 @@ async def test_indexing_screen_has_cache_rows(
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PDF_TEXTURE)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         lst = app.screen.query_one(SettingsList)
         ids = [it.id for it in lst._items]
         assert "pdf_texture.cache_size" in ids
@@ -137,7 +138,7 @@ async def test_cache_size_row_shows_empty_when_no_cache(
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PDF_TEXTURE)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         lst = app.screen.query_one(SettingsList)
         row = next(it for it in lst._items if it.id == "pdf_texture.cache_size")
         assert row.trailing_value(app) == "empty"
@@ -158,7 +159,7 @@ async def test_cache_size_row_shows_count_and_size(
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PDF_TEXTURE)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         lst = app.screen.query_one(SettingsList)
         row = next(it for it in lst._items if it.id == "pdf_texture.cache_size")
         v = row.trailing_value(app)
@@ -182,7 +183,7 @@ async def test_cache_actions_inline_under_indexing(
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PDF_TEXTURE)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         lst = app.screen.query_one(SettingsList)
         ids = [it.id for it in lst._items]
         # Actions visible on the Indexing screen.

@@ -11,6 +11,7 @@ from fnd import opener
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.actions import REGISTRY
+from tests._pilot_wait import wait_until
 
 
 @pytest.fixture
@@ -135,7 +136,18 @@ async def test_chunk_widgets_rebuild_when_focus_moves_to_different_file(
         tree.focus()
         first_leaf_zero = children[0].children[0]
         tree.move_cursor(first_leaf_zero)
-        await pilot.pause()
+        # A cursor move dispatches a debounced load, a decode worker and a
+        # mount; one pause covers that only while the machine is idle.
+        await wait_until(
+            pilot,
+            lambda: (
+                app._preview.parent_id is not None
+                and app._flat.active_buffer is not None
+                and app._flat.active_buffer.file_view is not None
+            ),
+            timeout=30.0,
+            message="the first PDF never became the active preview",
+        )
         first_pid = app._preview.parent_id
         first_buf = app._flat.active_buffer
         assert first_buf is not None
@@ -148,7 +160,12 @@ async def test_chunk_widgets_rebuild_when_focus_moves_to_different_file(
         await pilot.pause()
         second_leaf_zero = children[1].children[0]
         tree.move_cursor(second_leaf_zero)
-        await pilot.pause()
+        await wait_until(
+            pilot,
+            lambda: app._preview.parent_id not in (None, first_pid),
+            timeout=30.0,
+            message="preview did not rebuild for file 2",
+        )
         assert app._preview.parent_id is not None
         assert app._preview.parent_id != first_pid, "preview did not rebuild for file 2"
         # Stage 1c: a single shared LineBufferPreview is reused across files —

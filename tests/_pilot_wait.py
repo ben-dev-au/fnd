@@ -20,6 +20,8 @@ from typing import Any
 
 from textual.pilot import Pilot, WaitForScreenTimeout
 
+from tests._failure_state import describe
+
 
 async def safe_pause(pilot: Pilot[None]) -> None:
     """``pilot.pause()`` that swallows ``WaitForScreenTimeout``.
@@ -58,6 +60,12 @@ async def settle(pilot: Pilot[None], ticks: int = 4) -> None:
         await safe_pause(pilot)
 
 
+# Wall clock the identical samples must span. Three rounds of a degraded
+# ``safe_pause`` elapse in tens of microseconds, over which nothing can have
+# moved. Covered by continuing to pump, not by sleeping.
+_STABLE_MIN_SPAN = 0.05
+
+
 async def wait_stable(
     pilot: Pilot[None],
     sample: Callable[[], object],
@@ -66,7 +74,8 @@ async def wait_stable(
     timeout: float = 10.0,
     message: str = "",
 ) -> None:
-    """Wait until ``sample()`` is unchanged across ``rounds`` consecutive rounds.
+    """Wait until ``sample()`` is unchanged across ``rounds`` consecutive rounds
+    spanning at least ``_STABLE_MIN_SPAN`` seconds.
 
     The event-gated replacement for ``settle(pilot, ticks=N)``: a tick count
     assumes each ``safe_pause`` flushes a refresh, but a load spike degrades it
@@ -78,10 +87,13 @@ async def wait_stable(
     where one exists; use this when the only evidence is geometry holding
     still.
     """
-    deadline = time.monotonic() + timeout
+    started = time.monotonic()
+    deadline = started + timeout
     unreadable = object()
     last: object = object()
     stable = 0
+    stable_since = started
+    rounds_run = 0
     while True:
         try:
             current = sample()
@@ -89,14 +101,21 @@ async def wait_stable(
             # Mid-rebuild the widget may not be queryable. That is "still
             # moving", not a test failure — keep waiting.
             current = unreadable
-        stable = stable + 1 if current == last and current is not unreadable else 0
+        if current == last and current is not unreadable:
+            stable += 1
+        else:
+            stable = 0
+            stable_since = time.monotonic()
         last = current
-        if stable >= rounds:
+        rounds_run += 1
+        if stable >= rounds and time.monotonic() - stable_since >= _STABLE_MIN_SPAN:
             return
         if time.monotonic() >= deadline:
             raise AssertionError(
-                f"wait_stable timed out after {timeout}s: "
-                f"{message or 'sample never held still'} (last={current!r})"
+                f"wait_stable gave up after {time.monotonic() - started:.1f}s "
+                f"(budget {timeout}s, {rounds_run} rounds): "
+                f"{message or 'sample never held still'} (last={current!r})\n"
+                f"{describe(pilot)}"
             )
         await safe_pause(pilot)
 
@@ -108,15 +127,22 @@ async def wait_until(
     timeout: float = 10.0,
     poll: float = 0.02,
     message: str = "",
+    quiet: bool = False,
 ) -> None:
     """Poll ``predicate`` until truthy or ``timeout`` (wall-clock) elapses.
+
+    ``quiet`` skips the state snapshot for callers that CATCH the timeout and
+    carry on — there the snapshot is three region walks fired mid-navigation,
+    in the files most sensitive to exactly that.
 
     Each iteration: evaluate predicate, then yield the event loop via
     ``safe_pause`` (idle drain) or a small sleep so background tasks
     and timers can advance.
     """
-    deadline = time.monotonic() + timeout
+    started = time.monotonic()
+    deadline = started + timeout
     iters = 0
+    last_error: Exception | None = None
     while True:
         try:
             result = predicate()
@@ -124,20 +150,26 @@ async def wait_until(
                 result = await result  # type: ignore[assignment]
             if result:
                 return
-        except Exception:
-            pass
+        except Exception as exc:
+            # A predicate that raises every round reads identically to one that
+            # is merely False, and the two want opposite fixes.
+            last_error = exc
+        iters += 1
         if time.monotonic() >= deadline:
+            raised = f" (predicate last raised {last_error!r})" if last_error is not None else ""
             raise AssertionError(
-                f"wait_until timed out after {timeout}s: {message or 'predicate stayed False'}"
+                f"wait_until gave up after {time.monotonic() - started:.1f}s "
+                f"(budget {timeout}s, {iters} polls): "
+                f"{message or 'predicate stayed False'}{raised}"
+                f"{'' if quiet else chr(10) + describe(pilot)}"
             )
         # Alternate idle drains and short sleeps. ``safe_pause`` flushes
         # call_later queues (when load allows); ``sleep(poll)`` keeps
         # progress when the drain itself times out.
-        if iters % 2 == 0:
+        if iters % 2 == 1:
             await safe_pause(pilot)
         else:
             await asyncio.sleep(poll)
-        iters += 1
 
 
 async def run_search(pilot: Pilot[None], app: Any, query: str, *, timeout: float = 10.0) -> None:
@@ -158,3 +190,24 @@ async def run_search(pilot: Pilot[None], app: Any, query: str, *, timeout: float
         timeout=timeout,
         message=f"search for {query!r} never committed",
     )
+
+
+async def settings_ready(pilot: Pilot[None], app: Any, *, timeout: float = 30.0) -> Any:
+    """Wait until the settings screen is pushed AND its list has populated.
+
+    Pushing the screen and composing its rows are separate frames, so a single
+    pause reads an empty list on a machine that has not got to the second one.
+    Returns the screen.
+    """
+    from fnd.tui.settings_screen import SettingsList, SettingsScreen
+
+    def _ready() -> bool:
+        screen = app.screen
+        if not isinstance(screen, SettingsScreen):
+            return False
+        return bool(screen.query_one(SettingsList)._items)
+
+    await wait_until(
+        pilot, _ready, timeout=timeout, message="the settings screen never populated its list"
+    )
+    return app.screen

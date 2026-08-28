@@ -15,6 +15,7 @@ from textual.widgets import Input, Static
 from fnd.config import Config, Defaults, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import settings_ready
 
 if TYPE_CHECKING:
     pass
@@ -104,7 +105,7 @@ async def test_indexing_subscreen_chrome(built_index: Path, cfg: Config) -> None
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_INDEXING)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         assert screen._breadcrumb == ("Indexing & PDF Texture",)
@@ -128,7 +129,7 @@ async def test_indexing_toggle_via_enter(built_index: Path, cfg: Config) -> None
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_INDEXING)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         lst = app.screen.query_one(SettingsList)
         # Move cursor to the toggle row specifically — the Indexing
         # screen now has multiple selectable rows above it.
@@ -157,7 +158,7 @@ async def test_indexing_hint_bar(built_index: Path, cfg: Config) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_INDEXING)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         text = str(app.screen.query_one("#footer_hints", Static).content)
         assert "Nav" in text
         assert "Back" in text
@@ -177,7 +178,7 @@ async def test_indexing_detail_strip_populated(built_index: Path, cfg: Config) -
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_INDEXING)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         lst = app.screen.query_one(SettingsList)
         for i, item in enumerate(lst._items):
             if item.id == "indexing.auto_resume":
@@ -200,7 +201,7 @@ async def test_search_finds_auto_resume(built_index: Path, cfg: Config) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         search = screen.query_one("#settings_search", Input)

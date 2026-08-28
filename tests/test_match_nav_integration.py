@@ -77,8 +77,16 @@ def flashcards_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 
 def _current_stop_count(app: FNDApp) -> int:
+    """Scoped stops for the focused result, or -1 while the scope is unresolved.
+
+    ``_chunk_stops`` falls back to the UNSCOPED set when the chunk extent is
+    unknown, so a bare count stops the walk on a transient match between two
+    different sets — and the extent assertion below it then fails."""
     pane = app.query_one("#preview_pane", VerticalScroll)
-    return len(app._match_nav._chunk_stops(pane))
+    nav = app._match_nav
+    if nav._current_chunk_extent(pane) is None:
+        return -1
+    return len(nav._chunk_stops(pane))
 
 
 async def _walk_to_stop_count(pilot: Pilot[None], app: FNDApp, want: int, key: str) -> bool:
@@ -92,7 +100,11 @@ async def _walk_to_stop_count(pilot: Pilot[None], app: FNDApp, want: int, key: s
             return True
         await safe_press(pilot, key)
         try:
-            await wait_until(pilot, lambda: _current_stop_count(app) == want, timeout=10.0)
+            # Caught below as control flow, so no snapshot: it is three
+            # region walks fired mid-navigation.
+            await wait_until(
+                pilot, lambda: _current_stop_count(app) == want, timeout=10.0, quiet=True
+            )
         except AssertionError:
             continue
         return True
@@ -203,6 +215,14 @@ async def test_n_stays_within_the_current_result(cfg: Config, flashcards_index: 
         assert len(nav._chunk_stops(pane)) == 2, "scoped stops should be the table's two matches"
         # The adjacent Summary result's match is mounted too, so the UNSCOPED set
         # is larger — proving the scope is actively excluding another result.
+        # That neighbour arrives on the background fill, so it is waited for:
+        # asserting it straight away tested how fast the runner mounts.
+        await wait_until(
+            pilot,
+            lambda: len(nav._region_stops(pane)) > len(nav._chunk_stops(pane)),
+            timeout=30.0,
+            message="the neighbouring result's match never mounted, so scope excludes nothing",
+        )
         assert len(nav._region_stops(pane)) > len(nav._chunk_stops(pane)), (
             "expected a neighbouring result's match to be mounted and excluded by scope"
         )
@@ -211,12 +231,25 @@ async def test_n_stays_within_the_current_result(cfg: Config, flashcards_index: 
         # the stop set never grows and the burst cursor never indexes a foreign
         # stop (which is how crossing into another result would manifest).
         for _ in range(5):
+            # `_go` early-returns when the chunk's stops are not resolvable yet,
+            # which leaves `_last_target` unset — so wait for the scope BEFORE
+            # pressing. Gating after the press would make the assertion about
+            # the layout's timing rather than about n.
+            await wait_until(
+                pilot,
+                lambda: len(nav._chunk_stops(pane)) == 2,
+                timeout=30.0,
+                message="the table's two scoped stops never resolved",
+            )
             app.action_nav_next_match()
+            # CAPTURE it: `_go` records the landing synchronously, and a
+            # background mount completing during the drain below fires a result
+            # reveal, which clears `_last_target` by design. Both assertions are
+            # about what the press recorded, so both read the captured value.
+            landed = nav._last_target
+            assert landed is not None, "n did not record a landing stop"
             await pilot.pause()
             await pilot.pause()
             stops = nav._chunk_stops(pane)
             assert len(stops) == 2, "n changed the scoped stop set — it left the current result"
-            assert nav._last_target is not None, "n did not record a landing stop"
-            assert nav._last_target < len(stops), (
-                "n's cursor indexed outside the current result's stops"
-            )
+            assert landed < len(stops), "n's cursor indexed outside the current result's stops"

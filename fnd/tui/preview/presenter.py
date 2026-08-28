@@ -2446,6 +2446,12 @@ class PreviewPresenter:
             with contextlib.suppress(Exception):
                 widget.remove()
             frozen += 1
+        if frozen:
+            # The sweep rewrote the dicts the ▲▼ stops come from. Deferred:
+            # the request can resolve to a full region walk inline, and the
+            # sweep is measured for how long it holds the loop.
+            with contextlib.suppress(Exception):
+                self._app.call_after_refresh(self._app._match_nav.on_preview_scrolled)
         self.diag_log(
             f"mount served={container.served_chunks} built={container.built_chunks} "
             f"parent={container.parent_doc_id[:8]}"

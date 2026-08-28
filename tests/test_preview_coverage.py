@@ -24,6 +24,7 @@ from typing import Any, cast
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
+from textual.widget import Widget
 
 from fnd.matching import MatchSpec
 from fnd.query import FileChunk
@@ -78,6 +79,18 @@ def test_already_held_chunks_are_not_recaptured() -> None:
         total=20, focus_idx=0, hit_indices=[5], already=set(range(10)), margin=1, budget=500
     )
     assert all(i >= 10 for i in targets), targets
+
+
+def _laid_out_chunk(app: FNDApp) -> Widget | None:
+    """A mounted chunk that has actually been through layout.
+
+    ``_preview.active`` only says the container exists; its children report
+    size 0 until the next layout pass, so a width read between the two is a
+    race the fast machine always wins."""
+    container = app._preview.active
+    if container is None:
+        return None
+    return next((w for w in container.chunk_widgets.values() if w.size.width > 0), None)
 
 
 @pytest.mark.asyncio
@@ -353,9 +366,19 @@ async def test_the_freeze_sweep_yields_between_chunks(
 
     swept: list[int] = []
 
+    # Ticker turns seen at each freeze, so the yields can be counted BETWEEN the
+    # first and last chunk rather than across the whole sweep.
+    turns_at_freeze: list[int] = []
+
     def slow_freeze(chunk, chunk_seq):  # type: ignore[no-untyped-def]
         swept.append(chunk_seq)
-        time.sleep(0.01)
+        turns_at_freeze.append(len(gaps))
+        # Longer than FREEZE_SLICE_SECONDS, so the slice budget is spent by every
+        # single chunk and the sweep owes a yield at every boundary. Deriving the
+        # owed count from elapsed time instead cannot work: the sweep's wall clock
+        # includes the time it spends YIELDED, which grows under load while the
+        # number of slice boundaries does not.
+        time.sleep(tuning.FREEZE_SLICE_SECONDS + 0.004)
         return real_freeze(chunk, chunk_seq)
 
     monkeypatch.setattr(frozen_mod, "freeze", slow_freeze)
@@ -415,17 +438,24 @@ async def test_the_freeze_sweep_yields_between_chunks(
         "sweep from a yielding one, so this would pass either way"
     )
     worst_ms = max(gaps) * 1000 if gaps else 0.0
-    # A FRACTION of the sweep, not a millisecond figure. An unsliced sweep is one
-    # block, so its worst gap IS the whole sweep and the ratio is 1.0; sliced at
-    # `FREEZE_SLICE_SECONDS` over 10ms-padded chunks it is a third of that or
-    # less. Both terms scale with the machine, which an absolute bound does not:
-    # this assertion read 102ms against a 60ms cap on a loaded macOS runner while
-    # the sweep was slicing correctly.
+    # Turns the ticker got BETWEEN the first chunk and the last, which is the
+    # only window the chunk loop controls. Counting across the whole sweep is
+    # vacuous — the prologue awaits regardless — and the single worst gap cannot
+    # tell a blocking sweep from one OS deschedule: it read 483ms against a
+    # 249ms sweep on a Windows runner that was slicing correctly, a gap longer
+    # than the sweep it was meant to describe.
     assert sweep_ms > 0, "the sweep took no measurable time; nothing was proven"
-    assert worst_ms < sweep_ms * 0.5, (
+    assert len(turns_at_freeze) >= 8, "too few chunks swept to measure the cadence"
+    turns_in_loop = turns_at_freeze[-1] - turns_at_freeze[0]
+    # Every chunk overspends the slice budget, so the sweep owes one yield per
+    # boundary. Two of slack: the first slice starts mid-prologue and the last
+    # boundary has no chunk after it. `// 4` passed on two yields in eighty.
+    owed = len(turns_at_freeze) - 2
+    assert turns_in_loop >= owed, (
         "the freeze sweep held the loop through the whole swap — the "
-        f"cold-to-warm transition is one uninterruptible block "
-        f"({worst_ms:.0f}ms of a {sweep_ms:.0f}ms sweep)"
+        f"cold-to-warm transition is one uninterruptible block ({turns_in_loop} yields "
+        f"against {owed} owed, {len(turns_at_freeze)} chunks, {sweep_ms:.0f}ms sweep, "
+        f"worst gap {worst_ms:.0f}ms)"
     )
 
 
@@ -578,11 +608,14 @@ async def test_a_capture_is_cut_at_the_width_it_will_be_served_into(
     index = wide_doc(tmp_path, tmp_index_dir)
     app = FNDApp(index_dir=index, initial_query="quartzfin")
     async with app.run_test(size=(100, 30)) as pilot:
+        # `active` is the CONTAINER existing; its children are size-zero until
+        # layout runs, and every assertion below is about a laid-out width.
+        # Windows reported "no mounted chunk to measure against" on that gap.
         await wait_until(
             pilot,
-            lambda: bool(app._search.groups) and app._preview.active is not None,
+            lambda: bool(app._search.groups) and _laid_out_chunk(app) is not None,
             timeout=20.0,
-            message="preview never became active",
+            message="no chunk in the preview was ever laid out",
         )
         presenter = app._preview
         pane = app.query_one("#preview_pane", VerticalScroll)
@@ -598,7 +631,7 @@ async def test_a_capture_is_cut_at_the_width_it_will_be_served_into(
         assert presenter.capture_width(pane) != pane.content_size.width
 
         # The width a real mounted chunk was laid out at is the ground truth.
-        live = next((w for w in container.chunk_widgets.values() if w.size.width > 0), None)
+        live = _laid_out_chunk(app)
         assert live is not None, "no mounted chunk to measure against"
         assert presenter.capture_width(pane) == live.size.width, (
             f"captures would be cut at {presenter.capture_width(pane)} while chunks "
@@ -812,6 +845,14 @@ async def test_the_repair_re_arms_but_cannot_chain_forever(
             message="preview never became active",
         )
         presenter = app._preview
+        # Same gap as above: wait for a chunk that has been through layout
+        # before stopping the work that would produce one.
+        await wait_until(
+            pilot,
+            lambda: _laid_out_chunk(app) is not None,
+            timeout=20.0,
+            message="no chunk in the preview was ever laid out",
+        )
         presenter.stop_background_work()
         for _ in range(4):
             await pilot.pause()
@@ -1516,3 +1557,60 @@ async def test_a_chunk_the_builder_cannot_take_is_walked_but_not_counted() -> No
     assert seen == [(1, 1), (2, 1), (3, 2), (4, 2)], (
         f"a flat-path chunk was counted as captured progress: {seen}"
     )
+
+
+@pytest.mark.asyncio
+async def test_the_freeze_sweep_asks_the_markers_to_re_measure(
+    tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sweep rewrites ``chunk_widgets`` / ``match_targets``, which is where
+    the ▲▼ markers get their stops — so the counts it invalidates must be
+    re-derived, not left describing the tree it just removed."""
+    # The app sweeps on its own during startup, and under load it wins: this
+    # sweep then has nothing to freeze, owes no notification, and the test
+    # would be waiting for something that is correctly not coming. Hold the
+    # automatic sweep off until the explicit one below.
+    monkeypatch.setenv("_FND_NO_FREEZE", "1")
+    index = wide_doc(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups) and app._preview.active is not None,
+            timeout=30.0,
+            message="preview never became active",
+        )
+        container = app._preview.active
+        assert container is not None
+        searcher = app._search.searcher
+        assert searcher is not None
+        chunks = searcher.get_file_chunks(container.parent_doc_id)
+        mounted = sorted(container.mounted_indices)
+        assert len(mounted) >= 2, "need mounted chunks for the sweep to have anything to do"
+
+        asked = 0
+        original = app._match_nav.on_preview_scrolled
+
+        def counted() -> None:
+            nonlocal asked
+            asked += 1
+            original()
+
+        app._match_nav.on_preview_scrolled = counted  # type: ignore[method-assign]
+        before = len(container.chunk_widgets)
+        monkeypatch.delenv("_FND_NO_FREEZE")
+        await app._preview._freeze_chunks_outside_window(
+            container, chunks, mounted[-1] + 1, mounted[-1] + 1
+        )
+        # The positive control, and it must count what THIS sweep froze: chunks
+        # that were already stand-ins prove nothing about the notification.
+        swapped = sum(1 for w in container.chunk_widgets.values() if isinstance(w, FrozenChunkView))
+        assert swapped, "the sweep froze nothing, so the notification proves nothing"
+        assert before == len(container.chunk_widgets)
+        # Deferred off the sweep, so let the refresh it was posted to run.
+        await wait_until(
+            pilot,
+            lambda: asked > 0,
+            timeout=15.0,
+            message="the sweep swapped chunks without asking the markers to re-measure",
+        )

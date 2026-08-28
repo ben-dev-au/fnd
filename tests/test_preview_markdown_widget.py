@@ -44,6 +44,7 @@ async def _settle(pilot) -> None:  # type: ignore[no-untyped-def]
             built,
             timeout=15.0,
             message="no built FNDMarkdown mounted after focus",
+            quiet=True,  # caught below as control flow
         )
     except AssertionError:
         # Some tests (fence, table) mount via different paths; fall
@@ -411,11 +412,13 @@ async def test_pptx_preview_routes_through_fnd_markdown(cfg: Config, pptx_corpus
         # _settle finds any FNDMarkdown in the app (including hidden
         # prefetch containers); under CI load the user-side mount into
         # the visible pane can lag. Wait specifically on the pane.
+        # Gate on the table, not its container: the FNDMarkdown mounts before
+        # the markup under it is built, and the assertion is about the table.
         await wait_until(
             pilot,
-            lambda: bool(list(pane.query(FNDMarkdown))),
+            lambda: bool(list(pane.query(MarkdownTable))),
             timeout=30.0,
-            message="pptx FNDMarkdown not mounted in preview pane",
+            message="pptx table never rendered as a MarkdownTable",
         )
         assert list(pane.query(MarkdownTable)), "pptx table should render via MarkdownTable"
 

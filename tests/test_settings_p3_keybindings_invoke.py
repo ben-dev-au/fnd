@@ -8,6 +8,7 @@ import pytest
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import settings_ready
 
 
 @pytest.fixture
@@ -101,7 +102,7 @@ async def test_drill_mode_always_ellipsis(
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         from fnd.tui.settings_screen import SettingsList, SettingsScreen
 

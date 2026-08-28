@@ -43,6 +43,16 @@ def two_file_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
     return tmp_index_dir
 
 
+def _make_cold(app: FNDApp, parent_id: str) -> None:
+    """Undo everything the coverage sweep does that prices a file as warm."""
+    app._preview.chunk_cache.pop(parent_id, None)
+    app._preview.capture_store.drop_file(parent_id)
+    state = app._preview.file_warm_state(parent_id)
+    assert state is None or not state.is_served, (
+        f"{parent_id[:8]} still reads as served, so this navigation is not cold"
+    )
+
+
 async def _search(pilot: Pilot[None], app: FNDApp) -> tuple[FileGroup, FileGroup]:
     await run_search(pilot, app, "target")
     small = next(g for g in app._search.groups if g.path.endswith("small.md"))
@@ -61,6 +71,12 @@ async def test_a_navigation_opens_a_session_straight_away(two_file_index: Path) 
         # A committed search parks the cursor, which dispatches a preview load
         # of its own — so wait for that to land before testing a navigation.
         await wait_until(pilot, lambda: app._progress.active is None)
+
+        # Make the navigation cold, don't hope for it. That parked load starts
+        # a coverage sweep which decodes and captures NEIGHBOURS, and both are
+        # inputs to the warm/cold plan — so whether this file is still cold when
+        # the test gets here is the runner's timing, not the test's setup.
+        _make_cold(app, big.parent_id)
 
         app._preview.render_full_doc(big.parent_id, focus_chunk_seq=0)
         session = app._progress.active

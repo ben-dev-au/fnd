@@ -53,6 +53,8 @@ from fnd.index import (
     _doc_for_chunk,
     _ensure_index,
     _path_parent_id,
+    commit,
+    commit_async,
     prune_removed_files,
     read_file_metadata,
     sources_are_enumerable,
@@ -828,7 +830,7 @@ async def run_indexer(
         local_writer = local_index.writer(heap_size=_WRITER_HEAP)
         if rebuild:
             local_writer.delete_documents(F_COLLECTION, collection)
-            local_writer.commit()
+            commit(local_writer)
         # Prior-committed snapshot for the incremental skip. A point-in-time
         # searcher reflects only what previous runs committed; files we
         # process this run are deleted+re-added, never skipped later, so the
@@ -908,7 +910,7 @@ async def run_indexer(
                 # Save everything we processed before cancel fired so
                 # the user doesn't lose those files on the next launch.
                 with contextlib.suppress(Exception):
-                    writer.commit()
+                    await commit_async(writer)
                 yield _emit("cancelled")
                 # Leave state file in place so we can resume.
                 return
@@ -959,7 +961,7 @@ async def run_indexer(
                 # outstanding. It is not a failure — commit what the run
                 # already wrote and end on the truthful terminal event.
                 with contextlib.suppress(Exception):
-                    writer.commit()
+                    await commit_async(writer)
                 yield _emit("cancelled")
                 return
             file_elapsed_ms = (time.perf_counter() - t_file) * 1000.0
@@ -1065,7 +1067,7 @@ async def run_indexer(
                 state.files_completed % 10 == 0
             )
             if commit_due:
-                writer.commit()
+                await commit_async(writer)
 
             yield _emit(
                 "file_complete",
@@ -1088,7 +1090,7 @@ async def run_indexer(
                 prune_removed_files(
                     index, writer, collection=collection, live_parent_ids=live_parent_ids
                 )
-        writer.commit()
+        await commit_async(writer)
         writer.wait_merging_threads()
     finally:
         _pdf._cache_singleton = prior_singleton

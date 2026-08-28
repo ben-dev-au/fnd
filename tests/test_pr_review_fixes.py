@@ -35,6 +35,7 @@ from fnd.apps import (
     detect_obsidian_vault_path,
     load_user_apps,
 )
+from tests._pilot_wait import settings_ready
 
 # ── #1 — vault-relative file_in_vault ──────────────────────────────────────
 
@@ -148,7 +149,7 @@ async def test_enter_on_widget_only_row_does_not_close_settings_stack() -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_KEYBINDINGS)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         lst = screen.query_one(SettingsList)

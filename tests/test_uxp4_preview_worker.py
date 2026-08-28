@@ -56,12 +56,16 @@ def two_file_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 async def test_preview_load_dispatches_worker_on_cache_miss(
     cfg: Config, two_file_index: Path
 ) -> None:
-    """First-time _render_full_doc dispatches a preview-load worker."""
+    """A cache MISS dispatches a preview-load worker."""
     app = FNDApp(index_dir=two_file_index, config=cfg, collection="notes")
     async with app.run_test() as pilot:
         await pilot.pause()
         await run_search(pilot, app, "target")
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
+        # Make the miss, don't hope for it: the coverage sweep the cursor-park
+        # load starts decodes NEIGHBOURS into this same cache, and once it wins
+        # ``render_full_doc`` takes the cached path and dispatches nothing.
+        app._preview.chunk_cache.pop(big_group.parent_id, None)
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         # Worker dispatched in the preview-load group.
         worker_groups = [w.group for w in app.workers]
@@ -77,6 +81,8 @@ async def test_preview_load_dispatches_worker_on_cache_miss(
         # Cache hit path: no new worker, no progress, no spinner.
         before_workers = len(app.workers)
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
+        # A cache hit dispatches nothing, so there is no outcome to wait for —
+        # one drain is the whole point, and the assertions are about absence.
         await pilot.pause()
         assert app._preview.load_progress is None
         assert len(app.workers) <= before_workers
@@ -93,11 +99,15 @@ async def test_preview_clears_old_content_and_shows_progress_bar(
         await run_search(pilot, app, "target")
         small_group = next(g for g in app._search.groups if g.path.endswith("small.md"))
         big_group = next(g for g in app._search.groups if g.path.endswith("big.md"))
-        # Load small file first so something is mounted.
+        # Load small file first so something is mounted. Gated on the outcome:
+        # the switch below only means anything once this one has landed.
         app._preview.render_full_doc(small_group.parent_id, focus_chunk_seq=0)
-        await pilot.pause()
-        await pilot.pause()
-        assert app._preview.parent_id == small_group.parent_id
+        await wait_until(
+            pilot,
+            lambda: app._preview.parent_id == small_group.parent_id,
+            timeout=30.0,
+            message="small.md never became the active preview",
+        )
         # Switch to the big file. Strip should become visible immediately.
         app._preview.render_full_doc(big_group.parent_id, focus_chunk_seq=0)
         strip = app.query_one(FNDProgressBar)
@@ -166,10 +176,14 @@ async def test_switching_files_mid_load_cancels_mount_task(
         # is the race-free postcondition. None covers the helper nilling
         # the field; done() covers a mount that already completed.
         assert first_task is None or first_task.done() or first_task.cancelling() > 0
-        # Drain the small load.
-        await pilot.pause()
-        await pilot.pause()
-        # Final state reflects small.md, not big.md.
+        # Gate on the outcome: two pauses cover the switch only while the
+        # machine is idle, and the assertion below is what they are for.
+        await wait_until(
+            pilot,
+            lambda: app._preview.parent_id == small_group.parent_id,
+            timeout=30.0,
+            message="the preview never settled on small.md after the switch",
+        )
         assert app._preview.parent_id == small_group.parent_id
 
 
@@ -282,10 +296,13 @@ async def test_preview_title_no_longer_carries_progress_text(
         title = app._preview_title()
         assert "loading" not in title.lower()
         assert "chunks" not in title.lower()
-        # Drain.
-        await pilot.pause()
-        await pilot.pause()
-        await pilot.pause()
-        # After load the title shows the file basename.
-        title = app._preview_title()
-        assert "big.md" in title
+        # After load the title shows the file basename. Gated on that, not on
+        # three pauses: the load is a decode worker and a mount, and Windows
+        # finished neither in three ticks — four attempts, four failures, the
+        # title still naming the cursor-parked file.
+        await wait_until(
+            pilot,
+            lambda: "big.md" in app._preview_title(),
+            timeout=30.0,
+            message="the preview title never named the loaded file",
+        )

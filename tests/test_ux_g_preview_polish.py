@@ -14,6 +14,7 @@ from fnd.index import build_index
 from fnd.query import Hit
 from fnd.tui import FNDApp
 from fnd.tui.results_labels import _format_hit_label, _trim_redundant_heading
+from tests._pilot_wait import wait_until
 
 
 def test_trim_redundant_heading_strips_filename_prefix() -> None:
@@ -166,22 +167,24 @@ async def test_md_match_chunk_renders_via_markdown_widget_with_highlight(
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        for _ in range(8):
-            await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
-        md_widgets = list(pane.query(FNDMarkdown))
-        assert md_widgets, "expected matched md chunk to mount FNDMarkdown"
-        # Some block under at least one FNDMarkdown carries a
-        # search-highlight span — that's the visible match indicator.
-        any_highlight = False
-        for md in md_widgets:
-            for block in md.query("MarkdownBlock"):
-                spans = getattr(block, "_content", None)
-                if spans is None:
-                    continue
-                if any("bold" in str(s.style) for s in spans.spans):
-                    any_highlight = True
-                    break
-            if any_highlight:
-                break
-        assert any_highlight, "expected a highlight span on at least one block"
+
+        def any_highlight() -> bool:
+            """A block under some FNDMarkdown carries a search-highlight span —
+            the visible match indicator. The widget mounting is not the span
+            landing: Windows rendered one a frame before the other."""
+            for md in pane.query(FNDMarkdown):
+                for block in md.query("MarkdownBlock"):
+                    content = getattr(block, "_content", None)
+                    if content is not None and any("bold" in str(sp.style) for sp in content.spans):
+                        return True
+            return False
+
+        await wait_until(
+            pilot,
+            any_highlight,
+            timeout=30.0,
+            message="no block ever carried a search-highlight span",
+        )
+        assert list(pane.query(FNDMarkdown)), "expected matched md chunk to mount FNDMarkdown"
+        assert any_highlight(), "expected a highlight span on at least one block"

@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._pilot_wait import settings_ready
+
 
 @pytest.mark.skipif(
     sys.platform != "darwin",
@@ -47,7 +49,7 @@ async def test_root_has_open_keybindings_file(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         lst = app.screen.query_one(SettingsList)
         labels = [it.label for it in lst._items]
         assert "Keybindings file" in labels
@@ -64,7 +66,7 @@ async def test_shift_enter_on_open_config_calls_reveal(built_index: Path) -> Non
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         # Bridge focus from the filter Input → list (the new on_mount

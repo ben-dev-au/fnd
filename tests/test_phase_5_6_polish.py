@@ -14,6 +14,7 @@ from fnd.index import build_index
 from fnd.query import FileChunk
 from fnd.render import render_document_rich
 from fnd.tui import FNDApp
+from tests._pilot_wait import settings_ready
 
 # ── Visible highlights via Rich Text styling ─────────────────────────
 
@@ -217,7 +218,7 @@ async def test_escape_closes_settings_menu(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         assert isinstance(app.screen, SettingsScreen)
         await pilot.press("escape")
         await pilot.pause()

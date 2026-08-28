@@ -10,6 +10,7 @@ from textual.widgets import Input
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import settings_ready
 
 
 @pytest.fixture
@@ -27,7 +28,7 @@ async def test_root_menu_focuses_search_input(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         assert isinstance(screen.focused, Input)
@@ -51,7 +52,7 @@ async def test_submenu_open_focuses_list_not_input(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PREFERENCES)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         assert screen._breadcrumb != ()  # sanity: this is a sub-screen
@@ -67,7 +68,7 @@ async def test_typing_immediately_routes_to_filter(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         before_items = list(screen.query_one(SettingsList)._items)
@@ -90,7 +91,7 @@ async def test_down_from_input_focuses_list(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         await pilot.press("down")
@@ -107,7 +108,7 @@ async def test_up_at_top_of_list_focuses_input(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         # Move into the list.
@@ -142,7 +143,7 @@ async def test_no_cursor_highlight_while_input_focused(built_index: Path) -> Non
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         assert isinstance(screen.focused, Input)
@@ -181,7 +182,7 @@ async def test_up_below_top_moves_cursor_only(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PREFERENCES)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         # Sub-menu on_mount focuses the list directly.

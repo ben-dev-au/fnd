@@ -1,0 +1,304 @@
+"""The ▲▼ markers must end up describing the viewport the preview is actually on.
+
+They are a cache, refreshed by a coalesced, settle-gated poll. Both ways that
+cache can be left describing a viewport the preview has left are pinned here:
+a request arriving while a poll is in flight, and a rebuild landing on one.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from fnd.tui.match_navigator import MatchNavigator
+
+
+class _Ctrl:
+    def __init__(self, nav: Any) -> None:
+        self._nav = nav
+
+    @property
+    def is_settling(self) -> bool:
+        return bool(self._nav.settling)
+
+
+class _App:
+    """Just the timer facility and the settle flag a confirmation consults."""
+
+    def __init__(self) -> None:
+        self.timers: list[Any] = []
+        self._preview_scroll: Any = None
+
+    def set_timer(self, delay: float, callback: Any, *, name: str = "") -> None:
+        self.timers.append(callback)
+
+
+class _Nav(MatchNavigator):
+    """A navigator with the poll and the region read replaced by hand-driven
+    stand-ins, so the scheduling can be tested without a laid-out preview.
+
+    The real ``__init__`` runs against ``_App``: copying its fields here is what
+    turned every new piece of navigator state into a failure in this file rather
+    than in whatever forgot it.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(_App())  # type: ignore[arg-type]
+        self._app._preview_scroll = _Ctrl(self)  # type: ignore[attr-defined]
+        self.pending: list[Any] = []
+        self.measured = 0
+        # Successive values the region read yields, so a layout that is still
+        # moving can be scripted; the last one repeats once exhausted.
+        self.readings: list[tuple[int, int]] = []
+        self.settling = False
+        # What a subtree walk would find. 0 models a chunk that has not
+        # composed yet, which is the state the count ladder can strand on.
+        self.stops = 0
+
+    def _pane(self):  # type: ignore[override]
+        return object()
+
+    def _count_stops(self, pane) -> int:  # type: ignore[override]
+        return self.stops
+
+    def _poll_until_landed(  # type: ignore[override]
+        self, retries: int, last_scroll: int | None, *, is_valid: Any, on_landed: Any
+    ) -> None:
+        self.pending.append(on_landed)
+
+    def _measure_offscreen(self) -> None:  # type: ignore[override]
+        if self.readings:
+            self._above, self._below = self.readings[0]
+            if len(self.readings) > 1:
+                self.readings.pop(0)
+        self.measured += 1
+
+    def land(self) -> None:
+        """Fire the oldest in-flight poll, as a landed scroll would."""
+        self.pending.pop(0)()
+
+    def fire_timers(self) -> int:
+        """Fire every armed confirmation timer; returns how many ran."""
+        timers = list(self._app.timers)  # type: ignore[attr-defined]
+        self._app.timers.clear()  # type: ignore[attr-defined]
+        for cb in timers:
+            cb()
+        return len(timers)
+
+
+def test_a_request_during_an_in_flight_poll_still_measures() -> None:
+    """The dropped request is the one that would have caught the real landing."""
+    nav = _Nav()
+    nav._schedule_measure()
+    nav._schedule_measure()  # arrives while the first poll is still in flight
+    nav.land()
+    assert nav.measured == 1
+    assert nav.pending, "the swallowed request never became a poll of its own"
+    nav.land()
+    assert nav.measured == 2
+
+
+def test_a_burst_collapses_to_one_follow_up() -> None:
+    """Coalescing still holds: many requests cost one extra poll, not many."""
+    nav = _Nav()
+    nav._schedule_measure()
+    for _ in range(10):
+        nav._schedule_measure()
+    nav.land()
+    assert len(nav.pending) == 1
+    nav.land()
+    assert nav.measured == 2
+    assert not nav.pending, "the follow-up must not re-arm itself"
+
+
+def test_a_rebuild_landing_on_a_poll_does_not_wedge_the_scheduler() -> None:
+    """A superseded poll must release the in-flight flag; holding it made every
+    later request return at the guard, so the markers stopped updating."""
+    nav = _Nav()
+    nav._schedule_measure()
+    nav._refresh_gen += 1  # a rebuild supersedes the in-flight poll
+    nav.land()
+    assert nav.measured == 0, "a superseded poll must not measure"
+    assert not nav._measure_pending, "the flag outlived the poll that set it"
+    nav._schedule_measure()
+    assert nav.pending, "a request after the rebuild was dropped as a duplicate"
+
+
+def test_a_rebuild_clears_a_swallowed_request_too() -> None:
+    nav = _Nav()
+    nav._schedule_measure()
+    nav._schedule_measure()
+    nav._refresh_gen += 1
+    nav.land()
+    assert not nav.pending, "a superseded generation must not schedule a follow-up"
+    assert not nav._measure_again
+
+
+@pytest.mark.parametrize("rounds", [1, 3, 7])
+def test_the_scheduler_always_settles(rounds: int) -> None:
+    """Landing every poll must terminate — a follow-up that re-armed itself
+    would spin the event loop for as long as the preview is open."""
+    nav = _Nav()
+    for _ in range(rounds):
+        nav._schedule_measure()
+    drained = 0
+    while nav.pending and drained < 10:
+        nav.land()
+        drained += 1
+    assert not nav.pending
+    assert drained <= 2, f"a burst of {rounds} cost {drained} polls"
+
+
+def test_a_late_reflow_is_caught_by_a_confirmation_pass() -> None:
+    """The counts come from LAYOUT, but every trigger is a scroll or a mount, so
+    a reflow that lands after the last scroll would otherwise leave the border
+    describing a layout that is gone — with nothing pending to notice."""
+    nav = _Nav()
+    nav._open_confirmation_window()
+    nav.readings = [(0, 0), (0, 1)]
+    nav._schedule_measure()
+    nav.land()
+    assert nav.measured == 1
+    assert nav.fire_timers() == 1, "no confirmation was armed after the measure"
+    assert nav.measured == 2, "the confirmation did not re-measure"
+    assert (nav.above, nav.below) == (0, 1), "the late reading was not adopted"
+
+
+def test_a_confirmation_skips_a_settling_navigation() -> None:
+    """A confirmation must never read regions while a navigation is landing —
+    that is the one path the surrounding code requires be left clear."""
+    nav = _Nav()
+    nav._open_confirmation_window()
+    nav.settling = True
+    nav.readings = [(1, 1)]
+    nav._schedule_measure()
+    nav.land()
+    before = nav.measured
+    assert nav.fire_timers() == 1
+    assert nav.measured == before, "a confirmation read regions mid-settle"
+    assert nav._app.timers, "a skipped tick must still arm the next one"  # type: ignore[attr-defined]
+
+
+def test_confirmation_cannot_outlive_its_window() -> None:
+    """A layout that never holds still must not keep the loop open."""
+    nav = _Nav()
+    nav._open_confirmation_window()
+    nav._app.timers.clear()  # type: ignore[attr-defined]
+    nav._confirm_armed_gen = None
+    nav._confirm_until = 0.0  # window already closed
+    nav.readings = [(i, i) for i in range(20)]
+    nav._schedule_measure()
+    nav.land()
+    assert not nav._app.timers, "a closed window still armed a confirmation"  # type: ignore[attr-defined]
+
+
+def test_a_rebuild_cancels_pending_confirmations() -> None:
+    nav = _Nav()
+    nav._open_confirmation_window()
+    nav.readings = [(0, 0), (1, 1)]
+    nav._schedule_measure()
+    nav.land()
+    nav._refresh_gen += 1  # a new preview owns the measurement now
+    nav.fire_timers()
+    assert not nav.pending, "a confirmation from the previous preview still fired"
+
+
+def test_the_window_keeps_re_measuring_until_it_closes() -> None:
+    """Agreement between two samples is not evidence the layout has stopped —
+    it has been wrong that way twice. The window is what stops the loop."""
+    nav = _Nav()
+    nav._open_confirmation_window()
+    nav.readings = [(1, 0)]  # a reading that repeats, then changes late
+    nav._schedule_measure()
+    nav.land()
+    for _ in range(3):
+        assert nav.fire_timers() == 1, "the loop stopped while its window was open"
+    nav.readings = [(0, 1)]
+    assert nav.fire_timers() == 1
+    assert (nav.above, nav.below) == (0, 1), "a late change was not picked up"
+
+
+def test_the_window_closes() -> None:
+    nav = _Nav()
+    nav._open_confirmation_window()
+    nav._app.timers.clear()  # type: ignore[attr-defined]
+    nav._confirm_armed_gen = None
+    nav._confirm_until = 0.0
+    nav.readings = [(1, 0)]
+    nav._schedule_measure()
+    nav.land()
+    assert not nav._app.timers, "a closed window still armed a confirmation"  # type: ignore[attr-defined]
+
+
+def test_a_rebuild_leaves_the_new_navigation_with_a_chain() -> None:
+    """A chain armed under the previous generation is dead on arrival, and a
+    bare "a chain exists" guard cannot say so — it just declines to arm the one
+    the new navigation needs, leaving an open window with nothing running."""
+    nav = _Nav()
+    nav._open_confirmation_window()  # generation 0 arms a chain
+    nav._refresh_gen += 1  # a rebuild supersedes it, timer still pending
+    nav._open_confirmation_window()
+    assert len(nav._app.timers) == 2, "the new generation was refused a chain"  # type: ignore[attr-defined]
+    nav.fire_timers()  # the stale one no-ops, the live one measures and re-arms
+    assert nav._app.timers, "the navigation was left with an open window and no chain"  # type: ignore[attr-defined]
+
+
+def test_only_one_confirmation_chain_runs_at_a_time() -> None:
+    """``on_result_revealed`` opens a window without bumping the generation, so
+    a sweep down the results list would otherwise leave one chain per row alive,
+    every one of them reading regions."""
+    nav = _Nav()
+    for _ in range(10):
+        nav._open_confirmation_window()
+    assert len(nav._app.timers) == 1, (  # type: ignore[attr-defined]
+        f"{len(nav._app.timers)} chains armed for one preview"  # type: ignore[attr-defined]
+    )
+    nav.readings = [(0, 1)]
+    nav.fire_timers()
+    assert len(nav._app.timers) == 1, "a tick armed more than its own successor"  # type: ignore[attr-defined]
+
+
+def test_a_raising_read_does_not_escape_the_timer() -> None:
+    """Textual hands a raising timer callback to ``App._handle_exception``,
+    which takes the app down; these counts are decoration."""
+    nav = _Nav()
+
+    def boom() -> None:
+        raise RuntimeError("preview torn down mid-read")
+
+    nav._measure_offscreen = boom  # type: ignore[method-assign]
+    nav._open_confirmation_window()
+    nav.fire_timers()  # must not raise
+    assert nav._app.timers, "the chain died on a read that raised"  # type: ignore[attr-defined]
+
+
+def test_a_chunk_that_composes_late_still_gets_a_count() -> None:
+    """``_count_tick``'s ladder is three refreshes and then stops if the count
+    is still 0. A chunk that composes after that left the count stuck at 0 with
+    nothing pending — a real Windows failure, 30s of polling against
+    `chunk_stops=[3, 5, 7]` that the navigator never counted."""
+    nav = _Nav()
+    nav._open_confirmation_window()
+    assert nav.count == 0
+
+    nav.fire_timers()  # the window ticks while the chunk is still empty
+    assert nav.count == 0, "counted stops that do not exist yet"
+
+    nav.stops = 3  # the chunk composes, long after the ladder gave up
+    nav.fire_timers()
+    assert nav.count == 3, "the confirmation window never re-derived the count"
+
+
+def test_the_recount_stops_once_the_count_is_real() -> None:
+    """The walk is only paid while the count reads zero — a window ticking 40
+    times must not re-walk the subtree once it has an answer."""
+    nav = _Nav()
+    nav.stops = 2
+    nav._open_confirmation_window()
+    nav.fire_timers()
+    assert nav.count == 2
+
+    nav.stops = 99  # a later walk would see this; the recount must not run
+    nav.fire_timers()
+    assert nav.count == 2, "re-walked the subtree after the count was populated"

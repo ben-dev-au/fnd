@@ -23,6 +23,7 @@ import pytest
 
 from fnd.index import build_index
 from fnd.tui import FNDApp
+from tests._pilot_wait import settings_ready, wait_until
 
 
 @pytest.fixture
@@ -43,7 +44,7 @@ async def test_root_menu_is_short_list_of_categories(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         assert screen._breadcrumb == ()
@@ -82,7 +83,7 @@ async def test_cursor_skips_headers_on_keybindings(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_KEYBINDINGS)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         assert isinstance(app.screen, SettingsScreen)
         lst = app.screen.query_one(SettingsList)
         # Sanity: there ARE headers on this sub-screen.
@@ -106,7 +107,7 @@ async def test_left_arrow_pops(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         assert isinstance(app.screen, SettingsScreen)
         await pilot.press("down")  # bridge from Input → list
         await pilot.pause()
@@ -132,7 +133,7 @@ async def test_right_arrow_only_drills(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         open_settings_section(app, SECTION_PREFERENCES)
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         lst = screen.query_one(SettingsList)
@@ -160,10 +161,17 @@ async def test_palette_toggle(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         assert isinstance(app.screen, SettingsScreen)
         app.action_open_command_palette()
-        await pilot.pause()
+        # This press CLOSES the stack, so wait for it to go rather than for a
+        # list to populate — the same action toggles both ways.
+        await wait_until(
+            pilot,
+            lambda: not isinstance(app.screen, SettingsScreen),
+            timeout=30.0,
+            message="a second press never closed the settings stack",
+        )
         assert not isinstance(app.screen, SettingsScreen)
 
 
@@ -195,7 +203,7 @@ async def test_drilling_into_preferences_then_esc_returns_to_root(built_index: P
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         root_screen = app.screen
         assert isinstance(root_screen, SettingsScreen)
         # Drill into Preferences.
@@ -261,7 +269,7 @@ async def test_root_has_open_config_file_row(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         lst = screen.query_one(SettingsList)

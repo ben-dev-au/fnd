@@ -17,6 +17,7 @@ from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.menu import KIND_HEADER
 from fnd.tui.settings_screen import SettingsList, SettingsScreen
+from tests._pilot_wait import settings_ready
 
 
 @pytest.fixture
@@ -65,7 +66,7 @@ async def test_search_finds_indexing_row(
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         search = screen.query_one("#settings_search", Input)
@@ -85,7 +86,7 @@ async def test_search_breadcrumb_is_indexing(built_index: Path, cfg: Config) -> 
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_open_command_palette()
-        await pilot.pause()
+        await settings_ready(pilot, app)
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         search = screen.query_one("#settings_search", Input)

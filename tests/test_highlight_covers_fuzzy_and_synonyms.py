@@ -24,6 +24,7 @@ from fnd.matching import MatchSpec, word_matches
 from fnd.synonyms import SynonymTable
 from fnd.tui import FNDApp
 from fnd.tui.widgets.markdown import FNDMarkdown
+from tests._pilot_wait import wait_until
 
 # ── Unit: MatchSpec covers all three pass semantics ──────────────────
 
@@ -214,9 +215,26 @@ async def test_fuzzy_match_chunk_highlights_the_actual_word(
         await pilot.pause()
         tree = app.query_one("#results_pane", Tree)
         tree.focus()
-        for _ in range(8):
-            await pilot.pause()
         pane = app.query_one("#preview_pane", VerticalScroll)
+        word_lower = "templates"
+
+        def word_rendered() -> bool:
+            """The widget existing is not the word being in it — Windows mounted
+            the FNDMarkdown a frame before its blocks carried any content, and
+            the search below then read -1."""
+            for md in pane.query(FNDMarkdown):
+                for block in md.query("MarkdownBlock"):
+                    content = getattr(block, "_content", None)
+                    if content is not None and word_lower in content.plain.lower():
+                        return True
+            return False
+
+        await wait_until(
+            pilot,
+            word_rendered,
+            timeout=30.0,
+            message="the matched chunk never rendered the word",
+        )
         md_widgets = list(pane.query(FNDMarkdown))
         assert md_widgets, "expected fuzzy-hit chunk to mount"
         # The chars of the doc word "templates" must be COVERED by
@@ -224,7 +242,6 @@ async def test_fuzzy_match_chunk_highlights_the_actual_word(
         # is split into yellow / orange runs, so a single span won't
         # span the whole word).
         all_styled_chars: set[int] = set()
-        word_lower = "templates"
         word_start = -1
         for md in md_widgets:
             for block in md.query("MarkdownBlock"):

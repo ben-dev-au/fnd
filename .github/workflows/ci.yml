@@ -9,6 +9,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # A new push supersedes the PR run still going for the same branch: its
+  # three OS jobs are ~95 runner-minutes that can no longer gate anything.
+  # Never cancel on main — those runs are the release record.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: pytest (${{ matrix.os }})

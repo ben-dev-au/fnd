@@ -11,6 +11,7 @@ resolution + scrolling live on :class:`MatchNavigator` below.
 from __future__ import annotations
 
 import contextlib
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -57,6 +58,21 @@ def _view_buckets(ys: list[int], vh: int) -> int:
             views += 1
             covered_to = y + vh
     return views
+
+
+# Re-measure spacing, and the window a navigation keeps re-measuring in. The
+# window is what stops it, not agreement between readings: two equal samples
+# prove only that two samples matched, and this cache has already been wrong
+# that way twice.
+#
+# The read is `enumerate_stop_regions` over the pane subtree, so it scales with
+# mounted chunks: 1.6ms at 45, 3.8ms median / 7.8ms peak at 201, against a
+# `FULLMOUNT_CHUNK_BUDGET` of 250. At 4Hz that is ~2-3% of one core, and
+# `on_result_revealed` re-opens the window, so walking a results list keeps it
+# running rather than the 40 reads a single navigation costs. It stops 10s after
+# the last one.
+_CONFIRM_DELAY = 0.25
+_CONFIRM_BUDGET = 10.0
 
 
 def offscreen_views(ys: list[int], top: int, bottom: int, vh: int) -> tuple[int, int]:
@@ -161,6 +177,20 @@ class MatchNavigator:
         self._above = 0
         self._below = 0
         self._measure_pending = False
+        # A re-measure asked for while one was already in flight. Dropping it
+        # is what leaves the border showing a viewport the preview has left:
+        # the in-flight poll can land on the PRE-scroll layout, so the request
+        # it swallows is the one that would have caught the real position.
+        self._measure_again = False
+        # Deadline for the re-measures described at ``_CONFIRM_BUDGET``. The
+        # counts derive from LAYOUT while every trigger that refreshes them is a
+        # scroll or a mount, so a late reflow strands them with nothing watching.
+        self._confirm_until = 0.0
+        # The generation a confirmation chain is armed for, or None. Keyed by
+        # generation, not a bare flag: a chain armed under an older one is dead
+        # on arrival, and a flag cannot say so — it just blocks the arm the new
+        # navigation needs, leaving an open window with nothing running.
+        self._confirm_armed_gen: int | None = None
         self._last_target: int | None = None
         # Bumped per rebuild() so a superseded count tick self-cancels.
         self._refresh_gen = 0
@@ -394,8 +424,12 @@ class MatchNavigator:
         self._above = self._below = self._count = 0
         # Release the coalescing latch: the in-flight poll (if any) belongs to
         # the previous generation and will now exit without measuring, so
-        # leaving the latch set would drop every request for THIS preview.
+        # leaving the latch set would drop every request for THIS preview. The
+        # deferred request it swallowed belongs to that generation too.
         self._measure_pending = False
+        self._measure_again = False
+        self._confirm_armed_gen = None
+        self._open_confirmation_window()
         self._notify()
         self._await_mount(self._refresh_gen, retries=60)
 
@@ -492,6 +526,61 @@ class MatchNavigator:
             on_landed=self._measure_offscreen,
         )
 
+    def _open_confirmation_window(self) -> None:
+        """A navigation starts the layout moving; re-measure until it stops."""
+        self._confirm_until = time.monotonic() + _CONFIRM_BUDGET
+        self._arm_confirmation()
+
+    def _arm_confirmation(self) -> None:
+        """Re-measure once more after the layout has had time to stop moving.
+
+        One chain at a time. ``on_result_revealed`` opens a window without
+        bumping the generation, so an arm per switch would leave a sweep of the
+        results list running a chain per row, all of them reading regions.
+        """
+        gen = self._refresh_gen
+        if self._confirm_armed_gen == gen:
+            return
+        try:
+            self._app.set_timer(
+                _CONFIRM_DELAY, lambda: self._confirm_tick(gen), name="match-nav-confirm"
+            )
+        except Exception:
+            return  # a stand-in app with no timer facility forgoes the re-confirm
+        self._confirm_armed_gen = gen
+
+    def _confirm_tick(self, gen: int) -> None:
+        """One confirmation: read now unless a navigation is mid-settle.
+
+        Not routed through :meth:`_schedule_measure`, whose landing poll
+        reschedules per refresh — a window of that is per-frame work on the
+        settle path. A skipped tick costs nothing; the next is 250ms away."""
+        if gen != self._refresh_gen:
+            return  # superseded; its own generation's chain owns the window
+        self._confirm_armed_gen = None
+        # Textual hands a raising timer callback to ``App._handle_exception``,
+        # which takes the app down. A region read on a preview mid-teardown is
+        # exactly where that would come from, and the counts are decoration.
+        with contextlib.suppress(Exception):
+            ctrl = getattr(self._app, "_preview_scroll", None)
+            if ctrl is None or not ctrl.is_settling:
+                self._measure_offscreen()
+                self._recount_if_empty()
+        if time.monotonic() < self._confirm_until:
+            self._arm_confirmation()
+
+    def _recount_if_empty(self) -> None:
+        """``_count_tick``'s ladder is three refreshes; a chunk that composes
+        later leaves the count at 0 with nothing pending to fix it. Walk only
+        while it reads zero, so the cost is paid in the broken state alone."""
+        if self._count:
+            return
+        pane = self._pane()
+        found = 0 if pane is None else self._count_stops(pane)
+        if found:
+            self._count = found
+            self._notify()
+
     def _measure_offscreen(self) -> None:
         """Re-derive the cached ▲/▼ view counts (current result, above/below the
         viewport) and refresh the border only when they changed. Reads regions —
@@ -517,6 +606,7 @@ class MatchNavigator:
         Clear the old markers now, reset the burst memory (a new result is a
         fresh nav), and re-measure once the reveal position settles."""
         self._last_target = None
+        self._open_confirmation_window()
         if (self._above, self._below) != (0, 0):
             self._above = self._below = 0
             self._notify()
@@ -536,15 +626,25 @@ class MatchNavigator:
         preview were dropped as duplicates.
         """
         if self._measure_pending:
+            self._measure_again = True
             return
         self._measure_pending = True
         gen = self._refresh_gen
 
         def _landed() -> None:
-            if gen != self._refresh_gen:
-                return  # superseded; the newer rebuild owns the measurement
+            # Cleared BEFORE the generation check, so a superseded poll cannot
+            # leave the latch set. Defence in depth: `_poll_until_landed` gates
+            # on the same generation in the frame it calls this.
             self._measure_pending = False
+            if gen != self._refresh_gen:
+                self._measure_again = False
+                return  # superseded; the newer rebuild owns the measurement
             self._measure_offscreen()
+            if self._measure_again:
+                self._measure_again = False
+                self._schedule_measure()
+            elif time.monotonic() < self._confirm_until:
+                self._arm_confirmation()
 
         self._poll_until_landed(
             30, None, is_valid=lambda: gen == self._refresh_gen, on_landed=_landed
