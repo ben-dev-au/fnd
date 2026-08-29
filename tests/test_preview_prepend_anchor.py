@@ -315,3 +315,45 @@ async def test_a_claim_on_content_that_left_the_layout_is_dropped_not_absorbed()
             f"scroll_y {pane.scroll_y} (was {before}) — the pane moved for content "
             f"that is no longer laid out"
         )
+
+
+@pytest.mark.asyncio
+async def test_no_frame_paints_the_document_at_the_uncorrected_offset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The absorb has to be in the arrangement the frame is painted from.
+
+    Written from the ``virtual_size`` watcher it arrives one update cycle late:
+    ``Screen._refresh_layout`` builds the map, calls ``_size_updated`` (where
+    the watcher runs), then paints that same map. The scroll therefore reached
+    the screen a cycle behind the prepend, so one frame showed the document a
+    prepend-height out of place and the next snapped it back.
+    """
+    from textual._compositor import Compositor
+
+    app = _PaneApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        pane, filler, anchor = await _ready(pilot, app)
+        _claim(pane, anchor)
+        settled = anchor.region.y
+
+        painted: list[int] = []
+        render_update = Compositor.render_update
+
+        def record(self: Compositor, *args: object, **kwargs: object) -> object:
+            update = render_update(self, *args, **kwargs)  # type: ignore[arg-type]
+            painted.append(anchor.region.y)
+            return update
+
+        monkeypatch.setattr(Compositor, "render_update", record)
+        filler.styles.height = 560
+        await pilot.pause()
+        await pilot.pause()
+
+        assert painted, "no frame was painted, so this proves nothing"
+        assert set(painted) == {settled}, (
+            f"the anchor painted at {sorted(set(painted))} — a 60-row prepend reached "
+            f"the screen before the scroll absorbing it, so the document moved under "
+            f"the reader for a frame (it sits at {settled})"
+        )
