@@ -24,6 +24,9 @@ jobs:
     # on the real thing. ``fail-fast: false`` so one OS going red still
     # reports the others. Free tier on public repos; private repos use the
     # 10x multiplier so keep an eye on the minutes budget.
+    # Gated on format/typecheck (~1min combined): a lint or type failure
+    # is visible before the ~30-40min matrix burns runner time proving it.
+    needs: [format, typecheck]
     strategy:
       fail-fast: false
       matrix:
