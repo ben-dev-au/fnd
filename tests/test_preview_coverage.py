@@ -683,8 +683,8 @@ async def test_a_tall_chunk_is_captured_at_the_width_it_was_asked_for(
             tall, requested, match_spec=app._effective_match_spec
         )
         assert capture is not None, "the jig produced nothing to check"
-        assert capture.height > warm_host_mod._LAYOUT_HEIGHT, (
-            f"chunk rendered {capture.height} rows against a layout box of "
+        assert capture.outer_height > warm_host_mod._LAYOUT_HEIGHT, (
+            f"chunk rendered {capture.outer_height} rows against a layout box of "
             f"{warm_host_mod._LAYOUT_HEIGHT}, so it never overflowed and this test "
             f"cannot detect the bug"
         )

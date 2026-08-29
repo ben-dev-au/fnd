@@ -733,11 +733,9 @@ def test_a_genuinely_empty_chunk_above_still_lands() -> None:
 def test_a_frozen_chunk_does_not_get_the_focus_band() -> None:
     """The band paints the widget BACKGROUND, and a capture's strips are opaque.
 
-    So on a frozen chunk the band cannot tint the content at all — the only
-    thing it can reach is the one padding row the strips do not cover, which
-    renders as a stray amber bar above the text. It was invisible while a
-    stand-in was sized to its strips alone, and appeared the moment stand-ins
-    started carrying the padding of the chunk they replace.
+    So on a frozen chunk the band can tint nothing the reader can see, and any
+    row the strips did not cover would show it as a stray amber bar instead.
+    Skipping it is what keeps that impossible however the capture is sized.
     """
     from rich.segment import Segment
     from textual.strip import Strip
@@ -748,7 +746,6 @@ def test_a_frozen_chunk_does_not_get_the_focus_band() -> None:
         chunk_seq=3,
         width=20,
         strips=[Strip([Segment("captured row".ljust(20))], 20)],
-        padding=(0, 0, 1, 0),
     )
     header = FrozenChunkView(capture)
     pane = _FakePane()

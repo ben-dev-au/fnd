@@ -94,10 +94,12 @@ async def test_capture_holds_everything_the_tree_painted() -> None:
 
         # The capture must cover the WHOLE chunk, not the part on screen: the
         # pane here is 24 rows and the chunk is taller.
-        assert frozen.height >= md.virtual_size.height, (
-            f"captured {frozen.height} rows for a chunk {md.virtual_size.height} tall"
+        assert frozen.outer_height >= md.virtual_size.height, (
+            f"captured {frozen.outer_height} rows for a chunk {md.virtual_size.height} tall"
         )
-        assert frozen.height > 24, "chunk should exceed the viewport for this to prove anything"
+        assert frozen.outer_height > 24, (
+            "chunk should exceed the viewport for this to prove anything"
+        )
 
         styled = sum(
             1 for s in frozen.strips for seg in s._segments if seg.style and seg.style.bgcolor
@@ -120,11 +122,11 @@ async def test_positions_survive_the_widgets_that_produced_them() -> None:
             f"first match row {frozen.first_match_row} != live {live_row}"
         )
         assert frozen.stop_rows, "no match stops captured"
-        assert all(0 <= r < frozen.height for r in frozen.stop_rows)
+        assert all(0 <= r < frozen.outer_height for r in frozen.stop_rows)
         # Table cells resolve to rows recorded while the DataTable still existed —
         # the point being that a row cannot race, whereas a live cell region can.
         for coord, row in frozen.cell_rows.items():
-            assert 0 <= row < frozen.height, f"cell {coord} row {row} outside the chunk"
+            assert 0 <= row < frozen.outer_height, f"cell {coord} row {row} outside the chunk"
 
 
 @pytest.mark.asyncio
@@ -148,8 +150,8 @@ async def test_the_stand_in_is_one_widget_of_the_same_height() -> None:
         )
 
         assert len(list(view.query("*"))) == 0, "the stand-in must hold no child widgets"
-        assert view.size.height == frozen.height, (
-            f"stand-in is {view.size.height} rows, capture is {frozen.height} — "
+        assert view.size.height == frozen.outer_height, (
+            f"stand-in is {view.size.height} rows, capture is {frozen.outer_height} — "
             "a height mismatch would shift the page when it is swapped in"
         )
         rendered = "\n".join(view.render_line(y).text for y in range(view.size.height))
@@ -391,7 +393,7 @@ async def test_a_wrapped_block_captures_the_row_its_match_paints_on() -> None:
         )
         painted = [i for i, s in enumerate(frozen.strips) if "quartzfin" in s.text]
         assert painted, "the match did not survive the capture"
-        assert frozen.first_match_row == painted[0] + frozen.padding[0], (
+        assert frozen.first_match_row == painted[0], (
             f"captured row {frozen.first_match_row} != painted row {painted[0]}"
         )
 
@@ -437,4 +439,94 @@ async def test_a_wrapped_chunk_keeps_its_stop_rows_through_a_capture() -> None:
         frozen_rows = sorted(r.y - view.region.y for r in enumerate_stop_regions(pane, spec))
         assert frozen_rows == live_rows, (
             f"stops at rows {live_rows} live but {frozen_rows} once frozen"
+        )
+
+
+class _TopPaddedHost(App[None]):
+    """A chunk with the padding production puts ABOVE it (``.chunk-first``).
+
+    ``_PaddedHost`` pads underneath, which is the case that cannot see this:
+    padding below leaves the content starting at row 0 either way.
+    """
+
+    CSS = """
+    #pane { height: 100%; }
+    .chunk-first { padding: 1 0 0 0; height: auto; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="pane"):
+            yield FNDMarkdown(
+                match_spec=MatchSpec.from_query("quartzfin"),
+                id="md",
+                classes="chunk-first chunk-md-body",
+            )
+
+
+def _painted(app: App[None], widget) -> list[str]:  # type: ignore[no-untyped-def]
+    """The screen rows ``widget`` occupies, as the compositor paints them."""
+    region = widget.region
+    strips = app.screen._compositor.render_strips()
+    return [
+        strips[y].text.rstrip() for y in range(region.y, min(region.y + region.height, len(strips)))
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_stand_in_paints_the_rows_the_tree_painted() -> None:
+    """Same rows, not merely the same number of them.
+
+    ``Compositor.reflow`` lays a root's children out inside the size it is given
+    MINUS that root's padding. Sized to the content region, a capture therefore
+    spends its first row on the padding and drops the last content row, and a
+    stand-in that re-adds that padding paints everything one row low — which no
+    height check can see, and which showed up as the page stepping sideways the
+    first time a file was frozen.
+    """
+    app = _TopPaddedHost()
+    async with app.run_test(size=(80, 60)) as pilot:
+        md = app.query_one("#md", FNDMarkdown)
+        md.update(DOC)
+        await md.build_done.wait()
+        await wait_stable(
+            pilot,
+            lambda: (md.region.height, md.virtual_size.height),
+            rounds=3,
+            timeout=15.0,
+            message="the chunk never settled",
+        )
+        assert md.outer_size.height > md.size.height, (
+            "fixture must pad the chunk, or this proves nothing"
+        )
+        assert md.region.y + md.region.height <= app.screen.size.height, (
+            "the chunk must fit on screen, or the comparison misses its tail"
+        )
+        before = _painted(app, md)
+        assert any(r.strip() for r in before), "the chunk painted nothing to compare"
+
+        frozen = freeze(md, chunk_seq=0)
+        assert frozen is not None
+        pane = app.query_one("#pane", VerticalScroll)
+        view = FrozenChunkView(frozen)
+        await pane.mount(view, before=md)
+        await md.remove()
+        await wait_stable(
+            pilot,
+            lambda: (view.region.height, view.region.y),
+            rounds=3,
+            timeout=15.0,
+            message="the stand-in never settled",
+        )
+
+        assert view.region.height == len(before), (
+            f"stand-in occupies {view.region.height} rows, the tree occupied {len(before)}"
+        )
+        after = _painted(app, view)
+        assert after == before, (
+            "the stand-in paints different rows from the tree it replaced:\n"
+            + "\n".join(
+                f"  row {i}: tree={b!r} stand-in={a!r}"
+                for i, (b, a) in enumerate(zip(before, after))
+                if a != b
+            )
         )
