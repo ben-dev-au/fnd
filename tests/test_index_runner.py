@@ -25,6 +25,7 @@ from fnd.index_runner import (
     is_state_resumable,
     load_state,
     run_indexer,
+    run_sync,
     save_state,
     state_file_for,
 )
@@ -427,6 +428,47 @@ async def test_warm_run_skips_unchanged_files(tmp_path: Path, papers_dir: Path) 
     # Skip path never touches the extractor/cache.
     assert final.cache_hits_total == 0
     assert final.cache_misses_total == 0
+
+
+def test_run_sync_returns_chunks_written(tmp_path: Path) -> None:
+    """The CLI's `indexed N chunks for collection X` line needs a chunk
+    count, not a file count — one file split into two heading-sections
+    must report 2, proving this isn't just len(files)."""
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    (notes / "a.md").write_text("# First\n\nBody one.\n\n# Second\n\nBody two.\n")
+    cfg = CollectionConfig(sources=[SourceConfig(path=notes)])
+
+    written = run_sync(config=cfg, collection="t", index_dir=tmp_path / "idx")
+
+    assert written == 2, f"expected 2 chunks from a two-section file, got {written}"
+
+
+def test_chunks_written_excludes_rolled_back_chunks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file that yields chunks and then fails has those chunks deleted —
+    the reported total must not count chunks that aren't in the index."""
+    import fnd.index_runner as runner_module
+
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    (notes / "ok.md").write_text("# OK\n\nBody.\n")
+    (notes / "broken.md").write_text("# Broken\n\nBody.\n")
+    cfg = CollectionConfig(sources=[SourceConfig(path=notes)])
+
+    real_process_one_file = runner_module._process_one_file
+
+    def fake_process_one_file(*, path: Path, **kwargs: object) -> tuple[int, bool, bool, str]:
+        if path.name == "broken.md":
+            return 5, False, False, "boom"
+        return real_process_one_file(path=path, **kwargs)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(runner_module, "_process_one_file", fake_process_one_file)
+
+    written = run_sync(config=cfg, collection="t", index_dir=tmp_path / "idx")
+
+    assert written == 1, f"rolled-back chunks from the failed file leaked into the total: {written}"
 
 
 @pytest.mark.asyncio

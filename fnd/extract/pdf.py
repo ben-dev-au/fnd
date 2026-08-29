@@ -928,6 +928,20 @@ def _has_docling() -> bool:
     return shutil.which("docling") is not None
 
 
+# The PDF spec requires the ``%PDF-`` marker within the first 1024 bytes.
+_PDF_MAGIC_SCAN_BYTES: Final = 1024
+
+
+def _looks_like_pdf(path: Path) -> bool:
+    """True if ``path``'s first bytes carry the ``%PDF-`` marker."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(_PDF_MAGIC_SCAN_BYTES)
+    except OSError:
+        return True  # let the real open() below produce the honest error
+    return b"%PDF-" in head
+
+
 def extract(
     path: Path,
     *,
@@ -947,6 +961,8 @@ def extract(
     indexer runner's live-progress channel so the IndexerScreen ETA
     refines as a single long PDF processes its pages.
     """
+    if not _looks_like_pdf(path):
+        raise ExtractError(str(path), "not a PDF (missing %PDF header)")
     cache = _get_cache()
     # One folder per document: ownership is decided against the previous
     # chunk, so the state must not span files.
