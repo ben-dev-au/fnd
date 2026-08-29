@@ -46,11 +46,11 @@ def cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[CliRunner, lis
 
     touched: list[str] = []
 
-    def fake_build(*, collection: str, **_kwargs: object) -> int:
+    def fake_run_sync(*, collection: str, **_kwargs: object) -> int:
         touched.append(collection)
         return 7
 
-    monkeypatch.setattr("fnd.index.build_index_from_config", fake_build)
+    monkeypatch.setattr("fnd.index_runner.run_sync", fake_run_sync)
     return CliRunner(), touched
 
 
@@ -106,11 +106,11 @@ def test_rebuild_flag_reaches_every_target(
     runner, _touched = cli
     seen: list[bool] = []
 
-    def fake_build(*, collection: str, rebuild: bool, **_kwargs: object) -> int:
+    def fake_run_sync(*, collection: str, rebuild: bool, **_kwargs: object) -> int:
         seen.append(rebuild)
         return 0
 
-    monkeypatch.setattr("fnd.index.build_index_from_config", fake_build)
+    monkeypatch.setattr("fnd.index_runner.run_sync", fake_run_sync)
     result = runner.invoke(app, ["collection", "reindex", "-c", "all", "--rebuild"])
 
     assert result.exit_code == 0, result.output
@@ -133,6 +133,34 @@ def test_naming_the_collection_twice_is_refused(cli: tuple[CliRunner, list[str]]
 
     assert result.exit_code == 2
     assert touched == []
+
+
+def test_reindex_delegates_to_index_runner_run_sync(
+    cli: tuple[CliRunner, list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CLI must drive the same incremental, cloud-aware engine the TUI
+    uses (index_runner.run_sync) rather than build_index_from_config, which
+    always did a full non-incremental rebuild on every run."""
+    runner, _touched = cli
+    calls: list[dict[str, object]] = []
+
+    def fake_run_sync(
+        *,
+        config: object,
+        collection: str,
+        index_dir: object,
+        rebuild: bool = False,
+        progress_callback: object = None,
+    ) -> int:
+        calls.append({"collection": collection, "rebuild": rebuild})
+        return 3
+
+    monkeypatch.setattr("fnd.index_runner.run_sync", fake_run_sync)
+    result = runner.invoke(app, ["collection", "reindex", "-c", "notes"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == [{"collection": "notes", "rebuild": False}]
+    assert "indexed 3 chunks for collection notes" in result.output
 
 
 def test_accepting_the_all_proposal_prompts_once(
