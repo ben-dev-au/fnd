@@ -19,10 +19,12 @@ from textual.css.model import CombinatorType, SelectorType
 
 from fnd.tui import FNDApp
 from fnd.tui.preview.visibility import (
+    ANCESTOR_RULES,
     NODE_ONLY_CLASSES,
     set_node_class,
     set_preview_visibility,
 )
+from fnd.tui.widgets.markdown import FNDMarkdown, FNDMarkdownBlockQuote, FNDMarkdownParagraph
 from fnd.tui.widgets.preview_container import PreviewContainer
 
 
@@ -116,6 +118,43 @@ async def test_a_no_op_toggle_does_no_work(tmp_index_dir: Path) -> None:
         assert calls == 0, "a redundant toggle still restyled the node"
 
 
+@pytest.mark.asyncio
+async def test_reveal_repaints_a_translucent_background_inside_the_container(
+    tmp_index_dir: Path,
+) -> None:
+    """A callout built behind ``-pre-reveal`` must paint its tint once revealed."""
+    md = "> [!warning] Careful\n> Body text.\n"
+    app = FNDApp(index_dir=tmp_index_dir, initial_query="anything")
+    async with app.run_test(size=(80, 24)) as pilot:
+        container = PreviewContainer(parent_doc_id="x", query_signature="y", total_chunks=1)
+        await app.query_one("#preview_pane").mount(container)
+        set_preview_visibility(container, pre_reveal=True)
+        await container.mount(FNDMarkdown(md))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        quote = app.query_one(FNDMarkdownBlockQuote)
+        body = list(app.query(FNDMarkdownParagraph).results())[-1]
+        set_preview_visibility(container, pre_reveal=False)
+        await pilot.pause()
+
+        # The blockquote is restyled directly, so its tint is right either way.
+        # Without one distinguishable from the pane the assertion below would
+        # hold on the broken code too.
+        tint = quote.background_colors[1]
+        assert tint != app.screen.background_colors[1], "no tint to lose"
+
+        style = next(iter(body.render_line(0))).style
+        assert style is not None
+        painted = style.bgcolor
+        assert painted is not None
+        assert painted.triplet == tint.rgb, (
+            f"the callout body painted on {painted}, not the {tint} of the "
+            f"blockquote it sits inside"
+        )
+
+
 # Properties a shortcut class may set. Anything outside this changes the geometry
 # descendants are laid out against, and the descendant walk is what re-arranges
 # them — so skipping it would leave the subtree sized for the old layout. That is
@@ -127,7 +166,11 @@ async def test_a_no_op_toggle_does_no_work(tmp_index_dir: Path) -> None:
 # Scrollbar COLOURS are allowed and scrollbar SIZE is not, which is the whole
 # distinction: repainting the bar moves nothing, resizing it re-wraps every line
 # beneath it.
-EXACT_ALLOWED = {"display", "opacity", "visibility"}
+#
+# ANCESTOR_RULES are allowed only because the shortcut busts descendant style
+# caches when one of them moves. Spelling the set that way is what makes a new
+# inherited rule — one the bust does not cover — fail here.
+EXACT_ALLOWED = {"display", "visibility", *ANCESTOR_RULES}
 ALLOWED_PREFIXES = ("scrollbar_color", "scrollbar_background", "auto_scrollbar_")
 
 
@@ -160,11 +203,12 @@ async def test_shortcut_classes_change_visibility_only(tmp_index_dir: Path) -> N
             declared = set(rule.styles.get_rules())
             extra = {name for name in declared if _is_geometric(name)}
             assert not extra, (
-                f"a shortcut class now sets {sorted(extra)}, which affects layout, "
-                f"not just visibility. fnd/tui/preview/visibility.py skips the "
-                f"descendant walk — and that walk is what re-arranges the subtree — "
-                f"so descendants would keep their old geometry. Either drop the "
-                f"class from NODE_ONLY_CLASSES, or move the property elsewhere."
+                f"a shortcut class now sets {sorted(extra)}, which reaches past the "
+                f"node — either into the geometry descendants are laid out against, "
+                f"or into the styles they cache. fnd/tui/preview/visibility.py skips "
+                f"the descendant walk, so they would keep the old value. Either move "
+                f"the property elsewhere, or, if descendants only CACHE it, add it to "
+                f"ANCESTOR_RULES so the bust covers it."
             )
         assert checked, "no rules matched the shortcut classes; this scan proved nothing"
 
@@ -208,3 +252,51 @@ def test_the_shortcut_never_asks_for_a_subtree_restyle() -> None:
     set_preview_visibility(node, hidden=True)
     set_node_class(node, "is-loading", True)
     assert (len(fake.class_calls), len(fake.app.stylesheet.updated)) == before
+
+
+def test_the_shortcut_busts_descendant_caches_only_when_it_must() -> None:
+    """Condition 3: an inherited rule that moves invalidates every cache below."""
+    from typing import cast
+
+    from textual.dom import DOMNode
+
+    from tests._preview_fakes import FakeContainer
+
+    fake = FakeContainer()
+    node = cast("DOMNode", fake)
+
+    set_preview_visibility(node, hidden=True, pre_reveal=True)
+    assert [d.notified for d in fake.descendants] == [1, 1], "opacity moved; nothing was busted"
+    assert [d.refreshed for d in fake.descendants] == [1, 1], (
+        "cleared the cache but left the strips it rendered — the repaint is what "
+        "puts the new colour on screen"
+    )
+
+    # Still `-pre-reveal`, so this one leaves opacity where it was.
+    set_node_class(node, "is-loading", True)
+    assert [d.notified for d in fake.descendants] == [1, 1], (
+        "a flip that moved no inherited rule still walked the subtree"
+    )
+
+    set_preview_visibility(node, pre_reveal=False)
+    assert [d.notified for d in fake.descendants] == [2, 2], "the reveal did not bust"
+
+
+def test_a_display_only_flip_leaves_descendants_alone() -> None:
+    """``-hidden`` sets display, which nothing below it caches."""
+    from typing import cast
+
+    from textual.dom import DOMNode
+
+    from tests._preview_fakes import FakeContainer
+
+    fake = FakeContainer()
+    node = cast("DOMNode", fake)
+
+    set_preview_visibility(node, hidden=True)
+    assert fake.app.stylesheet.updated, "nothing was flipped; this would pass on a no-op stub"
+    assert [d.notified for d in fake.descendants] == [0, 0], (
+        "a display-only flip walked the subtree; only rules descendants CACHE "
+        "need the bust, and paying it on every hide gives the walk back"
+    )
+    assert [d.refreshed for d in fake.descendants] == [0, 0]
