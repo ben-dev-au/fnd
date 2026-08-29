@@ -21,8 +21,9 @@ htmlcov/
 tests/fixtures/.cache/
 # Index data is never committed (lives in user's Library on macOS)
 index/
-# Per-user Claude Code config / scheduled-task state
+# Per-user local tooling config, conventions and scheduled-task state
 .claude/
+CLAUDE.md
 # Per-user operational notes (release runbooks, account setup) and
 # all developer-only tooling. Lives in a separate private repo at
 # dev/. Not part of the public repo.
