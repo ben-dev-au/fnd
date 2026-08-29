@@ -102,7 +102,6 @@ dev = [
     # gitignored; CI runs the full suite without --testmon as the
     # safety net.
     "pytest-testmon>=2.1",
-    "pytest-xdist>=3.6",
 ]
 # Structured PDF rendering — opt-in. Lives in a PEP 735 dependency
 # group rather than [project.optional-dependencies] so the user can
