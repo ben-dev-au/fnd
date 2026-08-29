@@ -1,3 +1,7 @@
+# `pre-commit install` (no -t flag) installs both hook types below, so
+# pyright/pytest-fast (pre-push) actually run rather than sitting silent.
+default_install_hook_types: [pre-commit, pre-push]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
@@ -23,6 +27,9 @@ repos:
     hooks:
       - id: pyright
         name: pyright (strict)
+        # Pre-push: kept with pytest-fast below so `git commit` stays
+        # instant for WIP checkpoints; standalone cost is ~10s.
+        stages: [pre-push]
         entry: uv run pyright
         language: system
         types: [python]
@@ -30,12 +37,10 @@ repos:
 
       - id: pytest-fast
         name: "pytest (testmon: only tests whose code paths changed)"
-        # --testmon caches per-test code dependencies in
-        # ``.testmondata`` (gitignored). First run pays the full suite
-        # cost while the baseline is built; subsequent commits only
-        # re-run tests whose tracked files changed in the diff. CI
-        # runs the full serial suite without --testmon as the
-        # gold-standard catch-all.
+        # Pre-push, not pre-commit: keeps `git commit` free for WIP
+        # checkpoints. --testmon skips diff-untouched tests; CI runs
+        # the full serial suite without --testmon as the catch-all.
+        stages: [pre-push]
         entry: uv run pytest -q -m "not slow" --testmon
         language: system
         types: [python]
