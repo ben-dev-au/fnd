@@ -933,14 +933,7 @@ _PDF_MAGIC_SCAN_BYTES: Final = 1024
 
 
 def _looks_like_pdf(path: Path) -> bool:
-    """Cheap sniff for real PDF bytes, ahead of the subprocess pool.
-
-    Content with no PDF structure at all — e.g. a security course's
-    file-upload test fixtures, named ``*.pdf`` but holding plain text or
-    null bytes — has crashed the pool worker on the way back from a
-    clean, correctly-raised ExtractError. Rejecting it here, in the
-    parent process, keeps it off that path entirely.
-    """
+    """True if ``path``'s first bytes carry the ``%PDF-`` marker."""
     try:
         with open(path, "rb") as f:
             head = f.read(_PDF_MAGIC_SCAN_BYTES)

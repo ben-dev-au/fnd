@@ -1,12 +1,5 @@
-"""A ``.pdf``-suffixed file with no PDF structure must fail fast, before it
-ever reaches the extraction subprocess pool.
-
-Content with no ``%PDF-`` header (plain text, null bytes) can crash the
-pool worker on the way back from a clean, correctly-raised ExtractError —
-traced via FND_WORKER_TRACE against real security-course test fixtures that
-are named ``*.pdf`` but hold no PDF bytes at all. A magic-header check ahead
-of dispatch avoids the crash-prone path entirely for such content.
-"""
+"""A ``.pdf``-suffixed file with no ``%PDF-`` header must fail fast, before
+it ever reaches the extraction subprocess pool."""
 
 from __future__ import annotations
 
@@ -47,9 +40,7 @@ def test_plain_text_named_pdf_is_rejected(tmp_path: Path) -> None:
 
 
 def test_real_pdf_header_still_dispatches(tmp_path: Path) -> None:
-    """The header check must not reject genuine PDF bytes — even an
-    otherwise-truncated file with a real ``%PDF-`` header should still
-    reach pymupdf, which raises its own (different) error."""
+    """A real ``%PDF-`` header, even on truncated content, still dispatches."""
     from fnd.extract import pdf
 
     truncated = tmp_path / "truncated.pdf"

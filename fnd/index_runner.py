@@ -997,7 +997,8 @@ async def run_indexer(
                     else:
                         state.indexed_newly += 1
 
-            written += chunks_written
+            if not err:
+                written += chunks_written
             state.files_completed += 1
             state.cache_hits = cache.hits
             state.cache_misses = cache.misses
@@ -1136,13 +1137,7 @@ def run_sync(
     rebuild: bool = False,
     progress_callback: Callable[[ProgressEvent], None] | None = None,
 ) -> int:
-    """Sync wrapper for CLI use — drives the async runner to completion.
-
-    Drives the async iterator with ``asyncio.run`` and surfaces each
-    progress event to ``progress_callback(event)``. Returns the number
-    of chunks written, matching what ``build_index_from_config`` used
-    to return.
-    """
+    """Drive ``run_indexer`` to completion; returns the chunks written."""
 
     async def _drive() -> int:
         n = 0
