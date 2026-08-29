@@ -25,6 +25,7 @@ from fnd.index_runner import (
     is_state_resumable,
     load_state,
     run_indexer,
+    run_sync,
     save_state,
     state_file_for,
 )
@@ -427,6 +428,20 @@ async def test_warm_run_skips_unchanged_files(tmp_path: Path, papers_dir: Path) 
     # Skip path never touches the extractor/cache.
     assert final.cache_hits_total == 0
     assert final.cache_misses_total == 0
+
+
+def test_run_sync_returns_chunks_written(tmp_path: Path) -> None:
+    """The CLI's `indexed N chunks for collection X` line needs a chunk
+    count, not a file count — one file split into two heading-sections
+    must report 2, proving this isn't just len(files)."""
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    (notes / "a.md").write_text("# First\n\nBody one.\n\n# Second\n\nBody two.\n")
+    cfg = CollectionConfig(sources=[SourceConfig(path=notes)])
+
+    written = run_sync(config=cfg, collection="t", index_dir=tmp_path / "idx")
+
+    assert written > 1, f"expected more than 1 chunk from a single two-section file, got {written}"
 
 
 @pytest.mark.asyncio
