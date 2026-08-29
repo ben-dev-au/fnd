@@ -12,7 +12,6 @@ permissions:
 concurrency:
   # A new push supersedes the PR run still going for the same branch: its
   # three OS jobs are ~95 runner-minutes that can no longer gate anything.
-  # Never cancel on main — those runs are the release record.
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -26,7 +25,11 @@ jobs:
     # 10x multiplier so keep an eye on the minutes budget.
     # Gated on format/typecheck (~1min combined): a lint or type failure
     # is visible before the ~30-40min matrix burns runner time proving it.
+    # PR-only: branch protection requires this + format/typecheck +
+    # security.yml green and up to date with main before merging, so
+    # push-to-main would just re-prove an already-proven tree.
     needs: [format, typecheck]
+    if: github.event_name == 'pull_request'
     strategy:
       fail-fast: false
       matrix:
