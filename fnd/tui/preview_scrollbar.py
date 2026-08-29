@@ -299,7 +299,21 @@ class MatchAwareScrollBar(ScrollBar):
         # A container behind ``-pre-reveal`` is in the layout so the pane can
         # scroll to its match before revealing it, so its rows reach the bar
         # too: the thumb went 5 cells to 3 and back on every navigation.
-        virtual_size = self.window_virtual_size - getattr(self.parent, "staged_rows", 0)
+        virtual_size = self.window_virtual_size
+        staged = getattr(self.parent, "staged_rows", 0)
+        corrected = virtual_size - staged
+        # Only while the reader's position fits inside the corrected document
+        # and something unstaged is on screen: mid-swap the pane scrolls INTO the
+        # staged container, where correcting pins the thumb to the bottom of the
+        # track, and at zero leaves none at all. ``max`` because a preview
+        # shorter than the viewport fits by definition.
+        #
+        # This is the one place thumb SIZE depends on position, against
+        # ``ThinScrollBarRender``'s constant-size rule: crossing out of a short
+        # visible preview mid-stage resizes it once. Staging is transient and a
+        # navigation's own scroll does not stop in that band.
+        if staged and corrected > 0 and max(0, corrected - self.window_size) >= self.position:
+            virtual_size = corrected
         window_size = self.window_size if self.window_size < virtual_size else 0
         return MatchAwareScrollBarRender(
             virtual_size=ceil(virtual_size),
@@ -383,30 +397,35 @@ class MatchAwareScroll(VerticalScroll):
     #: does not move under the reader. See ``arrange``.
     absorb_anchor: tuple[object, int] | None = None
 
-    #: Rows of layout held by containers still behind ``-pre-reveal``, from the
-    #: arrangement in flight. The bar subtracts them so it keeps describing the
-    #: document on screen — see :meth:`MatchAwareScrollBar._render_bar`.
-    staged_rows: int = 0
+    #: Height of each of the pane's children, from the arrangement in flight.
+    #: Read by :attr:`staged_rows`.
+    _child_rows: dict[Widget, int] | None = None
+
+    @property
+    def staged_rows(self) -> int:
+        """Rows of layout held by containers still behind ``-pre-reveal``.
+
+        Read from the class, not counted during the arrange: revealing changes
+        ``opacity`` only and ``preview/visibility.py`` keeps that free of layout,
+        so a counted value is never told what it counts has been revealed.
+        """
+        return sum(
+            rows
+            for child, rows in (self._child_rows or {}).items()
+            if child.has_class("-pre-reveal")
+        )
 
     def arrange(self, size: Size, optimal: bool = False) -> DockArrangeResult:
         """Absorb a prepend into the arrangement the compositor is about to read.
 
         ``Screen._refresh_layout`` builds the map, THEN runs ``_size_updated``
-        (where a ``virtual_size`` watcher fires), THEN paints the map it already
-        built — and a scroll written from a watcher is deferred another cycle
-        again. Correcting there therefore left one frame showing the document a
-        prepend-height out of place, and the next snapped it back: the flicker
-        between where a navigation started and where it lands. ``_arrange_root``
-        reads ``scroll_offset`` immediately after this call, which is where
-        Textual applies its own bottom-anchor for the same reason.
+        (where a ``virtual_size`` watcher fires), THEN paints the map it built.
+        ``_arrange_root`` reads ``scroll_offset`` straight after this call, which
+        is where Textual applies its own bottom-anchor for the same reason.
         """
         arrangement = super().arrange(size, optimal=optimal)
         if not optimal:
-            self.staged_rows = sum(
-                placement.region.height
-                for placement in arrangement.placements
-                if placement.widget.has_class("-pre-reveal")
-            )
+            self._child_rows = {p.widget: p.region.height for p in arrangement.placements}
             self._absorb_prepend(arrangement, size)
         return arrangement
 
@@ -485,9 +504,9 @@ class MatchAwareScroll(VerticalScroll):
         """``anchor``'s row within its parent, as the pass in flight places it.
 
         Same coordinate as ``virtual_region.y``, which cannot be used here: it
-        reports the map this pass is about to replace. A parent is asked at
-        ``Size(width, 0)`` — what its own auto-height measurement just arranged
-        it at — so this reads that cached arrangement rather than forcing one.
+        reports the map this pass is about to replace. Asking the parent costs
+        one container arrange whenever Textual measured it at its own height
+        instead (its all-dynamic-height branch) — 0.26ms at 40 chunks.
         """
         from textual.widget import Widget as _Widget
 
@@ -506,9 +525,9 @@ class MatchAwareScroll(VerticalScroll):
     def _set_absorbed_scroll(self, value: float, max_y: int) -> None:
         """Move the viewport without going through the scroll reactives.
 
-        A normal write defers the scroll to the next update cycle
-        (``Widget._refresh_scroll``) — the frame's-worth of lateness this whole
-        path exists to avoid — so the scrollbar is positioned here too.
+        ``validate_scroll_y`` clamps against the ``virtual_size`` this
+        arrangement is about to replace, so at the end of a document a plain
+        write drops the absorb entirely — measured 116 where 216 was wanted.
         """
         from textual.reactive import Reactive
         from textual.widget import Widget as _Widget

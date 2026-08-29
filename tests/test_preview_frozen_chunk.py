@@ -530,3 +530,53 @@ async def test_a_stand_in_paints_the_rows_the_tree_painted() -> None:
                 if a != b
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_a_stand_in_swap_never_doubles_the_container() -> None:
+    """Textual defers ``remove()``, so mounting the stand-in and then removing
+    the tree leaves BOTH in the layout until the removal lands — ten swaps
+    measured 559 duplicate rows in a container being read. ``display = False``
+    is what takes the tree out in the pass the stand-in joins.
+    """
+    from rich.segment import Segment
+    from textual.strip import Strip
+    from textual.widgets import Static
+
+    from fnd.tui.preview.frozen import FrozenChunk
+    from fnd.tui.widgets.preview_container import PreviewContainer
+
+    class _Host(App[None]):
+        def compose(self) -> ComposeResult:
+            with VerticalScroll(id="pane"):
+                yield PreviewContainer(parent_doc_id="doc", query_signature="q", total_chunks=1)
+
+    app = _Host()
+    async with app.run_test(size=(40, 24)) as pilot:
+        container = app.query_one(PreviewContainer)
+        chunk = Static("chunk")
+        chunk.styles.height = 40
+        await container.mount(chunk)
+        await pilot.pause()
+        width = container.size.width
+        before = container.get_content_height(container.size, container.size, width)
+        assert before == 40, f"setup: the container measured {before} rows, not 40"
+
+        capture = FrozenChunk(
+            chunk_seq=0,
+            width=width,
+            strips=[Strip([Segment(" " * width)], width) for _ in range(40)],
+        )
+        # The window the sweep actually opens: the stand-in has joined and the
+        # removal has not landed. Measured here rather than after ``remove()``,
+        # which detaches the node and hides the overlap.
+        view = FrozenChunkView(capture)
+        await container.mount(view, before=chunk)
+        chunk.display = False
+        during = container.get_content_height(container.size, container.size, width)
+        chunk.remove()
+
+        assert during == before, (
+            f"container measured {during} rows against {before}: the stand-in and "
+            f"the tree it replaces were both in the layout"
+        )

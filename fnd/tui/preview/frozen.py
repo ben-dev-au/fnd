@@ -176,11 +176,8 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
     # rows on one measured chunk) and using ``size`` silently truncates the tail.
     #
     # Plus the chunk's own gutter, because ``Compositor.reflow`` lays a root's
-    # children out inside the size it is given MINUS that root's padding: sized
-    # to the content region alone the capture spends a row on the padding and
-    # drops the last content row, and a stand-in that re-adds the padding then
-    # paints everything a row low. Both are invisible to a height check, which
-    # is why this survived one. The strips are the chunk's whole box.
+    # children out inside the size it is given MINUS that root's padding. The
+    # strips are therefore the chunk's whole box, padding rows included.
     full = Size(
         size.width, max(size.height, chunk.virtual_size.height) + chunk.styles.gutter.height
     )

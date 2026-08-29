@@ -349,11 +349,43 @@ async def test_no_frame_paints_the_document_at_the_uncorrected_offset(
         monkeypatch.setattr(Compositor, "render_update", record)
         filler.styles.height = 560
         await pilot.pause()
-        await pilot.pause()
 
         assert painted, "no frame was painted, so this proves nothing"
         assert set(painted) == {settled}, (
             f"the anchor painted at {sorted(set(painted))} — a 60-row prepend reached "
             f"the screen before the scroll absorbing it, so the document moved under "
             f"the reader for a frame (it sits at {settled})"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_prepend_past_the_old_end_of_the_document_is_absorbed_in_full() -> None:
+    """The absorb runs before the arrangement it belongs to has been applied, so
+    ``validate_scroll_y`` would clamp it against a ``virtual_size`` that has not
+    grown yet. Parked at the end of the document, that clamp is the whole
+    correction: the reader is left where they were and the prepend shoves them
+    backwards by its own height.
+    """
+    app = _PaneApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        pane, filler, anchor = await _ready(pilot, app)
+        filler.styles.height = 100
+        await pilot.pause()
+        pane.scroll_to(y=pane.max_scroll_y, animate=False, immediate=True)
+        await pilot.pause()
+        before = pane.scroll_y
+        assert before > 0, "setup: the pane never scrolled"
+        assert before == pane.max_scroll_y, (
+            f"setup: parked at {before} of {pane.max_scroll_y}, not at the end"
+        )
+
+        _claim(pane, anchor)
+        filler.styles.height = 200
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pane.scroll_y == before + 100, (
+            f"scroll_y {pane.scroll_y}, wanted {before + 100} — a 100-row prepend was "
+            f"clamped against the document size it was about to replace"
         )
