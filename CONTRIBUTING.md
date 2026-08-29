@@ -1,17 +1,13 @@
 # Contributing to fnd
 
-Thanks for your interest. fnd is a document-search CLI/TUI developed on macOS,
-with early-beta Linux and Windows builds that have had almost no real-world use.
-It's early but actively developed. Bug reports, app-catalogue entries, and
-focused PRs are all welcome — reports from Linux and Windows especially, since
-that is where the coverage gap is.
+fnd is a document-search CLI/TUI developed on macOS; the Linux and Windows
+builds are early beta with almost no real-world use. Bug reports, app-catalogue
+entries and focused PRs are welcome, especially from Linux and Windows, where
+the coverage gap is.
 
 ## Development setup
 
-Requires Python 3.13 and [uv](https://docs.astral.sh/uv/). Development happens on
-macOS; the other two OSes are only exercised by CI, so if you're set up to
-develop on Linux or Windows you'll likely be the first to hit whatever is broken
-there.
+Requires Python 3.13 and [uv](https://docs.astral.sh/uv/).
 
 ```sh
 git clone https://github.com/ben-dev-au/fnd.git
@@ -20,7 +16,9 @@ make sync          # uv sync --all-extras --group dev
 make install-hooks # pre-commit hooks (ruff + pyright)
 ```
 
-Run fnd from the checkout with `uv run python -m fnd <command>`.
+Run fnd from the checkout with `uv run python -m fnd <command>`. Only CI
+exercises Linux and Windows, so there you will likely be first to hit whatever
+is broken.
 
 ## Before opening a PR
 
@@ -32,33 +30,49 @@ make fmt    # auto-format and apply safe fixes
 
 CI runs the suite on `macos-14`, `ubuntu-latest` and `windows-latest`, plus
 ruff-format and pyright (strict). A green matrix means the code runs on all
-three, not that the behaviour has been checked by a human anywhere but macOS.
+three, not that anyone has checked the behaviour outside macOS.
 
-Platform-specific behaviour belongs in one of the four seams rather than in
-`sys.platform` checks scattered through feature code: `fnd/paths.py` (where
-files live), `fnd/launcher.py` (opening and revealing), `fnd/os_labels.py` (what
-the OS calls things), and `fnd/cloud_files.py` (cloud-backed placeholder files).
+Keep PRs scoped to one change. Platform-specific behaviour belongs in one of
+the four seams, not in `sys.platform` checks scattered through feature code:
+`fnd/paths.py` (where files live), `fnd/launcher.py` (opening and revealing),
+`fnd/os_labels.py` (what the OS calls things), and `fnd/cloud_files.py`
+(cloud-backed placeholders).
 
-Keep PRs scoped to one change; match the surrounding code's style and comment
-density.
+## Conventions
+
+**Spelling is Australian/British throughout**: identifiers, comments,
+docstrings, documentation and commit messages (`sanitise`, `normalise`,
+`colour`, `behaviour`, `serialise`, `centre`, `cancelled`). The one exception
+is third-party API surface that dictates American spelling (Rich/Textual
+`color`, CSS properties, JSON `serialize`); match the library there and keep
+our own names British.
+
+**Comments default to none, with a three-line budget.** A comment earns its
+place only by stating what the code cannot: a constraint, an invariant, a
+measured number, or the bug it guards against. Well-named identifiers do not
+need narrating. Going longer needs a specific reason, such as a table of
+measurements whose numbers are the content, or a module docstring carrying
+architecture; comments inside a function body essentially never qualify.
+
+**State the fact, not the story.** No history ("this used to be X"), no arguing
+for the change, no recap of the symptom that prompted it; those belong in the
+commit message. Architecture rationale lives in the module docstring once, and
+functions point at it rather than restating it. Function docstrings and tests
+get one line stating the contract.
 
 ## Writing tests against the TUI
 
-Almost every flaky test this project has had was the same mistake: using a
-number of event-loop turns as a proxy for "the async work finished".
-`pilot.pause()` means one pump cycle happened, not that a decode and a mount are
-done — and how many cycles that takes is a property of the machine. So
-`await pilot.pause()` followed by an assertion on state that lands
-asynchronously is a race whose odds are set by the runner.
+Almost every flaky test here was one mistake: treating a number of event-loop
+turns as a proxy for "the async work finished". `pilot.pause()` means one pump
+cycle happened, not that a decode and a mount are done, and how many cycles
+that takes is a property of the machine.
 
-Do not extend that into "the runner is starved, so wait longer" — it was the
-working theory here for a week and the numbers refute it. Across 185 CI pytest
-jobs, a failing job ran +0.3 / -1.0 / +0.1 minutes against the median passing job
-on macOS / Ubuntu / Windows: failures do not cluster in slow jobs. Windows fails
-about four times as often as either other OS for reasons that are its own, and
-every timed-out wait that printed its poll count showed the poller alive
-(1400-plus polls in 30s) with the product simply not finished. More budget would
-never have helped any of them.
+It is not a starvation problem. Across 185 CI pytest jobs, failing jobs ran
++0.3 / -1.0 / +0.1 minutes against the median passing job on macOS / Ubuntu /
+Windows: failures do not cluster in slow jobs. Windows fails about four times
+as often for its own reasons, and every timed-out wait that printed its poll
+count showed the poller alive (1400-plus polls in 30s) with the product simply
+unfinished. More budget would have helped none of them.
 
 **Gate on the outcome you are about to assert.**
 
@@ -78,84 +92,78 @@ await wait_until(
 )
 ```
 
-A generous budget costs nothing when the test passes — `wait_until` returns the
-moment the predicate holds — and only spends time on a genuine failure. Adding
-pauses or raising a sleep is never the fix; it moves the odds without removing
-the guess. If there is no product signal to gate on, that is a gap in the
-product, not in the test.
+A generous budget costs nothing: `wait_until` returns the moment the predicate
+holds, so only a real failure spends it. Adding pauses or raising a sleep moves
+the odds without removing the guess. No product signal to gate on is a gap in
+the product, not the test.
 
 **A gate that cannot fail is a deleted pause.** `wait_until` evaluates its
-predicate before the first pause, so a predicate that is already true returns
-without yielding. A helper here asked whether *any* preview existed — which the
-app's own cursor-park load makes permanently true — and 14 sites that had each
-replaced a real `pilot.pause()` returned in 0.0ms. Gate on the thing you are
-about to assert, named specifically: the file you navigated to, the count you
-expect, the row that must exist.
+predicate before the first pause, so one already true returns without yielding.
+A helper asking whether *any* preview existed was permanently true, courtesy of
+the app's own cursor-park load: 14 sites that had each replaced a real
+`pilot.pause()` returned in 0.0ms. Name the specific thing, such as the file
+you navigated to, the count you expect, or the row that must exist.
 
-To find these, wrap `tests._pilot_wait.wait_until` from a `-p` plugin and record,
-per call site, whether the predicate was already true on its first evaluation.
-Patch it in `pytest_configure`: test modules bind the name at import, so an
-autouse fixture is too late and silently measures nothing. Read the output as a
-shortlist, not a verdict — the question is whether the predicate was already
-satisfied *at that call site* by state that predates the trigger, which is a
-per-site fact, not a property of the predicate.
+Find them by wrapping `tests._pilot_wait.wait_until` from a `-p` plugin,
+recording per call site whether the predicate was already true on first
+evaluation. Patch it in `pytest_configure`: test modules bind the name at
+import, so an autouse fixture is too late and silently measures nothing. It
+gives a shortlist, not a verdict; whether pre-trigger state already satisfied
+the predicate is a per-site fact.
 
-**Do not change a test that has not failed.** Every regression this repo has
-shipped while fixing flakes came from sweeping a change across sites chosen by
-pattern-match rather than by evidence: the 14 gates above landed in six files
-with zero CI failures between them, and a regex before that hit two
-`action_open_command_palette()` calls where the action *closes* the menu. Get the
-frequency table first (see *Measuring a flake* below), fix what it names, and
-prove the fix on the same instrument. One green run is not evidence: a head that
-failed four of six attempts displays as green, because re-running overwrites a
-run's conclusion.
+**Do not change a test that has not failed.** Every regression shipped here
+while fixing flakes came from sweeping sites chosen by pattern-match rather
+than by evidence: the 14 gates above landed in six files with zero CI failures
+between them, and an earlier regex hit two `action_open_command_palette()`
+calls where the action *closes* the menu. Get the frequency table first, fix
+what it names, and prove it on the same instrument. One green run is not
+evidence: a head that failed four of six attempts displays as green, because
+re-running overwrites a run's conclusion.
 
-The rule bans a *speculative* sweep, not a grep. Once a failure has proved a
-shape, grepping for that exact shape and fixing every instance is evidence-driven
-and is how the mount-gated family here was closed in one pass instead of one
-flake at a time. The line is whether a real failure established the shape: three
-of those instances had never failed on their own, and fixing them was right. If
-nothing has failed, you have a hunch, and a hunch is what the fourteen gates
-were.
+That bans a *speculative* sweep, not a grep. Once a failure proves a shape,
+grepping for it and fixing every instance is evidence-driven, and closed the
+mount-gated family here in one pass instead of one flake at a time. Three of
+those had never failed on their own and fixing them was still right. With
+nothing failed you have a hunch, and a hunch is what the fourteen gates were.
 
-Three more shapes worth recognising, all of which have shipped here:
+Three more shapes worth recognising, all shipped here:
 
-- **A precondition that depends on LOSING a race.** "The cache is still cold"
+- **A precondition that depends on losing a race.** "The cache is still cold"
   was true locally and false on a differently-timed runner, because the
   cursor-park load starts a coverage sweep that decodes neighbours. Make the
-  state and assert you made it, rather than hoping for it.
+  state and assert you made it.
 - **A boolean "in progress" flag used as a completion signal.** "Not started"
-  and "finished" read the same. Compare a monotonic counter against a value read
-  before the trigger.
+  and "finished" read the same. Compare a monotonic counter against a value
+  read before the trigger.
 - **A derived cache with no invalidation event.** Assert the invariant (the
-  cache agrees with a fresh reading), not just the value — a stale cache and a
-  wrong computation produce identical symptoms.
+  cache agrees with a fresh reading), not the value; a stale cache and a wrong
+  computation look identical.
 
 ### Reproducing a slow runner locally
 
-A green local run says little; the runners are slower and Windows is slowest.
-In rough order of fidelity:
+A green local run says little; the runners are slower and Windows slowest. In
+rough order of fidelity:
 
-- `docker run --cpus=2` against `ubuntu-latest` — closest to the real thing,
-  and the only option here that is a real constrained Linux rather than a
-  simulation. Untested so far: it needs a container runtime started first.
-- Run the suite under CPU contention (busy loops on most cores). This is what
-  reproduced a live CI flake on unmodified `main`.
-- Inject a delay into the preview decode — models background work taking
+- `docker run --cpus=2` against `ubuntu-latest`, the only option here that is a
+  genuinely constrained Linux rather than a simulation. Untested so far: it
+  needs a container runtime started first.
+- The suite under CPU contention (busy loops on most cores), which reproduced a
+  live CI flake on unmodified `main`.
+- A delay injected into the preview decode, modelling background work taking
   longer, which is the Windows shape.
-- Shorten Textual's internal `_wait_for_screen` bound to ~0 — models a starved
-  pump, and enumerates every test that needs a pause to do real work.
+- Textual's `_wait_for_screen` bound shortened to ~0, modelling a starved pump,
+  which enumerates every test that needs a pause to do real work.
 
 The last two have opposite blind spots: shortening the wait removes *waiting*
 without adding *work*, so a test that needs real wall-clock passes there and
-still fails on CI. Neither models Windows; for that, use CI itself.
+still fails on CI. Neither models Windows; use CI for that.
 
 ## Measuring a flake
 
-One CI run is one sample. It cannot tell "fixed" from "lucky", and re-running
-makes it worse: `gh run rerun` re-runs the SAME run id and overwrites its
-conclusion, so a run that failed four times and passed once displays as green.
-Read attempt history with
+One CI run is one sample and cannot tell "fixed" from "lucky". Re-running makes
+it worse: `gh run rerun` reuses the run id and overwrites its conclusion, so a
+run that failed four times and passed once displays as green. Read attempt
+history with
 `gh api repos/<owner>/<repo>/actions/runs/<id>/attempts/<n> --jq .conclusion`.
 
 Run the suite many times instead:
@@ -164,29 +172,28 @@ Run the suite many times instead:
 git push origin HEAD:flake-hunt/<name>     # 15 suites, 5 per OS, ~60 min
 ```
 
-The workflow ranks every failure and separates the two cases a single run
-conflates — red in **every** run of an OS is a real platform failure and
-belongs in the gate; red in **some** is a flake, listed by frequency. It also
-names any suite that reported nothing, because a job that dies before uploading
-leaves no artifact and would otherwise just shrink the sample silently.
-`.github/scripts/aggregate_junit.py` also runs standalone over a directory of
-downloaded artifacts.
+The workflow ranks failures and separates what a single run conflates: red in
+**every** run of an OS is a platform failure and belongs in the gate; red in
+**some** is a flake, listed by frequency. It also names any suite that reported
+nothing, since a job dying before upload leaves no artifact and would otherwise
+shrink the sample silently. `.github/scripts/aggregate_junit.py` runs
+standalone over a directory of downloaded artifacts too.
 
-**Pick the sample size before you see the result.** Five clean runs bound a
-failure rate under roughly 45%, not at zero — that is not enough to clear a
-1-in-15 flake. This suite has been measured at 60 runs: two rounds on the very
-same commit came back 5/5 and then 4/5, and the round that would have been
-called "fixed" was the one that happened to be clean.
+**Pick the sample size before you see the result.** Five clean runs bound the
+failure rate under roughly 45%, not at zero, which will not clear a 1-in-15
+flake. This suite has been measured at 60 runs: two rounds on the very same
+commit came back 5/5 and then 4/5, and the round that would have been called
+"fixed" was the one that happened to be clean.
 
-**Prove a fix with something that makes it fail on demand.** A fix with no such
-control is unverified however green it looks, and "it passes now" is equally
-consistent with "the test never exercised the change".
+**Prove a fix with something that makes it fail on demand.** Without that
+control a fix is unverified however green it looks, and "it passes now" is
+equally consistent with "the test never exercised the change".
 
 ## Adding an app to the "Open with…" catalogue
 
-Third-party app integrations live in [`docs/apps.md`](docs/apps.md). To
-contribute one, add your `[apps.<id>]` config block to the catalogue; see that
-page for the schema and safety rules.
+Third-party app integrations live in [`docs/apps.md`](docs/apps.md). Add your
+`[apps.<id>]` config block to the catalogue; see that page for the schema and
+safety rules.
 
 ## Security
 
