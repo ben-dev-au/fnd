@@ -112,6 +112,7 @@ class ProgressEvent:
     textured_already_total: int = 0
     still_flat_total: int = 0
     failed_total: int = 0
+    chunks_written: int = 0
 
 
 @dataclass(slots=True)
@@ -996,7 +997,8 @@ async def run_indexer(
                     else:
                         state.indexed_newly += 1
 
-            written += chunks_written
+            if not err:
+                written += chunks_written
             state.files_completed += 1
             state.cache_hits = cache.hits
             state.cache_misses = cache.misses
@@ -1124,7 +1126,7 @@ async def run_indexer(
     if cancel is not None and cancel.is_set():
         yield _emit("cancelled")
         return
-    yield _emit("done")
+    yield _emit("done", chunks_written=written)
 
 
 def run_sync(
@@ -1135,12 +1137,7 @@ def run_sync(
     rebuild: bool = False,
     progress_callback: Callable[[ProgressEvent], None] | None = None,
 ) -> int:
-    """Sync wrapper for CLI use — drives the async runner to completion.
-
-    Drives the async iterator with ``asyncio.run`` and surfaces each
-    progress event to ``progress_callback(event)``. Returns the
-    number of files processed.
-    """
+    """Drive ``run_indexer`` to completion; returns the chunks written."""
 
     async def _drive() -> int:
         n = 0
@@ -1154,7 +1151,7 @@ def run_sync(
             if progress_callback is not None:
                 progress_callback(ev)
             if ev.kind == "done":
-                n = ev.files_done
+                n = ev.chunks_written
         return n
 
     return asyncio.run(_drive())

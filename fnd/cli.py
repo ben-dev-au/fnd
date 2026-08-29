@@ -662,7 +662,7 @@ def collection_reindex(
     """
     from fnd.cli_scope import FilterIssues, resolve_collection_option, resolve_or_exit
     from fnd.config import load
-    from fnd.index import build_index_from_config
+    from fnd.index_runner import run_sync
     from fnd.query_errors import MissingFilterValueError
 
     cfg = load()
@@ -697,13 +697,11 @@ def collection_reindex(
         typer.echo(f"indexing {len(targets)} collections: {', '.join(targets)}")
     total = 0
     for target in targets:
-        written = build_index_from_config(
+        written = run_sync(
             config=cfg.collection(target),
             collection=target,
             index_dir=default_index_dir(),
             rebuild=rebuild,
-            tag_sources=tuple(cfg.defaults.tag_sources),
-            tag_frontmatter_keys=tuple(cfg.defaults.tag_frontmatter_keys),
         )
         typer.echo(f"indexed {written} chunks for collection {target}")
         total += written
