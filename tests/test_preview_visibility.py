@@ -122,12 +122,7 @@ async def test_a_no_op_toggle_does_no_work(tmp_index_dir: Path) -> None:
 async def test_reveal_repaints_a_translucent_background_inside_the_container(
     tmp_index_dir: Path,
 ) -> None:
-    """A callout built behind ``-pre-reveal`` must paint its tint once revealed.
-
-    Under ``opacity: 0`` an ancestor contributes no background, and Textual caches
-    that per descendant against the descendant's own key — so without the bust the
-    callout's text keeps the bare pane colour for the life of the container.
-    """
+    """A callout built behind ``-pre-reveal`` must paint its tint once revealed."""
     md = "> [!warning] Careful\n> Body text.\n"
     app = FNDApp(index_dir=tmp_index_dir, initial_query="anything")
     async with app.run_test(size=(80, 24)) as pilot:
@@ -285,3 +280,23 @@ def test_the_shortcut_busts_descendant_caches_only_when_it_must() -> None:
 
     set_preview_visibility(node, pre_reveal=False)
     assert [d.notified for d in fake.descendants] == [2, 2], "the reveal did not bust"
+
+
+def test_a_display_only_flip_leaves_descendants_alone() -> None:
+    """``-hidden`` sets display, which nothing below it caches."""
+    from typing import cast
+
+    from textual.dom import DOMNode
+
+    from tests._preview_fakes import FakeContainer
+
+    fake = FakeContainer()
+    node = cast("DOMNode", fake)
+
+    set_preview_visibility(node, hidden=True)
+    assert fake.app.stylesheet.updated, "nothing was flipped; this would pass on a no-op stub"
+    assert [d.notified for d in fake.descendants] == [0, 0], (
+        "a display-only flip walked the subtree; only rules descendants CACHE "
+        "need the bust, and paying it on every hide gives the walk back"
+    )
+    assert [d.refreshed for d in fake.descendants] == [0, 0]

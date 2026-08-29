@@ -56,7 +56,13 @@ class FakeStylesheet:
         nodes = tuple(nodes)
         self.updated.append(nodes)
         for node in nodes:
-            node.styles.rules["opacity"] = 0.0 if node.has_class("-pre-reveal") else 1.0
+            # `-pre-reveal` is the only shortcut class declaring opacity, and an
+            # absent rule reads as None, not as the 1.0 default: a stub that set
+            # 1.0 here would bust on a `-hidden` flip that production leaves alone.
+            if node.has_class("-pre-reveal"):
+                node.styles.rules["opacity"] = 0.0
+            else:
+                node.styles.rules.pop("opacity", None)
 
 
 class FakeApp:
