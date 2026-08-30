@@ -47,21 +47,13 @@ class FrozenChunk:
     first_match_row: int | None = None
     stop_rows: list[int] = field(default_factory=list)
     cell_rows: dict[tuple[int, int], int] = field(default_factory=dict)
-    # The chunk's own padding, in Textual's (top, right, bottom, left) order.
-    # Captured because the strips are the CONTENT region only: a chunk carries
-    # `.chunk-section` / `.chunk-first` padding, so a stand-in without it is a
-    # row shorter than the widget it replaces.
-    padding: tuple[int, int, int, int] = (0, 0, 0, 0)
-
-    @property
-    def height(self) -> int:
-        """Rows of content. The stand-in adds ``padding`` on top of this."""
-        return len(self.strips)
 
     @property
     def outer_height(self) -> int:
-        """Rows the chunk occupied in its container, padding included."""
-        return len(self.strips) + self.padding[0] + self.padding[2]
+        """Rows the chunk occupied, padding included: the strips are its whole
+        box, so the stand-in adds nothing to this and the row fields index the
+        strips directly."""
+        return len(self.strips)
 
 
 def _row_within(widget: Widget, chunk: Widget) -> int | None:
@@ -179,10 +171,15 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
 
     # Capture the VIRTUAL height, not the allocated one: they differ (48 vs 56
     # rows on one measured chunk) and using ``size`` silently truncates the tail.
-    full = Size(size.width, max(size.height, chunk.virtual_size.height))
+    #
+    # Plus the chunk's own gutter, because ``Compositor.reflow`` lays a root's
+    # children out inside the size it is given MINUS that root's padding. The
+    # strips are therefore the chunk's whole box, padding rows included.
+    full = Size(
+        size.width, max(size.height, chunk.virtual_size.height) + chunk.styles.gutter.height
+    )
     comp = Compositor()
     comp.reflow(chunk, full)
-    pad = chunk.styles.padding
     return FrozenChunk(
         chunk_seq=chunk_seq,
         width=full.width,
@@ -190,7 +187,6 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
         first_match_row=first_match_row,
         stop_rows=stop_rows,
         cell_rows=cell_rows,
-        padding=(pad.top, pad.right, pad.bottom, pad.left),
     )
 
 
@@ -247,18 +243,10 @@ class FrozenChunkView(Widget):
         self.frozen = frozen
         # A fixed height, equal to what the widget tree occupied — so swapping
         # the tree for this moves nothing on screen and needs no scroll
-        # compensation, unlike removing the chunk outright.
-        #
-        # "What it occupied" includes the chunk's padding. The strips are the
-        # CONTENT region, and a chunk carries `.chunk-section` (one row below)
-        # or `.chunk-first` (one row above), so a stand-in sized to the strips
-        # alone is a row short. That row is invisible on its own and lethal in
-        # aggregate: the sweep freezes chunks ABOVE the viewport too, and
-        # shrinking the content above without touching scroll_y slides what the
-        # user is reading upward — measured at exactly -6 rows for 6 chunks
-        # frozen above, a second or two after the navigation landed.
-        top, right, bottom, left = frozen.padding
-        self.styles.padding = (top, right, bottom, left)
+        # compensation, unlike removing the chunk outright. The strips are the
+        # chunk's whole box, padding rows included, so this widget carries no
+        # padding of its own: adding any would paint the content that much low
+        # and clip the same number of rows off the bottom.
         self.styles.height = frozen.outer_height
         # Read by the scroll strategy in place of descending into a widget tree.
         self.fnd_first_match_row = frozen.first_match_row
@@ -274,8 +262,6 @@ class FrozenChunkView(Widget):
         cannot blank and the mounted run cannot develop a hole.
         """
         self.frozen = frozen
-        top, right, bottom, left = frozen.padding
-        self.styles.padding = (top, right, bottom, left)
         self.styles.height = frozen.outer_height
         self.fnd_first_match_row = frozen.first_match_row
         self._reported_width = frozen.width

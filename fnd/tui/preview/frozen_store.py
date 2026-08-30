@@ -170,16 +170,16 @@ class ChunkCaptureStore:
             self._files[key] = captures
         previous = captures.get(capture.chunk_seq)
         if previous is not None:
-            self._rows -= previous.height
+            self._rows -= previous.outer_height
         captures[capture.chunk_seq] = capture
-        self._rows += capture.height
+        self._rows += capture.outer_height
         self._files.move_to_end(key)
         self._evict(budget_rows())
 
     def _evict(self, budget: int) -> None:
         while len(self._files) > 1 and self._rows > budget:
             _, dropped = self._files.popitem(last=False)
-            self._rows -= sum(c.height for c in dropped.values())
+            self._rows -= sum(c.outer_height for c in dropped.values())
 
     def count(self, parent_id: str, query_sig: str, width: int) -> int:
         return len(self._files.get((parent_id, query_sig, width), {}))
@@ -200,10 +200,10 @@ class ChunkCaptureStore:
         """
         stale = [k for k in self._files if k[2] != width]
         for key in stale:
-            self._rows -= sum(c.height for c in self._files.pop(key).values())
+            self._rows -= sum(c.outer_height for c in self._files.pop(key).values())
         return len(stale)
 
     def drop_file(self, parent_id: str) -> None:
         """Forget one file — its content or its highlighting changed."""
         for key in [k for k in self._files if k[0] == parent_id]:
-            self._rows -= sum(c.height for c in self._files.pop(key).values())
+            self._rows -= sum(c.outer_height for c in self._files.pop(key).values())

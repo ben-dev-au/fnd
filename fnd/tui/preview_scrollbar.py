@@ -30,6 +30,20 @@ Two marker-mapping modes coexist:
   the track resolves back to a chunk index proportionally and paints if
   that chunk matches. Used by the structural Markdown / docx / pptx
   preview path until Phase 5 migrates it.
+
+A container built behind ``-pre-reveal`` is in the layout — that is how the pane
+scrolls to its match before revealing it — so its rows reach the bar as well and
+resized the thumb on every navigation, measured 5 cells to 3 and back.
+:attr:`MatchAwareScroll.staged_rows` reports them and
+:meth:`MatchAwareScrollBar._render_bar` subtracts them, but only while the
+reader's position still fits inside the corrected document and something
+unstaged is left to describe: mid-swap the pane scrolls INTO the staged
+container, where correcting pins the thumb to the bottom of the track, and once
+the outgoing preview is hidden the count covers the whole document and leaves no
+thumb at all. A preview shorter than the viewport fits by definition, hence the
+``max``. That correction is the one place thumb SIZE depends on position,
+against :class:`ThinScrollBarRender`'s constant-size rule; staging is transient
+and a navigation's own scroll does not stop in the band where it shows.
 """
 
 from __future__ import annotations
@@ -43,7 +57,7 @@ from rich.segment import Segment, Segments
 from rich.style import Style as RichStyle
 from textual.binding import Binding
 from textual.containers import VerticalScroll
-from textual.geometry import Size
+from textual.geometry import Region, Size
 from textual.scrollbar import ScrollBar, ScrollBarRender
 
 try:  # private: an empty tuple is isinstance-safe, so its loss only costs the
@@ -53,6 +67,7 @@ except ImportError:  # pragma: no cover
 
 if TYPE_CHECKING:
     from rich.console import Console, ConsoleOptions, RenderResult
+    from textual.layout import DockArrangeResult
     from textual.widget import Widget
 
 # Match markers use the same yellow accent as the inline body-text
@@ -295,8 +310,14 @@ class MatchAwareScrollBar(ScrollBar):
         self.refresh()
 
     def _render_bar(self, scrollbar_style: Any) -> Any:
-        window_size = self.window_size if self.window_size < self.window_virtual_size else 0
+        # Both terms of the predicate, and why the bar discounts staged rows at
+        # all, are in the module docstring.
         virtual_size = self.window_virtual_size
+        staged = getattr(self.parent, "staged_rows", 0)
+        corrected = virtual_size - staged
+        if staged and corrected > 0 and max(0, corrected - self.window_size) >= self.position:
+            virtual_size = corrected
+        window_size = self.window_size if self.window_size < virtual_size else 0
         return MatchAwareScrollBarRender(
             virtual_size=ceil(virtual_size),
             window_size=ceil(window_size),
@@ -322,6 +343,14 @@ def _is_displayed(widget: Widget) -> bool:
         parent = node.parent
         node = parent if isinstance(parent, _Widget) else None
     return True
+
+
+def _placed(arrangement: DockArrangeResult, widget: Widget) -> Region | None:
+    """Where ``arrangement`` puts ``widget``, or None if it is not in it."""
+    for placement in arrangement.placements:
+        if placement.widget is widget:
+            return placement.region
+    return None
 
 
 class MatchAwareScroll(VerticalScroll):
@@ -368,16 +397,45 @@ class MatchAwareScroll(VerticalScroll):
     #: ``(widget, virtual_y)`` for a chunk just below content being revealed
     #: ABOVE the viewport. Every layout that pushes that widget further down is
     #: the prepend landing, and the pane scrolls by exactly that so the document
-    #: does not move under the reader. See ``watch_virtual_size``.
+    #: does not move under the reader. See ``arrange``.
     absorb_anchor: tuple[object, int] | None = None
 
-    def watch_virtual_size(self, old_value: Size, new_value: Size) -> None:
-        """Absorb a shift above the anchor as the layout that caused it lands.
+    #: Height of each of the pane's children, from the arrangement in flight.
+    #: Read by :attr:`staged_rows`.
+    _child_rows: dict[Widget, int] | None = None
 
-        The one moment the new size exists and nothing has painted with it.
-        Correcting after a settle paints ~120ms at up to 760 rows off;
-        correcting before it clamps against the old size and lands short.
+    @property
+    def staged_rows(self) -> int:
+        """Rows of layout held by containers still behind ``-pre-reveal``.
+
+        Read from the class, not counted during the arrange: revealing changes
+        ``opacity`` only and ``preview/visibility.py`` keeps that free of layout,
+        so a counted value is never told what it counts has been revealed.
         """
+        return sum(
+            rows
+            for child, rows in (self._child_rows or {}).items()
+            if child.has_class("-pre-reveal")
+        )
+
+    def arrange(self, size: Size, optimal: bool = False) -> DockArrangeResult:
+        """Absorb a prepend into the arrangement the compositor is about to read.
+
+        ``Screen._refresh_layout`` builds the map, THEN runs ``_size_updated``
+        (where a ``virtual_size`` watcher fires), THEN paints the map it built.
+        ``_arrange_root`` reads ``scroll_offset`` straight after this call, which
+        is where Textual applies its own bottom-anchor for the same reason.
+        """
+        arrangement = super().arrange(size, optimal=optimal)
+        if not optimal:
+            self._child_rows = {p.widget: p.region.height for p in arrangement.placements}
+            self._absorb_prepend(arrangement, size)
+        return arrangement
+
+    def _absorb_prepend(self, arrangement: DockArrangeResult, size: Size) -> None:
+        """Scroll by whatever content this arrangement inserted above the anchor."""
+        from fnd.tui.preview.liveness import is_live
+
         claim = self.absorb_anchor
         if claim is None:
             return
@@ -387,25 +445,22 @@ class MatchAwareScroll(VerticalScroll):
         # prepend arriving in instalments — built chunks resolve their heights
         # over successive layouts — is absorbed in full rather than once.
         widget, before_y = claim
+        anchor = cast("Widget", widget)
         # A widget whose container has left the layout reports virtual_region
         # ``Region()`` — y=0, no exception — so a stranded claim would read as a
         # prepend of -before_y and really scroll the pane: measured 117-187 rows
         # backwards on a cross-file navigation. Liveness is the only thing that
         # tells that apart from a genuine y=0.
-        from fnd.tui.preview.liveness import is_live
-
-        if not is_live(cast("Widget", widget)) or not _is_displayed(cast("Widget", widget)):
+        if not is_live(anchor) or not _is_displayed(anchor):
             self.absorb_anchor = None
             return
-        try:
-            now_y = int(widget.virtual_region.y)  # type: ignore[attr-defined]
-        except Exception:
-            self.absorb_anchor = None
-            return
+        now_y = self._anchor_row(arrangement, anchor)
+        if now_y is None:
+            return  # not in this arrangement: nothing this pass can have moved
         grew = now_y - before_y
         if grew == 0:
             return  # signed: a prune removing content above shrinks it
-        self.absorb_anchor = (widget, now_y)
+        self.absorb_anchor = (anchor, now_y)
         # Reconcile-guarded: an unguarded write reads as a user scroll and
         # releases the navigation's anchor. Saved and restored rather than
         # begun/ended, because this can land inside another such region.
@@ -437,12 +492,61 @@ class MatchAwareScroll(VerticalScroll):
                     # drive scroll_y back and undo the absorb. That completes
                     # their scroll, which is the lesser artefact.
                     animator.force_stop_animation(self, "scroll_y")
-            current = float(self.scroll_y)
-            self.scroll_y = current + grew
-            self.scroll_target_y = self.scroll_y
+            # ``validate_scroll_y`` would clamp against the size this
+            # arrangement is about to replace, landing the absorb short of a
+            # prepend that grew the document. Clamp against the new one.
+            self._set_absorbed_scroll(
+                float(self.scroll_y) + grew,
+                max(size.height, arrangement.total_region.height) - size.height,
+            )
         finally:
             if preview is not None and not outer:
                 preview.end_reconcile_scroll()
+
+    def _anchor_row(self, arrangement: DockArrangeResult, anchor: Widget) -> int | None:
+        """``anchor``'s row within its parent, as the pass in flight places it.
+
+        Same coordinate as ``virtual_region.y``, which cannot be used here: it
+        reports the map this pass is about to replace. Asking the parent costs
+        one container arrange whenever Textual measured it at its own height
+        instead (its all-dynamic-height branch) — 0.26ms at 40 chunks.
+        """
+        from textual.widget import Widget as _Widget
+
+        parent = anchor.parent
+        if parent is self:
+            placed = _placed(arrangement, anchor)
+            return None if placed is None else placed.y
+        if not isinstance(parent, _Widget):
+            return None
+        outer = _placed(arrangement, parent)
+        if outer is None:
+            return None
+        inner = _placed(parent.arrange(Size(outer.width, 0)), anchor)
+        return None if inner is None else inner.y
+
+    def _set_absorbed_scroll(self, value: float, max_y: int) -> None:
+        """Move the viewport without going through the scroll reactives.
+
+        ``validate_scroll_y`` clamps against the ``virtual_size`` this
+        arrangement is about to replace, so at the end of a document a plain
+        write drops the absorb entirely — measured 116 where 216 was wanted.
+        """
+        from textual.reactive import Reactive
+        from textual.widget import Widget as _Widget
+
+        scroll_y = min(max(0.0, value), float(max(0, max_y)))
+        self.set_reactive(_Widget.scroll_y, scroll_y)
+        self.set_reactive(cast("Reactive[float]", _Widget.scroll_target_y), scroll_y)
+        if self.show_vertical_scrollbar:
+            self.vertical_scrollbar.position = scroll_y
+        # Everything ``watch_scroll_y`` would have told about the move: the
+        # lazy mounter's boundary check and the ▲/▼ re-measure both key off a
+        # scroll, and an absorb is one even though it keeps the reader still.
+        with contextlib.suppress(Exception):
+            lazy = getattr(self.app, "_lazy", None)
+            if lazy is not None:
+                lazy.schedule_check(user_initiated=self.has_focus)
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         # Bubble to the app so it can extend the mounted chunk window

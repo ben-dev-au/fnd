@@ -860,10 +860,9 @@ class PreviewPresenter:
                     except Exception:
                         captured = None
                     else:
-                        # `outer_height`, not `height`: above_height accumulates
-                        # `virtual_region` spans, which include the chunk's
-                        # padding. Subtracting the strip count alone leaves the
-                        # padding rows in the correction and the pane drifts.
+                        # The stand-in replaces the tree's whole box, padding
+                        # included, so the correction takes back exactly what
+                        # the tree contributed to ``above_height``.
                         above_height -= captured.outer_height if i < keep_lo else 0
                         container.chunk_widgets[seq] = view
                         container.match_targets.pop(seq, None)
@@ -2443,6 +2442,11 @@ class PreviewPresenter:
                 )
             container.chunk_widgets[chunk.chunk_seq] = view
             container.match_targets.pop(chunk.chunk_seq, None)
+            # ``display = False`` leaves the arrange in the SAME pass the mount
+            # above joins it; ``remove()`` alone is deferred, so ten swaps held
+            # 559 duplicate rows in a container being read.
+            with contextlib.suppress(Exception):
+                widget.display = False
             with contextlib.suppress(Exception):
                 widget.remove()
             frozen += 1
