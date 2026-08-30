@@ -1,0 +1,102 @@
+name: deps-latest
+
+# Resolves every dependency at its newest allowed version — ignoring the
+# committed uv.lock — and runs the suite against that. uv.lock governs dev
+# and CI only and never reaches a user, so ci.yml tests a version set no
+# installer produces. This job tests what `uv tool install fndr`, `pipx
+# install fndr` and `brew install fnd` actually resolve, before a user
+# finds out. Red means: do not raise that pin yet.
+
+on:
+  schedule:
+    # Monday 10:00 UTC, an hour after security.yml so a CVE-driven
+    # yank and this run don't report the same breakage twice.
+    - cron: "0 10 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-and-test:
+    name: pytest @ latest (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is excluded on purpose: it fails intermittently with a
+        # different test each run, which on a scheduled job would cry wolf
+        # often enough to make the signal worthless. ci.yml still covers it.
+        os: [macos-14, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Snapshot the committed resolution
+        run: uv export --no-hashes --no-emit-project -o /tmp/before.txt
+
+      - name: Resolve every dependency at its newest allowed version
+        run: uv lock --upgrade
+
+      - name: Report what moved
+        run: |
+          uv export --no-hashes --no-emit-project -o /tmp/after.txt
+          {
+            echo "### Newest allowed vs committed uv.lock (${{ matrix.os }})"
+            echo '```diff'
+            if diff -u /tmp/before.txt /tmp/after.txt | tail -n +3 | grep -E '^[-+]'; then :; else
+              echo "(nothing moved — the lock is already at the newest allowed versions)"
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Sync the upgraded resolution
+        run: uv sync
+
+      - name: Test
+        # Same invocation as ci.yml, so a failure here is attributable to
+        # the dependency change and nothing else.
+        run: uv run pytest -q -m "not slow"
+
+  report-failure:
+    name: raise a tracking issue
+    needs: resolve-and-test
+    # Scheduled runs only: a hand-dispatched run is already being watched
+    # by whoever dispatched it, and does not need an issue filed.
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Open or update the tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="deps-latest: a newer dependency breaks the suite"
+          body="The weekly resolve-at-latest run failed: $RUN_URL
+
+          Something newer than the committed \`uv.lock\` breaks fnd. The run
+          summary lists exactly which versions moved. Do not raise the
+          affected pin in \`pyproject.toml\` until this is green again.
+
+          Users are unaffected while the pins stay as they are — that is what
+          the three-component \`~=\` ranges buy."
+          # Comment on the standing issue rather than opening a fresh one each
+          # Monday, so a long-lived upstream break is one thread, not twelve.
+          existing=$(gh issue list --search "$title in:title" --state open \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
