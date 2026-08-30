@@ -27,8 +27,17 @@ updates:
       day: "monday"
     commit-message:
       prefix: "chore(deps)"
+    # Raise the pin rather than widen the range. Left to itself Dependabot
+    # rewrote `platformdirs~=4.9.6` to `>=4.9.6,<4.12.0`, floating three
+    # untested minors to users — the exact defect the pins exist to stop.
+    versioning-strategy: "increase"
     groups:
       dev-tooling:
         dependency-type: "development"
         update-types: ["minor", "patch"]
+    ignore:
+      # 1.1.0 pins `syrupy==4.8.0`, which caps `pytest<9` and drags pytest
+      # back to 8.4.2 — PYSEC-2026-1845. Drop this once it allows syrupy 5.
+      - dependency-name: "pytest-textual-snapshot"
+        versions: ["1.1.0"]
     open-pull-requests-limit: 5
