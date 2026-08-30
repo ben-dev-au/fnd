@@ -357,8 +357,13 @@ async def test_a_table_that_has_not_laid_out_is_refused() -> None:
 
 # One paragraph, one source line, wrapping to many rows with its match late —
 # the shape a PDF contents page has, and the one a block-top row gets wrong.
+# TWO matches, both inside that one block: with one, a per-block capture and a
+# per-row one produce the same rows and the parity test below cannot tell them
+# apart.
 _WRAPPED = "Step %02d - a deployment guide entry with no newline in it. " * 40 % tuple(range(40))
-_WRAPPED_DOC = _WRAPPED.replace("Step 30", "Step 30 quartzfin")
+_WRAPPED_DOC = _WRAPPED.replace("Step 30", "Step 30 quartzfin").replace(
+    "Step 35", "Step 35 quartzfin"
+)
 
 
 class _WrappedHost(App[None]):
@@ -420,6 +425,12 @@ async def test_a_wrapped_chunk_keeps_its_stop_rows_through_a_capture() -> None:
         pane = app.query_one("#pane", VerticalScroll)
         live_rows = sorted(r.y - md.region.y for r in enumerate_stop_regions(pane, spec))
         assert live_rows, "no match stops while live"
+        assert len(live_rows) == 2, (
+            f"stops at {live_rows}: expected one stop per match. Either the live "
+            "per-row stop set regressed, or the fixture stopped putting both "
+            "matches in one block, which is what lets this tell a per-block "
+            "capture from a per-row one"
+        )
         assert live_rows[0] > 5, (
             f"stops at {live_rows}: the fixture must wrap for this to prove anything"
         )

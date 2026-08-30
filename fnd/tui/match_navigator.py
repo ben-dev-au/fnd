@@ -4,7 +4,7 @@ The results-pane arrows step between results; within a result whose chunk is
 taller than the viewport they skip straight past matches below the fold. This
 module hops between those hidden matches by viewport — scoped to the current
 result — and surfaces ``▲a ▼b`` view counts so the user knows they exist. The
-geometry (next/prev stop, view bucketing) is pure and unit-tested; region
+geometry (next/prev stop, hop counting) is pure and unit-tested; region
 resolution + scrolling live on :class:`MatchNavigator` below.
 """
 
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import time
+from bisect import bisect_right
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -24,40 +25,83 @@ if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
 
 
-def _landing_margin(vh: int) -> int:
-    """Rows a jumped-to match is dropped below the viewport top (a quarter down,
-    ≥1). The SAME value drives the actual scroll (``_scroll_to_stop``) and the
-    burst reference viewport (``_ref_top`` via the choosers) — they must agree or
-    a burst hop on a non-16-row pane picks the wrong stop."""
-    return max(1, int(vh * 0.25))
+def view_anchors(ys: list[int], vh: int, home: int | None = None) -> list[int]:
+    """Content-space tops of the views ``n``/``b`` step through — a greedy tiling
+    of the stops, each view spanning ``vh`` from the first match it reaches.
 
+    ONE list drives both directions and both border counts, so a hop and a count
+    cannot disagree. Stops within one viewport of an anchor share its view, so
+    the document's last screenful is one view however many matches fall in it and
+    a pane clamped at ``max_scroll_y`` still shows them all.
 
-def _ref_top(ys: list[int], scroll_y: int, last_target: int | None, margin: int) -> int:
-    """Top of the reference viewport: the last jump's resulting position during
-    a burst (``last_target`` set), else the live scroll top. Using the last
-    target's position — not the not-yet-settled live scroll — lets a rapid
-    ``n n n`` burst advance screen-by-screen instead of re-picking the same
-    stop while the animation catches up. A manual scroll clears ``last_target``
-    (see :meth:`MatchNavigator.on_manual_scroll`), so it reverts to live."""
-    if last_target is not None and 0 <= last_target < len(ys):
-        return ys[last_target] - margin
-    return scroll_y
-
-
-def _view_buckets(ys: list[int], vh: int) -> int:
-    """Number of viewport-sized screenfuls needed to cover ``ys`` (sorted) — a
-    greedy sweep: each screenful spans ``vh`` from the first match it reaches, so
-    matches within one viewport of each other count as one "view". This is the
-    count of ``n``/``b`` hops it takes to visit them all."""
+    ``home`` is where the results pane landed, and anchors the first view when it
+    already shows the first stop: a landing sits a quarter-viewport ABOVE the
+    match, so tiling from the match leaves it a position no key can return to.
+    """
     if vh <= 0:
-        return 0  # unlaid-out / hidden pane — no meaningful screenful width
-    views = 0
+        return []  # unlaid-out / hidden pane — no meaningful screenful width
+    anchors: list[int] = []
     covered_to: int | None = None
+    if home is not None and ys and home <= ys[0] < home + vh:
+        anchors.append(home)
+        covered_to = home + vh
     for y in ys:
         if covered_to is None or y >= covered_to:
-            views += 1
+            anchors.append(y)
             covered_to = y + vh
-    return views
+    return anchors
+
+
+def _view_of(anchors: list[int], y: int) -> int:
+    """Index of the view that shows stop ``y`` — the last anchor at or above it.
+    Every stop falls in a view by construction of :func:`view_anchors`."""
+    return max(0, bisect_right(anchors, y) - 1)
+
+
+def step_view(
+    anchors: list[int], stops: list[int], top: int, vh: int, *, forward: bool
+) -> int | None:
+    """Where ``n`` (or ``b``) moves the viewport from ``top``, or ``None`` when
+    nothing off screen lies that way.
+
+    Keyed on the first STOP off screen, not on the current view's index: a
+    results landing leaves the viewport part-way through its view, so the view
+    holding it and the rows it shows are different spans.
+    """
+    if not anchors:
+        return None
+    if forward:
+        nxt = next((y for y in stops if y >= top + vh), None)
+        if nxt is not None:
+            return anchors[_view_of(anchors, nxt)]
+        wrap = anchors[0]
+    else:
+        prv = next((y for y in reversed(stops) if y < top), None)
+        if prv is not None:
+            return anchors[_view_of(anchors, prv)]
+        wrap = anchors[-1]
+    # Nothing off screen that way, so this is the wrap. Worth taking only if the
+    # view it lands on shows a match this viewport does not.
+    return wrap if _reveals(stops, wrap, top, vh) else None
+
+
+def _reveals(stops: list[int], target: int, top: int, vh: int) -> bool:
+    """Whether a viewport at ``target`` shows a stop one at ``top`` does not."""
+    return any(target <= y < target + vh and not (top <= y < top + vh) for y in stops)
+
+
+def offscreen_views(anchors: list[int], stops: list[int], top: int, vh: int) -> tuple[int, int]:
+    """``(views above, views below)`` — the ``▲a ▼b`` border: views holding a
+    match this viewport does not show.
+
+    Counted over the same stops :func:`step_view` walks, so ``▼2`` is two more
+    screenfuls holding a match AND two more presses of ``n``.
+    """
+    if not anchors:
+        return 0, 0
+    above = {_view_of(anchors, y) for y in stops if y < top}
+    below = {_view_of(anchors, y) for y in stops if y >= top + vh}
+    return len(above), len(below)
 
 
 # Re-measure spacing, and the window a navigation keeps re-measuring in. The
@@ -66,71 +110,15 @@ def _view_buckets(ys: list[int], vh: int) -> int:
 # that way twice.
 #
 # The read is `enumerate_stop_regions` over the pane subtree, so it scales with
-# mounted chunks: 1.6ms at 45, 3.8ms median / 7.8ms peak at 201, against a
+# the mounted STOPS, not just the chunks: 1.2ms warm at 13 chunks / 36 stops,
+# 2.5ms at 102 chunks / 882 stops (the densest in this corpus) and 3.5ms at 1592
+# stops on a synthetic shape denser than anything in it, against a
 # `FULLMOUNT_CHUNK_BUDGET` of 250. At 4Hz that is ~2-3% of one core, and
 # `on_result_revealed` re-opens the window, so walking a results list keeps it
 # running rather than the 40 reads a single navigation costs. It stops 10s after
 # the last one.
 _CONFIRM_DELAY = 0.25
 _CONFIRM_BUDGET = 10.0
-
-
-def offscreen_views(ys: list[int], top: int, bottom: int, vh: int) -> tuple[int, int]:
-    """``(matching views above the viewport, matching views below)`` — the
-    awareness signal behind the ``▲a ▼b`` border. ``ys`` are the current
-    result's match stops (content-space tops, sorted); ``[top, bottom)`` is the
-    viewport in the same space; ``vh`` is its height. A "view" is a screenful
-    that holds ≥1 off-screen match, so ``▼2`` means two more screenfuls of this
-    result lie below the fold. A stop exactly at ``bottom`` is below; one at
-    ``top`` is visible."""
-    above = [y for y in ys if y < top]
-    below = [y for y in ys if y >= bottom]
-    return _view_buckets(above, vh), _view_buckets(below, vh)
-
-
-def next_stop_index(
-    ys: list[int], scroll_y: int, viewport_h: int, last_target: int | None, margin: int
-) -> int:
-    """Index of the first stop at/below the reference viewport's bottom edge;
-    wraps to 0 when none is below. ``ys`` is the stops' content-space tops,
-    sorted ascending."""
-    if not ys:
-        return 0
-    ref_bottom = _ref_top(ys, scroll_y, last_target, margin) + viewport_h
-    for i, y in enumerate(ys):
-        if y >= ref_bottom:
-            return i
-    return 0
-
-
-def prev_stop_index(
-    ys: list[int], scroll_y: int, viewport_h: int, last_target: int | None, margin: int
-) -> int:
-    """Index of the top stop of the screenful immediately above the reference
-    viewport; wraps to the last stop when none is above."""
-    if not ys:
-        return 0
-    ref_top = _ref_top(ys, scroll_y, last_target, margin)
-    nearest_above: int | None = None
-    for i, y in enumerate(ys):
-        if y < ref_top:
-            nearest_above = i
-        else:
-            break
-    if nearest_above is None:
-        return len(ys) - 1
-    # Land on the TOP of that previous screenful (symmetry with next's hop),
-    # not just the nearest stop above — so a screen with many matches is one
-    # press up, mirroring one press down. Clamp the window so a tiny viewport
-    # (viewport_h < 2*margin) doesn't invert it and break the grouping.
-    window_top = ys[nearest_above] - max(0, viewport_h - 2 * margin)
-    target = nearest_above
-    for i in range(nearest_above, -1, -1):
-        if ys[i] >= window_top:
-            target = i
-        else:
-            break
-    return target
 
 
 class MatchNavigator:
@@ -191,9 +179,39 @@ class MatchNavigator:
         # on arrival, and a flag cannot say so — it just blocks the arm the new
         # navigation needs, leaving an open window with nothing running.
         self._confirm_armed_gen: int | None = None
-        self._last_target: int | None = None
+        # The last hop's destination and the landing the chunk was entered at,
+        # both stored as offsets FROM THE CHUNK'S TOP and keyed by its seq. A
+        # mount above the window shifts every stop (measured: +5 rows between two
+        # presses), so an absolute content y goes stale mid-walk; and an absolute
+        # y is ambiguous across chunks besides (a 2033 against a neighbour's
+        # 2034).
+        self._last_rel: int | None = None
+        self._last_seq: int | None = None
+        self._home_rel: int | None = None
+        self._home_seq: int | None = None
         # Bumped per rebuild() so a superseded count tick self-cancels.
         self._refresh_gen = 0
+
+    def _home(self, base: int) -> int | None:
+        """The landing this chunk was entered at, in content space now, or
+        ``None`` when it belongs to another chunk. ``base`` is the chunk's
+        current top: the stored offset is measured from it, so a reflow that
+        moves the chunk moves the landing with it."""
+        if self._home_rel is None or self._home_seq != self._focus_seq():
+            return None
+        return self._home_rel + base
+
+    def _last(self, base: int) -> int | None:
+        """The last hop's destination in content space now, or ``None``."""
+        if self._last_rel is None or self._last_seq != self._focus_seq():
+            return None
+        return self._last_rel + base
+
+    def _focus_seq(self) -> int | None:
+        """The chunk the results pane revealed, or ``None`` before any."""
+        ctrl = getattr(self._app, "_preview_scroll", None)
+        anchor = getattr(ctrl, "anchor", None)
+        return None if anchor is None else anchor.focus_chunk_seq
 
     def _pane(self) -> VerticalScroll | None:
         from textual.containers import VerticalScroll
@@ -205,9 +223,14 @@ class MatchNavigator:
 
     def _stops_within(self, root: Widget, spec: MatchSpec) -> int:
         """Match stops inside ``root``, from DATA only — no region reads, so no
-        layout is forced. Mirrors ``enumerate_stop_regions``' stop set: one per
-        matching table cell, one per non-table match block, one per matching
-        plain line.
+        layout is forced: one per matching table cell, one per non-table match
+        block, one per matching plain line.
+
+        Deliberately per BLOCK where ``enumerate_stop_regions`` is per row: the
+        rows need layout, and this runs on paths that must not force it. They go
+        to zero together on a laid-out subtree only: a mounted block with no
+        geometry counts here and yields no region, so the hint can lead the keys
+        while a fill is hiding chunks.
 
         Shared by the preview-wide count and the current-chunk check so the two
         can't drift on what counts as a stop — they answer the same question at
@@ -271,11 +294,12 @@ class MatchNavigator:
     def _current_chunk_extent(self, pane: VerticalScroll) -> tuple[int, int] | None:
         """Content-space ``[top, bottom)`` of the CURRENT result's chunk — the
         one the results-pane selection revealed (``anchor.focus_chunk_seq``).
-        ``bottom`` is the next mounted chunk's top (so it works whether the
-        chunk widget is the full ``FNDMarkdown`` or just a plain chunk's first
-        line); the last chunk extends to the content bottom. ``None`` when the
-        current chunk can't be located (no anchor, or a flat preview with no
-        per-chunk widgets) — callers then skip the arrows rather than guess."""
+        ``bottom`` is the next chunk's top (so it works whether the chunk widget
+        is the full ``FNDMarkdown`` or just a plain chunk's first line); the last
+        chunk extends to the content bottom. ``None`` ONLY for a preview with no
+        per-chunk widgets at all (flat), where the caller's whole-preview
+        fallback is right; an unresolvable chunk yields an EMPTY extent instead,
+        because that fallback is otherwise a licence to leave the chunk."""
         ctrl = getattr(self._app, "_preview_scroll", None)
         anchor = getattr(ctrl, "anchor", None)
         preview = getattr(self._app, "_preview", None)
@@ -297,9 +321,17 @@ class MatchNavigator:
 
         top = ctop(cur)
         if top is None:
-            return None
+            # Mounted but not laid out (the background fill hides every chunk
+            # above the window). EMPTY, never None: None means "no per-chunk
+            # widgets at all" and unscopes the caller to the whole preview.
+            return 0, 0
+        # A later chunk with no geometry cannot leak a stop in: every arm of
+        # ``enumerate_stop_regions`` drops a zero-height region. So bounding on
+        # the next chunk that HAS laid out is safe, and bounding on the next in
+        # sequence instead would collapse a plain chunk to one row, since
+        # ``chunk_widgets`` holds only its first LINE.
         laters = [
-            y for s, w in widgets.items() if s > seq and (y := ctop(w)) is not None and y > top
+            y for s2, w in widgets.items() if s2 > seq and (y := ctop(w)) is not None and y > top
         ]
         bottom = min(laters) if laters else max(top + 1, pane.virtual_size.height)
         return top, bottom
@@ -324,9 +356,13 @@ class MatchNavigator:
             return 0, 0
         lo, hi = extent
         stops = [y for y in self._region_stops(pane) if lo <= y < hi]
-        top = pane.scroll_offset.y
         vh = pane.scrollable_content_region.height
-        return offscreen_views(stops, top, top + vh, vh)
+        # Not pinned here: this runs while a landing may still be committing, and
+        # a home captured mid-flight would stick. _go pins it on the first press.
+        home = self._home(lo)
+        if home is None:
+            home = pane.scroll_offset.y
+        return offscreen_views(view_anchors(stops, vh, home), stops, pane.scroll_offset.y, vh)
 
     @property
     def count(self) -> int:
@@ -384,20 +420,13 @@ class MatchNavigator:
     def below(self) -> int:
         return self._below  # cached — matching views below the viewport (this result)
 
-    @property
-    def position(self) -> int | None:
-        """1-based index of the stop last jumped to (clamped to the count), or
-        ``None`` before any jump (or after a manual scroll)."""
-        if self._last_target is None:
-            return None
-        return min(self._last_target + 1, self._count) if self._count else self._last_target + 1
-
     def on_manual_scroll(self) -> None:
         """Drop the burst memory so the next ``n``/``b`` is computed purely from
         the on-screen position, never resuming from the previous jump. A user
         scroll also moves matches across the fold, so re-measure the ▲/▼ markers
         (coalesced + settle-gated via :meth:`on_preview_scrolled`)."""
-        self._last_target = None
+        self._last_rel = self._last_seq = None
+        self._home_rel = self._home_seq = None
         self.on_preview_scrolled()
 
     def rebuild(self) -> None:
@@ -405,7 +434,8 @@ class MatchNavigator:
         memory and re-derive the cached count. Two phases so nothing touches the
         preview subtree during the cold-nav scroll-settle window."""
         self._refresh_gen += 1
-        self._last_target = None
+        self._last_rel = self._last_seq = None
+        self._home_rel = self._home_seq = None
         # Drop stale arrows now and refresh the border this frame (real counts
         # land once the mount settles, via _measure_after_settle). Without the
         # notify the previous result's markers would linger until settle.
@@ -605,7 +635,8 @@ class MatchNavigator:
         scroll (so the old result's markers would linger); this fires regardless.
         Clear the old markers now, reset the burst memory (a new result is a
         fresh nav), and re-measure once the reveal position settles."""
-        self._last_target = None
+        self._last_rel = self._last_seq = None
+        self._home_rel = self._home_seq = None
         self._open_confirmation_window()
         if (self._above, self._below) != (0, 0):
             self._above = self._below = 0
@@ -664,19 +695,29 @@ class MatchNavigator:
         # and stop at its boundaries — never wandering into the next result
         # (that's the results-pane's job). Fresh each press — never a stale snap.
         stops = self._chunk_stops(pane)
-        if not stops:
-            return
-        scroll_y = pane.scroll_offset.y
         vh = pane.scrollable_content_region.height
-        if vh <= 0:
-            return  # pane not laid out yet — nothing meaningful to hop within
-        # Same margin the actual scroll lands with, so the burst reference
-        # viewport (_ref_top) matches where a jump really put the last match.
-        margin = _landing_margin(vh)
-        chooser = next_stop_index if forward else prev_stop_index
-        k = chooser(stops, scroll_y, vh, self._last_target, margin)
-        self._last_target = k
-        self._scroll_to_stop(pane, stops[k], vh)
+        if not stops or vh <= 0:
+            self._schedule_measure()  # no scroll here either, so nothing else refreshes ▲▼
+            return
+        extent = self._current_chunk_extent(pane)
+        base = extent[0] if extent is not None else 0
+        home = self._home(base)
+        if home is None:  # first press in this chunk: pin where the landing put us
+            home = pane.scroll_offset.y
+            self._home_rel, self._home_seq = home - base, self._focus_seq()
+        anchors = view_anchors(stops, vh, home)
+        # The last hop's DESTINATION, not its index: the stop list is rebuilt
+        # every press, so an index addresses a different stop than it recorded.
+        top = pane.scroll_offset.y
+        last = self._last(base)
+        if last is not None and last in set(anchors):
+            top = last
+        target = step_view(anchors, stops, top, vh, forward=forward)
+        if target is None:
+            self._schedule_measure()  # no scroll, so nothing else refreshes ▲▼
+            return
+        self._last_rel, self._last_seq = target - base, self._focus_seq()
+        self._scroll_to_stop(pane, target, vh)
         # Re-measure the view arrows AFTER the scroll commits — reading regions
         # synchronously here (before layout settles) yields an unresolved
         # viewport. Coalesced; runs on the next refresh with the scroll applied.
@@ -685,10 +726,11 @@ class MatchNavigator:
     def _scroll_to_stop(self, pane: VerticalScroll, top_y: int, vh: int) -> None:
         from textual.geometry import Region
 
-        # Drop the match ~a quarter down the viewport for context above it — the
-        # same margin _go feeds the choosers (via _landing_margin).
-        margin = _landing_margin(vh)
-        region = Region(0, max(0, top_y - margin), 1, vh)
+        # The anchor IS the view's top: views tile by exactly one viewport, so a
+        # hop covers a screenful and the border's count of screenfuls and of
+        # presses are the same number. Offsetting the match down the viewport
+        # here would shift every view off its tile and split them again.
+        region = Region(0, max(0, top_y), 1, vh)
         # Flag this as a controller-owned scroll so the scroll watcher doesn't
         # treat it as a user scroll (which would clear the burst memory we just
         # set). Mirrors StructuralScrollStrategy's reconcile-scroll guard.
