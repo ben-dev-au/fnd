@@ -83,7 +83,7 @@ jobs:
         run: uv run pytest -q -m "not slow" --junitxml=junit.xml ${{ inputs.pytest_args }}
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: junit-${{ matrix.os }}-${{ matrix.index }}
           path: junit.xml
