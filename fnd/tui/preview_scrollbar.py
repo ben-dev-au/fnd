@@ -30,6 +30,20 @@ Two marker-mapping modes coexist:
   the track resolves back to a chunk index proportionally and paints if
   that chunk matches. Used by the structural Markdown / docx / pptx
   preview path until Phase 5 migrates it.
+
+A container built behind ``-pre-reveal`` is in the layout — that is how the pane
+scrolls to its match before revealing it — so its rows reach the bar as well and
+resized the thumb on every navigation, measured 5 cells to 3 and back.
+:attr:`MatchAwareScroll.staged_rows` reports them and
+:meth:`MatchAwareScrollBar._render_bar` subtracts them, but only while the
+reader's position still fits inside the corrected document and something
+unstaged is left to describe: mid-swap the pane scrolls INTO the staged
+container, where correcting pins the thumb to the bottom of the track, and once
+the outgoing preview is hidden the count covers the whole document and leaves no
+thumb at all. A preview shorter than the viewport fits by definition, hence the
+``max``. That correction is the one place thumb SIZE depends on position,
+against :class:`ThinScrollBarRender`'s constant-size rule; staging is transient
+and a navigation's own scroll does not stop in the band where it shows.
 """
 
 from __future__ import annotations
@@ -296,22 +310,11 @@ class MatchAwareScrollBar(ScrollBar):
         self.refresh()
 
     def _render_bar(self, scrollbar_style: Any) -> Any:
-        # A container behind ``-pre-reveal`` is in the layout so the pane can
-        # scroll to its match before revealing it, so its rows reach the bar
-        # too: the thumb went 5 cells to 3 and back on every navigation.
+        # Both terms of the predicate, and why the bar discounts staged rows at
+        # all, are in the module docstring.
         virtual_size = self.window_virtual_size
         staged = getattr(self.parent, "staged_rows", 0)
         corrected = virtual_size - staged
-        # Only while the reader's position fits inside the corrected document
-        # and something unstaged is on screen: mid-swap the pane scrolls INTO the
-        # staged container, where correcting pins the thumb to the bottom of the
-        # track, and at zero leaves none at all. ``max`` because a preview
-        # shorter than the viewport fits by definition.
-        #
-        # This is the one place thumb SIZE depends on position, against
-        # ``ThinScrollBarRender``'s constant-size rule: crossing out of a short
-        # visible preview mid-stage resizes it once. Staging is transient and a
-        # navigation's own scroll does not stop in that band.
         if staged and corrected > 0 and max(0, corrected - self.window_size) >= self.position:
             virtual_size = corrected
         window_size = self.window_size if self.window_size < virtual_size else 0

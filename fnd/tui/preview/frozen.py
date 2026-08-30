@@ -50,12 +50,9 @@ class FrozenChunk:
 
     @property
     def outer_height(self) -> int:
-        """Rows the chunk occupied in its container, padding included.
-
-        The strips ARE the chunk's whole box, so this is their count and the
-        stand-in adds nothing to it. Row indices — ``first_match_row``,
-        ``stop_rows``, ``cell_rows`` — index the strips directly.
-        """
+        """Rows the chunk occupied, padding included: the strips are its whole
+        box, so the stand-in adds nothing to this and the row fields index the
+        strips directly."""
         return len(self.strips)
 
 

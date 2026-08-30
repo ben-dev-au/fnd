@@ -389,3 +389,58 @@ async def test_a_prepend_past_the_old_end_of_the_document_is_absorbed_in_full() 
             f"scroll_y {pane.scroll_y}, wanted {before + 100} — a 100-row prepend was "
             f"clamped against the document size it was about to replace"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_claim_is_measured_against_its_container_not_the_pane() -> None:
+    """``absorb_anchor`` is seeded from ``virtual_region.y``, which Textual
+    measures against the immediate PARENT, so the row the absorb compares it
+    against has to be parent-relative too. Measuring from the pane adds the
+    container's own offset to every delta — invisible while one container is
+    mounted at y=0, and wrong for the whole staging window, which is the only
+    time a second one exists.
+    """
+    from fnd.tui.widgets.preview_container import PreviewContainer
+
+    class _TwoContainers(App[None]):
+        def compose(self) -> ComposeResult:
+            yield MatchAwareScroll(id="preview_pane")
+
+    async def _container(pane: MatchAwareScroll, name: str) -> PreviewContainer:
+        container = PreviewContainer(parent_doc_id=name, query_signature="q", total_chunks=1)
+        await pane.mount(container)
+        return container
+
+    app = _TwoContainers()
+    async with app.run_test(size=(60, 24)) as pilot:
+        pane = app.query_one("#preview_pane", MatchAwareScroll)
+        outgoing = await _container(pane, "outgoing")
+        filler = Static("outgoing")
+        filler.styles.height = 120
+        await outgoing.mount(filler)
+
+        incoming = await _container(pane, "incoming")
+        above = Static("above")
+        above.styles.height = 30
+        anchor = Static("anchor")
+        anchor.styles.height = 40
+        await incoming.mount(above)
+        await incoming.mount(anchor)
+        await pilot.pause()
+        pane.scroll_to(y=150, animate=False, immediate=True)
+        await pilot.pause()
+        assert incoming.virtual_region.y > 0, (
+            "setup: the claimed container sits at the top of the pane, where both "
+            "coordinate bases agree and this proves nothing"
+        )
+        before = pane.scroll_y
+
+        pane.absorb_anchor = (anchor, int(anchor.virtual_region.y))
+        above.styles.height = 50
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pane.scroll_y == before + 20, (
+            f"scroll moved {pane.scroll_y - before} for a 20-row prepend — the "
+            f"container's own offset ({incoming.virtual_region.y}) leaked into the delta"
+        )
