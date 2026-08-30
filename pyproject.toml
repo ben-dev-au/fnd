@@ -27,29 +27,27 @@ classifiers = [
     "Topic :: Text Processing :: Indexing",
     "Typing :: Typed",
 ]
-# Pins use the compatible-release operator (~=) so `uv sync` cannot
-# silently absorb a surprise major from a security-sensitive parser
-# (pymupdf and the OOXML parsers especially). uv.lock pins exact
-# versions; the operators here gate `uv lock --upgrade`. Bumps go
-# through quarterly review documented in SECURITY.md.
+# Three-component `~=X.Y.Z` so only patch releases float. uv.lock governs
+# dev and CI only and never reaches a user install, so these ranges are
+# what ships; minor bumps go through deps-latest.yml (see SECURITY.md).
 dependencies = [
-    "tantivy~=0.26",
-    "pymupdf~=1.27",
-    "python-pptx~=1.0",
-    "python-docx~=1.2",
+    "tantivy~=0.26.0",
+    "pymupdf~=1.28.2",
+    "python-pptx~=1.0.2",
+    "python-docx~=1.2.0",
     # EPUB / HTML / ODF extraction: zip container + XHTML/content.xml parsing.
     # Already resolved transitively via python-docx/python-pptx; declared
     # directly here because fnd/extract/{epub,web,odf}.py import it.
-    "lxml~=6.1",
-    "markdown-it-py~=4.0",
-    "textual~=8.0",
-    "rich~=15.0",
-    "typer~=0.25",
-    "pydantic~=2.13",
-    "platformdirs~=4.9",
-    "snowballstemmer~=3.0",
-    "tomlkit~=0.14",
-    "tomli-w~=1.2",
+    "lxml~=6.1.2",
+    "markdown-it-py~=4.2.0",
+    "textual~=8.2.8",
+    "rich~=15.0.0",
+    "typer~=0.25.1",
+    "pydantic~=2.13.5",
+    "platformdirs~=4.9.6",
+    "snowballstemmer~=3.0.1",
+    "tomlkit~=0.14.0",
+    "tomli-w~=1.2.0",
     "termaid[rich]~=0.6.1",
 ]
 
@@ -115,7 +113,7 @@ dev = [
 # requirement; the extra no longer exists and uv warns if requested).
 # docling-slim is installed separately into its own uv tool venv
 # (transitive version conflicts make it unsafe to co-install in fnd's venv).
-pdf-structure = ["pymupdf4llm~=1.27"]
+pdf-structure = ["pymupdf4llm~=1.28.2"]
 
 [tool.uv]
 # Groups installed by ``uv sync`` when no --group flag is passed.
