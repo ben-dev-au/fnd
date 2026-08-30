@@ -46,7 +46,7 @@ jobs:
           echo "tag and pyproject version agree: $ver"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
@@ -259,7 +259,7 @@ jobs:
     runs-on: macos-14
     steps:
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
       - run: uv python install 3.13
       - name: Install from PyPI and run it
         env:
