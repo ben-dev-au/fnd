@@ -196,7 +196,7 @@ requires-dist = [
     { name = "rich", specifier = "~=15.0.0" },
     { name = "snowballstemmer", specifier = "~=3.0.1" },
     { name = "tantivy", specifier = "~=0.26.0" },
-    { name = "termaid", extras = ["rich"], specifier = "~=0.6.1" },
+    { name = "termaid", extras = ["rich"], specifier = ">=0.6.1,<0.9.0" },
     { name = "textual", specifier = "~=8.2.8" },
     { name = "tomli-w", specifier = "~=1.2.0" },
     { name = "tomlkit", specifier = "~=0.14.0" },
@@ -1108,11 +1108,11 @@ wheels = [
 
 [[package]]
 name = "termaid"
-version = "0.6.1"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a7/16/4facdf2b4910c6b8bdcb177cc31625b83fc44adbd4589649f5fdb6090c4a/termaid-0.6.1.tar.gz", hash = "sha256:f7284009b7e85fceae62ffed5dfc6d37b2e74cc6821698897654429ad943ed64", size = 382404, upload-time = "2026-03-30T09:58:03.655Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/02/74/951acc74226adf541b876257787fbf1f8a68d81f2d6a59749165b51dba44/termaid-0.8.0.tar.gz", hash = "sha256:58c4b8960bd4382b1b13c79f1beb9a53ebcbc58531fc8ecea8c64a307112f377", size = 401844, upload-time = "2026-07-29T08:52:05.975Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a2/c3/f8a70c3c1a66c543c1f9c80e5fd0001ffa7162db53457b6a78fe4d873590/termaid-0.6.1-py3-none-any.whl", hash = "sha256:44b15a47e2650dcdc08b2d94f3caf9588c369f6e1e945e2e5d99d35df8548bc1", size = 155353, upload-time = "2026-03-30T09:58:01.97Z" },
+    { url = "https://files.pythonhosted.org/packages/05/e6/2f1cdca71adb5864a97ad06c0f0b509e9ab9592b3da83f2dd5708a61ec68/termaid-0.8.0-py3-none-any.whl", hash = "sha256:3b572ed705bbca77eeffcbc1906a73f1c8119613a0552bb2ff7463a2672b1cb3", size = 159955, upload-time = "2026-07-29T08:52:04.707Z" },
 ]
 
 [package.optional-dependencies]
