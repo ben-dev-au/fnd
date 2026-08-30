@@ -34,6 +34,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Nothing here pushes; leaving the token in .git/config only widens
+          # what a compromised build step could reach.
+          persist-credentials: false
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
@@ -75,13 +79,13 @@ jobs:
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # Only what `gh issue` needs. No checkout, so no contents scope either.
       issues: write
     steps:
-      - uses: actions/checkout@v4
       - name: Open or update the tracking issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail

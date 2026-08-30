@@ -75,16 +75,20 @@ Out of scope (today):
   (`~=X.Y.Z`) in `pyproject.toml`, so only patch releases float. These
   ranges — not `uv.lock` — are what an installer resolves against, and
   so they are what every user actually gets.
-- `uv.lock` governs the development environment and CI (`uv sync
-  --frozen`). It is not shipped to installers: `pip`, `pipx`, `uv tool
-  install` and the Homebrew formula all resolve the ranges above.
+- `uv.lock` governs the development environment and the `uv sync
+  --frozen` CI jobs. It is not shipped to installers: `pip`, `pipx`, `uv
+  tool install` and the Homebrew formula all resolve the ranges above.
+  `deps-latest.yml` is the deliberate exception — it runs `uv lock
+  --upgrade` first, precisely to test outside the lock.
 - CI runs `pip-audit --strict` against the exported lockfile on every
   push and weekly on a cron (`.github/workflows/security.yml`). The
   build fails on any HIGH/CRITICAL CVE in a direct dep.
 - `.github/workflows/deps-latest.yml` runs weekly, resolves every
   dependency at its newest allowed version ignoring `uv.lock`, and runs
-  the suite against it. A minor-version pin is raised only after that
-  job is green at the new version.
+  the suite against it. With `~=X.Y.Z` pins that is the patch float —
+  the versions reaching users with no PR to review, and this is their
+  only gate. A new minor is gated instead by the Dependabot PR that
+  raises the pin, which `ci.yml` runs the full suite against.
 - Quarterly we run `uv lock --upgrade-package <name>` on each
   security-critical parser (pymupdf, python-docx, python-pptx,
   tantivy, markdown-it-py) and ship the bump as a patch release if
@@ -92,11 +96,13 @@ Out of scope (today):
 
 ## Reproducible installs
 
-- `uv sync --frozen` reproduces the development and CI environment
-  exactly. It reads `uv.lock` and refuses to resolve new versions.
+- `uv sync --frozen` reproduces the lockfile's resolution for a given
+  Python version and platform. It reads `uv.lock` and refuses to resolve
+  new versions; the wheels it selects still vary by platform.
 - End-user installs (`pipx`/`uv tool install fndr`, Homebrew) resolve
-  the `pyproject.toml` ranges instead, so they are reproducible only to
-  the patch level. Pass a constraints file if you need an exact set.
+  the `pyproject.toml` ranges instead. Those hold the major and minor
+  series, but the patch release selected may change over time. Pass a
+  constraints file if you need an exact set.
 - Pinned toolchain: Python 3.13 (the one `uv python install 3.13`
   resolves), `uv >= 0.4`. CI uses the same.
 - Pure-Python wheels build deterministically from the same sdist on
