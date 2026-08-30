@@ -25,11 +25,10 @@ jobs:
     # 10x multiplier so keep an eye on the minutes budget.
     # Gated on format/typecheck (~1min combined): a lint or type failure
     # is visible before the ~30-40min matrix burns runner time proving it.
-    # PR-only: branch protection requires this + format/typecheck +
-    # security.yml green and up to date with main before merging, so
-    # push-to-main would just re-prove an already-proven tree.
+    # Also runs on push to main: protection does not require branches to
+    # be up to date, so a PR is proven against an older tree and only the
+    # post-merge run exercises the tree that actually landed.
     needs: [format, typecheck]
-    if: github.event_name == 'pull_request'
     strategy:
       fail-fast: false
       matrix:
