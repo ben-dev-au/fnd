@@ -1,0 +1,74 @@
+name: quarterly-review
+
+# SECURITY.md promises a quarterly review of the security-critical parsers.
+# A promise kept by remembering is not a control, so this files the issue
+# with the checklist on schedule whether or not anyone remembers.
+
+on:
+  schedule:
+    # 09:00 on the 1st of January, April, July and October.
+    - cron: "0 9 1 1,4,7,10 *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  file-review-issue:
+    name: file the review issue
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      # Checkout is needed here: the drift summary runs `uv export`/`uv lock`
+      # against the real manifest.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - run: uv python install 3.13
+
+      - name: Collect the current versus newest-allowed picture
+        id: drift
+        run: |
+          set -euo pipefail
+          uv export --no-hashes --no-emit-project -o /tmp/current.txt
+          uv lock --upgrade --quiet
+          uv export --no-hashes --no-emit-project -o /tmp/newest.txt
+          {
+            echo 'drift<<EOF'
+            if diff -u /tmp/current.txt /tmp/newest.txt | tail -n +3 | grep -E '^[-+][a-z]'; then :; else
+              echo "(nothing is behind within the current pins)"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open the review issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          DRIFT: ${{ steps.drift.outputs.drift }}
+        run: |
+          set -euo pipefail
+          gh issue create \
+            --title "Quarterly dependency review — $(date -u '+%Y-%m')" \
+            --body "Per SECURITY.md, review the security-critical parsers this quarter.
+
+          For each of **pymupdf, python-docx, python-pptx, tantivy, markdown-it-py**:
+
+          - [ ] Read the changelog since the pinned version for disclosed security fixes
+          - [ ] \`uv lock --upgrade-package <name>\`
+          - [ ] Raise the \`~=X.Y.Z\` pin in \`pyproject.toml\` to match — the pin, not the lock, is what users get
+          - [ ] Confirm \`deps-latest\` and the full suite are green at the new version
+          - [ ] Ship as a patch release if anything security-relevant was disclosed
+
+          Behind within the current pins right now:
+
+          \`\`\`diff
+          $DRIFT
+          \`\`\`
+
+          Note this diff only shows movement *allowed by the pins* (patches). A
+          new minor will not appear here — check the upstream changelogs directly."

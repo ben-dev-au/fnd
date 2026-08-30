@@ -1,0 +1,115 @@
+name: canary
+
+# Installs the PUBLISHED artefacts the way a user does, on clean runners.
+# Every other job here tests the source tree; this is the only one that
+# tests what actually shipped. The v1.0.0 Homebrew bottle was broken and
+# nothing noticed, because nothing installs what users install.
+#
+# Both channels are asserted against PyPI's current version, so "installed
+# something" cannot pass for "installed the release".
+
+on:
+  schedule:
+    # Monday 11:00 UTC, after deps-latest so a single upstream breakage
+    # does not race two jobs into filing two different issues.
+    - cron: "0 11 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  expected:
+    name: resolve expected version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: |
+          set -euo pipefail
+          ver=$(curl -fsSL https://pypi.org/pypi/fndr/json \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['info']['version'])")
+          [ -n "$ver" ] || { echo "::error::could not resolve the current fndr version"; exit 1; }
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "::notice::expecting fndr $ver on every channel"
+
+  pypi:
+    name: PyPI install (${{ matrix.os }})
+    needs: expected
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - run: uv python install 3.13
+      - name: Install from PyPI and run it
+        shell: bash
+        env:
+          VERSION: ${{ needs.expected.outputs.version }}
+        run: |
+          set -euo pipefail
+          # --refresh so a cached wheel cannot mask a broken publish.
+          out=$(uvx --refresh --from "fndr==$VERSION" fnd version 2>&1)
+          printf '%s\n' "$out"
+          # Whole line, not substring — 0.0.50 contains 0.0.5.
+          printf '%s\n' "$out" | grep -qFx "$VERSION" \
+            || { echo "::error::PyPI install did not report exactly $VERSION"; exit 1; }
+
+  homebrew:
+    name: Homebrew install (bottle)
+    needs: expected
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: Homebrew/actions/setup-homebrew@main
+      - name: Tap and install exactly as a user does
+        env:
+          VERSION: ${{ needs.expected.outputs.version }}
+        run: |
+          set -euo pipefail
+          # From GitHub, not a local checkout: this must exercise the formula
+          # and bottle URL a real user resolves.
+          brew tap ben-dev-au/tap
+          brew install ben-dev-au/tap/fnd
+          out=$(fnd version 2>&1)
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -qFx "$VERSION" \
+            || { echo "::error::Homebrew install reported '$out', expected $VERSION"; exit 1; }
+
+  report-failure:
+    name: raise a tracking issue
+    needs: [expected, pypi, homebrew]
+    # Scheduled runs only: a hand-dispatched run is already being watched.
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      # Only what `gh issue` needs. No checkout, so no contents scope either.
+      issues: write
+    steps:
+      - name: Open or update the tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          VERSION: ${{ needs.expected.outputs.version }}
+        run: |
+          set -euo pipefail
+          title="canary: a published install channel is broken"
+          body="The weekly canary failed installing the published fndr \`$VERSION\`: $RUN_URL
+
+          This means users cannot install, or are installing the wrong version.
+          The run shows which channel — PyPI, Homebrew, or a specific OS.
+
+          This is user-facing and outranks anything else in the queue."
+          existing=$(gh issue list --search "$title in:title" --state open \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
