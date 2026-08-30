@@ -1,7 +1,7 @@
 # FND
 
 [![CI](https://github.com/ben-dev-au/fnd/actions/workflows/ci.yml/badge.svg)](https://github.com/ben-dev-au/fnd/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
 [![Platform: macOS | Linux (beta) | Windows (beta)](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20(beta)%20%7C%20Windows%20(beta)-lightgrey.svg)](#platform-support)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/ben.dev.au)
@@ -396,9 +396,12 @@ After installing, reindex from **Settings → Collections → ‹name› → Rei
 automatically.
 
 Two packages: `pymupdf4llm` (which pulls `pymupdf-layout`, Polyform
-Noncommercial; fnd is non-commercial, acceptable) and `docling-slim[standard]`
-(Apache-2.0). ML weights (~400 MB) download on first use. Uninstall removes the
-packages; indexed structured chunks remain in the index until the next reindex.
+Noncommercial 1.0) and `docling-slim[standard]` (Apache-2.0). fnd redistributes
+neither — the install fetches them onto your machine, so Polyform's
+non-commercial restriction binds your use of `pymupdf-layout` directly. Check it
+before installing this extra in a commercial setting. ML weights (~400 MB)
+download on first use. Uninstall removes the packages; indexed structured chunks
+remain in the index until the next reindex.
 
 ### Cost on first reindex
 
@@ -630,7 +633,19 @@ Much gratitude if you do, but I hope you find the tool useful either way.
 
 ## License
 
-[MIT](LICENSE) © Ben Davidson
+[GNU AGPL-3.0-or-later](LICENSE) © 2026 Ben Davidson
+
+Use it, read it, modify it, run it — privately, for any purpose, with no
+obligations at all. If you distribute it, or run a modified version as a network
+service, that version has to ship its source under this same licence. Put
+plainly: your use is either private, or it is open source.
+
+fnd links [PyMuPDF](https://pymupdf.readthedocs.io/) (AGPL-3.0-or-commercial),
+so any distributed combination already carried AGPL terms; this licence states
+what was true of fnd all along.
+
+Releases up to and including `fndr` 0.0.5 were published under MIT and remain
+MIT.
 
 ## Acknowledgments
 

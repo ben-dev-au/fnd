@@ -11,7 +11,7 @@ version = "0.0.5"
 description = "Fast, free, keyboard-driven document search for macOS (Linux and Windows in early beta)"
 readme = "README.md"
 requires-python = ">=3.13"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "Ben Davidson" }]
 keywords = ["search", "cli", "tui", "full-text-search", "pdf", "bm25", "tantivy", "cross-platform"]
@@ -109,9 +109,9 @@ dev = [
 # ``uv sync`` (no flags) won't wipe the install. ``fnd extras
 # install pdf-structure`` flips the toggle in default-groups.
 #
-# pymupdf4llm depends on pymupdf-layout (Artifex, Polyform Noncommercial
-# 1.0 — acceptable because fnd is open-source and non-commercial). The
-# `[layout]` extra is obsolete at ~=1.27 (pymupdf-layout is now a base
+# pymupdf4llm pulls pymupdf-layout (Polyform Noncommercial 1.0); fnd never
+# redistributes it, so the restriction binds the installing user, not fnd.
+# The `[layout]` extra is obsolete at ~=1.27 (pymupdf-layout is now a base
 # requirement; the extra no longer exists and uv warns if requested).
 # docling-slim is installed separately into its own uv tool venv
 # (transitive version conflicts make it unsafe to co-install in fnd's venv).
