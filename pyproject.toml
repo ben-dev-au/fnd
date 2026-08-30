@@ -46,7 +46,7 @@ dependencies = [
     "pydantic~=2.13.5",
     "platformdirs~=4.9.6",
     "snowballstemmer~=3.0.1",
-    "tomlkit~=0.14.0",
+    "tomlkit>=0.14,<0.16",
     "tomli-w~=1.2.0",
     "termaid[rich]~=0.6.1",
 ]
