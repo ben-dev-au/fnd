@@ -38,6 +38,17 @@ the four seams, not in `sys.platform` checks scattered through feature code:
 `fnd/os_labels.py` (what the OS calls things), and `fnd/cloud_files.py`
 (cloud-backed placeholders).
 
+## Licence and sign-off
+
+fnd is [AGPL-3.0-or-later](LICENSE), and contributions are accepted under that
+same licence — inbound matches outbound, and nothing is reassigned to me.
+
+Sign off each commit with `git commit -s`, which appends a `Signed-off-by:`
+line. That line is the [Developer Certificate of
+Origin](https://developercertificate.org/): you certify you wrote the patch, or
+otherwise hold the right to submit it under AGPL-3.0-or-later. No CLA, no
+copyright assignment.
+
 ## Conventions
 
 **Spelling is Australian/British throughout**: identifiers, comments,
