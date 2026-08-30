@@ -188,7 +188,7 @@ requires-dist = [
     { name = "textual", specifier = "~=8.2.8" },
     { name = "tomli-w", specifier = "~=1.2.0" },
     { name = "tomlkit", specifier = "~=0.14.0" },
-    { name = "typer", specifier = ">=0.25.1,<0.28.0" },
+    { name = "typer", specifier = "~=0.27.1" },
 ]
 
 [package.metadata.requires-dev]
