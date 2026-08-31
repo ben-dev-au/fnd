@@ -14,9 +14,6 @@ class _StubApp:
 
 
 def test_manual_scroll_clears_the_burst_memory() -> None:
-    # The real constructor against a stub app: hand-copying its fields made
-    # every new piece of navigator state fail here rather than where it was
-    # forgotten.
     nav = MatchNavigator(_StubApp())  # type: ignore[arg-type]
     nav._last_rel = 30
     nav.on_manual_scroll()

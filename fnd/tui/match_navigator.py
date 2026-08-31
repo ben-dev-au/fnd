@@ -111,7 +111,7 @@ def offscreen_views(anchors: list[int], stops: list[int], top: int, vh: int) -> 
 #
 # The read is `enumerate_stop_regions` over the pane subtree, so it scales with
 # the mounted STOPS, not just the chunks: 1.2ms warm at 13 chunks / 36 stops,
-# 2.5ms at 102 chunks / 882 stops (the densest in this corpus) and 3.5ms at 1592
+# 2.6ms at 102 chunks / 882 stops (the densest in this corpus) and 3.5ms at 1592
 # stops on a synthetic shape denser than anything in it, against a
 # `FULLMOUNT_CHUNK_BUDGET` of 250. At 4Hz that is ~2-3% of one core, and
 # `on_result_revealed` re-opens the window, so walking a results list keeps it
@@ -321,15 +321,10 @@ class MatchNavigator:
 
         top = ctop(cur)
         if top is None:
-            # Mounted but not laid out (the background fill hides every chunk
-            # above the window). EMPTY, never None: None means "no per-chunk
-            # widgets at all" and unscopes the caller to the whole preview.
-            return 0, 0
-        # A later chunk with no geometry cannot leak a stop in: every arm of
-        # ``enumerate_stop_regions`` drops a zero-height region. So bounding on
-        # the next chunk that HAS laid out is safe, and bounding on the next in
-        # sequence instead would collapse a plain chunk to one row, since
-        # ``chunk_widgets`` holds only its first LINE.
+            return 0, 0  # EMPTY, not None: None unscopes the caller (see docstring)
+        # Bound on the next chunk that HAS laid out: a zero-height one leaks no
+        # stop (every arm of ``enumerate_stop_regions`` drops one), and for a
+        # plain chunk ``chunk_widgets`` holds only its first LINE.
         laters = [
             y for s2, w in widgets.items() if s2 > seq and (y := ctop(w)) is not None and y > top
         ]
@@ -357,8 +352,7 @@ class MatchNavigator:
         lo, hi = extent
         stops = [y for y in self._region_stops(pane) if lo <= y < hi]
         vh = pane.scrollable_content_region.height
-        # Not pinned here: this runs while a landing may still be committing, and
-        # a home captured mid-flight would stick. _go pins it on the first press.
+        # Not pinned here: a landing may still be committing. _go pins it.
         home = self._home(lo)
         if home is None:
             home = pane.scroll_offset.y
@@ -706,8 +700,6 @@ class MatchNavigator:
             home = pane.scroll_offset.y
             self._home_rel, self._home_seq = home - base, self._focus_seq()
         anchors = view_anchors(stops, vh, home)
-        # The last hop's DESTINATION, not its index: the stop list is rebuilt
-        # every press, so an index addresses a different stop than it recorded.
         top = pane.scroll_offset.y
         last = self._last(base)
         if last is not None and last in set(anchors):

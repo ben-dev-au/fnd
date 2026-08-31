@@ -12,10 +12,8 @@ from fnd.tui.match_navigator import MatchNavigator
 
 
 class FakePane:
-    """Modelled, not stubbed: ``max_scroll_y`` is derived from the document
-    height and the scroll CLAMPS to it, because a pane that can always reach the
-    position it is asked for cannot show a view stranded past the last screenful.
-    """
+    """``max_scroll_y`` is derived and the scroll clamps to it: a pane that
+    always reaches the position it is asked for hides the stranded-view case."""
 
     def __init__(self, vh: int, virtual_height: int = 10**6) -> None:
         self.size = Size(80, vh)

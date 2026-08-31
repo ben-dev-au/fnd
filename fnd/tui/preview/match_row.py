@@ -28,6 +28,35 @@ if TYPE_CHECKING:
 _TAB_SIZE = 8
 
 
+def _expand_tabs(line: str) -> tuple[str, list[tuple[int, int, int]]]:
+    """``line`` with tabs expanded by CELL (Textual's rule, so a wide character
+    before a tab moves the stop), and ``(source, expanded, text)`` index triples
+    so a character offset maps into the result."""
+    from textual.expand_tabs import get_tab_widths
+
+    out: list[str] = []
+    marks: list[tuple[int, int, int]] = []
+    src = exp = 0
+    for text, pad in get_tab_widths(line, _TAB_SIZE):
+        marks.append((src, exp, len(text)))
+        out.append(text)
+        out.append(" " * pad)
+        src += len(text) + (1 if pad else 0)  # the tab itself
+        exp += len(text) + pad
+    return "".join(out), marks
+
+
+def _expanded_col(marks: list[tuple[int, int, int]], offset: int) -> int:
+    """``offset`` (an index into the source line) as an index into the expanded
+    one. An offset on the tab itself maps to where the tab began."""
+    col = offset
+    for src, exp, width in marks:
+        if src > offset:
+            break
+        col = exp + min(offset - src, width)
+    return col
+
+
 def region_at_row(region: Region, row: int) -> Region:
     """``region`` trimmed to begin ``row`` rows down — a block's match rather
     than the block itself."""
@@ -49,12 +78,9 @@ def block_plain(widget: Widget) -> str | None:
 
 
 def _match_offsets(block: Widget, plain: str, spec: MatchSpec | None) -> list[int]:
-    """Ascending character offsets of the block's matches, preferring the baked
-    highlight spans and their full-over-dimmed tiering to a scan of ``spec``.
-
-    The dim tier is a fallback for a block with no full match, never an addition
-    to one — the same rule ``first_match_block`` applies.
-    """
+    """Ascending character offsets of the block's matches, from the baked spans
+    where it has them, else a scan of ``spec``. Dim spans are a fallback for a
+    block with no full match, never an addition to one."""
     spans = getattr(block, "_fnd_match_spans", None)
     if spans:
         from fnd.render import DIM_STYLES
@@ -82,11 +108,9 @@ def _rows_for_offsets(plain: str, offsets: list[int], width: int, height: int) -
     ``divide_line`` pass as a block with one.
 
     Tabs expand to ``_TAB_SIZE`` first, per line, because that is what
-    ``Content._wrap_and_format`` does before dividing. ``str.expandtabs`` sets
-    its stops by character where Textual sets them by cell: over 66,652 tabbed
-    lines of one index, 20 part, none of them by a row COUNT — so the height
-    check passes them and a match in the one shifted break column lands a row
-    out. Fences reach the wrapped model only because ``FNDApp.CSS`` zeroes
+    ``Content._wrap_and_format`` does before dividing, and by CELL, which is why
+    the expansion goes through Textual's own helper. Fences reach the wrapped
+    model only because ``FNDApp.CSS`` zeroes
     ``MarkdownFence > Label``'s padding; under stock padding no model reproduces
     the height and this declines.
     """
@@ -94,18 +118,18 @@ def _rows_for_offsets(plain: str, offsets: list[int], width: int, height: int) -
 
     lines = plain.split("\n")
     tabbed = "\t" in plain
+    expansions = [_expand_tabs(line) if tabbed else (line, []) for line in lines]
     for wrap_width in (0, width):
         row = 0
         pos = 0
         i = 0
         found: list[int] = []
-        for line in lines:
-            expanded = line.expandtabs(_TAB_SIZE) if tabbed else line
+        for line, (expanded, marks) in zip(lines, expansions, strict=True):
             breaks = divide_line(expanded, wrap_width) if wrap_width > 0 else []
             while i < len(offsets) and offsets[i] <= pos + len(line):
                 column = offsets[i] - pos
                 if tabbed:
-                    column = len(line[:column].expandtabs(_TAB_SIZE))
+                    column = _expanded_col(marks, column)
                 found.append(row + bisect_right(breaks, column))
                 i += 1
             row += 1 + len(breaks)
@@ -156,7 +180,7 @@ def rows_to_first_match(block: Widget, spec: MatchSpec | None = None) -> int:
 
 
 def rows_to_matches(block: Widget, spec: MatchSpec | None = None) -> list[int]:
-    """Rendered rows from ``block``'s top down to each of its matches, one per
-    row. ``[0]`` when they cannot be established, so a caller always gets the
-    same safe anchor :func:`rows_to_first_match` returns."""
+    """Rendered rows of ``block``'s matches, one per row; ``[0]`` when they
+    cannot be established, the same safe anchor :func:`rows_to_first_match`
+    falls back to."""
     return _match_rows(block, spec) or [0]

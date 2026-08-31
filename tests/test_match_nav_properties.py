@@ -1,9 +1,4 @@
-"""Properties the n/b view model must hold for ANY stop layout and viewport.
-
-Every defect this module has had was a disagreement between two presses, or
-between a press and the border, on a stop layout nobody had thought to write
-down. The example tests pin the shapes that broke; these pin the rules.
-"""
+"""Properties the n/b view model holds for any stop layout and viewport."""
 
 from __future__ import annotations
 
@@ -155,9 +150,8 @@ def test_walking_forward_brings_every_stop_below_on_screen(
     assert not missed, f"n never showed {missed} walking down from {top}"
 
 
-# ── The landing anchor ───────────────────────────────────────────────────────
-# A results landing sits a quarter-viewport ABOVE the match, so it is not one of
-# the positions the keys step through unless the tiling starts there.
+# The landing sits a quarter-viewport above the match, so it is only one of the
+# positions the keys step through if the tiling starts there.
 _home = st.integers(min_value=-40, max_value=4000)
 
 

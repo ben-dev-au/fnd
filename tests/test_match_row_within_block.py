@@ -205,3 +205,36 @@ def test_a_declined_model_falls_back_to_the_block_top() -> None:
 
 def test_no_match_falls_back_to_the_block_top() -> None:
     assert rows_to_matches(_wrapped(120), MatchSpec.from_query("kubernetes")) == [0]
+
+
+def test_tabs_expand_the_way_textual_expands_them() -> None:
+    """Textual sets tab stops by CELL, so a double-width character before a tab
+    moves them. Checked against Textual's own helper, which is the contract."""
+    from textual.expand_tabs import expand_tabs_inline
+
+    from fnd.tui.preview.match_row import _expand_tabs
+
+    for line in (
+        "识别\tvalue = 1",  # wide characters before the tab move the stop
+        "ab\tcd\tef",  # successive stops accumulate
+        "\tleading",
+        "é́\tcombining marks",
+        "no tabs here",
+        "",
+    ):
+        assert _expand_tabs(line)[0] == expand_tabs_inline(line, 8), repr(line)
+
+
+def test_an_offset_maps_into_the_expanded_line() -> None:
+    """A match's column has to be found in the EXPANDED line, or it is compared
+    against break positions measured in a different string."""
+    from fnd.tui.preview.match_row import _expand_tabs, _expanded_col
+
+    line = "识别\tvalue"
+    expanded, marks = _expand_tabs(line)
+
+    assert expanded.startswith("识别    ")  # 4 cells used, so the stop is 4 on
+    assert _expanded_col(marks, 0) == 0  # first character
+    assert _expanded_col(marks, 2) == 2  # the tab itself maps to where it began
+    assert _expanded_col(marks, 3) == 6  # first character after the expansion
+    assert expanded[_expanded_col(marks, 3)] == "v"
