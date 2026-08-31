@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   test:
-    name: pytest (${{ matrix.os }})
+    name: pytest (${{ matrix.label }})
     # Cross-platform matrix: the same suite runs on all three supported
     # OSes so platform-specific path/launcher/stat behaviour is exercised
     # on the real thing. ``fail-fast: false`` so one OS going red still
@@ -32,13 +32,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, ubuntu-latest, windows-latest]
+        # Windows runs ~1.5x slower than the others and was taking 49 min against
+        # this timeout. Matrix jobs get their own runners, so three shards run
+        # concurrently and the job gates on the slowest (~17 min), not the sum.
+        include:
+          - { os: macos-14, label: "macos-14", shard: 0, shards: 0 }
+          - { os: ubuntu-latest, label: "ubuntu-latest", shard: 0, shards: 0 }
+          - { os: windows-latest, label: "windows-latest 1/3", shard: 1, shards: 3 }
+          - { os: windows-latest, label: "windows-latest 2/3", shard: 2, shards: 3 }
+          - { os: windows-latest, label: "windows-latest 3/3", shard: 3, shards: 3 }
     runs-on: ${{ matrix.os }}
     # Windows is materially slower (spawn-based multiprocessing + slower file
     # I/O and tmp cleanup), so give the matrix headroom beyond the ~28 min the
     # macOS/Linux runs take; otherwise the Windows job is killed mid-suite
     # before pytest can report which tests failed.
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
       - name: Install uv
@@ -53,7 +61,17 @@ jobs:
         # Serial, no --testmon. CI is the gold-standard catch-all
         # behind the local pre-commit hook, which uses --testmon for
         # speed and may skip tests the developer's diff doesn't reach.
-        run: uv run pytest -q -m "not slow"
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.shards }}" -eq 0 ]; then
+            uv run pytest -q -m "not slow"
+          else
+            files=$(uv run python .github/scripts/shard_tests.py \
+              "${{ matrix.shard }}" "${{ matrix.shards }}")
+            echo "shard ${{ matrix.shard }}/${{ matrix.shards }}: $(echo "$files" | wc -l) files"
+            uv run pytest -q -m "not slow" $files
+          fi
 
   format:
     name: ruff-format
