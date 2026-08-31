@@ -28,7 +28,7 @@ from textual.message import Message
 from textual.strip import Strip
 from textual.widget import Widget
 
-from fnd.tui.preview.match_row import rows_to_first_match
+from fnd.tui.preview.match_row import rows_to_first_match, rows_to_matches
 
 
 @dataclass(slots=True)
@@ -151,7 +151,7 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
                 continue
             row = _row_within(block, chunk)
             if row is not None:
-                stop_rows.append(row + rows_to_first_match(block, spec))
+                stop_rows.extend(row + r for r in rows_to_matches(block, spec))
         for dt in chunk.query(DataTable):
             base = _row_within(dt, chunk)
             if base is None:

@@ -139,7 +139,11 @@ def _match_nav_state(app: Any) -> str:
             # The cache against the truth. They disagree only when a re-measure
             # was lost, which reads identically to a bad landing without this.
             ("fresh", lambda: nav._offscreen_views(nav._pane())),
-            ("position", lambda: nav.position),
+            # Where the landing put the reader and where the last hop went, both
+            # offsets from the chunk's top: a walk that drifts shows up here as
+            # the two disagreeing with the scroll.
+            ("home_rel", lambda: nav._home_rel),
+            ("last_rel", lambda: nav._last_rel),
             ("measure_pending", lambda: nav._measure_pending),
             # The rows themselves, not just how many. above/below is derived
             # from these against the viewport, so a disagreement between where

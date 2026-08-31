@@ -129,6 +129,88 @@ def table_result_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
     return tmp_index_dir
 
 
+@pytest.fixture
+def fence_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
+    """One fence taller than the viewport, carrying many matches. The shape the
+    per-row stop set exists for: one stop per BLOCK gives this chunk a single
+    stop, and every match after the first is unreachable."""
+    a = tmp_path / "notes"
+    lines = [f"    filler_value_{i} = {i}" for i in range(90)]
+    for i in (5, 25, 45, 65, 85):
+        lines[i] = f"    total = quartzfin(argument_{i})"
+    _write(a / "Code.md", "# Code\n\n```python\n" + "\n".join(lines) + "\n```\n")
+    build_index(roots=[a], index_dir=tmp_index_dir, collection="notes")
+    return tmp_index_dir
+
+
+def _painted_rows(app: FNDApp, spec: Any) -> list[int]:
+    """Content-space rows of the focused chunk that PAINT a match, from the
+    compositor's own strips rather than from any region the navigator reads."""
+    from textual._compositor import Compositor
+    from textual.geometry import Size
+
+    from fnd.render import text_has_any_match
+
+    pane = app.query_one("#preview_pane", VerticalScroll)
+    anchor = app._preview_scroll.anchor
+    if anchor is None:
+        return []
+    chunk = (app._preview.chunk_widgets or {}).get(anchor.focus_chunk_seq)
+    if chunk is None or chunk.region.height == 0:
+        return []
+    size = Size(chunk.size.width, max(chunk.size.height, chunk.virtual_size.height))
+    comp = Compositor()
+    comp.reflow(chunk, size)
+    base = pane.scrollable_content_region.offset.y - pane.scroll_offset.y
+    top = chunk.region.y - base
+    return [
+        top + i
+        for i, strip in enumerate(comp.render_strips(size))
+        if text_has_any_match(strip.text, spec)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_n_walks_every_match_of_a_tall_fence_into_view(
+    cfg: Config, fence_index: Path
+) -> None:
+    """The reported bug, end to end: a fence taller than the viewport holds five
+    matches and n must bring each of them on screen. Asserted against the rows
+    the compositor PAINTS, so a stop set that merely reports itself as complete
+    cannot satisfy it."""
+    app = FNDApp(index_dir=fence_index, config=cfg, collection="notes", initial_query="quartzfin")
+    async with app.run_test(size=(100, 24)) as pilot:
+        await pilot.pause()
+        app.query_one("#results_pane", Tree).focus()
+        nav = app._match_nav
+        pane = app.query_one("#preview_pane", VerticalScroll)
+        await wait_until(
+            pilot,
+            lambda: len(nav._chunk_stops(pane)) >= 5,
+            timeout=30.0,
+            message="the fence's stops never resolved",
+        )
+        spec = app._effective_match_spec
+        painted = _painted_rows(app, spec)
+        assert len(painted) == 5, f"the fixture painted {len(painted)} matches"
+
+        def _on_screen() -> set[int]:
+            lo = pane.scroll_offset.y
+            return {y for y in painted if lo <= y < lo + pane.scrollable_content_region.height}
+
+        seen = _on_screen()
+        assert len(seen) < 5, "the fixture must not fit on one screen"
+        for _ in range(len(painted) + 2):
+            if len(seen) == len(painted):
+                break
+            app.action_nav_next_match()
+            await pilot.pause()
+            await pilot.pause()
+            seen |= _on_screen()
+
+        assert seen == set(painted), f"n never brought {sorted(set(painted) - seen)} on screen"
+
+
 def _cell_visible(pane: VerticalScroll, dt: DataTable[Any], coord: Coordinate) -> bool:
     """True if the table cell at ``coord`` is within the pane's visible area."""
     try:
@@ -232,7 +314,7 @@ async def test_n_stays_within_the_current_result(cfg: Config, flashcards_index: 
         # stop (which is how crossing into another result would manifest).
         for _ in range(5):
             # `_go` early-returns when the chunk's stops are not resolvable yet,
-            # which leaves `_last_target` unset — so wait for the scope BEFORE
+            # which leaves `_last_rel` unset — so wait for the scope BEFORE
             # pressing. Gating after the press would make the assertion about
             # the layout's timing rather than about n.
             await wait_until(
@@ -244,12 +326,18 @@ async def test_n_stays_within_the_current_result(cfg: Config, flashcards_index: 
             app.action_nav_next_match()
             # CAPTURE it: `_go` records the landing synchronously, and a
             # background mount completing during the drain below fires a result
-            # reveal, which clears `_last_target` by design. Both assertions are
+            # reveal, which clears `_last_rel` by design. Both assertions are
             # about what the press recorded, so both read the captured value.
-            landed = nav._last_target
+            landed = nav._last_rel
             assert landed is not None, "n did not record a landing stop"
             await pilot.pause()
             await pilot.pause()
             stops = nav._chunk_stops(pane)
             assert len(stops) == 2, "n changed the scoped stop set — it left the current result"
-            assert landed < len(stops), "n's cursor indexed outside the current result's stops"
+            extent = nav._current_chunk_extent(pane)
+            assert extent is not None, "the chunk extent stopped resolving mid-walk"
+            lo, hi = extent
+            # `landed` is an offset from the chunk's top, so the bound is the
+            # chunk's HEIGHT. Comparing it against the absolute extent passes
+            # only while the chunk happens to start near the top of the document.
+            assert 0 <= landed < hi - lo, "n landed outside the current result's chunk"

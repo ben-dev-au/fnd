@@ -93,3 +93,106 @@ async def test_a_wrapped_block_stops_on_the_row_its_match_paints_on() -> None:
             f"stop at y={regions[0].y} is the block's top ({block.region.y}), not the "
             f"row its match paints on ({block.region.y + painted[0]})"
         )
+
+
+# One fence taller than the viewport carrying two matches far apart — the shape
+# of a long code block, where every match after the first used to be unreachable.
+FENCE_LINES = [f"    filler_value_{i} = {i}" for i in range(120)]
+FENCE_LINES[10] = "    first = quartzfin(1)"
+FENCE_LINES[90] = "    second = quartzfin(2)"
+FENCE_MD = "# Code\n\n```python\n" + "\n".join(FENCE_LINES) + "\n```\n"
+
+
+@pytest.mark.asyncio
+async def test_a_long_fence_stops_on_every_match_it_paints() -> None:
+    """One stop per block strands every match after a tall block's first."""
+    from textual._compositor import Compositor
+    from textual.geometry import Size
+
+    class _Harness(App[None]):
+        # Production's fence rules: under stock padding no wrap model reproduces
+        # the laid-out height, so the row resolver declines and the test would
+        # prove nothing (see fnd.tui.preview.match_row._rows_for_offsets).
+        CSS = """
+        MarkdownFence { overflow-x: hidden; padding: 0 0 0 1; }
+        MarkdownFence > Label { padding: 0; width: 1fr; }
+        """
+
+        def compose(self) -> ComposeResult:
+            yield VerticalScroll(id="preview_pane")
+
+        async def on_mount(self) -> None:
+            pane = self.query_one("#preview_pane", VerticalScroll)
+            await pane.mount(FNDMarkdown(FENCE_MD, match_spec=MatchSpec.from_query("quartzfin")))
+
+    async with _Harness().run_test(size=(100, 24)) as pilot:
+        md = pilot.app.query_one(FNDMarkdown)
+        await md.build_done.wait()
+        await pilot.pause()
+        block = md.first_match_block
+        assert block is not None
+        assert block.size.height > 24, "the fixture must exceed the viewport"
+
+        size = Size(block.size.width, max(block.size.height, block.virtual_size.height))
+        comp = Compositor()
+        comp.reflow(block, size)
+        painted = [i for i, s in enumerate(comp.render_strips(size)) if "quartzfin" in s.text]
+        assert len(painted) == 2, f"the fixture painted {len(painted)} matches"
+
+        pane = pilot.app.query_one("#preview_pane", VerticalScroll)
+        regions = enumerate_stop_regions(pane, MatchSpec.from_query("quartzfin"))
+        assert [r.y - block.region.y for r in regions] == painted
+
+
+# A tab-indented fence: every line fits the pane as written, and every line
+# wraps once its leading tab expands to 8 cells. Java/Go source, and the shape
+# that tells a tab-aware row model from a tab-blind one.
+TAB_LINES = [f"\tint filler_variable_{i:02d} = compute(one, two, three);" for i in range(60)]
+TAB_LINES[8] = "\tint quartzfin_08 = compute(one, two, three, four);"
+TAB_LINES[47] = "\tint quartzfin_47 = compute(one, two, three, four);"
+TAB_FENCE_MD = "# Code\n\n```java\n" + "\n".join(TAB_LINES) + "\n```\n"
+
+
+@pytest.mark.asyncio
+async def test_a_tab_indented_fence_stops_on_every_match_it_paints() -> None:
+    """Textual expands tabs to 8 cells before wrapping, so a row model that
+    does not predicts the wrong height, declines, and sends every match in the
+    fence to the block's top."""
+    from textual._compositor import Compositor
+    from textual.geometry import Size
+
+    class _Harness(App[None]):
+        CSS = """
+        MarkdownFence { overflow-x: hidden; padding: 0 0 0 1; }
+        MarkdownFence > Label { padding: 0; width: 1fr; }
+        """
+
+        def compose(self) -> ComposeResult:
+            yield VerticalScroll(id="preview_pane")
+
+        async def on_mount(self) -> None:
+            pane = self.query_one("#preview_pane", VerticalScroll)
+            await pane.mount(
+                FNDMarkdown(TAB_FENCE_MD, match_spec=MatchSpec.from_query("quartzfin"))
+            )
+
+    async with _Harness().run_test(size=(64, 24)) as pilot:
+        md = pilot.app.query_one(FNDMarkdown)
+        await md.build_done.wait()
+        await pilot.pause()
+        block = md.first_match_block
+        assert block is not None
+        # The fixture only discriminates while both hold: nothing wraps as
+        # written, and everything wraps once the tabs expand.
+        assert max(len(line) for line in TAB_LINES) < block.content_region.width
+        assert block.size.height == 2 * len(TAB_LINES), block.size.height
+
+        size = Size(block.size.width, max(block.size.height, block.virtual_size.height))
+        comp = Compositor()
+        comp.reflow(block, size)
+        painted = [i for i, s in enumerate(comp.render_strips(size)) if "quartzfin" in s.text]
+        assert len(painted) == 2, f"the fixture painted {len(painted)} matches"
+
+        pane = pilot.app.query_one("#preview_pane", VerticalScroll)
+        regions = enumerate_stop_regions(pane, MatchSpec.from_query("quartzfin"))
+        assert [r.y - block.region.y for r in regions] == painted

@@ -928,7 +928,8 @@ def enumerate_stop_regions(pane: VerticalScroll, spec: MatchSpec) -> list[Region
     """Every match stop's screen-space region across the pane's mounted
     chunks, sorted by content-space y. Tables expand to one region per matching
     cell (``_fnd_match_coords``); other ``FNDMarkdown`` blocks contribute one
-    region each; plain (pdf/txt) chunks contribute one per matching body line.
+    per row they paint a match on; plain (pdf/txt) chunks contribute one per
+    matching body line.
 
     Off-screen cells of a mounted table resolve fine — the table is one
     full-height widget — so a big flashcards/glossary table is fully covered
@@ -944,7 +945,7 @@ def enumerate_stop_regions(pane: VerticalScroll, spec: MatchSpec) -> list[Region
 
     from fnd.render import text_has_any_match
     from fnd.tui.preview.frozen import FrozenChunkView
-    from fnd.tui.preview.match_row import region_at_row, rows_to_first_match
+    from fnd.tui.preview.match_row import region_at_row, rows_to_matches
     from fnd.tui.widgets.markdown import (
         FNDMarkdown,
         FNDMarkdownTableDT,
@@ -964,14 +965,16 @@ def enumerate_stop_regions(pane: VerticalScroll, spec: MatchSpec) -> list[Region
                 r = stop_region_for_cell(dt, coord)
                 if r is not None:
                     regions.append(r)
-        # Non-table match blocks, on the row the match PAINTS on: a stop on the
+        # Non-table match blocks, on every row a match PAINTS on: a stop on the
         # block's top row sends n/b, and the ▲▼ markers that read this, to a row
         # with no match on it.
         for block in md.match_blocks:
             if isinstance(block, FNDMarkdownTableDT | FNDMarkdownTD | FNDMarkdownTH):
                 continue
             if block.region.height > 0:
-                regions.append(region_at_row(block.region, rows_to_first_match(block, spec)))
+                regions.extend(
+                    region_at_row(block.region, row) for row in rows_to_matches(block, spec)
+                )
     # Frozen chunks: the stops were recorded as rows while the blocks still
     # existed, so they resolve by offset from the view's own top. A table cell's
     # row came from the same capture, which is why they need no special case
