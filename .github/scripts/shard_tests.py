@@ -33,7 +33,11 @@ def main() -> int:
         print(f"::error::shard {index}/{total} is empty", file=sys.stderr)
         return 1
 
-    print("\n".join(mine))
+    # Write bytes: print() translates "\n" to "\r\n" on Windows, the trailing
+    # \r rides into every path the shell splits out, and pytest is handed files
+    # that do not exist (exit 4, a usage error, not a test failure).
+    sys.stdout.buffer.write(("\n".join(mine) + "\n").encode("utf-8"))
+    sys.stdout.buffer.flush()
     return 0
 
 

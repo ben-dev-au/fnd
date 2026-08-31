@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -36,6 +38,18 @@ def test_shard_index_is_validated() -> None:
         shard_tests.shard(files, 0, 3)
     with pytest.raises(ValueError, match=r"outside 1\.\.3"):
         shard_tests.shard(files, 4, 3)
+
+
+def test_stdout_has_no_carriage_returns() -> None:
+    # Windows print() emits \r\n; the \r then rides into every path the shell
+    # splits out and pytest exits 4 on files that do not exist.
+    out = subprocess.run(
+        [sys.executable, str(_ROOT / ".github" / "scripts" / "shard_tests.py"), "1", "3"],
+        capture_output=True,
+        check=True,
+    )
+    assert b"\r" not in out.stdout
+    assert out.stdout.endswith(b"\n")
 
 
 def test_paths_are_relative_and_space_free() -> None:
