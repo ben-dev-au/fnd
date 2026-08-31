@@ -67,6 +67,8 @@ jobs:
       - run: uv sync --frozen --group dev
       - name: Ruff format (check only)
         run: uv run ruff format --check .
+      - name: pre-commit and CI run the same ruff
+        run: python3 .github/scripts/check_ruff_sync.py
 
   typecheck:
     name: pyright (strict)
