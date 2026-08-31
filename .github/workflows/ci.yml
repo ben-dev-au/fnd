@@ -28,7 +28,7 @@ jobs:
     # Also runs on push to main: protection does not require branches to
     # be up to date, so a PR is proven against an older tree and only the
     # post-merge run exercises the tree that actually landed.
-    needs: [format, typecheck]
+    needs: [format, typecheck, pins]
     strategy:
       fail-fast: false
       matrix:
@@ -78,3 +78,16 @@ jobs:
       - run: uv sync --frozen
       - name: Pyright
         run: uv run pyright
+
+  pins:
+    name: runtime pins
+    # uv.lock reaches no installer, so the pyproject specifiers ARE what users
+    # get. Dependabot widens them by default; nothing but this job stops a
+    # widened range shipping versions CI never ran. Stdlib only, ~5s.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Every user-facing dependency pins the minor
+        run: python3 .github/scripts/check_runtime_pins.py
