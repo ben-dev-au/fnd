@@ -27,9 +27,9 @@ updates:
       day: "monday"
     commit-message:
       prefix: "chore(deps)"
-    # Raise the pin rather than widen the range. Left to itself Dependabot
-    # rewrote `platformdirs~=4.9.6` to `>=4.9.6,<4.12.0`, floating three
-    # untested minors to users — the exact defect the pins exist to stop.
+    # Ineffective for the uv ecosystem as of 2026-08-31: Dependabot widens
+    # `~=X.Y.Z` to a range regardless (#134 twice, #138). The pin is enforced
+    # by .github/scripts/check_runtime_pins.py, not by this setting.
     versioning-strategy: "increase"
     groups:
       dev-tooling:
