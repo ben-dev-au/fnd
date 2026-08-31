@@ -23,7 +23,7 @@ jobs:
     steps:
       # Checkout is needed here: the drift summary runs `uv export`/`uv lock`
       # against the real manifest.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Install uv

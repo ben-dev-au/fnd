@@ -40,7 +40,7 @@ jobs:
     # before pytest can report which tests failed.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
@@ -61,7 +61,7 @@ jobs:
     # obvious in the PR check list without re-running the slow tests.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - run: uv python install 3.13
       - run: uv sync --frozen --group dev
@@ -72,7 +72,7 @@ jobs:
     name: pyright (strict)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - run: uv python install 3.13
       - run: uv sync --frozen
@@ -86,7 +86,7 @@ jobs:
     # widened range shipping versions CI never ran. Stdlib only, ~5s.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Every user-facing dependency pins the minor

@@ -30,7 +30,7 @@ jobs:
       sdist-sha256: ${{ steps.meta.outputs.sha256 }}
       version: ${{ steps.meta.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -135,7 +135,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Download dist
         uses: actions/download-artifact@v8
         with:

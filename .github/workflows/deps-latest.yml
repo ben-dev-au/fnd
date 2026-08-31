@@ -33,7 +33,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Nothing here pushes; leaving the token in .git/config only widens
           # what a compromised build step could reach.
