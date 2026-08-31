@@ -83,6 +83,13 @@ Out of scope (today):
 - CI runs `pip-audit --strict` against the exported lockfile on every
   push and weekly on a cron (`.github/workflows/security.yml`). The
   build fails on any HIGH/CRITICAL CVE in a direct dep.
+- `.github/workflows/ci.yml` runs `check_runtime_pins.py` on every PR
+  and it is a required check: a user-facing dependency that is not
+  pinned `~=X.Y.Z` fails the build. Dependabot rewrites these pins into
+  wide ranges by default and `versioning-strategy: increase` does not
+  stop it, so this guard — not the Dependabot config — is what holds
+  the convention. Expect to correct the specifier by hand on any
+  runtime-dependency bump.
 - `.github/workflows/deps-latest.yml` runs weekly, resolves every
   dependency at its newest allowed version ignoring `uv.lock`, and runs
   the suite against it. With `~=X.Y.Z` pins that is the patch float —
