@@ -88,8 +88,9 @@ Out of scope (today):
   pinned `~=X.Y.Z` fails the build. Dependabot rewrites these pins into
   wide ranges by default and `versioning-strategy: increase` does not
   stop it, so this guard — not the Dependabot config — is what holds
-  the convention. Expect to correct the specifier by hand on any
-  runtime-dependency bump.
+  the convention. A patch bump is lock-only and passes untouched; a minor
+  or major bump falls outside the pin, so Dependabot rewrites the range
+  and the specifier needs correcting by hand in that PR.
 - `.github/workflows/deps-latest.yml` runs weekly, resolves every
   dependency at its newest allowed version ignoring `uv.lock`, and runs
   the suite against it. With `~=X.Y.Z` pins that is the patch float —
