@@ -18,7 +18,7 @@ jobs:
     name: pip-audit (lockfile)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
@@ -48,7 +48,7 @@ jobs:
     name: ruff (bandit ruleset)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - run: uv python install 3.13
       - run: uv sync --frozen --group dev
@@ -65,7 +65,7 @@ jobs:
       # `Resource not accessible by integration`.
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v3
