@@ -1,12 +1,8 @@
 name: canary
 
-# Installs the PUBLISHED artefacts the way a user does, on clean runners.
-# Every other job here tests the source tree; this is the only one that
-# tests what actually shipped. The v1.0.0 Homebrew bottle was broken and
-# nothing noticed, because nothing installs what users install.
-#
-# Both channels are asserted against PyPI's current version, so "installed
-# something" cannot pass for "installed the release".
+# Installs the PUBLISHED artefacts on clean runners: the only job here that
+# exercises what shipped rather than the source tree. Asserts the exact
+# version, so "installed something" cannot pass for "installed the release".
 
 on:
   schedule:

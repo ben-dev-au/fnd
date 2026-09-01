@@ -1,9 +1,7 @@
 version: 2
 
 updates:
-  # Workflow actions. Minor and patch land as one grouped PR; majors arrive
-  # individually, because that is where the breaking changes are — this repo
-  # sat three to seven majors behind until Node 20's deprecation surfaced it.
+  # Majors ungrouped so a breaking jump is attributable to one PR.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -17,9 +15,7 @@ updates:
         update-types: ["minor", "patch"]
     open-pull-requests-limit: 5
 
-  # Python dependencies. Dev tooling is grouped: a ruff or pytest bump is low
-  # stakes and CI proves it. Runtime deps stay ungrouped so each lands as its
-  # own reviewable PR — raising a `~=X.Y.Z` pin is what reaches every user.
+  # Runtime deps ungrouped: raising a `~=X.Y.Z` pin is what reaches users.
   - package-ecosystem: "uv"
     directory: "/"
     schedule:

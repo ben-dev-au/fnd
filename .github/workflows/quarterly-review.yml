@@ -1,8 +1,7 @@
 name: quarterly-review
 
-# SECURITY.md promises a quarterly review of the security-critical parsers.
-# A promise kept by remembering is not a control, so this files the issue
-# with the checklist on schedule whether or not anyone remembers.
+# Files the parser review SECURITY.md commits to, with the checklist and the
+# current patch-level drift.
 
 on:
   schedule:

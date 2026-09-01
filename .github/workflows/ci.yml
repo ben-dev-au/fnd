@@ -23,8 +23,8 @@ jobs:
     # on the real thing. ``fail-fast: false`` so one OS going red still
     # reports the others. Free tier on public repos; private repos use the
     # 10x multiplier so keep an eye on the minutes budget.
-    # Gated on format/typecheck (~1min combined): a lint or type failure
-    # is visible before the ~30-40min matrix burns runner time proving it.
+    # Gated on the ~1min checks so a lint or type failure surfaces before the
+    # matrix spends 15 runners on it.
     # Also runs on push to main: protection does not require branches to
     # be up to date, so a PR is proven against an older tree and only the
     # post-merge run exercises the tree that actually landed.
@@ -32,22 +32,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Matrix jobs get their own runners and start together, so shards run
-        # concurrently and the gate is the slowest shard, not the sum. Measured
-        # whole-suite: windows 48.9, macos 32.6, ubuntu 30.5 min — sharding only
-        # windows would just move the gate to macos, so all three split.
-        #
-        # Five is the ceiling, not a tuning choice: the free plan allows 5
-        # concurrent macOS jobs. A sixth shard, or any other macOS job running
-        # beside this matrix, queues behind them and costs a whole shard of
-        # wall clock. security.yml was moved off macOS to free these slots.
+        # Five is a ceiling, not a preference: the free plan allows 5 concurrent
+        # macOS jobs, and a sixth queues for a whole shard of wall clock.
+        # Unsharded: windows 48.9, macos 32.6, ubuntu 30.5 min.
         os: [macos-14, ubuntu-latest, windows-latest]
         shard: [1, 2, 3, 4, 5]
     runs-on: ${{ matrix.os }}
-    # Windows is materially slower (spawn-based multiprocessing + slower file
-    # I/O and tmp cleanup), so give the matrix headroom beyond the ~28 min the
-    # macOS/Linux runs take; otherwise the Windows job is killed mid-suite
-    # before pytest can report which tests failed.
+    # Far above the ~12 min gate: past the limit a job is killed without
+    # reporting which test failed.
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -108,3 +100,9 @@ jobs:
           persist-credentials: false
       - name: Every user-facing dependency pins the minor
         run: python3 .github/scripts/check_runtime_pins.py
+      - name: Branch protection requires exactly the matrix jobs
+        # A required check no job reports blocks every PR forever; a job no
+        # rule requires goes red without blocking anything.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 .github/scripts/check_required_checks.py
