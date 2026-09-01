@@ -45,7 +45,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       - run: uv python install 3.13
       - name: Install from PyPI and run it
         shell: bash
@@ -66,6 +66,9 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 30
     steps:
+      # Left on @main, unlike every other action here: a branch has no
+      # version for Dependabot to track, so a SHA pin would freeze it
+      # permanently. This job holds no secrets worth that trade.
       - uses: Homebrew/actions/setup-homebrew@main
       - name: Tap and install exactly as a user does
         env:

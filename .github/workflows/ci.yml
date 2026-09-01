@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   test:
-    name: pytest (${{ matrix.os }})
+    name: pytest (${{ matrix.os }} ${{ matrix.shard }}/3)
     # Cross-platform matrix: the same suite runs on all three supported
     # OSes so platform-specific path/launcher/stat behaviour is exercised
     # on the real thing. ``fail-fast: false`` so one OS going red still
@@ -32,17 +32,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Matrix jobs get their own runners and start together, so shards run
+        # concurrently and the gate is the slowest shard, not the sum. Measured
+        # whole-suite: windows 48.9, macos 32.6, ubuntu 30.5 min — sharding only
+        # windows would just move the gate to macos, so all three split.
         os: [macos-14, ubuntu-latest, windows-latest]
+        shard: [1, 2, 3]
     runs-on: ${{ matrix.os }}
     # Windows is materially slower (spawn-based multiprocessing + slower file
     # I/O and tmp cleanup), so give the matrix headroom beyond the ~28 min the
     # macOS/Linux runs take; otherwise the Windows job is killed mid-suite
     # before pytest can report which tests failed.
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           enable-cache: true
       - name: Set up Python 3.13
@@ -53,7 +58,12 @@ jobs:
         # Serial, no --testmon. CI is the gold-standard catch-all
         # behind the local pre-commit hook, which uses --testmon for
         # speed and may skip tests the developer's diff doesn't reach.
-        run: uv run pytest -q -m "not slow"
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=$(uv run python .github/scripts/shard_tests.py "${{ matrix.shard }}" 3)
+          echo "shard ${{ matrix.shard }}/3: $(echo "$files" | wc -l) files"
+          uv run pytest -q -m "not slow" $files
 
   format:
     name: ruff-format
@@ -61,8 +71,8 @@ jobs:
     # obvious in the PR check list without re-running the slow tests.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       - run: uv python install 3.13
       - run: uv sync --frozen --group dev
       - name: Ruff format (check only)
@@ -74,8 +84,8 @@ jobs:
     name: pyright (strict)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       - run: uv python install 3.13
       - run: uv sync --frozen
       - name: Pyright
@@ -88,7 +98,7 @@ jobs:
     # widened range shipping versions CI never ran. Stdlib only, ~5s.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Every user-facing dependency pins the minor
