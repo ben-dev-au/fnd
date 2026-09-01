@@ -108,3 +108,9 @@ jobs:
           persist-credentials: false
       - name: Every user-facing dependency pins the minor
         run: python3 .github/scripts/check_runtime_pins.py
+      - name: Branch protection requires exactly the matrix jobs
+        # A required check no job reports blocks every PR forever; a job no
+        # rule requires goes red without blocking anything.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 .github/scripts/check_required_checks.py
