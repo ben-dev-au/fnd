@@ -19,7 +19,7 @@ shard_tests = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(shard_tests)
 
 
-@pytest.mark.parametrize("total", [2, 3, 4])
+@pytest.mark.parametrize("total", [2, 3, 4, 5, 6])
 def test_shards_cover_every_file_exactly_once(total: int) -> None:
     files = shard_tests.all_test_files(_ROOT)
     assert files, "no test files discovered"

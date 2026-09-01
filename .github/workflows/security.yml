@@ -16,7 +16,10 @@ permissions:
 jobs:
   pip-audit:
     name: pip-audit (lockfile)
-    runs-on: macos-14
+    # ubuntu, not macos: this reads the exported lockfile and is
+    # platform-independent. macOS concurrency is capped at 5 on the free
+    # plan and the test matrix needs every slot.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install uv
@@ -46,7 +49,8 @@ jobs:
 
   ruff-security:
     name: ruff (bandit ruleset)
-    runs-on: macos-14
+    # ubuntu, not macos: a static linter, same concurrency reasoning as above.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
