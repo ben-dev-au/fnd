@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   test:
-    name: pytest (${{ matrix.os }} ${{ matrix.shard }}/3)
+    name: pytest (${{ matrix.os }} ${{ matrix.shard }}/5)
     # Cross-platform matrix: the same suite runs on all three supported
     # OSes so platform-specific path/launcher/stat behaviour is exercised
     # on the real thing. ``fail-fast: false`` so one OS going red still
@@ -36,8 +36,13 @@ jobs:
         # concurrently and the gate is the slowest shard, not the sum. Measured
         # whole-suite: windows 48.9, macos 32.6, ubuntu 30.5 min — sharding only
         # windows would just move the gate to macos, so all three split.
+        #
+        # Five is the ceiling, not a tuning choice: the free plan allows 5
+        # concurrent macOS jobs. A sixth shard, or any other macOS job running
+        # beside this matrix, queues behind them and costs a whole shard of
+        # wall clock. security.yml was moved off macOS to free these slots.
         os: [macos-14, ubuntu-latest, windows-latest]
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5]
     runs-on: ${{ matrix.os }}
     # Windows is materially slower (spawn-based multiprocessing + slower file
     # I/O and tmp cleanup), so give the matrix headroom beyond the ~28 min the
@@ -61,8 +66,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          files=$(uv run python .github/scripts/shard_tests.py "${{ matrix.shard }}" 3)
-          echo "shard ${{ matrix.shard }}/3: $(echo "$files" | wc -l) files"
+          files=$(uv run python .github/scripts/shard_tests.py "${{ matrix.shard }}" 5)
+          echo "shard ${{ matrix.shard }}/5: $(echo "$files" | wc -l) files"
           uv run pytest -q -m "not slow" $files
 
   format:
