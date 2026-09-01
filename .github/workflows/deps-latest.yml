@@ -1,14 +1,8 @@
 name: deps-latest
 
-# Resolves every dependency at its newest allowed version — ignoring the
-# committed uv.lock — and runs the suite against that. uv.lock governs dev
-# and CI only and never reaches a user, so ci.yml tests a version set no
-# installer produces.
-#
-# With three-component `~=X.Y.Z` pins, "newest allowed" is the patch float:
-# the versions that reach every user automatically, with no PR to review.
-# This is the only gate on them. Deliberate minor bumps are gated instead
-# by the Dependabot PR that raises the pin, which ci.yml runs in full.
+# Resolves every dependency at its newest allowed version, ignoring uv.lock,
+# and runs the suite. With three-component pins that is the patch float: the
+# versions reaching users with no PR to review, and their only gate.
 
 on:
   schedule:
