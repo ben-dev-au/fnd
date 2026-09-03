@@ -8,8 +8,10 @@ Grammar::
     not_expr    ::= NOT? atom
     atom        ::= "(" expr ")" | comparison
     comparison  ::= ident OP value
-                  | value "in" ident
+                  | value "in" ident            (value is IN the field's list)
                   | value "not in" ident
+                  | ident "in" "[" value,* "]"  (field's scalar is IN the list)
+                  | ident "not in" "[" value,* "]"
     OP          ::= "==" | "!=" | "<" | ">" | "<=" | ">=" | "~~"
     value       ::= 'string' | "string" | number | iso_date | true | false | null
     ident       ::= word | "quoted word"
@@ -44,6 +46,9 @@ class TokenKind(Enum):
     NULL = auto()
     LPAREN = auto()
     RPAREN = auto()
+    LBRACKET = auto()
+    RBRACKET = auto()
+    COMMA = auto()
     EOF = auto()
 
 
@@ -83,7 +88,7 @@ _OPERATORS = ("==", "!=", "<=", ">=", "~~", "<", ">")
 
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _NUMBER_RE = re.compile(r"\d+(\.\d+)?")
-_BARE_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_\-]*")
+_BARE_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_\-.]*")
 
 
 def tokenize(text: str) -> list[Token]:
@@ -104,6 +109,18 @@ def tokenize(text: str) -> list[Token]:
             continue
         if ch == ")":
             out.append(Token(TokenKind.RPAREN, ")", col))
+            i += 1
+            continue
+        if ch == "[":
+            out.append(Token(TokenKind.LBRACKET, "[", col))
+            i += 1
+            continue
+        if ch == "]":
+            out.append(Token(TokenKind.RBRACKET, "]", col))
+            i += 1
+            continue
+        if ch == ",":
+            out.append(Token(TokenKind.COMMA, ",", col))
             i += 1
             continue
         # Operators (longest match first).
@@ -197,6 +214,19 @@ class In:
 
     value: object
     field: str
+    negated: bool
+
+
+@dataclass(slots=True, frozen=True)
+class FieldIn:
+    """The field's scalar is one of a literal list: ``file.kind in ['pdf','md']``.
+
+    The mirror image of :class:`In`, which tests a literal against a *list*
+    field. A list-valued field never matches here; use ``In`` for that.
+    """
+
+    field: str
+    values: tuple[object, ...]
     negated: bool
 
 
@@ -300,8 +330,10 @@ class _Parser:
                 self.advance()
                 value = self._parse_value()
                 return Compare(str(first.value), str(op_tok.value), value)
-            # Form B: ident is the LHS of an "in"/"not in" — but that's
-            # Form C below. Re-raise with the actual context.
+            if op_tok.kind in (TokenKind.IN, TokenKind.NOT_IN):
+                self.advance()
+                values = self._parse_value_list()
+                return FieldIn(str(first.value), values, negated=op_tok.kind is TokenKind.NOT_IN)
             raise FilterError(f"expected operator after {first.value!r}", op_tok.column)
         # Form C: value ("in"|"not in") ident
         if first.kind in (
@@ -324,6 +356,26 @@ class _Parser:
                 return In(value, str(ident.value), negated=True)
             raise FilterError("expected 'in' / 'not in' after value", mem.column)
         raise FilterError(f"unexpected token {first.value!r}", first.column)
+
+    def _parse_value_list(self) -> tuple[object, ...]:
+        """``[ value, value, ... ]`` — a trailing comma and an empty list are
+        rejected, so a typo can't silently become a filter that matches nothing."""
+        open_tok = self.expect(TokenKind.LBRACKET)
+        values: list[object] = []
+        while True:
+            values.append(self._parse_value())
+            nxt = self.peek()
+            if nxt.kind is TokenKind.COMMA:
+                self.advance()
+                continue
+            break
+        end = self.peek()
+        if end.kind is not TokenKind.RBRACKET:
+            raise FilterError("expected ',' or ']' in list", end.column)
+        self.advance()
+        if not values:
+            raise FilterError("empty list", open_tok.column)
+        return tuple(values)
 
     def _parse_value(self) -> object:
         t = self.advance()
@@ -353,6 +405,20 @@ class _Parser:
 
 
 Predicate = Callable[[Mapping[str, object]], bool]
+
+
+def referenced_fields(node: object) -> frozenset[str]:
+    """Every field name an AST references. Lets a caller decide policy for a
+    field before evaluating, which the strict-null evaluator cannot express."""
+    if isinstance(node, Compare):
+        return frozenset({node.field})
+    if isinstance(node, (In, FieldIn)):
+        return frozenset({node.field})
+    if isinstance(node, Not):
+        return referenced_fields(node.operand)
+    if isinstance(node, (And, Or)):
+        return referenced_fields(node.left) | referenced_fields(node.right)
+    return frozenset()
 
 
 def compile_filter(text: str) -> Predicate:
@@ -392,6 +458,8 @@ def _make_evaluator(node: object) -> Predicate:
         return lambda fm: _eval_compare(fm, field, op, value)
     if isinstance(node, In):
         return lambda fm: _eval_in(fm, node.value, node.field, node.negated)
+    if isinstance(node, FieldIn):
+        return lambda fm: _eval_field_in(fm, node.field, node.values, node.negated)
     raise AssertionError(f"unknown AST node {type(node).__name__}")
 
 
@@ -401,13 +469,8 @@ def _eval_compare(fm: Mapping[str, object], field: str, op: str, value: object) 
         return False
     actual = fm[field]
     if op in ("==", "!="):
-        # Reject silent bool/int conflation: ``True == 1`` is True in raw
-        # Python, but for YAML frontmatter where ``true`` and ``1`` are
-        # distinct, that's a semantic surprise. If exactly one side is bool,
-        # they're not equal.
-        if isinstance(actual, bool) != isinstance(value, bool):
-            return op == "!="
-        return (actual == value) if op == "==" else (actual != value)
+        equal = _scalar_equal(actual, value)
+        return equal if op == "==" else not equal
     if op == "~~":
         if not isinstance(actual, str) or not isinstance(value, str):
             return False
@@ -427,11 +490,36 @@ def _eval_compare(fm: Mapping[str, object], field: str, op: str, value: object) 
     return False
 
 
+def _scalar_equal(actual: object, value: object) -> bool:
+    """Equality that refuses bool/int conflation.
+
+    ``True == 1`` in raw Python, but YAML ``true`` and ``1`` are distinct
+    values, so exactly one side being a bool means not-equal.
+    """
+    if isinstance(actual, bool) != isinstance(value, bool):
+        return False
+    return bool(actual == value)
+
+
+def _eval_field_in(
+    fm: Mapping[str, object], field: str, values: tuple[object, ...], negated: bool
+) -> bool:
+    if field not in fm:
+        return False  # strict null, as for every other comparison
+    actual = fm[field]
+    if isinstance(actual, list | tuple):
+        return False  # a list field belongs on the ``In`` form
+    member = any(_scalar_equal(actual, v) for v in values)
+    return (not member) if negated else member
+
+
 def _eval_in(fm: Mapping[str, object], value: object, field: str, negated: bool) -> bool:
     if field not in fm:
         return False  # strict null even for `not in`
     container = fm[field]
-    if not isinstance(container, list | tuple):
+    if not isinstance(container, list | tuple | set | frozenset):
+        # Sets included: every tag API returns frozenset, and a type gate that
+        # rejected them would make ``'x' in file.tags.os`` silently False.
         return False
     is_member = value in container
     return (not is_member) if negated else is_member
