@@ -1,8 +1,8 @@
 """The shared filter vocabulary.
 
 One :class:`Dimension` per thing a user can filter on. Each knows how to
-render its value as DSL text, recognise that text again in an AST, and compile
-it to a :class:`Rule`. Query time reuses the same names and value vocabularies
+render its value as DSL text (for display) and compile it to a :class:`Rule`.
+Query time reuses the same names and value vocabularies
 (``fnd.vocabulary``) so a config ``kinds = ["pdf"]`` and a ``--kind pdf`` flag
 mean the same thing; it keeps its own tantivy compiler, because size, globs and
 ignore files have no index field to compile against.
@@ -11,14 +11,15 @@ ignore files have no index field to compile against.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Protocol
 
-from fnd.filter_dsl import Compare, FieldIn, FilterError, In, Not, compile_filter, referenced_fields
+from fnd.filter_dsl import FilterError, compile_filter, referenced_fields
 from fnd.filter_dsl import parse as parse_dsl
 from fnd.filters.model import Rule
 from fnd.kinds import KINDS_IN_CATEGORY
+from fnd.tags import normalise_tag
 
 __all__ = ["DIMENSIONS", "Dimension", "dimension", "rule_from_text"]
 
@@ -51,8 +52,6 @@ class Dimension(Protocol):
 
     def render(self, value: object) -> str: ...
 
-    def match(self, node: object) -> object | None: ...
-
     def rule(self, value: object) -> Rule | None: ...
 
 
@@ -67,16 +66,18 @@ class _ListDimension:
         values = _as_list(value)
         return f"{self.fact} in [{', '.join(_quote(v) for v in values)}]"
 
-    def match(self, node: object) -> object | None:
-        if isinstance(node, FieldIn) and node.field == self.fact and not node.negated:
-            return list(node.values)
-        return None
-
     def rule(self, value: object) -> Rule | None:
         values = _as_list(value)
         if not values:
             return None
-        return _compile(self.render(values))
+        wanted = {str(v) for v in values}
+        fact = self.fact
+
+        def predicate(facts: Mapping[str, object]) -> bool:
+            actual = facts.get(fact)
+            return isinstance(actual, str) and actual in wanted
+
+        return Rule(predicate=predicate, text=self.render(values), facts=frozenset({self.fact}))
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,17 +91,22 @@ class _TagExcludeDimension:
         values = _as_list(value)
         return " AND ".join(f"NOT ({_quote(v)} in {self.fact})" for v in values)
 
-    def match(self, node: object) -> object | None:
-        inner = node.operand if isinstance(node, Not) else None
-        if isinstance(inner, In) and inner.field == self.fact and not inner.negated:
-            return [inner.value]
-        return None
-
     def rule(self, value: object) -> Rule | None:
         values = _as_list(value)
         if not values:
             return None
-        return _compile(self.render(values))
+        excluded = {normalise_tag(str(v)) for v in values if normalise_tag(str(v))}
+        if not excluded:
+            return None
+        fact = self.fact
+
+        def predicate(facts: Mapping[str, object]) -> bool:
+            actual = facts.get(fact)
+            if not isinstance(actual, (list, tuple, set, frozenset)):
+                return True
+            return not (excluded & {str(t) for t in actual})
+
+        return Rule(predicate=predicate, text=self.render(values), facts=frozenset({self.fact}))
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,11 +119,6 @@ class _ComparisonDimension:
 
     def render(self, value: object) -> str:
         return f"{self.fact} {self.op} {_quote(value)}"
-
-    def match(self, node: object) -> object | None:
-        if isinstance(node, Compare) and node.field == self.fact and node.op == self.op:
-            return node.value
-        return None
 
     def rule(self, value: object) -> Rule | None:
         if value is None:
@@ -135,9 +136,6 @@ class _ExpressionDimension:
 
     def render(self, value: object) -> str:
         return str(value)
-
-    def match(self, node: object) -> object | None:
-        return None  # never recognised — it is the fallback
 
     def rule(self, value: object) -> Rule | None:
         text = str(value or "").strip()
@@ -184,15 +182,6 @@ def dimension(dimension_id: str) -> Dimension:
         return _BY_ID[dimension_id]
     except KeyError as e:
         raise FilterError(f"unknown filter dimension {dimension_id!r}", 1) from e
-
-
-def recognise(node: object) -> tuple[str, object] | None:
-    """``(dimension_id, value)`` for a clause a picker can edit, else None."""
-    for dim in DIMENSIONS:
-        value = dim.match(node)
-        if value is not None:
-            return dim.id, value
-    return None
 
 
 def note_kinds() -> Sequence[str]:

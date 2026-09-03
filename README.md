@@ -334,7 +334,9 @@ its overrides.
 | `respect_fndignore` | The same syntax in a `.fndignore`, read only by fnd — how to hide something from search without hiding it from git. **On by default.** |
 | `exclude_tags` | Tags that keep a file out. **macOS Finder tags only**, because reading a tag is one attribute lookup while reading a note's YAML tags means opening every candidate file. Defaults to `["no_index"]`. |
 | `kinds` | Restrict to given file types. Empty means every supported type. |
-| `min_size` / `max_size` | Bytes. Keeps multi-hundred-megabyte scans out. |
+| `min_size` / `max_size` | Bytes. Keeps stubs, and multi-hundred-megabyte scans, out. |
+| `created_after` / `created_before` | ISO dates (`2024-01-01`). A fixed bound, not the Filters pane's rolling window — a window would change what the index holds as time passed. A file with no creation date (best-effort on Linux) is kept. |
+| `modified_after` / `modified_before` | ISO dates, same semantics. |
 | `frontmatter` | A frontmatter predicate — the same `[…]` syntax as a query. **Notes only**; every other file type passes through. Use this to exclude on a YAML tag: `NOT ('no_index' in tags)`. |
 | `expression` | A predicate over any file, using `file.kind`, `file.size`, `file.modified`, `file.tags.os`, `file.path` and the like. The rows above are written in terms of it. |
 
@@ -387,7 +389,8 @@ respect_gitignore = true            # honour .gitignore, with git's own rules
 respect_fndignore = true            # same syntax, read only by fnd
 exclude_tags      = ["no_index"]    # macOS Finder tags — see the note below
 # max_size        = 50_000_000
-# expression      = "file.modified >= 2020-01-01"
+# modified_after  = 2020-01-01
+# expression      = "file.size < 50_000_000"
 
 # Default app per file type for the `o` shortcut. Built-in ids:
 # system, obsidian, vscode (all OSes); skim, preview, pdf_expert (macOS);

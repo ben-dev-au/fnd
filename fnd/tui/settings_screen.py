@@ -596,7 +596,10 @@ class EditBar(Horizontal):
         raw = ev.value.strip()
         coerce = self._item.coerce or str
         try:
-            value: Any = coerce(raw) if raw else raw
+            # Empty input goes through coerce too: it is how an optional
+            # setting is cleared and how a list row empties itself. Skipping
+            # it posted the literal "" and validation rejected the write.
+            value: Any = coerce(raw)
         except (TypeError, ValueError) as e:
             self.show_error(f"invalid: {e}")
             return
@@ -1711,6 +1714,7 @@ def _source_filter_items(
     Booleans are three-state (inherit / yes / no), so a picker rather than a
     toggle; an unset field shows what it inherits.
     """
+    from fnd import os_labels
     from fnd.tui.menu import _coerce_str_list
 
     def _set(field: str) -> Callable[[FNDApp, Any], None]:
@@ -1761,6 +1765,12 @@ def _source_filter_items(
                 return [] if as_list else ""
             if as_list:
                 return _coerce_str_list(text)
+            if f.endswith("_size"):
+                return int(text.replace("_", "").replace(",", ""))
+            if f.startswith(("created_", "modified_")):
+                import datetime as _dt
+
+                return _dt.date.fromisoformat(text)
             from fnd.filter_dsl import parse_or_error
 
             _pred, err = parse_or_error(text)
@@ -1790,7 +1800,8 @@ def _source_filter_items(
         _text_row(
             "exclude_tags",
             "Skip files tagged",
-            "Comma-separated tags that keep a file out of the index.",
+            "Comma-separated Finder tags that keep a file out of the index"
+            + ("." if os_labels.is_macos() else " (macOS only — inert here)."),
             "no_index, draft",
             as_list=True,
         ),
@@ -1800,6 +1811,34 @@ def _source_filter_items(
             "Comma-separated kind ids, e.g. pdf, md.",
             "pdf, md",
             as_list=True,
+        ),
+        _text_row(
+            "min_size",
+            "Minimum file size",
+            "Bytes; skip anything smaller.",
+            "32",
+            as_list=False,
+        ),
+        _text_row(
+            "max_size",
+            "Maximum file size",
+            "Bytes; skip anything larger.",
+            "50000000",
+            as_list=False,
+        ),
+        _text_row(
+            "created_after",
+            "Created on or after",
+            "ISO date; a fixed bound, not a rolling window.",
+            "2024-01-01",
+            as_list=False,
+        ),
+        _text_row(
+            "modified_after",
+            "Modified on or after",
+            "ISO date; a fixed bound, not a rolling window.",
+            "2024-01-01",
+            as_list=False,
         ),
         _text_row(
             "expression",
@@ -2351,6 +2390,8 @@ class SourceFormScreen(Screen[None]):
             if item.toggle_setter is not None:
                 item.toggle_setter(self.app, new)  # type: ignore[arg-type]
             self.query_one(SettingsList).refresh_values()
+        elif item.kind == KIND_EXTERNAL and item.external is not None:
+            item.external(self.app)  # type: ignore[arg-type]
 
     @on(EditBar.EditCommitted)
     def _on_edit_committed(self, ev: EditBar.EditCommitted) -> None:

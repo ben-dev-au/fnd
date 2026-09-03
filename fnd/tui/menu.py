@@ -2106,6 +2106,59 @@ def _coerce_optional_int(raw: str) -> int | None:
     return int(text) if text else None
 
 
+def _coerce_optional_date(raw: str) -> object:
+    """ISO date, or None to clear. A bad value raises so the row shows it."""
+    import datetime as _dt
+
+    text = raw.strip()
+    return _dt.date.fromisoformat(text) if text else None
+
+
+def _get_filter_scalar(field_name: str) -> Callable[[FNDApp], str]:
+    def _g(app: FNDApp) -> str:
+        value = getattr(_filters_defaults(app), field_name, None)
+        return "" if value is None else str(value)
+
+    return _g
+
+
+def _filter_date_rows() -> tuple[MenuItem, ...]:
+    """One row per date bound. Absolute, not the pane's rolling windows."""
+    specs = (
+        ("created_after", "Created on or after"),
+        ("created_before", "Created on or before"),
+        ("modified_after", "Modified on or after"),
+        ("modified_before", "Modified on or before"),
+    )
+    out: list[MenuItem] = []
+    for field_name, label in specs:
+        which = "created" if field_name.startswith("created") else "last modified"
+        out.append(
+            MenuItem(
+                id=f"filters.{field_name}",
+                label=label,
+                description=(
+                    f"Only index files {which} within this bound, as an ISO date "
+                    "(2024-01-01). Empty means no bound. A fixed date, not a "
+                    "rolling window — a window would change what the index holds "
+                    "as time passed. Needs a reindex to take effect."
+                    + (
+                        " Creation dates are best-effort on Linux; a file without one is kept."
+                        if field_name.startswith("created")
+                        else ""
+                    )
+                ),
+                kind=KIND_SCALAR,
+                setting_path=f"defaults.filters.{field_name}",
+                hint="2024-01-01",
+                coerce=_coerce_optional_date,
+                value_getter=_get_filter_scalar(field_name),
+                keywords=("date", "created", "modified", "age", "older", "newer"),
+            )
+        )
+    return tuple(out)
+
+
 def _provider_index_filters(_app: FNDApp) -> tuple[MenuItem, ...]:
     """Filters applied while indexing, inherited by every source."""
     return (
@@ -2176,6 +2229,21 @@ def _provider_index_filters(_app: FNDApp) -> tuple[MenuItem, ...]:
             keywords=("kind", "type", "filetype", "pdf", "markdown", "restrict"),
         ),
         MenuItem(
+            id="filters.min_size",
+            label="Minimum file size",
+            description=(
+                "Skip files smaller than this many bytes. Empty means no "
+                "minimum. Useful for dropping stub and placeholder files. "
+                "Needs a reindex to take effect."
+            ),
+            kind=KIND_SCALAR,
+            setting_path="defaults.filters.min_size",
+            hint="bytes, e.g. 32",
+            coerce=_coerce_optional_int,
+            value_getter=_get_filter_scalar("min_size"),
+            keywords=("size", "small", "stub", "minimum", "bytes"),
+        ),
+        MenuItem(
             id="filters.max_size",
             label="Maximum file size",
             description=(
@@ -2187,9 +2255,10 @@ def _provider_index_filters(_app: FNDApp) -> tuple[MenuItem, ...]:
             setting_path="defaults.filters.max_size",
             hint="bytes, e.g. 50000000",
             coerce=_coerce_optional_int,
-            value_getter=lambda app: str(_filters_defaults(app).max_size or ""),
+            value_getter=_get_filter_scalar("max_size"),
             keywords=("size", "large", "big", "limit", "bytes", "maximum"),
         ),
+        *_filter_date_rows(),
         MenuItem(
             id="filters.expression",
             label="Custom filter expression",

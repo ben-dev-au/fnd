@@ -38,6 +38,7 @@ IGNORE_FILENAMES: Final = (".gitignore", ".fndignore")
 
 # Bounds an ignore file read; a pathological file must not stall a scan.
 _MAX_BYTES: Final = 1 << 20
+_MAX_PATTERN_LEN: Final = 4096
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,8 +94,12 @@ def _translate_segment(segment: str) -> str:
     while i < len(segment):
         ch = segment[i]
         if ch == "*":
+            # Collapse a run of stars into one. Consecutive ``[^/]*`` groups
+            # mean the same thing but backtrack exponentially, so a hostile
+            # pattern in any cloned repo's .gitignore would hang the scan.
+            while i < len(segment) and segment[i] == "*":
+                i += 1
             out.append("[^/]*")
-            i += 1
         elif ch == "?":
             out.append("[^/]")
             i += 1
@@ -118,8 +123,19 @@ def _translate_segment(segment: str) -> str:
     return "".join(out)
 
 
+def _collapse(segments: list[str]) -> list[str]:
+    """Drop a repeated ``**`` segment. ``**/**/x`` means ``**/x``, but each
+    one compiles to its own unbounded group and they backtrack together."""
+    out: list[str] = []
+    for segment in segments:
+        if segment == "**" and out and out[-1] == "**":
+            continue
+        out.append(segment)
+    return out
+
+
 def _translate(pattern: str, *, anchored: bool) -> re.Pattern[str]:
-    segments = pattern.split("/")
+    segments = _collapse(pattern.split("/"))
     parts: list[str] = []
     for index, segment in enumerate(segments):
         last = index == len(segments) - 1
@@ -133,8 +149,11 @@ def _translate(pattern: str, *, anchored: bool) -> re.Pattern[str]:
             parts.append("/")
     body = "".join(parts)
     prefix = "" if anchored else "(?:.*/)?"
-    # A directory match must also cover everything beneath it.
-    return re.compile(f"^{prefix}{body}(?:/.*)?$")
+    # Matches the path itself only. A pattern naming a directory covers its
+    # contents because the walker never descends into an ignored directory —
+    # extending the regex over descendants instead would let a negated
+    # pattern re-include files the following patterns should still exclude.
+    return re.compile(f"^{prefix}{body}$")
 
 
 def parse_patterns(text: str) -> tuple[Pattern, ...]:
@@ -153,7 +172,7 @@ def parse_patterns(text: str) -> tuple[Pattern, ...]:
         dir_only = line.endswith("/")
         if dir_only:
             line = line[:-1]
-        if not line:
+        if not line or len(line) > _MAX_PATTERN_LEN:
             continue
         # A slash anywhere but the (already stripped) end anchors the pattern
         # to the ignore file's own directory.

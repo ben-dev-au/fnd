@@ -14,6 +14,7 @@ Grammar::
                   | ident "not in" "[" value,* "]"
     OP          ::= "==" | "!=" | "<" | ">" | "<=" | ">=" | "~~"
     value       ::= 'string' | "string" | number | iso_date | true | false | null
+                    (numbers accept TOML-style separators: 50_000_000)
     ident       ::= word | "quoted word"
 
 Same DSL is reused at query time (phase 5.5e-2) — the evaluator is
@@ -87,7 +88,7 @@ _OPERATORS = ("==", "!=", "<=", ">=", "~~", "<", ">")
 
 
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
-_NUMBER_RE = re.compile(r"\d+(\.\d+)?")
+_NUMBER_RE = re.compile(r"\d[\d_]*(\.\d[\d_]*)?")
 _BARE_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_\-.]*")
 
 
@@ -153,7 +154,7 @@ def tokenize(text: str) -> list[Token]:
             continue
         num_match = _NUMBER_RE.match(text, i)
         if num_match:
-            raw = num_match.group(0)
+            raw = num_match.group(0).replace("_", "")
             num_value: int | float = float(raw) if "." in raw else int(raw)
             out.append(Token(TokenKind.NUMBER, num_value, col))
             i = num_match.end()

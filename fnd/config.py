@@ -15,6 +15,7 @@ Phase 5.5e-1 adds :class:`SourceConfig` + multi-source collections + the
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 import re
 import sys
 import tomllib
@@ -229,6 +230,13 @@ class DefaultFilters(BaseModel):
     kinds: list[str] = Field(default_factory=list)
     min_size: int | None = None
     max_size: int | None = None
+    # Absolute dates, not the query pane's rolling windows: a window would
+    # change what the index contains as time passed, silently pruning files
+    # that were fine yesterday.
+    created_after: dt.date | None = None
+    created_before: dt.date | None = None
+    modified_after: dt.date | None = None
+    modified_before: dt.date | None = None
     frontmatter: str | None = None
     expression: str | None = None
 
@@ -251,6 +259,10 @@ class SourceFilters(BaseModel):
     kinds: list[str] | None = None
     min_size: int | None = None
     max_size: int | None = None
+    created_after: dt.date | None = None
+    created_before: dt.date | None = None
+    modified_after: dt.date | None = None
+    modified_before: dt.date | None = None
     frontmatter: str | None = None
     expression: str | None = None
 
@@ -1123,7 +1135,8 @@ excludes = ["**/.git/**", "**/.DS_Store", "**/__pycache__/**"]
 # respect_gitignore = false
 # exclude_tags = ["no_index", "draft"]
 # max_size = 50_000_000
-# expression = "file.modified >= 2020-01-01"
+# modified_after = 2020-01-01
+# expression = "file.size < 50_000_000"
 
 # Index-time filters inherited by every source. Files an ignore file or a
 # tag excludes never enter the index; the next update prunes any already in.

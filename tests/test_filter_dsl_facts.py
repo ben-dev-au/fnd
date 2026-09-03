@@ -33,6 +33,15 @@ class TestDottedIdents:
         assert _kinds("a > 1.5")[2] is TokenKind.NUMBER
         assert parse("a > 1.5") == Compare("a", ">", 1.5)
 
+    def test_digit_separators_are_accepted(self) -> None:
+        """TOML writes 50_000_000, so an expression copied from the config
+        must parse the same number."""
+        assert parse("file.size < 50_000_000") == Compare("file.size", "<", 50_000_000)
+        assert compile_filter("file.size < 50_000_000")({"file.size": 10}) is True
+
+    def test_a_leading_underscore_is_still_an_identifier(self) -> None:
+        assert parse("_key == 1") == Compare("_key", "==", 1)
+
     def test_iso_date_unaffected(self) -> None:
         assert parse("a < 2026-01-01") == Compare("a", "<", dt.date(2026, 1, 1))
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import os
 from pathlib import Path
 
 import pytest
@@ -162,6 +164,41 @@ class TestStructuredDimensions:
         _write(tmp_path, "big.md", "x" * 500)
         assert _names(tmp_path, defaults=DefaultFilters(max_size=100)) == {"small.md"}
 
+    def test_min_size_drops_small_files(self, tmp_path: Path) -> None:
+        _write(tmp_path, "stub.md", "x")
+        _write(tmp_path, "real.md", "x" * 50)
+        assert _names(tmp_path, defaults=DefaultFilters(min_size=10)) == {"real.md"}
+
+    def test_modified_after_drops_older_files(self, tmp_path: Path) -> None:
+        _write(tmp_path, "fresh.md")
+        stale = _write(tmp_path, "stale.md")
+        old_ts = (dt.datetime(2020, 1, 1, tzinfo=dt.UTC)).timestamp()
+        os.utime(stale, (old_ts, old_ts))
+        spec = DefaultFilters(modified_after=dt.date(2023, 1, 1))
+        assert _names(tmp_path, defaults=spec) == {"fresh.md"}
+
+    def test_modified_before_drops_newer_files(self, tmp_path: Path) -> None:
+        _write(tmp_path, "fresh.md")
+        stale = _write(tmp_path, "stale.md")
+        old_ts = (dt.datetime(2020, 1, 1, tzinfo=dt.UTC)).timestamp()
+        os.utime(stale, (old_ts, old_ts))
+        spec = DefaultFilters(modified_before=dt.date(2023, 1, 1))
+        assert _names(tmp_path, defaults=spec) == {"stale.md"}
+
+    def test_an_unknown_creation_date_keeps_the_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ext4 without statx reports no birth time; dropping would index nothing."""
+        from fnd.fsmeta import FileTimes
+
+        _write(tmp_path, "a.md")
+        monkeypatch.setattr(
+            "fnd.file_facts.read_file_times",
+            lambda _p: FileTimes(mtime=1_700_000_000, created=0, inode_changed=1),
+        )
+        spec = DefaultFilters(created_after=dt.date(2024, 1, 1))
+        assert _names(tmp_path, defaults=spec) == {"a.md"}
+
     def test_expression_applies_to_every_kind(self, tmp_path: Path) -> None:
         _write(tmp_path, "a.md", "xx")
         _write(tmp_path, "b.txt", "x")
@@ -200,3 +237,40 @@ class TestInheritance:
         _write(tmp_path, "b.txt")
         override = SourceFilters(max_size=10_000).model_dump(exclude_none=True)
         assert _names(tmp_path, filters=override) == {"a.md"}
+
+
+class TestSymlinkedRoot:
+    """Facts must measure against the root ``walk`` actually yields from.
+
+    ``walk`` resolves the root, so a symlinked ancestor made ``file.path``
+    fall back to the absolute path and any rule using it stop matching.
+    macOS /tmp and /var are themselves symlinks, so this needs no opt-in.
+    """
+
+    def test_file_path_is_relative_under_a_symlinked_ancestor(self, tmp_path: Path) -> None:
+        real = tmp_path / "real"
+        (real / "notes").mkdir(parents=True)
+        _write(real, "notes/todo.md")
+        link = tmp_path / "link"
+        link.symlink_to(real, target_is_directory=True)
+
+        spec = DefaultFilters(expression="file.path == 'todo.md'")
+        got = {p.name for p in walk_sources(sources=_sources(link / "notes", defaults=spec))}
+        assert got == {"todo.md"}
+
+    def test_hidden_is_not_confused_by_a_dot_in_an_ancestor(self, tmp_path: Path) -> None:
+        """An absolute-path fallback would read a dotted ancestor as hidden.
+
+        The source root itself is a real directory — a symlinked *root* is
+        refused outright unless ``follow_symlinks`` is set, so the ancestor
+        is what carries the link.
+        """
+        real = tmp_path / ".hidden-parent"
+        (real / "notes").mkdir(parents=True)
+        _write(real, "notes/plain.md")
+        link = tmp_path / "link"
+        link.symlink_to(real, target_is_directory=True)
+
+        spec = DefaultFilters(expression="file.hidden == false")
+        got = {p.name for p in walk_sources(sources=_sources(link / "notes", defaults=spec))}
+        assert got == {"plain.md"}

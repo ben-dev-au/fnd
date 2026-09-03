@@ -278,6 +278,14 @@ def _scandir_walk(
             yield entry_path
 
 
+def _resolved_root(path: Path) -> Path:
+    """The root as :func:`walk` sees it, or the original if it cannot resolve."""
+    try:
+        return path.expanduser().resolve()
+    except OSError:
+        return path.expanduser()
+
+
 def walk_sources(
     *,
     sources: list[SourceConfig],
@@ -322,6 +330,10 @@ def walk_sources(
                 kinds=tuple(resolved.kinds),
                 min_size=resolved.min_size,
                 max_size=resolved.max_size,
+                created_after=resolved.created_after,
+                created_before=resolved.created_before,
+                modified_after=resolved.modified_after,
+                modified_before=resolved.modified_before,
                 expression=resolved.expression or "",
             )
         )
@@ -343,6 +355,11 @@ def walk_sources(
             if on and name in IGNORE_FILENAMES
         ]
         providers = [p for p in TAG_PROVIDERS.values() if p.available_on(sys.platform)]
+        # ``walk`` resolves the root before yielding, so facts must measure
+        # against the resolved form. macOS /tmp and /var are themselves
+        # symlinks, so a mismatch here silently turns ``file.path`` into an
+        # absolute path and any rule using it stops matching.
+        facts_root = _resolved_root(source.path)
         for path in walk(
             roots=[source.path],
             includes=source.includes or None,
@@ -356,7 +373,7 @@ def walk_sources(
                 continue
             facts = FileFacts(
                 path,
-                root=source.path,
+                root=facts_root,
                 read_frontmatter=read_frontmatter,
                 tag_providers=providers,
             )

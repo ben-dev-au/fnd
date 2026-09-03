@@ -8,6 +8,7 @@ global excludes and ``.git/info/exclude`` — without that, a machine with a
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -192,3 +193,42 @@ def test_agrees_with_git_on_generated_cases(
     assert _ours_ignores(root, rel) == _git_ignores(root, env, rel), (
         f"pattern={pattern!r} rel={rel!r} is_dir={is_dir}"
     )
+
+
+class TestPathologicalPatterns:
+    """Ignore files come from arbitrary cloned repositories.
+
+    Each ``*`` compiles to an unbounded group, so a run of them backtracks
+    exponentially and would hang the scan rather than fail it.
+    """
+
+    @pytest.mark.parametrize(
+        "pattern",
+        [
+            "*" * 60 + "x",
+            "**/" * 40 + "x",
+            "a" + "*/" * 30 + "b",
+            "[" * 50,
+            "\\" * 40,
+            "*" * 20 + "/" + "*" * 20 + "/x",
+        ],
+    )
+    def test_matching_is_not_exponential(self, pattern: str) -> None:
+        victim = "a/" * 40 + "file.md"
+        patterns = parse_patterns(pattern + "\n")
+        start = time.perf_counter()
+        for p in patterns:
+            p.regex.match(victim)
+        assert time.perf_counter() - start < 1.0, f"{pattern[:24]!r} backtracks"
+
+    @pytest.mark.parametrize(
+        "line", ["/", "!", "!!", "\\", "   ", "#", "\\#literal", "a\\ ", "[!a-z].md", "[]].md"]
+    )
+    def test_degenerate_lines_do_not_raise(self, line: str) -> None:
+        parse_patterns(line + "\n")
+
+    def test_a_repeated_globstar_means_the_same_as_one(self, tmp_path: Path) -> None:
+        env = _init_repo(tmp_path)
+        (tmp_path / ".gitignore").write_text("**/**/x.md\n", encoding="utf-8")
+        _make(tmp_path, "a/b/x.md")
+        assert _ours_ignores(tmp_path, "a/b/x.md") == _git_ignores(tmp_path, env, "a/b/x.md")

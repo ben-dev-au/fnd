@@ -6,11 +6,9 @@ import datetime as dt
 from pathlib import Path
 
 import pytest
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 from fnd.file_facts import FileFacts
-from fnd.filters import FilterSpec, build_gate, parse, render
+from fnd.filters import FilterSpec, build_gate
 from fnd.filters.dimensions import NOTE_KINDS, rule_from_text
 from fnd.filters.model import Rule, Unknown
 from fnd.fsmeta import FileTimes
@@ -22,52 +20,29 @@ def _facts(tmp_path: Path, name: str, body: str = "") -> FileFacts:
     return FileFacts(f, root=tmp_path)
 
 
-class TestRoundTrip:
-    def test_full_spec_round_trips(self) -> None:
-        spec = FilterSpec(
-            kinds=("pdf", "md"),
-            exclude_tags=("no_index",),
-            min_size=10,
-            max_size=50_000_000,
-            created_after=dt.date(2024, 1, 1),
-            modified_before=dt.date(2026, 1, 1),
-        )
-        assert parse(render(spec)) == spec
+class TestValuesTheGrammarCannotQuote:
+    """Structured dimensions compile a predicate directly, not via DSL text.
 
-    def test_empty_spec_renders_empty(self) -> None:
-        assert render(FilterSpec()) == ""
-        assert parse("") == FilterSpec()
+    The grammar has no escape for a quote inside a string literal, so a tag
+    like ``don't-index`` rendered to text and re-parsed came back as
+    ``dont-index`` — a rule that could never match the real tag.
+    """
 
-    def test_unrecognised_clause_is_kept_verbatim_in_raw(self) -> None:
-        spec = parse("Course == 'DPwC'")
-        assert spec.raw == ("Course == 'DPwC'",)
-        assert parse(render(spec)) == spec
+    def test_a_tag_containing_a_quote_still_matches(self, tmp_path: Path) -> None:
+        class _OsTags:
+            id = "os"
 
-    @settings(max_examples=150, deadline=None)
-    @given(
-        kinds=st.lists(st.sampled_from(["pdf", "md", "txt", "docx"]), unique=True, max_size=4),
-        tags=st.lists(
-            st.text(alphabet="abcdefghijklmnopqrstuvwxyz_", min_size=1, max_size=8),
-            unique=True,
-            max_size=3,
-        ),
-        max_size=st.one_of(st.none(), st.integers(min_value=1, max_value=10**12)),
-        created=st.one_of(st.none(), st.dates()),
-    )
-    def test_round_trip_property(
-        self,
-        kinds: list[str],
-        tags: list[str],
-        max_size: int | None,
-        created: dt.date | None,
-    ) -> None:
-        spec = FilterSpec(
-            kinds=tuple(kinds),
-            exclude_tags=tuple(tags),
-            max_size=max_size,
-            created_after=created,
-        )
-        assert parse(render(spec)) == spec
+            def available_on(self, platform: str) -> bool:
+                return True
+
+            def read(self, ctx: object) -> frozenset[str]:
+                return frozenset({"don't-index"})
+
+        f = tmp_path / "n.md"
+        f.write_text("x", encoding="utf-8")
+        facts = FileFacts(f, root=tmp_path, tag_providers=[_OsTags()])  # type: ignore[list-item]
+        assert build_gate(FilterSpec(exclude_tags=("don't-index",))).passes(facts) is False
+        assert build_gate(FilterSpec(exclude_tags=("other",))).passes(facts) is True
 
 
 class TestOrCaptureRegression:
