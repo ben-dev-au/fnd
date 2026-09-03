@@ -90,6 +90,9 @@ class _PrefixingSearcher:
     def __init__(self, inner: Searcher, *, prefix: str) -> None:
         self._inner = inner
         self._prefix = prefix.strip()
+        # Passes that build their own boolean query (cascade's fuzzy pass)
+        # read this instead of the lexical string, which carries no prefix.
+        self.filter_prefix = self._prefix
 
     def _wrap(self, query: str) -> str:
         if not self._prefix:

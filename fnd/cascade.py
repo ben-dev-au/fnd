@@ -214,10 +214,13 @@ def _fuzzy_pass(
         )
         subqueries.append((tantivy.Occur.Must, tantivy.Query.const_score_query(src_q, 0.0)))
     # Apply the same field/range/collection hard filters as the literal pass, so
-    # widening to fuzzy can't leak docs the user's qualifiers excluded.
+    # widening to fuzzy can't leak docs the user's qualifiers excluded. The
+    # prefix rides on the searcher; ``query`` is the bare lexical string.
     from fnd.query_filters import extract_filters
 
-    for filt in extract_filters(query, schema, searcher._index).filters:
+    prefix = searcher.filter_prefix
+    filter_source = f"{prefix} {query}" if prefix else query
+    for filt in extract_filters(filter_source, schema, searcher._index).filters:
         subqueries.append((tantivy.Occur.Must, tantivy.Query.const_score_query(filt, 0.0)))
     # Tags are typed state rather than query text, so extract_filters can't
     # see them; without this the fuzzy pass re-admits tag-excluded files.

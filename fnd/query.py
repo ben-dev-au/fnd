@@ -326,6 +326,11 @@ def _parse_query(index: Index, query: str, **kwargs: object) -> Query:
 class Searcher:
     """Single-pass searcher against an existing fnd index."""
 
+    # Hard-filter clauses every pass must honour, as query text. Wrappers that
+    # scope a search set it; passes building their own boolean query read it
+    # rather than the lexical string, which carries no qualifiers.
+    filter_prefix: str = ""
+
     def __init__(self, *, index_dir: Path) -> None:
         self._index = _open_index(index_dir)
         self._index.reload()
