@@ -113,6 +113,9 @@ class MenuItem:
     hint: str = ""
     coerce: Callable[[str], Any] | None = None
     value_getter: Callable[[FNDApp], str] | None = None
+    # Takes precedence over ``setting_path``, for a row that edits screen-local
+    # state rather than the config file.
+    scalar_setter: Callable[[FNDApp, Any], None] | None = None
 
     # TOGGLE
     toggle_getter: Callable[[FNDApp], bool] | None = None
@@ -2057,10 +2060,173 @@ def _provider_indexing_pdf_texture(app: FNDApp) -> tuple[MenuItem, ...]:
     indexing_items = tuple(
         _dc.replace(item, subsection="Indexing") for item in _provider_indexing(app)
     )
+    filter_items = tuple(
+        _dc.replace(item, subsection="Index filters") for item in _provider_index_filters(app)
+    )
     pdf_texture_items = tuple(
         _dc.replace(item, subsection="PDF Texture") for item in _provider_pdf_texture(app)
     )
-    return shared + indexing_items + pdf_texture_items
+    return shared + indexing_items + filter_items + pdf_texture_items
+
+
+# ── Index filters ────────────────────────────────────────────────────
+
+
+def _filters_defaults(app: FNDApp) -> Any:
+    """``[defaults.filters]``, or the shipped defaults under a config-less stub."""
+    from fnd.config import DefaultFilters
+
+    cfg = app._config  # type: ignore[attr-defined]
+    return cfg.defaults.filters if cfg else DefaultFilters()
+
+
+def _get_filter_toggle(field_name: str) -> Callable[[FNDApp], bool]:
+    def _g(app: FNDApp) -> bool:
+        return bool(getattr(_filters_defaults(app), field_name))
+
+    return _g
+
+
+def _get_filter_list(field_name: str) -> Callable[[FNDApp], str]:
+    def _g(app: FNDApp) -> str:
+        return ", ".join(getattr(_filters_defaults(app), field_name, []) or [])
+
+    return _g
+
+
+def _get_filter_text(field_name: str) -> Callable[[FNDApp], str]:
+    def _g(app: FNDApp) -> str:
+        return str(getattr(_filters_defaults(app), field_name, "") or "")
+
+    return _g
+
+
+def _coerce_optional_int(raw: str) -> int | None:
+    text = raw.strip().replace("_", "").replace(",", "")
+    return int(text) if text else None
+
+
+def _provider_index_filters(_app: FNDApp) -> tuple[MenuItem, ...]:
+    """Filters applied while indexing, inherited by every source."""
+    return (
+        MenuItem(
+            id="filters.respect_gitignore",
+            label="Respect .gitignore",
+            description=(
+                "Skip files a .gitignore excludes, with git's own rules — nested "
+                "files, negations and directory patterns. Note a .gitignore says "
+                "what git should not track, which is not always what you want "
+                "unsearchable: large PDFs are often excluded from a repo but are "
+                "exactly what you want to find. Needs a reindex to take effect."
+            ),
+            kind=KIND_TOGGLE,
+            toggle_getter=_get_filter_toggle("respect_gitignore"),
+            toggle_setter=lambda app, v: _setting_writer("defaults.filters.respect_gitignore")(
+                app, v
+            ),
+            setting_path="defaults.filters.respect_gitignore",
+            keywords=("git", "gitignore", "ignore", "exclude", "repo"),
+        ),
+        MenuItem(
+            id="filters.respect_fndignore",
+            label="Respect .fndignore",
+            description=(
+                "Skip files a .fndignore excludes. Same syntax as .gitignore, but "
+                "read only by fnd — the way to hide something from search without "
+                "also hiding it from git. Needs a reindex to take effect."
+            ),
+            kind=KIND_TOGGLE,
+            toggle_getter=_get_filter_toggle("respect_fndignore"),
+            toggle_setter=lambda app, v: _setting_writer("defaults.filters.respect_fndignore")(
+                app, v
+            ),
+            setting_path="defaults.filters.respect_fndignore",
+            keywords=("fndignore", "ignore", "exclude", "hide"),
+        ),
+        MenuItem(
+            id="filters.exclude_tags",
+            label="Skip files tagged",
+            description=(
+                "Comma-separated Finder tags that keep a file out of the index"
+                + (". " if os_labels.is_macos() else " (macOS only — inert here). ")
+                + "Reads the tag, never the file, so it costs nothing to scan. "
+                "To exclude on a note's YAML tags, use the frontmatter filter "
+                "below. Matched case-insensitively. Needs a reindex."
+            ),
+            kind=KIND_SCALAR,
+            setting_path="defaults.filters.exclude_tags",
+            hint="no_index, draft",
+            coerce=_coerce_str_list,
+            value_getter=_get_filter_list("exclude_tags"),
+            keywords=("tag", "tags", "no_index", "skip", "exclude", "finder"),
+        ),
+        MenuItem(
+            id="filters.kinds",
+            label="Index only these file types",
+            description=(
+                "Restrict indexing to the chosen types. Leave empty to index "
+                "every supported type. A source's own Includes still apply on "
+                "top. Needs a reindex to take effect."
+            ),
+            kind=KIND_PICKER,
+            multi=True,
+            groups_provider=_filter_kind_groups,
+            picker_getter=lambda app: list(_filters_defaults(app).kinds or []),
+            picker_setter=_setting_writer("defaults.filters.kinds"),
+            keywords=("kind", "type", "filetype", "pdf", "markdown", "restrict"),
+        ),
+        MenuItem(
+            id="filters.max_size",
+            label="Maximum file size",
+            description=(
+                "Skip files larger than this many bytes. Empty means no limit. "
+                "Useful for keeping multi-hundred-megabyte scans out of the "
+                "index. Needs a reindex to take effect."
+            ),
+            kind=KIND_SCALAR,
+            setting_path="defaults.filters.max_size",
+            hint="bytes, e.g. 50000000",
+            coerce=_coerce_optional_int,
+            value_getter=lambda app: str(_filters_defaults(app).max_size or ""),
+            keywords=("size", "large", "big", "limit", "bytes", "maximum"),
+        ),
+        MenuItem(
+            id="filters.expression",
+            label="Custom filter expression",
+            description=(
+                "An expression every file must satisfy, over file.kind, "
+                "file.size, file.modified, file.tags.all and the like. Written "
+                "for you by the rows above; edit directly for anything they "
+                "cannot express. Needs a reindex to take effect."
+            ),
+            kind=KIND_SCALAR,
+            setting_path="defaults.filters.expression",
+            hint="file.size < 50000000",
+            value_getter=_get_filter_text("expression"),
+            keywords=("expression", "custom", "advanced", "dsl", "filter", "rule"),
+        ),
+        MenuItem(
+            id="filters.frontmatter",
+            label="Frontmatter filter",
+            description=(
+                "An expression a note's YAML frontmatter must satisfy, e.g. "
+                "Status != 'archived'. Applies to notes only — every other file "
+                "type passes through untouched. Needs a reindex to take effect."
+            ),
+            kind=KIND_SCALAR,
+            setting_path="defaults.filters.frontmatter",
+            hint="Status != 'archived'",
+            value_getter=_get_filter_text("frontmatter"),
+            keywords=("frontmatter", "yaml", "note", "metadata", "filter"),
+        ),
+    )
+
+
+def _filter_kind_groups(_app: FNDApp) -> list[Any]:
+    """Category -> kind, the same tree the source Includes picker shows."""
+    from fnd.tui.settings_screen import _includes_groups
+
+    return _includes_groups()
 
 
 def _is_pdf_structure_installed() -> bool:

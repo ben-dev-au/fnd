@@ -13,7 +13,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
-from fnd.file_facts import FileFacts, is_fact_name
+from fnd.file_facts import FileFacts
 from fnd.filter_dsl import Predicate
 
 __all__ = ["FileGate", "FilterSpec", "Rule", "Unknown"]
@@ -59,7 +59,7 @@ class Rule:
         return kind in self.applies_to
 
     def _has_unknown(self, facts: FileFacts) -> bool:
-        return any(is_fact_name(name) and facts.is_unknown(name) for name in self.facts)
+        return any(facts.is_unknown(name) for name in self.facts)
 
 
 @dataclass(frozen=True, slots=True)

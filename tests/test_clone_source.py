@@ -14,6 +14,7 @@ import pytest
 from fnd.config import (
     CollectionConfig,
     SourceConfig,
+    SourceFilters,
     clone_source,
     load,
     write_collection,
@@ -30,6 +31,13 @@ def _setup_two_collections(tmp_path: Path) -> Path:
         excludes=["**/.git/**", "**/drafts/**"],
         follow_symlinks=True,
         frontmatter_filter="type == 'note'",
+        filters=SourceFilters(
+            respect_gitignore=False,
+            exclude_tags=["no_index", "wip"],
+            kinds=["md"],
+            max_size=1000,
+            expression="file.size >= 1",
+        ),
         app="obsidian",
         app_for={"md": "obsidian", "pdf": "skim"},
         app_params={"vault": "MyVault"},
@@ -79,6 +87,7 @@ def test_clone_preserves_every_field_including_app_refs(tmp_path: Path) -> None:
     assert cloned.excludes == original.excludes
     assert cloned.follow_symlinks == original.follow_symlinks
     assert cloned.frontmatter_filter == original.frontmatter_filter
+    assert cloned.filters == original.filters
     assert cloned.app == original.app
     assert cloned.app_for == original.app_for
     assert cloned.app_params == original.app_params

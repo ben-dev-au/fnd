@@ -26,6 +26,7 @@ naturally; no pre-popping or manual back stacks.
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -1459,7 +1460,9 @@ class SettingsScreen(Screen[None]):
         app: FNDApp = self.app  # type: ignore[assignment]
         item = ev.item
         try:
-            if item.setting_path:
+            if item.scalar_setter is not None:
+                item.scalar_setter(app, ev.value)
+            elif item.setting_path:
                 from fnd.config import default_config_path, load, write_setting
 
                 write_setting(
@@ -1685,6 +1688,144 @@ class PickerScreen(Screen[None]):
             self.notify(_summarise(e), severity="error", title="Save failed")
 
 
+# Typed in a list/text override to mean "override to empty", which an empty
+# box cannot say — there it means "inherit".
+_OVERRIDE_EMPTY = "-"
+
+
+def _inherit_label(value: object) -> str:
+    if value is None or value == "" or value == []:
+        return "(none)"
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(v) for v in value)
+    return str(value)
+
+
+def _source_filter_items(
+    overrides: dict[str, Any], inherited: Any, on_change: Callable[[], None]
+) -> tuple[MenuItem, ...]:
+    """Per-source overrides over ``[defaults.filters]``.
+
+    Booleans are three-state (inherit / yes / no), so a picker rather than a
+    toggle; an unset field shows what it inherits.
+    """
+    from fnd.tui.menu import _coerce_str_list
+
+    def _set(field: str) -> Callable[[FNDApp, Any], None]:
+        def _apply(_app: FNDApp, value: Any) -> None:
+            if value is None or value == "":
+                overrides.pop(field, None)
+            elif value == _OVERRIDE_EMPTY:
+                overrides[field] = []
+            else:
+                overrides[field] = value
+            on_change()
+
+        return _apply
+
+    def _bool_row(field: str, label: str, description: str) -> MenuItem:
+        return MenuItem(
+            id=f"srcfilter.{field}",
+            label=label,
+            description=f"{description} Unset inherits the global setting "
+            f"({_inherit_label(getattr(inherited, field))}).",
+            kind=KIND_PICKER,
+            choices_provider=lambda _app: [
+                ChoiceOption(value=None, label="Inherit"),
+                ChoiceOption(value=True, label="Yes"),
+                ChoiceOption(value=False, label="No"),
+            ],
+            picker_getter=lambda _app, f=field: overrides.get(f),
+            picker_setter=_set(field),
+            keywords=("filter", "source", field),
+        )
+
+    def _text_row(
+        field: str, label: str, description: str, hint: str, *, as_list: bool
+    ) -> MenuItem:
+        def _getter(_app: FNDApp, f: str = field) -> str:
+            if f not in overrides:
+                return ""
+            value = overrides[f]
+            if value in ([], ""):
+                return _OVERRIDE_EMPTY
+            return ", ".join(value) if isinstance(value, list) else str(value)
+
+        def _coerce(raw: str, f: str = field) -> Any:
+            text = raw.strip()
+            if not text:
+                return None
+            if text == _OVERRIDE_EMPTY:
+                return [] if as_list else ""
+            if as_list:
+                return _coerce_str_list(text)
+            from fnd.filter_dsl import parse_or_error
+
+            _pred, err = parse_or_error(text)
+            if err is not None:
+                raise ValueError(f"col {err.column}: {err.message}")
+            return text
+
+        return MenuItem(
+            id=f"srcfilter.{field}",
+            label=label,
+            description=(
+                f"{description} Empty inherits the global setting "
+                f"({_inherit_label(getattr(inherited, field))}); "
+                f"'{_OVERRIDE_EMPTY}' overrides it to nothing."
+            ),
+            kind=KIND_SCALAR,
+            hint=hint,
+            coerce=_coerce,
+            value_getter=_getter,
+            scalar_setter=_set(field),
+            keywords=("filter", "source", field),
+        )
+
+    return (
+        _bool_row("respect_gitignore", "Respect .gitignore", "Skip files a .gitignore excludes."),
+        _bool_row("respect_fndignore", "Respect .fndignore", "Skip files a .fndignore excludes."),
+        _text_row(
+            "exclude_tags",
+            "Skip files tagged",
+            "Comma-separated tags that keep a file out of the index.",
+            "no_index, draft",
+            as_list=True,
+        ),
+        _text_row(
+            "kinds",
+            "Index only these file types",
+            "Comma-separated kind ids, e.g. pdf, md.",
+            "pdf, md",
+            as_list=True,
+        ),
+        _text_row(
+            "expression",
+            "Custom filter expression",
+            "An expression every file in this source must satisfy.",
+            "file.size < 50000000",
+            as_list=False,
+        ),
+        _text_row(
+            "frontmatter",
+            "Frontmatter filter",
+            "An expression a note's frontmatter must satisfy; other kinds pass through.",
+            "Status != 'archived'",
+            as_list=False,
+        ),
+    )
+
+
+def _source_filters_or_none(raw: dict[str, Any] | None) -> Any:
+    """Sparse overrides as a ``SourceFilters``, or ``None`` when nothing is set."""
+    from fnd.config import SourceFilters
+
+    cleaned = {k: v for k, v in (raw or {}).items() if v not in (None, "", [], {})}
+    return SourceFilters.model_validate(cleaned) if cleaned else None
+
+
 def _includes_groups() -> list[ToggleGroup]:
     """Category → kind model for the Includes nested picker (all registry
     kinds, since a source can index any supported type)."""
@@ -1874,6 +2015,8 @@ class SourceFormScreen(Screen[None]):
             # surface today; other params still reachable via the TOML.
             "app": "",
             "app_params_vault": "",
+            # Sparse SourceFilters overrides; empty means "inherit everything".
+            "filters": {},
         }
         # Snapshot the current source (if editing) for cancel and the
         # "needs reindex on save" check.
@@ -1941,6 +2084,7 @@ class SourceFormScreen(Screen[None]):
             "follow_symlinks": bool(s.follow_symlinks),
             "app": s.app or "",
             "app_params_vault": (s.app_params or {}).get("vault", ""),
+            "filters": s.filters.model_dump(exclude_none=True) if s.filters else {},
         }
         self._snapshot = {
             "path": self._fields["path"],
@@ -1952,7 +2096,29 @@ class SourceFormScreen(Screen[None]):
             "follow_symlinks": self._fields["follow_symlinks"],
             "app": self._fields["app"],
             "app_params_vault": self._fields["app_params_vault"],
+            "filters": copy.deepcopy(self._fields["filters"]),
         }
+
+    def _open_filters(self) -> None:
+        from fnd.config import DefaultFilters
+
+        app: FNDApp = self.app  # type: ignore[assignment]
+        cfg = app._config  # type: ignore[attr-defined]
+        inherited = cfg.defaults.filters if cfg else DefaultFilters()
+        overrides = self._fields["filters"]
+        self.app.push_screen(
+            SettingsScreen(
+                breadcrumb=("Settings", "Collections", self._collection_name, "Index filters"),
+                items=_source_filter_items(overrides, inherited, self._populate_fields),
+                provider=lambda _app: _source_filter_items(
+                    overrides, inherited, self._populate_fields
+                ),
+            )
+        )
+
+    def _filters_summary(self) -> str:
+        overrides = self._fields.get("filters") or {}
+        return f"{len(overrides)} overridden" if overrides else "inherited"
 
     def _populate_fields(self) -> None:
         self.query_one(SettingsList).set_items(self._build_field_items())
@@ -1995,6 +2161,18 @@ class SourceFormScreen(Screen[None]):
                 picker_setter=lambda _app, vs: self._set_excludes(vs),
             ),
             self._field_item("filter", "Filter", hint="frontmatter DSL"),
+            MenuItem(
+                id="form.filters",
+                label="Index filters",
+                description=(
+                    "Ignore files, skipped tags, file types and size for this "
+                    "source. Each setting inherits the global default until you "
+                    "override it here."
+                ),
+                kind=KIND_EXTERNAL,
+                external=lambda _app: self._open_filters(),
+                value_getter=lambda _app: self._filters_summary(),
+            ),
             MenuItem(
                 id="form.follow_symlinks",
                 label="Follow symlinks",
@@ -2316,6 +2494,7 @@ class SourceFormScreen(Screen[None]):
                 excludes=excludes_globs,
                 follow_symlinks=bool(self._fields["follow_symlinks"]),
                 frontmatter_filter=(str(self._fields["filter"]) or None),
+                filters=_source_filters_or_none(self._fields["filters"]),
                 app=app_id or None,
                 app_params=app_params,
             )
@@ -2788,6 +2967,7 @@ class AddCollectionWizard(Screen[None]):
             excludes=excludes_globs,
             follow_symlinks=bool(self._fields["follow_symlinks"]),
             frontmatter_filter=(str(self._fields["filter"]).strip() or None),
+            filters=_source_filters_or_none(self._fields.get("filters", {})),
         )
         new_collection = CollectionConfig(sources=[source])
         config_path = default_config_path()

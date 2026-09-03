@@ -14,6 +14,7 @@ Phase 5.5e-1 adds :class:`SourceConfig` + multi-source collections + the
 
 from __future__ import annotations
 
+import contextlib
 import re
 import sys
 import tomllib
@@ -21,7 +22,7 @@ from collections.abc import Collection
 from pathlib import Path
 from typing import Any, Final, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from fnd.kinds import ALL_KIND_IDS, CATEGORY_IDS, KIND_SPECS
 from fnd.paths import app_data_dir  # re-exported: many modules import it from here
@@ -213,6 +214,76 @@ def is_all_collections(value: str | None, *, known: Collection[str] = ()) -> boo
     return value.strip().casefold() == ALL_COLLECTIONS
 
 
+class DefaultFilters(BaseModel):
+    """``[defaults.filters]`` — every field concrete, so it can be the base a
+    per-source override resolves against."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    respect_gitignore: bool = True
+    respect_fndignore: bool = True
+    # OS-level tags only (macOS Finder). Reading a tag is one xattr; reading a
+    # note's YAML tags would mean opening every candidate during enumeration,
+    # which is what ``frontmatter`` is for.
+    exclude_tags: list[str] = Field(default_factory=lambda: ["no_index"])
+    kinds: list[str] = Field(default_factory=list)
+    min_size: int | None = None
+    max_size: int | None = None
+    frontmatter: str | None = None
+    expression: str | None = None
+
+    @field_validator("frontmatter", "expression")
+    @classmethod
+    def _validate_expression(cls, v: str | None) -> str | None:
+        return _compiled_or_error(v, "filters")
+
+
+class SourceFilters(BaseModel):
+    """Per-source overrides. ``None`` inherits ``[defaults.filters]``; the two
+    models are distinct types so "unset" is never confused with "set to the
+    same value as the default"."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    respect_gitignore: bool | None = None
+    respect_fndignore: bool | None = None
+    exclude_tags: list[str] | None = None
+    kinds: list[str] | None = None
+    min_size: int | None = None
+    max_size: int | None = None
+    frontmatter: str | None = None
+    expression: str | None = None
+
+    @field_validator("frontmatter", "expression")
+    @classmethod
+    def _validate_expression(cls, v: str | None) -> str | None:
+        return _compiled_or_error(v, "filters")
+
+
+def _compiled_or_error(value: str | None, label: str) -> str | None:
+    """Compile eagerly so a syntax error surfaces at load with its column."""
+    if value is None or not value.strip():
+        return None
+    from fnd.filter_dsl import FilterError, compile_filter
+
+    try:
+        compile_filter(value)
+    except FilterError as e:
+        raise ValueError(f"{label}: {e.message} (col {e.column})") from e
+    return value
+
+
+def resolve_filters(source: SourceFilters | None, defaults: DefaultFilters) -> DefaultFilters:
+    """Per-field override; an unset field takes the default's value."""
+    if source is None:
+        return defaults
+    merged = defaults.model_dump()
+    for field_name, value in source.model_dump().items():
+        if value is not None:
+            merged[field_name] = value
+    return DefaultFilters.model_validate(merged)
+
+
 class SourceConfig(BaseModel):
     """One root path inside a collection with its own filter chain.
 
@@ -227,6 +298,7 @@ class SourceConfig(BaseModel):
     excludes: list[str] = Field(default_factory=list)
     follow_symlinks: bool = False
     frontmatter_filter: str | None = None
+    filters: SourceFilters | None = None
     # When set, this app id is used for any of its declared ``handles``
     # — sugar for the common single-app case.
     app: str | None = None
@@ -237,6 +309,22 @@ class SourceConfig(BaseModel):
     # apps registry templates. Common keys: ``vault`` (Obsidian vault
     # name).
     app_params: dict[str, str] = Field(default_factory=dict)
+
+    # Populated by :class:`Config` once the defaults are known. Private so it
+    # never reaches the TOML writer, which must emit only what the user set.
+    _resolved_filters: DefaultFilters | None = PrivateAttr(default=None)
+
+    @property
+    def effective_filters(self) -> DefaultFilters:
+        """Overrides merged over the defaults.
+
+        Falls back to the shipped defaults for a source built outside a
+        :class:`Config`, so an ad-hoc walk filters the same way a configured
+        one does.
+        """
+        if self._resolved_filters is not None:
+            return self._resolved_filters
+        return resolve_filters(self.filters, DefaultFilters())
 
     @field_validator("path", mode="before")
     @classmethod
@@ -504,6 +592,10 @@ class Defaults(BaseModel):
     # :data:`DEFAULT_JUNK_DIRS`. Matched by basename only — e.g.
     # ``["build", "dist"]`` skips any ``build/`` or ``dist/`` subtree.
     extra_junk_dirs: list[str] = Field(default_factory=list)
+    # Index-time filters every source inherits. A source's own ``filters``
+    # table overrides these per field. Changing them needs a reindex — the
+    # next incremental run prunes anything newly excluded.
+    filters: DefaultFilters = Field(default_factory=DefaultFilters)
 
 
 class Config(BaseModel):
@@ -520,6 +612,20 @@ class Config(BaseModel):
     # ``BUILTIN_APPS | self.apps``. Missing entries fall through to the
     # system default at open time.
     app_defaults: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _resolve_source_filters(self) -> Config:
+        """Fold ``[defaults.filters]`` into every source once, here.
+
+        Doing it at load keeps ``walk_sources(sources=…)`` a one-argument call,
+        so the eight callers that never learned about defaults — the PDF
+        inventories, cost estimates and texture maintenance among them — stay
+        in step with the indexer by construction.
+        """
+        for collection in self.collections.values():
+            for source in collection.sources:
+                source._resolved_filters = resolve_filters(source.filters, self.defaults.filters)
+        return self
 
     @model_validator(mode="after")
     def _validate_app_refs(self) -> Config:
@@ -759,6 +865,10 @@ def _source_to_tomlkit_table(source: SourceConfig) -> Any:
         table["follow_symlinks"] = source.follow_symlinks
     if source.frontmatter_filter:
         table["frontmatter_filter"] = source.frontmatter_filter
+    if source.filters is not None:
+        emitted = source.filters.model_dump(exclude_none=True)
+        if emitted:
+            table["filters"] = emitted
     if source.app is not None:
         table["app"] = source.app
     if source.app_for:
@@ -821,6 +931,9 @@ def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Conf
     - ``ranking.default.recency_boost``
     - ``collections.default.ranking_profile``
 
+    A ``value`` of ``None`` removes the key: TOML has no null, so clearing an
+    optional setting means the key is absent.
+
     Preserves comments and unrelated tables via ``tomlkit``. The full
     document is re-validated through :class:`Config` after the in-memory
     edit; on validation failure the on-disk file is **not** modified and
@@ -846,7 +959,13 @@ def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Conf
             cursor = new_tbl
         else:
             cursor = existing
-    cursor[leaf] = value  # type: ignore[index]
+    if value is None:
+        # TOML has no null, so an emptied optional setting is the absence of
+        # the key. Writing None instead raises out of tomlkit.
+        with contextlib.suppress(KeyError):
+            del cursor[leaf]  # type: ignore[union-attr]
+    else:
+        cursor[leaf] = value  # type: ignore[index]
 
     # Validate the full document before committing to disk. Re-parsing the
     # tomlkit dump gives us a plain dict — Pydantic doesn't accept tomlkit's
@@ -998,6 +1117,20 @@ path = "~/Documents"
 excludes = ["**/.git/**", "**/.DS_Store", "**/__pycache__/**"]
 # follow_symlinks = false
 # frontmatter_filter = "type == 'note'"  # md sources only — DSL described in docs.
+# Index-time filters. These override [defaults.filters] field by field;
+# anything left out is inherited.
+# [collections.default.sources.filters]
+# respect_gitignore = false
+# exclude_tags = ["no_index", "draft"]
+# max_size = 50_000_000
+# expression = "file.modified >= 2020-01-01"
+
+# Index-time filters inherited by every source. Files an ignore file or a
+# tag excludes never enter the index; the next update prunes any already in.
+# [defaults.filters]
+# respect_gitignore = true
+# respect_fndignore = true
+# exclude_tags = ["no_index"]
 
 # Example second collection — uncomment to use:
 # [[collections.notes.sources]]

@@ -319,6 +319,37 @@ commented starter template), then `fnd config validate` to check it. UI edits
 preserve your comments and formatting, so hand-editing and the Settings UI mix
 freely.
 
+### Keeping files out of the index
+
+Filters at index time decide what gets indexed at all, as opposed to the
+Filters pane, which narrows what an already-built index returns. They live in
+`[defaults.filters]` and, per source, in a `[…sources.filters]` table that
+overrides the defaults field by field. Settings → **Indexing & PDF Texture →
+Index filters** edits the defaults; a source's own **Index filters** row edits
+its overrides.
+
+| Filter | What it does |
+| --- | --- |
+| `respect_gitignore` | Honours every `.gitignore` down the tree, with git's rules — negation, directory patterns, nearest file wins. **On by default.** |
+| `respect_fndignore` | The same syntax in a `.fndignore`, read only by fnd — how to hide something from search without hiding it from git. **On by default.** |
+| `exclude_tags` | Tags that keep a file out. **macOS Finder tags only**, because reading a tag is one attribute lookup while reading a note's YAML tags means opening every candidate file. Defaults to `["no_index"]`. |
+| `kinds` | Restrict to given file types. Empty means every supported type. |
+| `min_size` / `max_size` | Bytes. Keeps multi-hundred-megabyte scans out. |
+| `frontmatter` | A frontmatter predicate — the same `[…]` syntax as a query. **Notes only**; every other file type passes through. Use this to exclude on a YAML tag: `NOT ('no_index' in tags)`. |
+| `expression` | A predicate over any file, using `file.kind`, `file.size`, `file.modified`, `file.tags.os`, `file.path` and the like. The rows above are written in terms of it. |
+
+Enabling a filter does not need a rebuild: the next update prunes anything
+newly excluded. Two things worth knowing before you turn `respect_gitignore`
+off and on:
+
+> **A `.gitignore` says what git should not track, which is not always what you
+> want unsearchable.** Large PDFs — textbooks, lecture slides — are commonly
+> kept out of a repository precisely because they are big, and those are often
+> exactly the documents you want to find.
+
+> **Finder tags are macOS-only.** On Linux and Windows `exclude_tags` is inert;
+> `.fndignore` and the `frontmatter` filter are the portable equivalents.
+
 ## Configuration
 
 The config lives in your platform's app-data directory (run `fnd config path` to
@@ -348,6 +379,15 @@ follow_symlinks = false
 path               = "~/Notes"
 includes           = ["**/*.md"]
 frontmatter_filter = "Status == 'published' AND NOT ('private' in tags)"  # md only
+
+# Index-time filters every source inherits. A source's own [filters] table
+# overrides these field by field; anything left out is inherited.
+[defaults.filters]
+respect_gitignore = true            # honour .gitignore, with git's own rules
+respect_fndignore = true            # same syntax, read only by fnd
+exclude_tags      = ["no_index"]    # macOS Finder tags — see the note below
+# max_size        = 50_000_000
+# expression      = "file.modified >= 2020-01-01"
 
 # Default app per file type for the `o` shortcut. Built-in ids:
 # system, obsidian, vscode (all OSes); skim, preview, pdf_expert (macOS);

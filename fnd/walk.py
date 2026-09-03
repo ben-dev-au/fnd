@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import fnmatch
 import os
-from collections.abc import Callable, Iterable, Iterator
+import sys
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
     from fnd.config import SourceConfig
 
 from fnd.extract import supported_suffixes
+from fnd.ignore_files import IgnoreStack, ancestor_stack, load_ignore_file
 
 
 def _matches_any(globs: list[str], rel_str: str) -> bool:
@@ -99,6 +101,7 @@ def walk(
     excludes: list[str] | None = None,
     follow_symlinks: bool = False,
     skip_dirs: frozenset[str] | None = None,
+    ignore_names: Sequence[str] = (),
 ) -> Iterator[Path]:
     """Yield supported files under ``roots`` in deterministic order.
 
@@ -107,6 +110,9 @@ def walk(
     :data:`fnd.config.DEFAULT_JUNK_DIRS` so callers that don't pass this
     parameter get the expected developer-junk prune. Pass ``frozenset()``
     to disable the prune entirely (legacy behaviour).
+
+    ``ignore_names`` names the ignore files to honour (``.gitignore``,
+    ``.fndignore``); empty disables the mechanism entirely.
     """
     if skip_dirs is None:
         # Late import: fnd.config imports fnd.walk transitively, so keep
@@ -146,6 +152,7 @@ def walk(
             inc_targets_hidden=inc_targets_hidden,
             follow_symlinks=follow_symlinks,
             skip_dirs=skip_dirs,
+            ignore_names=ignore_names,
         )
 
 
@@ -168,6 +175,7 @@ def _scandir_walk(
     inc_targets_hidden: bool,
     follow_symlinks: bool,
     skip_dirs: frozenset[str],
+    ignore_names: Sequence[str] = (),
 ) -> Iterator[Path]:
     """DFS via ``os.scandir`` so excluded directories aren't descended.
 
@@ -179,14 +187,27 @@ def _scandir_walk(
     # An index directory used directly as a scan root would otherwise have its
     # internals (Tantivy meta.json, the schema sidecar, …) yielded — the
     # per-child guard below only catches index dirs *nested* under the root.
-    stack: list[Path] = [] if _is_index_dir(str(root)) else [root]
+    base = ancestor_stack(root, ignore_names)
+    stack: list[tuple[Path, IgnoreStack]] = [] if _is_index_dir(str(root)) else [(root, base)]
     while stack:
-        current = stack.pop()
+        current, inherited = stack.pop()
         try:
             with os.scandir(current) as it:
                 entries = sorted(it, key=lambda e: e.name)
         except (OSError, PermissionError):
             continue
+        # Read this directory's ignore files only when scandir already proved
+        # they exist, so a tree without any costs no extra syscalls.
+        scope = inherited
+        if ignore_names:
+            present = {e.name for e in entries}
+            # A directory holding .git is a repository root: git applies no
+            # outer .gitignore inside it, so neither do we. Nested repos are
+            # common in a corpus of cloned assignments.
+            outer = IgnoreStack() if ".git" in present else inherited
+            scope = outer.push(
+                *(load_ignore_file(current, n) for n in ignore_names if n in present)
+            )
 
         for entry in entries:
             name = entry.name
@@ -214,7 +235,10 @@ def _scandir_walk(
                 # target hidden files for a different reason.
                 if name.startswith(".") and not inc_targets_hidden:
                     continue
-                stack.append(Path(entry.path))
+                child = Path(entry.path)
+                if scope and scope.ignored(child, is_dir=True):
+                    continue
+                stack.append((child, scope))
                 continue
 
             if not is_file:
@@ -248,6 +272,8 @@ def _scandir_walk(
                 continue
             if exc and _matches_any(exc, rel_str):
                 continue
+            if scope and scope.ignored(entry_path, is_dir=False):
+                continue
 
             yield entry_path
 
@@ -260,11 +286,10 @@ def walk_sources(
 ) -> Iterator[Path]:
     """Yield in-scope paths across every source.
 
-    Per source: applies includes/excludes via :func:`walk`, then on
-    ``.md`` files runs the source's frontmatter filter. Frontmatter parse
-    errors and missing-field strict-null cases drop the file silently —
-    the indexer will eventually log them via ``fnd status --errors``
-    (phase 10).
+    Per source: ``walk`` applies includes/excludes and the ignore files, then
+    the source's resolved filters gate each candidate (:mod:`fnd.filters`).
+    Frontmatter parse errors and missing-field strict-null cases drop the file
+    silently — the indexer logs them via ``fnd status --errors``.
 
     ``skip_dirs`` is forwarded to :func:`walk`. Indexer entry points
     resolve this from ``defaults.skip_junk_dirs`` + ``extra_junk_dirs``;
@@ -278,30 +303,62 @@ def walk_sources(
     Defaults to a plain read.
     """
     from fnd.config import SourceConfig  # local import: avoid cycle
-    from fnd.filter_dsl import compile_filter
-    from fnd.frontmatter import (
-        FrontmatterParseError,
-        read_frontmatter_from_file,
-    )
-
-    read = read_frontmatter or read_frontmatter_from_file
+    from fnd.file_facts import FileFacts
+    from fnd.filters import FilterSpec, build_gate
+    from fnd.filters.dimensions import NOTE_KINDS, dimension, rule_from_text
+    from fnd.ignore_files import IGNORE_FILENAMES
+    from fnd.tags import TAG_PROVIDERS
 
     for source in sources:
         assert isinstance(source, SourceConfig)
-        predicate = compile_filter(source.frontmatter_filter) if source.frontmatter_filter else None
+        resolved = source.effective_filters
+        # Tag exclusion reads OS tags only: one xattr per file, no content.
+        # Frontmatter tags would mean opening every candidate during
+        # enumeration — the shape of the scan stall, and it would move cloud
+        # fetches out of the reported per-file phase. A frontmatter filter is
+        # the explicit way to exclude on YAML tags.
+        gate = build_gate(
+            FilterSpec(
+                kinds=tuple(resolved.kinds),
+                min_size=resolved.min_size,
+                max_size=resolved.max_size,
+                expression=resolved.expression or "",
+            )
+        )
+        tag_rule = dimension("exclude_tags_os").rule(tuple(resolved.exclude_tags))
+        # Scoped to note kinds: strict null would otherwise fail a frontmatter
+        # comparison on every PDF and drop the lot.
+        scoped = [
+            rule_from_text(text, applies_to=NOTE_KINDS)
+            for text in (source.frontmatter_filter, resolved.frontmatter)
+            if text
+        ]
+        rules = gate.rules + ((tag_rule,) if tag_rule else ()) + tuple(scoped)
+        names = [
+            name
+            for name, on in (
+                (".gitignore", resolved.respect_gitignore),
+                (".fndignore", resolved.respect_fndignore),
+            )
+            if on and name in IGNORE_FILENAMES
+        ]
+        providers = [p for p in TAG_PROVIDERS.values() if p.available_on(sys.platform)]
         for path in walk(
             roots=[source.path],
             includes=source.includes or None,
             excludes=source.excludes or None,
             follow_symlinks=source.follow_symlinks,
             skip_dirs=skip_dirs,
+            ignore_names=names,
         ):
-            if predicate is None or path.suffix.lower() != ".md":
+            if not rules:
                 yield path
                 continue
-            try:
-                fm = read(path) or {}
-            except FrontmatterParseError:
-                continue
-            if predicate(fm):
+            facts = FileFacts(
+                path,
+                root=source.path,
+                read_frontmatter=read_frontmatter,
+                tag_providers=providers,
+            )
+            if all(rule.passes(facts) for rule in rules):
                 yield path

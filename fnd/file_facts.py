@@ -104,7 +104,7 @@ class FileFacts(Mapping[str, object]):
         self._cache: dict[str, object] = {}
         self._fm: dict[str, object] = {}
         self._fm_read = False
-        self._tag_cache: dict[str, tuple[str, ...]] | None = None
+        self._tag_cache: dict[str, dict[str, tuple[str, ...]]] = {}
 
     # ── Mapping ──────────────────────────────────────────────────
 
@@ -134,7 +134,11 @@ class FileFacts(Mapping[str, object]):
     # ── Unknown-vs-absent ────────────────────────────────────────
 
     def is_unknown(self, key: str) -> bool:
-        """True when a reserved fact exists but could not be determined."""
+        """True when a reserved fact exists but could not be determined.
+
+        A frontmatter key is never unknown, only absent — the strict-null rule
+        already drops a file whose frontmatter does not answer the question.
+        """
         if not is_fact_name(key):
             return False
         if key not in self._cache:
@@ -144,21 +148,23 @@ class FileFacts(Mapping[str, object]):
     # ── Computation ──────────────────────────────────────────────
 
     def _frontmatter(self) -> dict[str, object]:
-        if not self._fm_read:
-            self._fm_read = True
-            try:
-                self._fm = self._read_fm(self._path) or {}
-            except (FrontmatterParseError, OSError, ValueError):
-                # A malformed or unreadable file has no frontmatter; it must
-                # not take the index run down with it.
-                self._fm = {}
+        if self._fm_read:
+            return self._fm
+        self._fm_read = True
+        try:
+            self._fm = self._read_fm(self._path) or {}
+        except (FrontmatterParseError, OSError, ValueError):
+            # A malformed or unreadable file has no frontmatter; it must not
+            # take the index run down with it.
+            self._fm = {}
         return self._fm
 
     def _compute_fact(self, key: str) -> object:
         if key not in RESERVED_FACTS:
             return _UNKNOWN
         if key in _TAG_FACTS:
-            return self._tags().get(_TAG_FACTS[key], ())
+            source = _TAG_FACTS[key]
+            return self._tags(only=source).get(source, ())
         match key:
             case "file.path":
                 return self._relative()
@@ -196,16 +202,27 @@ class FileFacts(Mapping[str, object]):
             return _UNKNOWN
         return dt.datetime.fromtimestamp(stamp, tz=dt.UTC).date()
 
-    def _tags(self) -> dict[str, tuple[str, ...]]:
-        if self._tag_cache is not None:
-            return self._tag_cache
-        ctx = TagContext(path=self._path, frontmatter=self._frontmatter() or None)
+    def _tags(self, *, only: str | None = None) -> dict[str, tuple[str, ...]]:
+        """Tags per provider, computing only the provider a fact names.
+
+        ``file.tags.os`` must not parse frontmatter: it is read for every
+        candidate during enumeration, where opening files is what caused the
+        scan stall.
+        """
+        cache_key = only or "*"
+        cached = self._tag_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        providers = [p for p in self._providers if only is None or p.id == only]
+        needs_content = any(p.id != "os" for p in providers)
+        ctx = TagContext(
+            path=self._path,
+            frontmatter=(self._frontmatter() or None) if needs_content else None,
+        )
         # Sorted tuples, not frozensets: the DSL's membership test rejects any
         # container it cannot order, and tuples keep rendering deterministic.
-        by_source = {
-            src: tuple(sorted(vals)) for src, vals in read_tags(ctx, self._providers).items()
-        }
-        self._tag_cache = by_source
+        by_source = {src: tuple(sorted(vals)) for src, vals in read_tags(ctx, providers).items()}
+        self._tag_cache[cache_key] = by_source
         return by_source
 
     def _relative(self) -> str:
