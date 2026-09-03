@@ -269,6 +269,11 @@ class SourceFilters(BaseModel):
     @field_validator("frontmatter", "expression")
     @classmethod
     def _validate_expression(cls, v: str | None) -> str | None:
+        # Empty is kept, not folded to None: here it means "this source has no
+        # expression", which differs from "inherit" whenever the defaults set
+        # one. The defaults model normalises it away again on resolution.
+        if v is not None and not v.strip():
+            return ""
         return _compiled_or_error(v, "filters")
 
 

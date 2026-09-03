@@ -39,6 +39,15 @@ class TestDottedIdents:
         assert parse("file.size < 50_000_000") == Compare("file.size", "<", 50_000_000)
         assert compile_filter("file.size < 50_000_000")({"file.size": 10}) is True
 
+    @pytest.mark.parametrize("text", ["a < 1__0", "a < 1_", "a < _1"])
+    def test_malformed_separators_are_rejected(self, text: str) -> None:
+        """Doubled or trailing separators are a parse error, as in TOML."""
+        with pytest.raises(FilterError):
+            compile_filter(text)
+
+    def test_a_separator_inside_a_float_works(self) -> None:
+        assert parse("a < 1_000.5") == Compare("a", "<", 1000.5)
+
     def test_a_leading_underscore_is_still_an_identifier(self) -> None:
         assert parse("_key == 1") == Compare("_key", "==", 1)
 

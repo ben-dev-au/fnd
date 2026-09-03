@@ -274,3 +274,28 @@ class TestSymlinkedRoot:
         spec = DefaultFilters(expression="file.hidden == false")
         got = {p.name for p in walk_sources(sources=_sources(link / "notes", defaults=spec))}
         assert got == {"plain.md"}
+
+
+class TestOverrideToNothing:
+    """A source can opt out of a global exclusion, not just change it.
+
+    ``-`` in a per-source row stores an empty override. Treating that as
+    "untouched" reinstated the global value, so the opt-out was a no-op.
+    """
+
+    def test_an_emptied_expression_exempts_the_source(self, tmp_path: Path) -> None:
+        _write(tmp_path, "big.md", "x" * 500)
+        globals_ = DefaultFilters(expression="file.size < 10")
+        assert _names(tmp_path, defaults=globals_) == set()
+
+        override = {"expression": ""}
+        assert _names(tmp_path, defaults=globals_, filters=override) == {"big.md"}
+
+    def test_an_emptied_kind_list_exempts_the_source(self, tmp_path: Path) -> None:
+        _write(tmp_path, "a.md")
+        _write(tmp_path, "b.txt")
+        globals_ = DefaultFilters(kinds=["md"])
+        assert _names(tmp_path, defaults=globals_) == {"a.md"}
+
+        override = {"kinds": []}
+        assert _names(tmp_path, defaults=globals_, filters=override) == {"a.md", "b.txt"}

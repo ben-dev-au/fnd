@@ -88,7 +88,8 @@ _OPERATORS = ("==", "!=", "<=", ">=", "~~", "<", ">")
 
 
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
-_NUMBER_RE = re.compile(r"\d[\d_]*(\.\d[\d_]*)?")
+# Separators sit between digits, as TOML requires: 50_000_000 but not 1__0 or 1_.
+_NUMBER_RE = re.compile(r"\d+(?:_\d+)*(?:\.\d+(?:_\d+)*)?")
 _BARE_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_\-.]*")
 
 

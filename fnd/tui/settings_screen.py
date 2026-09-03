@@ -1834,8 +1834,22 @@ def _source_filter_items(
             as_list=False,
         ),
         _text_row(
+            "created_before",
+            "Created on or before",
+            "ISO date; a fixed bound, not a rolling window.",
+            "2024-01-01",
+            as_list=False,
+        ),
+        _text_row(
             "modified_after",
             "Modified on or after",
+            "ISO date; a fixed bound, not a rolling window.",
+            "2024-01-01",
+            as_list=False,
+        ),
+        _text_row(
+            "modified_before",
+            "Modified on or before",
             "ISO date; a fixed bound, not a rolling window.",
             "2024-01-01",
             as_list=False,
@@ -1858,10 +1872,15 @@ def _source_filter_items(
 
 
 def _source_filters_or_none(raw: dict[str, Any] | None) -> Any:
-    """Sparse overrides as a ``SourceFilters``, or ``None`` when nothing is set."""
+    """Sparse overrides as a ``SourceFilters``, or ``None`` when none are set.
+
+    Only ``None`` means "inherit". An empty list is the explicit override to
+    nothing — the row's ``-`` — so dropping it here would silently reinstate
+    the global value the user was overriding.
+    """
     from fnd.config import SourceFilters
 
-    cleaned = {k: v for k, v in (raw or {}).items() if v not in (None, "", [], {})}
+    cleaned = {k: v for k, v in (raw or {}).items() if v is not None}
     return SourceFilters.model_validate(cleaned) if cleaned else None
 
 

@@ -121,15 +121,39 @@ async def test_an_override_marks_the_form_dirty_and_an_unchanged_one_does_not(
         assert form._snapshot != form._fields, "an override must be seen as a change"
 
 
-def test_source_filters_or_none_drops_empty_overrides() -> None:
+def test_only_an_unset_field_inherits() -> None:
+    """``-`` overrides to nothing; an untouched field inherits.
+
+    Treating an empty list as untouched made the row's own ``-`` a no-op, so
+    a source could not be exempted from a global exclusion.
+    """
     from fnd.tui.settings_screen import _source_filters_or_none
 
     assert _source_filters_or_none({}) is None
-    assert _source_filters_or_none({"exclude_tags": []}) is None
+    assert _source_filters_or_none({"respect_gitignore": None}) is None
+
+    emptied = _source_filters_or_none({"exclude_tags": []})
+    assert emptied is not None, "an explicit empty override must survive"
+    assert emptied.exclude_tags == []
+
     got = _source_filters_or_none({"respect_gitignore": False})
     assert got is not None
     assert got.respect_gitignore is False
     assert got.exclude_tags is None, "an untouched field must stay unset so it inherits"
+
+
+def test_an_emptied_override_beats_the_global_default() -> None:
+    """End to end: the source keeps files the defaults would have excluded."""
+    from fnd.config import DefaultFilters, SourceFilters, resolve_filters
+    from fnd.tui.settings_screen import _source_filters_or_none
+
+    defaults = DefaultFilters(exclude_tags=["no_index"], expression="file.size < 10")
+    emptied = _source_filters_or_none({"exclude_tags": [], "expression": ""})
+    assert isinstance(emptied, SourceFilters)
+
+    resolved = resolve_filters(emptied, defaults)
+    assert resolved.exclude_tags == []
+    assert resolved.expression is None
 
 
 def test_optional_scalars_clear_to_unset() -> None:
