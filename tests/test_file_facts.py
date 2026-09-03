@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -111,6 +113,19 @@ class TestFactValues:
     def test_dates_are_date_objects(self, tmp_path: Path) -> None:
         facts = _facts(tmp_path)
         assert isinstance(facts["file.modified"], dt.date)
+
+    @pytest.mark.parametrize("hour", [0, 9, 23])
+    def test_dates_are_the_local_calendar_day(self, tmp_path: Path, hour: int) -> None:
+        """A bound names the day the user typed, so the fact must be local.
+
+        Rendered in UTC, a morning edit east of Greenwich reads as the
+        previous day and a file touched on the bound date is dropped.
+        """
+        f = tmp_path / "n.md"
+        f.write_text("x", encoding="utf-8")
+        stamp = time.mktime((2024, 1, 1, hour, 0, 0, 0, 0, -1))
+        os.utime(f, (stamp, stamp))
+        assert FileFacts(f, root=tmp_path)["file.modified"] == dt.date(2024, 1, 1)
 
     def test_tags_are_ordered_tuples_the_dsl_can_search(self, tmp_path: Path) -> None:
         facts = _facts(

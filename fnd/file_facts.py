@@ -200,7 +200,10 @@ class FileFacts(Mapping[str, object]):
         # the epoch — reporting it as a real date would filter on a lie.
         if stamp <= 0:
             return _UNKNOWN
-        return dt.datetime.fromtimestamp(stamp, tz=dt.UTC).date()
+        # Local, not UTC: a bound names the calendar day the user typed. East
+        # of UTC a morning edit reads as the previous day in UTC, so a file
+        # touched on the bound date would be dropped.
+        return dt.datetime.fromtimestamp(stamp).date()
 
     def _tags(self, *, only: str | None = None) -> dict[str, tuple[str, ...]]:
         """Tags per provider, computing only the provider a fact names.
