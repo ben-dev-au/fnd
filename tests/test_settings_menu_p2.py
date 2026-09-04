@@ -1,4 +1,4 @@
-"""Phase 2 — Settings menu UI/UX behaviours.
+"""Settings menu UI/UX behaviours.
 
 Covers the redesign concerns the user raised:
 
@@ -53,6 +53,7 @@ async def test_root_menu_is_short_list_of_categories(built_index: Path) -> None:
         assert labels == [
             "Preferences",
             "Collections",
+            "Filters",
             "Keybindings",
             "Indexing & PDF Texture",
             "External",
@@ -61,9 +62,10 @@ async def test_root_menu_is_short_list_of_categories(built_index: Path) -> None:
         ]
         # The External row is a header; everything else is selectable.
         kinds = [it.kind for it in lst._items]
-        assert kinds[4] == KIND_HEADER
-        assert kinds[:4] == [KIND_EXTERNAL] * 4
-        assert kinds[5:] == [KIND_EXTERNAL, KIND_EXTERNAL]
+        divider = labels.index("External")
+        assert kinds[divider] == KIND_HEADER
+        assert kinds[:divider] == [KIND_EXTERNAL] * divider
+        assert kinds[divider + 1 :] == [KIND_EXTERNAL, KIND_EXTERNAL]
         # Cursor skips the header and lands on the first selectable row.
         assert lst._items[lst.cursor_index].label == "Preferences"
 

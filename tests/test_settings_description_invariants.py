@@ -1,4 +1,4 @@
-"""Phase G — invariants on every selectable MenuItem.
+"""Invariants on every selectable MenuItem.
 
 Run as a sweep across every provider so a future drift catches the
 test instead of a user finding it:
@@ -44,6 +44,42 @@ def _all_selectable() -> list[MenuItem]:
     for sid in _SECTION_IDS:
         items.extend(section_items(app, sid))
     return [it for it in items if it.kind != KIND_HEADER]
+
+
+@pytest.mark.asyncio
+async def test_rows_needing_a_real_config_also_carry_descriptions(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The sweep above walks providers with no config, so the screens that
+    need one — a collection, its sources, the source form — were never
+    reached, and rows there shipped bare."""
+    from fnd.config import CollectionConfig, SourceConfig, write_collection
+    from fnd.tui import FNDApp
+    from fnd.tui.menu import _provider_collection, _provider_sources
+    from fnd.tui.settings_screen import SettingsList, SourceFormScreen
+
+    cfg_path = tmp_path / "config.toml"
+    root = tmp_path / "vault"
+    root.mkdir()
+    write_collection(
+        config_path=cfg_path,
+        name="probe",
+        collection=CollectionConfig(sources=[SourceConfig(path=root)]),
+    )
+    from fnd.config import load
+
+    app = FNDApp(index_dir=None, config=load(cfg_path))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        rows: list[MenuItem] = [
+            *_provider_collection(app, "probe"),
+            *_provider_sources(app, "probe"),
+        ]
+        app.push_screen(SourceFormScreen(collection_name="probe", source_index=0))
+        for _ in range(30):
+            await pilot.pause()
+        rows.extend(app.screen.query_one(SettingsList)._items)
+
+    bare = [it.id for it in rows if it.kind != KIND_HEADER and len(it.description or "") < 9]
+    assert not bare, f"rows with no usable description: {bare}"
 
 
 def test_every_row_has_a_user_facing_description() -> None:

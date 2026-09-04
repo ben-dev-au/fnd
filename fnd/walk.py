@@ -1,6 +1,6 @@
 """Filesystem walker — yield supported files under a collection's roots.
 
-Includes/excludes precedence per plan §8:
+Includes/excludes precedence:
 
 1. A path is in scope only if it lives under one of ``roots``.
 2. If ``includes`` is set, the path must match at least one ``includes`` glob.
@@ -313,7 +313,7 @@ def walk_sources(
     from fnd.config import SourceConfig  # local import: avoid cycle
     from fnd.file_facts import FileFacts
     from fnd.filters import FilterSpec, build_gate
-    from fnd.filters.dimensions import NOTE_KINDS, rule_from_text
+    from fnd.filters.dimensions import NOTE_KINDS, rule_from_text, tag_selection
     from fnd.ignore_files import IGNORE_FILENAMES
     from fnd.tags import TAG_PROVIDERS
 
@@ -323,8 +323,8 @@ def walk_sources(
         gate = build_gate(
             FilterSpec(
                 kinds=tuple(resolved.kinds),
-                include_tags=tuple(resolved.include_tags),
-                exclude_tags=tuple(resolved.exclude_tags),
+                include_tags=tag_selection(resolved.include_tags),
+                exclude_tags=tag_selection(resolved.exclude_tags),
                 min_size=resolved.min_size,
                 max_size=resolved.max_size,
                 created_after=resolved.created_after,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -385,3 +386,57 @@ class TestTypeGlobAbsorption:
             for p in walk_sources(sources=_sources(tmp_path, defaults=DefaultFilters(kinds=["md"])))
         }
         assert globbed == kinded == {"a.md"}
+
+
+class TestTagsAreNotConflated:
+    """A system tag and a note's ``tags:`` entry sharing a word are different
+    statements about a file, and each is filterable on its own."""
+
+    @staticmethod
+    def _corpus(root: Path) -> None:
+        import plistlib
+        import subprocess
+
+        _write(root, "yaml_draft.md", "---\ntags: [draft]\n---\nbody\n")
+        _write(root, "os_draft.md", "plain note\n")
+        _write(root, "clean.md", "nothing\n")
+        blob = plistlib.dumps(["draft"], fmt=plistlib.FMT_BINARY).hex()
+        subprocess.run(
+            [
+                "xattr",
+                "-wx",
+                "com.apple.metadata:_kMDItemUserTags",
+                blob,
+                str(root / "os_draft.md"),
+            ],
+            check=True,
+        )
+
+    @pytest.mark.skipif(sys.platform != "darwin", reason="system tags are macOS-only")
+    @pytest.mark.parametrize(
+        ("selection", "kept"),
+        [
+            ({"frontmatter": ["draft"]}, {"clean.md", "os_draft.md"}),
+            ({"os": ["draft"]}, {"clean.md", "yaml_draft.md"}),
+            (["draft"], {"clean.md"}),
+        ],
+    )
+    def test_excluding_one_source_leaves_the_other(
+        self, tmp_path: Path, selection: object, kept: set[str]
+    ) -> None:
+        self._corpus(tmp_path)
+        spec = DefaultFilters(exclude_tags=selection)  # type: ignore[arg-type]
+        assert _names(tmp_path, defaults=spec) == kept
+
+    @pytest.mark.skipif(sys.platform != "darwin", reason="system tags are macOS-only")
+    def test_including_one_source_admits_only_it(self, tmp_path: Path) -> None:
+        self._corpus(tmp_path)
+        spec = DefaultFilters(include_tags={"os": ["draft"]}, exclude_tags=[])
+        assert _names(tmp_path, defaults=spec) == {"os_draft.md"}
+
+    def test_a_bare_list_still_means_every_source(self, tmp_path: Path) -> None:
+        """The rule ``--tag`` already uses, so one list keeps working."""
+        _write(tmp_path, "yaml_draft.md", "---\ntags: [draft]\n---\nbody\n")
+        _write(tmp_path, "clean.md", "nothing\n")
+        spec = DefaultFilters(exclude_tags=["draft"])
+        assert _names(tmp_path, defaults=spec) == {"clean.md"}

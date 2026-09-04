@@ -1,15 +1,13 @@
 """Config + filesystem locations.
 
-Per plan §6: a single TOML file owned by the user with collections, defaults,
-and ranking profiles. ``fnd config edit`` is the read-modify-write entry
-point; ``fnd collection add`` appends a new ``[[sources]]`` table via
-``tomlkit``, preserving comments and unrelated tables.
+A single TOML file owned by the user, holding collections, defaults and
+ranking profiles. ``fnd config edit`` is the read-modify-write entry point;
+``fnd collection add`` appends a new ``[[sources]]`` table via ``tomlkit``,
+preserving comments and unrelated tables.
 
-Phase 3 covers: defaults, collections (roots/includes/excludes/follow_symlinks).
-Phase 7 adds ranking profiles (recency boost / filetype boost / phrase
-proximity) — wired into :class:`fnd.rerank.RankingProfile` at search time.
-Phase 5.5e-1 adds :class:`SourceConfig` + multi-source collections + the
-``frontmatter_filter`` DSL (parsed eagerly via :mod:`fnd.filter_dsl`).
+Ranking profiles are wired into :class:`fnd.rerank.RankingProfile` at search
+time. A collection holds :class:`SourceConfig` entries, each with its own
+filter chain.
 """
 
 from __future__ import annotations
@@ -226,9 +224,12 @@ class DefaultFilters(BaseModel):
     # Every tag source: OS tags and a note's YAML ``tags:``. The latter opens
     # each note during enumeration, which the indexer's reader bounds and
     # reports exactly as it does for ``frontmatter``.
-    # Index only files carrying one of these, the tag rows' ● state.
-    include_tags: list[str] = Field(default_factory=list)
-    exclude_tags: list[str] = Field(default_factory=lambda: ["no_index"])
+    # A bare list claims every tag source; a table names them:
+    #   exclude_tags = ["no_index"]
+    #   [defaults.filters.exclude_tags]
+    #   os = ["archive"]
+    include_tags: list[str] | dict[str, list[str]] = Field(default_factory=list)
+    exclude_tags: list[str] | dict[str, list[str]] = Field(default_factory=lambda: ["no_index"])
     kinds: list[str] = Field(default_factory=list)
     min_size: int | None = None
     max_size: int | None = None
@@ -257,8 +258,8 @@ class SourceFilters(BaseModel):
 
     respect_gitignore: bool | None = None
     respect_fndignore: bool | None = None
-    include_tags: list[str] | None = None
-    exclude_tags: list[str] | None = None
+    include_tags: list[str] | dict[str, list[str]] | None = None
+    exclude_tags: list[str] | dict[str, list[str]] | None = None
     kinds: list[str] | None = None
     min_size: int | None = None
     max_size: int | None = None
@@ -461,8 +462,8 @@ class CollectionConfig(BaseModel):
 class RankingProfileConfig(BaseModel):
     """User-facing knobs that map onto :class:`fnd.rerank.RankingProfile`.
 
-    ``bm25_k1`` / ``bm25_b`` are accepted for forward-compat (§21 Spike A:
-    Tantivy hardcodes them upstream) and silently ignored at runtime.
+    ``bm25_k1`` / ``bm25_b`` are accepted for forward-compat and silently
+    ignored at runtime: tantivy hardcodes them upstream.
     """
 
     recency_boost: float = 0.0
@@ -474,7 +475,7 @@ class RankingProfileConfig(BaseModel):
     # BM25-ranked results. >0 enables this as an extra post-rank nudge.
     phrase_proximity: float = 0.0
     proximity_max_window: int = 50
-    # forward-compat (currently ignored — see §21 Spike A)
+    # Forward-compat; ignored, as tantivy hardcodes these.
     bm25_k1: float | None = None
     bm25_b: float | None = None
 
@@ -484,7 +485,7 @@ class AppConfig(BaseModel):
 
     Exactly one of ``argv`` (process exec) and ``url`` (deep-link via
     ``open <url>``) must be set. Template variables use ``{name}``-style
-    placeholders; see ``docs/apps/README.md`` for the full variable list.
+    placeholders; see ``docs/apps.md`` for the full variable list.
     Built-in apps (``system``, ``preview``, ``skim``, ``pdf_expert``,
     ``obsidian``, ``vscode``) ship in :mod:`fnd.apps` and do NOT appear
     here unless the user is overriding them.
@@ -646,7 +647,7 @@ class Config(BaseModel):
     collections: dict[str, CollectionConfig] = Field(default_factory=dict)
     ranking: dict[str, RankingProfileConfig] = Field(default_factory=dict)
     # User-extensible app registry. Keys are app ids referenced by
-    # ``app_defaults`` and (Phase 2) per-source app fields. Built-in
+    # ``app_defaults`` and the per-source app fields. Built-in
     # apps live in :mod:`fnd.apps`; entries here override built-ins on
     # id collision.
     apps: dict[str, AppConfig] = Field(default_factory=dict)
@@ -894,7 +895,7 @@ def _source_to_tomlkit_table(source: SourceConfig) -> Any:
     """Serialise ``source`` to a tomlkit Table. Single point that owns
     the source-field → TOML mapping so :func:`write_collection_source`,
     :func:`write_collection`, and :func:`clone_source` all preserve the
-    same set of optional fields (including the Phase 2 app refs).
+    same set of optional fields, app references included.
     """
     import tomlkit
 
@@ -1101,7 +1102,7 @@ def clone_source(
 
     The clone is a true deep copy — edits to the new entry don't
     propagate back to the original. Uses :func:`_source_to_tomlkit_table`
-    so every persisted field (including Phase 2 ``app`` / ``app_for`` /
+    so every persisted field (``app`` / ``app_for`` /
     ``app_params``) round-trips.
     """
     validate_collection_name(source_collection)
@@ -1277,7 +1278,7 @@ excludes = ["**/.git/**", "**/.DS_Store", "**/__pycache__/**"]
 # md  = "obsidian"  # or "vscode" / "system"
 # txt = "vscode"
 
-# User-defined apps. See docs/apps/ for ready-to-paste configs for common
+# User-defined apps. See docs/apps.md for ready-to-paste configs for common
 # third-party apps. Each entry sets exactly one of `argv` (process exec)
 # or `url` (deep-link via `open <url>`). Template variables: {path},
 # {path_pct}, {page}, {line}, {heading}, {heading_pct}, {query},

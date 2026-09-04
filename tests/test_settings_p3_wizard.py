@@ -1,4 +1,4 @@
-"""Phase 3 (Settings UX redesign) — Add Collection wizard tests."""
+"""Settings UX redesign — Add Collection wizard tests."""
 
 from __future__ import annotations
 

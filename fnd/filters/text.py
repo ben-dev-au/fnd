@@ -19,7 +19,7 @@ def build_gate(spec: FilterSpec) -> FileGate:
         if dim.id == "frontmatter":
             continue
         value = getattr(spec, dim.id, None)
-        if value in (None, (), "", []):
+        if value in (None, (), "", [], {}):
             continue
         rule = dim.rule(value)
         if rule is not None:

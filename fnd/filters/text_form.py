@@ -18,13 +18,29 @@ import re
 
 from fnd.filter_dsl import And, Compare, FieldIn, FilterError, In, Not, Or
 from fnd.filter_dsl import parse as parse_dsl
-from fnd.filters.dimensions import NOTE_KINDS
+from fnd.filters.dimensions import NOTE_KINDS, dimension
 from fnd.filters.model import FilterSpec
 
 __all__ = ["parse", "render"]
 
 _BARE = re.compile(r"[A-Za-z_][A-Za-z0-9_\-.]*\Z")
-_TAG_FACT = "file.tags.all"
+
+
+def _tag_sources(fact: str) -> tuple[str, ...] | None:
+    """Which tag sources a ``file.tags.*`` fact names, or None if it is not one.
+
+    Derived from the registry so a new tag source needs no edit here.
+    ``file.tags.all`` names every source, which is how a bare config list is
+    expanded too.
+    """
+    from fnd.tags import TAG_PROVIDERS
+
+    if fact == "file.tags.all":
+        return tuple(TAG_PROVIDERS)
+    source = fact.removeprefix("file.tags.")
+    return (source,) if source in TAG_PROVIDERS else None
+
+
 _COMPARISONS: dict[tuple[str, str], str] = {
     ("file.size", ">="): "min_size",
     ("file.size", "<="): "max_size",
@@ -91,11 +107,13 @@ def render(spec: FilterSpec) -> str:
     clauses: list[str] = []
     if spec.kinds:
         clauses.append(f"file.kind in [{', '.join(_value(k) for k in spec.kinds)}]")
-    if spec.include_tags:
-        # One OR clause: carrying any of them is enough.
-        clauses.append(" OR ".join(f"{_value(t)} in {_TAG_FACT}" for t in spec.include_tags))
-    for tag in spec.exclude_tags:
-        clauses.append(f"NOT ({_value(tag)} in {_TAG_FACT})")
+    # Rendered by the dimensions themselves: they own how a tag names its
+    # source, and this second copy drifted — the qualifier leaked into the tag
+    # value, so 'os:archive' re-parsed as 'os:os:archive'.
+    for dim_id in ("include_tags", "exclude_tags"):
+        text = dimension(dim_id).render(getattr(spec, dim_id))
+        if text:
+            clauses.append(text)
     for field_name, (fact, op) in _BY_FIELD.items():
         value = getattr(spec, field_name, None)
         if value is not None:
@@ -135,22 +153,38 @@ def _match_frontmatter(node: object) -> str | None:
     return _unparse(node.right)
 
 
-def _tag_in(node: object) -> str | None:
-    """``'x' in file.tags.all`` — one alternative of an include clause."""
-    if isinstance(node, In) and node.field == _TAG_FACT and not node.negated:
-        return str(node.value)
-    return None
+def _tag_in(node: object) -> dict[str, tuple[str, ...]] | None:
+    """``'x' in file.tags.<source>`` as ``{source: (tag,)}``.
+
+    Keyed by source, so a rule about Finder tags does not come back as a rule
+    about every tag.
+    """
+    if not isinstance(node, In) or node.negated:
+        return None
+    sources = _tag_sources(node.field)
+    if sources is None:
+        return None
+    return {s: (str(node.value),) for s in sources}
 
 
-def _include_tags(node: object) -> tuple[str, ...] | None:
+def _merge_tags(
+    a: dict[str, tuple[str, ...]], b: dict[str, tuple[str, ...]]
+) -> dict[str, tuple[str, ...]]:
+    out = {k: tuple(v) for k, v in a.items()}
+    for source, tags in b.items():
+        out[source] = tuple(dict.fromkeys(out.get(source, ()) + tags))
+    return out
+
+
+def _include_tags(node: object) -> dict[str, tuple[str, ...]] | None:
     """A single tag membership, or an ``OR`` chain of nothing else."""
     single = _tag_in(node)
     if single is not None:
-        return (single,)
+        return single
     if not isinstance(node, Or):
         return None
     left, right = _include_tags(node.left), _include_tags(node.right)
-    return None if left is None or right is None else left + right
+    return None if left is None or right is None else _merge_tags(left, right)
 
 
 def _recognise(node: object) -> tuple[str, object] | None:
@@ -159,10 +193,10 @@ def _recognise(node: object) -> tuple[str, object] | None:
     included = _include_tags(node)
     if included is not None:
         return "include_tags", included
-    if isinstance(node, Not) and isinstance(node.operand, In):
-        inner = node.operand
-        if inner.field == _TAG_FACT and not inner.negated:
-            return "exclude_tags", str(inner.value)
+    if isinstance(node, Not):
+        excluded = _tag_in(node.operand)
+        if excluded is not None:
+            return "exclude_tags", excluded
     if isinstance(node, Compare):
         field_name = _COMPARISONS.get((node.field, node.op))
         if field_name is not None:
@@ -185,7 +219,7 @@ def parse(text: str) -> FilterSpec:
     if not stripped:
         return FilterSpec()
     updates: dict[str, object] = {}
-    tags: list[str] = []
+    tags: dict[str, tuple[str, ...]] = {}
     leftover: list[str] = []
     for clause in _split_and(parse_dsl(stripped)):
         found = _recognise(clause)
@@ -194,13 +228,16 @@ def parse(text: str) -> FilterSpec:
             continue
         name, value = found
         if name == "include_tags":
-            updates["include_tags"] = tuple(dict.fromkeys(value))  # type: ignore[arg-type]
+            updates["include_tags"] = _merge_tags(
+                updates.get("include_tags", {}),  # type: ignore[arg-type]
+                value,  # type: ignore[arg-type]
+            )
         elif name == "exclude_tags":
-            tags.append(str(value))
+            tags = _merge_tags(tags, value)  # type: ignore[arg-type]
         else:
             updates[name] = value
     if tags:
-        updates["exclude_tags"] = tuple(dict.fromkeys(tags))
+        updates["exclude_tags"] = tags
     if leftover:
         updates["expression"] = leftover[0]
         if len(leftover) > 1:

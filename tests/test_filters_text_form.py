@@ -101,13 +101,21 @@ class TestTextInformsTheRows:
         assert parse("file.kind in ['pdf', 'md']").kinds == ("pdf", "md")
 
     def test_a_typed_tag_clause_becomes_the_tags_row(self) -> None:
-        assert parse("NOT ('no_index' in file.tags.all)").exclude_tags == ("no_index",)
+        every = parse("NOT ('no_index' in file.tags.all)").exclude_tags
+        assert set(every) == {"os", "frontmatter"}
+        assert all(tags == ("no_index",) for tags in every.values())
 
-    def test_a_single_provider_survives_as_an_expression(self) -> None:
-        """The row means any source; naming one is still the user's to keep."""
+    def test_naming_a_tag_source_becomes_a_qualified_row(self) -> None:
+        """A Finder tag and a note tag sharing a word are different rules."""
         spec = parse("NOT ('no_index' in file.tags.os)")
-        assert spec.exclude_tags == ()
-        assert "file.tags.os" in spec.expression
+        assert spec.exclude_tags == {"os": ("no_index",)}
+        assert spec.expression == ""
+
+    def test_a_qualified_tag_round_trips(self) -> None:
+        spec = FilterSpec(
+            exclude_tags={"os": ("archive", "shared"), "frontmatter": ("draft", "shared")}
+        )
+        assert parse(render(spec)).exclude_tags == spec.exclude_tags
 
     def test_a_typed_size_clause_becomes_the_size_row(self) -> None:
         spec = parse("file.size <= 50_000_000")
@@ -159,7 +167,7 @@ class TestValuesCarryingAQuote:
     )
     def test_a_tag_round_trips_verbatim(self, tag: str) -> None:
         spec = FilterSpec(exclude_tags=(tag,))
-        assert parse(render(spec)).exclude_tags == (tag,)
+        assert parse(render(spec)).exclude_tags == spec.exclude_tags
 
 
 class TestFieldNamesCarryingAQuote:
@@ -175,21 +183,21 @@ class TestIncludeTags:
     def test_one_included_tag_round_trips(self) -> None:
         spec = FilterSpec(include_tags=("readings",))
         assert render(spec) == "'readings' in file.tags.all"
-        assert parse(render(spec)).include_tags == ("readings",)
+        assert parse(render(spec)).include_tags == spec.include_tags
 
     def test_several_are_one_or_clause(self) -> None:
         """Carrying any of them is enough, so they must not become AND."""
         spec = FilterSpec(include_tags=("a", "b", "c"))
-        assert parse(render(spec)).include_tags == ("a", "b", "c")
+        assert parse(render(spec)).include_tags == spec.include_tags
 
     def test_include_and_exclude_survive_together(self) -> None:
         spec = FilterSpec(include_tags=("keep",), exclude_tags=("drop",))
         back = parse(render(spec))
-        assert back.include_tags == ("keep",)
-        assert back.exclude_tags == ("drop",)
+        assert back.include_tags == spec.include_tags
+        assert back.exclude_tags == spec.exclude_tags
 
     def test_an_or_of_something_else_stays_an_expression(self) -> None:
         """Only a pure tag-membership OR is a row; anything else is raw text."""
         spec = parse("'a' in file.tags.all OR file.size > 10")
-        assert spec.include_tags == ()
+        assert spec.include_tags == {}
         assert "file.size" in spec.expression

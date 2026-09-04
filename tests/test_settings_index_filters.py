@@ -19,23 +19,27 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_the_indexing_screen_has_one_filters_row(built_index: Path) -> None:
-    """One drill into the browser, not a column of typed fields."""
-    from fnd.tui.menu import SECTION_INDEXING_PDF_TEXTURE
+async def test_the_filters_screen_splits_index_from_query(built_index: Path) -> None:
+    """One drill into the browser, and the two kinds of filter kept apart.
+
+    ``tag_sources`` takes effect immediately while everything above it needs a
+    reindex; on one undifferentiated list that difference is invisible.
+    """
+    from fnd.tui.menu import KIND_HEADER, SECTION_FILTERS
     from fnd.tui.settings_screen import SettingsList, SettingsScreen, open_settings_section
 
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
-        open_settings_section(app, SECTION_INDEXING_PDF_TEXTURE)
+        open_settings_section(app, SECTION_FILTERS)
         await settings_ready(pilot, app)
         assert isinstance(app.screen, SettingsScreen)
         items = app.screen.query_one(SettingsList)._items
-        filter_rows = [it for it in items if it.id.startswith("filters.")]
-        assert [it.id for it in filter_rows] == ["filters.browse"], (
-            f"expected one filters row, got {[it.id for it in filter_rows]}"
-        )
-        assert filter_rows[0].subsection == "Index filters"
+        assert [it.id for it in items if it.id.endswith(".browse")] == ["filters.browse"]
+        headers = [it.label for it in items if it.kind == KIND_HEADER]
+        assert headers == ["What gets indexed", "What a search returns"]
+        order = [it.id for it in items]
+        assert order.index("filters.browse") < order.index("filters.tag_sources")
 
 
 @pytest.mark.asyncio
@@ -279,22 +283,42 @@ async def test_the_source_scan_does_not_block_the_screen(built_index: Path) -> N
             if not screen._scanning:
                 break
         assert not screen._scanning, "the sample never arrived"
-        tags = next(n for n in tree.root.children if "Tags" in str(n.label))
+        # One tag source needs no parent level, so the branch is named for it.
+        tags = next(n for n in tree.root.children if "tags" in str(n.label).lower())
         assert any("slowtag" in str(c.label) for c in tags.children)
         assert "scanning" not in str(screen.query_one("#filter_summary").render())
 
 
 @pytest.mark.asyncio
-async def test_the_two_filter_rows_are_not_both_called_filter(built_index: Path) -> None:
-    """'Filter' sat directly above 'Index filters'; the drill looked like a
-    no-op because Enter on the scalar above it opens a text field."""
-    from fnd.tui.settings_screen import SettingsList, SourceFormScreen
+async def test_the_frontmatter_rule_lives_with_the_other_filters(built_index: Path) -> None:
+    """It sat beside Index filters as its own row, so the two could hold
+    different answers to the same question and neither showed the other's."""
+    from fnd.tui.settings_screen import FilterBrowserScreen, SettingsList, SourceFormScreen
+    from fnd.tui.widgets.toggle_tree import ToggleTree
 
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(SourceFormScreen(collection_name="default", source_index=None))
         await pilot.pause()
-        labels = {it.id: it.label for it in app.screen.query_one(SettingsList)._items}
-        assert labels["form.filter"] == "Frontmatter rule"
-        assert labels["form.filters"] == "Index filters"
+        lst = app.screen.query_one(SettingsList)
+        ids = [it.id for it in lst._items]
+        assert "form.filter" not in ids, "a second frontmatter input beside Index filters"
+        assert "form.filters" in ids
+        lst.cursor_index = ids.index("form.filters")
+        await pilot.pause()
+        await pilot.press("right")
+        for _ in range(400):
+            await pilot.pause()
+            if isinstance(app.screen, FilterBrowserScreen):
+                break
+        browser = app.screen
+        assert isinstance(browser, FilterBrowserScreen)
+        while browser._scanning:
+            await pilot.pause()
+        rules = next(
+            n
+            for n in browser.query_one(ToggleTree).root.children
+            if "Rules you type" in str(n.label)
+        )
+        assert any("Frontmatter rule" in str(c.label) for c in rules.children)

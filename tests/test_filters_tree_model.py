@@ -66,21 +66,33 @@ class TestBranches:
         self,
     ) -> None:
         """What is switched on must be visible without scrolling the corpus."""
-        spec = FilterSpec(exclude_tags=("wk3",))
+        spec = FilterSpec(exclude_tags={"os": ("wk3",)})
         tags = next(b for b in spec_branches(spec, _sample()) if b.id == "tags")
-        assert tags.items[0][0] == "tag:wk3"
+        os_group = next(g for g in tags.groups if g.id == "tags:os")
+        assert os_group.items[0][0] == "tag:os:wk3"
 
-    def test_a_tag_in_both_providers_is_one_row(self) -> None:
-        """One exclusion covers every source, so two rows would share an id."""
+    def test_a_tag_in_both_sources_gets_a_row_in_each(self) -> None:
+        """A Finder tag and a note tag sharing a word are different rules."""
         sample = SourceSample(tags={"os": {"draft": 2}, "frontmatter": {"draft": 5}})
         tags = next(b for b in spec_branches(FilterSpec(), sample) if b.id == "tags")
-        assert [i[0] for i in tags.items] == ["tag:draft"]
-        assert "(7)" in tags.items[0][1]
+        by_source = {b.id: [i[0] for i in b.items] for b in tags.groups}
+        assert by_source == {
+            "tags:os": ["tag:os:draft"],
+            "tags:frontmatter": ["tag:frontmatter:draft"],
+        }
+
+    def test_one_source_needs_no_extra_level(self) -> None:
+        """Nesting a lone source under a parent is a click for nothing."""
+        sample = SourceSample(tags={"frontmatter": {"draft": 5}})
+        tags = next(b for b in spec_branches(FilterSpec(), sample) if b.id == "tags")
+        assert not tags.groups
+        assert [i[0] for i in tags.items] == ["tag:frontmatter:draft"]
 
     def test_a_configured_tag_absent_from_the_sample_still_appears(self) -> None:
-        spec = FilterSpec(exclude_tags=("never_scanned",))
+        spec = FilterSpec(exclude_tags={"os": ("never_scanned",)})
         tags = next(b for b in spec_branches(spec, _sample()) if b.id == "tags")
-        assert any(i[0] == "tag:never_scanned" for i in tags.items)
+        os_group = next(g for g in tags.groups if g.id == "tags:os")
+        assert any(i[0] == "tag:os:never_scanned" for i in os_group.items)
 
 
 class TestSelectionRoundTrip:
@@ -150,21 +162,22 @@ class TestTagTriState:
     """The tag rows carry the query pane's ●/⊘/○, and all three must mean something."""
 
     def test_an_included_tag_round_trips(self) -> None:
-        spec = FilterSpec(include_tags=("readings",))
+        spec = FilterSpec(include_tags={"frontmatter": ("readings",)})
         selected, excluded = selection_for(spec, gitignore=True, fndignore=True)
-        assert "tag:readings" in selected
+        assert "tag:frontmatter:readings" in selected
         back, _g, _f = apply_selection(spec, selected, excluded)
-        assert back.include_tags == ("readings",)
+        assert back.include_tags == {"frontmatter": ("readings",)}
 
     def test_include_and_exclude_are_separate_sets(self) -> None:
-        spec = FilterSpec(include_tags=("keep",), exclude_tags=("drop",))
+        spec = FilterSpec(include_tags={"os": ("keep",)}, exclude_tags={"frontmatter": ("drop",)})
         selected, excluded = selection_for(spec, gitignore=True, fndignore=True)
-        assert "tag:keep" in selected
-        assert excluded == {"tag:drop"}
+        assert "tag:os:keep" in selected
+        assert excluded == {"tag:frontmatter:drop"}
         back, _g, _f = apply_selection(spec, selected, excluded)
         assert back == spec
 
     def test_a_configured_include_tag_appears_even_if_unscanned(self) -> None:
-        spec = FilterSpec(include_tags=("never_scanned",))
+        spec = FilterSpec(include_tags={"os": ("never_scanned",)})
         tags = next(b for b in spec_branches(spec, _sample()) if b.id == "tags")
-        assert any(i[0] == "tag:never_scanned" for i in tags.items)
+        os_group = next(g for g in tags.groups if g.id == "tags:os")
+        assert any(i[0] == "tag:os:never_scanned" for i in os_group.items)

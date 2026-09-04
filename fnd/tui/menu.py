@@ -54,6 +54,7 @@ SECTION_KEYBINDINGS = "keybindings"
 SECTION_PREFERENCES = "preferences"
 SECTION_COLLECTIONS = "collections"
 SECTION_INDEXING_PDF_TEXTURE = "indexing-pdf-texture"
+SECTION_FILTERS = "filters"
 # Legacy aliases retained so any saved jump-state or external link that
 # referenced the pre-combine section ids still routes into the combined
 # screen instead of crashing.
@@ -1438,12 +1439,20 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
         MenuItem(
             id=f"col.{name}.rename",
             label="Rename",
+            description=(
+                "Change this collection's name. Search scope and saved panel "
+                "state follow the new name; the index is not rebuilt."
+            ),
             kind=KIND_EXTERNAL,
             external=_make_open_rename(name),
         ),
         MenuItem(
             id=f"col.{name}.sources",
             label="Sources",
+            description=(
+                "The folders this collection indexes, and each one's filters, "
+                "excludes and opening app."
+            ),
             kind=KIND_EXTERNAL,
             external=_make_open_sources_screen(name),
             value_getter=(
@@ -1459,6 +1468,11 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
         MenuItem(
             id=f"col.{name}.ranking_profile",
             label="Ranking profile",
+            description=(
+                "Which [ranking.<name>] block scores this collection's results "
+                "— recency, file-type and phrase-proximity weights. Applies to "
+                "the next search; no reindex."
+            ),
             kind=KIND_PICKER,
             choices_provider=_choices_ranking,
             picker_getter=(
@@ -1594,6 +1608,9 @@ def _provider_sources(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
         MenuItem(
             id=f"sources.{name}.add",
             label="Add source",
+            description=(
+                "Add a folder to this collection. Its files enter the index on the next update."
+            ),
             kind=KIND_EXTERNAL,
             external=_make_open_source_form(name, None),
         ),
@@ -1757,42 +1774,6 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
             toggle_setter=lambda app, v: _setting_writer("defaults.indexer_auto_resume")(app, v),
             setting_path="defaults.indexer_auto_resume",
             keywords=("auto", "resume", "indexer", "interrupted", "launch", "reindex"),
-        ),
-        header("Tags", level=2),
-        MenuItem(
-            id="indexing.tag_sources",
-            label="Tag sources",
-            description=(
-                "Which sources feed the Tags filter, comma-separated. "
-                "'frontmatter' reads a note's YAML tags:; 'os' reads macOS "
-                "Finder tags"
-                + ("" if os_labels.is_macos() else " (macOS only — inert here)")
-                + ". Leave empty to turn tag filtering off. "
-                "Toggling a source takes effect immediately — no reindex."
-            ),
-            kind=KIND_SCALAR,
-            setting_path="defaults.tag_sources",
-            hint="frontmatter, os",
-            coerce=_coerce_str_list,
-            value_getter=_get_str_list_default("tag_sources"),
-            keywords=("tag", "tags", "frontmatter", "finder", "source"),
-        ),
-        MenuItem(
-            id="indexing.tag_frontmatter_keys",
-            label="Extra frontmatter tag keys",
-            description=(
-                "Frontmatter fields to treat as tags beyond tags:, "
-                "comma-separated — e.g. Course, Notes_Type, Topic. Values are "
-                "grouped under the key in the Tags pane (course/algebra), so "
-                "they never collide with a plain tag. Matched "
-                "case-insensitively. Needs a reindex to take effect."
-            ),
-            kind=KIND_SCALAR,
-            setting_path="defaults.tag_frontmatter_keys",
-            hint="Course, Notes_Type, Topic",
-            coerce=_coerce_str_list,
-            value_getter=_get_str_list_default("tag_frontmatter_keys"),
-            keywords=("tag", "tags", "frontmatter", "key", "course", "custom"),
         ),
     )
 
@@ -2056,13 +2037,10 @@ def _provider_indexing_pdf_texture(app: FNDApp) -> tuple[MenuItem, ...]:
     indexing_items = tuple(
         _dc.replace(item, subsection="Indexing") for item in _provider_indexing(app)
     )
-    filter_items = tuple(
-        _dc.replace(item, subsection="Index filters") for item in _provider_index_filters(app)
-    )
     pdf_texture_items = tuple(
         _dc.replace(item, subsection="PDF Texture") for item in _provider_pdf_texture(app)
     )
-    return shared + indexing_items + filter_items + pdf_texture_items
+    return shared + indexing_items + pdf_texture_items
 
 
 # ── Index filters ────────────────────────────────────────────────────
@@ -2153,8 +2131,16 @@ def _summary_index_filters(app: FNDApp) -> str:
     ]
     if on:
         bits.append(", ".join(on))
-    if f.exclude_tags:
-        bits.append(f"-{len(f.exclude_tags)} tag" + ("s" if len(f.exclude_tags) > 1 else ""))
+    from fnd.filters.dimensions import tag_selection
+
+    dropped = sorted({t for tags in tag_selection(f.exclude_tags).values() for t in tags})
+    if dropped:
+        bits.append(
+            f"never {'/'.join(dropped)}" if len(dropped) < 3 else f"never {len(dropped)} tags"
+        )
+    kept = sorted({t for tags in tag_selection(f.include_tags).values() for t in tags})
+    if kept:
+        bits.append(f"only {'/'.join(kept)}" if len(kept) < 3 else f"only {len(kept)} tags")
     if f.kinds:
         bits.append(f"{len(f.kinds)} types")
     if f.max_size or f.min_size:
@@ -2405,12 +2391,24 @@ def _summary_indexing(app: FNDApp) -> str:
     return "✓ auto-resume" if _get_indexer_auto_resume(app) else "✗ auto-resume"
 
 
+def _engine_chip() -> str:
+    """Engine state for the trailing summary.
+
+    Off the render path with its two siblings: it stats the uv tool root and
+    calls ``importlib.invalidate_caches()``, whose cost is process-wide and
+    lands on whatever imports next rather than showing up here.
+    """
+    return "✓ engine on" if _is_pdf_structure_installed() else "✗ engine off"
+
+
 def _summary_pdf_texture(app: FNDApp) -> str:
     """Engine + cache chip — still used by tests after the section combine."""
     from fnd.tui.lazy_trailing import PLACEHOLDER, get_or_schedule
 
-    engine = "✓ engine on" if _is_pdf_structure_installed() else "✗ engine off"
-    parts = [engine]
+    parts: list[str] = []
+    engine = get_or_schedule(app, "pdf_texture.summary.engine", _engine_chip)
+    if engine and engine != PLACEHOLDER:
+        parts.append(engine)
     cache_part = get_or_schedule(app, "pdf_texture.summary.cache_short", _cache_size_short)
     if cache_part and cache_part != PLACEHOLDER:
         parts.append(cache_part)
@@ -2467,7 +2465,8 @@ def _summary_indexing_pdf_texture(app: FNDApp) -> str:
 
     Composes the two prior chip summaries so the root row carries the
     most actionable status bits from both subsections at a glance."""
-    return f"{_summary_indexing(app)} · {_summary_pdf_texture(app)}"
+    halves = [t for t in (_summary_indexing(app), _summary_pdf_texture(app)) if t]
+    return " · ".join(halves)
 
 
 def _summary_cache_size_row(app: FNDApp) -> str:
@@ -2734,6 +2733,55 @@ def _run_cache_clear(app: FNDApp) -> None:
     )
 
 
+def _provider_filters(app: FNDApp) -> tuple[MenuItem, ...]:
+    """Filters, split by when they apply.
+
+    Index-time filters decide what the index holds; query-time ones narrow
+    what a search returns from it. On one screen the difference is visible;
+    apart, the two read identically.
+    """
+    return (
+        header("What gets indexed", level=2),
+        *_provider_index_filters(app),
+        MenuItem(
+            id="filters.tag_frontmatter_keys",
+            label="Extra frontmatter tag keys",
+            description=(
+                "Frontmatter fields to treat as tags beyond tags:, "
+                "comma-separated — e.g. Course, Notes_Type, Topic. Values are "
+                "grouped under the key in the Tags pane (course/algebra), so "
+                "they never collide with a plain tag. Matched "
+                "case-insensitively. Needs a reindex to take effect."
+            ),
+            kind=KIND_SCALAR,
+            setting_path="defaults.tag_frontmatter_keys",
+            hint="Course, Notes_Type, Topic",
+            coerce=_coerce_str_list,
+            value_getter=_get_str_list_default("tag_frontmatter_keys"),
+            keywords=("tag", "tags", "frontmatter", "key", "course", "custom"),
+        ),
+        header("What a search returns", level=2),
+        MenuItem(
+            id="filters.tag_sources",
+            label="Tag sources",
+            description=(
+                "Which sources feed the Tags filter, comma-separated. "
+                "'frontmatter' reads a note's YAML tags:; 'os' reads macOS "
+                "Finder tags"
+                + ("" if os_labels.is_macos() else " (macOS only — inert here)")
+                + ". Leave empty to turn tag filtering off. "
+                "Toggling a source takes effect immediately — no reindex."
+            ),
+            kind=KIND_SCALAR,
+            setting_path="defaults.tag_sources",
+            hint="frontmatter, os",
+            coerce=_coerce_str_list,
+            value_getter=_get_str_list_default("tag_sources"),
+            keywords=("tag", "tags", "frontmatter", "finder", "source"),
+        ),
+    )
+
+
 def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
     """Root settings menu — a clean, short list of categories. No
     content piled on top of each other. Each drill-in row pushes its
@@ -2754,6 +2802,17 @@ def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_EXTERNAL,
             external=_open_section(SECTION_COLLECTIONS),
             value_getter=_summary_collections,
+        ),
+        MenuItem(
+            id=f"root.{SECTION_FILTERS}",
+            label="Filters",
+            description=(
+                "What enters the index, and what a search returns from it — "
+                "file types, tags, size, dates and ignore files."
+            ),
+            kind=KIND_EXTERNAL,
+            external=_open_section(SECTION_FILTERS),
+            value_getter=_summary_index_filters,
         ),
         MenuItem(
             id=f"root.{SECTION_KEYBINDINGS}",
@@ -2838,6 +2897,7 @@ _SECTION_PROVIDERS: dict[str, Callable[[FNDApp], tuple[MenuItem, ...]]] = {
     SECTION_COLLECTIONS: _provider_collections,
     SECTION_KEYBINDINGS: _provider_keybindings,
     SECTION_INDEXING_PDF_TEXTURE: _provider_indexing_pdf_texture,
+    SECTION_FILTERS: _provider_filters,
 }
 
 _SECTION_LABELS: dict[str, str] = {
@@ -2845,6 +2905,7 @@ _SECTION_LABELS: dict[str, str] = {
     SECTION_COLLECTIONS: "Collections",
     SECTION_KEYBINDINGS: "Keybindings",
     SECTION_INDEXING_PDF_TEXTURE: "Indexing & PDF Texture",
+    SECTION_FILTERS: "Filters",
 }
 
 

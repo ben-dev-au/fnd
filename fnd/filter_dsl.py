@@ -1,4 +1,4 @@
-"""Predicate DSL parser + evaluator (§5.5e-1).
+"""Predicate DSL parser + evaluator.
 
 Grammar::
 
@@ -17,8 +17,8 @@ Grammar::
                     (numbers accept TOML-style separators: 50_000_000)
     ident       ::= word | "quoted word"
 
-Same DSL is reused at query time (phase 5.5e-2) — the evaluator is
-purely functional, takes a frontmatter dict, returns bool.
+The same DSL is reused at query time: the evaluator is purely functional,
+takes a frontmatter dict and returns a bool.
 """
 
 from __future__ import annotations

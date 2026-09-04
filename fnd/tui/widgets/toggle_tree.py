@@ -58,9 +58,11 @@ class ToggleGroup:
     ``mode`` picks the leaf behaviour, so one tree can carry the several kinds
     of choice a filter set needs:
 
-    * ``multi``  — any number on (file types)
-    * ``cycle``  — off → include → exclude → off, as the query pane's tags do
-    * ``radio``  — at most one on (a date window, a size bound)
+    * ``multi``   — any number on (file types)
+    * ``cycle``   — off → include → exclude → off, as the query pane's tags do
+    * ``radio``   — at most one on (a date window, a size bound)
+    * ``actions`` — leaves carry no state; Enter asks the host to open an
+      editor. For the rules that are typed rather than ticked.
 
     ``empty_label`` is what the branch means when nothing under it is on —
     "no file type ticked" reads as *nothing included* unless the row says
@@ -93,6 +95,18 @@ class ToggleTree(Tree[dict[str, Any]]):
         Binding("right", "expand_here", "Expand", show=False),
         Binding("left", "collapse_here", "Collapse", show=False),
     ]
+
+    class ActionSelected(Message):
+        """Enter on an ``actions`` leaf: the host opens that rule's editor."""
+
+        def __init__(self, toggle_tree: ToggleTree, item_id: str) -> None:
+            self.toggle_tree = toggle_tree
+            self.item_id = item_id
+            super().__init__()
+
+        @property
+        def control(self) -> ToggleTree:
+            return self.toggle_tree
 
     class NavigatedOut(Message):
         """← pressed with nothing left to collapse: the host should go back."""
@@ -140,6 +154,7 @@ class ToggleTree(Tree[dict[str, Any]]):
         self.auto_expand = False
         self._groups: tuple[ToggleGroup, ...] = ()
         self._by_id: dict[str, ToggleGroup] = {}
+        self._action_items: set[str] = set()
         self._selected: set[str] = set()
         self._item_labels: dict[str, str] = {}
 
@@ -158,6 +173,9 @@ class ToggleTree(Tree[dict[str, Any]]):
         self._selected = set(selected)
         self._excluded = set(excluded or ())
         self._item_labels = {it.id: it.label for g in self._groups for it in g.leaves}
+        self._action_items = {
+            it.id for g in self._by_id.values() if g.mode == "actions" for it in g.items
+        }
         self._rebuild(expanded or set())
 
     @property
@@ -206,6 +224,8 @@ class ToggleTree(Tree[dict[str, Any]]):
     def _group_label(self, g: ToggleGroup) -> str:
         mode = self._mode(g)
         leaves = g.leaves
+        if mode == "actions":
+            return f"{_MARKER_GAP}{g.label}"
         if mode == "cycle":
             n_ex = sum(1 for it in leaves if it.id in self._excluded)
             if n_ex:
@@ -228,6 +248,8 @@ class ToggleTree(Tree[dict[str, Any]]):
         return f"{tri_state_marker(n, len(leaves))}{_MARKER_GAP}{g.label}"
 
     def _item_label(self, item_id: str) -> str:
+        if item_id in self._action_items:
+            return f"⏎{_MARKER_GAP}{self._item_labels.get(item_id, item_id)}"
         if item_id in self._excluded:
             marker = _EXCLUDED
         elif item_id in self._selected:
@@ -258,6 +280,8 @@ class ToggleTree(Tree[dict[str, Any]]):
             if g is None:
                 return
             ids = {it.id for it in g.leaves}
+            if self._mode(g) == "actions":
+                return
             if self._mode(g) in ("cycle", "radio"):
                 # Selecting every tag is never what the user means; clearing
                 # the branch is.
@@ -272,6 +296,9 @@ class ToggleTree(Tree[dict[str, Any]]):
             item_id = str(data.get("id"))
             group = self._group_by_id(str(data.get("group")))
             mode = self._mode(group)
+            if mode == "actions":
+                self.post_message(self.ActionSelected(self, item_id))
+                return
             if mode == "cycle":
                 self._cycle(item_id)
                 node.set_label(self._item_label(item_id))

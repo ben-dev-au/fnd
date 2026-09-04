@@ -1,4 +1,4 @@
-"""Settings & Commands menu — rendering and dispatch (Phase 2).
+"""Settings & Commands menu — rendering and dispatch.
 
 The menu's *data* lives in :mod:`fnd.tui.menu`. This module renders it
 as a stack of Textual ``Screen``s that share the main app's visual
@@ -55,6 +55,7 @@ from fnd.tui.menu import (
     ChoiceOption,
     MenuItem,
     build_root_items,
+    header,
     section_items,
     section_label,
     walk_all_sections,
@@ -1126,6 +1127,7 @@ class SettingsScreen(Screen[None]):
             "cache.stale_count",
             "cache.retexturise_outdated",
             "pdf_texture.summary.stale_short",
+            "pdf_texture.summary.engine",
         ):
             invalidate(key)
 
@@ -1698,7 +1700,7 @@ def _same_setting(value: Any, default: Any) -> bool:
     field must not be recorded — doing so would turn inheriting into an
     explicit empty and silently drop the default it was inheriting.
     """
-    empty = (None, "", [])
+    empty = (None, "", [], {})
     if value in empty and default in empty:
         return True
     return bool(value == default)
@@ -1961,7 +1963,7 @@ class SourceFormScreen(Screen[None]):
             "excludes_custom": "",  # comma-separated free-form globs
             "filter": "",
             "follow_symlinks": False,
-            # Phase 2b: per-source app override + Obsidian vault.
+            # Per-source app override + Obsidian vault.
             # ``app`` is the registry id (or "" = no override → resolver
             # walks the global app_defaults / auto-promote ladder).
             # ``app_params_vault`` is the only app_param that has UI
@@ -2051,6 +2053,16 @@ class SourceFormScreen(Screen[None]):
             "filters": copy.deepcopy(self._fields["filters"]),
         }
 
+    def _frontmatter_text(self) -> str:
+        """This source's frontmatter rule, wherever it was last edited.
+
+        The browser writes into ``filters``; a legacy ``frontmatter_filter``
+        arrives in ``filter``. Reading only the latter would let a browser
+        edit be overwritten by the value the form loaded with.
+        """
+        override = self._fields["filters"].get("frontmatter")
+        return str(override if override is not None else self._fields["filter"] or "")
+
     def _frontmatter_into_filters(self, text: str) -> dict[str, Any]:
         """The frontmatter rule as part of this source's filter overrides.
 
@@ -2078,15 +2090,59 @@ class SourceFormScreen(Screen[None]):
         from fnd.config import EXCLUDES_PRESETS
 
         return [
-            self._field_item("path", "Path", hint="path or ~/path"),
+            header("Source", level=2),
+            self._field_item(
+                "path",
+                "Path",
+                hint="path or ~/path",
+                description=(
+                    "The folder to index. ~ expands; the path must exist. "
+                    "Changing it reindexes this source from scratch."
+                ),
+            ),
+            MenuItem(
+                id="form.follow_symlinks",
+                label="Follow symlinks",
+                description=(
+                    "Descend into symlinked folders. Off by default: a link "
+                    "pointing back up the tree would index the same files "
+                    "repeatedly."
+                ),
+                kind=KIND_TOGGLE,
+                toggle_getter=lambda _app: bool(self._fields["follow_symlinks"]),
+                toggle_setter=lambda _app, v: self._set_follow(v),
+            ),
+            header("What gets indexed", level=2),
+            MenuItem(
+                id="form.filters",
+                label="Index filters",
+                description=(
+                    "Ignore files, skipped tags, file types and size for this "
+                    "source. Each setting inherits the global default until you "
+                    "override it here."
+                ),
+                kind=KIND_EXTERNAL,
+                external=lambda _app: self._open_filters(),
+                value_getter=lambda _app: self._filters_summary(),
+            ),
             self._field_item(
                 "includes_custom",
                 "Extra paths to include",
                 hint="glob patterns, comma-separated",
+                description=(
+                    "Glob patterns for anything the file types cannot express, "
+                    "such as a hidden folder ('.obsidian/**'). File types "
+                    "themselves belong in Index filters. Leave empty for none."
+                ),
             ),
             MenuItem(
                 id="form.excludes",
                 label="Excludes",
+                description=(
+                    "Paths to skip, as ready-made presets or your own globs. "
+                    "Applied before any filter, so an excluded folder is never "
+                    "read at all."
+                ),
                 kind=KIND_PICKER,
                 multi=True,
                 choices_provider=lambda _app: [
@@ -2107,30 +2163,7 @@ class SourceFormScreen(Screen[None]):
                 picker_getter=lambda _app: self._excludes_picker_state(),
                 picker_setter=lambda _app, vs: self._set_excludes(vs),
             ),
-            self._field_item(
-                "filter",
-                "Frontmatter rule",
-                hint="e.g. type == 'note'",
-            ),
-            MenuItem(
-                id="form.filters",
-                label="Index filters",
-                description=(
-                    "Ignore files, skipped tags, file types and size for this "
-                    "source. Each setting inherits the global default until you "
-                    "override it here."
-                ),
-                kind=KIND_EXTERNAL,
-                external=lambda _app: self._open_filters(),
-                value_getter=lambda _app: self._filters_summary(),
-            ),
-            MenuItem(
-                id="form.follow_symlinks",
-                label="Follow symlinks",
-                kind=KIND_TOGGLE,
-                toggle_getter=lambda _app: bool(self._fields["follow_symlinks"]),
-                toggle_setter=lambda _app, v: self._set_follow(v),
-            ),
+            header("Opening", level=2),
             MenuItem(
                 id="form.app",
                 label="App",
@@ -2138,7 +2171,7 @@ class SourceFormScreen(Screen[None]):
                     "Open files from this source with a specific app. "
                     "Leave as '(default)' to use the global app_defaults "
                     "+ auto-promote ladder. See ``[apps]`` in config.toml "
-                    "and docs/apps/ for the full list."
+                    "and docs/apps.md for the full list."
                 ),
                 kind=KIND_PICKER,
                 multi=False,
@@ -2276,8 +2309,6 @@ class SourceFormScreen(Screen[None]):
             )
         elif item.kind == KIND_SCALAR:
             current = self._fields.get(item.id.split(".", 1)[-1], "")
-            if item.id == "form.filter":
-                current = self._fields["filter"]
             self.query_one(EditBar).open(item, str(current or ""))
         elif item.kind == KIND_TOGGLE:
             new = not (item.toggle_getter(self.app) if item.toggle_getter else False)  # type: ignore[arg-type]
@@ -2314,7 +2345,7 @@ class SourceFormScreen(Screen[None]):
 
     def _refresh_match_status(self) -> None:
         sample = self.query_one("#frontmatter_sample", TextArea).text
-        filter_text = str(self._fields["filter"] or "").strip()
+        filter_text = self._frontmatter_text().strip()
         status = self.query_one("#match_status", Static)
         status.remove_class("-match")
         status.remove_class("-no-match")
@@ -2430,7 +2461,7 @@ class SourceFormScreen(Screen[None]):
                 follow_symlinks=bool(self._fields["follow_symlinks"]),
                 frontmatter_filter=None,
                 filters=_source_filters_or_none(
-                    self._frontmatter_into_filters(str(self._fields["filter"]))
+                    self._frontmatter_into_filters(self._frontmatter_text())
                 ),
                 app=app_id or None,
                 app_params=app_params,
@@ -2583,7 +2614,7 @@ class AddCollectionWizard(Screen[None]):
 
     def _show_error(self, message: str) -> None:
         """Render an inline validation error in the wizard's #wizard_error
-        Static. Phase 6 dropped the old `notify()` toast pattern so the
+        Static. The old `notify()` toast pattern was dropped so the
         user sees errors anchored to the form they're filling out."""
         err = self.query_one("#wizard_error", Static)
         err.update(message)
@@ -3744,7 +3775,7 @@ class StructuredPdfConfirmScreen(Screen[None]):
         start_extras_install(app, cmds=cmds, action_label=label)
 
 
-# ── Clone-source flow (Phase 5) ─────────────────────────────────────
+# ── Clone-source flow ───────────────────────────────────────────────
 
 
 class DeleteSourceScreen(Screen[None]):
@@ -4668,14 +4699,14 @@ def _describe_spec(spec: Any) -> str:
     parts: list[str] = []
     if spec.kinds:
         parts.append(f"{len(spec.kinds)} kind" + ("s" if len(spec.kinds) > 1 else ""))
-    if spec.include_tags:
-        n = len(spec.include_tags)
-        joined = "/".join(spec.include_tags)
-        parts.append(f"only files tagged {joined}" if n < 4 else f"only {n} tags")
-    if spec.exclude_tags:
-        n = len(spec.exclude_tags)
-        joined = "/".join(spec.exclude_tags)
-        parts.append(f"never {joined}" if n < 4 else f"never {n} tags")
+    for field_name, phrase in (("include_tags", "only files tagged"), ("exclude_tags", "never")):
+        values = sorted({t for tags in getattr(spec, field_name).values() for t in tags})
+        if values:
+            parts.append(
+                f"{phrase} {'/'.join(values)}"
+                if len(values) < 4
+                else f"{phrase} {len(values)} tags"
+            )
     if spec.min_size is not None or spec.max_size is not None:
         parts.append("size")
     if any(
@@ -4712,13 +4743,17 @@ def _spec_from_filters(filters: Any) -> Any:
     files are read, not a predicate over one — so they stay on their rows.
     """
     from fnd.filters import FilterSpec
+    from fnd.filters.dimensions import tag_selection
 
     values: dict[str, Any] = {}
     for name in _SPEC_FIELDS:
         value = getattr(filters, name, None)
         if value is None:
             continue
-        values[name] = tuple(value) if isinstance(value, list) else value
+        if name in ("include_tags", "exclude_tags"):
+            values[name] = tag_selection(value)
+        else:
+            values[name] = tuple(value) if isinstance(value, list) else value
     return FilterSpec(**values)
 
 
@@ -4728,7 +4763,26 @@ def _spec_to_mapping(spec: Any) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for name in _SPEC_FIELDS:
         value = getattr(spec, name)
-        out[name] = list(value) if isinstance(value, tuple) else value
+        if isinstance(value, dict):
+            # Every source holding the same tags is the bare list the user
+            # most likely typed; anything else needs the table to stay exact.
+            from fnd.tags import TAG_PROVIDERS
+
+            sets = {source: frozenset(tags) for source, tags in value.items() if tags}
+            uniform = len(sets) == len(TAG_PROVIDERS) and len(set(sets.values())) == 1
+            # Empty stays a list: it is the explicit "override the default to
+            # nothing", and a bare list is how that reads in the config.
+            out[name] = (
+                (
+                    sorted(next(iter(sets.values())))
+                    if uniform or not sets
+                    else {source: sorted(tags) for source, tags in sets.items()}
+                )
+                if sets
+                else []
+            )
+        else:
+            out[name] = list(value) if isinstance(value, tuple) else value
     if spec.raw:
         joined = " AND ".join(f"({c})" for c in (spec.expression, *spec.raw) if c)
         out["expression"] = joined
@@ -4745,6 +4799,96 @@ def _branch_group(branch: Any) -> ToggleGroup:
         empty_label=branch.empty_label,
         groups=tuple(_branch_group(b) for b in branch.groups),
     )
+
+
+class RuleTextScreen(Screen[None]):
+    """One typed filter rule, validated as you type.
+
+    Separate from :class:`FilterTextScreen`, which edits the whole set: a row
+    that opens the entire expression to change one clause is a trap.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape", "back", "Back", show=False),
+        Binding("ctrl+s", "save_close", show=False),
+    ]
+
+    CSS = """
+    RuleTextScreen { background: $surface; }
+    RuleTextScreen > #settings_box {
+        height: 1fr; border: round $primary 50%; padding: 0 1;
+    }
+    RuleTextScreen > #settings_box:focus-within { border: round $accent; }
+    RuleTextScreen #rule_text { height: 1fr; }
+    RuleTextScreen #rule_status { height: auto; padding: 0 1; color: $text-muted; }
+    RuleTextScreen #rule_status.-ok { color: $success; }
+    RuleTextScreen #rule_status.-bad { color: $error; }
+    RuleTextScreen > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        value: str,
+        note_scoped: bool,
+        on_save: Callable[[str], None],
+    ) -> None:
+        super().__init__()
+        self._title = title
+        self._value = value
+        self._note_scoped = note_scoped
+        self._on_save = on_save
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings_box") as box:
+            box.border_title = self._title
+            yield TextArea(self._value, id="rule_text")
+            yield Static("", id="rule_status")
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#rule_text", TextArea).focus()
+        self._refresh_status()
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(app, (("^S", "Save"), ("Esc", "Cancel")))
+        )
+
+    @on(TextArea.Changed, "#rule_text")
+    def _on_changed(self, _ev: TextArea.Changed) -> None:
+        self._refresh_status()
+
+    def _parsed(self) -> Any:
+        from fnd.filter_dsl import parse_or_error
+
+        text = self.query_one("#rule_text", TextArea).text.strip()
+        return (None, None) if not text else parse_or_error(text)
+
+    def _refresh_status(self) -> None:
+        status = self.query_one("#rule_status", Static)
+        _pred, err = self._parsed()
+        status.remove_class("-ok", "-bad")
+        if err is not None:
+            status.add_class("-bad")
+            status.update(f"✗ col {err.column}: {err.message}")
+            return
+        status.add_class("-ok")
+        scope = "notes only; every other type passes" if self._note_scoped else "every file"
+        status.update(f"✓ {scope}")
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    def action_save_close(self) -> None:
+        _pred, err = self._parsed()
+        if err is not None:
+            self._refresh_status()
+            return
+        self._on_save(self.query_one("#rule_text", TextArea).text.strip())
+        self.app.pop_screen()
 
 
 class FilterBrowserScreen(Screen[None]):
@@ -4805,6 +4949,36 @@ class FilterBrowserScreen(Screen[None]):
             yield ToggleTree("Filters", id="filter_tree")
             yield Static("", id="filter_summary")
         yield Static("", id="footer_hints")
+
+    @on(ToggleTree.ActionSelected, "#filter_tree")
+    def _on_rule_selected(self, ev: ToggleTree.ActionSelected) -> None:
+        """A typed rule lives with the ticked ones, not on the screen above.
+
+        The frontmatter rule sat beside Index filters, so the two could hold
+        different answers to the same question and neither showed the other's.
+        """
+        from dataclasses import replace as _replace
+
+        field_name = ev.item_id.removeprefix("rule:")
+        titles = {
+            "frontmatter": "Frontmatter rule · notes only",
+            "expression": "Custom expression · any file",
+        }
+        if field_name not in titles:
+            return
+
+        def _save(text: str) -> None:
+            self._spec = _replace(self._spec, **{field_name: text})
+            self._rebuild()
+
+        self.app.push_screen(
+            RuleTextScreen(
+                title=titles[field_name],
+                value=str(getattr(self._spec, field_name, "") or ""),
+                note_scoped=field_name == "frontmatter",
+                on_save=_save,
+            )
+        )
 
     @on(ToggleTree.NavigatedOut, "#filter_tree")
     def _on_navigated_out(self, _ev: ToggleTree.NavigatedOut) -> None:

@@ -19,7 +19,7 @@ from fnd.filter_dsl import FilterError, compile_filter, referenced_fields
 from fnd.filter_dsl import parse as parse_dsl
 from fnd.filters.model import Rule
 from fnd.kinds import KINDS_IN_CATEGORY
-from fnd.tags import normalise_tag
+from fnd.tags import TAG_PROVIDERS, normalise_tag, source_tag_selection
 
 __all__ = ["DIMENSIONS", "Dimension", "dimension", "rule_from_text"]
 
@@ -36,9 +36,58 @@ def _as_list(value: object) -> list[object]:
     return [value] if value else []
 
 
+def tag_selection(value: object) -> dict[str, tuple[str, ...]]:
+    """Config tags as ``{source: tags}``.
+
+    A bare list claims every source — the rule ``source_tag_selection`` already
+    applies to ``--tag`` on the query side — while a table names them:
+
+        exclude_tags = ["no_index"]
+        [defaults.filters.exclude_tags]
+        os = ["archive"]
+    """
+    if isinstance(value, Mapping):
+        return {
+            str(source): tuple(sorted({normalise_tag(str(t)) for t in tags} - {""}))
+            for source, tags in value.items()
+            if source in TAG_PROVIDERS and tags
+        }
+    return {
+        source: tuple(sorted(tags))
+        for source, tags in source_tag_selection(
+            (str(v) for v in _as_list(value)), TAG_PROVIDERS
+        ).items()
+    }
+
+
+def _clauses(groups: dict[str, tuple[str, ...]]) -> list[tuple[str, str]]:
+    """``(fact, tag)`` per clause, collapsing a tag held by every source.
+
+    ``file.tags.all`` is how a user writes "wherever it came from", so a
+    selection covering every source renders that way instead of one clause
+    per source.
+    """
+    everywhere = set(next(iter(groups.values()), ())) if groups else set()
+    for tags in groups.values():
+        everywhere &= set(tags)
+    if len(groups) < len(TAG_PROVIDERS):
+        everywhere = set()
+    out = [("file.tags.all", t) for t in sorted(everywhere)]
+    for source in sorted(groups):
+        out += [(tag_fact(source), t) for t in sorted(set(groups[source]) - everywhere)]
+    return out
+
+
+def tag_fact(source: str) -> str:
+    """The fact a tag rule reads for one source."""
+    return f"file.tags.{source}"
+
+
 def _quote(value: object) -> str:
     if isinstance(value, str):
-        return "'" + value.replace("'", "") + "'"
+        # Escaped, not stripped: a tag may legitimately contain an
+        # apostrophe, and this text is parsed back by the text form.
+        return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
     if isinstance(value, dt.date):
         return value.isoformat()
     return str(value)
@@ -84,33 +133,37 @@ class _ListDimension:
 class _TagExcludeDimension:
     """``NOT ('no_index' in file.tags.all)`` — one clause per excluded tag.
 
+    A tag may name the source it came from (``os:archive``), because a Finder
+    tag and a note's ``tags:`` entry that happen to share a word are not the
+    same statement about a file.
+
     Fail-open: a source that cannot answer contributes no tags, so an
     unreadable xattr or an unfetched note is indexed rather than dropped.
     """
 
     id: str
-    fact: str
 
     def render(self, value: object) -> str:
-        values = _as_list(value)
-        return " AND ".join(f"NOT ({_quote(v)} in {self.fact})" for v in values)
+        return " AND ".join(
+            f"NOT ({_quote(t)} in {fact})" for fact, t in _clauses(tag_selection(value))
+        )
 
     def rule(self, value: object) -> Rule | None:
-        values = _as_list(value)
-        if not values:
+        groups = tag_selection(value)
+        if not groups:
             return None
-        excluded = {normalise_tag(str(v)) for v in values if normalise_tag(str(v))}
-        if not excluded:
-            return None
-        fact = self.fact
+        wanted = {tag_fact(s): set(tags) for s, tags in groups.items()}
 
-        def predicate(facts: Mapping[str, object]) -> bool:
-            actual = facts.get(fact)
-            if not isinstance(actual, (list, tuple, set, frozenset)):
-                return True
-            return not (excluded & {str(t) for t in actual})
+        def predicate(file_facts: Mapping[str, object]) -> bool:
+            for fact, tags in wanted.items():
+                actual = file_facts.get(fact)
+                if not isinstance(actual, (list, tuple, set, frozenset)):
+                    continue
+                if tags & {str(t) for t in actual}:
+                    return False
+            return True
 
-        return Rule(predicate=predicate, text=self.render(values), facts=frozenset({self.fact}))
+        return Rule(predicate=predicate, text=self.render(value), facts=frozenset(wanted))
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,26 +175,26 @@ class _TagIncludeDimension:
     """
 
     id: str
-    fact: str
 
     def render(self, value: object) -> str:
-        values = _as_list(value)
-        return " OR ".join(f"{_quote(v)} in {self.fact}" for v in values)
+        return " OR ".join(f"{_quote(t)} in {fact}" for fact, t in _clauses(tag_selection(value)))
 
     def rule(self, value: object) -> Rule | None:
-        values = _as_list(value)
-        wanted = {normalise_tag(str(v)) for v in values if normalise_tag(str(v))}
-        if not wanted:
+        groups = tag_selection(value)
+        if not groups:
             return None
-        fact = self.fact
+        wanted = {tag_fact(s): set(tags) for s, tags in groups.items()}
 
-        def predicate(facts: Mapping[str, object]) -> bool:
-            actual = facts.get(fact)
-            if not isinstance(actual, (list, tuple, set, frozenset)):
-                return False
-            return bool(wanted & {str(t) for t in actual})
+        def predicate(file_facts: Mapping[str, object]) -> bool:
+            for fact, tags in wanted.items():
+                actual = file_facts.get(fact)
+                if isinstance(actual, (list, tuple, set, frozenset)) and tags & {
+                    str(t) for t in actual
+                }:
+                    return True
+            return False
 
-        return Rule(predicate=predicate, text=self.render(values), facts=frozenset({self.fact}))
+        return Rule(predicate=predicate, text=self.render(value), facts=frozenset(wanted))
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,8 +249,8 @@ def rule_from_text(text: str, *, applies_to: frozenset[str] | None = None) -> Ru
 
 DIMENSIONS: Final[tuple[Dimension, ...]] = (
     _ListDimension("kinds", "file.kind"),
-    _TagIncludeDimension("include_tags", "file.tags.all"),
-    _TagExcludeDimension("exclude_tags", "file.tags.all"),
+    _TagIncludeDimension("include_tags"),
+    _TagExcludeDimension("exclude_tags"),
     _ComparisonDimension("min_size", "file.size", ">="),
     _ComparisonDimension("max_size", "file.size", "<="),
     _ComparisonDimension("created_after", "file.created", ">="),

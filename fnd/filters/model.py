@@ -89,8 +89,12 @@ class FilterSpec:
     """
 
     kinds: tuple[str, ...] = ()
-    include_tags: tuple[str, ...] = ()
-    exclude_tags: tuple[str, ...] = ()
+    # Keyed by tag-source id, the shape ``TagFilter`` already uses on the
+    # query side: a Finder tag and a note's ``tags:`` entry sharing a word are
+    # not the same statement about a file. ``tag_selection`` expands a bare
+    # list into every source.
+    include_tags: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    exclude_tags: dict[str, tuple[str, ...]] = field(default_factory=dict)
     min_size: int | None = None
     max_size: int | None = None
     created_after: dt.date | None = None
@@ -100,6 +104,16 @@ class FilterSpec:
     frontmatter: str = ""
     expression: str = ""
     raw: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Tags are a set per source: order carries no meaning, and the
+        # dimensions render them sorted, so an unsorted spec would not survive
+        # its own text form. A bare sequence claims every source — the rule the
+        # config and ``--tag`` already use.
+        from fnd.filters.dimensions import tag_selection
+
+        for name in ("include_tags", "exclude_tags"):
+            object.__setattr__(self, name, tag_selection(getattr(self, name)))
 
     def is_empty(self) -> bool:
         return self == FilterSpec()
