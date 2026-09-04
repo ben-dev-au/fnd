@@ -35,7 +35,7 @@ from fnd.tui.preview.visibility import set_node_class, set_preview_visibility
 from fnd.tui.preview.warm_host import WarmHost
 from fnd.tui.preview.warmth import WarmState, warm_state
 from fnd.tui.preview_dispatcher import choose_preview_mode, uses_markdown_renderer
-from fnd.tui.preview_scroll import ScrollAnchor
+from fnd.tui.preview_scroll import LandingIntent, ScrollAnchor
 from fnd.tui.preview_scrollbar import MatchAwareScroll
 from fnd.tui.widgets.markdown import FNDMarkdown, _legacy_blocks_to_md
 from fnd.tui.widgets.preview_container import PreviewCache, PreviewContainer
@@ -216,6 +216,9 @@ class PreviewPresenter:
 
         self.load_timer: _Any | None = None
         self.load_target: tuple[str, int] | None = None
+        # Landing intent for one navigation, ``(parent_id, chunk_seq, intent)``.
+        # Set by a backward n/b hand-over; dropped when a different target loads.
+        self.pending_landing_intent: tuple[str, int, LandingIntent] | None = None
         # True while the cursor is moving via Option/Alt + arrow ("scan" mode):
         # schedule_load skips its leading fire so fast browsing doesn't mount
         # every row — the preview only loads once the sweep settles (trailing).
@@ -423,8 +426,25 @@ class PreviewPresenter:
         self.active = None
         self.render_full_doc(parent_id, focus_chunk_seq=focus_chunk_seq)
 
+    def _landing_intent(self, parent_id: str, focus_chunk_seq: int) -> LandingIntent:
+        """The intent this navigation was armed for. NOT consumed by the read: a
+        navigation arms more than once, and a consuming read left the second arm
+        with the default, discarding the intent."""
+        pending = self.pending_landing_intent
+        if pending is not None and pending[:2] == (parent_id, focus_chunk_seq):
+            return pending[2]
+        return "first_match"
+
+    def _drop_stale_landing_intent(self, parent_id: str, focus_chunk_seq: int) -> None:
+        """Forget a request the reader has navigated away from — the end of the
+        navigation it was set for, and the only thing that clears it."""
+        pending = self.pending_landing_intent
+        if pending is not None and pending[:2] != (parent_id, focus_chunk_seq):
+            self.pending_landing_intent = None
+
     def schedule_load(self, parent_id: str, focus_chunk_seq: int) -> None:
         """Debounce a cursor-move → preview-load; coalesces rapid arrow sweeps."""
+        self._drop_stale_landing_intent(parent_id, focus_chunk_seq)
         if self._scan_move:
             # Option/Alt+arrow scan: browse the results without mounting anything.
             # Record where the cursor is but DON'T load and DON'T arm a timer — so
@@ -574,7 +594,12 @@ class PreviewPresenter:
         )
         glide = self._app._config is None or self._app._config.defaults.preview_scroll_animation
         self._app._preview_scroll.arm(
-            ScrollAnchor(parent_id, focus_chunk_seq, animate=target_mounted and glide)
+            ScrollAnchor(
+                parent_id,
+                focus_chunk_seq,
+                intent=self._landing_intent(parent_id, focus_chunk_seq),
+                animate=target_mounted and glide,
+            )
         )
         # One progress session spans the whole navigation, opened here because
         # arming is the single event every navigation passes through — so the
@@ -1195,7 +1220,13 @@ class PreviewPresenter:
         # resolved focus chunk and reconcile (idempotent — re-applies the
         # install's scroll; for intra-file nav it IS the scroll). The 25%
         # context margin matches the structural path.
-        self._app._preview_scroll.arm(ScrollAnchor(parent_id, focus_chunk_seq))
+        self._app._preview_scroll.arm(
+            ScrollAnchor(
+                parent_id,
+                focus_chunk_seq,
+                intent=self._landing_intent(parent_id, focus_chunk_seq),
+            )
+        )
         self._app._preview_scroll.reconcile()
         self._app._diag_log(
             f"dispatch_flat parent={parent_id[:8]} cache_hit={'yes' if cache_hit else 'no'} "

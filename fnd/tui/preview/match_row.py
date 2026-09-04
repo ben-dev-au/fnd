@@ -184,3 +184,57 @@ def rows_to_matches(block: Widget, spec: MatchSpec | None = None) -> list[int]:
     cannot be established, the same safe anchor :func:`rows_to_first_match`
     falls back to."""
     return _match_rows(block, spec) or [0]
+
+
+def row_within(widget: Widget, chunk: Widget) -> int | None:
+    """``widget``'s top row relative to ``chunk``'s, or ``None`` when either has
+    no geometry."""
+    try:
+        r, c = widget.region, chunk.region
+    except Exception:
+        return None
+    if r.height == 0 or c.height == 0:
+        return None
+    return r.y - c.y
+
+
+def chunk_stop_rows(chunk: Widget, spec: MatchSpec) -> tuple[list[int], dict[tuple[int, int], int]]:
+    """Every row of ``chunk`` a match paints on, sorted, plus the table-cell rows
+    that contributed, keyed by ``(row, column)``. Ordered by ROW, never by
+    registration: a table appends itself to ``match_blocks`` at mount, after
+    every text block, so that list ends with it whatever follows it."""
+    from textual.widgets import DataTable
+
+    from fnd.tui.widgets.markdown import (
+        FNDMarkdown,
+        FNDMarkdownTableDT,
+        FNDMarkdownTD,
+        FNDMarkdownTH,
+    )
+
+    if not isinstance(chunk, FNDMarkdown):
+        return [], {}
+    rows: list[int] = []
+    for block in chunk.match_blocks:
+        # The table owns its cells' rows (resolved below); counting the phantom
+        # cell blocks as well double-counts every table match.
+        if isinstance(block, FNDMarkdownTableDT | FNDMarkdownTD | FNDMarkdownTH):
+            continue
+        row = row_within(block, chunk)
+        if row is not None:
+            rows.extend(row + r for r in rows_to_matches(block, spec))
+    cells: dict[tuple[int, int], int] = {}
+    for dt in chunk.query(DataTable):
+        base = row_within(dt, chunk)
+        if base is None:
+            continue
+        for coord in getattr(dt, "_fnd_match_coords", []) or []:
+            try:
+                cell = dt._get_cell_region(coord)  # pyright: ignore[reportAttributeAccessIssue]
+            except Exception:
+                continue
+            if cell.height == 0:
+                continue
+            cells[(coord.row, coord.column)] = base + cell.y - dt.scroll_offset.y
+    rows.extend(cells.values())
+    return sorted(set(rows)), cells

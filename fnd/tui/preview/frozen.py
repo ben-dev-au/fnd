@@ -28,7 +28,7 @@ from textual.message import Message
 from textual.strip import Strip
 from textual.widget import Widget
 
-from fnd.tui.preview.match_row import rows_to_first_match, rows_to_matches
+from fnd.tui.preview.match_row import chunk_stop_rows, row_within, rows_to_first_match
 
 
 @dataclass(slots=True)
@@ -54,16 +54,6 @@ class FrozenChunk:
         box, so the stand-in adds nothing to this and the row fields index the
         strips directly."""
         return len(self.strips)
-
-
-def _row_within(widget: Widget, chunk: Widget) -> int | None:
-    try:
-        r, c = widget.region, chunk.region
-    except Exception:
-        return None
-    if r.height == 0 or c.height == 0:
-        return None
-    return r.y - c.y
 
 
 def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
@@ -127,45 +117,14 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
         # asks of the live blocks — a block whose spans were cleared after it
         # registered would otherwise get a scanned row live and row 0 frozen.
         spec = chunk.match_spec
-        if inner is not None and (block_row := _row_within(inner, chunk)) is not None:
+        if inner is not None and (block_row := row_within(inner, chunk)) is not None:
             # Down to the row the match PAINTS on, not the block's top: 32 rows
             # apart on a wrapped contents page, and the live scroll counts the
             # same way, so the substrates cannot disagree.
             first_match_row = block_row + rows_to_first_match(inner, spec)
-        from fnd.tui.widgets.markdown import FNDMarkdownTableDT, FNDMarkdownTD, FNDMarkdownTH
-
-        for block in chunk.match_blocks:
-            # Skip a table's own cell blocks, exactly as enumerate_stop_regions
-            # does: the table owns those cells and they are collected below from
-            # ``_fnd_match_coords``. Counting both double-counts every table
-            # match, which showed up as a frozen chunk reporting 6 stops where
-            # the live one reported 5.
-            #
-            # The ``sorted(set(...))`` below masks this whenever a cell block's
-            # row equals the row derived from the DataTable — measured, that is
-            # the common case, so removing this skip does NOT fail the parity
-            # test. It stays because the two disagree once a cell spans rows,
-            # and a silent extra stop is the failure mode this whole path exists
-            # to prevent.
-            if isinstance(block, FNDMarkdownTableDT | FNDMarkdownTD | FNDMarkdownTH):
-                continue
-            row = _row_within(block, chunk)
-            if row is not None:
-                stop_rows.extend(row + r for r in rows_to_matches(block, spec))
-        for dt in chunk.query(DataTable):
-            base = _row_within(dt, chunk)
-            if base is None:
-                continue
-            for coord in getattr(dt, "_fnd_match_coords", []) or []:
-                try:
-                    cell = dt._get_cell_region(coord)  # pyright: ignore[reportAttributeAccessIssue]
-                except Exception:
-                    continue
-                if cell.height == 0:
-                    continue
-                cell_rows[(coord.row, coord.column)] = base + cell.y - dt.scroll_offset.y
-        stop_rows.extend(cell_rows.values())
-        stop_rows = sorted(set(stop_rows))
+        # The same pass the live scroll resolves a last-match entry with, so the
+        # two substrates cannot disagree about which stop is last.
+        stop_rows, cell_rows = chunk_stop_rows(chunk, spec)
         if first_match_row is None and stop_rows:
             first_match_row = stop_rows[0]
 

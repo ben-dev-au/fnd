@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from textual.geometry import Offset, Region, Size
 
+from fnd.matching import MatchSpec
 from fnd.tui.match_navigator import MatchNavigator
 
 
@@ -54,6 +55,9 @@ class FakeApp:
 
     # The burst memory is keyed on the revealed chunk, so the stand-in has one.
     _preview_scroll = SimpleNamespace(anchor=SimpleNamespace(focus_chunk_seq=1), is_settling=False)
+    # Read when a press finds no stops, to tell a chunk with nothing to reach
+    # from one whose layout has not resolved yet.
+    _effective_match_spec = MatchSpec()
 
 
 def _nav(stops: list[int], vh: int = 20, virtual_height: int = 10**6) -> MatchNavigator:
