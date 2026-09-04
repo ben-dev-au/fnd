@@ -232,3 +232,69 @@ def test_a_source_override_records_only_what_differs() -> None:
     values = _spec_to_mapping(widened)
     delta = {k: v for k, v in values.items() if not _same_setting(v, getattr(defaults, k, None))}
     assert delta == {"exclude_tags": []}, delta
+
+
+@pytest.mark.asyncio
+async def test_the_source_scan_does_not_block_the_screen(built_index: Path) -> None:
+    """The picker scan opens files; on the event loop one cloud-evicted note
+    freezes the screen for as long as the provider takes to deliver."""
+    import threading
+
+    from fnd.filters import FilterSpec
+    from fnd.filters.scan import SourceSample
+    from fnd.tui.settings_screen import FilterBrowserScreen
+    from fnd.tui.widgets.toggle_tree import ToggleTree
+
+    release = threading.Event()
+
+    def provider() -> SourceSample:
+        release.wait(timeout=10)
+        return SourceSample(kinds={"md": 42}, tags={"os": {"slowtag": 7}})
+
+    app = FNDApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(
+            FilterBrowserScreen(
+                title="t",
+                spec=FilterSpec(),
+                gitignore=True,
+                fndignore=True,
+                sample_provider=provider,
+                on_save=lambda *_a: None,
+            )
+        )
+        for _ in range(10):
+            await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, FilterBrowserScreen)
+        assert screen._scanning, "test setup — the scan should still be running"
+        tree = screen.query_one(ToggleTree)
+        assert tree.root.children, "the tree must be usable before the scan lands"
+        assert "scanning" in str(screen.query_one("#filter_summary").render())
+
+        release.set()
+        for _ in range(400):
+            await pilot.pause()
+            if not screen._scanning:
+                break
+        assert not screen._scanning, "the sample never arrived"
+        tags = next(n for n in tree.root.children if "Tags" in str(n.label))
+        assert any("slowtag" in str(c.label) for c in tags.children)
+        assert "scanning" not in str(screen.query_one("#filter_summary").render())
+
+
+@pytest.mark.asyncio
+async def test_the_two_filter_rows_are_not_both_called_filter(built_index: Path) -> None:
+    """'Filter' sat directly above 'Index filters'; the drill looked like a
+    no-op because Enter on the scalar above it opens a text field."""
+    from fnd.tui.settings_screen import SettingsList, SourceFormScreen
+
+    app = FNDApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(SourceFormScreen(collection_name="default", source_index=None))
+        await pilot.pause()
+        labels = {it.id: it.label for it in app.screen.query_one(SettingsList)._items}
+        assert labels["form.filter"] == "Frontmatter filter"
+        assert labels["form.filters"] == "Index filters"

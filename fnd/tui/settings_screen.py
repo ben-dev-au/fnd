@@ -1720,7 +1720,9 @@ def open_source_filter_browser(
     cfg = app._config  # type: ignore[attr-defined]
     defaults = cfg.defaults.filters if cfg else DefaultFilters()
     resolved = resolve_filters(SourceFilters.model_validate(overrides or {}), defaults)
-    sample = sample_source(root, budget_s=0.8) if root is not None and root.exists() else None
+
+    def _sample() -> Any:
+        return sample_source(root, budget_s=0.8) if root is not None and root.exists() else None
 
     def _save(spec: Any, gitignore: bool, fndignore: bool) -> None:
         values = _spec_to_mapping(spec)
@@ -1738,7 +1740,7 @@ def open_source_filter_browser(
             spec=_spec_from_filters(resolved),
             gitignore=resolved.respect_gitignore,
             fndignore=resolved.respect_fndignore,
-            sample=sample,
+            sample_provider=_sample,
             on_save=_save,
         )
     )
@@ -2080,7 +2082,7 @@ class SourceFormScreen(Screen[None]):
                 picker_getter=lambda _app: self._excludes_picker_state(),
                 picker_setter=lambda _app, vs: self._set_excludes(vs),
             ),
-            self._field_item("filter", "Filter", hint="frontmatter DSL"),
+            self._field_item("filter", "Frontmatter filter", hint="frontmatter DSL"),
             MenuItem(
                 id="form.filters",
                 label="Index filters",
@@ -4740,7 +4742,7 @@ class FilterBrowserScreen(Screen[None]):
         spec: Any,
         gitignore: bool,
         fndignore: bool,
-        sample: Any = None,
+        sample_provider: Callable[[], Any] | None = None,
         on_save: Callable[[Any, bool, bool], None],
     ) -> None:
         super().__init__()
@@ -4748,7 +4750,9 @@ class FilterBrowserScreen(Screen[None]):
         self._spec = spec
         self._gitignore = gitignore
         self._fndignore = fndignore
-        self._sample = sample
+        self._sample: Any = None
+        self._sample_provider = sample_provider
+        self._scanning = sample_provider is not None
         self._on_save = on_save
 
     def compose(self) -> ComposeResult:
@@ -4759,9 +4763,40 @@ class FilterBrowserScreen(Screen[None]):
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
+        self._rebuild()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(
+                app,
+                (("⏎", "Toggle"), ("→", "Open"), ("t", "As text"), ("c", "Clear"), ("^S", "Save")),
+            )
+        )
+        if self._sample_provider is not None:
+            self.run_worker(self._load_sample, thread=True)
+
+    def _load_sample(self) -> None:
+        """Sampling opens files, so it cannot run on the event loop: the scan's
+        budget is only checked between files, and one cloud-evicted note
+        overruns it by as long as the provider takes to deliver."""
+        try:
+            sample = self._sample_provider() if self._sample_provider is not None else None
+        except Exception:
+            sample = None
+        self.app.call_from_thread(self._sample_arrived, sample)
+
+    def _sample_arrived(self, sample: Any) -> None:
+        self._scanning = False
+        self._sample = sample
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        import contextlib
+
         from fnd.filters.tree_model import selection_for, spec_branches
 
         tree = self.query_one("#filter_tree", ToggleTree)
+        keep = tree.expanded_group_ids if tree.root.children else set()
+        line = tree.cursor_line
         branches = spec_branches(self._spec, self._sample)
         groups = [
             ToggleGroup(b.id, b.label, tuple(ToggleItem(*i) for i in b.items), b.mode)
@@ -4770,16 +4805,14 @@ class FilterBrowserScreen(Screen[None]):
         selected, excluded = selection_for(
             self._spec, gitignore=self._gitignore, fndignore=self._fndignore
         )
-        tree.set_model(groups, selected, excluded=excluded, expanded=set())
+        tree.set_model(groups, selected, excluded=excluded, expanded=keep)
+        # The sample can land while the user is already navigating; keep them
+        # where they were rather than snapping back to the first row.
+        with contextlib.suppress(Exception):
+            if line > 0:
+                tree.cursor_line = line
         tree.focus()
         self._refresh_summary()
-        app: FNDApp = self.app  # type: ignore[assignment]
-        self.query_one("#footer_hints", Static).update(
-            _hint_bar(
-                app,
-                (("⏎", "Toggle"), ("→", "Open"), ("t", "As text"), ("c", "Clear"), ("^S", "Save")),
-            )
-        )
 
     @on(ToggleTree.SelectionChanged, "#filter_tree")
     def _on_selection(self, ev: ToggleTree.SelectionChanged) -> None:
@@ -4798,6 +4831,8 @@ class FilterBrowserScreen(Screen[None]):
             n for n, on in ((".gitignore", self._gitignore), (".fndignore", self._fndignore)) if on
         )
         parts = [f"honouring {ignores}" if ignores else "ignore files off"]
+        if self._scanning:
+            parts.append("scanning source for types and tags…")
         if text:
             parts.append(text)
         self.query_one("#filter_summary", Static).update(" · ".join(parts))
@@ -4809,12 +4844,12 @@ class FilterBrowserScreen(Screen[None]):
             frontmatter=self._spec.frontmatter, expression=self._spec.expression
         )
         self._gitignore = self._fndignore = False
-        self.on_mount()
+        self._rebuild()
 
     def action_edit_text(self) -> None:
         def _save(spec: Any) -> None:
             self._spec = spec
-            self.on_mount()
+            self._rebuild()
 
         self.app.push_screen(
             FilterTextScreen(title=f"{self._title} (text)", spec=self._spec, on_save=_save)

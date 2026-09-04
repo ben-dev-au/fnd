@@ -2110,7 +2110,7 @@ def _open_filter_browser(app: FNDApp) -> None:
             spec=_spec_from_filters(current),
             gitignore=current.respect_gitignore,
             fndignore=current.respect_fndignore,
-            sample=_sample_first_source(app),
+            sample_provider=lambda: _sample_first_source(app),
             on_save=_save,
         )
     )
