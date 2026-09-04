@@ -973,6 +973,7 @@ def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Conf
         if existing is None or not hasattr(existing, "get"):
             new_tbl = tomlkit.table()
             cursor[p] = new_tbl  # type: ignore[index]
+            _reseat_last(cursor)
             cursor = new_tbl
         else:
             cursor = existing
@@ -982,7 +983,12 @@ def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Conf
         with contextlib.suppress(KeyError):
             del cursor[leaf]  # type: ignore[union-attr]
     else:
+        # Only a *new* key is appended to the end of the body; replacing one
+        # edits in place, where reseating would move the wrong entry.
+        fresh = leaf not in cursor  # type: ignore[operator]
         cursor[leaf] = value  # type: ignore[index]
+        if fresh:
+            _reseat_last(cursor)
 
     # Validate the full document before committing to disk. Re-parsing the
     # tomlkit dump gives us a plain dict — Pydantic doesn't accept tomlkit's
@@ -993,8 +999,49 @@ def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Conf
     from fnd._perms import secure_mkdir, secure_write_text
 
     secure_mkdir(config_path.parent)
-    secure_write_text(config_path, tomlkit.dumps(doc))
+    secure_write_text(config_path, _spaced_tables(tomlkit.dumps(doc)))
     return config
+
+
+def _reseat_last(parent: object) -> None:
+    """Move the just-added sub-table above the parent's trailing comments.
+
+    tomlkit appends to the end of the parent's body, which is *after* any
+    comment block introducing the table that follows — leaving that comment
+    attached to the new table instead of the one it describes.
+    """
+    from tomlkit.items import Comment, Whitespace
+
+    container = parent if hasattr(parent, "body") else getattr(parent, "value", None)
+    body = getattr(container, "body", None)
+    if not body or body[-1][0] is None:
+        return
+    entry = body.pop()
+    at = len(body)
+    while at > 0 and isinstance(body[at - 1][1], (Comment, Whitespace)):
+        at -= 1
+    body.insert(at, entry)
+
+
+def _spaced_tables(text: str) -> str:
+    """One blank line before every table header.
+
+    tomlkit renders a table created this run flush against the one after it.
+    Idempotent, so a file already spaced this way is returned unchanged.
+    """
+    lines = text.splitlines()
+    out: list[str] = []
+    for line in lines:
+        if line.startswith("["):
+            # A comment block directly above a header belongs to it, so the
+            # blank goes above the comments, not between them and the table.
+            at = len(out)
+            while at > 0 and out[at - 1].lstrip().startswith("#"):
+                at -= 1
+            if at > 0 and out[at - 1].strip():
+                out.insert(at, "")
+        out.append(line)
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
 
 
 def clone_source(
