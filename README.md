@@ -340,6 +340,14 @@ its overrides.
 | `frontmatter` | A frontmatter predicate — the same `[…]` syntax as a query. **Notes only**; every other file type passes through. Use this to exclude on a YAML tag: `NOT ('no_index' in tags)`. |
 | `expression` | A predicate over any file, using `file.kind`, `file.size`, `file.modified`, `file.tags.os`, `file.path` and the like. The rows above are written in terms of it. |
 
+Each screen has an **Edit as text** row showing the whole set as one
+expression. The rows and the text are two views of the same filter, so editing
+either updates the other — typing `file.kind in ['pdf']` fills the file-type
+row in, and ticking that row writes the same clause back out. Anything the
+rows cannot express stays in `expression` verbatim. A per-source row set to
+`-` overrides to *nothing*, which is how one source opts out of a global
+exclusion; leaving a row empty inherits instead.
+
 Enabling a filter does not need a rebuild: the next update prunes anything
 newly excluded. Two things worth knowing before you turn `respect_gitignore`
 off and on:

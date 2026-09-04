@@ -1794,7 +1794,37 @@ def _source_filter_items(
             keywords=("filter", "source", field),
         )
 
+    def _open_text(app: FNDApp) -> None:
+        from fnd.config import SourceFilters
+
+        def _save(spec: Any) -> None:
+            for name, value in _spec_to_mapping(spec).items():
+                if value in (None, [], ""):
+                    overrides.pop(name, None)
+                else:
+                    overrides[name] = value
+            on_change()
+
+        app.push_screen(
+            FilterTextScreen(
+                title="Index filters (text)",
+                spec=_spec_from_filters(SourceFilters.model_validate(overrides or {})),
+                on_save=_save,
+            )
+        )
+
     return (
+        MenuItem(
+            id="srcfilter.as_text",
+            label="Edit as text",
+            description=(
+                "The rows above as one expression. Editing here fills the rows "
+                "back in, so the two stay in step."
+            ),
+            kind=KIND_EXTERNAL,
+            external=_open_text,
+            value_getter=lambda _app: f"{len(overrides)} set" if overrides else "empty",
+        ),
         _bool_row("respect_gitignore", "Respect .gitignore", "Skip files a .gitignore excludes."),
         _bool_row("respect_fndignore", "Respect .fndignore", "Skip files a .fndignore excludes."),
         _text_row(
@@ -4689,3 +4719,157 @@ class StillFlatDrillIn(Screen[None]):
 
     def action_back(self) -> None:
         self.app.pop_screen()
+
+
+class FilterTextScreen(Screen[None]):
+    """Edit a filter set as one expression.
+
+    The rows and this text are two views of the same set: a clause typed here
+    that matches a row's shape becomes that row when saved.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape", "back", "Back", show=False),
+        Binding("ctrl+s", "save_close", show=False),
+    ]
+
+    CSS = """
+    FilterTextScreen { background: $surface; }
+    FilterTextScreen > #settings_box {
+        height: 1fr; border: round $primary 50%; padding: 0 1;
+    }
+    FilterTextScreen > #settings_box:focus-within { border: round $accent; }
+    FilterTextScreen #filter_text { height: 1fr; }
+    FilterTextScreen #filter_status { height: auto; padding: 0 1; color: $text-muted; }
+    FilterTextScreen #filter_status.-ok { color: $success; }
+    FilterTextScreen #filter_status.-bad { color: $error; }
+    FilterTextScreen > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        spec: Any,
+        on_save: Callable[[Any], None],
+    ) -> None:
+        super().__init__()
+        self._title = title
+        self._spec = spec
+        self._on_save = on_save
+
+    def compose(self) -> ComposeResult:
+        from fnd.filters.text_form import render
+
+        with Vertical(id="settings_box") as box:
+            box.border_title = self._title
+            yield TextArea(render(self._spec), id="filter_text")
+            yield Static("", id="filter_status")
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        self.query_one("#filter_text", TextArea).focus()
+        self._refresh_status()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(app, (("^S", "Save"), ("Esc", "Cancel")))
+        )
+
+    @on(TextArea.Changed, "#filter_text")
+    def _on_changed(self, _ev: TextArea.Changed) -> None:
+        self._refresh_status()
+
+    def _parsed(self) -> tuple[Any, Any]:
+        from fnd.filters.text_form import parse_or_error
+
+        return parse_or_error(self.query_one("#filter_text", TextArea).text)
+
+    def _refresh_status(self) -> None:
+        status = self.query_one("#filter_status", Static)
+        spec, err = self._parsed()
+        status.remove_class("-ok", "-bad")
+        if err is not None:
+            status.add_class("-bad")
+            status.update(f"✗ col {err.column}: {err.message}")
+            return
+        status.add_class("-ok")
+        rows = _describe_spec(spec)
+        status.update(f"✓ {rows}" if rows else "✓ no filters")
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    def action_save_close(self) -> None:
+        spec, err = self._parsed()
+        if err is not None or spec is None:
+            self._refresh_status()
+            return
+        self._on_save(spec)
+        self.app.pop_screen()
+
+
+def _describe_spec(spec: Any) -> str:
+    """Which rows the text currently fills, so the effect is visible on save."""
+    parts: list[str] = []
+    if spec.kinds:
+        parts.append(f"{len(spec.kinds)} kind" + ("s" if len(spec.kinds) > 1 else ""))
+    if spec.exclude_tags:
+        parts.append(f"{len(spec.exclude_tags)} tag" + ("s" if len(spec.exclude_tags) > 1 else ""))
+    if spec.min_size is not None or spec.max_size is not None:
+        parts.append("size")
+    if any(
+        getattr(spec, f) is not None
+        for f in ("created_after", "created_before", "modified_after", "modified_before")
+    ):
+        parts.append("dates")
+    if spec.frontmatter:
+        parts.append("frontmatter")
+    if spec.expression or spec.raw:
+        parts.append("custom")
+    return " · ".join(parts)
+
+
+_SPEC_FIELDS = (
+    "kinds",
+    "exclude_tags",
+    "min_size",
+    "max_size",
+    "created_after",
+    "created_before",
+    "modified_after",
+    "modified_before",
+    "frontmatter",
+    "expression",
+)
+
+
+def _spec_from_filters(filters: Any) -> Any:
+    """A ``DefaultFilters``/``SourceFilters`` as the text form's spec.
+
+    The two ignore-file toggles have no expression form — they select which
+    files are read, not a predicate over one — so they stay on their rows.
+    """
+    from fnd.filters import FilterSpec
+
+    values: dict[str, Any] = {}
+    for name in _SPEC_FIELDS:
+        value = getattr(filters, name, None)
+        if value is None:
+            continue
+        values[name] = tuple(value) if isinstance(value, list) else value
+    return FilterSpec(**values)
+
+
+def _spec_to_mapping(spec: Any) -> dict[str, Any]:
+    """The spec's fields as config values, with the text form's leftovers
+    folded back into ``expression`` so nothing typed is lost."""
+    out: dict[str, Any] = {}
+    for name in _SPEC_FIELDS:
+        value = getattr(spec, name)
+        out[name] = list(value) if isinstance(value, tuple) else value
+    if spec.raw:
+        joined = " AND ".join(f"({c})" for c in (spec.expression, *spec.raw) if c)
+        out["expression"] = joined
+    return out

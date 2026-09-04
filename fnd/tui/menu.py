@@ -2159,9 +2159,57 @@ def _filter_date_rows() -> tuple[MenuItem, ...]:
     return tuple(out)
 
 
+def _summary_filters_text(app: FNDApp) -> str:
+    from fnd.filters.text_form import render
+    from fnd.tui.settings_screen import _spec_from_filters
+
+    text = render(_spec_from_filters(_filters_defaults(app)))
+    return f"{len(text)} chars" if text else "empty"
+
+
+def _open_filters_as_text(app: FNDApp) -> None:
+    """The defaults rows as one expression, and back again on save."""
+    from fnd.config import default_config_path, load, write_setting
+    from fnd.tui.settings_screen import (
+        FilterTextScreen,
+        _spec_from_filters,
+        _spec_to_mapping,
+    )
+
+    def _save(spec: Any) -> None:
+        for name, value in _spec_to_mapping(spec).items():
+            write_setting(
+                config_path=default_config_path(),
+                dotted_path=f"defaults.filters.{name}",
+                value=value if value not in ([], "") else None,
+            )
+        app._config = load()  # type: ignore[attr-defined]
+        app._refresh_status()  # type: ignore[attr-defined]
+
+    app.push_screen(
+        FilterTextScreen(
+            title="Index filters (text)",
+            spec=_spec_from_filters(_filters_defaults(app)),
+            on_save=_save,
+        )
+    )
+
+
 def _provider_index_filters(_app: FNDApp) -> tuple[MenuItem, ...]:
     """Filters applied while indexing, inherited by every source."""
     return (
+        MenuItem(
+            id="filters.as_text",
+            label="Edit as text",
+            description=(
+                "The rows below as one expression. Editing here fills the rows "
+                "back in, so the two stay in step. Needs a reindex to take effect."
+            ),
+            kind=KIND_EXTERNAL,
+            external=_open_filters_as_text,
+            value_getter=_summary_filters_text,
+            keywords=("text", "expression", "advanced", "edit", "dsl"),
+        ),
         MenuItem(
             id="filters.respect_gitignore",
             label="Respect .gitignore",

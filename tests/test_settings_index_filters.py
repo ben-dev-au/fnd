@@ -168,3 +168,70 @@ def test_optional_scalars_clear_to_unset() -> None:
     assert _coerce_optional_date("") is None
     assert _coerce_str_list("") == []
     assert _coerce_optional_int("50_000_000") == 50_000_000
+
+
+@pytest.mark.asyncio
+async def test_editing_as_text_fills_the_rows_back_in(built_index: Path) -> None:
+    """The text view and the rows are two views of one set.
+
+    Typing a row-shaped clause must populate that row on save — that is the
+    "text informs the UI" half, not a mis-parse.
+    """
+    from textual.widgets import TextArea
+
+    from fnd.tui.settings_screen import FilterTextScreen, _spec_from_filters
+
+    saved: list[object] = []
+    from fnd.config import SourceFilters
+
+    app = FNDApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(
+            FilterTextScreen(
+                title="t",
+                spec=_spec_from_filters(SourceFilters()),
+                on_save=saved.append,
+            )
+        )
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, FilterTextScreen)
+        screen.query_one(
+            "#filter_text", TextArea
+        ).text = "(file.kind in ['pdf']) AND (file.size <= 500)"
+        await pilot.pause()
+        screen.action_save_close()
+        await pilot.pause()
+
+    assert len(saved) == 1
+    spec = saved[0]
+    assert spec.kinds == ("pdf",)  # type: ignore[attr-defined]
+    assert spec.max_size == 500  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_malformed_text_refuses_to_save(built_index: Path) -> None:
+    from textual.widgets import TextArea
+
+    from fnd.config import SourceFilters
+    from fnd.tui.settings_screen import FilterTextScreen, _spec_from_filters
+
+    saved: list[object] = []
+    app = FNDApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(
+            FilterTextScreen(
+                title="t", spec=_spec_from_filters(SourceFilters()), on_save=saved.append
+            )
+        )
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, FilterTextScreen)
+        screen.query_one("#filter_text", TextArea).text = "file.kind in ["
+        await pilot.pause()
+        screen.action_save_close()
+        await pilot.pause()
+        assert saved == [], "invalid text must not be saved"
+        assert isinstance(app.screen, FilterTextScreen), "screen stays open on error"
