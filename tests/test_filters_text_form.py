@@ -169,3 +169,27 @@ class TestFieldNamesCarryingAQuote:
     def test_a_field_name_with_a_double_quote_round_trips(self) -> None:
         spec = FilterSpec(expression='"od\\"d" == 1')
         assert parse(render(spec)).expression == '"od\\"d" == 1'
+
+
+class TestIncludeTags:
+    def test_one_included_tag_round_trips(self) -> None:
+        spec = FilterSpec(include_tags=("readings",))
+        assert render(spec) == "'readings' in file.tags.all"
+        assert parse(render(spec)).include_tags == ("readings",)
+
+    def test_several_are_one_or_clause(self) -> None:
+        """Carrying any of them is enough, so they must not become AND."""
+        spec = FilterSpec(include_tags=("a", "b", "c"))
+        assert parse(render(spec)).include_tags == ("a", "b", "c")
+
+    def test_include_and_exclude_survive_together(self) -> None:
+        spec = FilterSpec(include_tags=("keep",), exclude_tags=("drop",))
+        back = parse(render(spec))
+        assert back.include_tags == ("keep",)
+        assert back.exclude_tags == ("drop",)
+
+    def test_an_or_of_something_else_stays_an_expression(self) -> None:
+        """Only a pure tag-membership OR is a row; anything else is raw text."""
+        spec = parse("'a' in file.tags.all OR file.size > 10")
+        assert spec.include_tags == ()
+        assert "file.size" in spec.expression

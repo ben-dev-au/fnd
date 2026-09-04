@@ -89,6 +89,7 @@ class FilterSpec:
     """
 
     kinds: tuple[str, ...] = ()
+    include_tags: tuple[str, ...] = ()
     exclude_tags: tuple[str, ...] = ()
     min_size: int | None = None
     max_size: int | None = None

@@ -226,6 +226,8 @@ class DefaultFilters(BaseModel):
     # Every tag source: OS tags and a note's YAML ``tags:``. The latter opens
     # each note during enumeration, which the indexer's reader bounds and
     # reports exactly as it does for ``frontmatter``.
+    # Index only files carrying one of these, the tag rows' ● state.
+    include_tags: list[str] = Field(default_factory=list)
     exclude_tags: list[str] = Field(default_factory=lambda: ["no_index"])
     kinds: list[str] = Field(default_factory=list)
     min_size: int | None = None
@@ -255,6 +257,7 @@ class SourceFilters(BaseModel):
 
     respect_gitignore: bool | None = None
     respect_fndignore: bool | None = None
+    include_tags: list[str] | None = None
     exclude_tags: list[str] | None = None
     kinds: list[str] | None = None
     min_size: int | None = None

@@ -1746,6 +1746,33 @@ def open_source_filter_browser(
     )
 
 
+def _default_frontmatter(app: Any) -> str:
+    cfg = getattr(app, "_config", None)
+    return (getattr(cfg.defaults.filters, "frontmatter", None) or "") if cfg else ""
+
+
+def _source_frontmatter(source: Any) -> str:
+    """This source's frontmatter rule, wherever it is currently stored."""
+    override = getattr(source.filters, "frontmatter", None) if source.filters else None
+    if override is not None:
+        return str(override)
+    return str(source.frontmatter_filter or "")
+
+
+def _merge_frontmatter(filters: dict[str, Any], text: str, default: str) -> dict[str, Any]:
+    """Fold the rule into ``filters``, keeping "same as the default" unset.
+
+    An empty rule where the default has one is a real override, not an absence
+    — dropping the key there would silently reinstate the inherited rule.
+    """
+    value = text.strip()
+    if value == default.strip():
+        filters.pop("frontmatter", None)
+    else:
+        filters["frontmatter"] = value
+    return filters
+
+
 def _source_filters_or_none(raw: dict[str, Any] | None) -> Any:
     """Sparse overrides as a ``SourceFilters``, or ``None`` when none are set.
 
@@ -2013,7 +2040,7 @@ class SourceFormScreen(Screen[None]):
             "includes_custom": includes_custom,
             "excludes_presets": preset_keys,
             "excludes_custom": excludes_custom,
-            "filter": s.frontmatter_filter or "",
+            "filter": _source_frontmatter(s),
             "follow_symlinks": bool(s.follow_symlinks),
             "app": s.app or "",
             "app_params_vault": (s.app_params or {}).get("vault", ""),
@@ -2031,6 +2058,16 @@ class SourceFormScreen(Screen[None]):
             "app_params_vault": self._fields["app_params_vault"],
             "filters": copy.deepcopy(self._fields["filters"]),
         }
+
+    def _frontmatter_into_filters(self, text: str) -> dict[str, Any]:
+        """The frontmatter rule as part of this source's filter overrides.
+
+        It was a field beside the filters, so the browser and the row could
+        disagree about the same rule and neither showed the other's value.
+        """
+        return _merge_frontmatter(
+            dict(self._fields["filters"]), text, _default_frontmatter(self.app)
+        )
 
     def _open_filters(self) -> None:
         app: FNDApp = self.app  # type: ignore[assignment]
@@ -2082,7 +2119,11 @@ class SourceFormScreen(Screen[None]):
                 picker_getter=lambda _app: self._excludes_picker_state(),
                 picker_setter=lambda _app, vs: self._set_excludes(vs),
             ),
-            self._field_item("filter", "Frontmatter filter", hint="frontmatter DSL"),
+            self._field_item(
+                "filter",
+                "Frontmatter rule",
+                hint="e.g. type == 'note'",
+            ),
             MenuItem(
                 id="form.filters",
                 label="Index filters",
@@ -2417,8 +2458,10 @@ class SourceFormScreen(Screen[None]):
                 includes=includes_globs,
                 excludes=excludes_globs,
                 follow_symlinks=bool(self._fields["follow_symlinks"]),
-                frontmatter_filter=(str(self._fields["filter"]) or None),
-                filters=_source_filters_or_none(self._fields["filters"]),
+                frontmatter_filter=None,
+                filters=_source_filters_or_none(
+                    self._frontmatter_into_filters(str(self._fields["filter"]))
+                ),
                 app=app_id or None,
                 app_params=app_params,
             )
@@ -2890,8 +2933,14 @@ class AddCollectionWizard(Screen[None]):
             includes=includes_globs,
             excludes=excludes_globs,
             follow_symlinks=bool(self._fields["follow_symlinks"]),
-            frontmatter_filter=(str(self._fields["filter"]).strip() or None),
-            filters=_source_filters_or_none(self._fields.get("filters", {})),
+            frontmatter_filter=None,
+            filters=_source_filters_or_none(
+                _merge_frontmatter(
+                    dict(self._fields.get("filters", {})),
+                    str(self._fields["filter"]),
+                    _default_frontmatter(self.app),
+                )
+            ),
         )
         new_collection = CollectionConfig(sources=[source])
         config_path = default_config_path()
@@ -4649,8 +4698,14 @@ def _describe_spec(spec: Any) -> str:
     parts: list[str] = []
     if spec.kinds:
         parts.append(f"{len(spec.kinds)} kind" + ("s" if len(spec.kinds) > 1 else ""))
+    if spec.include_tags:
+        n = len(spec.include_tags)
+        joined = "/".join(spec.include_tags)
+        parts.append(f"only files tagged {joined}" if n < 4 else f"only {n} tags")
     if spec.exclude_tags:
-        parts.append(f"{len(spec.exclude_tags)} tag" + ("s" if len(spec.exclude_tags) > 1 else ""))
+        n = len(spec.exclude_tags)
+        joined = "/".join(spec.exclude_tags)
+        parts.append(f"never {joined}" if n < 4 else f"never {n} tags")
     if spec.min_size is not None or spec.max_size is not None:
         parts.append("size")
     if any(
@@ -4667,6 +4722,7 @@ def _describe_spec(spec: Any) -> str:
 
 _SPEC_FIELDS = (
     "kinds",
+    "include_tags",
     "exclude_tags",
     "min_size",
     "max_size",
@@ -4709,6 +4765,18 @@ def _spec_to_mapping(spec: Any) -> dict[str, Any]:
     return out
 
 
+def _branch_group(branch: Any) -> ToggleGroup:
+    """A model :class:`Branch` as the widget's :class:`ToggleGroup`, nested."""
+    return ToggleGroup(
+        id=branch.id,
+        label=branch.label,
+        items=tuple(ToggleItem(*i) for i in branch.items),
+        mode=branch.mode,
+        empty_label=branch.empty_label,
+        groups=tuple(_branch_group(b) for b in branch.groups),
+    )
+
+
 class FilterBrowserScreen(Screen[None]):
     """Filters as the Filters pane shows them: collapsible branches, tri-state.
 
@@ -4729,6 +4797,9 @@ class FilterBrowserScreen(Screen[None]):
         height: 1fr; border: round $primary 50%; padding: 0 1;
     }
     FilterBrowserScreen > #settings_box:focus-within { border: round $accent; }
+    FilterBrowserScreen #filter_legend {
+        height: auto; padding: 0 1; color: $text-muted; text-style: dim;
+    }
     FilterBrowserScreen #filter_summary { height: auto; padding: 0 1; color: $text-muted; }
     FilterBrowserScreen > #footer_hints {
         dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
@@ -4756,11 +4827,20 @@ class FilterBrowserScreen(Screen[None]):
         self._on_save = on_save
 
     def compose(self) -> ComposeResult:
+        from fnd.filters.tree_model import LEGEND
+
         with Vertical(id="settings_box") as box:
             box.border_title = self._title
+            yield Static(LEGEND, id="filter_legend")
             yield ToggleTree("Filters", id="filter_tree")
             yield Static("", id="filter_summary")
         yield Static("", id="footer_hints")
+
+    @on(ToggleTree.NavigatedOut, "#filter_tree")
+    def _on_navigated_out(self, _ev: ToggleTree.NavigatedOut) -> None:
+        """← at the outermost level leaves the screen, as it does everywhere
+        else in Settings. The tree's own binding would otherwise swallow it."""
+        self.action_back()
 
     def on_mount(self) -> None:
         self._rebuild()
@@ -4798,10 +4878,7 @@ class FilterBrowserScreen(Screen[None]):
         keep = tree.expanded_group_ids if tree.root.children else set()
         line = tree.cursor_line
         branches = spec_branches(self._spec, self._sample)
-        groups = [
-            ToggleGroup(b.id, b.label, tuple(ToggleItem(*i) for i in b.items), b.mode)
-            for b in branches
-        ]
+        groups = [_branch_group(b) for b in branches]
         selected, excluded = selection_for(
             self._spec, gitignore=self._gitignore, fndignore=self._fndignore
         )
@@ -4824,18 +4901,22 @@ class FilterBrowserScreen(Screen[None]):
         self._refresh_summary()
 
     def _refresh_summary(self) -> None:
+        """Show the rows as the expression they compile to.
+
+        The text is not a separate feature to go and find — it is this filter
+        set, written out, and ``t`` opens it for editing.
+        """
         from fnd.filters.text_form import render
 
         text = render(self._spec)
         ignores = ", ".join(
             n for n, on in ((".gitignore", self._gitignore), (".fndignore", self._fndignore)) if on
         )
-        parts = [f"honouring {ignores}" if ignores else "ignore files off"]
+        head = [f"obeying {ignores}" if ignores else "ignore files off"]
         if self._scanning:
-            parts.append("scanning source for types and tags…")
-        if text:
-            parts.append(text)
-        self.query_one("#filter_summary", Static).update(" · ".join(parts))
+            head.append("scanning source for types and tags…")
+        lines = [" · ".join(head), f"as text ('t' to edit):  {text or 'no filters'}"]
+        self.query_one("#filter_summary", Static).update("\n".join(lines))
 
     def action_clear_all(self) -> None:
         from fnd.filters import FilterSpec

@@ -91,6 +91,9 @@ def render(spec: FilterSpec) -> str:
     clauses: list[str] = []
     if spec.kinds:
         clauses.append(f"file.kind in [{', '.join(_value(k) for k in spec.kinds)}]")
+    if spec.include_tags:
+        # One OR clause: carrying any of them is enough.
+        clauses.append(" OR ".join(f"{_value(t)} in {_TAG_FACT}" for t in spec.include_tags))
     for tag in spec.exclude_tags:
         clauses.append(f"NOT ({_value(tag)} in {_TAG_FACT})")
     for field_name, (fact, op) in _BY_FIELD.items():
@@ -132,9 +135,30 @@ def _match_frontmatter(node: object) -> str | None:
     return _unparse(node.right)
 
 
+def _tag_in(node: object) -> str | None:
+    """``'x' in file.tags.all`` — one alternative of an include clause."""
+    if isinstance(node, In) and node.field == _TAG_FACT and not node.negated:
+        return str(node.value)
+    return None
+
+
+def _include_tags(node: object) -> tuple[str, ...] | None:
+    """A single tag membership, or an ``OR`` chain of nothing else."""
+    single = _tag_in(node)
+    if single is not None:
+        return (single,)
+    if not isinstance(node, Or):
+        return None
+    left, right = _include_tags(node.left), _include_tags(node.right)
+    return None if left is None or right is None else left + right
+
+
 def _recognise(node: object) -> tuple[str, object] | None:
     if isinstance(node, FieldIn) and node.field == "file.kind" and not node.negated:
         return "kinds", tuple(str(v) for v in node.values)
+    included = _include_tags(node)
+    if included is not None:
+        return "include_tags", included
     if isinstance(node, Not) and isinstance(node.operand, In):
         inner = node.operand
         if inner.field == _TAG_FACT and not inner.negated:
@@ -169,7 +193,9 @@ def parse(text: str) -> FilterSpec:
             leftover.append(_unparse(clause) or stripped)
             continue
         name, value = found
-        if name == "exclude_tags":
+        if name == "include_tags":
+            updates["include_tags"] = tuple(dict.fromkeys(value))  # type: ignore[arg-type]
+        elif name == "exclude_tags":
             tags.append(str(value))
         else:
             updates[name] = value

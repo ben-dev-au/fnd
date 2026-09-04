@@ -296,5 +296,5 @@ async def test_the_two_filter_rows_are_not_both_called_filter(built_index: Path)
         app.push_screen(SourceFormScreen(collection_name="default", source_index=None))
         await pilot.pause()
         labels = {it.id: it.label for it in app.screen.query_one(SettingsList)._items}
-        assert labels["form.filter"] == "Frontmatter filter"
+        assert labels["form.filter"] == "Frontmatter rule"
         assert labels["form.filters"] == "Index filters"

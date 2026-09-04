@@ -114,6 +114,37 @@ class _TagExcludeDimension:
 
 
 @dataclass(frozen=True, slots=True)
+class _TagIncludeDimension:
+    """``'a' in file.tags.all OR 'b' in file.tags.all`` — carry at least one.
+
+    Strict, unlike its exclude counterpart: "only files tagged X" cannot be
+    satisfied by a file whose tags nothing could read.
+    """
+
+    id: str
+    fact: str
+
+    def render(self, value: object) -> str:
+        values = _as_list(value)
+        return " OR ".join(f"{_quote(v)} in {self.fact}" for v in values)
+
+    def rule(self, value: object) -> Rule | None:
+        values = _as_list(value)
+        wanted = {normalise_tag(str(v)) for v in values if normalise_tag(str(v))}
+        if not wanted:
+            return None
+        fact = self.fact
+
+        def predicate(facts: Mapping[str, object]) -> bool:
+            actual = facts.get(fact)
+            if not isinstance(actual, (list, tuple, set, frozenset)):
+                return False
+            return bool(wanted & {str(t) for t in actual})
+
+        return Rule(predicate=predicate, text=self.render(values), facts=frozenset({self.fact}))
+
+
+@dataclass(frozen=True, slots=True)
 class _ComparisonDimension:
     """A single ordered comparison against a fact: size or a date bound."""
 
@@ -165,6 +196,7 @@ def rule_from_text(text: str, *, applies_to: frozenset[str] | None = None) -> Ru
 
 DIMENSIONS: Final[tuple[Dimension, ...]] = (
     _ListDimension("kinds", "file.kind"),
+    _TagIncludeDimension("include_tags", "file.tags.all"),
     _TagExcludeDimension("exclude_tags", "file.tags.all"),
     _ComparisonDimension("min_size", "file.size", ">="),
     _ComparisonDimension("max_size", "file.size", "<="),

@@ -18,7 +18,7 @@ from fnd.filters.model import FilterSpec
 from fnd.filters.scan import SourceSample
 from fnd.kinds import CATEGORIES, KIND_BY_ID, KINDS_IN_CATEGORY
 
-__all__ = ["BRANCHES", "apply_selection", "selection_for", "spec_branches"]
+__all__ = ["BRANCHES", "LEGEND", "apply_selection", "selection_for", "spec_branches"]
 
 # (id, label, days back). ``None`` days = no bound.
 _WINDOWS: tuple[tuple[str, str, int | None], ...] = (
@@ -39,15 +39,26 @@ _SIZES: tuple[tuple[str, str, int | None], ...] = (
 
 BRANCHES = ("kinds", "tags", "ignore", "size", "modified", "created")
 
+# Shown above the tree. The glyphs carry different polarity per branch —
+# ● on a file type includes, ⊘ on a tag excludes — so the meaning is stated
+# once here rather than guessed from each row.
+LEGEND = "●  keep only these   ⊘  never these   ○  no rule"
+
 
 @dataclass(frozen=True, slots=True)
 class Branch:
-    """One collapsible row: its leaves and how they behave."""
+    """One collapsible row: its leaves, its sub-branches and how they behave.
+
+    ``empty_label`` says what the branch means with nothing switched on —
+    without it, "no file type ticked" reads as *nothing is indexed*.
+    """
 
     id: str
     label: str
     mode: str
-    items: tuple[tuple[str, str], ...]  # (item id, label)
+    items: tuple[tuple[str, str], ...] = ()  # (item id, label)
+    groups: tuple[Branch, ...] = ()
+    empty_label: str = ""
 
 
 def _kind_items(sample: SourceSample | None) -> list[tuple[str, str, str]]:
@@ -75,12 +86,21 @@ def spec_branches(spec: FilterSpec, sample: SourceSample | None = None) -> list[
     by_cat: dict[str, list[tuple[str, str]]] = {}
     for cat_id, kind, label in kinds:
         by_cat.setdefault(cat_id, []).append((kind, label))
-    for cat in CATEGORIES:
-        items = by_cat.get(cat.id)
-        if items:
-            branches.append(
-                Branch(f"kinds:{cat.id}", f"File type · {cat.label}", "multi", tuple(items))
+    categories = tuple(
+        Branch(f"kinds:{cat.id}", cat.label, "multi", tuple(by_cat[cat.id]))
+        for cat in CATEGORIES
+        if by_cat.get(cat.id)
+    )
+    if categories:
+        branches.append(
+            Branch(
+                "kinds",
+                "File types",
+                "multi",
+                groups=categories,
+                empty_label="every type",
             )
+        )
 
     # Counts merge across providers: a tag carried both as an OS tag and in
     # YAML is one exclusion, and listing it twice would give the tree two rows
@@ -93,28 +113,31 @@ def spec_branches(spec: FilterSpec, sample: SourceSample | None = None) -> list[
         (f"tag:{v}", f"{v}  ({c})")
         for v, c in sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
     ]
-    for tag in spec.exclude_tags:
+    for tag in (*spec.include_tags, *spec.exclude_tags):
         if not any(i[0] == f"tag:{tag}" for i in seen):
             seen.append((f"tag:{tag}", tag))
     # Whatever is switched on sorts first, so the branch shows what it is
     # doing without the user scrolling a corpus-length list to find it.
-    active = {f"tag:{t}" for t in spec.exclude_tags}
+    active = {f"tag:{t}" for t in (*spec.include_tags, *spec.exclude_tags)}
     tag_items = [i for i in seen if i[0] in active] + [i for i in seen if i[0] not in active]
     if tag_items:
-        branches.append(Branch("tags", "Tags", "cycle", tuple(tag_items)))
+        branches.append(Branch("tags", "Tags", "cycle", tuple(tag_items), empty_label="any tag"))
 
     branches.append(
         Branch(
             "ignore",
-            "Ignore files",
+            "Obey ignore files",
             "multi",
             (("ignore:git", ".gitignore"), ("ignore:fnd", ".fndignore")),
+            empty_label="none",
         )
     )
     branches.append(
-        Branch("size", "Maximum size", "radio", tuple((f"size:{i}", lbl) for i, lbl, _ in _SIZES))
+        Branch(
+            "size", "Maximum file size", "radio", tuple((f"size:{i}", lbl) for i, lbl, _ in _SIZES)
+        )
     )
-    for field_name, label in (("modified", "Modified"), ("created", "Created")):
+    for field_name, label in (("modified", "Modified within"), ("created", "Created within")):
         branches.append(
             Branch(
                 field_name,
@@ -135,7 +158,7 @@ def selection_for(
     read rather than filtering one, so they are not part of the predicate
     spec the gate compiles.
     """
-    selected: set[str] = set()
+    selected: set[str] = {f"tag:{t}" for t in spec.include_tags}
     excluded: set[str] = {f"tag:{t}" for t in spec.exclude_tags}
     selected |= {f"kind:{k}" for k in spec.kinds}
     # ``kinds`` empty means every type, which the tree shows as nothing ticked.
@@ -167,6 +190,7 @@ def apply_selection(
 ) -> tuple[FilterSpec, bool, bool]:
     """``(spec, respect_gitignore, respect_fndignore)`` matching the tree."""
     kinds = tuple(sorted(i.removeprefix("kind:") for i in selected if i.startswith("kind:")))
+    keep = tuple(sorted(i.removeprefix("tag:") for i in selected if i.startswith("tag:")))
     tags = tuple(sorted(i.removeprefix("tag:") for i in excluded if i.startswith("tag:")))
     today = dt.date.today()
 
@@ -185,6 +209,7 @@ def apply_selection(
     updated = replace(
         spec,
         kinds=kinds,
+        include_tags=keep,
         exclude_tags=tags,
         max_size=max_size,
         modified_after=bounds["modified_after"],

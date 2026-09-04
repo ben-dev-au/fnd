@@ -323,6 +323,7 @@ def walk_sources(
         gate = build_gate(
             FilterSpec(
                 kinds=tuple(resolved.kinds),
+                include_tags=tuple(resolved.include_tags),
                 exclude_tags=tuple(resolved.exclude_tags),
                 min_size=resolved.min_size,
                 max_size=resolved.max_size,

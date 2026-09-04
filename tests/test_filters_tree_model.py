@@ -12,6 +12,17 @@ from fnd.filters.scan import SourceSample, sample_source
 from fnd.filters.tree_model import apply_selection, selection_for, spec_branches
 
 
+def _leaves(branches: list[object]) -> set[str]:
+    """Every item id at any depth — kinds now sit under one File types parent."""
+    out: set[str] = set()
+    stack = list(branches)
+    while stack:
+        b = stack.pop()
+        out |= {i[0] for i in b.items}  # type: ignore[attr-defined]
+        stack.extend(b.groups)  # type: ignore[attr-defined]
+    return out
+
+
 def _sample() -> SourceSample:
     return SourceSample(
         kinds={"md": 439, "pdf": 7},
@@ -22,18 +33,28 @@ def _sample() -> SourceSample:
 class TestBranches:
     def test_only_kinds_present_are_offered(self) -> None:
         """A picker listing types the source does not contain is noise."""
-        labels = {
-            item[0]
-            for branch in spec_branches(FilterSpec(), _sample())
-            for item in branch.items
-            if item[0].startswith("kind:")
+        found = {
+            i for i in _leaves(spec_branches(FilterSpec(), _sample())) if i.startswith("kind:")
         }
-        assert labels == {"kind:md", "kind:pdf"}
+        assert found == {"kind:md", "kind:pdf"}
 
     def test_every_kind_is_offered_when_nothing_is_known(self) -> None:
-        branches = spec_branches(FilterSpec(), None)
-        kinds = {i[0] for b in branches for i in b.items if i[0].startswith("kind:")}
+        kinds = {i for i in _leaves(spec_branches(FilterSpec(), None)) if i.startswith("kind:")}
         assert len(kinds) > 10
+
+    def test_file_types_hang_off_one_parent(self) -> None:
+        """Seven loose 'File type · X' siblings read as seven unrelated filters."""
+        branches = spec_branches(FilterSpec(), None)
+        tops = [b for b in branches if b.id == "kinds"]
+        assert len(tops) == 1
+        assert tops[0].label == "File types"
+        assert not tops[0].items, "categories belong under the parent, not beside it"
+        assert len(tops[0].groups) > 3
+
+    def test_the_file_type_branch_says_what_empty_means(self) -> None:
+        """Nothing ticked means every type, which ○ alone reads as the opposite."""
+        kinds = next(b for b in spec_branches(FilterSpec(), None) if b.id == "kinds")
+        assert kinds.empty_label == "every type"
 
     def test_tag_branch_cycles_and_others_do_not(self) -> None:
         modes = {b.id: b.mode for b in spec_branches(FilterSpec(), _sample())}
@@ -123,3 +144,27 @@ class TestBoundedScan:
         got = sample_source(tmp_path)
         assert got.files_seen == 2
         assert got.tags.get("frontmatter", {}).get("ok") == 1
+
+
+class TestTagTriState:
+    """The tag rows carry the query pane's ●/⊘/○, and all three must mean something."""
+
+    def test_an_included_tag_round_trips(self) -> None:
+        spec = FilterSpec(include_tags=("readings",))
+        selected, excluded = selection_for(spec, gitignore=True, fndignore=True)
+        assert "tag:readings" in selected
+        back, _g, _f = apply_selection(spec, selected, excluded)
+        assert back.include_tags == ("readings",)
+
+    def test_include_and_exclude_are_separate_sets(self) -> None:
+        spec = FilterSpec(include_tags=("keep",), exclude_tags=("drop",))
+        selected, excluded = selection_for(spec, gitignore=True, fndignore=True)
+        assert "tag:keep" in selected
+        assert excluded == {"tag:drop"}
+        back, _g, _f = apply_selection(spec, selected, excluded)
+        assert back == spec
+
+    def test_a_configured_include_tag_appears_even_if_unscanned(self) -> None:
+        spec = FilterSpec(include_tags=("never_scanned",))
+        tags = next(b for b in spec_branches(spec, _sample()) if b.id == "tags")
+        assert any(i[0] == "tag:never_scanned" for i in tags.items)

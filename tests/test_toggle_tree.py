@@ -137,3 +137,115 @@ async def test_group_marker_tri_state() -> None:
         await pilot.press("enter")  # select C++ too
         await pilot.pause()
         assert "●" in str(code.label), f"full expected: {code.label!r}"
+
+
+NESTED = [
+    ToggleGroup(
+        "kinds",
+        "File types",
+        (),
+        empty_label="every type",
+        groups=(
+            ToggleGroup(
+                "docs", "Documents", (ToggleItem("pdf", "PDF"), ToggleItem("docx", "Word"))
+            ),
+            ToggleGroup("notes", "Notes", (ToggleItem("md", "Markdown"),)),
+        ),
+    ),
+    ToggleGroup("tags", "Tags", (ToggleItem("a", "a"), ToggleItem("b", "b")), mode="cycle"),
+]
+
+
+class _Nested(App[None]):
+    def compose(self) -> ComposeResult:
+        yield ToggleTree(id="tt")
+
+    def on_mount(self) -> None:
+        self.query_one("#tt", ToggleTree).set_model(
+            NESTED, set(), expanded={"kinds", "docs", "notes", "tags"}
+        )
+
+
+def _labels(tt: ToggleTree) -> dict[str, str]:
+    out: dict[str, str] = {}
+    stack = list(tt.root.children)
+    while stack:
+        node = stack.pop()
+        data = node.data if isinstance(node.data, dict) else {}
+        out[str(data.get("id"))] = str(node.label)
+        stack.extend(node.children)
+    return out
+
+
+class TestNesting:
+    @pytest.mark.asyncio
+    async def test_a_group_of_groups_rolls_up_through_both_levels(self) -> None:
+        app = _Nested()
+        async with app.run_test() as pilot:
+            tt = app.query_one("#tt", ToggleTree)
+            tt.cursor_line = 2  # PDF
+            await pilot.press("enter")
+            await pilot.pause()
+            labels = _labels(tt)
+            assert labels["docs"].startswith("◐"), labels["docs"]
+            assert labels["kinds"].startswith("◐"), labels["kinds"]
+
+    @pytest.mark.asyncio
+    async def test_toggling_the_top_group_cascades_to_every_descendant(self) -> None:
+        app = _Nested()
+        async with app.run_test() as pilot:
+            tt = app.query_one("#tt", ToggleTree)
+            tt.cursor_line = 0
+            await pilot.press("enter")
+            await pilot.pause()
+            assert tt.selected == frozenset({"pdf", "docx", "md"})
+            assert _labels(tt)["kinds"].startswith("●")
+
+    @pytest.mark.asyncio
+    async def test_an_empty_branch_says_what_that_means(self) -> None:
+        app = _Nested()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert "every type" in _labels(app.query_one("#tt", ToggleTree))["kinds"]
+
+    @pytest.mark.asyncio
+    async def test_one_excluded_tag_is_partial_not_a_blanket_exclusion(self) -> None:
+        """⊘ on the branch said the whole category was excluded when one was."""
+        app = _Nested()
+        async with app.run_test() as pilot:
+            tt = app.query_one("#tt", ToggleTree)
+            tag_a = next(n for n in tt.root.children if str(n.label).endswith("Tags")).children[0]
+            tt.cursor_line = tag_a.line
+            await pilot.press("enter")  # include
+            await pilot.press("enter")  # exclude
+            await pilot.pause()
+            assert tt.excluded == frozenset({"a"})
+            assert _labels(tt)["tags"].startswith("◐"), _labels(tt)["tags"]
+
+
+class TestNavigateOut:
+    @pytest.mark.asyncio
+    async def test_left_at_the_outermost_level_asks_the_host_to_leave(self) -> None:
+        """Without this the binding swallows ← and the host's back never fires."""
+        seen: list[bool] = []
+
+        class _App(_Nested):
+            @on(ToggleTree.NavigatedOut)
+            def _out(self, _ev: ToggleTree.NavigatedOut) -> None:
+                seen.append(True)
+
+        app = _App()
+        async with app.run_test() as pilot:
+            tt = app.query_one("#tt", ToggleTree)
+            tt.cursor_line = 2  # a leaf, two levels deep
+            await pilot.press("left")  # -> parent group
+            await pilot.pause()
+            assert not seen, "a leaf must walk to its parent first"
+            await pilot.press("left")  # collapse Documents
+            await pilot.press("left")  # -> File types
+            await pilot.press("left")  # collapse File types
+            await pilot.pause()
+            assert not seen
+            await pilot.press("left")  # nothing left to collapse
+            await pilot.pause()
+            assert seen, "← at the top level did not ask the host to go back"
