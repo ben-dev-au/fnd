@@ -190,9 +190,15 @@ async def test_enter_on_collection_does_not_undo_collapse(
 
 
 @pytest.mark.asyncio
-async def test_toggle_with_active_query_clears_results_without_focus_shift(
+async def test_toggle_with_active_query_reruns_without_focus_shift(
     built_index: Path, cfg: Config, isolated_ui_state: Path
 ) -> None:
+    """A scope change re-runs the query rather than emptying both panes.
+
+    Focus must stay put: the rerun path calls ``_refresh_results_tree``,
+    whose ``focus()`` would otherwise pull the user out of the sidebar
+    mid-toggle.
+    """
     app = FNDApp(index_dir=built_index, config=cfg, initial_query="blue penguin sandwich")
     async with app.run_test() as pilot:
         await safe_pause(pilot)
@@ -206,12 +212,13 @@ async def test_toggle_with_active_query_clears_results_without_focus_shift(
                 ctree.cursor_line = i
                 break
         await safe_pause(pilot)
+        generation = app._search._generation
         await safe_press(pilot, "enter")
         await wait_until(
             pilot,
-            lambda: app._search.groups == [],
+            lambda: app._search._generation > generation and app._search.idle,
             timeout=30.0,
-            message="toggling collection did not clear results",
+            message="toggling a collection did not re-run the query",
         )
         assert app._focus_context() == "collections"
 

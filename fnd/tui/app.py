@@ -1645,6 +1645,22 @@ class FNDApp(App[None]):
         if node is not None and node.children:
             node.expand_all()
 
+    def action_scope_toggle_batch(self) -> None:
+        """Toggle the focused scope or filter row without re-running the query.
+
+        Each re-run also re-preloads the top hits, so changing several things
+        one at a time is a lot of thrown-away work. Holding the modifier
+        batches them; the query runs once, on the next Enter in the query bar.
+        """
+        tree = self._focused_tree()
+        if tree is None:
+            return
+        node = tree.cursor_node
+        if node is None:
+            return
+        self._scope.defer_next_search()
+        tree.post_message(Tree.NodeSelected(node))
+
     def action_tree_collapse_all_children(self) -> None:
         """Collapse the focused node's *children* (each child and its subtree),
         leaving the node itself open. Only the descendants fold away — the row

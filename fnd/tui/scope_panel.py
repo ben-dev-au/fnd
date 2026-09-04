@@ -86,6 +86,7 @@ class ScopeController:
         # Debounce handle for the re-search after a filter toggle (see
         # _commit_filter_change) so a burst of multi-select toggles coalesces.
         self._filter_search_timer: Timer | None = None
+        self._batch_next = False
         # Sidebar panel state — always loaded from disk so user-tuned
         # collapse / expand state survives the next launch, even when
         # ``--collection`` is passed. The CLI flag overrides search
@@ -642,6 +643,15 @@ class ScopeController:
                 node.set_label(self._filetype_summary_label())
                 return
 
+    def defer_next_search(self) -> None:
+        """Skip the re-search for the next toggle only.
+
+        A one-shot flag rather than a scope guard: the toggle arrives as a
+        posted message, so a ``with`` block would have exited long before the
+        handler ran.
+        """
+        self._batch_next = True
+
     def _commit_filter_change(self) -> None:
         """Shared tail after any filter toggle: status, persist, re-run search.
 
@@ -653,7 +663,9 @@ class ScopeController:
         stay immediate (cheap, and the marker must update at once)."""
         self._app._refresh_status()
         self.persist()
-        if not self._app._search.current_query:
+        deferred = self._batch_next
+        self._batch_next = False
+        if deferred or not self._app._search.current_query:
             return
         if self._filter_search_timer is not None:
             self._filter_search_timer.stop()
@@ -1094,15 +1106,11 @@ class ScopeController:
         self._refresh_collections_panel_title()
         self._app._refresh_status()
         self.persist()
-        # Don't auto-rerun the active query: the user may be batch-
-        # toggling several collections, and each rerun would shift focus
-        # to the results pane (via _refresh_results_tree.focus()) and
-        # interrupt the run. Drop the now-stale results so it's obvious
-        # the next Enter in the query bar re-runs against the new scope;
-        # keep _current_query so the user's last query is recallable in
-        # the input.
-        if self._app._search.current_query and self._app._search.groups:
-            self._app._search.clear_results()
+        # Re-run on the same debounce the filter toggles use, so a scope
+        # change shows its result instead of emptying both panes with nothing
+        # to say why. Batch-toggling is served by the modifier (see
+        # ``batched``) rather than by making every change manual.
+        self._commit_filter_change()
 
     def _toggle_source(self, collection: str, source_id: str) -> None:
         """Flip one source's bit within its collection. FULL resolves to

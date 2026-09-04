@@ -102,6 +102,17 @@ REGISTRY: tuple[Action, ...] = (
         show_in_footer=False,
     ),
     Action(
+        id="scope_toggle_batch",
+        description="Toggle a collection, source or filter WITHOUT re-running the "
+        f"query — hold Ctrl / {os_labels.ALT_WORD} while pressing Enter to change "
+        "several at once, then Enter in the query bar to run them together.",
+        default_key="ctrl+enter,alt+enter",
+        command="toggle-batch",
+        footer_label="Toggle (batch)",
+        contexts=("filters", "collections"),
+        show_in_footer=False,
+    ),
+    Action(
         id="tree_collapse_all_children",
         description="Collapse the focused node's children — every descendant "
         f"folds away but the node itself stays open. Ctrl+Left / {os_labels.ALT_WORD}+Left.",
