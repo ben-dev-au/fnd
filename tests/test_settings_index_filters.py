@@ -19,7 +19,8 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_index_filter_rows_render_in_the_indexing_screen(built_index: Path) -> None:
+async def test_the_indexing_screen_has_one_filters_row(built_index: Path) -> None:
+    """One drill into the browser, not a column of typed fields."""
     from fnd.tui.menu import SECTION_INDEXING_PDF_TEXTURE
     from fnd.tui.settings_screen import SettingsList, SettingsScreen, open_settings_section
 
@@ -30,24 +31,11 @@ async def test_index_filter_rows_render_in_the_indexing_screen(built_index: Path
         await settings_ready(pilot, app)
         assert isinstance(app.screen, SettingsScreen)
         items = app.screen.query_one(SettingsList)._items
-        ids = {it.id for it in items}
-        for required in (
-            "filters.respect_gitignore",
-            "filters.respect_fndignore",
-            "filters.exclude_tags",
-            "filters.kinds",
-            "filters.min_size",
-            "filters.max_size",
-            "filters.created_after",
-            "filters.created_before",
-            "filters.modified_after",
-            "filters.modified_before",
-            "filters.expression",
-            "filters.frontmatter",
-        ):
-            assert required in ids, f"missing row {required!r}"
-        grouped = {it.subsection for it in items if it.id.startswith("filters.")}
-        assert grouped == {"Index filters"}
+        filter_rows = [it for it in items if it.id.startswith("filters.")]
+        assert [it.id for it in filter_rows] == ["filters.browse"], (
+            f"expected one filters row, got {[it.id for it in filter_rows]}"
+        )
+        assert filter_rows[0].subsection == "Index filters"
 
 
 @pytest.mark.asyncio
@@ -70,7 +58,7 @@ async def test_source_form_exposes_a_filters_drill(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_filters_drill_opens_override_rows(built_index: Path) -> None:
-    from fnd.tui.settings_screen import SettingsList, SettingsScreen, SourceFormScreen
+    from fnd.tui.settings_screen import SettingsList, SourceFormScreen
 
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
@@ -83,17 +71,11 @@ async def test_filters_drill_opens_override_rows(built_index: Path) -> None:
         lst.cursor_index = next(i for i, it in enumerate(lst._items) if it.id == "form.filters")
         await pilot.press("enter")
         await pilot.pause()
-        assert isinstance(app.screen, SettingsScreen)
-        ids = {it.id for it in app.screen.query_one(SettingsList)._items}
-        for required in (
-            "srcfilter.respect_gitignore",
-            "srcfilter.exclude_tags",
-            "srcfilter.min_size",
-            "srcfilter.max_size",
-            "srcfilter.created_after",
-            "srcfilter.expression",
-        ):
-            assert required in ids, f"missing per-source row {required!r}"
+        from fnd.tui.settings_screen import FilterBrowserScreen
+
+        assert isinstance(app.screen, FilterBrowserScreen), (
+            "the source filters row must open the visual browser"
+        )
 
 
 @pytest.mark.asyncio
@@ -154,20 +136,6 @@ def test_an_emptied_override_beats_the_global_default() -> None:
     resolved = resolve_filters(emptied, defaults)
     assert resolved.exclude_tags == []
     assert resolved.expression is None
-
-
-def test_optional_scalars_clear_to_unset() -> None:
-    """An emptied optional row must remove the key, not write "".
-
-    ``EditBar`` used to skip ``coerce`` on empty input, so the row posted a
-    literal empty string and validation rejected every write.
-    """
-    from fnd.tui.menu import _coerce_optional_date, _coerce_optional_int, _coerce_str_list
-
-    assert _coerce_optional_int("") is None
-    assert _coerce_optional_date("") is None
-    assert _coerce_str_list("") == []
-    assert _coerce_optional_int("50_000_000") == 50_000_000
 
 
 @pytest.mark.asyncio
@@ -237,29 +205,30 @@ async def test_malformed_text_refuses_to_save(built_index: Path) -> None:
         assert isinstance(app.screen, FilterTextScreen), "screen stays open on error"
 
 
-def test_a_dash_on_a_text_row_overrides_to_nothing() -> None:
-    """Through the real row setter, not a hand-built dict.
+def test_a_source_override_records_only_what_differs() -> None:
+    """The per-source browser shows the resolved set and stores the delta.
 
-    The previous test constructed the overrides mapping directly, so it passed
-    while the row's own ``-`` was being discarded.
+    Editing the effective filter and keeping only what differs from the
+    defaults removes the need for an inherit state or a ``-`` sentinel.
     """
-    from fnd.config import DefaultFilters
-    from fnd.tui.settings_screen import _source_filter_items
+    from fnd.config import DefaultFilters, SourceFilters, resolve_filters
+    from fnd.tui.settings_screen import _spec_from_filters, _spec_to_mapping
 
-    overrides: dict[str, object] = {}
-    rows = _source_filter_items(overrides, DefaultFilters(), lambda: None)
+    defaults = DefaultFilters(exclude_tags=["no_index"], kinds=["md"])
+    resolved = resolve_filters(SourceFilters(), defaults)
+    spec = _spec_from_filters(resolved)
 
-    for row_id in ("srcfilter.expression", "srcfilter.exclude_tags"):
-        row = next(r for r in rows if r.id == row_id)
-        assert row.coerce is not None
-        assert row.scalar_setter is not None
-        row.scalar_setter(None, row.coerce("-"))  # type: ignore[arg-type]
+    # Unchanged: nothing is recorded, so the source keeps inheriting.
+    from fnd.tui.settings_screen import _same_setting
 
-    assert overrides == {"expression": "", "exclude_tags": []}, (
-        "'-' must record an explicit empty override, not clear the field"
-    )
+    values = _spec_to_mapping(spec)
+    delta = {k: v for k, v in values.items() if not _same_setting(v, getattr(defaults, k, None))}
+    assert delta == {}, f"an untouched source must record no override, got {delta}"
 
-    for row_id in ("srcfilter.expression", "srcfilter.exclude_tags"):
-        row = next(r for r in rows if r.id == row_id)
-        row.scalar_setter(None, row.coerce(""))  # type: ignore[arg-type,misc]
-    assert overrides == {}, "an emptied box must clear the override so it inherits"
+    # Changed: only the changed field is recorded.
+    from dataclasses import replace
+
+    widened = replace(spec, exclude_tags=())
+    values = _spec_to_mapping(widened)
+    delta = {k: v for k, v in values.items() if not _same_setting(v, getattr(defaults, k, None))}
+    assert delta == {"exclude_tags": []}, delta

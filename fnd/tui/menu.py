@@ -2080,104 +2080,22 @@ def _filters_defaults(app: FNDApp) -> Any:
     return cfg.defaults.filters if cfg else DefaultFilters()
 
 
-def _get_filter_toggle(field_name: str) -> Callable[[FNDApp], bool]:
-    def _g(app: FNDApp) -> bool:
-        return bool(getattr(_filters_defaults(app), field_name))
-
-    return _g
-
-
-def _get_filter_list(field_name: str) -> Callable[[FNDApp], str]:
-    def _g(app: FNDApp) -> str:
-        return ", ".join(getattr(_filters_defaults(app), field_name, []) or [])
-
-    return _g
-
-
-def _get_filter_text(field_name: str) -> Callable[[FNDApp], str]:
-    def _g(app: FNDApp) -> str:
-        return str(getattr(_filters_defaults(app), field_name, "") or "")
-
-    return _g
-
-
-def _coerce_optional_int(raw: str) -> int | None:
-    text = raw.strip().replace("_", "").replace(",", "")
-    return int(text) if text else None
-
-
-def _coerce_optional_date(raw: str) -> object:
-    """ISO date, or None to clear. A bad value raises so the row shows it."""
-    import datetime as _dt
-
-    text = raw.strip()
-    return _dt.date.fromisoformat(text) if text else None
-
-
-def _get_filter_scalar(field_name: str) -> Callable[[FNDApp], str]:
-    def _g(app: FNDApp) -> str:
-        value = getattr(_filters_defaults(app), field_name, None)
-        return "" if value is None else str(value)
-
-    return _g
-
-
-def _filter_date_rows() -> tuple[MenuItem, ...]:
-    """One row per date bound. Absolute, not the pane's rolling windows."""
-    specs = (
-        ("created_after", "Created on or after"),
-        ("created_before", "Created on or before"),
-        ("modified_after", "Modified on or after"),
-        ("modified_before", "Modified on or before"),
-    )
-    out: list[MenuItem] = []
-    for field_name, label in specs:
-        which = "created" if field_name.startswith("created") else "last modified"
-        out.append(
-            MenuItem(
-                id=f"filters.{field_name}",
-                label=label,
-                description=(
-                    f"Only index files {which} within this bound, as an ISO date "
-                    "(2024-01-01). Empty means no bound. A fixed date, not a "
-                    "rolling window — a window would change what the index holds "
-                    "as time passed. Needs a reindex to take effect."
-                    + (
-                        " Creation dates are best-effort on Linux; a file without one is kept."
-                        if field_name.startswith("created")
-                        else ""
-                    )
-                ),
-                kind=KIND_SCALAR,
-                setting_path=f"defaults.filters.{field_name}",
-                hint="2024-01-01",
-                coerce=_coerce_optional_date,
-                value_getter=_get_filter_scalar(field_name),
-                keywords=("date", "created", "modified", "age", "older", "newer"),
-            )
-        )
-    return tuple(out)
-
-
-def _summary_filters_text(app: FNDApp) -> str:
-    from fnd.filters.text_form import render
-    from fnd.tui.settings_screen import _spec_from_filters
-
-    text = render(_spec_from_filters(_filters_defaults(app)))
-    return f"{len(text)} chars" if text else "empty"
-
-
-def _open_filters_as_text(app: FNDApp) -> None:
-    """The defaults rows as one expression, and back again on save."""
+def _open_filter_browser(app: FNDApp) -> None:
+    """The defaults, as branches rather than a column of text boxes."""
     from fnd.config import default_config_path, load, write_setting
     from fnd.tui.settings_screen import (
-        FilterTextScreen,
+        FilterBrowserScreen,
         _spec_from_filters,
         _spec_to_mapping,
     )
 
-    def _save(spec: Any) -> None:
-        for name, value in _spec_to_mapping(spec).items():
+    current = _filters_defaults(app)
+
+    def _save(spec: Any, gitignore: bool, fndignore: bool) -> None:
+        values = _spec_to_mapping(spec)
+        values["respect_gitignore"] = gitignore
+        values["respect_fndignore"] = fndignore
+        for name, value in values.items():
             write_setting(
                 config_path=default_config_path(),
                 dotted_path=f"defaults.filters.{name}",
@@ -2187,163 +2105,102 @@ def _open_filters_as_text(app: FNDApp) -> None:
         app._refresh_status()  # type: ignore[attr-defined]
 
     app.push_screen(
-        FilterTextScreen(
-            title="Index filters (text)",
-            spec=_spec_from_filters(_filters_defaults(app)),
+        FilterBrowserScreen(
+            title="Index filters",
+            spec=_spec_from_filters(current),
+            gitignore=current.respect_gitignore,
+            fndignore=current.respect_fndignore,
+            sample=_sample_first_source(app),
             on_save=_save,
         )
     )
 
 
+def _sample_first_source(app: FNDApp) -> Any:
+    """Values seen in the configured sources, for the pickers to offer.
+
+    Bounded: a picker wants suggestions, not an inventory, and a cloud-backed
+    folder must not stall the screen opening.
+    """
+    from pathlib import Path
+
+    from fnd.filters.scan import SourceSample, sample_source
+
+    cfg = app._config  # type: ignore[attr-defined]
+    if cfg is None:
+        return None
+    merged = SourceSample()
+    for collection in list(cfg.collections.values())[:3]:
+        for source in collection.sources[:2]:
+            root = Path(source.path)
+            if not root.exists():
+                continue
+            part = sample_source(root, budget_s=0.6)
+            merged.files_seen += part.files_seen
+            merged.truncated = merged.truncated or part.truncated
+            for kind, n in part.kinds.items():
+                merged.kinds[kind] = merged.kinds.get(kind, 0) + n
+            for src, values in part.tags.items():
+                bucket = merged.tags.setdefault(src, {})
+                for value, n in values.items():
+                    bucket[value] = bucket.get(value, 0) + n
+    return merged
+
+
+def _summary_index_filters(app: FNDApp) -> str:
+    f = _filters_defaults(app)
+    bits: list[str] = []
+    on = [
+        n
+        for n, v in ((".gitignore", f.respect_gitignore), (".fndignore", f.respect_fndignore))
+        if v
+    ]
+    if on:
+        bits.append(", ".join(on))
+    if f.exclude_tags:
+        bits.append(f"-{len(f.exclude_tags)} tag" + ("s" if len(f.exclude_tags) > 1 else ""))
+    if f.kinds:
+        bits.append(f"{len(f.kinds)} types")
+    if f.max_size or f.min_size:
+        bits.append("size")
+    if f.created_after or f.modified_after:
+        bits.append("dates")
+    if f.frontmatter or f.expression:
+        bits.append("custom")
+    return " · ".join(bits) if bits else "off"
+
+
 def _provider_index_filters(_app: FNDApp) -> tuple[MenuItem, ...]:
-    """Filters applied while indexing, inherited by every source."""
+    """One row into the filter browser, rather than a column of typed fields."""
     return (
         MenuItem(
-            id="filters.as_text",
-            label="Edit as text",
+            id="filters.browse",
+            label="Index filters",
             description=(
-                "The rows below as one expression. Editing here fills the rows "
-                "back in, so the two stay in step. Needs a reindex to take effect."
+                "Which files enter the index: file types, tags, size, dates "
+                "and ignore files, as branches you tick — or as one expression "
+                "if you prefer. Needs a reindex to take effect."
             ),
             kind=KIND_EXTERNAL,
-            external=_open_filters_as_text,
-            value_getter=_summary_filters_text,
-            keywords=("text", "expression", "advanced", "edit", "dsl"),
-        ),
-        MenuItem(
-            id="filters.respect_gitignore",
-            label="Respect .gitignore",
-            description=(
-                "Skip files a .gitignore excludes, with git's own rules — nested "
-                "files, negations and directory patterns. Note a .gitignore says "
-                "what git should not track, which is not always what you want "
-                "unsearchable: large PDFs are often excluded from a repo but are "
-                "exactly what you want to find. Needs a reindex to take effect."
+            external=_open_filter_browser,
+            value_getter=_summary_index_filters,
+            keywords=(
+                "filter",
+                "filters",
+                "ignore",
+                "gitignore",
+                "fndignore",
+                "tag",
+                "no_index",
+                "kind",
+                "type",
+                "size",
+                "date",
+                "exclude",
+                "skip",
             ),
-            kind=KIND_TOGGLE,
-            toggle_getter=_get_filter_toggle("respect_gitignore"),
-            toggle_setter=lambda app, v: _setting_writer("defaults.filters.respect_gitignore")(
-                app, v
-            ),
-            setting_path="defaults.filters.respect_gitignore",
-            keywords=("git", "gitignore", "ignore", "exclude", "repo"),
-        ),
-        MenuItem(
-            id="filters.respect_fndignore",
-            label="Respect .fndignore",
-            description=(
-                "Skip files a .fndignore excludes. Same syntax as .gitignore, but "
-                "read only by fnd — the way to hide something from search without "
-                "also hiding it from git. Needs a reindex to take effect."
-            ),
-            kind=KIND_TOGGLE,
-            toggle_getter=_get_filter_toggle("respect_fndignore"),
-            toggle_setter=lambda app, v: _setting_writer("defaults.filters.respect_fndignore")(
-                app, v
-            ),
-            setting_path="defaults.filters.respect_fndignore",
-            keywords=("fndignore", "ignore", "exclude", "hide"),
-        ),
-        MenuItem(
-            id="filters.exclude_tags",
-            label="Skip files tagged",
-            description=(
-                "Comma-separated Finder tags that keep a file out of the index"
-                + (". " if os_labels.is_macos() else " (macOS only — inert here). ")
-                + "Reads the tag, never the file, so it costs nothing to scan. "
-                "To exclude on a note's YAML tags, use the frontmatter filter "
-                "below. Matched case-insensitively. Needs a reindex."
-            ),
-            kind=KIND_SCALAR,
-            setting_path="defaults.filters.exclude_tags",
-            hint="no_index, draft",
-            coerce=_coerce_str_list,
-            value_getter=_get_filter_list("exclude_tags"),
-            keywords=("tag", "tags", "no_index", "skip", "exclude", "finder"),
-        ),
-        MenuItem(
-            id="filters.kinds",
-            label="Index only these file types",
-            description=(
-                "Restrict indexing to the chosen types. Leave empty to index "
-                "every supported type. A source's own Includes still apply on "
-                "top. Needs a reindex to take effect."
-            ),
-            kind=KIND_PICKER,
-            multi=True,
-            groups_provider=_filter_kind_groups,
-            picker_getter=lambda app: list(_filters_defaults(app).kinds or []),
-            picker_setter=_setting_writer("defaults.filters.kinds"),
-            keywords=("kind", "type", "filetype", "pdf", "markdown", "restrict"),
-        ),
-        MenuItem(
-            id="filters.min_size",
-            label="Minimum file size",
-            description=(
-                "Skip files smaller than this many bytes. Empty means no "
-                "minimum. Useful for dropping stub and placeholder files. "
-                "Needs a reindex to take effect."
-            ),
-            kind=KIND_SCALAR,
-            setting_path="defaults.filters.min_size",
-            hint="bytes, e.g. 32",
-            coerce=_coerce_optional_int,
-            value_getter=_get_filter_scalar("min_size"),
-            keywords=("size", "small", "stub", "minimum", "bytes"),
-        ),
-        MenuItem(
-            id="filters.max_size",
-            label="Maximum file size",
-            description=(
-                "Skip files larger than this many bytes. Empty means no limit. "
-                "Useful for keeping multi-hundred-megabyte scans out of the "
-                "index. Needs a reindex to take effect."
-            ),
-            kind=KIND_SCALAR,
-            setting_path="defaults.filters.max_size",
-            hint="bytes, e.g. 50000000",
-            coerce=_coerce_optional_int,
-            value_getter=_get_filter_scalar("max_size"),
-            keywords=("size", "large", "big", "limit", "bytes", "maximum"),
-        ),
-        *_filter_date_rows(),
-        MenuItem(
-            id="filters.expression",
-            label="Custom filter expression",
-            description=(
-                "An expression every file must satisfy, over file.kind, "
-                "file.size, file.modified, file.tags.all and the like. Written "
-                "for you by the rows above; edit directly for anything they "
-                "cannot express. Needs a reindex to take effect."
-            ),
-            kind=KIND_SCALAR,
-            setting_path="defaults.filters.expression",
-            hint="file.size < 50000000",
-            value_getter=_get_filter_text("expression"),
-            keywords=("expression", "custom", "advanced", "dsl", "filter", "rule"),
-        ),
-        MenuItem(
-            id="filters.frontmatter",
-            label="Frontmatter filter",
-            description=(
-                "An expression a note's YAML frontmatter must satisfy, e.g. "
-                "Status != 'archived'. Applies to notes only — every other file "
-                "type passes through untouched. Needs a reindex to take effect."
-            ),
-            kind=KIND_SCALAR,
-            setting_path="defaults.filters.frontmatter",
-            hint="Status != 'archived'",
-            value_getter=_get_filter_text("frontmatter"),
-            keywords=("frontmatter", "yaml", "note", "metadata", "filter"),
         ),
     )
-
-
-def _filter_kind_groups(_app: FNDApp) -> list[Any]:
-    """Category -> kind, the same tree the source Includes picker shows."""
-    from fnd.tui.settings_screen import _includes_groups
-
-    return _includes_groups()
 
 
 def _is_pdf_structure_installed() -> bool:

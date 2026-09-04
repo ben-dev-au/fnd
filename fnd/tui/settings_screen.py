@@ -1691,215 +1691,56 @@ class PickerScreen(Screen[None]):
             self.notify(_summarise(e), severity="error", title="Save failed")
 
 
-# Typed in a list/text override to mean "override to empty", which an empty
-# box cannot say — there it means "inherit".
-_OVERRIDE_EMPTY = "-"
+def _same_setting(value: Any, default: Any) -> bool:
+    """Whether a value differs from the default enough to be an override.
 
-
-def _inherit_label(value: object) -> str:
-    if value is None or value == "" or value == []:
-        return "(none)"
-    if isinstance(value, bool):
-        return "on" if value else "off"
-    if isinstance(value, (list, tuple)):
-        return ", ".join(str(v) for v in value)
-    return str(value)
-
-
-def _source_filter_items(
-    overrides: dict[str, Any], inherited: Any, on_change: Callable[[], None]
-) -> tuple[MenuItem, ...]:
-    """Per-source overrides over ``[defaults.filters]``.
-
-    Booleans are three-state (inherit / yes / no), so a picker rather than a
-    toggle; an unset field shows what it inherits.
+    ``None``, ``""`` and ``[]`` all mean "no value here", so an untouched
+    field must not be recorded — doing so would turn inheriting into an
+    explicit empty and silently drop the default it was inheriting.
     """
-    from fnd import os_labels
-    from fnd.tui.menu import _coerce_str_list
+    empty = (None, "", [])
+    if value in empty and default in empty:
+        return True
+    return bool(value == default)
 
-    def _set(field: str) -> Callable[[FNDApp, Any], None]:
-        def _apply(_app: FNDApp, value: Any) -> None:
-            # Only ``None`` clears the override. The coercions already turned
-            # ``-`` into an empty list or string, which is the *explicit*
-            # override to nothing — treating that as unset made the row's
-            # own ``-`` a no-op for the text fields.
-            if value is None:
-                overrides.pop(field, None)
-            else:
-                overrides[field] = value
-            on_change()
 
-        return _apply
+def open_source_filter_browser(
+    app: FNDApp, overrides: dict[str, Any], root: Any, on_change: Callable[[], None]
+) -> None:
+    """The source's *effective* filters, edited as branches.
 
-    def _bool_row(field: str, label: str, description: str) -> MenuItem:
-        return MenuItem(
-            id=f"srcfilter.{field}",
-            label=label,
-            description=f"{description} Unset inherits the global setting "
-            f"({_inherit_label(getattr(inherited, field))}).",
-            kind=KIND_PICKER,
-            choices_provider=lambda _app: [
-                ChoiceOption(value=None, label="Inherit"),
-                ChoiceOption(value=True, label="Yes"),
-                ChoiceOption(value=False, label="No"),
-            ],
-            picker_getter=lambda _app, f=field: overrides.get(f),
-            picker_setter=_set(field),
-            keywords=("filter", "source", field),
+    Showing the resolved set and recording only what differs from the defaults
+    means there is no third "inherit" state to explain, and no ``-`` sentinel:
+    change something and it becomes an override, put it back and it stops
+    being one.
+    """
+    from fnd.config import DefaultFilters, SourceFilters, resolve_filters
+    from fnd.filters.scan import sample_source
+
+    cfg = app._config  # type: ignore[attr-defined]
+    defaults = cfg.defaults.filters if cfg else DefaultFilters()
+    resolved = resolve_filters(SourceFilters.model_validate(overrides or {}), defaults)
+    sample = sample_source(root, budget_s=0.8) if root is not None and root.exists() else None
+
+    def _save(spec: Any, gitignore: bool, fndignore: bool) -> None:
+        values = _spec_to_mapping(spec)
+        values["respect_gitignore"] = gitignore
+        values["respect_fndignore"] = fndignore
+        overrides.clear()
+        for name, value in values.items():
+            if not _same_setting(value, getattr(defaults, name, None)):
+                overrides[name] = value
+        on_change()
+
+    app.push_screen(
+        FilterBrowserScreen(
+            title="Index filters · this source",
+            spec=_spec_from_filters(resolved),
+            gitignore=resolved.respect_gitignore,
+            fndignore=resolved.respect_fndignore,
+            sample=sample,
+            on_save=_save,
         )
-
-    def _text_row(
-        field: str, label: str, description: str, hint: str, *, as_list: bool
-    ) -> MenuItem:
-        def _getter(_app: FNDApp, f: str = field) -> str:
-            if f not in overrides:
-                return ""
-            value = overrides[f]
-            if value in ([], ""):
-                return _OVERRIDE_EMPTY
-            return ", ".join(value) if isinstance(value, list) else str(value)
-
-        def _coerce(raw: str, f: str = field) -> Any:
-            text = raw.strip()
-            if not text:
-                return None
-            if text == _OVERRIDE_EMPTY:
-                return [] if as_list else ""
-            if as_list:
-                return _coerce_str_list(text)
-            if f.endswith("_size"):
-                return int(text.replace("_", "").replace(",", ""))
-            if f.startswith(("created_", "modified_")):
-                import datetime as _dt
-
-                return _dt.date.fromisoformat(text)
-            from fnd.filter_dsl import parse_or_error
-
-            _pred, err = parse_or_error(text)
-            if err is not None:
-                raise ValueError(f"col {err.column}: {err.message}")
-            return text
-
-        return MenuItem(
-            id=f"srcfilter.{field}",
-            label=label,
-            description=(
-                f"{description} Empty inherits the global setting "
-                f"({_inherit_label(getattr(inherited, field))}); "
-                f"'{_OVERRIDE_EMPTY}' overrides it to nothing."
-            ),
-            kind=KIND_SCALAR,
-            hint=hint,
-            coerce=_coerce,
-            value_getter=_getter,
-            scalar_setter=_set(field),
-            keywords=("filter", "source", field),
-        )
-
-    def _open_text(app: FNDApp) -> None:
-        from fnd.config import SourceFilters
-
-        def _save(spec: Any) -> None:
-            for name, value in _spec_to_mapping(spec).items():
-                if value in (None, [], ""):
-                    overrides.pop(name, None)
-                else:
-                    overrides[name] = value
-            on_change()
-
-        app.push_screen(
-            FilterTextScreen(
-                title="Index filters (text)",
-                spec=_spec_from_filters(SourceFilters.model_validate(overrides or {})),
-                on_save=_save,
-            )
-        )
-
-    return (
-        MenuItem(
-            id="srcfilter.as_text",
-            label="Edit as text",
-            description=(
-                "The rows above as one expression. Editing here fills the rows "
-                "back in, so the two stay in step."
-            ),
-            kind=KIND_EXTERNAL,
-            external=_open_text,
-            value_getter=lambda _app: f"{len(overrides)} set" if overrides else "empty",
-        ),
-        _bool_row("respect_gitignore", "Respect .gitignore", "Skip files a .gitignore excludes."),
-        _bool_row("respect_fndignore", "Respect .fndignore", "Skip files a .fndignore excludes."),
-        _text_row(
-            "exclude_tags",
-            "Skip files tagged",
-            "Comma-separated Finder tags that keep a file out of the index"
-            + ("." if os_labels.is_macos() else " (macOS only — inert here)."),
-            "no_index, draft",
-            as_list=True,
-        ),
-        _text_row(
-            "kinds",
-            "Index only these file types",
-            "Comma-separated kind ids, e.g. pdf, md.",
-            "pdf, md",
-            as_list=True,
-        ),
-        _text_row(
-            "min_size",
-            "Minimum file size",
-            "Bytes; skip anything smaller.",
-            "32",
-            as_list=False,
-        ),
-        _text_row(
-            "max_size",
-            "Maximum file size",
-            "Bytes; skip anything larger.",
-            "50000000",
-            as_list=False,
-        ),
-        _text_row(
-            "created_after",
-            "Created on or after",
-            "ISO date; a fixed bound, not a rolling window.",
-            "2024-01-01",
-            as_list=False,
-        ),
-        _text_row(
-            "created_before",
-            "Created on or before",
-            "ISO date; a fixed bound, not a rolling window.",
-            "2024-01-01",
-            as_list=False,
-        ),
-        _text_row(
-            "modified_after",
-            "Modified on or after",
-            "ISO date; a fixed bound, not a rolling window.",
-            "2024-01-01",
-            as_list=False,
-        ),
-        _text_row(
-            "modified_before",
-            "Modified on or before",
-            "ISO date; a fixed bound, not a rolling window.",
-            "2024-01-01",
-            as_list=False,
-        ),
-        _text_row(
-            "expression",
-            "Custom filter expression",
-            "An expression every file in this source must satisfy.",
-            "file.size < 50000000",
-            as_list=False,
-        ),
-        _text_row(
-            "frontmatter",
-            "Frontmatter filter",
-            "An expression a note's frontmatter must satisfy; other kinds pass through.",
-            "Status != 'archived'",
-            as_list=False,
-        ),
     )
 
 
@@ -2190,21 +2031,10 @@ class SourceFormScreen(Screen[None]):
         }
 
     def _open_filters(self) -> None:
-        from fnd.config import DefaultFilters
-
         app: FNDApp = self.app  # type: ignore[assignment]
-        cfg = app._config  # type: ignore[attr-defined]
-        inherited = cfg.defaults.filters if cfg else DefaultFilters()
-        overrides = self._fields["filters"]
-        self.app.push_screen(
-            SettingsScreen(
-                breadcrumb=("Settings", "Collections", self._collection_name, "Index filters"),
-                items=_source_filter_items(overrides, inherited, self._populate_fields),
-                provider=lambda _app: _source_filter_items(
-                    overrides, inherited, self._populate_fields
-                ),
-            )
-        )
+        raw_path = str(self._fields.get("path") or "").strip()
+        root = Path(raw_path).expanduser() if raw_path else None
+        open_source_filter_browser(app, self._fields["filters"], root, self._populate_fields)
 
     def _filters_summary(self) -> str:
         overrides = self._fields.get("filters") or {}
@@ -4875,3 +4705,124 @@ def _spec_to_mapping(spec: Any) -> dict[str, Any]:
         joined = " AND ".join(f"({c})" for c in (spec.expression, *spec.raw) if c)
         out["expression"] = joined
     return out
+
+
+class FilterBrowserScreen(Screen[None]):
+    """Filters as the Filters pane shows them: collapsible branches, tri-state.
+
+    The same set is editable as text (``t``); each view writes the model the
+    other reads, so neither is the source of truth.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Back", show=False),
+        Binding("ctrl+s", "save_close", show=False),
+        Binding("t", "edit_text", show=False),
+        Binding("c", "clear_all", show=False),
+    ]
+
+    CSS = """
+    FilterBrowserScreen { background: $surface; }
+    FilterBrowserScreen > #settings_box {
+        height: 1fr; border: round $primary 50%; padding: 0 1;
+    }
+    FilterBrowserScreen > #settings_box:focus-within { border: round $accent; }
+    FilterBrowserScreen #filter_summary { height: auto; padding: 0 1; color: $text-muted; }
+    FilterBrowserScreen > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        spec: Any,
+        gitignore: bool,
+        fndignore: bool,
+        sample: Any = None,
+        on_save: Callable[[Any, bool, bool], None],
+    ) -> None:
+        super().__init__()
+        self._title = title
+        self._spec = spec
+        self._gitignore = gitignore
+        self._fndignore = fndignore
+        self._sample = sample
+        self._on_save = on_save
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings_box") as box:
+            box.border_title = self._title
+            yield ToggleTree("Filters", id="filter_tree")
+            yield Static("", id="filter_summary")
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        from fnd.filters.tree_model import selection_for, spec_branches
+
+        tree = self.query_one("#filter_tree", ToggleTree)
+        branches = spec_branches(self._spec, self._sample)
+        groups = [
+            ToggleGroup(b.id, b.label, tuple(ToggleItem(*i) for i in b.items), b.mode)
+            for b in branches
+        ]
+        selected, excluded = selection_for(
+            self._spec, gitignore=self._gitignore, fndignore=self._fndignore
+        )
+        tree.set_model(groups, selected, excluded=excluded, expanded=set())
+        tree.focus()
+        self._refresh_summary()
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(
+                app,
+                (("⏎", "Toggle"), ("→", "Open"), ("t", "As text"), ("c", "Clear"), ("^S", "Save")),
+            )
+        )
+
+    @on(ToggleTree.SelectionChanged, "#filter_tree")
+    def _on_selection(self, ev: ToggleTree.SelectionChanged) -> None:
+        from fnd.filters.tree_model import apply_selection
+
+        self._spec, self._gitignore, self._fndignore = apply_selection(
+            self._spec, ev.selected, ev.excluded
+        )
+        self._refresh_summary()
+
+    def _refresh_summary(self) -> None:
+        from fnd.filters.text_form import render
+
+        text = render(self._spec)
+        ignores = ", ".join(
+            n for n, on in ((".gitignore", self._gitignore), (".fndignore", self._fndignore)) if on
+        )
+        parts = [f"honouring {ignores}" if ignores else "ignore files off"]
+        if text:
+            parts.append(text)
+        self.query_one("#filter_summary", Static).update(" · ".join(parts))
+
+    def action_clear_all(self) -> None:
+        from fnd.filters import FilterSpec
+
+        self._spec = FilterSpec(
+            frontmatter=self._spec.frontmatter, expression=self._spec.expression
+        )
+        self._gitignore = self._fndignore = False
+        self.on_mount()
+
+    def action_edit_text(self) -> None:
+        def _save(spec: Any) -> None:
+            self._spec = spec
+            self.on_mount()
+
+        self.app.push_screen(
+            FilterTextScreen(title=f"{self._title} (text)", spec=self._spec, on_save=_save)
+        )
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    def action_save_close(self) -> None:
+        self._on_save(self._spec, self._gitignore, self._fndignore)
+        self.app.pop_screen()
