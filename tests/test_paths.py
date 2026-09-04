@@ -92,6 +92,9 @@ def test_uv_tool_root_falls_back_when_uv_absent(monkeypatch: pytest.MonkeyPatch)
         raise FileNotFoundError("uv not found")
 
     monkeypatch.setattr("fnd.paths.subprocess.run", boom)
+    # The uv answer is cached for the process; a real one from an earlier
+    # test would otherwise mask the fallback this asserts.
+    paths._uv_tool_dir.cache_clear()
     root = paths.uv_tool_root()
     assert root.name == "tools"
     assert "uv" in root.parts
@@ -109,6 +112,7 @@ def test_uv_tool_root_honours_xdg_data_home(
     monkeypatch.setattr("fnd.paths.subprocess.run", boom)
     monkeypatch.setattr("fnd.paths.sys.platform", "linux")
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    paths._uv_tool_dir.cache_clear()
     assert paths.uv_tool_root() == tmp_path / "xdg" / "uv" / "tools"
 
 
@@ -120,3 +124,46 @@ def test_helpers_create_nothing() -> None:
     before = p.exists()
     paths.dismissed_dir()
     assert p.exists() == before
+
+
+def test_uv_tool_dir_is_asked_once_per_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Settings open reached this five times, each a 20 ms fork on the
+    event loop. The root cannot move while fnd runs, so ask once."""
+    calls: list[int] = []
+
+    class _Out:
+        stdout = "/tmp/uv/tools\n"
+
+    def counting(*_a: object, **_k: object) -> object:
+        calls.append(1)
+        return _Out()
+
+    monkeypatch.setattr("fnd.paths.subprocess.run", counting)
+    paths._uv_tool_dir.cache_clear()
+    first = paths.uv_tool_root()
+    for _ in range(4):
+        assert paths.uv_tool_root() == first
+    assert len(calls) == 1, f"asked uv {len(calls)} times"
+    paths._uv_tool_dir.cache_clear()
+
+
+def test_an_install_is_still_seen_without_a_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The *root* is cached; what lives under it is not, so installing an
+    extra is visible immediately."""
+    from fnd import extras
+
+    class _Out:
+        stdout = str(tmp_path)
+
+    monkeypatch.setattr("fnd.paths.subprocess.run", lambda *_a, **_k: _Out())
+    paths._uv_tool_dir.cache_clear()
+    pkg = next(
+        p for extra in extras.EXTRAS.values() for p in extra.packages if p.install_via == "uv-tool"
+    )
+    tool = pkg.spec.split("[", 1)[0]
+    assert extras.is_package_installed(pkg) is False
+    (tmp_path / tool).mkdir(parents=True)
+    assert extras.is_package_installed(pkg) is True, "a cached root must not cache its contents"
+    paths._uv_tool_dir.cache_clear()

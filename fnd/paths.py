@@ -18,6 +18,7 @@ function — no directory is created here; callers create what they need
 
 from __future__ import annotations
 
+import functools
 import os
 import subprocess
 import sys
@@ -97,19 +98,31 @@ def pdf_structure_cache_dir() -> Path:
 # ── External tool locations ──────────────────────────────────────────────
 
 
+@functools.cache
+def _uv_tool_dir() -> str:
+    """``uv tool dir``, asked once per process; ``""`` when uv isn't callable.
+
+    Measured 60 ms warm / 90 ms cold, and a Settings row reaches it several
+    times per screen open. uv's tool root does not move while fnd runs —
+    installing a tool *into* it does not change it — so the answer is cached
+    while the ``.exists()`` checks built on it stay live.
+    """
+    try:
+        return subprocess.run(
+            ["uv", "tool", "dir"], capture_output=True, text=True, timeout=5, check=True
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
 def uv_tool_root() -> Path:
     """Root where ``uv tool install`` places tool venvs (the ``pdf-structure``
     extra installs docling here). Prefer uv's own answer (``uv tool dir``) so
     we track its layout on every OS; fall back to the platform default (POSIX
     XDG data dir / Windows ``%APPDATA%``) when uv isn't callable."""
-    try:
-        out = subprocess.run(
-            ["uv", "tool", "dir"], capture_output=True, text=True, timeout=5, check=True
-        ).stdout.strip()
-        if out:
-            return Path(out)
-    except (OSError, subprocess.SubprocessError):
-        pass
+    out = _uv_tool_dir()
+    if out:
+        return Path(out)
     if sys.platform == "win32":
         base = os.environ.get("APPDATA")
         if base:
