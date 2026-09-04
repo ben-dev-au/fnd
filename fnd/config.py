@@ -986,7 +986,7 @@ def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Conf
         # Only a *new* key is appended to the end of the body; replacing one
         # edits in place, where reseating would move the wrong entry.
         fresh = leaf not in cursor  # type: ignore[operator]
-        cursor[leaf] = value  # type: ignore[index]
+        cursor[leaf] = _grouped(value)  # type: ignore[index]
         if fresh:
             _reseat_last(cursor)
 
@@ -1001,6 +1001,20 @@ def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Conf
     secure_mkdir(config_path.parent)
     secure_write_text(config_path, _spaced_tables(tomlkit.dumps(doc)))
     return config
+
+
+def _grouped(value: object) -> object:
+    """Digit-group a large integer, as the shipped template writes sizes.
+
+    Byte sizes are the only settings big enough to matter, and nobody reads
+    ``50000000`` at a glance. ``tomlkit.integer`` drops the separators, so the
+    raw form has to be supplied directly.
+    """
+    from tomlkit.items import Integer, Trivia
+
+    if type(value) is int and abs(value) >= 10_000:
+        return Integer(value, Trivia(), f"{value:_d}")
+    return value
 
 
 def _reseat_last(parent: object) -> None:

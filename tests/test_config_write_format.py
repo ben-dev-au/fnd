@@ -39,3 +39,17 @@ def test_a_comment_stays_attached_to_its_table(tmp_path: Path) -> None:
     lines = _write(cfg).splitlines()
     i = lines.index("[[collections.a.sources]]")
     assert lines[i - 1] == "# what this collection is for"
+
+
+def test_a_byte_size_is_written_with_digit_groups(tmp_path: Path) -> None:
+    """``50000000`` is not a number anyone reads at a glance."""
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[defaults]\nresult_limit = 50\n")
+    write_setting(config_path=cfg, dotted_path="defaults.filters.max_size", value=50_000_000)
+    write_setting(config_path=cfg, dotted_path="defaults.result_limit", value=200)
+    text = cfg.read_text(encoding="utf-8")
+    assert "max_size = 50_000_000" in text
+    assert "result_limit = 200" in text, "small numbers must stay plain"
+    from fnd.config import load
+
+    assert load(cfg).defaults.filters.max_size == 50_000_000
