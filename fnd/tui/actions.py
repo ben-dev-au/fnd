@@ -1,9 +1,9 @@
 """Action registry — single source of truth for the TUI's behaviour surface.
 
-Per plan §5 + §7: every TUI action is declared here once, with its default
-keybinding and the ``:command`` name. Footer hints, the help overlay, and the
-keymap loader all read from this registry, so they can never drift out of
-sync with the actual bindings.
+Every TUI action is declared here once, with its default keybinding and the
+``:command`` name. Footer hints, the help overlay, and the keymap loader all
+read from this registry, so they can never drift out of sync with the actual
+bindings.
 
 User overrides live in
 ``~/Library/Application Support/fnd/keybindings.toml``::
@@ -53,7 +53,6 @@ class Action:
 
 
 # Authoritative registry. Order is the order shown in the help overlay.
-# Phase 6 covers the actions wired in phase 5; later phases extend this list.
 REGISTRY: tuple[Action, ...] = (
     Action(
         id="focus_query",

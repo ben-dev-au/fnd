@@ -1,4 +1,4 @@
-"""Phase A — per-kind visual language tests.
+"""Per-kind visual language tests.
 
 Each row kind has a distinct trailing affordance:
 
@@ -287,7 +287,7 @@ def test_keybindings_row_has_no_trailing_button() -> None:
 def test_keybindings_row_fits_under_narrow_width() -> None:
     """The full key + label + minimal pad fits within the row's width.
 
-    Catches the regression where my Phase A added [ Run ] to every
+    Catches the regression where [ Run ] was added to every
     KIND_ACTION row, pushing the leading [key] off the right edge of
     the Keybindings panel."""
     item = MenuItem(

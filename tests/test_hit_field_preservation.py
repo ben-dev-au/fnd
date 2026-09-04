@@ -1,6 +1,6 @@
 """Regression guard: every Hit-rebuild helper preserves every field.
 
-Phase 4 added ``Hit.line`` but the cascade / fusion / rerank rebuild
+``Hit.line`` was added but the cascade / fusion / rerank rebuild
 helpers were not audited — they kept the legacy field list, silently
 defaulting ``line`` to 0 every time they cloned a Hit. The TUI's
 search path always goes through cascade + rerank, so by the time a
@@ -98,7 +98,7 @@ def test_rebuild_preserves_all_fields_except_intentional_overrides(name: str, re
     """Every field except the one the helper overrides (score or
     pass_index) must round-trip. Without this guard, adding a field to
     Hit silently defaults that field to 0/""/None in every rebuilt
-    Hit — the exact class of bug behind Phase 4's missing line."""
+    Hit — the exact class of bug behind the missing ``line``."""
     original = _populated_hit()
     overridden = {"score", "pass_index"}
     for field in dataclasses.fields(Hit):

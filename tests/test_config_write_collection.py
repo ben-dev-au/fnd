@@ -1,4 +1,4 @@
-"""Phase 5.5e-3: write_collection round-trips a CollectionConfig via tomlkit."""
+"""write_collection round-trips a CollectionConfig via tomlkit."""
 
 from __future__ import annotations
 

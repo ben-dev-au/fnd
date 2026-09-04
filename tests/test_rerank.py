@@ -1,4 +1,4 @@
-"""Phase 7: Python post-rank score adjustments per plan §4.
+"""Python post-rank score adjustments.
 
 Three knobs:
   * recency boost (exponential half-life multiplier)
@@ -224,7 +224,7 @@ def two_collection_index(fixtures_dir: Path, tmp_index_dir: Path, tmp_path: Path
 def test_searcher_with_recency_profile_prefers_newer_file(
     two_collection_index: Path,
 ) -> None:
-    """Acceptance for §16 phase 7: 'ranking profile switch flips order on
+    """Acceptance: 'ranking profile switch flips order on
     tied content'. With recency on, the newer file must rank first."""
     s = Searcher(index_dir=two_collection_index)
     profile = RankingProfile(
@@ -269,7 +269,7 @@ def test_searcher_no_profile_keeps_bm25_order(
     two_collection_index: Path,
 ) -> None:
     """Without a profile argument, search_grouped must behave exactly as
-    before phase 7 (no rerank)."""
+    with no rerank applied."""
     s = Searcher(index_dir=two_collection_index)
     grouped_a = s.search_grouped("blue penguin sandwich")
     grouped_b = s.search_grouped("blue penguin sandwich")

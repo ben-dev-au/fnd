@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 __all__ = ["ScopeController"]
 
-# Phase F filters: panel layout. ``kinds`` is multi-select (each value
+# Filters panel layout. ``kinds`` is multi-select (each value
 # toggles independently) and nested category → type (mirroring the
 # Collections tree tri-state); ``date`` is a radio (single-select). The
 # file-type universe and its category grouping come from the central

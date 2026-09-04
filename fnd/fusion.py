@@ -1,12 +1,12 @@
-"""Parallel multi-query + Reciprocal Rank Fusion (§9d).
+"""Parallel multi-query + Reciprocal Rank Fusion.
 
-Phase 8's cascade widens *sequentially* — only run the next pass if the
-previous one came up short. Phase 9 runs sub-queries *in parallel* and
-fuses them with Reciprocal Rank Fusion (RRF), so a doc that ranks well in
-several sub-queries gets a real boost. The two mechanisms are
+The cascade in :mod:`fnd.cascade` widens *sequentially* — only run the next
+pass if the previous one came up short. This module runs sub-queries *in
+parallel* and fuses them with Reciprocal Rank Fusion (RRF), so a doc that
+ranks well in several sub-queries gets a real boost. The two mechanisms are
 complementary; the search layer can use either.
 
-Auto-derived sub-queries (per the worked example in §9d):
+Auto-derived sub-queries:
 
 * ``phrase`` — the user's query wrapped in quotes (weight 2.0). Only emitted
   for multi-word queries (a phrase pass on a single word is identical to
@@ -15,9 +15,9 @@ Auto-derived sub-queries (per the worked example in §9d):
 * ``syn`` — synonym-expanded version of the query (weight 0.6). Only emitted
   when the expansion actually changes the query string.
 
-The ``stem`` sub-query mentioned in §9d is omitted because the body field
-is already analyzed with ``en_stem`` (Snowball English) — an explicit
-stemmed pass would duplicate the lex pass.
+A ``stem`` sub-query is omitted: the body field is already analyzed with
+``en_stem`` (Snowball English), so an explicit stemmed pass would duplicate
+the lex pass.
 
 Pass-index attribution: each fused hit is tagged with ``pass_index``
 matching the highest-weighted sub-query that surfaced it. This lets the
@@ -25,8 +25,8 @@ TUI render a per-source glyph using the same vocabulary as cascade
 (``~`` fuzzy, ``⊕`` synonym) plus a new glyph for fusion-phrase hits
 (``pass_index=3``).
 
-Strong-signal bypass (UX-pass-4 §1) and the ``intent:`` line in
-:func:`parse_multi_input` (§3) are adapted from `tobi/qmd
+Strong-signal bypass and the ``intent:`` line in
+:func:`parse_multi_input` are adapted from `tobi/qmd
 <https://github.com/tobi/qmd>`_ (MIT). The score normalization
 ``s / (1 + s)`` and the threshold values 0.85 / 0.15 come from QMD;
 the implementation here is a Python rewrite. See README acknowledgments.
@@ -69,9 +69,9 @@ _RRF_K_DEFAULT = 60
 
 # Tiny additive bonus for being rank 1 / 2 / 3 in any sub-query. Tunes RRF
 # (which is otherwise smooth) toward a slight preference for the "very top"
-# of any single sub-query — matches the §9d spec. Scaled by the sub-query
-# weight (see :func:`_rrf_contribution`) so a heavy pass's rank-1 isn't
-# out-bonused by a doc sitting at rank 1 across several light passes.
+# of any single sub-query. Scaled by the sub-query weight (see
+# :func:`_rrf_contribution`) so a heavy pass's rank-1 isn't out-bonused
+# by a doc sitting at rank 1 across several light passes.
 _POS_BONUS_RANK_1 = 0.05
 _POS_BONUS_RANK_2_3 = 0.02
 
@@ -89,7 +89,7 @@ def _rrf_contribution(weight: float, rank: int, k: int = _RRF_K_DEFAULT) -> floa
     return base
 
 
-# Default per-source weights (§9d worked example).
+# Default per-source weights.
 _DEFAULT_WEIGHTS: dict[str, float] = {
     "phrase": 2.0,
     "lex": 1.0,
@@ -106,10 +106,9 @@ _SOURCE_TO_PASS_INDEX: dict[str, int] = {
     "phrase": 3,
 }
 
-# Strong-signal bypass thresholds (UX-pass-4 §1). Operate on a normalized
-# BM25 score ``s_norm = s / (1 + s)``, monotone in [0, 1) — query-
-# independent and corpus-stable. Adapted from tobi/qmd (MIT) — see
-# README acknowledgments.
+# Strong-signal bypass thresholds. Operate on a normalized BM25 score
+# ``s_norm = s / (1 + s)``, monotone in [0, 1) — query-independent and
+# corpus-stable. Adapted from tobi/qmd (MIT) — see README acknowledgments.
 STRONG_SIGNAL_MIN_NORM_SCORE: float = 0.85
 STRONG_SIGNAL_MIN_NORM_GAP: float = 0.15
 
@@ -145,7 +144,7 @@ class SubQuery:
 
 @dataclass(slots=True, frozen=True)
 class MultiInput:
-    """Result of parsing a ``:multi`` block (UX-pass-4 §3).
+    """Result of parsing a ``:multi`` block.
 
     ``intent`` does NOT produce a sub-query. It influences:
 
@@ -153,8 +152,6 @@ class MultiInput:
       (:func:`fnd.layered._evaluate_strong_signal`)
     * snippet selection — chunks containing intent tokens preferred
       (:func:`fnd.query._make_snippet`)
-    * forward-compat with the §22 LLM cross-encoder reranker (deferred
-      to v2).
     """
 
     subqueries: list[SubQuery]
@@ -380,17 +377,16 @@ def fusion_search(
     queries) rather than the 0.0001-0.07 range RRF arithmetic would
     produce. The internal RRF total still drives the sort order.
 
-    ``precomputed_lex_ranking`` (UX-pass-4 §1): when supplied, the lex
-    sub-query reuses this list instead of issuing a fresh
-    ``_filtered_raw_hits`` call. Lets the regime probe in
-    :mod:`fnd.layered` double as fusion's lex pass — saves one Tantivy
-    round-trip on every non-bypass query.
+    ``precomputed_lex_ranking``: when supplied, the lex sub-query reuses
+    this list instead of issuing a fresh ``_filtered_raw_hits`` call. Lets
+    the regime probe in :mod:`fnd.layered` double as fusion's lex pass —
+    saves one Tantivy round-trip on every non-bypass query.
 
-    ``with_trace`` (UX-pass-4 §2): when ``True``, returns
-    ``(hits, FusionTrace)`` so callers (CLI ``--explain`` / TUI
-    ``:explain``) can inspect which sub-queries ran, per-hit BM25
-    scores, RRF contributions, and primary-source attribution. Default
-    ``False`` returns the existing ``list[Hit]`` unchanged.
+    ``with_trace``: when ``True``, returns ``(hits, FusionTrace)`` so
+    callers (CLI ``--explain`` / TUI ``:explain``) can inspect which
+    sub-queries ran, per-hit BM25 scores, RRF contributions, and
+    primary-source attribution. Default ``False`` returns the existing
+    ``list[Hit]`` unchanged.
     """
     subs = subqueries if subqueries is not None else auto_subqueries(query, synonyms=synonyms)
     if not subs:

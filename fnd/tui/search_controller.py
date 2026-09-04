@@ -140,7 +140,7 @@ class SearchController:
         # the action registry.
         self.highlights_enabled: bool = True
         # Last :multi block's intent line, if any. Disables strong-signal
-        # bypass and biases snippet selection (UX-pass-4 §3). None until
+        # bypass and biases snippet selection. None until
         # the user submits a :multi block.
         self.intent: str | None = None
         self.groups: list[FileGroup] = []
@@ -152,10 +152,10 @@ class SearchController:
         # top results are worth prefetching, so keep just the last timer alive.
         self._prefetch_timer: Timer | None = None
         # Most-recent SearchTrace, populated on every _run_query so the
-        # :explain overlay (UX-pass-4 §2) can dump it as JSON. None until
+        # :explain overlay can dump it as JSON. None until
         # the first search runs.
         self.latest_trace: SearchTrace | None = None
-        # Synonyms for §9c cascade and §9d fusion's ``syn`` sub-query.
+        # Synonyms for the cascade and fusion's ``syn`` sub-query.
         # Bundled curated defaults + the user's optional personal table;
         # missing personal file is fine (defaults still apply).
         from fnd.config import app_data_dir
@@ -333,12 +333,12 @@ class SearchController:
             multicolour=defaults.multicolour_highlights if defaults else True,
         )
 
-        # Phase F: build the filter scaffolding (kind:, mtime:) and
-        # multi-collection scope (c:) as a SEPARATE prefix. The lexical
-        # part stays clean so the §9d fusion phrase-pass can wrap it
-        # in quotes without dragging field qualifiers inside the
-        # phrase (which Tantivy would parse as a literal phrase
-        # ``kind:md glimmer`` rather than a field-restricted query).
+        # Build the filter scaffolding (kind:, mtime:) and multi-collection
+        # scope (c:) as a SEPARATE prefix. The lexical part stays clean so
+        # the fusion phrase-pass can wrap it in quotes without dragging
+        # field qualifiers inside the phrase (which Tantivy would parse as
+        # a literal phrase ``kind:md glimmer`` rather than a
+        # field-restricted query).
         filter_clauses: list[str] = []
         if self._app._scope.filter_kinds:
             if len(self._app._scope.filter_kinds) == 1:
@@ -618,7 +618,7 @@ class SearchController:
         """Stable signature for the current query — match-bearing
         widgets are baked with this query's highlights, so the cache
         must invalidate when it changes. Includes intent because intent
-        biases snippet selection (UX-pass-4 §3), and the highlight
+        biases snippet selection, and the highlight
         toggle state because the rendered spans differ on/off: without
         it, toggling highlights re-uses the opposite-state cached
         container for the same file + query and the toggle has no

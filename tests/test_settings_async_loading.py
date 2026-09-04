@@ -1,4 +1,4 @@
-"""Phase B — async trailing-value loading.
+"""Async trailing-value loading.
 
 `_summary_cache_size_row`, `_summary_pdf_status`, `_summary_indexing`,
 `_summary_stale_entries` all touch the filesystem. They route through

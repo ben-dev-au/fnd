@@ -1,11 +1,11 @@
 """Query layer: parse → search → group-by-parent → top-N sections per file.
 
-Phase 1: single-pass query, no rerank. Phase 7 adds the reranker (recency,
-filetype, phrase-proximity); phase 8 adds cascading multi-pass; phase 9 adds
-RRF fusion of parallel sub-queries. Phase 5.5e-2 adds the optional
-``metadata_filter`` kwarg on :meth:`Searcher.search` and
-:meth:`Searcher.search_grouped`: a DSL string (same grammar as the
-index-time ``frontmatter_filter``) is compiled once and applied as a
+Single-pass: reranking, cascading and RRF fusion live in :mod:`fnd.rerank`,
+:mod:`fnd.cascade` and :mod:`fnd.fusion`.
+
+The optional ``metadata_filter`` kwarg on :meth:`Searcher.search` and
+:meth:`Searcher.search_grouped` takes a DSL string (same grammar as the
+index-time ``frontmatter_filter``); it is compiled once and applied as a
 post-rank predicate against each md chunk's stored ``meta_blob``, with
 oversample-and-retry inside :meth:`Searcher._filtered_raw_hits` so the
 caller still gets ``limit`` survivors when the filter is strict.
@@ -92,17 +92,17 @@ class Hit:
     # template variables (vscode, sublime, etc.).
     line: int = 0
     # Unix epoch seconds; 0 means "unknown / unindexed file". Used by the
-    # reranker (§4 recency boost) — pulled from the F_MTIME fast field at
+    # reranker's recency boost — pulled from the F_MTIME fast field at
     # search time, not stored on the Hit until reranking runs.
     mtime: int = 0
-    # Cascade pass that produced this hit (§9c): 0 = exact, 1 = fuzzy,
+    # Cascade pass that produced this hit: 0 = exact, 1 = fuzzy,
     # 2 = synonym. Used by the TUI to render a per-pass glyph (●/~/⊕).
     pass_index: int = 0
     # JSON-encoded frontmatter for the file (md only); empty bytes for
     # non-md or md without frontmatter. Read at search time from F_META_BLOB
-    # so query-time post-filters (§5.5e-2) can decode and evaluate.
+    # so query-time post-filters can decode and evaluate.
     meta_blob: bytes = b""
-    # Decoded chunk body text (from F_BODY_STRUCT). Carried so the §4
+    # Decoded chunk body text (from F_BODY_STRUCT). Carried so the
     # phrase-proximity reranker can measure term spread across the whole
     # chunk, not just the ~240-char snippet. Empty until populated.
     body_text: str = ""
@@ -154,8 +154,8 @@ class FileChunk:
 class FileGroup:
     """One file with its ranked matched sections.
 
-    The TUI tree (phase 5) renders the file as a parent node and ``hits`` as
-    its sorted children. ``top_score`` mirrors ``hits[0].score`` for sorting.
+    The TUI tree renders the file as a parent node and ``hits`` as its sorted
+    children. ``top_score`` mirrors ``hits[0].score`` for sorting.
     """
 
     parent_id: str
@@ -246,8 +246,8 @@ def _make_snippet(
     "testing" for the query "test" found no anchor at all and fell back to the
     chunk's opening characters — a row whose snippet showed no match.
 
-    When ``intent`` is supplied (UX-pass-4 §3), prefers a window whose context
-    overlaps with intent tokens. Otherwise prefers the window covering the most
+    When ``intent`` is supplied, prefers a window whose context overlaps with
+    intent tokens. Otherwise prefers the window covering the most
     distinct terms (the actual proximity / phrase match), then the earliest.
     """
     if not body_text:
@@ -602,7 +602,7 @@ class Searcher:
         ordering the TUI uses: a doc matching every query term outranks one
         matching only a single rarer term (raw BM25 over an OR does not
         guarantee that). The legacy single-pass BM25 path is kept only for the
-        rerank ``profile`` (§4 recency / filetype / phrase-proximity) and the
+        rerank ``profile`` (recency / filetype / phrase-proximity) and the
         explicit cascade ``fuzzy_distance`` callers.
 
         Use :meth:`search_grouped` to keep all matched sections of each file.
@@ -695,8 +695,7 @@ class Searcher:
             f'parent_id:"{parent_id}"',
             default_field_names=[F_PARENT_ID],
         )
-        # 5000 chunks/file is a generous ceiling; phase 12 will revisit for
-        # books / very long PDFs.
+        # 5000 chunks/file is a generous ceiling, books and long PDFs included.
         # Pin one generation for the whole search→decode sequence: the
         # decode threads below dereference these DocAddresses, and a
         # concurrent reload() must not swap the searcher under them.

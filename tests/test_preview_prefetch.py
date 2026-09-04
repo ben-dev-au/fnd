@@ -258,7 +258,7 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
     """Selecting a prefetched container completes mount up to the
     background-fill radius (regression for a prefetch/user-side mount
     race that stalled at the visible window — narrower than the radius).
-    With ``BACKGROUND_FILL_RADIUS = 10`` Phase 2a/2b cap mount at
+    With ``BACKGROUND_FILL_RADIUS = 10`` stages 2a/2b cap mount at
     ``focus +/- 10``; full-file completion would need a wider radius."""
 
     from fnd.tui.preview.tuning import BACKGROUND_FILL_RADIUS
@@ -283,7 +283,7 @@ async def test_user_selection_of_prefetched_container_runs_to_completion(
         app._preview.render_full_doc(target.parent_id, focus_chunk_seq=target_focus)
 
         def _expected_coverage(total: int, focus_idx: int, radius: int) -> int:
-            """Phase 2a+2b coverage: [max(0, focus-r), min(total, focus+r+1))."""
+            """Stage 2a+2b coverage: [max(0, focus-r), min(total, focus+r+1))."""
             return min(total, focus_idx + radius + 1) - max(0, focus_idx - radius)
 
         def _coverage_reached() -> bool:

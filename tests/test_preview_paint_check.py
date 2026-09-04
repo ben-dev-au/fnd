@@ -43,7 +43,7 @@ async def _settled(pilot: Pilot[None], preview: PreviewPresenter) -> None:
     """Wait until the preview has painted AND the pipeline is idle.
 
     ``_verify_painted`` re-arms instead of repairing while a load/mount/finalise
-    is still in flight — including the Phase 3 background fill that keeps running
+    is still in flight — including the background fill that keeps running
     after first paint. A test that asserts on the repair DECISION must gate on
     that, or it is really asserting on how far the background fill happened to
     get by the time it looked (which made this file timing-dependent)."""

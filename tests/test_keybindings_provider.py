@@ -1,4 +1,4 @@
-"""Phase 2c: Keybindings cheat-sheet derives from the live action
+"""Keybindings cheat-sheet derives from the live action
 registry and reorders per the calling-screen context hint.
 
 The old _provider_keybindings used hand-curated tables that drifted
@@ -77,7 +77,7 @@ def test_static_sections_present() -> None:
 
 
 def test_source_form_section_lists_ctrl_d_and_ctrl_s() -> None:
-    """Phase 5 added Ctrl+D source delete — must be in the cheat sheet."""
+    """Ctrl+D source delete must be in the cheat sheet."""
     items = _provider_keybindings(_fake_app())
     rows = _rows_under(items, "Source form")
     keys = [k for k, _ in rows]

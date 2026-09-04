@@ -1,4 +1,4 @@
-"""Phase 5.5e-1: `fnd collection add` writes [[sources]] via tomlkit."""
+"""`fnd collection add` writes [[sources]] via tomlkit."""
 
 from __future__ import annotations
 

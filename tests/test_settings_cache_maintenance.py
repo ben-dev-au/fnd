@@ -1,6 +1,6 @@
 """Cache size display + Cache maintenance sub-screen tests.
 
-Follows the test-pattern checklist in docs/test_patterns/settings_screen.md.
+Follows the test-pattern checklist in dev/docs/test_patterns/settings_screen.md.
 Cache prune/clear are exercised via direct callback invocation (the
 confirm modal's OptionList is also pilot-tested via the Yes/Cancel
 paths)."""
@@ -101,9 +101,8 @@ def _make_chunk(seq: int = 0) -> Chunk:
 async def test_indexing_screen_has_cache_rows(
     built_index: Path, cfg: Config, isolated_cache: Path
 ) -> None:
-    """Phase D flattened the cache section — prune / clear / update
-    now live directly under PDF structure cache, no Cache maintenance
-    drill in between."""
+    """Prune / clear / update live directly under PDF structure cache,
+    with no Cache maintenance drill in between."""
     from fnd.tui.menu import SECTION_PDF_TEXTURE
     from fnd.tui.settings_screen import SettingsList, open_settings_section
 
@@ -310,6 +309,7 @@ def test_root_summary_includes_cache(isolated_cache: Path, cfg: Config) -> None:
     # Pre-seed the lazy slot — bypasses the worker so the test runs
     # deterministically without needing a Textual event loop.
     _CACHE["pdf_texture.summary.cache_short"] = ("cache 1 KB", time.monotonic())
+    _CACHE["pdf_texture.summary.engine"] = ("✗ engine off", time.monotonic())
 
     class _App:
         def __init__(self) -> None:

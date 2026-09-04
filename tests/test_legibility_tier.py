@@ -1,4 +1,4 @@
-"""Phase D (deferred): LegibilityReprocessTier + LegibilityEvaluator.
+"""LegibilityReprocessTier + LegibilityEvaluator.
 
 Built and unit-tested in isolation; deliberately NOT composed into the
 live pipeline (the measured corpus has uniformly legible baked OCR). The

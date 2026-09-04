@@ -1,4 +1,4 @@
-"""Phase B — UI state persistence."""
+"""UI state persistence."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def test_save_then_load_round_trips(tmp_path: Path) -> None:
 
 
 def test_save_then_load_round_trips_filters(tmp_path: Path) -> None:
-    """Phase F: filter selections must round-trip alongside scope state.
+    """Filter selections must round-trip alongside scope state.
 
     Empty ``filter_kinds`` = "all kinds"; ``filter_date == 'any'`` = "any
     date" — the absence of an explicit selection.

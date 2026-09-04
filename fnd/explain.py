@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 @dataclass(slots=True, frozen=True)
 class StrongSignalTrace:
-    """Bypass-decision context (UX-pass-4 §1).
+    """Bypass-decision context.
 
     ``top_score_norm`` / ``second_score_norm`` are the normalized BM25
     scores ``s / (1 + s)`` of the top-2 literal-probe hits. ``gap_norm``

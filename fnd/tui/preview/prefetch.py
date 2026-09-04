@@ -446,7 +446,7 @@ class PrefetchEngine:
         )
         # Prefetch only mounts a tiny window around the focused chunk
         # so the DOM stays small across many cached files. User-side
-        # resume expands on click via Phase 1b/2.
+        # resume expands on click via stages 1b/2.
         win_start = max(0, focus_idx - tuning.PREFETCH_MOUNT_RADIUS)
         win_end = min(len(chunks), focus_idx + tuning.PREFETCH_MOUNT_RADIUS + 1)
         _perf.mark(

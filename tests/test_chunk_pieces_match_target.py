@@ -1,4 +1,4 @@
-"""Phase 5.8: scroll target is the FIRST matched line within a chunk, not
+"""Scroll target is the FIRST matched line within a chunk, not
 the chunk's section header.
 
 User reported: "the result is at p.6 (4.55) but it scrolls to the start of
@@ -120,7 +120,7 @@ def long_page_pdf_index(fixtures_dir: Path, tmp_index_dir: Path, tmp_path: Path)
 async def test_match_target_is_a_line_widget_not_the_header(
     long_page_pdf_index: Path,
 ) -> None:
-    """Phase 5 contract: when a focused PDF chunk contains a match,
+    """Contract: when a focused PDF chunk contains a match,
     ``scroll_to_chunk`` lands on the matched line, NOT the chunk's
     first line. The user-visible bug was scrolling to "page top"
     instead of the actual match position — the flat buffer's

@@ -1,6 +1,6 @@
 """Tantivy schema definition — single source of truth for the index format.
 
-Per plan §11. Changing fields = full reindex; the writer compares
+Changing fields = full reindex; the writer compares
 ``SCHEMA_VERSION`` against the index sidecar and refuses to load on mismatch.
 
 Fields:
@@ -148,7 +148,7 @@ def build_schema() -> Schema:
     # (which wants full markdown structure) don't fight over one field.
     sb.add_bytes_field(F_BODY_MD, stored=True, indexed=False)
 
-    # JSON-encoded frontmatter for query-time metadata filter (§5.5e-2).
+    # JSON-encoded frontmatter for the query-time metadata filter.
     sb.add_bytes_field(F_META_BLOB, stored=True, indexed=False)
 
     return sb.build()

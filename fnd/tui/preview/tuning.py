@@ -147,13 +147,13 @@ VISIBLE_FIRST_BELOW = 7
 # upward scroll happen before lazy mount has to extend the window.
 VISIBLE_FIRST_ABOVE_SCREENS = 1.0
 # Background-fill bound, applied beyond the ±VISIBLE_FIRST_* window
-# during the initial cold mount. At < VISIBLE_FIRST_* the phase 2a/2b
+# during the initial cold mount. At < VISIBLE_FIRST_* the stage 2a/2b
 # loops are no-ops; the scroll-driven lazy mount picks up from the
 # visible-window boundary instead. Raise to e.g. 10 for a small static
 # buffer before lazy-mount engages; the trade-off is a small cold-mount
 # cost per cached file.
 BACKGROUND_FILL_RADIUS = 3
-# Option C: when the active file is within this many chunks, background-fill it
+# When the active file is within this many chunks, background-fill it
 # completely so internal match-jumps land on an already-mounted chunk (instant).
 # Larger files stay windowed (radius above) to protect DOM size / input lag.
 #

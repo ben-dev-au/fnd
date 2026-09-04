@@ -1,14 +1,14 @@
-"""Regime-aware layered search (§9a + §9c + §9d + UX-pass-4 §1).
+"""Regime-aware layered search.
 
 One entry point — :func:`search_layered` — chosen by both the TUI and
 the CLI. Encapsulates the three search regimes through a single
 decision tree:
 
-* **strong-signal** (UX-pass-4 §1): literal probe alone, when the
-  normalized top BM25 ≥ 0.85 AND gap ≥ 0.15 AND no intent provided.
+* **strong-signal**: literal probe alone, when the normalized top BM25
+  ≥ 0.85 AND gap ≥ 0.15 AND no intent provided.
   Bypasses fusion's phrase + syn passes entirely.
-* **fusion** (§9d): phrase + lex + syn sub-queries, RRF-fused. Default.
-* **cascade** (§9c): widening fallback when fusion's chunk pool is
+* **fusion**: phrase + lex + syn sub-queries, RRF-fused. Default.
+* **cascade**: widening fallback when fusion's chunk pool is
   sparse (< limit / 4). Adds fuzzy~1 and synonym passes.
 
 The regime decision logic lives here, not scattered across modules.

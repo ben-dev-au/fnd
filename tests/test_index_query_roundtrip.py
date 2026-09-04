@@ -1,8 +1,5 @@
-"""Acceptance test for Phase 1: index the fixture corpus, query for the unique anchor
-phrases, assert the right (path, locator) tuple is rank #1.
-
-Per §15: this test is the contract for Phase 1. It MUST go red before any extractor /
-indexer code exists, then green once tasks #4-#6 land.
+"""Acceptance: index the fixture corpus, query for the unique anchor phrases,
+assert the right (path, locator) tuple is rank #1.
 """
 
 from __future__ import annotations

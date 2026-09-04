@@ -1,4 +1,4 @@
-"""Phase 5.5e-1: predicate DSL parser + evaluator."""
+"""Predicate DSL parser + evaluator."""
 
 from __future__ import annotations
 

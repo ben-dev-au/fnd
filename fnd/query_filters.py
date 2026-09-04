@@ -4,7 +4,7 @@ typed tantivy filter queries (hard, unscored), leaving the scored content behind
 This is the "filter context" half of the engine (Elasticsearch / Quickwit
 pattern): structural and field qualifiers restrict the result set without
 affecting BM25 score, while bare terms and phrases stay in the scored content
-query. See dev/audits/QUERY_SYNTAX_AUDIT.md §4.
+query.
 
 Extraction is deliberately conservative: a ``field:`` clause is lifted only when
 it sits at the top level (not inside ``(...)``) and is not adjacent to a boolean

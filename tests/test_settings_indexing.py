@@ -1,8 +1,4 @@
-"""Indexing settings section — tests follow docs/test_patterns/settings_screen.md.
-
-Phase 1 surface: one auto-resume toggle row. Later steps extend this
-section with structured-PDF status, install/uninstall, and cache rows.
-"""
+"""Indexing settings section — tests follow dev/docs/test_patterns/settings_screen.md."""
 
 from __future__ import annotations
 

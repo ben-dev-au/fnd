@@ -1,4 +1,4 @@
-"""UXP-4 §3 — intent: line in :multi DSL."""
+"""The ``intent:`` line in the :multi DSL."""
 
 from __future__ import annotations
 

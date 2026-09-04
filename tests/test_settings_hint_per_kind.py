@@ -1,4 +1,4 @@
-"""Phase A — footer hint cluster is per-kind aware.
+"""Footer hint cluster is per-kind aware.
 
 Whatever Enter does on the focused row, the footer says so. No
 "Open" labels when Enter actually toggles or edits.

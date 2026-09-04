@@ -1,4 +1,4 @@
-"""Phase C: DoclingTableTier — recover scanned-table grids.
+"""DoclingTableTier — recover scanned-table grids.
 
 A recovered scanned page flattens its table to prose and emits no
 picture marker, so the born-digital splice can't fire. This tier detects

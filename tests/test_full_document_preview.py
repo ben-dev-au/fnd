@@ -1,4 +1,4 @@
-"""Phase 5.5a: full-document preview with all matches highlighted."""
+"""Full-document preview with all matches highlighted."""
 
 from __future__ import annotations
 
@@ -154,7 +154,7 @@ def test_render_document_highlights_every_match_across_chunks() -> None:
 
 @pytest.mark.asyncio
 async def test_tui_renders_full_document_when_section_focused(built_index: Path) -> None:
-    """Phase 5 contract: focused PDF file mounts ONE LineBufferPreview;
+    """Contract: focused PDF file mounts ONE LineBufferPreview;
     every chunk's line range registers in ``chunk_to_range`` and every
     anchor term carries a match style baked into the FileView's lines."""
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")

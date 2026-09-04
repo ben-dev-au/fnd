@@ -1,4 +1,4 @@
-"""Phase 4: schema bump to 7 + new F_LINE field.
+"""Schema bump to 7 + new F_LINE field.
 
 The schema-version sidecar mismatch triggers the existing rebuild
 prompt in ``fnd/migrate.py``. The field-list snapshot here guards

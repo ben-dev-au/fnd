@@ -1,6 +1,6 @@
-"""Phase 5: ``clone_source`` deep-copies a source into another collection.
+"""``clone_source`` deep-copies a source into another collection.
 
-The clone preserves every field — including the Phase 2 app refs —
+The clone preserves every field — including the app refs —
 and is independent of the original (no shared mutable state). The TOML
 round-trip is exercised via ``Config.load`` after the write.
 """

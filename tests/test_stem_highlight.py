@@ -1,4 +1,4 @@
-"""Phase 5.9: stem-aware highlighting matches the search engine.
+"""Stem-aware highlighting matches the search engine.
 
 User-reported bug: query "penfolds" returns "penfold" hits but doesn't
 highlight; query "penfold" highlights "penfold" but not the "penfold" in

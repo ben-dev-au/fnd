@@ -425,7 +425,7 @@ class MatchNavigator:
 
     def rebuild(self) -> None:
         """Called when a preview mounts or the query changes: drop the burst
-        memory and re-derive the cached count. Two phases so nothing touches the
+        memory and re-derive the cached count. Two steps so nothing touches the
         preview subtree during the cold-nav scroll-settle window."""
         self._refresh_gen += 1
         self._last_rel = self._last_seq = None
@@ -458,7 +458,7 @@ class MatchNavigator:
         self._await_mount(self._refresh_gen, retries=60)
 
     def _await_mount(self, gen: int, retries: int) -> None:
-        """Phase 1: BARE poll for mount completion — no query, no region reads,
+        """Step 1: BARE poll for mount completion — no query, no region reads,
         nothing that touches the preview subtree — so the delicate cold-nav
         settle window is untouched (any per-frame subtree work there stalls the
         landing). Just wait for is_complete, then count.
@@ -485,7 +485,7 @@ class MatchNavigator:
         self._count_tick(gen, retries=3)
 
     def _count_tick(self, gen: int, retries: int) -> None:
-        """Phase 2: the mount is complete — derive the DATA count (no region
+        """Step 2: the mount is complete — derive the DATA count (no region
         reads; match data is set at compose time, which is done by is_complete).
         Kept to a couple of passes (measured safe; many post-mount subtree walks
         are not) to catch a chunk that composes on the very next frame."""

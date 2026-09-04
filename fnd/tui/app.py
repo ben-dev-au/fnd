@@ -1,16 +1,12 @@
-"""FND TUI — phase 5 shell.
+"""FND TUI shell.
 
-Layout (per §5 wireframe):
+Layout:
 
   ┌─ Status bar (collection · result count) ─┐
   ├─ Query input ────────────────────────────┤
   ├─ Results tree (left)  │  Preview pane ──┤
   └──────────────────────────────────────────┘
    /  search   Tab  focus   ⏎  open   z  reading-view   o  default-app   q  quit
-
-Phase 5 ships the structural layout + opener wired to Enter; phase 6 adds
-the full action map (filter chips, command palette, customisable keymap),
-phase 7 adds reranker live-tuning.
 """
 
 from __future__ import annotations
@@ -160,7 +156,7 @@ _DRAINER_STOP_TIMEOUT = 0.5
 
 
 class FNDApp(App[None]):
-    """Phase 5 shell."""
+    """Root Textual application: layout, screens and actions."""
 
     CSS = """
     Screen { background: $surface; }
@@ -324,9 +320,10 @@ class FNDApp(App[None]):
     #preview_pane.-reading { border: none; padding: 0; scrollbar-size-vertical: 0; }
     /* While a partial mount is in flight we hide the scrollbar (its
        virtual size keeps growing as chunks land, so the thumb would
-       jitter). Programmatic ``scroll_to_widget`` calls during phase 2b
-       still need to work — using ``overflow-y: hidden`` would prevent
-       that, so we only suppress the bar's chrome, not scrolling.
+       jitter). Programmatic ``scroll_to_widget`` calls during the hidden
+       prepend above the window still need to work — using
+       ``overflow-y: hidden`` would prevent that, so we only suppress the
+       bar's chrome, not scrolling.
 
        Hidden by COLOUR, not by size. ``scrollbar-size-vertical: 0`` removes
        the gutter, which changes the pane's content width — so every chunk in
@@ -750,7 +747,7 @@ class FNDApp(App[None]):
         # Texture, not via a startup popup — re-texturising is a
         # preview-quality refresh the user opts into, never urgent.
 
-    # ── Ranking profile (§7) ──────────────────────────────────────
+    # ── Ranking profile ───────────────────────────────────────────
 
     def _preview_title(self, edge_width: int = 0) -> str:
         """Border title for the preview pane — ``Preview — <file>``.
@@ -1255,7 +1252,7 @@ class FNDApp(App[None]):
         """Open the focused result at its page/section.
 
         For PDFs with a non-empty query, routes through Skim's URL form
-        so ``&search=`` highlights the term in the opened PDF (§22 Spike C).
+        so ``&search=`` highlights the term in the opened PDF.
         For MD / TXT, the chunk's ``line`` (plus per-source app override
         and Obsidian vault from app_params) flows through to the
         resolved handler so templates like ``code -g {path}:{line}:1``
@@ -2000,7 +1997,7 @@ class FNDApp(App[None]):
         Markdown widget rendering the SearchTrace as a fenced ``json``
         block. The trace covers the entire search call, not just the
         focused hit — focused-hit details are visible in the trace's
-        per-hit ``contributions`` list (UX-pass-4 §2).
+        per-hit ``contributions`` list.
         """
         existing = self.query("#explain_overlay")
         if existing:
@@ -2089,9 +2086,7 @@ class FNDApp(App[None]):
         result = parse_multi_input(text, synonyms=self._search.synonyms)
         self._search.intent = result.intent
         # Use lex line(s) as the search query (auto_subqueries inside
-        # fusion_search will re-derive phrase + syn from this). Keeping
-        # intent-only as the UX-pass-4 §3 hook; explicit sub-query
-        # override is a future extension.
+        # fusion_search will re-derive phrase + syn from this).
         lexical_parts = [s.query for s in result.subqueries if s.source == "lex"]
         if lexical_parts:
             self._search.run(" ".join(lexical_parts))

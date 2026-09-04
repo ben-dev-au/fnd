@@ -2,10 +2,9 @@
 
 The exact-phrase pass (``"q"``) is what surfaces an in-order match; RRF fuses
 on rank, so a low-BM25 exact match still rises above scattered partials. Graded
-slop passes were removed (measured no-op on the real corpus, see
-dev/research/SEARCH_RANKING_DESIGN.md §4): proximity is only meaningful when a
-near-miss document exists to promote, and Tantivy already grades distance inside
-a single ``"q"~N`` clause when that is ever wanted.
+slop passes were removed (measured no-op on the real corpus): proximity is only
+meaningful when a near-miss document exists to promote, and Tantivy already
+grades distance inside a single ``"q"~N`` clause when that is ever wanted.
 """
 
 from __future__ import annotations

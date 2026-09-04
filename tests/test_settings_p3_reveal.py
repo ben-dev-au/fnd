@@ -1,4 +1,4 @@
-"""Phase 3 (Settings UX redesign) — reveal & open-keybindings tests."""
+"""Settings UX redesign — reveal & open-keybindings tests."""
 
 from __future__ import annotations
 

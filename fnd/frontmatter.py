@@ -1,4 +1,4 @@
-"""Obsidian-style YAML frontmatter parser (§5.5e-1).
+"""Obsidian-style YAML frontmatter parser.
 
 Hand-rolled subset because adding PyYAML for one feature isn't worth the
 dep weight. Supports the shapes Obsidian / Jekyll / Hugo / MkDocs use:

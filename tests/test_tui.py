@@ -1,4 +1,4 @@
-"""Phase 5: TUI shell — keyboard-driven flows via Pilot."""
+"""TUI shell — keyboard-driven flows via Pilot."""
 
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ async def test_expanding_file_node_shows_section_hits(built_index: Path) -> None
 async def test_o_key_opens_at_locator_on_focused_section(
     built_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Per phase 5.7: Enter no longer opens externally — only the explicit
+    """Enter no longer opens externally — only the explicit
     `o` key (action_open_at_locator) does."""
     calls: list[dict[str, Any]] = []
 

@@ -1,4 +1,4 @@
-"""Phase 1c: in-app modal explaining macOS Accessibility denial.
+"""In-app modal explaining macOS Accessibility denial.
 
 The flow under test:
 

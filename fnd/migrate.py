@@ -1,4 +1,4 @@
-"""Schema-migration helpers (§5.5e-2 close-out).
+"""Schema-migration helpers.
 
 When ``SCHEMA_VERSION`` bumps, existing on-disk indexes have a stale
 sidecar. The runtime gates in :func:`fnd.index._ensure_index` and

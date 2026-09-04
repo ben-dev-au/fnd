@@ -6,12 +6,9 @@ by ``sha256(file_bytes) || extractor_signature`` under
 ``$XDG_CACHE_HOME/fnd/pdf-structure/<shard>/<key>.json``. Lookup happens
 at the top of an extractor; on hit, extraction is skipped entirely.
 
-Phase 2 of the real-PDF-support workstream. See
-``docs/plans/2026-05-20-real-pdf-support-bakeoff.md`` for the design
-rationale — content-addressed beats mtime+path because mtime drifts on
-rsync / Dropbox / Syncthing, and per-PDF extraction is multi-second so
-the one-time sha256 cost (~10ms for a 5MB file on M1 Max) is rounding
-error.
+Content-addressed beats mtime+path because mtime drifts on rsync / Dropbox /
+Syncthing, and per-PDF extraction is multi-second so the one-time sha256 cost
+(~10ms for a 5MB file on M1 Max) is rounding error.
 
 History: directory was previously ``$XDG_CACHE_HOME/fnd/extraction/``;
 class previously ``ExtractionCache``. Both renamed for clarity — this

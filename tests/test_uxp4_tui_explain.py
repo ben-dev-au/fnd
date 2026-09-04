@@ -1,4 +1,4 @@
-"""UXP-4 §2 (TUI surface) — :explain overlay."""
+"""TUI surface: :explain overlay."""
 
 from __future__ import annotations
 

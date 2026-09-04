@@ -1,4 +1,4 @@
-"""Phase 3 — press-key-to-invoke on Keybindings + drill cue mode."""
+"""Press-key-to-invoke on Keybindings + drill cue mode."""
 
 from __future__ import annotations
 

@@ -16,10 +16,9 @@ and the phase weights turn the rest into one 0..1 fraction. Adding a
 subsystem means adding a plan and a tracker — the facility, the widget
 and the calibration store need no knowledge of it.
 
-Seed durations come from the measured navigation budget (see
-``dev/audits/PREVIEW_LATENCY_INVESTIGATION.md`` and the real-terminal
-timings behind it); :mod:`fnd.tui.progress.calibration` replaces them
-with this machine's own medians after a few runs, keyed on ``operation_id``.
+Seed durations come from the measured navigation budget;
+:mod:`fnd.tui.progress.calibration` replaces them with this machine's own
+medians after a few runs, keyed on ``operation_id``.
 
 The preview tracker **reads** pipeline state rather than being called
 from inside the pipeline. Two reasons, both load-bearing:

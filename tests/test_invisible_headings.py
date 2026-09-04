@@ -1,4 +1,4 @@
-"""Phase B: per-page hdr_info recovers mid-size subheads.
+"""Per-page hdr_info recovers mid-size subheads.
 
 pymupdf4llm scans the whole document to rank header font sizes; in a
 scanned book the many distinct divider fonts exhaust the 6-level cutoff

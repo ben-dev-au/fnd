@@ -1,4 +1,4 @@
-"""Phase 5 host wire-in — FNDApp routes PDF/TXT through LineBufferPreview.
+"""FNDApp routes PDF/TXT through LineBufferPreview.
 
 These tests assert the user-visible contracts the redesign promised:
 
@@ -242,7 +242,7 @@ async def test_only_one_flat_buffer_is_visible_at_a_time(
     multi_match_pdf_index: Path,
 ) -> None:
     """User reported each chunk getting its own scrollbar section after
-    Phase 5 landed. Root cause: LineBufferPreview had no
+    Root cause: LineBufferPreview had no
     ``.-hidden`` CSS rule, so the ``-hidden`` class
     ``_activate_flat_buffer`` adds didn't actually remove non-active
     buffers from the layout — they stacked in the pane, each with
@@ -369,7 +369,7 @@ async def test_flat_buffer_cache_hit_reuses_widget(pdf_index: Path) -> None:
 @pytest.mark.asyncio
 async def test_md_preview_keeps_structural_path(cfg: Config, md_index: Path) -> None:
     """Markdown files still mount the PreviewContainer — the structural
-    path is unchanged by the Phase 5 wire-in."""
+    path is unchanged by the flat-buffer wire-in."""
     app = FNDApp(index_dir=md_index, config=cfg, initial_query="susy")
     async with app.run_test() as pilot:
         await safe_pause(pilot)

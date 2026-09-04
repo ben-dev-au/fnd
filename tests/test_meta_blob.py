@@ -1,4 +1,4 @@
-"""Phase 5.5e-2: JSON-roundtrip of frontmatter dicts for query-time filter."""
+"""JSON-roundtrip of frontmatter dicts for query-time filter."""
 
 from __future__ import annotations
 

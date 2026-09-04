@@ -1,4 +1,4 @@
-"""Phase 4: parallel chunk decode in ``Searcher.get_file_chunks``.
+"""Parallel chunk decode in ``Searcher.get_file_chunks``.
 
 The contract these tests pin:
 

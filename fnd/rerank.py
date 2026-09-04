@@ -1,12 +1,12 @@
-"""Python post-rank score adjustments per plan §4.
+"""Python post-rank score adjustments.
 
 Tantivy hardcodes BM25 ``k1``/``b`` upstream and exposes no per-doc score
-callback (Spike A in §21). The high-leverage knobs — recency decay, per-kind
-weighting, query-term clustering — are applied here in Python after the raw
-search returns, then the hit list is re-sorted.
+callback. The high-leverage knobs — recency decay, per-kind weighting,
+query-term clustering — are applied here in Python after the raw search
+returns, then the hit list is re-sorted.
 
 Three pure functions plus an orchestrator. Each pure function is unit-tested
-for monotonicity / idempotence in :mod:`tests.test_phase_7_rerank`.
+for monotonicity / idempotence in :mod:`tests.test_rerank`.
 
 Design notes:
 
@@ -38,7 +38,7 @@ from fnd.render import _stem  # stem helper kept centralized in render.py
 
 @dataclass(slots=True, frozen=True)
 class RankingProfile:
-    """Per-profile knobs (§4 / §6).
+    """Per-profile knobs.
 
     All zeros / empty maps are the identity — passing :class:`RankingProfile`
     with no args leaves the BM25 order untouched.
@@ -46,7 +46,7 @@ class RankingProfile:
 
     # Recency: ``score *= 1 + recency_boost * exp(-Δt / half_life)``.
     # ``recency_boost`` is the maximum bonus (0 disables). ``half_life`` is
-    # in seconds; default 365 days matches §6.
+    # in seconds.
     recency_boost: float = 0.0
     recency_half_life_seconds: int = 365 * 86_400
 
@@ -175,7 +175,7 @@ def rerank_hits(
     query: str,
     now: int | None = None,
 ) -> list[Hit]:
-    """Apply every enabled §4 adjustment to ``hits`` and return them re-sorted
+    """Apply every enabled adjustment to ``hits`` and return them re-sorted
     by adjusted score (descending). Stable for ties.
 
     Pure: returns a new list of new :class:`Hit` records (the originals are

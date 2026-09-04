@@ -1,4 +1,4 @@
-"""Phase 4: query-DSL pre-pass unit + property tests."""
+"""Query-DSL pre-pass unit + property tests."""
 
 from __future__ import annotations
 

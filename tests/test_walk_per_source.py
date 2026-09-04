@@ -1,4 +1,4 @@
-"""Phase 5.5e-1: per-source walker."""
+"""Per-source walker."""
 
 from __future__ import annotations
 

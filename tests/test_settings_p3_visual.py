@@ -1,4 +1,4 @@
-"""Phase 3 (Settings UX redesign) — visual foundation tests."""
+"""Settings UX redesign — visual foundation tests."""
 
 from __future__ import annotations
 

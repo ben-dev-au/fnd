@@ -1,4 +1,4 @@
-"""Phase 5.5e-2: index pipeline serializes frontmatter into meta_blob.
+"""Index pipeline serializes frontmatter into meta_blob.
 
 Reads meta_blob via the Tantivy doc store directly because Hit doesn't
 carry the field until Task 5; once Task 5 lands, this could simplify to

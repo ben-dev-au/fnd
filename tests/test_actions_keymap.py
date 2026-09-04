@@ -1,4 +1,4 @@
-"""Phase 6: action registry, keymap loader, command palette."""
+"""Action registry, keymap loader, command palette."""
 
 from __future__ import annotations
 

@@ -1,8 +1,8 @@
-"""Frontmatter ↔ JSON bytes (§5.5e-2).
+"""Frontmatter ↔ JSON bytes.
 
 The Tantivy ``meta_blob`` stored field holds JSON-encoded frontmatter so
 the query-time post-filter can apply the same DSL predicate the indexer
-already uses (§5.5e-1). JSON doesn't natively round-trip ``datetime.date``,
+already uses. JSON doesn't natively round-trip ``datetime.date``,
 so we wrap dates in a small typed envelope::
 
     encode({"due": date(2026, 6, 1)}) →

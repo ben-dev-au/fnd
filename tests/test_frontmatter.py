@@ -1,4 +1,4 @@
-"""Phase 5.5e-1: Obsidian-style YAML frontmatter parsing."""
+"""Obsidian-style YAML frontmatter parsing."""
 
 from __future__ import annotations
 

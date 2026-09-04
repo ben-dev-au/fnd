@@ -1,4 +1,4 @@
-"""Phase 5.5e-1: SourceConfig + multi-source collection schema."""
+"""SourceConfig + multi-source collection schema."""
 
 from __future__ import annotations
 

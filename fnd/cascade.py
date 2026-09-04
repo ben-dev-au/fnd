@@ -1,4 +1,4 @@
-"""Cascading multi-pass query (§9c).
+"""Cascading multi-pass query.
 
 Three widening passes are tried in order:
 
@@ -132,7 +132,7 @@ def _fuzzy_pass(
     heuristic. Per-term ``~N`` overrides the floor.
 
     ``active_sources`` further narrows the fuzzy pass to chunks indexed
-    from a subset of the active collection's sources, so the §9c cascade
+    from a subset of the active collection's sources, so the cascade
     fallback honours the same source-scope as the literal pass.
     """
     term_dists = _terms_with_fuzzy(query)
@@ -361,10 +361,9 @@ def cascade_search(
     filter); the programmatic fuzzy pass adds an inline source-set
     clause to its boolean query.
 
-    ``with_trace`` (UX-pass-4 §2): when ``True``, returns
-    ``(hits, CascadeTrace)`` so the layered search can format the
-    regime label as ``cascade(+fuzzy)`` / ``cascade(+syn)`` based on
-    which passes contributed new hits.
+    ``with_trace``: when ``True``, returns ``(hits, CascadeTrace)`` so the
+    layered search can format the regime label as ``cascade(+fuzzy)`` /
+    ``cascade(+syn)`` based on which passes contributed new hits.
     """
     seen: set[tuple[str, int]] = set()
     out: list[Hit] = []

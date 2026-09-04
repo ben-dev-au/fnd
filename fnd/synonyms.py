@@ -1,6 +1,6 @@
-"""Synonym expansion (§9e).
+"""Synonym expansion.
 
-User-curated synonym groups — kept in a TOML file (§6) — are applied at
+User-curated synonym groups — kept in a TOML file — are applied at
 *query time* by rewriting matching terms into Tantivy ``(term OR syn1 OR syn2)``
 disjunctions. The index never sees the expansion, so synonym edits are
 free (no reindex) and synonyms can change between sessions.

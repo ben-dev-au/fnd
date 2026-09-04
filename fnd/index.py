@@ -1,7 +1,6 @@
 """Tantivy IndexWriter wrapper + ``build_index`` entry point.
 
-Phase 1: single-process, single-writer. Phase 7 adds reranker; phase 10 adds
-fsevents incremental updates and the long-running watcher.
+Single-process, single-writer.
 """
 
 from __future__ import annotations
@@ -271,9 +270,8 @@ def build_index(
 ) -> int:
     """Index supported files under ``roots`` into ``index_dir``.
 
-    Honours includes/excludes globs per §8 precedence rules. Returns the number
-    of chunks written. Phase 1 is single-process and single-writer; multi-
-    process extraction lands in phase 10.
+    Honours the includes/excludes glob precedence rules. Returns the number of
+    chunks written. Single-process, single-writer.
 
     When ``rebuild=True``, all existing chunks for ``collection`` are deleted
     before re-adding — useful when an extractor improves and the user wants
@@ -349,7 +347,7 @@ def build_index_from_config(
     auto-promoted to a single implicit source by the loader, so this
     function only sees the new shape. For md files, frontmatter is read
     once per file and serialized into ``meta_blob`` on every chunk so the
-    query-time post-filter (§5.5e-2) can decode + evaluate it.
+    query-time post-filter can decode + evaluate it.
     """
     from fnd.walk import walk_sources
 

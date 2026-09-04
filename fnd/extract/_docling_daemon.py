@@ -1,13 +1,11 @@
 """Long-running docling helper, spawned at most once per reindex run.
 
 Docling's Python API can't share fnd's project venv (typer<0.22 vs
-fnd's typer~=0.25). The workaround proven in the Phase 0 bake-off:
-spawn docling's *own* venv Python running a small helper script, talk
-to it over stdin/stdout JSON-RPC.
+fnd's typer~=0.25). The workaround: spawn docling's *own* venv Python
+running a small helper script, talk to it over stdin/stdout JSON-RPC.
 
-Used by the production `fnd/extract/pdf.py` Phase 3 routing to extract
-pages where pymupdf4llm emitted `==> picture intentionally omitted <==`
-markers (image-rendered tables).
+Used by `fnd/extract/pdf.py` to extract pages where pymupdf4llm emitted
+`==> picture intentionally omitted <==` markers (image-rendered tables).
 
 Lifecycle:
 - `DoclingDaemon.get()` returns a process-singleton instance, spawning

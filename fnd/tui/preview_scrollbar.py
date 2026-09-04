@@ -2,9 +2,8 @@
 
 Textual's stock ``ScrollBar`` paints a moving thumb over an otherwise
 blank track; nothing on the bar itself tells the user where in the
-document the query matches live. Per master plan §5 ("scroll bar should
-mark match positions") and the user's repeated UX feedback, the marker
-must live on the scrollbar — not as a sibling minimap.
+document the query matches live. The markers live on the scrollbar itself,
+not as a sibling minimap.
 
 This module wires three thin subclasses:
 
@@ -19,7 +18,7 @@ This module wires three thin subclasses:
 
 Two marker-mapping modes coexist:
 
-* **Line-precise** (preferred, Phase 3 redesign) — driven by
+* **Line-precise** (preferred) — driven by
   ``set_match_lines(lines, total_lines)``. Each match line maps to one
   exact track cell via ``cell = int(line * track_height / total_lines)``,
   so a single big chunk and many tiny ones each get a marker at the right
@@ -29,7 +28,7 @@ Two marker-mapping modes coexist:
   where ``match_map[i]`` flags chunk ``i`` as match-bearing. Each cell on
   the track resolves back to a chunk index proportionally and paints if
   that chunk matches. Used by the structural Markdown / docx / pptx
-  preview path until Phase 5 migrates it.
+  preview path.
 
 A container built behind ``-pre-reveal`` is in the layout — that is how the pane
 scrolls to its match before revealing it — so its rows reach the bar as well and
@@ -162,7 +161,7 @@ class MatchAwareScrollBarRender(ThinScrollBarRender):
 
     Accepts either of two marker sources (mutually exclusive):
 
-    * Line-precise (Phase 3): ``match_lines`` + ``total_lines``. Each
+    * Line-precise: ``match_lines`` + ``total_lines``. Each
       match line maps to one exact track cell.
     * Chunk-uniform (legacy): ``match_map[i]`` flagging chunk ``i``;
       track cells proportionally resolve back to chunk indices.

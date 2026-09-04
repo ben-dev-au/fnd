@@ -212,8 +212,8 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
 class ConfigRecoveryApp(App[None]):
     """Standalone wrapper used at TUI startup before the main app exists.
 
-    Behaviour is unchanged from Phase 1 — pushes the reusable
-    :class:`ConfigRecoveryScreen` and exits when the user resolves it.
+    Pushes the reusable :class:`ConfigRecoveryScreen` and exits when the user
+    resolves it.
     """
 
     CSS = """

@@ -1,4 +1,4 @@
-"""Phase 2: Obsidian vault auto-detection.
+"""Obsidian vault auto-detection.
 
 ``fnd.apps.detect_obsidian_vault(path)`` walks up from ``path`` looking
 for a ``.obsidian/`` directory. Used by the Settings TUI to pre-fill

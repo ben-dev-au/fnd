@@ -1,4 +1,4 @@
-"""Phase 2 acceptance: PPTX and DOCX anchors round-trip with structure."""
+"""Acceptance: PPTX and DOCX anchors round-trip with structure."""
 
 from __future__ import annotations
 

@@ -35,12 +35,12 @@ class UiState:
     # sidebar looks the way it did at quit.
     expanded_collections: list[str] = field(default_factory=list)
     expanded_filter_branches: list[str] = field(default_factory=list)
-    # Phase F filters. Empty kinds list = "all kinds"; ``filter_date`` of
+    # Filter state. Empty kinds list = "all kinds"; ``filter_date`` of
     # ``"any"`` = "any date". Anything else is treated as a literal token
     # for the DSL pre-pass (kind:pdf, mtime:week, …).
     #
     # Fuzzy/synonym/etc. are NOT filters — they're cascade passes that
-    # broaden a sparse-result query automatically (§9c). The filters
+    # broaden a sparse-result query automatically. The filters
     # panel only carries scope-narrowing knobs.
     filter_kinds: list[str] = field(default_factory=list)
     filter_date: str = "any"

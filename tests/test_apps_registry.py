@@ -1,4 +1,4 @@
-"""Phase 1: apps registry, resolver, and template handlers.
+"""Apps registry, resolver, and template handlers.
 
 These tests pin the contract for ``fnd.apps``:
 

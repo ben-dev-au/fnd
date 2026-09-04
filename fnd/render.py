@@ -2,9 +2,8 @@
 Textual's :class:`textual.widgets.Markdown` widget, with query-term highlights
 applied via a Markdown bold wrap.
 
-Per plan §5: preview should show structured text (headings / paragraphs /
-lists), not a raw blob. Phase 5 ships the simplest faithful renderer; phase 7
-adds match-cluster minimap.
+The preview shows structured text (headings / paragraphs / lists), not a raw
+blob.
 """
 
 from __future__ import annotations
