@@ -101,7 +101,13 @@ class TestTextInformsTheRows:
         assert parse("file.kind in ['pdf', 'md']").kinds == ("pdf", "md")
 
     def test_a_typed_tag_clause_becomes_the_tags_row(self) -> None:
-        assert parse("NOT ('no_index' in file.tags.os)").exclude_tags == ("no_index",)
+        assert parse("NOT ('no_index' in file.tags.all)").exclude_tags == ("no_index",)
+
+    def test_a_single_provider_survives_as_an_expression(self) -> None:
+        """The row means any source; naming one is still the user's to keep."""
+        spec = parse("NOT ('no_index' in file.tags.os)")
+        assert spec.exclude_tags == ()
+        assert "file.tags.os" in spec.expression
 
     def test_a_typed_size_clause_becomes_the_size_row(self) -> None:
         spec = parse("file.size <= 50_000_000")

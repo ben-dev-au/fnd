@@ -82,10 +82,17 @@ def spec_branches(spec: FilterSpec, sample: SourceSample | None = None) -> list[
                 Branch(f"kinds:{cat.id}", f"File type · {cat.label}", "multi", tuple(items))
             )
 
-    seen: list[tuple[str, str]] = []
+    # Counts merge across providers: a tag carried both as an OS tag and in
+    # YAML is one exclusion, and listing it twice would give the tree two rows
+    # sharing an id.
+    totals: dict[str, int] = {}
     for source in ("os", "frontmatter"):
         for value, count in sample.tags_for(source) if sample else []:
-            seen.append((f"tag:{value}", f"{value}  ({count})"))
+            totals[value] = totals.get(value, 0) + count
+    seen: list[tuple[str, str]] = [
+        (f"tag:{v}", f"{v}  ({c})")
+        for v, c in sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
     for tag in spec.exclude_tags:
         if not any(i[0] == f"tag:{tag}" for i in seen):
             seen.append((f"tag:{tag}", tag))

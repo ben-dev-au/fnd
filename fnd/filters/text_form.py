@@ -24,7 +24,7 @@ from fnd.filters.model import FilterSpec
 __all__ = ["parse", "render"]
 
 _BARE = re.compile(r"[A-Za-z_][A-Za-z0-9_\-.]*\Z")
-_TAG_FACT = "file.tags.os"
+_TAG_FACT = "file.tags.all"
 _COMPARISONS: dict[tuple[str, str], str] = {
     ("file.size", ">="): "min_size",
     ("file.size", "<="): "max_size",

@@ -115,16 +115,21 @@ class TestRepositoryBoundary:
 
 
 class TestTagExclusion:
-    """``exclude_tags`` reads OS tags only.
+    """``exclude_tags`` reads every tag source, so the default is not macOS-only."""
 
-    Frontmatter tags would mean opening every candidate during enumeration —
-    the shape of the scan stall — and would move cloud fetches out of the
-    reported per-file phase. Excluding on a YAML tag is a frontmatter filter.
-    """
-
-    def test_frontmatter_tags_do_not_gate_the_walk(self, tmp_path: Path) -> None:
+    def test_a_yaml_tag_excludes_like_a_finder_tag_would(self, tmp_path: Path) -> None:
+        """The only cross-platform way to say "keep this out" — no Finder needed."""
         _write(tmp_path, "tagged.md", "---\ntags: [no_index]\n---\nbody\n")
-        assert _names(tmp_path) == {"tagged.md"}
+        _write(tmp_path, "plain.md", "---\ntags: [keep]\n---\nbody\n")
+        assert _names(tmp_path) == {"plain.md"}
+
+    def test_a_tag_the_filter_does_not_name_is_kept(self, tmp_path: Path) -> None:
+        _write(tmp_path, "a.md", "---\ntags: [draft]\n---\nbody\n")
+        assert _names(tmp_path) == {"a.md"}
+
+    def test_clearing_the_default_indexes_the_tagged_file(self, tmp_path: Path) -> None:
+        _write(tmp_path, "tagged.md", "---\ntags: [no_index]\n---\nbody\n")
+        assert _names(tmp_path, defaults=DefaultFilters(exclude_tags=[])) == {"tagged.md"}
 
     def test_a_frontmatter_filter_excludes_on_a_yaml_tag(self, tmp_path: Path) -> None:
         _write(tmp_path, "drop.md", "---\ntags: [no_index]\n---\nbody\n")
@@ -138,10 +143,26 @@ class TestTagExclusion:
         spec = DefaultFilters(frontmatter="NOT ('no_index' in tags)")
         assert _names(tmp_path, defaults=spec) == {"plain.md"}
 
-    def test_the_walk_does_not_read_frontmatter_for_the_default_filters(
+    def test_a_filter_that_asks_nothing_of_content_opens_no_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The guard against reintroducing the enumeration-time file open."""
+        """Reading content is opt-in. Measured 0.40s -> 1.92s over 4,439 notes,
+        so a dimension that acquires a content read by accident is not free."""
+        _write(tmp_path, "a.md", "---\ntags: [x]\n---\n")
+        reads: list[Path] = []
+        real = fnd.frontmatter.read_frontmatter_from_file
+        monkeypatch.setattr(
+            "fnd.file_facts.read_frontmatter_from_file",
+            lambda p: (reads.append(p), real(p))[1],
+        )
+        spec = DefaultFilters(exclude_tags=[], kinds=["md"], max_size=1_000)
+        assert _names(tmp_path, defaults=spec) == {"a.md"}
+        assert reads == [], f"enumeration opened files it did not need: {reads}"
+
+    def test_the_tag_default_does_read_content(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The negative control for the test above: it can tell the two apart."""
         _write(tmp_path, "a.md", "---\ntags: [x]\n---\n")
         reads: list[Path] = []
         real = fnd.frontmatter.read_frontmatter_from_file
@@ -150,7 +171,7 @@ class TestTagExclusion:
             lambda p: (reads.append(p), real(p))[1],
         )
         assert _names(tmp_path) == {"a.md"}
-        assert reads == [], f"enumeration opened files it did not need: {reads}"
+        assert reads, "the no_index default must read a note's YAML tags"
 
 
 class TestStructuredDimensions:

@@ -16,7 +16,7 @@ def build_gate(spec: FilterSpec) -> FileGate:
     """
     rules: list[Rule] = []
     for dim in DIMENSIONS:
-        if dim.id.startswith("exclude_tags_") or dim.id == "frontmatter":
+        if dim.id == "frontmatter":
             continue
         value = getattr(spec, dim.id, None)
         if value in (None, (), "", []):

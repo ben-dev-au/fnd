@@ -223,9 +223,9 @@ class DefaultFilters(BaseModel):
 
     respect_gitignore: bool = True
     respect_fndignore: bool = True
-    # OS-level tags only (macOS Finder). Reading a tag is one xattr; reading a
-    # note's YAML tags would mean opening every candidate during enumeration,
-    # which is what ``frontmatter`` is for.
+    # Every tag source: OS tags and a note's YAML ``tags:``. The latter opens
+    # each note during enumeration, which the indexer's reader bounds and
+    # reports exactly as it does for ``frontmatter``.
     exclude_tags: list[str] = Field(default_factory=lambda: ["no_index"])
     kinds: list[str] = Field(default_factory=list)
     min_size: int | None = None
@@ -1138,7 +1138,7 @@ excludes = ["**/.git/**", "**/.DS_Store", "**/__pycache__/**"]
 # anything left out is inherited.
 # [collections.default.sources.filters]
 # respect_gitignore = false
-# exclude_tags = ["no_index", "draft"]
+# exclude_tags = ["no_index", "draft"]   # OS tags and a note's YAML tags:
 # max_size = 50_000_000
 # modified_after = 2020-01-01
 # expression = "file.size < 50_000_000"

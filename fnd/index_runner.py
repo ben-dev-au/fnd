@@ -817,6 +817,12 @@ async def run_indexer(
         if exhausted:
             break
 
+    # A declined read only loses a file when a rule needed the content to
+    # reach a verdict. The tag filter fails open and keeps it, so reporting
+    # every decline would flag files that then index normally.
+    _walked = {p for p, _src in paths}
+    scan_blocked = [(p, reason) for p, reason in scan_blocked if p not in _walked]
+
     def _prepare() -> tuple[dict[str, int], int, int, Any, Any, Any]:
         local_paths = paths
         local_sizes: dict[str, int] = {}

@@ -49,6 +49,13 @@ class TestBranches:
         tags = next(b for b in spec_branches(spec, _sample()) if b.id == "tags")
         assert tags.items[0][0] == "tag:wk3"
 
+    def test_a_tag_in_both_providers_is_one_row(self) -> None:
+        """One exclusion covers every source, so two rows would share an id."""
+        sample = SourceSample(tags={"os": {"draft": 2}, "frontmatter": {"draft": 5}})
+        tags = next(b for b in spec_branches(FilterSpec(), sample) if b.id == "tags")
+        assert [i[0] for i in tags.items] == ["tag:draft"]
+        assert "(7)" in tags.items[0][1]
+
     def test_a_configured_tag_absent_from_the_sample_still_appears(self) -> None:
         spec = FilterSpec(exclude_tags=("never_scanned",))
         tags = next(b for b in spec_branches(spec, _sample()) if b.id == "tags")

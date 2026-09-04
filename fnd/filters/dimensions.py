@@ -82,7 +82,11 @@ class _ListDimension:
 
 @dataclass(frozen=True, slots=True)
 class _TagExcludeDimension:
-    """``NOT ('no_index' in file.tags.os)`` — one clause per excluded tag."""
+    """``NOT ('no_index' in file.tags.all)`` — one clause per excluded tag.
+
+    Fail-open: a source that cannot answer contributes no tags, so an
+    unreadable xattr or an unfetched note is indexed rather than dropped.
+    """
 
     id: str
     fact: str
@@ -161,8 +165,6 @@ def rule_from_text(text: str, *, applies_to: frozenset[str] | None = None) -> Ru
 
 DIMENSIONS: Final[tuple[Dimension, ...]] = (
     _ListDimension("kinds", "file.kind"),
-    _TagExcludeDimension("exclude_tags_os", "file.tags.os"),
-    _TagExcludeDimension("exclude_tags_frontmatter", "file.tags.frontmatter"),
     _TagExcludeDimension("exclude_tags", "file.tags.all"),
     _ComparisonDimension("min_size", "file.size", ">="),
     _ComparisonDimension("max_size", "file.size", "<="),

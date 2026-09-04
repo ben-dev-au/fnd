@@ -313,21 +313,17 @@ def walk_sources(
     from fnd.config import SourceConfig  # local import: avoid cycle
     from fnd.file_facts import FileFacts
     from fnd.filters import FilterSpec, build_gate
-    from fnd.filters.dimensions import NOTE_KINDS, dimension, rule_from_text
+    from fnd.filters.dimensions import NOTE_KINDS, rule_from_text
     from fnd.ignore_files import IGNORE_FILENAMES
     from fnd.tags import TAG_PROVIDERS
 
     for source in sources:
         assert isinstance(source, SourceConfig)
         resolved = source.effective_filters
-        # Tag exclusion reads OS tags only: one xattr per file, no content.
-        # Frontmatter tags would mean opening every candidate during
-        # enumeration — the shape of the scan stall, and it would move cloud
-        # fetches out of the reported per-file phase. A frontmatter filter is
-        # the explicit way to exclude on YAML tags.
         gate = build_gate(
             FilterSpec(
                 kinds=tuple(resolved.kinds),
+                exclude_tags=tuple(resolved.exclude_tags),
                 min_size=resolved.min_size,
                 max_size=resolved.max_size,
                 created_after=resolved.created_after,
@@ -337,7 +333,6 @@ def walk_sources(
                 expression=resolved.expression or "",
             )
         )
-        tag_rule = dimension("exclude_tags_os").rule(tuple(resolved.exclude_tags))
         # Scoped to note kinds: strict null would otherwise fail a frontmatter
         # comparison on every PDF and drop the lot.
         scoped = [
@@ -345,7 +340,7 @@ def walk_sources(
             for text in (source.frontmatter_filter, resolved.frontmatter)
             if text
         ]
-        rules = gate.rules + ((tag_rule,) if tag_rule else ()) + tuple(scoped)
+        rules = gate.rules + tuple(scoped)
         names = [
             name
             for name, on in (

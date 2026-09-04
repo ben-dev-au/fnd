@@ -113,6 +113,7 @@ So read the table below as **what is implemented**, not as what is verified:
 | Created-date filter               | ✓ (birth time) | best-effort (statx)              | ✓ (creation time)  |
 | Cloud-only file handling          | iCloud Drive   | not detectable                   | OneDrive & co.     |
 | Finder tag filtering              | ✓              | —                                | —                  |
+| YAML `tags:` filtering            | ✓              | ✓                                | ✓                  |
 
 Where an OS has no equivalent for something, fnd degrades rather than erroring.
 Built-in PDF viewers are auto-detected — the "Open with…" picker lists only the
@@ -332,12 +333,12 @@ its overrides.
 | --- | --- |
 | `respect_gitignore` | Honours every `.gitignore` down the tree, with git's rules — negation, directory patterns, nearest file wins. **On by default.** |
 | `respect_fndignore` | The same syntax in a `.fndignore`, read only by fnd — how to hide something from search without hiding it from git. **On by default.** |
-| `exclude_tags` | Tags that keep a file out. **macOS Finder tags only**, because reading a tag is one attribute lookup while reading a note's YAML tags means opening every candidate file. Defaults to `["no_index"]`. |
+| `exclude_tags` | Tags that keep a file out, from any source fnd reads: macOS Finder tags and a note's YAML `tags:`. Defaults to `["no_index"]`, so tagging a file `no_index` either way keeps it out. |
 | `kinds` | Restrict to given file types. Empty means every supported type. |
 | `min_size` / `max_size` | Bytes. Keeps stubs, and multi-hundred-megabyte scans, out. |
 | `created_after` / `created_before` | ISO dates (`2024-01-01`). A fixed bound, not the Filters pane's rolling window — a window would change what the index holds as time passed. A file with no creation date (best-effort on Linux) is kept. |
 | `modified_after` / `modified_before` | ISO dates, same semantics. |
-| `frontmatter` | A frontmatter predicate — the same `[…]` syntax as a query. **Notes only**; every other file type passes through. Use this to exclude on a YAML tag: `NOT ('no_index' in tags)`. |
+| `frontmatter` | A frontmatter predicate — the same `[…]` syntax as a query. **Notes only**; every other file type passes through. For anything beyond tags: `type == 'note' AND status != 'draft'`. |
 | `expression` | A predicate over any file, using `file.kind`, `file.size`, `file.modified`, `file.tags.os`, `file.path` and the like. The rows above are written in terms of it. |
 
 Each screen has an **Edit as text** row showing the whole set as one
@@ -357,8 +358,11 @@ off and on:
 > kept out of a repository precisely because they are big, and those are often
 > exactly the documents you want to find.
 
-> **Finder tags are macOS-only.** On Linux and Windows `exclude_tags` is inert;
-> `.fndignore` and the `frontmatter` filter are the portable equivalents.
+> **Finder tags are macOS-only, but `exclude_tags` is not.** On Linux and
+> Windows there are no Finder tags to read, so tag a note `tags: [no_index]` in
+> its frontmatter and the same setting keeps it out. Reading YAML tags means
+> opening each note as it is enumerated; cloud-only files are fetched under the
+> same bound and reported the same way as for the `frontmatter` filter.
 
 ## Configuration
 
@@ -395,7 +399,7 @@ frontmatter_filter = "Status == 'published' AND NOT ('private' in tags)"  # md o
 [defaults.filters]
 respect_gitignore = true            # honour .gitignore, with git's own rules
 respect_fndignore = true            # same syntax, read only by fnd
-exclude_tags      = ["no_index"]    # macOS Finder tags — see the note below
+exclude_tags      = ["no_index"]    # Finder tags and YAML tags: — see below
 # max_size        = 50_000_000
 # modified_after  = 2020-01-01
 # expression      = "file.size < 50_000_000"

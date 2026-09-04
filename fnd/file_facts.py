@@ -208,9 +208,8 @@ class FileFacts(Mapping[str, object]):
     def _tags(self, *, only: str | None = None) -> dict[str, tuple[str, ...]]:
         """Tags per provider, computing only the provider a fact names.
 
-        ``file.tags.os`` must not parse frontmatter: it is read for every
-        candidate during enumeration, where opening files is what caused the
-        scan stall.
+        ``file.tags.os`` therefore costs one xattr and never opens the file;
+        only ``file.tags.frontmatter`` and ``file.tags.all`` read content.
         """
         cache_key = only or "*"
         cached = self._tag_cache.get(cache_key)
