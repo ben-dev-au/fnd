@@ -62,7 +62,7 @@ def test_collection_add_with_filter_and_globs(
     )
     assert result.exit_code == 0, result.output
     s = load(cfg_path).collection("coursework").sources[0]
-    assert s.includes == ["**/*.md"]
+    assert s.filters.kinds == ["md"]
     assert s.excludes == ["**/.trash/**"]
     assert s.frontmatter_filter == "Course == 'DPwC'"
 
@@ -110,7 +110,7 @@ def test_collection_add_appends_to_existing_collection(
     assert result.exit_code == 0, result.output
     cw = load(cfg_path).collection("coursework")
     assert len(cw.sources) == 2
-    assert cw.sources[1].includes == ["**/*.pdf"]
+    assert cw.sources[1].filters.kinds == ["pdf"]
 
 
 def test_collection_add_preserves_user_comments(

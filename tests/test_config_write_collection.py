@@ -25,7 +25,8 @@ def test_write_creates_collection_in_empty_file(tmp_path: Path) -> None:
     write_collection(config_path=cfg_path, name="notes", collection=cc)
     out = load(cfg_path)
     assert out.collection("notes").sources[0].path == Path("/tmp/notes")
-    assert out.collection("notes").sources[0].includes == ["**/*.md"]
+    # ``includes = ["**/*.md"]`` is stored as the filter it states.
+    assert out.collection("notes").sources[0].filters.kinds == ["md"]
 
 
 def test_write_preserves_user_comments(tmp_path: Path) -> None:

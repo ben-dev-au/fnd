@@ -25,7 +25,7 @@ from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
-from fnd.kinds import ALL_KIND_IDS, CATEGORY_IDS, KIND_SPECS
+from fnd.kinds import ALL_KIND_IDS, CATEGORY_IDS, KIND_SPECS, split_type_globs
 from fnd.paths import app_data_dir  # re-exported: many modules import it from here
 
 _APP_NAME = "fnd"
@@ -333,6 +333,29 @@ class SourceConfig(BaseModel):
     # Populated by :class:`Config` once the defaults are known. Private so it
     # never reaches the TOML writer, which must emit only what the user set.
     _resolved_filters: DefaultFilters | None = PrivateAttr(default=None)
+
+    @model_validator(mode="after")
+    def _absorb_type_globs(self) -> SourceConfig:
+        """``includes = ["**/*.md"]`` is ``filters.kinds = ["md"]`` said twice.
+
+        Holding both lets the settings UI show one and the walk obey the
+        other. Skipped when the source states ``kinds`` itself, so an explicit
+        choice is never overwritten; idempotent, because the globs it moves
+        are gone from ``includes`` afterwards.
+        """
+        if self.filters is not None and self.filters.kinds is not None:
+            return self
+        kinds, rest = split_type_globs(self.includes)
+        if not kinds:
+            return self
+        merged = (
+            self.filters.model_copy(update={"kinds": kinds})
+            if self.filters is not None
+            else SourceFilters(kinds=kinds)
+        )
+        object.__setattr__(self, "filters", merged)
+        object.__setattr__(self, "includes", rest)
+        return self
 
     @property
     def effective_filters(self) -> DefaultFilters:

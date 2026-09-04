@@ -1884,15 +1884,9 @@ def _split_includes_globs(globs: list[str]) -> tuple[list[str], str]:
     is present; those globs are then consumed. Whatever remains becomes the
     comma-joined custom blob so the user keeps their original patterns verbatim.
     """
-    from fnd.kinds import KIND_SPECS
+    from fnd.kinds import split_type_globs
 
-    remaining = list(globs)
-    kinds: list[str] = []
-    for spec in KIND_SPECS:
-        kglobs = [f"**/*{sfx}" for sfx in spec.suffixes]
-        if any(g in remaining for g in kglobs):
-            kinds.append(spec.id)
-            remaining = [g for g in remaining if g not in kglobs]
+    kinds, remaining = split_type_globs(globs)
     return kinds, ", ".join(remaining)
 
 
@@ -1962,7 +1956,6 @@ class SourceFormScreen(Screen[None]):
         self._source_index = source_index  # None = adding new
         self._fields: dict[str, Any] = {
             "path": "",
-            "includes": [],  # list[str] of indexer ext keys (md / pdf / …)
             "includes_custom": "",  # comma-separated free-form globs
             "excludes_presets": [],  # list[str] of EXCLUDES_PRESETS keys
             "excludes_custom": "",  # comma-separated free-form globs
@@ -2032,11 +2025,11 @@ class SourceFormScreen(Screen[None]):
         if not (0 <= self._source_index < len(sources)):
             return
         s = sources[self._source_index]
-        exts, includes_custom = _split_includes_globs(list(s.includes))
+        # File types live in the filter set; only free-form globs remain here.
+        _exts, includes_custom = _split_includes_globs(list(s.includes))
         preset_keys, excludes_custom = _split_excludes_globs(list(s.excludes))
         self._fields = {
             "path": str(s.path),
-            "includes": exts,
             "includes_custom": includes_custom,
             "excludes_presets": preset_keys,
             "excludes_custom": excludes_custom,
@@ -2048,7 +2041,6 @@ class SourceFormScreen(Screen[None]):
         }
         self._snapshot = {
             "path": self._fields["path"],
-            "includes": list(self._fields["includes"]),
             "includes_custom": self._fields["includes_custom"],
             "excludes_presets": list(self._fields["excludes_presets"]),
             "excludes_custom": self._fields["excludes_custom"],
@@ -2087,14 +2079,10 @@ class SourceFormScreen(Screen[None]):
 
         return [
             self._field_item("path", "Path", hint="path or ~/path"),
-            MenuItem(
-                id="form.includes",
-                label="Includes",
-                kind=KIND_PICKER,
-                multi=True,
-                groups_provider=lambda _app: _includes_groups(),
-                picker_getter=lambda _app: self._includes_picker_state(),
-                picker_setter=lambda _app, vs: self._set_includes(vs),
+            self._field_item(
+                "includes_custom",
+                "Extra paths to include",
+                hint="glob patterns, comma-separated",
             ),
             MenuItem(
                 id="form.excludes",
@@ -2230,29 +2218,11 @@ class SourceFormScreen(Screen[None]):
                     self._fields["app_params_vault"] = detected
         self.query_one(SettingsList).refresh_values()
 
-    def _includes_picker_state(self) -> list[str]:
-        # Nested tree picker seed: current kinds, or ALL kinds when empty so a
-        # new source opens with every type selected (empty includes = index all).
-        from fnd.kinds import ALL_KIND_IDS
-
-        inc = list(self._fields["includes"])
-        return inc if inc else list(ALL_KIND_IDS)
-
     def _excludes_picker_state(self) -> list[str]:
         state = list(self._fields["excludes_presets"])
         if str(self._fields.get("excludes_custom") or "").strip():
             state.append("__custom__")
         return state
-
-    def _set_includes(self, values: list[str]) -> None:
-        # Tree picker commit: store the selected kind ids. All selected → store
-        # empty (= index every supported type, and auto-pick up future types).
-        # Any existing custom-glob value is preserved untouched.
-        from fnd.kinds import ALL_KIND_IDS
-
-        picked = [v for v in values if v in set(ALL_KIND_IDS)]
-        self._fields["includes"] = [] if set(picked) >= set(ALL_KIND_IDS) else picked
-        self.query_one(SettingsList).refresh_values()
 
     def _set_excludes(self, values: list[str]) -> None:
         picked = list(values)
@@ -2436,8 +2406,8 @@ class SourceFormScreen(Screen[None]):
         if not Path(path).expanduser().exists():
             self._show_error(f"Path does not exist: {path}")
             return
-        # Reassemble globs from picker-driven fields.
-        includes_globs: list[str] = _kinds_to_include_globs(list(self._fields["includes"]))
+        # Only free-form globs: the file types are a filter, not a glob list.
+        includes_globs: list[str] = []
         for g in str(self._fields.get("includes_custom") or "").split(","):
             g = g.strip()
             if g:

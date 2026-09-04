@@ -73,8 +73,9 @@ def _kind_items(sample: SourceSample | None) -> list[tuple[str, str, str]]:
             if spec is None:
                 continue
             count = (sample.kinds.get(kind, 0) if sample else 0) or 0
-            label = f"{spec.label}  ({count})" if count else spec.label
-            out.append((cat.id, f"kind:{kind}", label))
+            suffixes = "/".join(spec.suffixes)
+            label = f"{spec.label} ({suffixes})"
+            out.append((cat.id, f"kind:{kind}", f"{label}  ·  {count}" if count else label))
     return out
 
 

@@ -230,7 +230,8 @@ async def test_save_writes_collection_and_reindexes(
         src = cfg.collections["research"].sources[0]
         assert str(src.path) == str(real_dir)
         # Includes are mapped to globs.
-        assert "**/*.md" in src.includes
+        assert src.filters is not None
+        assert "md" in (src.filters.kinds or [])
         # Excludes from the `hidden` preset are present.
         assert any(".git" in g for g in src.excludes)
 
@@ -335,11 +336,14 @@ async def test_set_includes_stores_kinds_all_maps_to_empty(built_index: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_source_form_uses_picker_for_includes(
+async def test_source_form_shows_include_globs_as_ticked_file_types(
     built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Spec: Per-source form — Includes is a multi-select picker pre-checked
-    from the existing globs (parsed back into the indexer ext set)."""
+    """Spec: existing include globs show as pre-checked file types.
+
+    They are stated once now — as ``filters.kinds`` — so the guarantee lives
+    in Index filters rather than a second picker beside it.
+    """
     from fnd.config import (
         CollectionConfig,
         SourceConfig,
@@ -347,9 +351,9 @@ async def test_source_form_uses_picker_for_includes(
     )
     from fnd.tui import FNDApp
     from fnd.tui.settings_screen import (
+        FilterBrowserScreen,
         SettingsList,
         SourceFormScreen,
-        TreePickerScreen,
     )
     from fnd.tui.widgets.toggle_tree import ToggleTree
 
@@ -377,18 +381,23 @@ async def test_source_form_uses_picker_for_includes(
         form = app.screen
         assert isinstance(form, SourceFormScreen)
         lst = form.query_one(SettingsList)
-        idx = next(i for i, it in enumerate(lst._items) if it.id == "form.includes")
-        # The row must be a multi-select picker, not a free-text scalar.
-        assert lst._items[idx].kind == "picker"
-        lst.cursor_index = idx
-        await pilot.press("enter")
-        await pilot.pause()
-        picker = app.screen
-        assert isinstance(picker, TreePickerScreen)
-        tree = picker.query_one("#tree_picker", ToggleTree)
-        # md and pdf pre-selected from the existing globs.
-        assert "md" in tree.selected
-        assert "pdf" in tree.selected
+        assert not any(it.id == "form.includes" for it in lst._items), (
+            "a second file-type picker beside Index filters is the duplication"
+        )
+        lst.cursor_index = next(i for i, it in enumerate(lst._items) if it.id == "form.filters")
+        await pilot.press("right")
+        for _ in range(400):
+            await pilot.pause()
+            if isinstance(app.screen, FilterBrowserScreen):
+                break
+        browser = app.screen
+        assert isinstance(browser, FilterBrowserScreen)
+        while browser._scanning:
+            await pilot.pause()
+        tree = browser.query_one(ToggleTree)
+        # md and pdf pre-ticked from the globs the source was created with.
+        assert "kind:md" in tree.selected
+        assert "kind:pdf" in tree.selected
 
 
 @pytest.mark.asyncio

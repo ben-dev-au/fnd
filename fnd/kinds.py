@@ -18,6 +18,7 @@ import from anywhere without an import cycle.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 
@@ -172,3 +173,20 @@ def _validate() -> None:
 
 
 _validate()
+
+
+def split_type_globs(globs: Sequence[str]) -> tuple[list[str], list[str]]:
+    """``(kind ids, the globs that are not a plain file-type glob)``.
+
+    A kind is selected iff any of its ``**/*<suffix>`` globs is present; those
+    are consumed. ``includes = ["**/*.md"]`` and ``filters.kinds = ["md"]`` are
+    the same statement, and this is what lets one be written as the other.
+    """
+    remaining = list(globs)
+    kinds: list[str] = []
+    for spec in KIND_SPECS:
+        kglobs = [f"**/*{sfx}" for sfx in spec.suffixes]
+        if any(g in remaining for g in kglobs):
+            kinds.append(spec.id)
+            remaining = [g for g in remaining if g not in kglobs]
+    return kinds, remaining

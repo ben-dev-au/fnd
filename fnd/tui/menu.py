@@ -1551,8 +1551,6 @@ def _source_trailing(collection_name: str, idx: int) -> Callable[[FNDApp], str]:
     and a path-not-found warning when the source directory is missing."""
 
     def _summary(app: FNDApp) -> str:
-        from fnd.config import INDEXER_FILETYPES
-
         cfg = app._config  # type: ignore[attr-defined]
         if cfg is None or collection_name not in cfg.collections:
             return ""
@@ -1560,14 +1558,12 @@ def _source_trailing(collection_name: str, idx: int) -> Callable[[FNDApp], str]:
         if idx >= len(sources):
             return ""
         src = sources[idx]
-        # Derive display extensions from glob patterns in src.includes.
-        exts: list[str] = []
-        for glob in src.includes:
-            for ext in INDEXER_FILETYPES:
-                if glob.endswith(f".{ext}"):
-                    exts.append(ext)
-                    break
-        types = ", ".join(exts) if exts else "Custom"
+        # The file types are the filter set's, not the include globs': those
+        # are folded into ``filters.kinds`` when the config loads.
+        kinds = list(src.effective_filters.kinds)
+        types = ", ".join(kinds) if kinds else "All types"
+        if src.includes:
+            types = f"{types} + globs"
         suffix = ""
         try:
             p = Path(src.path)

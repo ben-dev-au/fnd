@@ -333,16 +333,24 @@ its overrides.
 | --- | --- |
 | `respect_gitignore` | Honours every `.gitignore` down the tree, with git's rules — negation, directory patterns, nearest file wins. **On by default.** |
 | `respect_fndignore` | The same syntax in a `.fndignore`, read only by fnd — how to hide something from search without hiding it from git. **On by default.** |
-| `exclude_tags` | Tags that keep a file out, from any source fnd reads: macOS Finder tags and a note's YAML `tags:`. Defaults to `["no_index"]`, so tagging a file `no_index` either way keeps it out. |
-| `kinds` | Restrict to given file types. Empty means every supported type. |
+| `include_tags` | Index only files carrying one of these tags — the tag rows' `●`. Empty means the tag is not consulted. |
+| `exclude_tags` | Tags that keep a file out — the tag rows' `⊘`. From any source fnd reads: macOS Finder tags and a note's YAML `tags:`. Defaults to `["no_index"]`, so tagging a file `no_index` either way keeps it out. |
+| `kinds` | Restrict to given file types. Empty means every supported type. A source's `includes = ["**/*.md"]` says the same thing, so those globs are folded into `kinds` when the config loads; globs that name no file type (`.obsidian/**`) stay in `includes`. |
 | `min_size` / `max_size` | Bytes. Keeps stubs, and multi-hundred-megabyte scans, out. |
 | `created_after` / `created_before` | ISO dates (`2024-01-01`). A fixed bound, not the Filters pane's rolling window — a window would change what the index holds as time passed. A file with no creation date (best-effort on Linux) is kept. |
 | `modified_after` / `modified_before` | ISO dates, same semantics. |
 | `frontmatter` | A frontmatter predicate — the same `[…]` syntax as a query. **Notes only**; every other file type passes through. For anything beyond tags: `type == 'note' AND status != 'draft'`. |
 | `expression` | A predicate over any file, using `file.kind`, `file.size`, `file.modified`, `file.tags.os`, `file.path` and the like. The rows above are written in terms of it. |
 
-Each screen has an **Edit as text** row showing the whole set as one
-expression. The rows and the text are two views of the same filter, so editing
+The tree shows one branch per rule, with the file types nested under a single
+parent, and a legend for the markers: `●` keep only these, `⊘` never these,
+`○` no rule. A branch with nothing switched on says what that means — the file
+types read `(every type)` — so an untouched filter is never mistaken for one
+that excludes everything.
+
+Beneath the tree the whole set is shown as the expression it compiles to, and
+`t` opens that for editing. The rows and the text are two views of the same
+filter, so editing
 either updates the other — typing `file.kind in ['pdf']` fills the file-type
 row in, and ticking that row writes the same clause back out. Anything the
 rows cannot express stays in `expression` verbatim. A per-source row set to
@@ -385,14 +393,16 @@ fuzzy_enabled = true       # auto-fuzzy in the cascade fallback (toggle with Ctr
 # A collection named "papers" with two source folders.
 [[collections.papers.sources]]
 path     = "~/Documents/Research"
-includes = ["**/*.pdf", "**/*.md"]        # omit to index all supported types
+includes = ["**/*.pdf", "**/*.md"]        # folded into filters.kinds on load
 excludes = ["**/.git/**", "archive/**"]
 follow_symlinks = false
 
 [[collections.papers.sources]]
-path               = "~/Notes"
-includes           = ["**/*.md"]
-frontmatter_filter = "Status == 'published' AND NOT ('private' in tags)"  # md only
+path = "~/Notes"
+
+[collections.papers.sources.filters]
+kinds       = ["md"]
+frontmatter = "Status == 'published' AND NOT ('private' in tags)"  # notes only
 
 # Index-time filters every source inherits. A source's own [filters] table
 # overrides these field by field; anything left out is inherited.
@@ -400,6 +410,8 @@ frontmatter_filter = "Status == 'published' AND NOT ('private' in tags)"  # md o
 respect_gitignore = true            # honour .gitignore, with git's own rules
 respect_fndignore = true            # same syntax, read only by fnd
 exclude_tags      = ["no_index"]    # Finder tags and YAML tags: — see below
+# include_tags    = ["reference"]   # index only files carrying one of these
+# kinds           = ["md", "pdf"]   # omit to index every supported type
 # max_size        = 50_000_000
 # modified_after  = 2020-01-01
 # expression      = "file.size < 50_000_000"
@@ -613,7 +625,10 @@ You rarely need `*`: search already matches word variants (`entropy` finds
 ### Markdown frontmatter filter
 
 Filter markdown notes by their YAML frontmatter with a `[…]` predicate. The
-same expression is also a source's `frontmatter_filter` in the config.
+same expression is a source's `filters.frontmatter` in the config, editable
+from its **Frontmatter rule** row. (A legacy `frontmatter_filter` key is still
+honoured, and moves into `filters.frontmatter` the next time the source is
+saved from Settings.)
 **String values use single quotes**; double quotes mark a field name with
 spaces (`"Due Date"`):
 

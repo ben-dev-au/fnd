@@ -35,9 +35,9 @@ def test_new_sources_shape_loads(tmp_path: Path) -> None:
     coursework = cfg.collection("coursework")
     assert len(coursework.sources) == 2
     assert isinstance(coursework.sources[0], SourceConfig)
-    assert coursework.sources[0].includes == ["**/*.md"]
+    assert coursework.sources[0].filters.kinds == ["md"]
     assert coursework.sources[0].frontmatter_filter == "Course == 'DPwC'"
-    assert coursework.sources[1].includes == ["**/*.pdf"]
+    assert coursework.sources[1].filters.kinds == ["pdf"]
     assert coursework.sources[1].frontmatter_filter is None
 
 
@@ -58,7 +58,7 @@ def test_legacy_flat_shape_normalised_to_one_source(tmp_path: Path) -> None:
     assert len(papers.sources) == 1
     s = papers.sources[0]
     assert s.path == Path("~/Documents/Papers").expanduser()
-    assert s.includes == ["**/*.pdf"]
+    assert s.filters.kinds == ["pdf"]
     assert s.excludes == ["**/Archive/**"]
     assert s.frontmatter_filter is None
 

@@ -320,3 +320,68 @@ class TestOverrideToNothing:
 
         override = {"kinds": []}
         assert _names(tmp_path, defaults=globals_, filters=override) == {"a.md", "b.txt"}
+
+
+class TestTypeGlobAbsorption:
+    """``includes = ["**/*.md"]`` and ``filters.kinds = ["md"]`` say one thing."""
+
+    def test_a_type_glob_becomes_a_kind(self, tmp_path: Path) -> None:
+        src = _sources(tmp_path, includes=["**/*.md"])[0]
+        assert src.includes == []
+        assert src.filters is not None
+        assert src.filters.kinds == ["md"]
+
+    def test_a_custom_glob_is_left_where_it_is(self, tmp_path: Path) -> None:
+        """Only a plain file-type glob has a kinds equivalent."""
+        src = _sources(tmp_path, includes=["**/*.md", ".obsidian/**"])[0]
+        assert src.includes == [".obsidian/**"]
+        assert src.filters is not None
+        assert src.filters.kinds == ["md"]
+
+    def test_an_explicit_kinds_override_is_never_overwritten(self, tmp_path: Path) -> None:
+        cfg = Config.model_validate(
+            {
+                "collections": {
+                    "c": {
+                        "sources": [
+                            {
+                                "path": str(tmp_path),
+                                "includes": ["**/*.md"],
+                                "filters": {"kinds": ["pdf"]},
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+        src = cfg.collections["c"].sources[0]
+        assert src.filters is not None
+        assert src.filters.kinds == ["pdf"]
+        assert src.includes == ["**/*.md"], "the globs must not vanish silently"
+
+    def test_absorbing_twice_changes_nothing(self, tmp_path: Path) -> None:
+        """``_normalise_sources`` re-runs on every model_validate."""
+        once = _sources(tmp_path, includes=["**/*.md"])[0]
+        twice = (
+            Config.model_validate(
+                {"collections": {"c": {"sources": [once.model_dump(exclude_none=True)]}}}
+            )
+            .collections["c"]
+            .sources[0]
+        )
+        assert twice.includes == once.includes
+        assert twice.filters is not None
+        assert once.filters is not None
+        assert twice.filters.kinds == once.filters.kinds
+
+    def test_the_walk_yields_the_same_files_either_way(self, tmp_path: Path) -> None:
+        """Measured identical across all 14 real sources; pinned here."""
+        _write(tmp_path, "a.md")
+        _write(tmp_path, "b.pdf")
+        _write(tmp_path, "c.txt")
+        globbed = {p.name for p in walk_sources(sources=_sources(tmp_path, includes=["**/*.md"]))}
+        kinded = {
+            p.name
+            for p in walk_sources(sources=_sources(tmp_path, defaults=DefaultFilters(kinds=["md"])))
+        }
+        assert globbed == kinded == {"a.md"}
