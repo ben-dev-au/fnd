@@ -93,6 +93,29 @@ _NUMBER_RE = re.compile(r"\d+(?:_\d+)*(?:\.\d+(?:_\d+)*)?")
 _BARE_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_\-.]*")
 
 
+def _scan_string(text: str, start: int, quote: str) -> tuple[str, int] | None:
+    """``(value, index past the closing quote)``, or None if unterminated.
+
+    Backslash escapes the quote and itself. A trailing backslash is read as a
+    literal instead when escaping it would run off the end, so a value that
+    ends in one — a Windows path, say — still parses as it did before escapes
+    existed.
+    """
+    for escaping in (True, False):
+        parts: list[str] = []
+        j = start + 1
+        while j < len(text) and text[j] != quote:
+            if escaping and text[j] == "\\" and j + 1 < len(text) and text[j + 1] in (quote, "\\"):
+                parts.append(text[j + 1])
+                j += 2
+                continue
+            parts.append(text[j])
+            j += 1
+        if j < len(text):
+            return "".join(parts), j + 1
+    return None
+
+
 def tokenize(text: str) -> list[Token]:
     """Return the token stream ending with an EOF token. Raises FilterError
     on unterminated strings or unrecognised characters."""
@@ -134,13 +157,15 @@ def tokenize(text: str) -> list[Token]:
         # Quoted tokens: double-quotes → IDENT (field names with spaces),
         # single-quotes → STRING (string literal values).
         if ch in ('"', "'"):
-            close = text.find(ch, i + 1)
-            if close == -1:
+            # ``\'`` and ``\\`` escape, so a tag or field carrying a quote can
+            # be written. Without it such a value had no text form at all and
+            # was silently mangled on the way through.
+            scanned = _scan_string(text, i, ch)
+            if scanned is None:
                 raise FilterError("unterminated string", col)
-            inner = text[i + 1 : close]
+            value, i = scanned
             kind = TokenKind.IDENT if ch == '"' else TokenKind.STRING
-            out.append(Token(kind, inner, col))
-            i = close + 1
+            out.append(Token(kind, value, col))
             continue
         # Date literal (must precede number — same leading digits).
         date_match = _DATE_RE.match(text, i)

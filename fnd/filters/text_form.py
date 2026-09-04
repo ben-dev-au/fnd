@@ -37,7 +37,12 @@ _BY_FIELD = {v: k for k, v in _COMPARISONS.items()}
 
 
 def _field(name: str) -> str:
-    return name if _BARE.match(name) else f'"{name}"'
+    if _BARE.match(name):
+        return name
+    # Quoted field names need the same escaping values get, or a name
+    # carrying a double quote re-emits as text that will not parse back.
+    escaped = name.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 def _value(value: object) -> str:
@@ -48,10 +53,8 @@ def _value(value: object) -> str:
     if isinstance(value, dt.date):
         return value.isoformat()
     if isinstance(value, str):
-        # The grammar has no escape for a quote inside a string literal, so a
-        # value carrying one cannot be written as text. Callers compile such
-        # values directly (fnd.filters.dimensions) and never route them here.
-        return "'" + value.replace("'", "") + "'"
+        escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+        return f"'{escaped}'"
     return str(value)
 
 

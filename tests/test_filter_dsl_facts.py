@@ -110,3 +110,52 @@ class TestSetContainers:
 
     def test_scalar_container_still_rejected(self) -> None:
         assert compile_filter("'x' in tags")({"tags": "x"}) is False
+
+
+class TestStringEscapes:
+    """A value carrying a quote had no text form and was silently mangled."""
+
+    @pytest.mark.parametrize(
+        ("text", "want"),
+        [
+            (r"a == 'don\'t'", "don't"),
+            (r"a == 'back\\slash'", "back\\slash"),
+            (r"a == 'both\'\\x'", "both'\\x"),
+            ("a == 'plain'", "plain"),
+        ],
+    )
+    def test_escapes_decode(self, text: str, want: str) -> None:
+        assert parse(text) == Compare("a", "==", want)
+
+    def test_a_field_name_can_carry_a_quote(self) -> None:
+        """Inside double quotes an apostrophe is an ordinary character."""
+        assert parse('"od\'d" == 1') == Compare("od'd", "==", 1)
+
+    def test_an_unterminated_string_still_raises(self) -> None:
+        with pytest.raises(FilterError):
+            compile_filter("a == 'unclosed")
+
+    def test_a_trailing_backslash_does_not_swallow_the_quote(self) -> None:
+        """``'x\\'`` is an escaped backslash then a close, not an escaped quote."""
+        assert parse(r"a == 'x\\'") == Compare("a", "==", "x\\")
+
+
+class TestTrailingBackslash:
+    """A value ending in one literal backslash predates escapes and must keep
+    working — a config that loaded yesterday must load today."""
+
+    @pytest.mark.parametrize(
+        ("text", "want"),
+        [
+            (r"a == 'C:\Users\foo\'", "C:\\Users\\foo\\"),
+            (r"a == 'x\'", "x\\"),
+            (r"a == 'x\\'", "x\\"),
+            (r"a == 'C:\temp'", "C:\\temp"),
+        ],
+    )
+    def test_it_parses_as_a_literal(self, text: str, want: str) -> None:
+        assert parse(text) == Compare("a", "==", want)
+
+    def test_a_genuinely_unterminated_string_still_raises(self) -> None:
+        with pytest.raises(FilterError):
+            compile_filter("a == 'unclosed")

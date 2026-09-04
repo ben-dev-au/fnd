@@ -1719,10 +1719,12 @@ def _source_filter_items(
 
     def _set(field: str) -> Callable[[FNDApp, Any], None]:
         def _apply(_app: FNDApp, value: Any) -> None:
-            if value is None or value == "":
+            # Only ``None`` clears the override. The coercions already turned
+            # ``-`` into an empty list or string, which is the *explicit*
+            # override to nothing — treating that as unset made the row's
+            # own ``-`` a no-op for the text fields.
+            if value is None:
                 overrides.pop(field, None)
-            elif value == _OVERRIDE_EMPTY:
-                overrides[field] = []
             else:
                 overrides[field] = value
             on_change()

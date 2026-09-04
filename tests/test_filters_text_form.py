@@ -143,3 +143,23 @@ class TestSafety:
     def test_parse_raises_for_callers_that_want_it(self) -> None:
         with pytest.raises(FilterError):
             parse("file.kind in [")
+
+
+class TestValuesCarryingAQuote:
+    """The text form is user-facing, so it must not mangle a real tag."""
+
+    @pytest.mark.parametrize(
+        "tag", ["don't-index", "has,comma", "has space", "back\\slash", "both'\\x"]
+    )
+    def test_a_tag_round_trips_verbatim(self, tag: str) -> None:
+        spec = FilterSpec(exclude_tags=(tag,))
+        assert parse(render(spec)).exclude_tags == (tag,)
+
+
+class TestFieldNamesCarryingAQuote:
+    """``_field`` must escape the same way ``_value`` does, or a quoted field
+    name re-emits as text that will not parse back."""
+
+    def test_a_field_name_with_a_double_quote_round_trips(self) -> None:
+        spec = FilterSpec(expression='"od\\"d" == 1')
+        assert parse(render(spec)).expression == '"od\\"d" == 1'

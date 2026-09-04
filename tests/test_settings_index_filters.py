@@ -235,3 +235,31 @@ async def test_malformed_text_refuses_to_save(built_index: Path) -> None:
         await pilot.pause()
         assert saved == [], "invalid text must not be saved"
         assert isinstance(app.screen, FilterTextScreen), "screen stays open on error"
+
+
+def test_a_dash_on_a_text_row_overrides_to_nothing() -> None:
+    """Through the real row setter, not a hand-built dict.
+
+    The previous test constructed the overrides mapping directly, so it passed
+    while the row's own ``-`` was being discarded.
+    """
+    from fnd.config import DefaultFilters
+    from fnd.tui.settings_screen import _source_filter_items
+
+    overrides: dict[str, object] = {}
+    rows = _source_filter_items(overrides, DefaultFilters(), lambda: None)
+
+    for row_id in ("srcfilter.expression", "srcfilter.exclude_tags"):
+        row = next(r for r in rows if r.id == row_id)
+        assert row.coerce is not None
+        assert row.scalar_setter is not None
+        row.scalar_setter(None, row.coerce("-"))  # type: ignore[arg-type]
+
+    assert overrides == {"expression": "", "exclude_tags": []}, (
+        "'-' must record an explicit empty override, not clear the field"
+    )
+
+    for row_id in ("srcfilter.expression", "srcfilter.exclude_tags"):
+        row = next(r for r in rows if r.id == row_id)
+        row.scalar_setter(None, row.coerce(""))  # type: ignore[arg-type,misc]
+    assert overrides == {}, "an emptied box must clear the override so it inherits"
