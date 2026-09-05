@@ -28,12 +28,17 @@ import json
 import os
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from fnd import paths
 from fnd.extract.base import Block, Chunk
+
+# Decides whether a cached entry is still worth reusing, given its chunks and
+# the engine fingerprint recorded with it. Policy lives with the extractor.
+AcceptEntry = Callable[[list[Chunk], dict[str, str]], bool]
 
 CACHE_SCHEMA_VERSION = 1
 
@@ -143,12 +148,15 @@ class PdfStructureCache:
         shard = key[:2]
         return self.root / shard / f"{_safe_stem(key)}.json"
 
-    def get(self, key: str) -> list[Chunk] | None:
+    def get(self, key: str, *, accept: AcceptEntry | None = None) -> list[Chunk] | None:
         """Return the cached chunks for `key`, or None on miss / corrupt.
 
         Corrupt entries (truncated JSON, mismatched schema_version,
         deserialisation error) silently miss; the caller re-extracts
         and overwrites on next put().
+
+        ``accept`` refuses an entry on what it holds and the engine recorded with
+        it — policy the cache has no business knowing. A refusal is a miss.
         """
         path = self.entry_path(key)
         if not path.exists():
@@ -164,13 +172,19 @@ class PdfStructureCache:
             return None
         try:
             chunks = [_chunk_from_dict(d) for d in blob.get("chunks", [])]
+            recorded = dict(blob.get("fingerprint") or {})
         except (KeyError, TypeError, ValueError):
+            self.misses += 1
+            return None
+        if accept is not None and not accept(chunks, recorded):
             self.misses += 1
             return None
         self.hits += 1
         return chunks
 
-    def get_any_for_content(self, content_sha256: str) -> list[Chunk] | None:
+    def get_any_for_content(
+        self, content_sha256: str, *, accept: AcceptEntry | None = None, skip: str | None = None
+    ) -> list[Chunk] | None:
         """Return cached chunks for this content under ANY signature.
 
         Durable reuse: when the current-signature key misses (a
@@ -190,7 +204,10 @@ class PdfStructureCache:
             else []
         )
         for entry in candidates:
-            chunks = self.get(entry.stem)  # reuses get()'s decode + hit/miss counters
+            if entry.stem == skip:
+                continue  # the caller just read (and refused) this one
+            # reuses get()'s decode, policy and hit/miss counters
+            chunks = self.get(entry.stem, accept=accept)
             if chunks is not None:
                 return chunks
         if not candidates:
@@ -289,7 +306,9 @@ class PdfStructureCache:
                 failed += 1
         return migrated, failed
 
-    def put(self, key: str, chunks: list[Chunk]) -> None:
+    def put(
+        self, key: str, chunks: list[Chunk], *, fingerprint: dict[str, str] | None = None
+    ) -> None:
         """Write `chunks` to the cache atomically.
 
         If the write fails partway through (disk full, interrupt), the
@@ -301,6 +320,9 @@ class PdfStructureCache:
         blob = {
             "schema_version": CACHE_SCHEMA_VERSION,
             "chunks": [_chunk_to_dict(c) for c in chunks],
+            # The engine that produced this, read back by ``accept``: the
+            # signature is coarse and does not move with an upgrade.
+            "fingerprint": dict(fingerprint or {}),
         }
         fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
         try:
