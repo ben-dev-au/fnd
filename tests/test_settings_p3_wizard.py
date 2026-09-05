@@ -397,7 +397,7 @@ async def test_source_form_shows_include_globs_as_ticked_file_types(
         # would widen ``**/*.md`` to the whole ``md`` kind, ``.markdown``
         # included. The browser says they are in force instead.
         summary = str(browser.query_one("#filter_summary").render())
-        assert "include globs" in summary, summary
+        assert "restricted to paths" in summary, summary
         assert "**/*.md" in summary
 
 

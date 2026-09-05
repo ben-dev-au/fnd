@@ -8,6 +8,7 @@ time, where the filter's effect is already baked into the index.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -38,10 +39,20 @@ class Rule:
     text: str
     facts: frozenset[str] = field(default_factory=frozenset)
     applies_to: frozenset[str] | None = None
+    needs_frontmatter: bool = False
+    """Skip a file with no frontmatter block.
+
+    A rule about ``Course`` can only be answered by a file that has
+    frontmatter. Scoping it by file kind instead was arbitrary in both
+    directions: it judged a .txt that carries no block, and ignored one that
+    does. Frontmatter is not a Markdown-only convention.
+    """
     unknown: Unknown = Unknown.PASS
 
     def passes(self, facts: FileFacts) -> bool:
         if not self._in_scope(facts):
+            return True
+        if self.needs_frontmatter and not facts.has_frontmatter():
             return True
         if self.unknown is Unknown.PASS and self._has_unknown(facts):
             return True
@@ -114,6 +125,20 @@ class FilterSpec:
 
         for name in ("include_tags", "exclude_tags"):
             object.__setattr__(self, name, tag_selection(getattr(self, name)))
+
+        # An expression naming only frontmatter fields is a frontmatter rule.
+        # Left in ``expression`` it would be evaluated against every file and
+        # strict-null every PDF out of the index; and the two fields would
+        # disagree about the same text depending on which one it landed in.
+        if self.expression and not self.frontmatter:
+            with contextlib.suppress(Exception):
+                from fnd.filter_dsl import parse as _parse
+                from fnd.filter_dsl import referenced_fields
+
+                fields = referenced_fields(_parse(self.expression))
+                if fields and not any(f.startswith("file.") for f in fields):
+                    object.__setattr__(self, "frontmatter", self.expression)
+                    object.__setattr__(self, "expression", "")
 
     def is_empty(self) -> bool:
         return self == FilterSpec()

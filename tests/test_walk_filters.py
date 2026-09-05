@@ -543,4 +543,6 @@ class TestEnumerationOpensOnlyMarkdown:
             lambda p: (reads.append(p), real(p))[1],
         )
         _names(tmp_path)
-        assert {p.suffix for p in reads} <= {".md", ".markdown"}, f"opened {reads}"
+        # Note formats only: a .txt carries frontmatter just as happily, a
+        # PDF or a CSV does not and reading one finds nothing.
+        assert {p.suffix for p in reads} <= {".md", ".markdown", ".txt"}, f"opened {reads}"

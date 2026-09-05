@@ -392,3 +392,74 @@ async def test_clearing_the_default_tags_does_not_reinstate_them(
             await pilot.pause()
 
     assert load(cfg_path).defaults.filters.exclude_tags == []
+
+
+@pytest.mark.asyncio
+async def test_the_expression_can_be_copied(built_index: Path) -> None:
+    """The app owns the mouse, so a terminal selection cannot reach the
+    summary text — without a copy key the expression is display-only.
+
+    Not ctrl+y: the app binds that to "copy query command" with priority, so
+    a screen binding there silently never fires."""
+    from fnd.filters import FilterSpec
+    from fnd.tui.settings_screen import FilterBrowserScreen
+
+    copied: list[str] = []
+    app = FNDApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(
+            FilterBrowserScreen(
+                title="t",
+                spec=FilterSpec(exclude_tags=("no_index",), kinds=("md",)),
+                gitignore=True,
+                fndignore=True,
+                on_save=lambda *_a: None,
+            )
+        )
+        for _ in range(20):
+            await pilot.pause()
+        import fnd.tui.clipboard as clip
+
+        real = clip.copy_text
+        clip.copy_text = lambda text, **_k: copied.append(text)  # type: ignore[assignment]
+        try:
+            await pilot.press("y")
+            for _ in range(10):
+                await pilot.pause()
+        finally:
+            clip.copy_text = real  # type: ignore[assignment]
+
+    assert copied, "the copy key did nothing"
+    assert "file.kind in [" in copied[0]
+    assert "no_index" in copied[0]
+
+
+@pytest.mark.asyncio
+async def test_the_summary_says_what_the_expression_leaves_out(built_index: Path) -> None:
+    """Ignore files and path globs are not predicates over a file, so they
+    cannot appear in the expression; presenting it as the whole filter
+    invited the question of whether it was complete."""
+    from fnd.filters import FilterSpec
+    from fnd.tui.settings_screen import FilterBrowserScreen
+
+    app = FNDApp(index_dir=built_index)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(
+            FilterBrowserScreen(
+                title="t",
+                spec=FilterSpec(),
+                gitignore=True,
+                fndignore=True,
+                globs=["**/*.md"],
+                on_save=lambda *_a: None,
+            )
+        )
+        for _ in range(20):
+            await pilot.pause()
+        summary = str(app.screen.query_one("#filter_summary").render())
+
+    assert "not in the expression" in summary, summary
+    assert ".gitignore" in summary
+    assert "**/*.md" in summary

@@ -76,12 +76,21 @@ class TestRoundTripBehaviour:
         assert render(FilterSpec()) == ""
         assert parse("") == FilterSpec()
 
-    def test_frontmatter_survives_with_its_kind_scope(self) -> None:
-        """The scope the compiler applies is written out, not silently dropped."""
+    def test_a_frontmatter_rule_needs_no_scope_clause(self) -> None:
+        """The rule is skipped for a file with no frontmatter block, so the
+        scope needs no spelling out. Writing it in produced a clause reading
+        as "exclude Markdown" with no counterpart in any other tool."""
         spec = FilterSpec(frontmatter="Course == 'DPwC'")
-        text = render(spec)
-        assert "file.kind in [" in text, text
-        assert parse(text).frontmatter == "Course == 'DPwC'"
+        assert render(spec) == "Course == 'DPwC'"
+        assert parse(render(spec)).frontmatter == "Course == 'DPwC'"
+
+    def test_the_earlier_spelling_of_the_scope_still_parses(self) -> None:
+        """A config holding either older form must keep working."""
+        for old in (
+            "NOT (file.kind in ['md']) OR (Course == 'DPwC')",
+            "(Course == 'DPwC') OR file.kind not in ['md']",
+        ):
+            assert parse(old).frontmatter == "Course == 'DPwC'", old
 
     def test_an_unrecognised_clause_is_kept(self) -> None:
         spec = parse("file.name ~~ 'draft-*'")
@@ -175,8 +184,10 @@ class TestFieldNamesCarryingAQuote:
     name re-emits as text that will not parse back."""
 
     def test_a_field_name_with_a_double_quote_round_trips(self) -> None:
+        """A quoted name is a frontmatter key, so the spec files it there."""
         spec = FilterSpec(expression='"od\\"d" == 1')
-        assert parse(render(spec)).expression == '"od\\"d" == 1'
+        assert spec.frontmatter == '"od\\"d" == 1'
+        assert parse(render(spec)) == spec
 
 
 class TestIncludeTags:

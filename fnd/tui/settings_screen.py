@@ -4930,6 +4930,9 @@ class FilterBrowserScreen(Screen[None]):
         Binding("ctrl+s", "save_close", show=False),
         Binding("t", "edit_text", show=False),
         Binding("c", "clear_all", show=False),
+        # Not ctrl+y: the app binds that to "copy query command" with
+        # priority, so a screen binding there never fires.
+        Binding("y", "copy_text", show=False),
     ]
 
     CSS = """
@@ -5033,6 +5036,7 @@ class FilterBrowserScreen(Screen[None]):
                     ("t", "As text"),
                     ("c", "Clear"),
                     ("^S", "Save"),
+                    ("y", "Copy"),
                     ("Esc/←", "Discard"),
                 ),
             )
@@ -5100,11 +5104,32 @@ class FilterBrowserScreen(Screen[None]):
         )
         head = [f"obeying {ignores}" if ignores else "ignore files off"]
         if self._globs:
-            head.append("also limited by include globs: " + ", ".join(self._globs))
+            head.append("restricted to paths: " + ", ".join(self._globs))
         if self._scanning:
             head.append("scanning source for types and tags…")
-        lines = [" · ".join(head), f"as text ('t' to edit):  {text or 'no filters'}"]
+        # Named separately because neither is a predicate over a file, so
+        # neither can appear in the expression below.
+        lines = [
+            "not in the expression — " + " · ".join(head),
+            f"expression ('t' edits, 'y' copies):  {text or 'no filters'}",
+        ]
         self.query_one("#filter_summary", Static).update("\n".join(lines))
+
+    def action_copy_text(self) -> None:
+        """Copy the expression. The app owns the mouse, so a terminal
+        selection cannot reach this text."""
+        from fnd.filters.text_form import render
+        from fnd.tui.clipboard import copy_text
+
+        text = render(self._spec)
+        if not text:
+            self.notify("No filter expression to copy", severity="information")
+            return
+        try:
+            copy_text(text)
+            self.notify("Filter expression copied", severity="information")
+        except OSError as e:
+            self.notify(f"Could not copy: {e}", severity="error")
 
     def action_clear_all(self) -> None:
         from fnd.filters import FilterSpec

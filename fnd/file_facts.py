@@ -57,13 +57,13 @@ RESERVED_FACTS: Final[frozenset[str]] = frozenset(
 def _frontmatter_kinds() -> frozenset[str]:
     """Kinds that can carry a YAML frontmatter block.
 
-    Read from the filter vocabulary rather than duplicated: two literals
-    that had to stay equal would reinstate the dropped-.txt regression the
-    moment one of them widened.
+    Every note format, not Markdown alone — a .txt file carries one just as
+    happily. Read from the kind registry so adding a note format needs no
+    edit here.
     """
-    from fnd.filters.dimensions import NOTE_KINDS
+    from fnd.kinds import KINDS_IN_CATEGORY
 
-    return NOTE_KINDS
+    return frozenset(KINDS_IN_CATEGORY.get("notes", ()))
 
 
 _TAG_FACTS: Final[dict[str, str]] = {
@@ -92,6 +92,7 @@ class FileFacts(Mapping[str, object]):
     __slots__ = (
         "_cache",
         "_fm",
+        "_fm_malformed",
         "_fm_read",
         "_path",
         "_providers",
@@ -117,6 +118,7 @@ class FileFacts(Mapping[str, object]):
         self._cache: dict[str, object] = {}
         self._fm: dict[str, object] = {}
         self._fm_read = False
+        self._fm_malformed = False
         self._tag_cache: dict[str, dict[str, tuple[str, ...]]] = {}
 
     # ── Mapping ──────────────────────────────────────────────────
@@ -146,6 +148,15 @@ class FileFacts(Mapping[str, object]):
 
     # ── Unknown-vs-absent ────────────────────────────────────────
 
+    def has_frontmatter(self) -> bool:
+        """Whether this file carries a frontmatter block at all.
+
+        A block that fails to parse counts: the file answers the question
+        badly rather than not at all, and a frontmatter rule should fail it
+        closed rather than wave it through on a typo.
+        """
+        return bool(self._frontmatter()) or self._fm_malformed
+
     def is_unknown(self, key: str) -> bool:
         """True when a reserved fact exists but could not be determined.
 
@@ -170,7 +181,10 @@ class FileFacts(Mapping[str, object]):
             return self._fm
         try:
             self._fm = self._read_fm(self._path) or {}
-        except (FrontmatterParseError, OSError, ValueError):
+        except FrontmatterParseError:
+            self._fm_malformed = True
+            self._fm = {}
+        except (OSError, ValueError):
             # A malformed or unreadable file has no frontmatter; it must not
             # take the index run down with it.
             self._fm = {}

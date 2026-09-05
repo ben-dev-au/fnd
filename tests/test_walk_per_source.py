@@ -28,6 +28,15 @@ def test_walks_two_sources_with_disjoint_filetypes(tmp_path: Path) -> None:
 
 
 def test_frontmatter_filter_excludes_non_matching_md(tmp_path: Path) -> None:
+    """A file with no frontmatter block is not judged by a frontmatter rule.
+
+    It used to be dropped, but only for ``.md`` — the rule was scoped by file
+    kind, so the same plain text in a ``.txt`` sailed through. Scoping by
+    whether the file actually carries a block makes the two consistent, and
+    the direction follows the rest of the filter set: an unanswerable
+    question passes rather than silently removing documents. A block that is
+    present but malformed still fails closed, since that file did answer.
+    """
     root = tmp_path / "notes"
     _touch(root / "in.md", "---\nCourse: DPwC\n---\nbody\n")
     _touch(root / "out.md", "---\nCourse: Algorithms\n---\nbody\n")
@@ -40,7 +49,7 @@ def test_frontmatter_filter_excludes_non_matching_md(tmp_path: Path) -> None:
         )
     ]
     paths = sorted(p.name for p in walk_sources(sources=sources))
-    assert paths == ["in.md"]
+    assert paths == ["in.md", "no_fm.md"]
 
 
 def test_frontmatter_filter_only_applies_to_md(tmp_path: Path) -> None:

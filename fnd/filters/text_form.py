@@ -16,9 +16,9 @@ from __future__ import annotations
 import datetime as dt
 import re
 
-from fnd.filter_dsl import And, Compare, FieldIn, FilterError, In, Not, Or
+from fnd.filter_dsl import And, Compare, FieldIn, FilterError, In, Not, Or, referenced_fields
 from fnd.filter_dsl import parse as parse_dsl
-from fnd.filters.dimensions import NOTE_KINDS, dimension
+from fnd.filters.dimensions import dimension
 from fnd.filters.model import FilterSpec
 
 __all__ = ["parse", "render"]
@@ -92,11 +92,6 @@ def _unparse(node: object, *, depth: int = 0) -> str:
     return ""
 
 
-def _note_scope() -> str:
-    kinds = ", ".join(_value(k) for k in sorted(NOTE_KINDS))
-    return f"file.kind in [{kinds}]"
-
-
 def render(spec: FilterSpec) -> str:
     """The whole filter set as one expression.
 
@@ -121,7 +116,11 @@ def render(spec: FilterSpec) -> str:
     if spec.frontmatter:
         # The kind scope the compiler applies is written out, so the text says
         # what the rule actually does rather than silently dropping it.
-        clauses.append(f"NOT ({_note_scope()}) OR ({spec.frontmatter})")
+        # No escape clause: a rule that asks about a frontmatter field is
+        # skipped for a file that has no frontmatter, so the scope needs no
+        # spelling out. Writing it into the text produced a clause that read
+        # as excluding Markdown and had no counterpart in any other tool.
+        clauses.append(spec.frontmatter)
     if spec.expression:
         clauses.append(spec.expression)
     clauses.extend(spec.raw)
@@ -138,19 +137,33 @@ def _split_and(node: object) -> list[object]:
     return [node]
 
 
+def _is_note_escape(node: object) -> bool:
+    """The kind-scope clause older versions wrote around a frontmatter rule."""
+    inner: object = node
+    negated = False
+    if isinstance(node, Not):
+        inner, negated = node.operand, True
+    if not isinstance(inner, FieldIn) or inner.field != "file.kind":
+        return False
+    return inner.negated != negated
+
+
 def _match_frontmatter(node: object) -> str | None:
-    """``NOT (file.kind in [notes]) OR (expr)`` — the note-scoped form."""
-    if not isinstance(node, Or):
-        return None
-    left = node.left
-    if not (isinstance(left, Not) and isinstance(left.operand, FieldIn)):
-        return None
-    inner = left.operand
-    if inner.field != "file.kind" or inner.negated:
-        return None
-    if {str(v) for v in inner.values} != set(NOTE_KINDS):
-        return None
-    return _unparse(node.right)
+    """A clause that only a file with frontmatter can answer.
+
+    Either it asks about frontmatter fields alone — no ``file.*`` anywhere —
+    or it is the kind-scoped form an older version wrote, which is unwrapped
+    so a config written then still round-trips.
+    """
+    if isinstance(node, Or):
+        if _is_note_escape(node.left):
+            return _unparse(node.right)
+        if _is_note_escape(node.right):
+            return _unparse(node.left)
+    fields = referenced_fields(node)
+    if fields and not any(f.startswith("file.") for f in fields):
+        return _unparse(node)
+    return None
 
 
 def _tag_in(node: object) -> dict[str, tuple[str, ...]] | None:

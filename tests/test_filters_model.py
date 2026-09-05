@@ -9,7 +9,7 @@ import pytest
 
 from fnd.file_facts import FileFacts
 from fnd.filters import FilterSpec, build_gate
-from fnd.filters.dimensions import NOTE_KINDS, rule_from_text
+from fnd.filters.dimensions import rule_from_text
 from fnd.filters.model import Rule, Unknown
 from fnd.fsmeta import FileTimes
 
@@ -67,15 +67,21 @@ class TestOrCaptureRegression:
 
 
 class TestScope:
-    def test_frontmatter_rule_does_not_drop_other_kinds(self, tmp_path: Path) -> None:
-        """Strict-null would fail ``Course`` on a PDF; the kind scope spares it."""
-        rule = rule_from_text("Course == 'DPwC'", applies_to=NOTE_KINDS)
+    def test_frontmatter_rule_skips_a_file_without_one(self, tmp_path: Path) -> None:
+        """Strict-null would fail ``Course`` on a PDF, and on a plain .txt."""
+        rule = rule_from_text("Course == 'DPwC'", needs_frontmatter=True)
         assert rule.passes(_facts(tmp_path, "paper.pdf")) is True
-        assert rule.passes(_facts(tmp_path, "n.md")) is False
+        assert rule.passes(_facts(tmp_path, "plain.txt", "just text")) is True
 
-    def test_frontmatter_rule_still_applies_to_notes(self, tmp_path: Path) -> None:
-        rule = rule_from_text("Course == 'DPwC'", applies_to=NOTE_KINDS)
-        assert rule.passes(_facts(tmp_path, "n.md", "---\nCourse: DPwC\n---\n")) is True
+    def test_frontmatter_rule_judges_a_file_that_has_one(self, tmp_path: Path) -> None:
+        """Whatever its extension — frontmatter is not Markdown-only."""
+        rule = rule_from_text("Course == 'DPwC'", needs_frontmatter=True)
+        yes = _facts(tmp_path, "n.md", "---\nCourse: DPwC\n---\n")
+        no = _facts(tmp_path, "o.md", "---\nCourse: Other\n---\n")
+        txt = _facts(tmp_path, "n.txt", "---\nCourse: DPwC\n---\n")
+        assert rule.passes(yes) is True
+        assert rule.passes(no) is False
+        assert rule.passes(txt) is True
 
     def test_unscoped_rule_applies_everywhere(self, tmp_path: Path) -> None:
         rule = rule_from_text("Course == 'DPwC'")

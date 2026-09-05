@@ -338,7 +338,7 @@ edits the defaults; a source's own **Index filters** row edits its overrides.
 | `min_size` / `max_size` | Bytes. Keeps stubs, and multi-hundred-megabyte scans, out. |
 | `created_after` / `created_before` | ISO dates (`2024-01-01`). A fixed bound, not the Filters pane's rolling window — a window would change what the index holds as time passed. A file with no creation date (best-effort on Linux) is kept. |
 | `modified_after` / `modified_before` | ISO dates, same semantics. |
-| `frontmatter` | A frontmatter predicate — the same `[…]` syntax as a query. **Markdown only** (`.md`, `.markdown`); every other file type, `.txt` included, passes through untouched. For anything beyond tags: `type == 'note' AND status != 'draft'`. |
+| `frontmatter` | A frontmatter predicate — the same `[…]` syntax as a query, e.g. `type == 'note' AND status != 'draft'`. It applies to a file **that has a frontmatter block**, whatever its extension, and is skipped for one that has none: a PDF, or a plain `.txt`, passes through untouched rather than failing a question it cannot answer. A block that is present but does not parse fails the rule, since that file did answer. |
 | `expression` | A predicate over any file, using `file.kind`, `file.size`, `file.modified`, `file.tags.os`, `file.path` and the like. The rows above are written in terms of it. |
 
 The tree shows one branch per rule, with the file types nested under a single

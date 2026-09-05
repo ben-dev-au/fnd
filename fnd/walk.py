@@ -314,7 +314,7 @@ def walk_sources(
     from fnd.config import SourceConfig  # local import: avoid cycle
     from fnd.file_facts import FileFacts
     from fnd.filters import FilterSpec, build_gate
-    from fnd.filters.dimensions import NOTE_KINDS, rule_from_text, tag_selection
+    from fnd.filters.dimensions import rule_from_text, tag_selection
     from fnd.ignore_files import IGNORE_FILENAMES
     from fnd.tags import TAG_PROVIDERS
 
@@ -338,7 +338,7 @@ def walk_sources(
         # Scoped to note kinds: strict null would otherwise fail a frontmatter
         # comparison on every PDF and drop the lot.
         scoped = [
-            rule_from_text(text, applies_to=NOTE_KINDS)
+            rule_from_text(text, needs_frontmatter=True)
             for text in (source.frontmatter_filter, resolved.frontmatter)
             if text
         ]
