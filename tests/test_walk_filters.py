@@ -326,18 +326,18 @@ class TestOverrideToNothing:
 class TestTypeGlobAbsorption:
     """``includes = ["**/*.md"]`` and ``filters.kinds = ["md"]`` say one thing."""
 
-    def test_a_type_glob_becomes_a_kind(self, tmp_path: Path) -> None:
-        src = _sources(tmp_path, includes=["**/*.md"])[0]
+    def test_a_complete_type_glob_set_becomes_a_kind(self, tmp_path: Path) -> None:
+        src = _sources(tmp_path, includes=["**/*.md", "**/*.markdown"])[0]
         assert src.includes == []
         assert src.filters is not None
         assert src.filters.kinds == ["md"]
 
-    def test_a_custom_glob_is_left_where_it_is(self, tmp_path: Path) -> None:
-        """Only a plain file-type glob has a kinds equivalent."""
-        src = _sources(tmp_path, includes=["**/*.md", ".obsidian/**"])[0]
-        assert src.includes == [".obsidian/**"]
-        assert src.filters is not None
-        assert src.filters.kinds == ["md"]
+    def test_a_custom_glob_alongside_one_blocks_the_move(self, tmp_path: Path) -> None:
+        """``includes`` globs are ORed while ``kinds`` is ANDed, so moving only
+        part of the list would turn a union into an intersection."""
+        src = _sources(tmp_path, includes=["**/*.md", "**/*.markdown", ".obsidian/**"])[0]
+        assert src.includes == ["**/*.md", "**/*.markdown", ".obsidian/**"]
+        assert src.filters is None or src.filters.kinds is None
 
     def test_an_explicit_kinds_override_is_never_overwritten(self, tmp_path: Path) -> None:
         cfg = Config.model_validate(
@@ -347,7 +347,7 @@ class TestTypeGlobAbsorption:
                         "sources": [
                             {
                                 "path": str(tmp_path),
-                                "includes": ["**/*.md"],
+                                "includes": ["**/*.md", "**/*.markdown"],
                                 "filters": {"kinds": ["pdf"]},
                             }
                         ]
@@ -358,11 +358,11 @@ class TestTypeGlobAbsorption:
         src = cfg.collections["c"].sources[0]
         assert src.filters is not None
         assert src.filters.kinds == ["pdf"]
-        assert src.includes == ["**/*.md"], "the globs must not vanish silently"
+        assert src.includes == ["**/*.md", "**/*.markdown"], "the globs vanished"
 
     def test_absorbing_twice_changes_nothing(self, tmp_path: Path) -> None:
         """``_normalise_sources`` re-runs on every model_validate."""
-        once = _sources(tmp_path, includes=["**/*.md"])[0]
+        once = _sources(tmp_path, includes=["**/*.md", "**/*.markdown"])[0]
         twice = (
             Config.model_validate(
                 {"collections": {"c": {"sources": [once.model_dump(exclude_none=True)]}}}
@@ -380,7 +380,10 @@ class TestTypeGlobAbsorption:
         _write(tmp_path, "a.md")
         _write(tmp_path, "b.pdf")
         _write(tmp_path, "c.txt")
-        globbed = {p.name for p in walk_sources(sources=_sources(tmp_path, includes=["**/*.md"]))}
+        globbed = {
+            p.name
+            for p in walk_sources(sources=_sources(tmp_path, includes=["**/*.md", "**/*.markdown"]))
+        }
         kinded = {
             p.name
             for p in walk_sources(sources=_sources(tmp_path, defaults=DefaultFilters(kinds=["md"])))
@@ -440,3 +443,95 @@ class TestTagsAreNotConflated:
         _write(tmp_path, "clean.md", "nothing\n")
         spec = DefaultFilters(exclude_tags=["draft"])
         assert _names(tmp_path, defaults=spec) == {"clean.md"}
+
+
+class TestFrontmatterScopeIsMarkdownOnly:
+    """A frontmatter rule applies to Markdown, and to nothing else.
+
+    ``TestFrontmatterScope`` above proves a PDF passes through, which held
+    whether the scope was ``.md`` or the whole notes category — and the
+    category silently dropped every ``.txt`` file.
+    """
+
+    def test_a_plain_text_file_is_not_judged_on_frontmatter(self, tmp_path: Path) -> None:
+        """.txt carries no YAML block, so strict null would drop every one."""
+        _write(tmp_path, "note.md", "---\ntype: note\n---\nbody\n")
+        _write(tmp_path, "plain.txt", "just text\n")
+        _write(tmp_path, "paper.pdf", "%PDF-1.4")
+        spec = DefaultFilters(exclude_tags=[], frontmatter="type == 'note'")
+        assert _names(tmp_path, defaults=spec) == {"note.md", "plain.txt", "paper.pdf"}
+
+    def test_a_markdown_file_is(self, tmp_path: Path) -> None:
+        _write(tmp_path, "yes.md", "---\ntype: note\n---\nbody\n")
+        _write(tmp_path, "no.md", "---\ntype: other\n---\nbody\n")
+        spec = DefaultFilters(exclude_tags=[], frontmatter="type == 'note'")
+        assert _names(tmp_path, defaults=spec) == {"yes.md"}
+
+    def test_the_legacy_key_has_the_same_scope(self, tmp_path: Path) -> None:
+        _write(tmp_path, "note.md", "---\ntype: note\n---\nbody\n")
+        _write(tmp_path, "plain.txt", "just text\n")
+        got = _names(
+            tmp_path,
+            defaults=DefaultFilters(exclude_tags=[]),
+            frontmatter_filter="type == 'note'",
+        )
+        assert got == {"note.md", "plain.txt"}
+
+
+class TestTypeGlobAbsorptionIsConservative:
+    """``includes`` globs are ORed; ``kinds`` is a separate ANDed rule. Moving
+    one into the other is only safe when it says exactly the same thing."""
+
+    def test_a_path_glob_alongside_a_type_glob_blocks_absorption(self, tmp_path: Path) -> None:
+        _write(tmp_path, "docs/a.md")
+        _write(tmp_path, "notes/b.md")
+        _write(tmp_path, "notes/c.pdf")
+        sources = _sources(tmp_path, includes=["**/*.md", "**/*.markdown", "notes/**"])
+        assert sources[0].filters is None or sources[0].filters.kinds is None
+        got = {p.name for p in walk_sources(sources=sources)}
+        assert got == {"a.md", "b.md", "c.pdf"}, "an OR of globs became an intersection"
+
+    def test_one_suffix_of_a_multi_suffix_kind_is_not_the_kind(self, tmp_path: Path) -> None:
+        """``**/*.c`` is not ``kinds = ["c"]``: the kind also covers ``.h``."""
+        _write(tmp_path, "a.c")
+        _write(tmp_path, "b.h")
+        sources = _sources(tmp_path, includes=["**/*.c"])
+        assert {p.name for p in walk_sources(sources=sources)} == {"a.c"}
+
+    def test_a_complete_set_of_suffix_globs_still_absorbs(self, tmp_path: Path) -> None:
+        _write(tmp_path, "a.md")
+        _write(tmp_path, "b.markdown")
+        _write(tmp_path, "c.txt")
+        sources = _sources(tmp_path, includes=["**/*.md", "**/*.markdown"])
+        assert sources[0].filters is not None
+        assert sources[0].filters.kinds == ["md"]
+        assert {p.name for p in walk_sources(sources=sources)} == {"a.md", "b.markdown"}
+
+
+class TestOneBadIgnoreLine:
+    def test_an_unusable_pattern_does_not_abort_the_run(self, tmp_path: Path) -> None:
+        """git tolerates an inverted character range by never matching it."""
+        _write(tmp_path, ".gitignore", "[z-a]\n*.tmp\n")
+        _write(tmp_path, "keep.md")
+        _write(tmp_path, "drop.tmp")
+        assert _names(tmp_path) == {"keep.md"}
+
+
+class TestEnumerationOpensOnlyMarkdown:
+    def test_the_tag_default_does_not_read_pdfs_and_data_files(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Reading a PDF as text looking for a YAML block opens every
+        candidate in the source and finds nothing."""
+        _write(tmp_path, "a.md", "---\ntags: [x]\n---\n")
+        _write(tmp_path, "b.pdf", "%PDF-1.4")
+        _write(tmp_path, "c.csv", "a,b\n")
+        _write(tmp_path, "d.txt", "plain")
+        reads: list[Path] = []
+        real = fnd.frontmatter.read_frontmatter_from_file
+        monkeypatch.setattr(
+            "fnd.file_facts.read_frontmatter_from_file",
+            lambda p: (reads.append(p), real(p))[1],
+        )
+        _names(tmp_path)
+        assert {p.suffix for p in reads} <= {".md", ".markdown"}, f"opened {reads}"

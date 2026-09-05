@@ -355,7 +355,6 @@ async def test_source_form_shows_include_globs_as_ticked_file_types(
         SettingsList,
         SourceFormScreen,
     )
-    from fnd.tui.widgets.toggle_tree import ToggleTree
 
     cfg_path = tmp_path / "config.toml"
     monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
@@ -394,10 +393,12 @@ async def test_source_form_shows_include_globs_as_ticked_file_types(
         assert isinstance(browser, FilterBrowserScreen)
         while browser._scanning:
             await pilot.pause()
-        tree = browser.query_one(ToggleTree)
-        # md and pdf pre-ticked from the globs the source was created with.
-        assert "kind:md" in tree.selected
-        assert "kind:pdf" in tree.selected
+        # The globs are not shown as ticked kinds: saving them back as kinds
+        # would widen ``**/*.md`` to the whole ``md`` kind, ``.markdown``
+        # included. The browser says they are in force instead.
+        summary = str(browser.query_one("#filter_summary").render())
+        assert "include globs" in summary, summary
+        assert "**/*.md" in summary
 
 
 @pytest.mark.asyncio

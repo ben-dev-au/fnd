@@ -18,6 +18,7 @@ Two rules are load-bearing and easy to lose:
 from __future__ import annotations
 
 import re
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -153,7 +154,12 @@ def _translate(pattern: str, *, anchored: bool) -> re.Pattern[str]:
     # contents because the walker never descends into an ignored directory —
     # extending the regex over descendants instead would let a negated
     # pattern re-include files the following patterns should still exclude.
-    return re.compile(f"^{prefix}{body}$")
+    # git sets core.ignorecase on a case-insensitive filesystem, which is the
+    # default on macOS and Windows, and then ignores README.md for a
+    # "readme.md" rule. Matching case-sensitively there disagrees with the
+    # tool whose semantics this implements.
+    flags = re.IGNORECASE if sys.platform in ("darwin", "win32") else 0
+    return re.compile(f"^{prefix}{body}$", flags)
 
 
 def parse_patterns(text: str) -> tuple[Pattern, ...]:
@@ -181,9 +187,16 @@ def parse_patterns(text: str) -> tuple[Pattern, ...]:
             line = line[1:]
         if not line:
             continue
+        try:
+            regex = _translate(line, anchored=anchored)
+        except re.error:
+            # git tolerates a pattern its own matcher cannot use — an inverted
+            # character range, say — by never matching it. Aborting the whole
+            # index run over one line of one .gitignore does not.
+            continue
         out.append(
             Pattern(
-                regex=_translate(line, anchored=anchored),
+                regex=regex,
                 negated=negated,
                 dir_only=dir_only,
                 source=source,
@@ -259,32 +272,14 @@ class IgnoreStack:
 
 
 # Climbing stops here; a pathological path must not walk to the filesystem root.
-_MAX_CLIMB: Final = 64
-
-
 def ancestor_stack(root: Path, names: Sequence[str]) -> IgnoreStack:
-    """Ignore files between the enclosing repository root and ``root``.
+    """Always empty: ignore files apply from the source root downwards.
 
-    A source can be indexed from below a repository root, where git still
-    applies the repository's own rules. Nothing is collected when no
-    repository encloses ``root``, so a stray ignore file elsewhere on disk
-    can never reach a walk.
+    git would apply an enclosing repository's rules to a subdirectory, but a
+    source is a folder the user named, and honouring rules written for a
+    different purpose above it is destructive out of proportion to the case it
+    serves. A dotfiles repository in the home directory — ``*`` plus a handful
+    of negations, a common shape — makes every file under ``~/Documents``
+    ignored, and the source indexes nothing at all.
     """
-    if not names:
-        return IgnoreStack()
-    chain: list[Path] = []
-    current = root
-    for _ in range(_MAX_CLIMB):
-        parent = current.parent
-        if parent == current:
-            return IgnoreStack()
-        chain.append(parent)
-        if (parent / ".git").exists():
-            break
-        current = parent
-    else:
-        return IgnoreStack()
-    files: list[IgnoreFile] = []
-    for directory in reversed(chain):
-        files.extend(f for f in (load_ignore_file(directory, n) for n in names) if f is not None)
-    return IgnoreStack(tuple(files))
+    return IgnoreStack()

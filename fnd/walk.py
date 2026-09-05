@@ -187,6 +187,7 @@ def _scandir_walk(
     # An index directory used directly as a scan root would otherwise have its
     # internals (Tantivy meta.json, the schema sidecar, …) yielded — the
     # per-child guard below only catches index dirs *nested* under the root.
+    # Ignore files apply from the source root downwards; see ancestor_stack.
     base = ancestor_stack(root, ignore_names)
     stack: list[tuple[Path, IgnoreStack]] = [] if _is_index_dir(str(root)) else [(root, base)]
     while stack:

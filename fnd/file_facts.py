@@ -53,6 +53,10 @@ RESERVED_FACTS: Final[frozenset[str]] = frozenset(
     }
 )
 
+# Kinds that can carry a YAML frontmatter block. Imported lazily-ish here
+# rather than from fnd.filters to keep this module free of that dependency.
+_FRONTMATTER_KINDS: Final[frozenset[str]] = frozenset({"md"})
+
 _TAG_FACTS: Final[dict[str, str]] = {
     "file.tags.os": "os",
     "file.tags.frontmatter": "frontmatter",
@@ -151,6 +155,10 @@ class FileFacts(Mapping[str, object]):
         if self._fm_read:
             return self._fm
         self._fm_read = True
+        if kind_for_suffix(self._path.suffix) not in _FRONTMATTER_KINDS:
+            # Reading a PDF or a CSV as text to look for a YAML block opens
+            # every candidate in the source for nothing.
+            return self._fm
         try:
             self._fm = self._read_fm(self._path) or {}
         except (FrontmatterParseError, OSError, ValueError):

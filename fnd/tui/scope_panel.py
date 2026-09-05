@@ -663,9 +663,7 @@ class ScopeController:
         stay immediate (cheap, and the marker must update at once)."""
         self._app._refresh_status()
         self.persist()
-        deferred = self._batch_next
-        self._batch_next = False
-        if deferred or not self._app._search.current_query:
+        if self._batch_next or not self._app._search.current_query:
             return
         if self._filter_search_timer is not None:
             self._filter_search_timer.stop()
@@ -1011,6 +1009,18 @@ class ScopeController:
                 return
 
     def on_filters_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
+        """Consume the batch-toggle deferral however this handler exits.
+
+        Most of its paths return without committing — a section header, an
+        unknown node kind — and a flag left set would silence the *next*
+        real toggle instead of this one.
+        """
+        try:
+            self._on_filters_selected(ev)
+        finally:
+            self._batch_next = False
+
+    def _on_filters_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
         """Enter on a filter value toggles it.
 
         - File type: each value toggles independently (multi-select).
@@ -1085,6 +1095,18 @@ class ScopeController:
         self._commit_filter_change()
 
     def on_collections_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
+        """Consume the batch-toggle deferral however this handler exits.
+
+        Most of its paths return without committing — a section header, an
+        unknown node kind — and a flag left set would silence the *next*
+        real toggle instead of this one.
+        """
+        try:
+            self._on_collections_selected(ev)
+        finally:
+            self._batch_next = False
+
+    def _on_collections_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
         """Enter on a collection node toggles the whole collection's scope
         (all sources at once); Enter on a single source row toggles that
         source independently. Every change mutates the ``selection`` map —

@@ -23,9 +23,10 @@ from fnd.tags import TAG_PROVIDERS, normalise_tag, source_tag_selection
 
 __all__ = ["DIMENSIONS", "Dimension", "dimension", "rule_from_text"]
 
-# Frontmatter is a note-format convention; the registry's own category is the
-# source of truth so adding .mdx or .org needs no edit here.
-NOTE_KINDS: Final[frozenset[str]] = frozenset(KINDS_IN_CATEGORY.get("notes", ()))
+# Frontmatter is a Markdown convention: a .txt file has no YAML block, so a
+# frontmatter predicate must not be evaluated against one — strict null would
+# drop every plain-text file in the source.
+NOTE_KINDS: Final[frozenset[str]] = frozenset({"md"} & set(KINDS_IN_CATEGORY.get("notes", ())))
 
 
 def _as_list(value: object) -> list[object]:

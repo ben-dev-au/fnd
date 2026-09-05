@@ -325,9 +325,8 @@ freely.
 Filters at index time decide what gets indexed at all, as opposed to the
 Filters pane, which narrows what an already-built index returns. They live in
 `[defaults.filters]` and, per source, in a `[…sources.filters]` table that
-overrides the defaults field by field. Settings → **Indexing & PDF Texture →
-Index filters** edits the defaults; a source's own **Index filters** row edits
-its overrides.
+overrides the defaults field by field. Settings → **Filters → Index filters**
+edits the defaults; a source's own **Index filters** row edits its overrides.
 
 | Filter | What it does |
 | --- | --- |
@@ -335,11 +334,11 @@ its overrides.
 | `respect_fndignore` | The same syntax in a `.fndignore`, read only by fnd — how to hide something from search without hiding it from git. **On by default.** |
 | `include_tags` | Index only files carrying one of these tags — the tag rows' `●`. Empty means the tag is not consulted. |
 | `exclude_tags` | Tags that keep a file out — the tag rows' `⊘`. From any source fnd reads: macOS Finder tags and a note's YAML `tags:`. Defaults to `["no_index"]`, so tagging a file `no_index` either way keeps it out. |
-| `kinds` | Restrict to given file types. Empty means every supported type. A source's `includes = ["**/*.md"]` says the same thing, so those globs are folded into `kinds` when the config loads; globs that name no file type (`.obsidian/**`) stay in `includes`. |
+| `kinds` | Restrict to given file types. Empty means every supported type. When a source's `includes` is exactly a set of complete file-type globs — every suffix of each type, so `["**/*.md", "**/*.markdown"]` and not `["**/*.md"]` alone — it says the same thing as `kinds` and is folded into it on load. Any other list is left as globs, because `includes` are ORed while `kinds` is a separate rule ANDed with them. |
 | `min_size` / `max_size` | Bytes. Keeps stubs, and multi-hundred-megabyte scans, out. |
 | `created_after` / `created_before` | ISO dates (`2024-01-01`). A fixed bound, not the Filters pane's rolling window — a window would change what the index holds as time passed. A file with no creation date (best-effort on Linux) is kept. |
 | `modified_after` / `modified_before` | ISO dates, same semantics. |
-| `frontmatter` | A frontmatter predicate — the same `[…]` syntax as a query. **Notes only**; every other file type passes through. For anything beyond tags: `type == 'note' AND status != 'draft'`. |
+| `frontmatter` | A frontmatter predicate — the same `[…]` syntax as a query. **Markdown only** (`.md`, `.markdown`); every other file type, `.txt` included, passes through untouched. For anything beyond tags: `type == 'note' AND status != 'draft'`. |
 | `expression` | A predicate over any file, using `file.kind`, `file.size`, `file.modified`, `file.tags.os`, `file.path` and the like. The rows above are written in terms of it. |
 
 The tree shows one branch per rule, with the file types nested under a single
@@ -365,6 +364,18 @@ off and on:
 > want unsearchable.** Large PDFs — textbooks, lecture slides — are commonly
 > kept out of a repository precisely because they are big, and those are often
 > exactly the documents you want to find.
+>
+> Ignore files apply from a source's own folder **downwards**. A repository
+> that happens to enclose the source does not govern it: a dotfiles repo in
+> your home directory would otherwise make everything under `~/Documents`
+> ignored.
+
+> **Upgrading an existing index.** These defaults are new, so the first update
+> after upgrading prunes anything they now exclude — on a 4,700-file corpus
+> that was about 260 files, mostly build artefacts, but it can include
+> documents kept out of a repository on purpose. Set `respect_gitignore =
+> false` under `[defaults.filters]`, or per source, to keep the old
+> behaviour.
 
 > **Finder tags are macOS-only, but `exclude_tags` is not.** On Linux and
 > Windows there are no Finder tags to read, so tag a note `tags: [no_index]` in
@@ -393,7 +404,7 @@ fuzzy_enabled = true       # auto-fuzzy in the cascade fallback (toggle with Ctr
 # A collection named "papers" with two source folders.
 [[collections.papers.sources]]
 path     = "~/Documents/Research"
-includes = ["**/*.pdf", "**/*.md"]        # folded into filters.kinds on load
+includes = ["**/*.pdf", "**/*.md"]        # ORed globs; see filters.kinds below
 excludes = ["**/.git/**", "archive/**"]
 follow_symlinks = false
 

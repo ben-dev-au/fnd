@@ -8,6 +8,7 @@ global excludes and ``.git/info/exclude`` — without that, a machine with a
 from __future__ import annotations
 
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -232,3 +233,59 @@ class TestPathologicalPatterns:
         (tmp_path / ".gitignore").write_text("**/**/x.md\n", encoding="utf-8")
         _make(tmp_path, "a/b/x.md")
         assert _ours_ignores(tmp_path, "a/b/x.md") == _git_ignores(tmp_path, env, "a/b/x.md")
+
+
+class TestScopeIsTheSourceDownwards:
+    """An ignore file above the source root does not govern it."""
+
+    def test_a_repository_enclosing_the_source_does_not_empty_it(self, tmp_path: Path) -> None:
+        """A dotfiles repo in the home directory — ``*`` plus a few negations,
+        a common shape — otherwise makes every file under ~/Documents ignored
+        and the source indexes nothing at all."""
+        import subprocess
+
+        from fnd.config import Config
+        from fnd.walk import walk_sources
+
+        home = tmp_path / "home"
+        home.mkdir()
+        subprocess.run(["git", "init", "-q", str(home)], check=True)
+        (home / ".gitignore").write_text("*\n!.vimrc\n", encoding="utf-8")
+        docs = home / "Documents"
+        docs.mkdir()
+        for name in ("notes.md", "paper.pdf", "todo.txt"):
+            (docs / name).write_text("content", encoding="utf-8")
+
+        cfg = Config.model_validate({"collections": {"c": {"sources": [{"path": str(docs)}]}}})
+        got = {p.name for p in walk_sources(sources=cfg.collections["c"].sources)}
+        assert got == {"notes.md", "paper.pdf", "todo.txt"}
+
+    def test_an_ignore_file_inside_the_source_still_applies(self, tmp_path: Path) -> None:
+        from fnd.config import Config
+        from fnd.walk import walk_sources
+
+        (tmp_path / ".gitignore").write_text("*.pdf\n", encoding="utf-8")
+        (tmp_path / "a.md").write_text("x", encoding="utf-8")
+        (tmp_path / "b.pdf").write_text("x", encoding="utf-8")
+        cfg = Config.model_validate({"collections": {"c": {"sources": [{"path": str(tmp_path)}]}}})
+        got = {p.name for p in walk_sources(sources=cfg.collections["c"].sources)}
+        assert got == {"a.md"}
+
+
+class TestCaseFollowsGit:
+    @pytest.mark.skipif(
+        sys.platform not in ("darwin", "win32"), reason="case-insensitive filesystems"
+    )
+    def test_a_pattern_matches_regardless_of_case(self, tmp_path: Path) -> None:
+        """git sets core.ignorecase on these platforms and ignores readme.md
+        for a README.md rule; the oracle suite's vocabulary is all lowercase,
+        so it could never see the disagreement."""
+        from fnd.config import Config
+        from fnd.walk import walk_sources
+
+        (tmp_path / ".gitignore").write_text("README.md\n", encoding="utf-8")
+        (tmp_path / "readme.md").write_text("x", encoding="utf-8")
+        (tmp_path / "keep.txt").write_text("x", encoding="utf-8")
+        cfg = Config.model_validate({"collections": {"c": {"sources": [{"path": str(tmp_path)}]}}})
+        got = {p.name for p in walk_sources(sources=cfg.collections["c"].sources)}
+        assert got == {"keep.txt"}

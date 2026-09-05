@@ -1707,7 +1707,11 @@ def _same_setting(value: Any, default: Any) -> bool:
 
 
 def open_source_filter_browser(
-    app: FNDApp, overrides: dict[str, Any], root: Any, on_change: Callable[[], None]
+    app: FNDApp,
+    overrides: dict[str, Any],
+    root: Any,
+    on_change: Callable[[], None],
+    globs: list[str] | None = None,
 ) -> None:
     """The source's *effective* filters, edited as branches.
 
@@ -1743,6 +1747,7 @@ def open_source_filter_browser(
             gitignore=resolved.respect_gitignore,
             fndignore=resolved.respect_fndignore,
             sample_provider=_sample,
+            globs=list(globs or ()),
             on_save=_save,
         )
     )
@@ -1751,6 +1756,20 @@ def open_source_filter_browser(
 def _default_frontmatter(app: Any) -> str:
     cfg = getattr(app, "_config", None)
     return (getattr(cfg.defaults.filters, "frontmatter", None) or "") if cfg else ""
+
+
+def _seeded_filters(source: Any) -> dict[str, Any]:
+    """A source's filter overrides, with a legacy rule folded in.
+
+    ``frontmatter_filter`` predates ``filters.frontmatter``. Seeding it here
+    means the browser — now the only surface for the rule — shows it, and
+    clearing it there actually clears it.
+    """
+    values: dict[str, Any] = source.filters.model_dump(exclude_none=True) if source.filters else {}
+    legacy = str(source.frontmatter_filter or "")
+    if legacy and not values.get("frontmatter"):
+        values["frontmatter"] = legacy
+    return values
 
 
 def _source_frontmatter(source: Any) -> str:
@@ -2039,7 +2058,7 @@ class SourceFormScreen(Screen[None]):
             "follow_symlinks": bool(s.follow_symlinks),
             "app": s.app or "",
             "app_params_vault": (s.app_params or {}).get("vault", ""),
-            "filters": s.filters.model_dump(exclude_none=True) if s.filters else {},
+            "filters": _seeded_filters(s),
         }
         self._snapshot = {
             "path": self._fields["path"],
@@ -2054,14 +2073,13 @@ class SourceFormScreen(Screen[None]):
         }
 
     def _frontmatter_text(self) -> str:
-        """This source's frontmatter rule, wherever it was last edited.
+        """This source's frontmatter rule.
 
-        The browser writes into ``filters``; a legacy ``frontmatter_filter``
-        arrives in ``filter``. Reading only the latter would let a browser
-        edit be overwritten by the value the form loaded with.
+        Only the overrides: a legacy ``frontmatter_filter`` is folded into
+        them at load, so falling back to it here would resurrect a rule the
+        user has just cleared in the browser.
         """
-        override = self._fields["filters"].get("frontmatter")
-        return str(override if override is not None else self._fields["filter"] or "")
+        return str(self._fields["filters"].get("frontmatter") or "")
 
     def _frontmatter_into_filters(self, text: str) -> dict[str, Any]:
         """The frontmatter rule as part of this source's filter overrides.
@@ -2077,7 +2095,12 @@ class SourceFormScreen(Screen[None]):
         app: FNDApp = self.app  # type: ignore[assignment]
         raw_path = str(self._fields.get("path") or "").strip()
         root = Path(raw_path).expanduser() if raw_path else None
-        open_source_filter_browser(app, self._fields["filters"], root, self._populate_fields)
+        globs = [
+            g.strip()
+            for g in str(self._fields.get("includes_custom") or "").split(",")
+            if g.strip()
+        ]
+        open_source_filter_browser(app, self._fields["filters"], root, self._populate_fields, globs)
 
     def _filters_summary(self) -> str:
         overrides = self._fields.get("filters") or {}
@@ -4876,7 +4899,7 @@ class RuleTextScreen(Screen[None]):
             status.update(f"✗ col {err.column}: {err.message}")
             return
         status.add_class("-ok")
-        scope = "notes only; every other type passes" if self._note_scoped else "every file"
+        scope = "Markdown only; every other type passes" if self._note_scoped else "every file"
         status.update(f"✓ {scope}")
 
     def action_back(self) -> None:
@@ -4928,9 +4951,14 @@ class FilterBrowserScreen(Screen[None]):
         gitignore: bool,
         fndignore: bool,
         sample_provider: Callable[[], Any] | None = None,
+        globs: list[str] | None = None,
         on_save: Callable[[Any, bool, bool], None],
     ) -> None:
         super().__init__()
+        # Include globs restrict the file types too, but they cannot be shown
+        # as ticked kinds: saving them back as kinds would widen a glob that
+        # names one suffix of a multi-suffix type. Say so instead.
+        self._globs = list(globs or ())
         self._title = title
         self._spec = spec
         self._gitignore = gitignore
@@ -4961,7 +4989,7 @@ class FilterBrowserScreen(Screen[None]):
 
         field_name = ev.item_id.removeprefix("rule:")
         titles = {
-            "frontmatter": "Frontmatter rule · notes only",
+            "frontmatter": "Frontmatter rule · Markdown only",
             "expression": "Custom expression · any file",
         }
         if field_name not in titles:
@@ -4992,7 +5020,14 @@ class FilterBrowserScreen(Screen[None]):
         self.query_one("#footer_hints", Static).update(
             _hint_bar(
                 app,
-                (("⏎", "Toggle"), ("→", "Open"), ("t", "As text"), ("c", "Clear"), ("^S", "Save")),
+                (
+                    ("⏎", "Toggle"),
+                    ("→", "Open"),
+                    ("t", "As text"),
+                    ("c", "Clear"),
+                    ("^S", "Save"),
+                    ("Esc", "Discard"),
+                ),
             )
         )
         if self._sample_provider is not None:
@@ -5057,6 +5092,8 @@ class FilterBrowserScreen(Screen[None]):
             n for n, on in ((".gitignore", self._gitignore), (".fndignore", self._fndignore)) if on
         )
         head = [f"obeying {ignores}" if ignores else "ignore files off"]
+        if self._globs:
+            head.append("also limited by include globs: " + ", ".join(self._globs))
         if self._scanning:
             head.append("scanning source for types and tags…")
         lines = [" · ".join(head), f"as text ('t' to edit):  {text or 'no filters'}"]
@@ -5084,5 +5121,9 @@ class FilterBrowserScreen(Screen[None]):
         self.app.pop_screen()
 
     def action_save_close(self) -> None:
-        self._on_save(self._spec, self._gitignore, self._fndignore)
+        try:
+            self._on_save(self._spec, self._gitignore, self._fndignore)
+        except Exception as e:
+            self.app.notify(_summarise(e), severity="error", title="Save failed")
+            return
         self.app.pop_screen()

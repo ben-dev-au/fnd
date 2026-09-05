@@ -322,3 +322,73 @@ async def test_the_frontmatter_rule_lives_with_the_other_filters(built_index: Pa
             if "Rules you type" in str(n.label)
         )
         assert any("Frontmatter rule" in str(c.label) for c in rules.children)
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_frontmatter_rule_is_visible_and_clearable(
+    built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The form's own row is gone, so the browser is the only surface for the
+    rule — it must read a legacy ``frontmatter_filter``, and clearing it there
+    must not be undone by the value the form loaded with."""
+    from fnd.config import CollectionConfig, SourceConfig, write_collection
+    from fnd.tui.settings_screen import SourceFormScreen
+
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+    root = tmp_path / "vault"
+    root.mkdir()
+    write_collection(
+        config_path=cfg_path,
+        name="probe",
+        collection=CollectionConfig(
+            sources=[SourceConfig(path=root, frontmatter_filter="Course == 'X'")]
+        ),
+    )
+    from fnd.config import load
+
+    app = FNDApp(index_dir=built_index, config=load(cfg_path))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(SourceFormScreen(collection_name="probe", source_index=0))
+        for _ in range(30):
+            await pilot.pause()
+        form = app.screen
+        assert form._fields["filters"].get("frontmatter") == "Course == 'X'", (
+            "the browser is handed the overrides and would show '(none)'"
+        )
+
+        form._fields["filters"].pop("frontmatter", None)
+        assert form._frontmatter_text() == "", "the cleared rule came back"
+
+
+@pytest.mark.asyncio
+async def test_clearing_the_default_tags_does_not_reinstate_them(
+    built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deleting the key lets ``DefaultFilters``' own default resurrect, so
+    "clear all" handed back an exclusion the user had just removed."""
+    from fnd.config import CONFIG_TEMPLATE, load
+    from fnd.tui.menu import _open_filter_browser
+    from fnd.tui.settings_screen import FilterBrowserScreen
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(CONFIG_TEMPLATE, encoding="utf-8")
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+
+    app = FNDApp(index_dir=built_index, config=load(cfg_path))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        _open_filter_browser(app)
+        for _ in range(40):
+            await pilot.pause()
+        browser = app.screen
+        assert isinstance(browser, FilterBrowserScreen)
+        while browser._scanning:
+            await pilot.pause()
+        await pilot.press("c")
+        await pilot.press("ctrl+s")
+        for _ in range(20):
+            await pilot.pause()
+
+    assert load(cfg_path).defaults.filters.exclude_tags == []

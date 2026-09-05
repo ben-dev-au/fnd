@@ -42,9 +42,10 @@ A run has two phases, and both must stay answerable to the user:
 - **Scan.** The walk is pumped in short time-boxed slices rather than
   one opaque thread hop, so cancel is honoured mid-scan and each slice
   emits an `enumerating` event carrying the running file count. This
-  matters because a scan is not always fast: a source with a
-  `frontmatter_filter` must open every candidate to evaluate it, and on
-  cloud-backed storage each open blocks on a download.
+  matters because a scan is not always fast: a filter that asks about a
+  note's content — a frontmatter rule, or a tag rule reading YAML `tags:`
+  — must open each Markdown candidate to evaluate it, and on cloud-backed
+  storage each open blocks on a download.
 - **Per-file.** Extraction runs off-loop in `asyncio.to_thread`, with
   progress events over an `AsyncIterator` and atomic resume state
   written after every file.
@@ -77,7 +78,18 @@ setting can never fight the sidebar. `-c` overrides scope for one launch,
 with `all` as the pseudo-name for every collection (a real collection of
 that name still wins, and new ones can't take it).
 
-**Filters** (`fnd/query_filters.py`, `fnd/filter_dsl.py`,
+**Index-time filters** (`fnd/filters/`, `fnd/file_facts.py`,
+`fnd/ignore_files.py`, `fnd/walk.py`). These decide what enters the index
+at all, as opposed to what a query returns from it. `filters/dimensions.py`
+holds one `Dimension` per thing a user can filter on, each compiling to a
+predicate over `FileFacts` — a lazy mapping of `file.*` attributes plus a
+note's frontmatter — and rendering to the same DSL the query side parses,
+so the settings tree and its text view are two views of one model.
+`ignore_files.py` is a hand-rolled gitwildmatch, checked against
+`git check-ignore`; it applies from a source's own folder downwards, never
+from a repository that happens to enclose it.
+
+**Query-time filters** (`fnd/query_filters.py`, `fnd/filter_dsl.py`,
 `fnd/tags.py`, `fnd/tag_query.py`, `fnd/tag_catalog.py`,
 `fnd/fsmeta.py`, `fnd/kind_catalog.py`). Scope selections from the TUI
 panel and `--kind` / `--tag` / `--created` / `--modified` on the CLI

@@ -68,9 +68,18 @@ class Branch:
     empty_label: str = ""
 
 
-def _kind_items(sample: SourceSample | None) -> list[tuple[str, str, str]]:
-    """(category id, kind id, label) for kinds present, or all when unknown."""
+def _kind_items(
+    sample: SourceSample | None, configured: tuple[str, ...] = ()
+) -> list[tuple[str, str, str]]:
+    """(category id, kind id, label) for kinds present, or all when unknown.
+
+    A kind the filter already names is offered even when the sample saw none:
+    dropping the row leaves a rule the user can neither see nor switch off,
+    under a branch that reads as unfiltered.
+    """
     present = set(sample.kinds) if sample and sample.kinds else None
+    if present is not None:
+        present |= set(configured)
     out: list[tuple[str, str, str]] = []
     for cat in CATEGORIES:
         for kind in KINDS_IN_CATEGORY.get(cat.id, ()):
@@ -132,7 +141,7 @@ def spec_branches(spec: FilterSpec, sample: SourceSample | None = None) -> list[
     """The branches a filter screen should render for ``spec``."""
     branches: list[Branch] = []
 
-    kinds = _kind_items(sample)
+    kinds = _kind_items(sample, spec.kinds)
     by_cat: dict[str, list[tuple[str, str]]] = {}
     for cat_id, kind, label in kinds:
         by_cat.setdefault(cat_id, []).append((kind, label))
@@ -165,20 +174,16 @@ def spec_branches(spec: FilterSpec, sample: SourceSample | None = None) -> list[
             empty_label="none",
         )
     )
-    branches.append(
-        Branch(
-            "size", "Maximum file size", "radio", tuple((f"size:{i}", lbl) for i, lbl, _ in _SIZES)
-        )
-    )
+    size_items = [(f"size:{i}", lbl) for i, lbl, _ in _SIZES]
+    if spec.max_size is not None and _size_id(spec.max_size) == CUSTOM:
+        size_items.insert(1, (f"size:{CUSTOM}", f"Under {_human_size(spec.max_size)}"))
+    branches.append(Branch("size", "Maximum file size", "radio", tuple(size_items)))
     for field_name, label in (("modified", "Modified within"), ("created", "Created within")):
-        branches.append(
-            Branch(
-                field_name,
-                label,
-                "radio",
-                tuple((f"{field_name}:{i}", lbl) for i, lbl, _ in _WINDOWS),
-            )
-        )
+        items = [(f"{field_name}:{i}", lbl) for i, lbl, _ in _WINDOWS]
+        bound = getattr(spec, f"{field_name}_after")
+        if bound is not None and _window_id(bound) == CUSTOM:
+            items.insert(1, (f"{field_name}:{CUSTOM}", f"Since {bound.isoformat()}"))
+        branches.append(Branch(field_name, label, "radio", tuple(items)))
     branches.append(
         Branch(
             "rules",
@@ -234,17 +239,33 @@ def _tags_from(ids: set[str] | frozenset[str]) -> dict[str, tuple[str, ...]]:
     return {source: tuple(sorted(tags)) for source, tags in out.items()}
 
 
+CUSTOM = "custom"
+"""Chosen when the stored bound is not one of the offered options.
+
+The options set a bound; the bound itself is an arbitrary number or date.
+Mapping an unmatched value back to "any" let an unrelated toggle delete it,
+and made a window stop matching two days after it was picked.
+"""
+
+
+def _human_size(value: int) -> str:
+    for unit, step in (("GB", 1_000_000_000), ("MB", 1_000_000), ("kB", 1_000)):
+        if value >= step:
+            return f"{value / step:g} {unit}"
+    return f"{value} bytes"
+
+
 def _size_id(value: int | None) -> str:
     if value is None:
         return "any"
-    return next((i for i, _l, v in _SIZES if v == value), "any")
+    return next((i for i, _l, v in _SIZES if v == value), CUSTOM)
 
 
 def _window_id(value: dt.date | None) -> str:
     if value is None:
         return "any"
     days = (dt.date.today() - value).days
-    return next((i for i, _l, d in _WINDOWS if d is not None and abs(d - days) <= 1), "any")
+    return next((i for i, _l, d in _WINDOWS if d is not None and abs(d - days) <= 1), CUSTOM)
 
 
 def apply_selection(
@@ -256,12 +277,18 @@ def apply_selection(
     tags = _tags_from(excluded)
     today = dt.date.today()
 
-    max_size = next(
-        (v for i, _l, v in _SIZES if f"size:{i}" in selected and v is not None),
-        None,
-    )
+    if f"size:{CUSTOM}" in selected:
+        max_size = spec.max_size
+    else:
+        max_size = next(
+            (v for i, _l, v in _SIZES if f"size:{i}" in selected and v is not None),
+            None,
+        )
     bounds: dict[str, dt.date | None] = {}
     for field_name in ("modified", "created"):
+        if f"{field_name}:{CUSTOM}" in selected:
+            bounds[f"{field_name}_after"] = getattr(spec, f"{field_name}_after")
+            continue
         days = next(
             (d for i, _l, d in _WINDOWS if f"{field_name}:{i}" in selected and d is not None),
             None,

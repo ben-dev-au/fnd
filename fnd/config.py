@@ -347,7 +347,11 @@ class SourceConfig(BaseModel):
         if self.filters is not None and self.filters.kinds is not None:
             return self
         kinds, rest = split_type_globs(self.includes)
-        if not kinds:
+        # Only when the globs say nothing else. ``walk`` ORs its include
+        # globs, while ``kinds`` is a separate rule that is ANDed with what is
+        # left — so absorbing half of ["**/*.md", "notes/**"] would turn "md
+        # files or anything under notes/" into "md files under notes/".
+        if not kinds or rest:
             return self
         merged = (
             self.filters.model_copy(update={"kinds": kinds})
@@ -1000,7 +1004,6 @@ def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Conf
         if existing is None or not hasattr(existing, "get"):
             new_tbl = tomlkit.table()
             cursor[p] = new_tbl  # type: ignore[index]
-            _reseat_last(cursor)
             cursor = new_tbl
         else:
             cursor = existing
@@ -1010,12 +1013,7 @@ def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Conf
         with contextlib.suppress(KeyError):
             del cursor[leaf]  # type: ignore[union-attr]
     else:
-        # Only a *new* key is appended to the end of the body; replacing one
-        # edits in place, where reseating would move the wrong entry.
-        fresh = leaf not in cursor  # type: ignore[operator]
         cursor[leaf] = _grouped(value)  # type: ignore[index]
-        if fresh:
-            _reseat_last(cursor)
 
     # Validate the full document before committing to disk. Re-parsing the
     # tomlkit dump gives us a plain dict — Pydantic doesn't accept tomlkit's
@@ -1044,24 +1042,9 @@ def _grouped(value: object) -> object:
     return value
 
 
-def _reseat_last(parent: object) -> None:
-    """Move the just-added sub-table above the parent's trailing comments.
-
-    tomlkit appends to the end of the parent's body, which is *after* any
-    comment block introducing the table that follows — leaving that comment
-    attached to the new table instead of the one it describes.
-    """
-    from tomlkit.items import Comment, Whitespace
-
-    container = parent if hasattr(parent, "body") else getattr(parent, "value", None)
-    body = getattr(container, "body", None)
-    if not body or body[-1][0] is None:
-        return
-    entry = body.pop()
-    at = len(body)
-    while at > 0 and isinstance(body[at - 1][1], (Comment, Whitespace)):
-        at -= 1
-    body.insert(at, entry)
+# A table header, and not a line that merely starts with "[" — a value inside
+# a multi-line string can do that.
+_TABLE_HEADER_RE = re.compile(r"^\[{1,2}[A-Za-z0-9_.\"\'\- ]+\]{1,2}\s*$")
 
 
 def _spaced_tables(text: str) -> str:
@@ -1072,8 +1055,18 @@ def _spaced_tables(text: str) -> str:
     """
     lines = text.splitlines()
     out: list[str] = []
+    in_string = False
     for line in lines:
-        if line.startswith("["):
+        # A value can span lines and one of them can look exactly like a
+        # table header; a blank inserted there changes the value.
+        quotes = line.count('"""') + line.count("'''")
+        if in_string:
+            in_string = quotes % 2 == 0
+            out.append(line)
+            continue
+        if quotes % 2 == 1:
+            in_string = True
+        if _TABLE_HEADER_RE.match(line):
             # A comment block directly above a header belongs to it, so the
             # blank goes above the comments, not between them and the table.
             at = len(out)
