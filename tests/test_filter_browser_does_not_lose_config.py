@@ -72,3 +72,49 @@ class TestKindsTheSampleNeverSaw:
         selected, excluded = selection_for(spec, gitignore=True, fndignore=True)
         back, _g, _f = apply_selection(spec, selected - {"kind:docx"}, excluded)
         assert back.kinds == ("pptx",)
+
+
+class TestTheCustomRowMeansItsLabel:
+    """The tree's labels are built when it rebuilds; a selection is resolved
+    when it is made. An id meaning "whatever the spec holds now" resolved a
+    row still reading "Under 5 MB" to a bound the user had since changed —
+    F1's own failure mode, reinstated inside its fix.
+
+    These deliberately do NOT re-derive the selection from the spec: doing so
+    reconciles the two and is exactly why the first regression test could not
+    see this.
+    """
+
+    def test_reselecting_a_stale_row_gives_what_it_says(self) -> None:
+        spec = FilterSpec(max_size=5_000_000)
+        selected, excluded = selection_for(spec, gitignore=True, fndignore=True)
+        moved, _g, _f = apply_selection(
+            spec, {i for i in selected if not i.startswith("size:")} | {"size:10mb"}, excluded
+        )
+        assert moved.max_size == 10_000_000
+
+        stale = {i for i in selected if not i.startswith("size:")} | {"size:custom:5000000"}
+        back, _g, _f = apply_selection(moved, stale, excluded)
+        assert back.max_size == 5_000_000
+
+    def test_the_same_holds_for_a_date(self) -> None:
+        spec = FilterSpec(modified_after=dt.date(2024, 1, 1))
+        selected, excluded = selection_for(spec, gitignore=True, fndignore=True)
+        moved, _g, _f = apply_selection(
+            spec,
+            {i for i in selected if not i.startswith("modified:")} | {"modified:30"},
+            excluded,
+        )
+        assert moved.modified_after == dt.date.today() - dt.timedelta(days=30)
+
+        stale = {i for i in selected if not i.startswith("modified:")} | {
+            "modified:custom:2024-01-01"
+        }
+        back, _g, _f = apply_selection(moved, stale, excluded)
+        assert back.modified_after == dt.date(2024, 1, 1)
+
+    def test_the_id_carries_the_value(self) -> None:
+        selected, _excluded = selection_for(
+            FilterSpec(max_size=5_000_000), gitignore=True, fndignore=True
+        )
+        assert "size:custom:5000000" in selected

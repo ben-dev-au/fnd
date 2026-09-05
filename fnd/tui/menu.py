@@ -1572,22 +1572,25 @@ def _source_trailing(collection_name: str, idx: int) -> Callable[[FNDApp], str]:
         if idx >= len(sources):
             return ""
         src = sources[idx]
-        # The file types are the filter set's, not the include globs': those
-        # are folded into ``filters.kinds`` when the config loads.
+        import re as _re
+
         from fnd.kinds import KIND_BY_ID
 
         kinds = list(src.effective_filters.kinds)
-        if not kinds and src.includes:
-            # Globs that name a suffix restrict the types just as kinds do,
-            # even when they are not a complete set and so were not folded in.
-            suffixes = {
-                sfx
-                for glob in src.includes
-                for sfx in (glob[glob.rfind(".") :],)
-                if glob.rfind(".") != -1
-            }
+        # A suffix glob restricts the type; anything else restricts the path.
+        # ``split_type_globs``' remainder is not the same question: it also
+        # holds suffix globs that name only part of a kind.
+        path_globs = [g for g in src.includes if not _re.fullmatch(r"\*\*/\*\.\w+", g)]
+        if not kinds and src.includes and not path_globs:
+            # Suffix globs restrict the types as kinds do, even when they are
+            # not a complete set and so were not folded in. A path glob among
+            # them does not: include globs are ORed, so "notes/**" admits
+            # every type under notes/ whatever its neighbours say.
+            suffixes = {glob[glob.rfind(".") :] for glob in src.includes if glob.rfind(".") != -1}
             kinds = sorted({k for k, spec in KIND_BY_ID.items() if set(spec.suffixes) & suffixes})
         types = ", ".join(kinds) if kinds else "All types"
+        if path_globs:
+            types = f"{types} · path globs"
         suffix = ""
         try:
             p = Path(src.path)
@@ -2066,7 +2069,7 @@ def _filters_defaults(app: FNDApp) -> Any:
 
 def _open_filter_browser(app: FNDApp) -> None:
     """The defaults, as branches rather than a column of text boxes."""
-    from fnd.config import default_config_path, load, write_setting
+    from fnd.config import default_config_path, load, write_settings
     from fnd.tui.settings_screen import (
         FilterBrowserScreen,
         _spec_from_filters,
@@ -2079,15 +2082,17 @@ def _open_filter_browser(app: FNDApp) -> None:
         values = _spec_to_mapping(spec)
         values["respect_gitignore"] = gitignore
         values["respect_fndignore"] = fndignore
-        for name, value in values.items():
-            write_setting(
-                config_path=default_config_path(),
-                dotted_path=f"defaults.filters.{name}",
-                # An empty list is written, not deleted: deleting the key lets
-                # the model default (exclude_tags = ["no_index"]) come back,
-                # so "clear all" silently reinstated an exclusion.
-                value=None if value == "" else value,
-            )
+        # One write, not thirteen: a failure partway through used to leave a
+        # filter set that was neither the old one nor the new one. An empty
+        # list is written rather than deleted, since deleting the key lets the
+        # model default (exclude_tags = ["no_index"]) come back.
+        write_settings(
+            config_path=default_config_path(),
+            values={
+                f"defaults.filters.{name}": (None if value == "" else value)
+                for name, value in values.items()
+            },
+        )
         app._config = load()  # type: ignore[attr-defined]
         app._refresh_status()  # type: ignore[attr-defined]
 
@@ -2158,7 +2163,7 @@ def _summary_index_filters(app: FNDApp) -> str:
         bits.append(f"{len(f.kinds)} types")
     if f.max_size or f.min_size:
         bits.append("size")
-    if f.created_after or f.modified_after:
+    if any((f.created_after, f.created_before, f.modified_after, f.modified_before)):
         bits.append("dates")
     if f.frontmatter or f.expression:
         bits.append("custom")

@@ -53,9 +53,18 @@ RESERVED_FACTS: Final[frozenset[str]] = frozenset(
     }
 )
 
-# Kinds that can carry a YAML frontmatter block. Imported lazily-ish here
-# rather than from fnd.filters to keep this module free of that dependency.
-_FRONTMATTER_KINDS: Final[frozenset[str]] = frozenset({"md"})
+
+def _frontmatter_kinds() -> frozenset[str]:
+    """Kinds that can carry a YAML frontmatter block.
+
+    Read from the filter vocabulary rather than duplicated: two literals
+    that had to stay equal would reinstate the dropped-.txt regression the
+    moment one of them widened.
+    """
+    from fnd.filters.dimensions import NOTE_KINDS
+
+    return NOTE_KINDS
+
 
 _TAG_FACTS: Final[dict[str, str]] = {
     "file.tags.os": "os",
@@ -155,7 +164,7 @@ class FileFacts(Mapping[str, object]):
         if self._fm_read:
             return self._fm
         self._fm_read = True
-        if kind_for_suffix(self._path.suffix) not in _FRONTMATTER_KINDS:
+        if kind_for_suffix(self._path.suffix) not in _frontmatter_kinds():
             # Reading a PDF or a CSV as text to look for a YAML block opens
             # every candidate in the source for nothing.
             return self._fm

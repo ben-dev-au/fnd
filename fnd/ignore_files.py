@@ -18,7 +18,6 @@ Two rules are load-bearing and easy to lose:
 from __future__ import annotations
 
 import re
-import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,6 +48,8 @@ class Pattern:
     dir_only: bool
     source: str
     lineno: int
+    fold_case: bool = False
+    """Match against a lowercased path, as git does under core.ignorecase."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +90,7 @@ def _class_span(pattern: str, i: int) -> int:
     return j + 1 if j < len(pattern) else i
 
 
-def _translate_segment(segment: str) -> str:
+def _translate_segment(segment: str, *, fold_case: bool = False) -> str:
     out: list[str] = []
     i = 0
     while i < len(segment):
@@ -116,10 +117,11 @@ def _translate_segment(segment: str) -> str:
             out.append("[" + body.replace("\\", "\\\\") + "]")
             i = end
         elif ch == "\\" and i + 1 < len(segment):
-            out.append(re.escape(segment[i + 1]))
+            nxt = segment[i + 1]
+            out.append(re.escape(nxt.lower() if fold_case else nxt))
             i += 2
         else:
-            out.append(re.escape(ch))
+            out.append(re.escape(ch.lower() if fold_case else ch))
             i += 1
     return "".join(out)
 
@@ -135,7 +137,24 @@ def _collapse(segments: list[str]) -> list[str]:
     return out
 
 
-def _translate(pattern: str, *, anchored: bool) -> re.Pattern[str]:
+def _fold_case(directory: Path, name: str) -> bool:
+    """Whether this filesystem is case-insensitive, asked of it directly.
+
+    git sets ``core.ignorecase`` from the filesystem at clone time, so a
+    case-sensitive volume on macOS gets case-sensitive matching. Keying off
+    ``sys.platform`` instead would exclude files git keeps — the same class of
+    silent over-exclusion, in the other direction.
+    """
+    flipped = name.upper() if name != name.upper() else name.lower()
+    if flipped == name:
+        return False
+    try:
+        return (directory / flipped).exists()
+    except OSError:
+        return False
+
+
+def _translate(pattern: str, *, anchored: bool, fold_case: bool) -> re.Pattern[str]:
     segments = _collapse(pattern.split("/"))
     parts: list[str] = []
     for index, segment in enumerate(segments):
@@ -145,7 +164,7 @@ def _translate(pattern: str, *, anchored: bool) -> re.Pattern[str]:
             # zero or more directories.
             parts.append("(?:.*)" if last else "(?:[^/]+/)*")
             continue
-        parts.append(_translate_segment(segment))
+        parts.append(_translate_segment(segment, fold_case=fold_case))
         if not last:
             parts.append("/")
     body = "".join(parts)
@@ -154,16 +173,17 @@ def _translate(pattern: str, *, anchored: bool) -> re.Pattern[str]:
     # contents because the walker never descends into an ignored directory —
     # extending the regex over descendants instead would let a negated
     # pattern re-include files the following patterns should still exclude.
-    # git sets core.ignorecase on a case-insensitive filesystem, which is the
-    # default on macOS and Windows, and then ignores README.md for a
-    # "readme.md" rule. Matching case-sensitively there disagrees with the
-    # tool whose semantics this implements.
-    flags = re.IGNORECASE if sys.platform in ("darwin", "win32") else 0
-    return re.compile(f"^{prefix}{body}$", flags)
+    # No re.IGNORECASE: that folds a character class too, so "*.[CH]" would
+    # match "x.c" where git keeps it. The literals are lowered above and the
+    # path is lowered at match time, which is what git's WM_CASEFOLD does.
+    return re.compile(f"^{prefix}{body}$")
 
 
-def parse_patterns(text: str) -> tuple[Pattern, ...]:
-    """One :class:`Pattern` per significant line, in file order."""
+def parse_patterns(text: str, *, fold_case: bool = False) -> tuple[Pattern, ...]:
+    """One :class:`Pattern` per significant line, in file order.
+
+    ``fold_case`` matches git's ``core.ignorecase``; see :func:`_fold_case`.
+    """
     out: list[Pattern] = []
     for lineno, raw in enumerate(text.splitlines(), start=1):
         line = _strip_trailing_space(raw)
@@ -188,7 +208,8 @@ def parse_patterns(text: str) -> tuple[Pattern, ...]:
         if not line:
             continue
         try:
-            regex = _translate(line, anchored=anchored)
+            regex = _translate(line, anchored=anchored, fold_case=fold_case)
+
         except re.error:
             # git tolerates a pattern its own matcher cannot use — an inverted
             # character range, say — by never matching it. Aborting the whole
@@ -201,6 +222,7 @@ def parse_patterns(text: str) -> tuple[Pattern, ...]:
                 dir_only=dir_only,
                 source=source,
                 lineno=lineno,
+                fold_case=fold_case,
             )
         )
     return tuple(out)
@@ -223,7 +245,7 @@ class IgnoreFile:
         for pattern in self.patterns:
             if pattern.dir_only and not is_dir:
                 continue
-            if pattern.regex.match(rel):
+            if pattern.regex.match(rel.lower() if pattern.fold_case else rel):
                 decided = pattern  # last match in a file wins
         return IgnoreMatch(decided, self.path) if decided is not None else None
 
@@ -236,7 +258,7 @@ def load_ignore_file(directory: Path, name: str) -> IgnoreFile | None:
     except OSError:
         return None
     text = raw.decode("utf-8", errors="replace")
-    patterns = parse_patterns(text)
+    patterns = parse_patterns(text, fold_case=_fold_case(directory, name))
     return IgnoreFile(path=path, anchor=directory, patterns=patterns) if patterns else None
 
 
@@ -272,7 +294,7 @@ class IgnoreStack:
 
 
 # Climbing stops here; a pathological path must not walk to the filesystem root.
-def ancestor_stack(root: Path, names: Sequence[str]) -> IgnoreStack:
+def ancestor_stack(_root: Path, _names: Sequence[str]) -> IgnoreStack:
     """Always empty: ignore files apply from the source root downwards.
 
     git would apply an enclosing repository's rules to a subdirectory, but a

@@ -666,3 +666,37 @@ async def test_cursor_move_does_not_call_render_all(
             f"{counter['n'] - baseline} times across 10 cursor moves; "
             "should be zero — only -cursor class toggles, no row rerenders"
         )
+
+
+class TestSourceRowMatchesTheWalk:
+    """A row that names file types must not contradict what is indexed."""
+
+    @staticmethod
+    def _row(tmp_path, includes):  # type: ignore[no-untyped-def]
+        from fnd.config import Config
+        from fnd.tui.menu import _source_trailing
+
+        cfg = Config.model_validate(
+            {
+                "defaults": {"filters": {"exclude_tags": []}},
+                "collections": {"c": {"sources": [{"path": str(tmp_path), "includes": includes}]}},
+            }
+        )
+
+        class _App:
+            _config = cfg
+
+        return _source_trailing("c", 0)(_App())  # type: ignore[arg-type]
+
+    def test_a_path_glob_means_the_types_are_not_restricted(self, tmp_path: Path) -> None:
+        """Include globs are ORed, so ``notes/**`` admits every type under
+        notes/ whatever its neighbours say. Reading the suffixes alone said
+        "md" for a source that yields PDFs."""
+        assert "All types" in self._row(tmp_path, ["**/*.md", "notes/**"])
+        assert "path globs" in self._row(tmp_path, ["**/*.md", "notes/**"])
+
+    def test_a_suffix_glob_still_names_its_type(self, tmp_path: Path) -> None:
+        assert self._row(tmp_path, ["**/*.md"]) == "md"
+
+    def test_no_includes_is_every_type(self, tmp_path: Path) -> None:
+        assert self._row(tmp_path, []) == "All types"

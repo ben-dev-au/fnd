@@ -1650,6 +1650,12 @@ class FNDApp(App[None]):
         one at a time is a lot of thrown-away work. Holding the modifier
         batches them; the query runs once, on the next Enter in the query bar.
         """
+        # Only the two scope trees: the action declares those contexts, but
+        # ``contexts`` groups the keybindings menu and gates nothing, so the
+        # results pane reached here too — posting NodeSelected on a result row
+        # and leaving the deferral set for the next real toggle.
+        if self._focus_context() not in ("collections", "filters"):
+            return
         tree = self._focused_tree()
         if tree is None:
             return

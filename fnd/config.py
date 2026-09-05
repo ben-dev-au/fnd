@@ -969,6 +969,59 @@ def write_collection(
     secure_write_text(config_path, tomlkit.dumps(doc))
 
 
+def write_settings(*, config_path: Path, values: dict[str, object]) -> Config:
+    """Apply several dotted-path settings in one read-modify-write.
+
+    One filter set is thirteen keys. Writing them one at a time meant a
+    failure partway through — a read-only directory, a full disk — left a
+    config that was neither the old set nor the new one.
+    """
+    import tomlkit
+
+    doc = (
+        tomlkit.parse(config_path.read_text(encoding="utf-8"))
+        if config_path.exists()
+        else tomlkit.document()
+    )
+    for dotted_path, value in values.items():
+        _apply_setting(doc, dotted_path, value)
+
+    raw = tomllib.loads(tomlkit.dumps(doc))
+    config = Config.model_validate(raw)
+
+    from fnd._perms import secure_mkdir, secure_write_text
+
+    secure_mkdir(config_path.parent)
+    secure_write_text(config_path, _spaced_tables(tomlkit.dumps(doc)))
+    return config
+
+
+def _apply_setting(doc: object, dotted_path: str, value: object) -> None:
+    """One dotted-path edit against an open tomlkit document."""
+    import tomlkit
+
+    parts = [p for p in dotted_path.split(".") if p]
+    if not parts:
+        raise ValueError("dotted_path must contain at least one segment")
+    *parents, leaf = parts
+    cursor: object = doc
+    for p in parents:
+        existing = cursor.get(p) if hasattr(cursor, "get") else None  # type: ignore[union-attr]
+        if existing is None or not hasattr(existing, "get"):
+            new_tbl = tomlkit.table()
+            cursor[p] = new_tbl  # type: ignore[index]
+            cursor = new_tbl
+        else:
+            cursor = existing
+    if value is None:
+        # TOML has no null, so an emptied optional setting is the absence of
+        # the key. Writing None instead raises out of tomlkit.
+        with contextlib.suppress(KeyError):
+            del cursor[leaf]  # type: ignore[union-attr]
+    else:
+        cursor[leaf] = _grouped(value)  # type: ignore[index]
+
+
 def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Config:
     """Update a single field in the config TOML by dotted path.
 
@@ -994,26 +1047,7 @@ def write_setting(*, config_path: Path, dotted_path: str, value: object) -> Conf
     else:
         doc = tomlkit.document()
 
-    parts = [p for p in dotted_path.split(".") if p]
-    if not parts:
-        raise ValueError("dotted_path must contain at least one segment")
-    *parents, leaf = parts
-    cursor: object = doc
-    for p in parents:
-        existing = cursor.get(p) if hasattr(cursor, "get") else None  # type: ignore[union-attr]
-        if existing is None or not hasattr(existing, "get"):
-            new_tbl = tomlkit.table()
-            cursor[p] = new_tbl  # type: ignore[index]
-            cursor = new_tbl
-        else:
-            cursor = existing
-    if value is None:
-        # TOML has no null, so an emptied optional setting is the absence of
-        # the key. Writing None instead raises out of tomlkit.
-        with contextlib.suppress(KeyError):
-            del cursor[leaf]  # type: ignore[union-attr]
-    else:
-        cursor[leaf] = _grouped(value)  # type: ignore[index]
+    _apply_setting(doc, dotted_path, value)
 
     # Validate the full document before committing to disk. Re-parsing the
     # tomlkit dump gives us a plain dict — Pydantic doesn't accept tomlkit's

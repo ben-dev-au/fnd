@@ -175,14 +175,16 @@ def spec_branches(spec: FilterSpec, sample: SourceSample | None = None) -> list[
         )
     )
     size_items = [(f"size:{i}", lbl) for i, lbl, _ in _SIZES]
-    if spec.max_size is not None and _size_id(spec.max_size) == CUSTOM:
-        size_items.insert(1, (f"size:{CUSTOM}", f"Under {_human_size(spec.max_size)}"))
+    size_id = _size_id(spec.max_size)
+    if size_id.startswith(f"{CUSTOM}:"):
+        size_items.insert(1, (f"size:{size_id}", f"Under {_human_size(spec.max_size or 0)}"))
     branches.append(Branch("size", "Maximum file size", "radio", tuple(size_items)))
     for field_name, label in (("modified", "Modified within"), ("created", "Created within")):
         items = [(f"{field_name}:{i}", lbl) for i, lbl, _ in _WINDOWS]
         bound = getattr(spec, f"{field_name}_after")
-        if bound is not None and _window_id(bound) == CUSTOM:
-            items.insert(1, (f"{field_name}:{CUSTOM}", f"Since {bound.isoformat()}"))
+        window_id = _window_id(bound)
+        if window_id.startswith(f"{CUSTOM}:"):
+            items.insert(1, (f"{field_name}:{window_id}", f"Since {bound.isoformat()}"))
         branches.append(Branch(field_name, label, "radio", tuple(items)))
     branches.append(
         Branch(
@@ -240,11 +242,17 @@ def _tags_from(ids: set[str] | frozenset[str]) -> dict[str, tuple[str, ...]]:
 
 
 CUSTOM = "custom"
-"""Chosen when the stored bound is not one of the offered options.
+"""Prefix for the row shown when a bound is not one of the offered options.
 
 The options set a bound; the bound itself is an arbitrary number or date.
 Mapping an unmatched value back to "any" let an unrelated toggle delete it,
 and made a window stop matching two days after it was picked.
+
+The id carries the value — ``size:custom:5000000`` — rather than meaning
+"whatever the spec holds". The tree's labels are built when it is rebuilt
+while a selection is resolved as it is made, so an id that referred to the
+current spec resolved a row still reading "Under 5 MB" to a bound the user
+had since changed.
 """
 
 
@@ -258,14 +266,23 @@ def _human_size(value: int) -> str:
 def _size_id(value: int | None) -> str:
     if value is None:
         return "any"
-    return next((i for i, _l, v in _SIZES if v == value), CUSTOM)
+    return next((i for i, _l, v in _SIZES if v == value), f"{CUSTOM}:{value}")
 
 
 def _window_id(value: dt.date | None) -> str:
     if value is None:
         return "any"
     days = (dt.date.today() - value).days
-    return next((i for i, _l, d in _WINDOWS if d is not None and abs(d - days) <= 1), CUSTOM)
+    return next(
+        (i for i, _l, d in _WINDOWS if d is not None and abs(d - days) <= 1),
+        f"{CUSTOM}:{value.isoformat()}",
+    )
+
+
+def _custom_value(selected: set[str] | frozenset[str], field: str) -> str | None:
+    """The value carried by a selected ``<field>:custom:<value>`` id."""
+    prefix = f"{field}:{CUSTOM}:"
+    return next((i[len(prefix) :] for i in selected if i.startswith(prefix)), None)
 
 
 def apply_selection(
@@ -277,8 +294,9 @@ def apply_selection(
     tags = _tags_from(excluded)
     today = dt.date.today()
 
-    if f"size:{CUSTOM}" in selected:
-        max_size = spec.max_size
+    custom_size = _custom_value(selected, "size")
+    if custom_size is not None:
+        max_size = int(custom_size)
     else:
         max_size = next(
             (v for i, _l, v in _SIZES if f"size:{i}" in selected and v is not None),
@@ -286,8 +304,9 @@ def apply_selection(
         )
     bounds: dict[str, dt.date | None] = {}
     for field_name in ("modified", "created"):
-        if f"{field_name}:{CUSTOM}" in selected:
-            bounds[f"{field_name}_after"] = getattr(spec, f"{field_name}_after")
+        custom_date = _custom_value(selected, field_name)
+        if custom_date is not None:
+            bounds[f"{field_name}_after"] = dt.date.fromisoformat(custom_date)
             continue
         days = next(
             (d for i, _l, d in _WINDOWS if f"{field_name}:{i}" in selected and d is not None),

@@ -2150,12 +2150,16 @@ class SourceFormScreen(Screen[None]):
             ),
             self._field_item(
                 "includes_custom",
-                "Extra paths to include",
+                "Restrict to these paths",
                 hint="glob patterns, comma-separated",
                 description=(
-                    "Glob patterns for anything the file types cannot express, "
-                    "such as a hidden folder ('.obsidian/**'). File types "
-                    "themselves belong in Index filters. Leave empty for none."
+                    "Leave empty to index the whole folder. Set it and ONLY "
+                    "matching paths are indexed — these globs replace the "
+                    "default, they do not add to it, so 'notes/**' alone "
+                    "means notes/ and nothing else. To keep everything and "
+                    "add a hidden folder, name both: "
+                    "'**/*.md, .obsidian/**'. File types belong in Index "
+                    "filters."
                 ),
             ),
             MenuItem(
@@ -4937,7 +4941,10 @@ class FilterBrowserScreen(Screen[None]):
     FilterBrowserScreen #filter_legend {
         height: auto; padding: 0 1; color: $text-muted; text-style: dim;
     }
-    FilterBrowserScreen #filter_summary { height: auto; padding: 0 1; color: $text-muted; }
+    FilterBrowserScreen #filter_summary {
+        height: auto; max-height: 5; overflow-y: auto;
+        padding: 0 1; color: $text-muted;
+    }
     FilterBrowserScreen > #footer_hints {
         dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
     }
@@ -5026,7 +5033,7 @@ class FilterBrowserScreen(Screen[None]):
                     ("t", "As text"),
                     ("c", "Clear"),
                     ("^S", "Save"),
-                    ("Esc", "Discard"),
+                    ("Esc/←", "Discard"),
                 ),
             )
         )

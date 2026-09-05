@@ -461,6 +461,15 @@ class TestFrontmatterScopeIsMarkdownOnly:
         spec = DefaultFilters(exclude_tags=[], frontmatter="type == 'note'")
         assert _names(tmp_path, defaults=spec) == {"note.md", "plain.txt", "paper.pdf"}
 
+    def test_the_markdown_extension_is_judged_too(self, tmp_path: Path) -> None:
+        """``.markdown`` is Markdown and does carry frontmatter. ``main`` keyed
+        on ``suffix == ".md"`` and never filtered it; that was the accident,
+        and this is the one extension whose behaviour the fix changed."""
+        _write(tmp_path, "yes.markdown", "---\ntype: note\n---\nbody\n")
+        _write(tmp_path, "no.markdown", "---\ntype: other\n---\nbody\n")
+        spec = DefaultFilters(exclude_tags=[], frontmatter="type == 'note'")
+        assert _names(tmp_path, defaults=spec) == {"yes.markdown"}
+
     def test_a_markdown_file_is(self, tmp_path: Path) -> None:
         _write(tmp_path, "yes.md", "---\ntype: note\n---\nbody\n")
         _write(tmp_path, "no.md", "---\ntype: other\n---\nbody\n")

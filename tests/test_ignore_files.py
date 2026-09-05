@@ -8,7 +8,6 @@ global excludes and ``.git/info/exclude`` — without that, a machine with a
 from __future__ import annotations
 
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -273,19 +272,75 @@ class TestScopeIsTheSourceDownwards:
 
 
 class TestCaseFollowsGit:
-    @pytest.mark.skipif(
-        sys.platform not in ("darwin", "win32"), reason="case-insensitive filesystems"
-    )
-    def test_a_pattern_matches_regardless_of_case(self, tmp_path: Path) -> None:
-        """git sets core.ignorecase on these platforms and ignores readme.md
-        for a README.md rule; the oracle suite's vocabulary is all lowercase,
-        so it could never see the disagreement."""
+    """Asserted differentially. git takes case from the filesystem
+    (``core.ignorecase``, set at init time), so asserting fnd's own answer
+    would pass on a case-folding volume and on a case-sensitive one, while
+    only one of them agrees with git. The oracle suite cannot see this
+    either: its generated vocabulary is all lowercase."""
+
+    def test_fnd_and_git_agree_on_a_case_mismatched_pattern(self, tmp_path: Path) -> None:
         from fnd.config import Config
         from fnd.walk import walk_sources
 
-        (tmp_path / ".gitignore").write_text("README.md\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        (tmp_path / ".gitignore").write_text("README.md\nBuild/\n", encoding="utf-8")
         (tmp_path / "readme.md").write_text("x", encoding="utf-8")
         (tmp_path / "keep.txt").write_text("x", encoding="utf-8")
+        (tmp_path / "build").mkdir()
+        (tmp_path / "build" / "x.md").write_text("x", encoding="utf-8")
+
         cfg = Config.model_validate({"collections": {"c": {"sources": [{"path": str(tmp_path)}]}}})
-        got = {p.name for p in walk_sources(sources=cfg.collections["c"].sources)}
-        assert got == {"keep.txt"}
+        ours = {
+            str(p.relative_to(tmp_path)) for p in walk_sources(sources=cfg.collections["c"].sources)
+        }
+        theirs = {
+            rel
+            for rel in ("readme.md", "keep.txt", "build/x.md")
+            if subprocess.run(
+                ["git", "-C", str(tmp_path), "check-ignore", rel], capture_output=True
+            ).returncode
+            != 0
+        }
+        assert ours == theirs
+
+    @pytest.mark.parametrize(
+        ("pattern", "rel"),
+        [
+            ("[Bb]in/x.md", "bin/x.md"),
+            ("*.[CH]", "x.c"),
+            ("*.[ch]", "x.c"),
+            ("doc[0-9].md", "doc3.md"),
+            ("[MN]ake.md", "make.md"),
+            ("*.MD", "note.md"),
+            ("Build/", "build/x.md"),
+        ],
+    )
+    def test_a_character_class_is_not_folded(self, tmp_path: Path, pattern: str, rel: str) -> None:
+        """git lowercases the text but compares a class member literally, so
+        ``*.[CH]`` does NOT match ``x.c``. Compiling with ``re.IGNORECASE``
+        folds both sides and silently drops files git keeps.
+
+        Only a file the walker can index is a valid probe: one with no suffix
+        is skipped for its kind, which reads as "ignored" and hides a
+        mismatch — that flaw cost a false result while writing this.
+        """
+        from fnd.config import Config
+        from fnd.walk import walk_sources
+
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        (tmp_path / ".gitignore").write_text(pattern + "\n", encoding="utf-8")
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x", encoding="utf-8")
+
+        cfg = Config.model_validate({"collections": {"c": {"sources": [{"path": str(tmp_path)}]}}})
+        kept = {
+            str(p.relative_to(tmp_path)) for p in walk_sources(sources=cfg.collections["c"].sources)
+        }
+        git_ignores = (
+            subprocess.run(
+                ["git", "-C", str(tmp_path), "check-ignore", rel], capture_output=True
+            ).returncode
+            == 0
+        )
+        assert (rel not in kept) == git_ignores
