@@ -678,6 +678,23 @@ class ScopeController:
         query = self._app._search.current_query
         if query:
             self._app._search.run(query)
+        # Results arriving re-lay the sidebar out, and Textual clamps a tree's
+        # scroll offset without moving its cursor — so the row the user was on
+        # can end up off screen until the next keypress snaps back to it.
+        self._app.call_after_refresh(self._keep_scope_cursors_visible)
+
+    def _keep_scope_cursors_visible(self) -> None:
+        for widget_id in ("#collections_panel_tree", "#filters_panel_tree"):
+            try:
+                tree = self._app.query_one(widget_id, Tree)
+            except Exception:
+                continue
+            line = tree.cursor_line
+            height = tree.size.height
+            top = tree.scroll_offset.y
+            if line < 0 or not height or top <= line < top + height:
+                continue
+            tree.scroll_to_line(line, animate=False)
 
     # ── Clear all filters ─────────────────────────────────────────
 

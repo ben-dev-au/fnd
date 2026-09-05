@@ -73,6 +73,7 @@ from fnd.tui.widgets.preview_container import (
     _HitWithQuery,
 )
 from fnd.tui.widgets.results_tree import ResultsTree
+from fnd.tui.widgets.scope_tree import ScopeTree
 
 # App-wide thin scrollbars: every stock Textual ScrollBar (results/sidebar
 # trees, code fences, settings lists) renders the thumb as a hairline glyph
@@ -496,7 +497,7 @@ class FNDApp(App[None]):
                 # whole collection in/out of scope). Filters tree uses
                 # the skip-expanded-parent subclass so File-type /
                 # Modified headers behave the same as file rows.
-                yield Tree("Collections", id="collections_panel_tree")
+                yield ScopeTree("Collections", id="collections_panel_tree")
                 # The filters tree lives inside a bordered container so a clear
                 # affordance can dock at the top and stay in view whatever the
                 # tag list's scroll. The container wears the border / title /
