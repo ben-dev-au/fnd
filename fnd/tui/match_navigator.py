@@ -1,10 +1,18 @@
-"""Within-result preview match navigation (n / b).
+"""Intra-file preview match navigation (n / b).
 
 The results-pane arrows step between results; within a result whose chunk is
 taller than the viewport they skip straight past matches below the fold. This
-module hops between those hidden matches by viewport — scoped to the current
-result — and surfaces ``▲a ▼b`` view counts so the user knows they exist. The
-geometry (next/prev stop, hop counting) is pure and unit-tested; region
+module hops between those hidden matches by viewport and surfaces ``▲a ▼b``
+view counts so the user knows they exist.
+
+A hop stays inside the current result's chunk. At its edge the press HANDS OVER
+to the file's adjacent listed section in document order, by moving the results
+selection — so leaving a section is always a visible result switch, never a
+silent scroll into a neighbour's match. The counts stay per-section, which is
+what they are for: ``▼0`` means the next press leaves this section, not that it
+does nothing.
+
+The geometry (next/prev stop, hop counting) is pure and unit-tested; region
 resolution + scrolling live on :class:`MatchNavigator` below.
 """
 
@@ -50,6 +58,19 @@ def view_anchors(ys: list[int], vh: int, home: int | None = None) -> list[int]:
             anchors.append(y)
             covered_to = y + vh
     return anchors
+
+
+def adjacent_section(seqs: list[int], current: int, *, forward: bool) -> int | None:
+    """The listed section ``n``/``b`` hands over to once ``current`` is exhausted
+    — the next (or previous) in DOCUMENT order, wrapping at the file's ends, and
+    ``None`` when there is nowhere to go. Not results order: the tree ranks by
+    score, so its neighbouring row is somewhere else in the file entirely."""
+    ordered = sorted(set(seqs))
+    if not ordered or ordered == [current]:
+        return None
+    if forward:
+        return next((s for s in ordered if s > current), ordered[0])
+    return next((s for s in reversed(ordered) if s < current), ordered[-1])
 
 
 def _view_of(anchors: list[int], y: int) -> int:
@@ -150,9 +171,8 @@ class MatchNavigator:
       mount settles, on a nav keypress, on a user scroll) and cached, so the
       border refresh stays layout-free.
 
-    ``n``/``b`` are likewise scoped: they hop between the current result's
-    matching views, never crossing into another result (that stays the
-    results-pane's job).
+    ``n``/``b`` hop between the current result's matching views, and at its edge
+    hand over to the file's adjacent listed section (see the module docstring).
     """
 
     def __init__(self, app: FNDApp) -> None:
@@ -332,9 +352,9 @@ class MatchNavigator:
         return top, bottom
 
     def _chunk_stops(self, pane: VerticalScroll) -> list[int]:
-        """The current result's match stops (content-space tops). Falls back to
-        every mounted stop when the chunk extent is unknown (flat preview) so
-        ``n``/``b`` still work there, just unscoped."""
+        """The current result's match stops (content-space tops). An unknown
+        extent (flat preview) falls back to every mounted stop — which on that
+        substrate is none, so the keys are inert rather than unscoped."""
         stops = self._region_stops(pane)
         extent = self._current_chunk_extent(pane)
         if extent is None:
@@ -363,15 +383,37 @@ class MatchNavigator:
         return self._count  # cached — cheap, no subtree walk
 
     def current_chunk_has_stops(self) -> bool:
-        """Whether ``n``/``b`` can actually reach a match from where the user is.
+        """Whether ``n``/``b`` can do anything from where the user is: walk this
+        section's own matches, or hand over to another listed section."""
+        return self._chunk_has_match_data() or self.can_hop_section()
+
+    def _is_dead_end(self) -> bool:
+        """Whether this chunk offers nothing to walk to — the only state a
+        hand-over may fire from when no stop resolved. A chunk still mounting or
+        still building is not one: the data gate reads False in both windows, and
+        handing over there walks the reader out of the section mid-navigation."""
+        preview = getattr(self._app, "_preview", None)
+        widgets: dict[int, object] = getattr(preview, "chunk_widgets", None) or {}
+        seq = self._focus_seq()
+        if seq is None or seq not in widgets:
+            return False
+        # Its blocks register DURING the build, so an empty match set before
+        # ``build_done`` means "not yet". This is the wide window — seconds on a
+        # big chunk — where the un-mounted one above is a tick.
+        build_done = getattr(widgets[seq], "build_done", None)
+        if build_done is not None and not build_done.is_set():
+            return False
+        return not self._chunk_has_match_data()
+
+    def _chunk_has_match_data(self) -> bool:
+        """Whether the current chunk carries a match at all.
 
         ``count`` spans the whole mounted preview, but ``_go`` operates on
         ``_chunk_stops`` — scoped to the current result's chunk. Gating the
         footer hint on ``count`` therefore advertised ``n/b Matches`` on a chunk
-        where both keys silently no-op. Mirrors ``_chunk_stops``' own scoping
-        rule, including its unscoped fallback, and reads data only (widget
-        classes and registered match blocks), never regions — so it is safe on
-        the same paths ``count`` is.
+        where both keys silently no-op. Mirrors ``_chunk_stops``' own scoping,
+        and reads data only — never regions — so it answers while the layout is
+        still resolving, which is what tells a mid-mount press from a dead end.
         """
 
         from fnd.tui.widgets.markdown import (
@@ -681,17 +723,134 @@ class MatchNavigator:
     def prev(self) -> None:
         self._go(forward=False)
 
+    def _active_parent(self) -> str | None:
+        """The file both the preview and the anchor name, or ``None`` when they
+        disagree — a whole navigation long, since the anchor is armed before the
+        container is activated. ``None`` on a flat preview, which nulls
+        ``active`` and contributes no stops for n/b to walk."""
+        preview = getattr(self._app, "_preview", None)
+        parent = getattr(getattr(preview, "active", None), "parent_doc_id", None)
+        anchor = getattr(getattr(self._app, "_preview_scroll", None), "anchor", None)
+        armed = getattr(anchor, "parent_id", None)
+        if parent is None or (armed is not None and armed != parent):
+            return None
+        return parent
+
+    def _listed_sections(self) -> list[int]:
+        """Chunk seqs of the current file's listed sections, in document order."""
+        parent = self._active_parent()
+        if parent is None:
+            return []
+        groups = getattr(getattr(self._app, "_search", None), "groups", None) or []
+        for group in groups:
+            if group.parent_id == parent:
+                return sorted(h.chunk_seq for h in group.hits)
+        return []
+
+    def _select_section_row(self, seq: int) -> bool:
+        """Put the results cursor on this file's row for ``seq``, which is what
+        performs the hand-over: the highlight drives the normal result landing,
+        so mounting and windowing stay on the path that already handles them."""
+        from fnd.tui.widgets.results_tree import ResultsTree
+
+        try:
+            tree = self._app.query_one("#results_pane", ResultsTree)
+        except Exception:
+            return False
+        parent = self._active_parent()
+        file_node = next(
+            (
+                node
+                for node in tree.root.children
+                if node.data
+                and node.data.get("kind") == "file"
+                and node.data["group"].parent_id == parent
+            ),
+            None,
+        )
+        if file_node is None:
+            return False
+        # Found in the tree's own model, so a row that does not exist costs no
+        # expansion of a node the reader had collapsed.
+        row = next(
+            (
+                child
+                for child in file_node.children
+                if child.data
+                and child.data.get("kind") == "section"
+                and child.data["hit"].chunk_seq == seq
+            ),
+            None,
+        )
+        if row is None:
+            return False
+        if not file_node.is_expanded:
+            file_node.expand()  # its rows are what `_tree_lines` is read for
+        line = next((i for i, tl in enumerate(tree._tree_lines) if tl.node is row), None)
+        if line is None:
+            return False
+        preview = getattr(self._app, "_preview", None)
+        if preview is not None:
+            # A scan (Option+arrow) suppresses the load the highlight triggers,
+            # and only the tree's own key handler clears it.
+            preview._scan_move = False
+        if tree.cursor_line == line:
+            # ``move_cursor_to_line`` early-returns on the line it is already on,
+            # so no highlight fires and nothing loads. Reachable whenever a scan
+            # has moved the cursor ahead of the preview.
+            self._app._load_result_node(row.data)
+        else:
+            tree.move_cursor_to_line(line)
+        return True
+
+    def can_hop_section(self) -> bool:
+        """Whether a hand-over is available from here — data only (results rows
+        and the active file), so it is safe wherever the footer gate is.
+
+        Never with highlights off: the spec is empty, there is nothing to walk
+        to, and a hand-over would be the only thing the keys still did."""
+        if self._app._effective_match_spec.is_empty:
+            return False
+        seq = self._focus_seq()
+        if seq is None:
+            return False
+        return adjacent_section(self._listed_sections(), seq, forward=True) is not None
+
+    def _hop_section(self, *, forward: bool) -> bool:
+        """Hand over to the adjacent listed section of this file, in document
+        order. Returns whether it was taken."""
+        seq = self._focus_seq()
+        if seq is None or self._app._effective_match_spec.is_empty:
+            return False
+        target = adjacent_section(self._listed_sections(), seq, forward=forward)
+        if target is None:
+            return False
+        preview = getattr(self._app, "_preview", None)
+        parent = self._active_parent()
+        if preview is not None and parent is not None and not forward:
+            # The LANDING's intent, not a scroll of our own after it: the armed
+            # anchor re-applies its position as later chunks freeze, overwriting
+            # anything scrolled behind its back.
+            preview.pending_landing_intent = (parent, target, "last_match")
+        if not self._select_section_row(target):
+            if preview is not None:
+                preview.pending_landing_intent = None
+            return False
+        return True
+
     def _go(self, *, forward: bool) -> None:
         pane = self._pane()
         if pane is None:
             return
-        # Scope to the CURRENT result's chunk so n/b reveal its hidden matches
-        # and stop at its boundaries — never wandering into the next result
-        # (that's the results-pane's job). Fresh each press — never a stale snap.
+        # Scope to the CURRENT result's chunk so a hop reveals its hidden matches
+        # and stops at its boundaries; the edge is where the hand-over below takes
+        # over. Fresh each press — never a stale snap.
         stops = self._chunk_stops(pane)
         vh = pane.scrollable_content_region.height
         if not stops or vh <= 0:
-            self._schedule_measure()  # no scroll here either, so nothing else refreshes ▲▼
+            # Only a dead end may hand over; a chunk still arriving must wait.
+            if not self._is_dead_end() or not self._hop_section(forward=forward):
+                self._schedule_measure()  # no scroll, so nothing else refreshes ▲▼
             return
         extent = self._current_chunk_extent(pane)
         base = extent[0] if extent is not None else 0
@@ -704,6 +863,11 @@ class MatchNavigator:
         last = self._last(base)
         if last is not None and last in set(anchors):
             top = last
+        # Nothing off screen this way: hand over rather than wrap inside the
+        # section. A file with only this one keeps the wrap, in step_view.
+        off_screen = any(y >= top + vh for y in stops) if forward else any(y < top for y in stops)
+        if not off_screen and self._hop_section(forward=forward):
+            return
         target = step_view(anchors, stops, top, vh, forward=forward)
         if target is None:
             self._schedule_measure()  # no scroll, so nothing else refreshes ▲▼

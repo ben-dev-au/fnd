@@ -10,6 +10,7 @@ visible, not merely that the scroll offset moved.
 
 from __future__ import annotations
 
+import contextlib
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,7 @@ from textual.widgets import DataTable, Tree
 from fnd.config import Config, load
 from fnd.index import build_index
 from fnd.tui import FNDApp
-from tests._pilot_wait import safe_press, wait_until
+from tests._pilot_wait import safe_press, settle, wait_until
 
 
 def _write(p: Path, body: str) -> None:
@@ -271,15 +272,11 @@ async def test_n_reveals_second_table_match_below_the_fold(
 
 
 @pytest.mark.asyncio
-async def test_n_stays_within_the_current_result(cfg: Config, flashcards_index: Path) -> None:
-    """n/b are scoped to the CURRENT result's chunk — they hop between its hidden
-    matches and never cross into another result (the results-pane arrows' job).
-
-    Tested at the mechanism, not via a distant chunk background-mounting: navigate
-    to the multi-view table (which focus-mounts it AND its adjacent Summary
-    result), then assert the scoped stop set excludes the neighbour's match that
-    the unscoped set includes, and that hammering n never leaks past that scope.
-    """
+async def test_n_never_scrolls_a_neighbours_match_under_the_current_result(
+    cfg: Config, flashcards_index: Path
+) -> None:
+    """Leaving a section is a hand-over that moves the results selection, never
+    a silent scroll that shows a neighbour's match under this section's row."""
     app = FNDApp(index_dir=flashcards_index, config=cfg, collection="notes", initial_query="CRC")
     async with app.run_test(size=(110, 24)) as pilot:
         await pilot.pause()
@@ -305,13 +302,8 @@ async def test_n_stays_within_the_current_result(cfg: Config, flashcards_index: 
             timeout=30.0,
             message="the neighbouring result's match never mounted, so scope excludes nothing",
         )
-        assert len(nav._region_stops(pane)) > len(nav._chunk_stops(pane)), (
-            "expected a neighbouring result's match to be mounted and excluded by scope"
-        )
 
-        # Hammer n past the table's own two matches: it stays scoped every press —
-        # the stop set never grows and the burst cursor never indexes a foreign
-        # stop (which is how crossing into another result would manifest).
+        table_seq = _focus_seq(app)
         for _ in range(5):
             # `_go` early-returns when the chunk's stops are not resolvable yet,
             # which leaves `_last_rel` unset — so wait for the scope BEFORE
@@ -329,11 +321,19 @@ async def test_n_stays_within_the_current_result(cfg: Config, flashcards_index: 
             # reveal, which clears `_last_rel` by design. Both assertions are
             # about what the press recorded, so both read the captured value.
             landed = nav._last_rel
+            await pilot.pause()
+            await pilot.pause()
+            if _focus_seq(app) != table_seq:
+                await wait_until(
+                    pilot,
+                    lambda: _cursor_section_seq(app) == _focus_seq(app),
+                    timeout=30.0,
+                    message="n left the table without moving the results selection",
+                )
+                return
             assert landed is not None, "n did not record a landing stop"
-            await pilot.pause()
-            await pilot.pause()
             stops = nav._chunk_stops(pane)
-            assert len(stops) == 2, "n changed the scoped stop set — it left the current result"
+            assert len(stops) == 2, "n changed the scoped stop set while the result stayed put"
             extent = nav._current_chunk_extent(pane)
             assert extent is not None, "the chunk extent stopped resolving mid-walk"
             lo, hi = extent
@@ -341,3 +341,245 @@ async def test_n_stays_within_the_current_result(cfg: Config, flashcards_index: 
             # chunk's HEIGHT. Comparing it against the absolute extent passes
             # only while the chunk happens to start near the top of the document.
             assert 0 <= landed < hi - lo, "n landed outside the current result's chunk"
+
+
+def _focus_seq(app: FNDApp) -> int | None:
+    anchor = app._preview_scroll.anchor
+    return None if anchor is None else anchor.focus_chunk_seq
+
+
+def _cursor_section_seq(app: FNDApp) -> int | None:
+    """The chunk seq of the results row the cursor is on, or None."""
+    node = app.query_one("#results_pane", Tree).cursor_node
+    data = getattr(node, "data", None)
+    if not isinstance(data, dict) or data.get("kind") != "section":
+        return None
+    return data["hit"].chunk_seq
+
+
+async def _walk_until_handover(
+    pilot: Pilot[None], app: FNDApp, *, presses: int = 6
+) -> tuple[int, int]:
+    """Press n until the focused section changes; return the (seq, scroll_y) the
+    last press departed from."""
+    pane = app.query_one("#preview_pane", VerticalScroll)
+    start = _focus_seq(app)
+    departed = (start or 0, pane.scroll_offset.y)
+    for _ in range(presses):
+        departed = (_focus_seq(app) or 0, pane.scroll_offset.y)
+        before = pane.scroll_offset.y
+        app.action_nav_next_match()
+        # Gate on the press's own effect, not on a tick count that degrades to a
+        # no-op under load. A press that moves nothing ends the walk, so the
+        # timeout is control flow rather than a failure.
+        with contextlib.suppress(AssertionError):
+            await wait_until(
+                pilot,
+                lambda: _focus_seq(app) != start or pane.scroll_offset.y != before,
+                timeout=10.0,
+                quiet=True,
+            )
+        if _focus_seq(app) != start:
+            return departed
+    return departed
+
+
+@pytest.mark.asyncio
+async def test_n_hands_over_to_the_next_listed_section(cfg: Config, flashcards_index: Path) -> None:
+    """Exhausting the table's own views does not wrap forever inside it: the
+    next press moves to the file's next listed section, and the results cursor
+    moves with it so the row and the border name the same section."""
+    app = FNDApp(index_dir=flashcards_index, config=cfg, collection="notes", initial_query="CRC")
+    async with app.run_test(size=(110, 24)) as pilot:
+        await pilot.pause()
+        app.query_one("#results_pane", Tree).focus()
+        assert await _walk_to_stop_count(pilot, app, 2, "down"), (
+            "results arrows never landed on the two-match flashcards table"
+        )
+        start = _focus_seq(app)
+        await _walk_until_handover(pilot, app)
+        assert _focus_seq(app) != start, "n never left the table's own views"
+        await wait_until(
+            pilot,
+            lambda: _cursor_section_seq(app) == _focus_seq(app),
+            timeout=30.0,
+            message="the results cursor did not follow the hand-over",
+        )
+
+
+@pytest.mark.asyncio
+async def test_b_returns_across_a_hand_over_to_the_sections_last_view(
+    cfg: Config, flashcards_index: Path
+) -> None:
+    """b returns to the section n left, at its LAST view. Asserted on the stop
+    the viewport shows: a capture swap re-heights the document, so the same view
+    is a different absolute y on the way back."""
+    app = FNDApp(index_dir=flashcards_index, config=cfg, collection="notes", initial_query="CRC")
+    async with app.run_test(size=(110, 24)) as pilot:
+        await pilot.pause()
+        app.query_one("#results_pane", Tree).focus()
+        assert await _walk_to_stop_count(pilot, app, 2, "down"), (
+            "results arrows never landed on the two-match flashcards table"
+        )
+        pane = app.query_one("#preview_pane", VerticalScroll)
+        nav = app._match_nav
+        seq, _top = await _walk_until_handover(pilot, app)
+        assert _focus_seq(app) != seq, "n never handed over, so there is nothing to undo"
+
+        def _last_stop_on_screen() -> bool:
+            if _focus_seq(app) != seq or _cursor_section_seq(app) != seq:
+                return False
+            stops = nav._chunk_stops(pane)
+            lo = pane.scroll_offset.y
+            return bool(stops) and lo <= stops[-1] < lo + pane.scrollable_content_region.height
+
+        app.action_nav_prev_match()
+        await wait_until(
+            pilot,
+            _last_stop_on_screen,
+            timeout=30.0,
+            message=(
+                f"b did not return to the departed section's last view: "
+                f"focus={_focus_seq(app)} (want {seq})"
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_hand_over_lands_even_after_an_option_scan(
+    cfg: Config, flashcards_index: Path
+) -> None:
+    """Only the tree's key handler clears scan mode, so the hand-over clears it
+    itself — the preview pane has focus for n/b just as often."""
+    app = FNDApp(index_dir=flashcards_index, config=cfg, collection="notes", initial_query="CRC")
+    async with app.run_test(size=(110, 24)) as pilot:
+        await pilot.pause()
+        app.query_one("#results_pane", Tree).focus()
+        assert await _walk_to_stop_count(pilot, app, 2, "down"), (
+            "results arrows never landed on the two-match flashcards table"
+        )
+        start = _focus_seq(app)
+        app._preview._scan_move = True
+
+        await _walk_until_handover(pilot, app)
+
+        assert _focus_seq(app) != start, "the scan flag suppressed the hand-over's load"
+
+
+@pytest.fixture
+def flat_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
+    """A .txt file — no chunk is markdown-rendered, so the preview takes the
+    FLAT path, which nulls ``preview.active`` and keeps its own buffer."""
+    a = tmp_path / "notes"
+    filler = "".join(f"filler line {i} of no interest at all.\n" for i in range(60))
+    body = (
+        "opening line mentions quartzfin early.\n"
+        + filler
+        + "a second quartzfin sits far below the first.\n"
+        + filler
+        + "the closing quartzfin is the last one in the file.\n"
+    )
+    _write(a / "Plain.txt", body)
+    build_index(roots=[a], index_dir=tmp_index_dir, collection="notes")
+    return tmp_index_dir
+
+
+@pytest.mark.asyncio
+async def test_a_flat_preview_advertises_no_match_keys(cfg: Config, flat_index: Path) -> None:
+    """A line buffer contributes no stops, so n/b are inert on a flat preview and
+    the footer must not offer them."""
+    app = FNDApp(index_dir=flat_index, config=cfg, collection="notes", initial_query="quartzfin")
+    async with app.run_test(size=(110, 24)) as pilot:
+        await pilot.pause()
+        app.query_one("#results_pane", Tree).focus()
+        await wait_until(
+            pilot,
+            lambda: app._flat.active_buffer is not None and _cursor_section_seq(app) is not None,
+            timeout=30.0,
+            message="the flat buffer never activated on a .txt file",
+        )
+        assert app._preview.active is None, "this fixture must take the flat path"
+        nav = app._match_nav
+        pane = app.query_one("#preview_pane", VerticalScroll)
+
+        assert nav._chunk_stops(pane) == [], "a flat preview resolved stops it cannot have"
+        assert not nav.current_chunk_has_stops(), "the footer offered n/b where they do nothing"
+
+
+@pytest.mark.asyncio
+async def test_a_hand_over_onto_the_row_the_cursor_already_holds_still_lands(
+    cfg: Config, flashcards_index: Path
+) -> None:
+    """``move_cursor_to_line`` early-returns on the row the cursor already holds,
+    so a hand-over there fires no highlight and must dispatch the load itself."""
+    app = FNDApp(index_dir=flashcards_index, config=cfg, collection="notes", initial_query="CRC")
+    async with app.run_test(size=(110, 24)) as pilot:
+        await pilot.pause()
+        tree = app.query_one("#results_pane", Tree)
+        tree.focus()
+        assert await _walk_to_stop_count(pilot, app, 2, "down"), (
+            "results arrows never landed on the two-match flashcards table"
+        )
+        start = _focus_seq(app)
+        rows = [
+            (ln, tl.node.data["hit"].chunk_seq)
+            for ln, tl in enumerate(tree._tree_lines)
+            if isinstance(tl.node.data, dict) and tl.node.data.get("kind") == "section"
+        ]
+        target = next((ln, seq) for ln, seq in rows if seq != start)
+
+        # Scan: the cursor moves, the preview deliberately does not follow.
+        app._preview._scan_move = True
+        tree.cursor_line = target[0]
+        await settle(pilot, 3)
+        assert _cursor_section_seq(app) == target[1], "the scan did not move the cursor"
+        assert _focus_seq(app) == start, "the scan loaded the row it moved onto"
+
+        # b at the landing has nothing above it inside this chunk, so it hands
+        # over — onto the row the cursor already holds.
+        app.action_nav_prev_match()
+
+        await wait_until(
+            pilot,
+            lambda: _focus_seq(app) == target[1],
+            timeout=30.0,
+            message=(
+                f"the hand-over onto the cursor's own row never landed: "
+                f"focus={_focus_seq(app)} cursor={_cursor_section_seq(app)}"
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_hand_over_into_a_collapsed_file_still_lands(
+    cfg: Config, flashcards_index: Path
+) -> None:
+    """A collapsed file has no section rows in the tree, so the hand-over opens it
+    first. The focus is re-read after the collapse, which itself loads a row."""
+    app = FNDApp(index_dir=flashcards_index, config=cfg, collection="notes", initial_query="CRC")
+    async with app.run_test(size=(110, 24)) as pilot:
+        await pilot.pause()
+        tree = app.query_one("#results_pane", Tree)
+        tree.focus()
+        assert await _walk_to_stop_count(pilot, app, 2, "down"), (
+            "results arrows never landed on the two-match flashcards table"
+        )
+        file_node = next(
+            node for node in tree.root.children if node.data and node.data.get("kind") == "file"
+        )
+        file_node.collapse()
+        await settle(pilot, 4)
+        assert not file_node.is_expanded
+        start = _focus_seq(app)
+
+        app.action_nav_prev_match()
+
+        await wait_until(
+            pilot,
+            lambda: file_node.is_expanded and _focus_seq(app) not in (None, start),
+            timeout=30.0,
+            message=(
+                f"the hand-over never landed out of a collapsed file: "
+                f"focus={_focus_seq(app)} (start {start}) expanded={file_node.is_expanded}"
+            ),
+        )
