@@ -41,6 +41,9 @@ def test_cached_chunk_gets_heading_folded(tmp_path: Path, monkeypatch: pytest.Mo
         kind="pdf",
         body="Generic body paragraph only.",
         body_struct=[Block(kind="p", text="Generic body paragraph only.")],
+        # Textured: an entry with no body_md is refused as a stale texturising,
+        # and this test needs a HIT.
+        body_md="Generic body paragraph only.",
         heading_path="Chapter 9 > Cached Heading Wombat",
         page=1,
         chunk_seq=0,

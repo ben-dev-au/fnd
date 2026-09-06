@@ -921,6 +921,35 @@ def legacy_flat_signature() -> str:
 _extractor_signature = extractor_signature
 
 
+def _engine_version() -> str:
+    """Version of the texturising engine, or ``""`` when it is not installed."""
+    if not _HAS_PYMUPDF4LLM:
+        return ""
+    try:
+        return str(getattr(importlib.import_module("pymupdf4llm"), "__version__", "unknown"))
+    except ImportError:
+        return "unknown"
+
+
+def texture_fingerprint() -> dict[str, str]:
+    """The engine recorded with each cache entry. ``texture_signature`` is coarse
+    and does not move with an upgrade: measured, 1.27.2.3 emitted no markdown for
+    18 of this corpus's PDFs, and 1.28.2 textures every one."""
+    return {"engine": _engine_version()}
+
+
+def texture_reusable(
+    chunks: list[Chunk], recorded: dict[str, str], *, now: dict[str, str] | None = None
+) -> bool:
+    """Whether a cached texturising deserves reuse: a real one always, an EMPTY
+    one only while the engine that produced it is the one running now."""
+    if any(c.body_md for c in chunks):
+        return True
+    if not _HAS_PYMUPDF4LLM or _skip_structure_extraction:
+        return True
+    return (now or texture_fingerprint()) == recorded
+
+
 def _has_docling() -> bool:
     """Cached check for docling CLI presence — used by signature only."""
     import shutil
@@ -981,9 +1010,12 @@ def extract(
     # texturising still serves, so a routine reindex doesn't redo the work).
     if _force_fresh_texture:
         cache.forget_content(content_sha)
-    cached = cache.get(key)
+    # The measured entries sit under the CURRENT signature, so they arrive at
+    # get(); durable reuse takes the same rule for entries from an older one.
+    accept = texture_reusable
+    cached = cache.get(key, accept=accept)
     if cached is None and not _force_fresh_texture:
-        cached = cache.get_any_for_content(content_sha)
+        cached = cache.get_any_for_content(content_sha, accept=accept, skip=key)
     if cached is not None:
         # Cache entries are keyed by content hash, so two different files
         # with identical bytes share an entry. The chunks were captured
@@ -1051,7 +1083,7 @@ def extract(
     # structured chunks).
     if not _skip_structure_extraction:
         with contextlib.suppress(OSError):
-            cache.put(key, chunks)
+            cache.put(key, chunks, fingerprint=texture_fingerprint())
 
     for chunk in chunks:
         yield _mirror_body_into_md(folder.fold(chunk))
