@@ -24,11 +24,12 @@ takes a frontmatter dict and returns a bool.
 from __future__ import annotations
 
 import datetime as dt
-import fnmatch
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum, auto
+
+from fnd.globs import PathGlob
 
 
 class TokenKind(Enum):
@@ -501,7 +502,9 @@ def _eval_compare(fm: Mapping[str, object], field: str, op: str, value: object) 
     if op == "~~":
         if not isinstance(actual, str) or not isinstance(value, str):
             return False
-        return fnmatch.fnmatchcase(actual, value)
+        # The walker's glob language, so a rule over file.path answers what
+        # the walk itself would.
+        return PathGlob(value).matches(actual)
     # Ordered compares: numeric-numeric or date-date only.
     if op in ("<", ">", "<=", ">="):
         if not _orderable(actual, value):

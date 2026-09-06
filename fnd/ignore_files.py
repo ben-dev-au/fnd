@@ -1,9 +1,10 @@
 """``.gitignore`` / ``.fndignore`` matching.
 
-Git's own semantics, hand-rolled: pattern translation is small and the format
-is frozen, while the part that actually decides an answer — per-directory
-stacking, innermost-wins, negation — is ours either way. Correctness is held
-by differential tests against ``git check-ignore``.
+Git's own semantics, hand-rolled over the shared translator in
+:mod:`fnd.globs`: this module owns the *policy* — per-directory stacking,
+innermost-wins, negation, anchoring, case-folding — while the pattern language
+itself is shared with config globs. Correctness is held by differential tests
+against ``git check-ignore``.
 
 Two rules are load-bearing and easy to lose:
 
@@ -22,6 +23,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
+
+from fnd.globs import translate
 
 __all__ = [
     "IGNORE_FILENAMES",
@@ -78,65 +81,6 @@ def _strip_trailing_space(line: str) -> str:
     return out
 
 
-def _class_span(pattern: str, i: int) -> int:
-    """Index just past a ``[...]`` class starting at ``i``, or ``i`` if unclosed."""
-    j = i + 1
-    if j < len(pattern) and pattern[j] in ("!", "^"):
-        j += 1
-    if j < len(pattern) and pattern[j] == "]":
-        j += 1
-    while j < len(pattern) and pattern[j] != "]":
-        j += 1
-    return j + 1 if j < len(pattern) else i
-
-
-def _translate_segment(segment: str, *, fold_case: bool = False) -> str:
-    out: list[str] = []
-    i = 0
-    while i < len(segment):
-        ch = segment[i]
-        if ch == "*":
-            # Collapse a run of stars into one. Consecutive ``[^/]*`` groups
-            # mean the same thing but backtrack exponentially, so a hostile
-            # pattern in any cloned repo's .gitignore would hang the scan.
-            while i < len(segment) and segment[i] == "*":
-                i += 1
-            out.append("[^/]*")
-        elif ch == "?":
-            out.append("[^/]")
-            i += 1
-        elif ch == "[":
-            end = _class_span(segment, i)
-            if end == i:
-                out.append(re.escape("["))
-                i += 1
-                continue
-            body = segment[i + 1 : end - 1]
-            if body.startswith(("!", "^")):
-                body = "^" + body[1:]
-            out.append("[" + body.replace("\\", "\\\\") + "]")
-            i = end
-        elif ch == "\\" and i + 1 < len(segment):
-            nxt = segment[i + 1]
-            out.append(re.escape(nxt.lower() if fold_case else nxt))
-            i += 2
-        else:
-            out.append(re.escape(ch.lower() if fold_case else ch))
-            i += 1
-    return "".join(out)
-
-
-def _collapse(segments: list[str]) -> list[str]:
-    """Drop a repeated ``**`` segment. ``**/**/x`` means ``**/x``, but each
-    one compiles to its own unbounded group and they backtrack together."""
-    out: list[str] = []
-    for segment in segments:
-        if segment == "**" and out and out[-1] == "**":
-            continue
-        out.append(segment)
-    return out
-
-
 def _fold_case(directory: Path, name: str) -> bool:
     """Whether this filesystem is case-insensitive, asked of it directly.
 
@@ -152,31 +96,6 @@ def _fold_case(directory: Path, name: str) -> bool:
         return (directory / flipped).exists()
     except OSError:
         return False
-
-
-def _translate(pattern: str, *, anchored: bool, fold_case: bool) -> re.Pattern[str]:
-    segments = _collapse(pattern.split("/"))
-    parts: list[str] = []
-    for index, segment in enumerate(segments):
-        last = index == len(segments) - 1
-        if segment == "**":
-            # Trailing ``/**`` matches everything below; elsewhere it spans
-            # zero or more directories.
-            parts.append("(?:.*)" if last else "(?:[^/]+/)*")
-            continue
-        parts.append(_translate_segment(segment, fold_case=fold_case))
-        if not last:
-            parts.append("/")
-    body = "".join(parts)
-    prefix = "" if anchored else "(?:.*/)?"
-    # Matches the path itself only. A pattern naming a directory covers its
-    # contents because the walker never descends into an ignored directory —
-    # extending the regex over descendants instead would let a negated
-    # pattern re-include files the following patterns should still exclude.
-    # No re.IGNORECASE: that folds a character class too, so "*.[CH]" would
-    # match "x.c" where git keeps it. The literals are lowered above and the
-    # path is lowered at match time, which is what git's WM_CASEFOLD does.
-    return re.compile(f"^{prefix}{body}$")
 
 
 def parse_patterns(text: str, *, fold_case: bool = False) -> tuple[Pattern, ...]:
@@ -208,7 +127,7 @@ def parse_patterns(text: str, *, fold_case: bool = False) -> tuple[Pattern, ...]
         if not line:
             continue
         try:
-            regex = _translate(line, anchored=anchored, fold_case=fold_case)
+            regex = translate(line, anchored=anchored, fold_case=fold_case)
 
         except re.error:
             # git tolerates a pattern its own matcher cannot use — an inverted

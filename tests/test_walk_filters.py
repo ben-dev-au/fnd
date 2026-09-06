@@ -11,7 +11,7 @@ import pytest
 
 import fnd.frontmatter
 from fnd.config import Config, DefaultFilters, SourceConfig, SourceFilters
-from fnd.walk import walk_sources
+from fnd.walk import walk, walk_sources
 
 
 def _write(root: Path, rel: str, body: str = "x") -> Path:
@@ -376,19 +376,16 @@ class TestTypeGlobAbsorption:
         assert twice.filters.kinds == once.filters.kinds
 
     def test_the_walk_yields_the_same_files_either_way(self, tmp_path: Path) -> None:
-        """Measured identical across all 14 real sources; pinned here."""
-        _write(tmp_path, "a.md")
-        _write(tmp_path, "b.pdf")
-        _write(tmp_path, "c.txt")
-        globbed = {
-            p.name
-            for p in walk_sources(sources=_sources(tmp_path, includes=["**/*.md", "**/*.markdown"]))
-        }
-        kinded = {
-            p.name
-            for p in walk_sources(sources=_sources(tmp_path, defaults=DefaultFilters(kinds=["md"])))
-        }
-        assert globbed == kinded == {"a.md"}
+        """The two mechanisms, not two names for one: absorption runs inside
+        ``model_validate``, so both arms of a ``_sources``-only comparison are
+        the same model and the assertion holds however wrong the fold is."""
+        for rel in ("a.md", "b.pdf", "c.txt", "sub/d.md", "sub/e.txt", "sub/deep/f.markdown"):
+            _write(tmp_path, rel)
+        globs = ["**/*.md", "**/*.markdown"]
+        globbed = {p.name for p in walk(roots=[tmp_path], includes=globs)}
+        assert _sources(tmp_path, includes=globs)[0].includes == [], "absorption did not run"
+        kinded = {p.name for p in walk_sources(sources=_sources(tmp_path, includes=globs))}
+        assert globbed == kinded == {"a.md", "d.md", "f.markdown"}
 
 
 class TestTagsAreNotConflated:

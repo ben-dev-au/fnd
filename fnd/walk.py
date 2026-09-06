@@ -18,13 +18,13 @@ Includes/excludes precedence:
      ``recurse_symlinks=False`` to ``Path.rglob`` rather than relying on the
      Python 3.13 default).
 
-Globs are matched against the path **relative to its root** using ``PurePath.match``-
-compatible semantics extended to support ``**`` (recursive).
+Globs are matched against the path **relative to its root** by
+:mod:`fnd.globs`, the same translator the filter DSL's ``~~`` uses — ``*`` and
+``?`` stop at ``/``, a whole ``**`` segment spans zero or more directories.
 """
 
 from __future__ import annotations
 
-import fnmatch
 import os
 import sys
 from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -35,27 +35,8 @@ if TYPE_CHECKING:
     from fnd.config import SourceConfig
 
 from fnd.extract import supported_suffixes
+from fnd.globs import GlobSet
 from fnd.ignore_files import IgnoreStack, ancestor_stack, load_ignore_file
-
-
-def _matches_any(globs: list[str], rel_str: str) -> bool:
-    """Return True if ``rel_str`` matches any glob.
-
-    ``**`` matches any number of path segments, including zero — so
-    ``**/*.md`` must match both ``sub/a.md`` *and* ``a.md`` (root-level).
-    ``fnmatch`` treats ``**`` as a literal wildcard across ``/`` characters
-    which covers the subdir case but not the zero-segment case, so for
-    patterns that start with ``**/`` we also try the pattern without that
-    prefix against root-level paths (no ``/`` in ``rel_str``).
-    """
-    root_level = "/" not in rel_str
-    for g in globs:
-        if fnmatch.fnmatchcase(rel_str, g):
-            return True
-        # ``**/*.ext`` should match ``a.ext`` at the root level too.
-        if root_level and g.startswith("**/") and fnmatch.fnmatchcase(rel_str, g[3:]):
-            return True
-    return False
 
 
 def _is_hidden(rel: Path) -> bool:
@@ -122,9 +103,9 @@ def walk(
         skip_dirs = DEFAULT_JUNK_DIRS
 
     suffixes = supported_suffixes()
-    inc = list(includes or [])
-    exc = list(excludes or [])
-    inc_targets_hidden = _glob_targets_hidden(inc)
+    inc = GlobSet.parse(includes)
+    exc = GlobSet.parse(excludes)
+    inc_targets_hidden = _glob_targets_hidden(list(includes or []))
 
     for root in roots:
         original = root.expanduser()
@@ -170,8 +151,8 @@ def _scandir_walk(
     *,
     root: Path,
     suffixes: frozenset[str],
-    inc: list[str],
-    exc: list[str],
+    inc: GlobSet,
+    exc: GlobSet,
     inc_targets_hidden: bool,
     follow_symlinks: bool,
     skip_dirs: frozenset[str],
@@ -269,9 +250,9 @@ def _scandir_walk(
             # hidden ancestor directories.
             if _is_hidden(rel) and not inc_targets_hidden:
                 continue
-            if inc and not _matches_any(inc, rel_str):
+            if inc and not inc.matches(rel_str):
                 continue
-            if exc and _matches_any(exc, rel_str):
+            if exc and exc.matches(rel_str):
                 continue
             if scope and scope.ignored(entry_path, is_dir=False):
                 continue
