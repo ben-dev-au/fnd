@@ -110,7 +110,7 @@ class TestTextInformsTheRows:
         assert parse("file.kind in ['pdf', 'md']").kinds == ("pdf", "md")
 
     def test_a_typed_tag_clause_becomes_the_tags_row(self) -> None:
-        every = parse("NOT ('no_index' in file.tags.all)").exclude_tags
+        every = parse("NOT ('no_index' in file.tags.all)").tag_excludes
         assert set(every) == {"os", "frontmatter"}
         assert all(tags == ("no_index",) for tags in every.values())
 

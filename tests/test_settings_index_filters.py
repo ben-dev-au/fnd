@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -353,7 +354,7 @@ async def test_a_legacy_frontmatter_rule_is_visible_and_clearable(
         app.push_screen(SourceFormScreen(collection_name="probe", source_index=0))
         for _ in range(30):
             await pilot.pause()
-        form = app.screen
+        form = cast(SourceFormScreen, app.screen)
         assert form._fields["filters"].get("frontmatter") == "Course == 'X'", (
             "the browser is handed the overrides and would show '(none)'"
         )
