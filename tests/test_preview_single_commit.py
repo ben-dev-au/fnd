@@ -51,6 +51,9 @@ class _Strategy:
     def locate(self) -> ViewportLocation | None:
         return None
 
+    def hold_location(self, location: ViewportLocation) -> None:
+        return None
+
     def scroll_to_location(
         self, location: ViewportLocation, on_done: Callable[[], None] | None = None
     ) -> None:

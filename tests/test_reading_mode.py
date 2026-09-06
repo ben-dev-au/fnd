@@ -257,6 +257,76 @@ async def test_reading_view_prunes_full_mount_to_window(
 
 
 @pytest.mark.asyncio
+async def test_prune_claims_the_chunk_the_reader_is_on(tmp_path: Path, tmp_index_dir: Path) -> None:
+    """The prune's absorb claim sits on the topmost VISIBLE chunk, not the
+    first kept one: the pane absorbs only what moves its claim."""
+    from fnd.tui.preview_scrollbar import MatchAwareScroll
+
+    cfg, idx = _build_doc(tmp_path, tmp_index_dir, 80)
+    app = FNDApp(index_dir=idx, config=cfg, collection="notes")
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        await _load_full(app, pilot)
+        pane = app.query_one("#preview_pane", MatchAwareScroll)
+        active = app._preview.active
+        assert active is not None
+
+        top, bot = pane.scroll_y, pane.scroll_y + pane.size.height
+        visible = {
+            seq: w
+            for seq, w in active.chunk_widgets.items()
+            if w.virtual_region.height > 0
+            and w.virtual_region.y < bot
+            and w.virtual_region.y + w.virtual_region.height > top
+        }
+        assert visible, "setup: nothing visible to claim"
+        first_visible = min(visible, key=lambda seq: visible[seq].virtual_region.y)
+
+        pane.absorb_anchor = None
+        app._preview.prune_active_to_window()
+        claim = pane.absorb_anchor
+        assert claim is not None, "the prune left no claim for the layout to absorb"
+        assert claim[0] is visible[first_visible], "the prune claimed a chunk the reader is not on"
+
+
+@pytest.mark.asyncio
+async def test_reading_view_claims_the_position_it_restores(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """A claim standing over the toggle is re-seated onto the located chunk.
+    Driven on the exit toggle, the one path with no prune to re-seat it."""
+    from fnd.tui.preview_scrollbar import MatchAwareScroll
+
+    cfg, idx = _build_doc(tmp_path, tmp_index_dir, 80)
+    app = FNDApp(index_dir=idx, config=cfg, collection="notes")
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        await _load_full(app, pilot)
+        pane = app.query_one("#preview_pane", MatchAwareScroll)
+        app.action_toggle_reading_mode()
+        for _ in range(6):
+            await pilot.pause()
+        active = app._preview.active
+        assert active is not None
+        assert app._reading_mode
+
+        located = app._preview_scroll.locate()
+        assert located is not None, "setup: nothing under the viewport top"
+        target = active.chunk_widgets[located.chunk_seq]
+        stale = next(w for w in active.chunk_widgets.values() if w is not target)
+        pane.absorb_anchor = (stale, int(stale.virtual_region.y))
+
+        app.action_toggle_reading_mode()
+        await pilot.pause()
+
+        claim = pane.absorb_anchor
+        assert claim is not None, "the toggle left the pane with nothing to absorb"
+        assert claim[0] is target, (
+            "the toggle left the pane holding a chunk other than the one it restores"
+        )
+
+
+@pytest.mark.asyncio
 async def test_reading_view_scroll_step_is_larger(tmp_path: Path, tmp_index_dir: Path) -> None:
     """A scroll-key press advances more than one line in Reading View (the
     mouse-off arrow-flood means each key = a repaint; a bigger step covers a

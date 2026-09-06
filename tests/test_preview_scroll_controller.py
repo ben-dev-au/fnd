@@ -20,6 +20,7 @@ class FakeStrategy:
         self.calls: list[ScrollAnchor] = []
         self.settled: int = 0
         self.restored: list[ViewportLocation] = []
+        self.held: list[ViewportLocation] = []
 
     def reconcile(self, anchor: ScrollAnchor, on_settled: object = None, **_kw: object) -> None:
         self.calls.append(anchor)
@@ -29,6 +30,9 @@ class FakeStrategy:
 
     def locate(self) -> ViewportLocation | None:
         return ViewportLocation("flat", line=7)
+
+    def hold_location(self, location: ViewportLocation) -> None:
+        self.held.append(location)
 
     def scroll_to_location(self, location: ViewportLocation, on_done: object = None) -> None:
         self.restored.append(location)
@@ -74,6 +78,9 @@ def test_is_settling_stays_true_until_deferred_on_settled_fires() -> None:
                 held.append(on_settled)
 
         def locate(self) -> ViewportLocation | None:
+            return None
+
+        def hold_location(self, location: ViewportLocation) -> None:
             return None
 
         def scroll_to_location(self, location: ViewportLocation, on_done: object = None) -> None:
@@ -447,6 +454,30 @@ def test_structural_locate_returns_top_chunk_and_in_chunk_offset() -> None:
     assert strat.locate() == ViewportLocation("structural", chunk_seq=2, offset=3)
 
 
+def test_structural_locate_measures_from_the_nearest_chunk_top() -> None:
+    """A viewport 8 rows into a 10-row chunk is 2 rows above the next one."""
+    # Only the boundary survives a width reflow, so the smaller of the two
+    # distances is the one that carries less re-wrap error.
+    deep = _FakeWidget(Region(0, -8, 80, 10))
+    next_up = _FakeWidget(Region(0, 2, 80, 30))
+    pane = _FakePane(height=40)
+    host = _FakeHost(pane, chunk_widgets={2: deep, 3: next_up}, match_targets={})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+
+    assert strat.locate() == ViewportLocation("structural", chunk_seq=3, offset=-2)
+
+
+def test_structural_locate_ignores_culled_chunks() -> None:
+    """``region`` is NULL_REGION for a culled chunk, which reads as y=0."""
+    culled = _FakeWidget(Region(0, 0, 0, 0))
+    real = _FakeWidget(Region(0, -3, 80, 10))
+    pane = _FakePane(height=40)
+    host = _FakeHost(pane, chunk_widgets={9: culled, 2: real}, match_targets={})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+
+    assert strat.locate() == ViewportLocation("structural", chunk_seq=2, offset=3)
+
+
 def test_structural_scroll_to_location_scrolls_to_chunk_plus_offset() -> None:
     # virtual_region.y (content-space top) = 200; restore scrolls to top + the
     # captured 6-row in-chunk offset.
@@ -458,6 +489,18 @@ def test_structural_scroll_to_location_scrolls_to_chunk_plus_offset() -> None:
     strat.scroll_to_location(ViewportLocation("structural", chunk_seq=5, offset=6))
 
     assert pane.scrolled_to_y == 206
+
+
+def test_structural_scroll_to_location_takes_a_negative_offset() -> None:
+    """A location naming the chunk below the viewport top restores above it."""
+    w = _FakeWidget(Region(0, 100, 80, 40), virtual_region=Region(0, 200, 80, 40))
+    pane = _FakePane(height=40)
+    host = _FakeHost(pane, chunk_widgets={5: w}, match_targets={})
+    strat = StructuralScrollStrategy(cast(StructuralHost, host))
+
+    strat.scroll_to_location(ViewportLocation("structural", chunk_seq=5, offset=-4))
+
+    assert pane.scrolled_to_y == 196
 
 
 def _drain(host: _FakeHost, *, limit: int = 200) -> int:
@@ -561,6 +604,9 @@ class _RaisingStrategy:
     def locate(self) -> ViewportLocation | None:
         raise RuntimeError("locate boom")
 
+    def hold_location(self, location: ViewportLocation) -> None:
+        raise RuntimeError("hold boom")
+
     def scroll_to_location(self, location: ViewportLocation, on_done: object = None) -> None:
         raise RuntimeError("scroll boom")
 
@@ -626,6 +672,9 @@ class _CallsThenRaisesStrategy:
         raise RuntimeError("boom after settle")
 
     def locate(self) -> ViewportLocation | None:
+        return None
+
+    def hold_location(self, location: ViewportLocation) -> None:
         return None
 
     def scroll_to_location(self, location: ViewportLocation, on_done: object = None) -> None:

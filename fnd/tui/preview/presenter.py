@@ -766,9 +766,9 @@ class PreviewPresenter:
         visible window. Used when switching files: the outgoing container stays
         on screen while the incoming one builds, so its full-mounted DOM would
         otherwise inflate the incoming mount's arrange (Option C's inter-file
-        cost). Flash-free — the visible window stays put: the first kept chunk is
-        claimed as the pane's absorb anchor, so whatever the removal actually
-        takes off the top is corrected by the layout that applies it.
+        cost). Flash-free: the topmost visible chunk is claimed as the pane's
+        absorb anchor, so whatever the removal actually takes off the top is
+        corrected by the layout that applies it.
 
         Returns the height taken off the top, which a caller sampling the
         viewport must subtract: the correction lands with a later layout."""
@@ -827,10 +827,12 @@ class PreviewPresenter:
         # Removal is DEFERRED by Textual, so compensating here scrolls against a
         # virtual size that still counts the chunks — measured 439-680 rows out.
         # The anchor is the reader's own content: absorbing its movement needs no
-        # prediction, and prices the frozen stand-ins for free.
-        kept = [(i, w, y0) for (i, w, y0, _y1) in ranges if keep_lo <= i <= keep_hi]
-        if kept:
-            pane.absorb_anchor = (kept[0][1], int(kept[0][2]))
+        # prediction, and prices the frozen stand-ins for free. The topmost
+        # VISIBLE chunk: a claim above the fold prices nothing below itself.
+        first_visible = min(visible)
+        seat = [(i, w, y0) for (i, w, y0, _y1) in ranges if i == first_visible]
+        if seat:
+            pane.absorb_anchor = (seat[0][1], int(seat[0][2]))
         import os as _os_freeze
         import time as _time
 
@@ -1479,7 +1481,7 @@ class PreviewPresenter:
         if container is None or not is_live(container):
             return
         try:
-            pane = self._app.query_one("#preview_pane", VerticalScroll)
+            pane = self._app.query_one("#preview_pane", MatchAwareScroll)
         except Exception:
             return
         width = self.capture_width(pane)
@@ -1539,6 +1541,10 @@ class PreviewPresenter:
 
         repaired = 0
         drift = 0
+        claim = pane.absorb_anchor
+        held = claim[0] if claim is not None else None
+        if not (isinstance(held, Widget) and is_live(held)):
+            held = None
         # `reconciling` is NOT held across the loop. It gates lazy mount's
         # release of the scroll anchor and the match-nav burst reset, so holding
         # it for a pass — measured at 2.8s, and 6s on heavy content — means a
@@ -1572,9 +1578,12 @@ class PreviewPresenter:
                     continue
                 self.capture_store.put(parent_id, query_sig, capture.width, capture)
             before = view.frozen.outer_height
-            # A chunk entirely above the viewport moves what the reader is
-            # looking at when its height changes; accumulate and correct once.
-            if view.virtual_region.y + before <= viewport_top:
+            # A chunk above the viewport moves what the reader is looking at;
+            # accumulate and correct once, less what the claim absorbs — it
+            # prices what moves ITS anchor, so that much would land twice.
+            bottom = view.virtual_region.y + before
+            absorbed_above = None if held is None else held.virtual_region.y
+            if bottom <= viewport_top and (absorbed_above is None or bottom > absorbed_above):
                 drift += capture.outer_height - before
             view.adopt(capture)
             repaired += 1
