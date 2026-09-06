@@ -43,8 +43,7 @@ def test_a_file_with_no_listed_sections_has_no_hop() -> None:
 
 
 def test_an_unlisted_current_section_hands_over_either_side() -> None:
-    """The focused chunk need not be listed itself — a landing can be revealed
-    from a row that is no longer in the tree — and the hop is still ordered."""
+    """The focused chunk need not be listed itself; the hop is still ordered."""
     assert adjacent_section([3, 12], 7, forward=True) == 12
     assert adjacent_section([3, 12], 7, forward=False) == 3
 
@@ -72,8 +71,7 @@ def _nav(
     flat: bool = False,
     highlights: bool = True,
 ) -> MatchNavigator:
-    """A navigator on a plain (pdf/txt) chunk 7 of a file listing ``sections``,
-    whose own match line either is or is not locatable."""
+    """A navigator on a plain chunk 7 of a file listing ``sections``."""
     chunk = SimpleNamespace(build_done=SimpleNamespace(is_set=lambda: not building))
     preview = SimpleNamespace(
         active=None if flat else SimpleNamespace(parent_doc_id="p"),
@@ -102,8 +100,7 @@ def _nav(
 
 
 def test_the_key_hint_holds_when_the_chunk_has_no_stop_but_the_file_does() -> None:
-    """The hint gates on what n/b can DO, and with another listed section to
-    hand over to they work even on a chunk whose own match cannot be located."""
+    """The hint gates on what n/b can do, and a hand-over is something."""
     assert _nav([3, 7], chunk_has_stop=False).current_chunk_has_stops()
 
 
@@ -112,8 +109,7 @@ def test_the_key_hint_drops_on_a_lone_section_with_no_reachable_match() -> None:
 
 
 def _nav_pressing(sections: list[int], *, chunk_has_stop: bool, stops: list[int], **kw: object):
-    """A navigator wired to a fake pane. Only the results-tree move is stubbed —
-    the hop's own guards run, which is where the decisions live."""
+    """Only the results-tree move is stubbed, so the hop's own guards run."""
     nav = _nav(sections, chunk_has_stop=chunk_has_stop, **kw)  # type: ignore[arg-type]
     pane = SimpleNamespace(
         scrollable_content_region=Region(0, 0, 80, 20),
@@ -154,27 +150,23 @@ def test_a_press_before_the_chunk_mounts_waits_rather_than_handing_over() -> Non
 
 
 def test_a_press_during_a_cross_file_navigation_does_not_hand_over() -> None:
-    """The anchor names the file being navigated TO; ``preview.active`` still
-    names the one being left. Resolving the hop across that gap moves the
-    results cursor onto the previous file's section, abandoning the navigation."""
+    """The anchor names the file being opened while ``active`` still names the one
+    being left; resolving across that gap abandons the navigation."""
     nav, taken = _nav_pressing([3, 7], chunk_has_stop=False, stops=[], anchor_parent="other-file")
     nav.next()
     assert taken == []
 
 
 def test_a_press_while_the_chunk_is_still_building_waits() -> None:
-    """Its blocks register during the build, so an empty match set there means
-    "not yet", not "nothing here" — and the build is the wide window (seconds on
-    a big chunk), where the un-mounted one is a tick."""
+    """Blocks register during the build, so an empty match set there means "not
+    yet" — the wide window, seconds on a big chunk."""
     nav, taken = _nav_pressing([3, 7], chunk_has_stop=False, stops=[], building=True)
     nav.next()
     assert taken == []
 
 
 def test_a_flat_preview_does_not_hand_over() -> None:
-    """A flat preview nulls ``preview.active`` and contributes no stops, so n/b
-    are inert there — reading its file from the installed buffer instead would
-    make the keys advertise a hand-over as the only thing they do."""
+    """A flat preview contributes no stops, so n/b are inert and never hand over."""
     nav, taken = _nav_pressing([3, 7], chunk_has_stop=False, stops=[], flat=True)
     nav.next()
     assert taken == []
@@ -182,9 +174,7 @@ def test_a_flat_preview_does_not_hand_over() -> None:
 
 
 def test_highlights_off_leaves_the_keys_inert() -> None:
-    """Toggling highlights off empties the spec: there are no matches to walk,
-    so a press must do nothing — not hand over — and the footer must not offer
-    keys whose only remaining act would be to leave the section."""
+    """Highlights off empties the spec: no matches to walk, so no hand-over."""
     nav, taken = _nav_pressing([3, 7], chunk_has_stop=False, stops=[], highlights=False)
     nav.next()
     assert taken == []

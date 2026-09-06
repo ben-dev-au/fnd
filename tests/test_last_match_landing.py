@@ -67,7 +67,7 @@ async def test_the_table_cell_is_one_of_the_stops() -> None:
 
         _rows, cells = chunk_stop_rows(md, MatchSpec.from_query("CRC"))
 
-        assert (coords[0].row, coords[0].column) in cells
+        assert (0, coords[0].row, coords[0].column) in cells
 
 
 class _FakePane:
@@ -198,3 +198,40 @@ async def test_a_last_match_landing_waits_for_an_unresolved_table_cell() -> None
 
         assert pane.captured is None, "committed a landing over an unresolved cell"
         assert host.deferred, "did not retry for the cell to lay out"
+
+
+TWO_TABLES = (
+    "# Intro\n\n"
+    "| # | Q |\n| --- | --- |\n| CRC first table | a |\n\n"
+    + "".join(f"Filler paragraph {i}.\n\n" for i in range(6))
+    + "| # | Q |\n| --- | --- |\n| CRC second table | b |\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_two_tables_matching_the_same_cell_keep_both_stops() -> None:
+    """Cell rows are per-table: two tables in one chunk can both match at the
+    same local coordinate, and keying the stop set on the coordinate alone drops
+    the first table's row — a match n/b could then never reach."""
+
+    class _Harness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield FNDMarkdown(TWO_TABLES, match_spec=MatchSpec.from_query("CRC"))
+
+    async with _Harness().run_test(size=(80, 30)) as pilot:
+        md = pilot.app.query_one(FNDMarkdown)
+        await md.build_done.wait()
+        await pilot.pause()
+        tables = list(pilot.app.query(DataTable))
+        assert len(tables) == 2, "the fixture needs two tables"
+        coords = [tuple(getattr(t, "_fnd_match_coords", [])) for t in tables]
+        assert coords[0], f"the first table matched nothing: {coords}"
+        assert coords[0] == coords[1], f"the tables must match the same cell: {coords}"
+
+        rows, _cells = chunk_stop_rows(md, MatchSpec.from_query("CRC"))
+
+        table_rows = [t.region.y - md.region.y for t in tables]
+        for want in table_rows:
+            assert any(abs(r - want) <= 2 for r in rows), (
+                f"no stop near table at row {want}: rows={rows}"
+            )

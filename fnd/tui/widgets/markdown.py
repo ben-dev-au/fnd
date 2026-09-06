@@ -1004,14 +1004,9 @@ class FNDMarkdown(Markdown):
 
     @property
     def match_blocks(self) -> list[MarkdownBlock]:
-        """Match stops of this chunk for intra-file nav: the full-match blocks,
-        or the dim-only ones when no full match exists anywhere in the chunk
-        (mirrors ``first_match_block``'s tiering).
-
-        REGISTRATION order, which is document order only until a table joins:
-        a table appends itself from ``compose`` (at mount), every text block from
-        ``apply_chunk_highlights`` (pre-mount). Order by painted row instead —
-        :func:`~fnd.tui.preview.match_row.chunk_stop_rows`."""
+        """Match stops of this chunk for intra-file nav, in REGISTRATION order —
+        which is document order only until a table joins (it registers at mount).
+        Order by painted row with :func:`~fnd.tui.preview.match_row.chunk_stop_rows`."""
         return self._match_blocks or self._dim_match_blocks
 
     def update(self, markdown):  # type: ignore[no-untyped-def, override]

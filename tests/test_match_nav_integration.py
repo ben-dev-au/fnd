@@ -275,17 +275,8 @@ async def test_n_reveals_second_table_match_below_the_fold(
 async def test_n_never_scrolls_a_neighbours_match_under_the_current_result(
     cfg: Config, flashcards_index: Path
 ) -> None:
-    """n/b hop between the CURRENT result's hidden matches. Leaving one is a
-    hand-over that moves the results selection (see the hand-over tests below) —
-    never a silent scroll that brings a neighbour's match on screen while the
-    selected row still names this section.
-
-    Tested at the mechanism, not via a distant chunk background-mounting: navigate
-    to the multi-view table (which focus-mounts it AND its adjacent Summary
-    result), then assert the scoped stop set excludes the neighbour's match that
-    the unscoped set includes, and that every press either stays inside the scope
-    or hands over explicitly.
-    """
+    """Leaving a section is a hand-over that moves the results selection, never
+    a silent scroll that shows a neighbour's match under this section's row."""
     app = FNDApp(index_dir=flashcards_index, config=cfg, collection="notes", initial_query="CRC")
     async with app.run_test(size=(110, 24)) as pilot:
         await pilot.pause()
@@ -333,7 +324,6 @@ async def test_n_never_scrolls_a_neighbours_match_under_the_current_result(
             await pilot.pause()
             await pilot.pause()
             if _focus_seq(app) != table_seq:
-                # The hand-over: explicit, and the results row names where we are.
                 await wait_until(
                     pilot,
                     lambda: _cursor_section_seq(app) == _focus_seq(app),
@@ -421,13 +411,9 @@ async def test_n_hands_over_to_the_next_listed_section(cfg: Config, flashcards_i
 async def test_b_returns_across_a_hand_over_to_the_sections_last_view(
     cfg: Config, flashcards_index: Path
 ) -> None:
-    """b undoes the hand-over: back to the section n left, and to its LAST view —
-    the end n departed from, not the landing a results row would give.
-
-    Asserted on the stop the viewport SHOWS, not on the scroll offset it left:
-    swapping a live chunk for its capture re-heights the document, so the same
-    view is a different absolute y on the way back.
-    """
+    """b returns to the section n left, at its LAST view. Asserted on the stop
+    the viewport shows: a capture swap re-heights the document, so the same view
+    is a different absolute y on the way back."""
     app = FNDApp(index_dir=flashcards_index, config=cfg, collection="notes", initial_query="CRC")
     async with app.run_test(size=(110, 24)) as pilot:
         await pilot.pause()
@@ -463,9 +449,8 @@ async def test_b_returns_across_a_hand_over_to_the_sections_last_view(
 async def test_a_hand_over_lands_even_after_an_option_scan(
     cfg: Config, flashcards_index: Path
 ) -> None:
-    """Option+arrow browsing leaves the preview deliberately behind the cursor,
-    and only the results tree's own key handler clears that — the preview pane
-    has focus for n/b just as often, so the hand-over clears it itself."""
+    """Only the tree's key handler clears scan mode, so the hand-over clears it
+    itself — the preview pane has focus for n/b just as often."""
     app = FNDApp(index_dir=flashcards_index, config=cfg, collection="notes", initial_query="CRC")
     async with app.run_test(size=(110, 24)) as pilot:
         await pilot.pause()
@@ -501,14 +486,8 @@ def flat_index(tmp_path: Path, tmp_index_dir: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_a_flat_preview_advertises_no_match_keys(cfg: Config, flat_index: Path) -> None:
-    """A line buffer contributes no stops — ``enumerate_stop_regions`` reads
-    markdown blocks, captures and per-line Statics, and a flat preview has none
-    — so n/b are inert there and the footer must not offer them.
-
-    The hand-over is what makes this worth pinning: reading the flat file's
-    identity from its installed buffer made ``can_hop_section`` true, and the
-    hint appeared over keys that still did nothing.
-    """
+    """A line buffer contributes no stops, so n/b are inert on a flat preview and
+    the footer must not offer them."""
     app = FNDApp(index_dir=flat_index, config=cfg, collection="notes", initial_query="quartzfin")
     async with app.run_test(size=(110, 24)) as pilot:
         await pilot.pause()
@@ -531,15 +510,8 @@ async def test_a_flat_preview_advertises_no_match_keys(cfg: Config, flat_index: 
 async def test_a_hand_over_onto_the_row_the_cursor_already_holds_still_lands(
     cfg: Config, flashcards_index: Path
 ) -> None:
-    """An Option-scan moves the results cursor without loading, so the cursor can
-    already be on the row a hand-over targets. Textual's ``move_cursor_to_line``
-    early-returns there and no highlight fires — the press has to dispatch the
-    load itself, or it reports success having done nothing.
-
-    The scan state is built through the app's own mechanism (``_scan_move`` plus
-    a cursor move), because pressing Option+arrow depends on key routing this
-    test is not about.
-    """
+    """``move_cursor_to_line`` early-returns on the row the cursor already holds,
+    so a hand-over there fires no highlight and must dispatch the load itself."""
     app = FNDApp(index_dir=flashcards_index, config=cfg, collection="notes", initial_query="CRC")
     async with app.run_test(size=(110, 24)) as pilot:
         await pilot.pause()
@@ -582,14 +554,8 @@ async def test_a_hand_over_onto_the_row_the_cursor_already_holds_still_lands(
 async def test_a_hand_over_into_a_collapsed_file_still_lands(
     cfg: Config, flashcards_index: Path
 ) -> None:
-    """A reader can collapse the file they are previewing; its section rows then
-    have no line in the tree, so the hand-over has to open it before it can put
-    the cursor on one.
-
-    The focus is re-read AFTER the collapse: collapsing moves the cursor onto the
-    file row, which loads it, so the section captured before the collapse is not
-    the one the press starts from.
-    """
+    """A collapsed file has no section rows in the tree, so the hand-over opens it
+    first. The focus is re-read after the collapse, which itself loads a row."""
     app = FNDApp(index_dir=flashcards_index, config=cfg, collection="notes", initial_query="CRC")
     async with app.run_test(size=(110, 24)) as pilot:
         await pilot.pause()

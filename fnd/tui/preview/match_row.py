@@ -198,11 +198,12 @@ def row_within(widget: Widget, chunk: Widget) -> int | None:
     return r.y - c.y
 
 
-def chunk_stop_rows(chunk: Widget, spec: MatchSpec) -> tuple[list[int], dict[tuple[int, int], int]]:
+def chunk_stop_rows(
+    chunk: Widget, spec: MatchSpec
+) -> tuple[list[int], dict[tuple[int, int, int], int]]:
     """Every row of ``chunk`` a match paints on, sorted, plus the table-cell rows
-    that contributed, keyed by ``(row, column)``. Ordered by ROW, never by
-    registration: a table appends itself to ``match_blocks`` at mount, after
-    every text block, so that list ends with it whatever follows it."""
+    that contributed. Ordered by ROW, never by ``match_blocks``, which a table
+    joins at mount and so ends whatever follows it in the document."""
     from textual.widgets import DataTable
 
     from fnd.tui.widgets.markdown import (
@@ -223,8 +224,10 @@ def chunk_stop_rows(chunk: Widget, spec: MatchSpec) -> tuple[list[int], dict[tup
         row = row_within(block, chunk)
         if row is not None:
             rows.extend(row + r for r in rows_to_matches(block, spec))
-    cells: dict[tuple[int, int], int] = {}
-    for dt in chunk.query(DataTable):
+    # Keyed by TABLE as well as cell: two tables in one chunk can match the same
+    # local coordinate, and collapsing them drops the first one's row entirely.
+    cells: dict[tuple[int, int, int], int] = {}
+    for index, dt in enumerate(chunk.query(DataTable)):
         base = row_within(dt, chunk)
         if base is None:
             continue
@@ -235,6 +238,7 @@ def chunk_stop_rows(chunk: Widget, spec: MatchSpec) -> tuple[list[int], dict[tup
                 continue
             if cell.height == 0:
                 continue
-            cells[(coord.row, coord.column)] = base + cell.y - dt.scroll_offset.y
-    rows.extend(cells.values())
+            row = base + cell.y - dt.scroll_offset.y
+            cells[(index, coord.row, coord.column)] = row
+            rows.append(row)
     return sorted(set(rows)), cells

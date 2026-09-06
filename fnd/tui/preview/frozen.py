@@ -46,7 +46,7 @@ class FrozenChunk:
     strips: list[Strip]
     first_match_row: int | None = None
     stop_rows: list[int] = field(default_factory=list)
-    cell_rows: dict[tuple[int, int], int] = field(default_factory=dict)
+    cell_rows: dict[tuple[int, int, int], int] = field(default_factory=dict)
 
     @property
     def outer_height(self) -> int:
@@ -110,7 +110,7 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
     # Positions first: they need the widgets, which the caller is about to drop.
     first_match_row: int | None = None
     stop_rows: list[int] = []
-    cell_rows: dict[tuple[int, int], int] = {}
+    cell_rows: dict[tuple[int, int, int], int] = {}
     if isinstance(chunk, FNDMarkdown):
         inner = chunk.first_match_block
         # The chunk's own spec, so this asks exactly what enumerate_stop_regions
