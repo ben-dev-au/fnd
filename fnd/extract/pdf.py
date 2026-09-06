@@ -941,9 +941,8 @@ def texture_fingerprint() -> dict[str, str]:
 def texture_reusable(
     chunks: list[Chunk], recorded: dict[str, str], *, now: dict[str, str] | None = None
 ) -> bool:
-    """Whether a cached texturising still deserves reuse: a real one always, so
-    an upgrade never orphans the corpus; an EMPTY one only while the engine that
-    produced it is the one running now, or the run cannot texture at all."""
+    """Whether a cached texturising deserves reuse: a real one always, an EMPTY
+    one only while the engine that produced it is the one running now."""
     if any(c.body_md for c in chunks):
         return True
     if not _HAS_PYMUPDF4LLM or _skip_structure_extraction:

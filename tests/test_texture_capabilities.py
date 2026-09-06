@@ -16,9 +16,9 @@ from fnd.cache import ExtractionCache
 from fnd.extract import pdf
 from fnd.extract.base import Block, Chunk
 
-# Resolved through the module on every call, never bound at import:
-# tests/test_pdf_extras_optional.py drops ``fnd.extract.pdf`` from sys.modules,
-# so a name bound here can outlive the module a later monkeypatch patches.
+# Called through the module, never bound at import: test_pdf_extras_optional
+# drops ``fnd.extract.pdf`` from sys.modules, so a name bound here outlives the
+# module a later monkeypatch patches.
 
 
 def _chunk(seq: int = 0, *, body_md: str = "") -> Chunk:
@@ -63,8 +63,7 @@ def test_an_empty_texturising_is_refused_once_the_engine_moves(tmp_path: Path) -
 
 
 def test_an_empty_texturising_is_kept_while_the_engine_is_the_same(tmp_path: Path) -> None:
-    """Otherwise a PDF this engine genuinely cannot texture re-runs it on every
-    index — the cost the stamp exists to avoid."""
+    """Otherwise a PDF this engine cannot texture re-runs it on every index."""
     cache = _cache(tmp_path)
     cache.put("k", [_chunk()], fingerprint={"engine": "1.28.2"})
 
@@ -77,8 +76,7 @@ def test_an_empty_texturising_is_kept_while_the_engine_is_the_same(tmp_path: Pat
 
 
 def test_a_textured_entry_is_kept_however_the_engine_moved(tmp_path: Path) -> None:
-    """Reuse of real texturings is what keeps an upgrade from orphaning the
-    corpus, which is why the signature is coarse in the first place."""
+    """Reusing real texturings is what keeps an upgrade from orphaning the corpus."""
     cache = _cache(tmp_path)
     cache.put("k", [_chunk(body_md="# real")], fingerprint={"engine": "1.0.0"})
 
@@ -96,9 +94,8 @@ def test_an_entry_from_before_the_stamp_is_retried_once() -> None:
 
 
 def test_a_run_that_cannot_texture_refuses_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Battery-saver ("Update cache at index time" off) and a machine without the
-    extra both run flat-only. Refusing there re-extracts the file on every index
-    and never settles, because such a run does not write the entry back."""
+    """A flat-only run does not write the entry back, so refusing there never
+    settles."""
     monkeypatch.setattr(pdf, "_skip_structure_extraction", True)
 
     assert pdf.texture_reusable([_chunk()], {}, now={"engine": "1.28.2"})
@@ -146,9 +143,8 @@ def _seed(
 def test_extract_re_texturises_an_entry_under_the_current_signature(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The path the 18 real entries take. They sit under the CURRENT signature,
-    so they arrive at ``cache.get(key)`` — seeding under an old signature tests
-    durable reuse instead, and leaves this line unguarded."""
+    """The path the 18 real entries take: the CURRENT signature, so ``get(key)``
+    rather than durable reuse."""
     from fnd.extract import pdf
 
     pdf_path = tmp_path / "doc.pdf"
@@ -167,8 +163,7 @@ def test_extract_re_texturises_an_entry_under_the_current_signature(
 def test_extract_keeps_an_empty_entry_from_the_same_engine(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A PDF that genuinely cannot texturise under this engine must not re-run
-    it on every index — the cost the stamp exists to avoid."""
+    """A PDF this engine cannot texturise must not re-run it on every index."""
     from fnd.extract import pdf
 
     pdf_path = tmp_path / "doc.pdf"
@@ -186,13 +181,8 @@ def test_extract_keeps_an_empty_entry_from_the_same_engine(
 def test_a_written_entry_records_what_produced_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The stamp has to be WRITTEN, not just read. An entry saved without it
-    records no capabilities, so an empty texturising is refused on every index
-    and the engine re-runs forever on a PDF that cannot texturise here.
-
-    Asserted on the entry as it lands on disk: the heavy extraction runs in a
-    subprocess, so a spy on the texturiser in this process never fires.
-    """
+    """The stamp has to be WRITTEN, not just read — asserted on the entry as it
+    lands, since the extraction runs in a subprocess."""
     import json
 
     from fnd.cache import sha256_file
@@ -214,9 +204,8 @@ def test_a_written_entry_records_what_produced_it(
 
 
 def test_a_refused_entry_is_not_read_twice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Durable reuse globs every signature for this content, which includes the
-    entry the current-signature read just refused — a second full decode of the
-    same blob (143 chunks on the largest of the 18) for no possible gain."""
+    """Durable reuse globs every signature, including the entry ``get`` just
+    refused — a second decode of the same blob for no gain."""
     from fnd.extract import pdf
 
     pdf_path = tmp_path / "doc.pdf"
