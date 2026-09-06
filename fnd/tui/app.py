@@ -573,6 +573,9 @@ class FNDApp(App[None]):
             self._preview.prune_active_to_window()
         else:
             self.query_one("#results_pane", ResultsTree).focus()
+        # The pane absorbs the reflow towards whatever it holds still, starting
+        # before the restore's first refresh. Aim both at one position.
+        self._preview_scroll.hold_location(location)
         if location is not None:
             self.call_after_refresh(self._preview_scroll.scroll_to_location, location)
         # Reading View changes the preview's width by more than any scrollbar:

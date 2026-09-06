@@ -1614,3 +1614,127 @@ async def test_the_freeze_sweep_asks_the_markers_to_re_measure(
             timeout=15.0,
             message="the sweep swapped chunks without asking the markers to re-measure",
         )
+
+
+async def _stale_chunks_above_the_fold(
+    app: FNDApp, pilot: Any, *, freeze_at: tuple[int, ...]
+) -> list[tuple[FrozenChunkView, int]] | None:
+    """Freeze the laid-out chunks at ``freeze_at``, park the fold below them
+    all, and mark their strips stale."""
+    container = app._preview.active
+    assert container is not None
+    live = [
+        (seq, w)
+        for seq, w in sorted(container.chunk_widgets.items())
+        if isinstance(w, FNDMarkdown) and w.size.width > 0 and w.size.height > 0
+    ]
+    if len(live) <= max(freeze_at):
+        return None
+    made: list[tuple[FrozenChunkView, int]] = []
+    for i in freeze_at:
+        seq, widget = live[i]
+        captured = freeze(widget, seq)
+        if captured is None:
+            return None
+        view = FrozenChunkView(captured)
+        await container.mount(view, before=widget)
+        container.chunk_widgets[seq] = view
+        widget.remove()
+        made.append((view, seq))
+    for _ in range(4):
+        await pilot.pause()
+
+    pane = app.query_one("#preview_pane", VerticalScroll)
+    last = made[-1][0]
+    pane.scroll_to(y=last.virtual_region.y + last.virtual_region.height + 10, animate=False)
+    for _ in range(4):
+        await pilot.pause()
+    for view, _seq in made:
+        if view.virtual_region.y + view.virtual_region.height > pane.scroll_offset.y:
+            return None  # not above the fold; the drift predicate would skip it
+        object.__setattr__(view.frozen, "width", view.size.width + 7)
+    return made
+
+
+@pytest.mark.parametrize("claim", ["none", "below", "on", "dead", "mixed"])
+@pytest.mark.asyncio
+async def test_stale_strip_repair_owes_the_drift_a_claim_does_not_absorb(
+    tmp_path: Path,
+    tmp_index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    claim: str,
+) -> None:
+    """The repair defers only the drift the pane's claim actually absorbs.
+    A claim prices what moves ITS anchor, so an anchor level with or below the
+    drift pays for none of it: measured 4 rows, a dead claim the same."""
+    from fnd.tui.preview_scrollbar import MatchAwareScroll
+
+    index = wide_doc(tmp_path, tmp_index_dir)
+    app = FNDApp(index_dir=index, initial_query="quartzfin")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_until(
+            pilot,
+            lambda: bool(app._search.groups) and app._preview.active is not None,
+            timeout=20.0,
+            message="preview never became active",
+        )
+        presenter = app._preview
+        await wait_until(
+            pilot,
+            lambda: _laid_out_chunk(app) is not None,
+            timeout=20.0,
+            message="no chunk in the preview was ever laid out",
+        )
+        presenter.stop_background_work()
+        for _ in range(4):
+            await pilot.pause()
+
+        # "mixed" straddles the anchor: one stale chunk above it (absorbed) and
+        # one below it but still above the fold (owed), which is the only case
+        # that partitions the drift rather than taking all or none of it.
+        container = app._preview.active
+        assert container is not None
+        laid_out = [
+            seq
+            for seq, w in sorted(container.chunk_widgets.items())
+            if isinstance(w, FNDMarkdown) and w.size.width > 0 and w.size.height > 0
+        ]
+        made = await _stale_chunks_above_the_fold(
+            app, pilot, freeze_at=(0, 2) if claim == "mixed" else (0,)
+        )
+        assert made is not None, "setup: no stale stand-in above the fold"
+        view = made[0][0]
+        shorter = {
+            seq: dataclasses.replace(v.frozen, strips=list(v.frozen.strips)[:-4]) for v, seq in made
+        }
+
+        async def capture_shorter(chunk: Any, *_args: object, **_kwargs: object) -> FrozenChunk:
+            return shorter[chunk.chunk_seq]
+
+        monkeypatch.setattr(presenter._warm_host, "capture", capture_shorter)
+        presenter.capture_store.clear()
+
+        pane = app.query_one("#preview_pane", MatchAwareScroll)
+        # The probe is content BELOW every stale chunk: whichever compensator
+        # owes the correction, the reader must not see this row move.
+        floor = max(v.virtual_region.y + v.virtual_region.height for v, _ in made)
+        probe = next(w for w in container.chunk_widgets.values() if w.virtual_region.y >= floor)
+        between = container.chunk_widgets[laid_out[1]]
+        anchors: dict[str, tuple[object, int] | None] = {
+            "none": None,
+            "below": (probe, int(probe.virtual_region.y)),
+            "on": (view, int(view.virtual_region.y)),
+            "dead": (FrozenChunkView(view.frozen), 0),  # never mounted, never in the layout
+            "mixed": (between, int(between.virtual_region.y)),
+        }
+        pane.absorb_anchor = anchors[claim]
+        before = probe.region.y
+
+        await presenter._repair_stale_strips()
+        for _ in range(8):
+            await pilot.pause()
+
+        assert probe.region.y == before, (
+            f"claim={claim}: the reader's content moved {probe.region.y - before} rows "
+            f"({before} -> {probe.region.y}); drift was neither absorbed nor repaired"
+        )
