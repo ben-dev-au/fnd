@@ -277,7 +277,10 @@ to apps as argv lists (never a shell) or as percent-encoded URLs handed to
 
 A **collection** is a named group of source folders you search together; each
 **source** is a folder plus the include/exclude globs that decide which files in
-it get indexed. Out of the box fnd searches **all** your collections; tick
+it get indexed. Globs are matched against the path relative to the source root:
+`*` and `?` stop at a `/`, and a whole `**` segment spans zero or more folders,
+so `**/*.md` catches `a.md` and `notes/deep/a.md` alike. The same language backs
+the `~~` operator in a filter expression. Out of the box fnd searches **all** your collections; tick
 individual ones in the sidebar to narrow that, and the selection is remembered
 for next launch. `-c <name>` scopes a single launch, and `-c all` widens it back
 out again without touching what's remembered.
