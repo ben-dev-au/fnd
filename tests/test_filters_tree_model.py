@@ -9,17 +9,17 @@ import pytest
 
 from fnd.filters import FilterSpec
 from fnd.filters.scan import SourceSample, sample_source
-from fnd.filters.tree_model import apply_selection, selection_for, spec_branches
+from fnd.filters.tree_model import Branch, apply_selection, selection_for, spec_branches
 
 
-def _leaves(branches: list[object]) -> set[str]:
+def _leaves(branches: list[Branch]) -> set[str]:
     """Every item id at any depth — kinds now sit under one File types parent."""
     out: set[str] = set()
     stack = list(branches)
     while stack:
         b = stack.pop()
-        out |= {i[0] for i in b.items}  # type: ignore[attr-defined]
-        stack.extend(b.groups)  # type: ignore[attr-defined]
+        out |= {i[0] for i in b.items}
+        stack.extend(b.groups)
     return out
 
 

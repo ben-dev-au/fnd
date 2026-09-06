@@ -111,6 +111,7 @@ def test_collection_add_appends_to_existing_collection(
     cw = load(cfg_path).collection("coursework")
     assert len(cw.sources) == 2
     # ``pdf`` has one suffix, so this glob is the whole kind and folds.
+    assert cw.sources[1].filters is not None
     assert cw.sources[1].filters.kinds == ["pdf"]
 
 

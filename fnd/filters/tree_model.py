@@ -118,7 +118,7 @@ def _tag_branch(spec: FilterSpec, sample: SourceSample | None) -> Branch | None:
             (f"tag:{source}:{v}", f"{v}  ({c})")
             for v, c in (sample.tags_for(source) if sample else [])
         ]
-        configured = set(spec.include_tags.get(source, ())) | set(spec.exclude_tags.get(source, ()))
+        configured = set(spec.tag_includes.get(source, ())) | set(spec.tag_excludes.get(source, ()))
         for tag in sorted(configured):
             if not any(i[0] == f"tag:{source}:{tag}" for i in seen):
                 seen.append((f"tag:{source}:{tag}", tag))
@@ -210,10 +210,10 @@ def selection_for(
     spec the gate compiles.
     """
     selected: set[str] = {
-        f"tag:{source}:{t}" for source, tags in spec.include_tags.items() for t in tags
+        f"tag:{source}:{t}" for source, tags in spec.tag_includes.items() for t in tags
     }
     excluded: set[str] = {
-        f"tag:{source}:{t}" for source, tags in spec.exclude_tags.items() for t in tags
+        f"tag:{source}:{t}" for source, tags in spec.tag_excludes.items() for t in tags
     }
     selected |= {f"kind:{k}" for k in spec.kinds}
     # ``kinds`` empty means every type, which the tree shows as nothing ticked.

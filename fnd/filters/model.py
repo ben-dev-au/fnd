@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
@@ -29,6 +29,12 @@ class Unknown(Enum):
 
     PASS = auto()
     DROP = auto()
+
+
+#: What the tag fields accept. ``__post_init__`` normalises a bare sequence
+#: into the keyed form, so the annotation has to admit both or every caller
+#: passing the documented shorthand is a type error.
+TagSelection = dict[str, tuple[str, ...]] | Sequence[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,8 +110,8 @@ class FilterSpec:
     # query side: a Finder tag and a note's ``tags:`` entry sharing a word are
     # not the same statement about a file. ``tag_selection`` expands a bare
     # list into every source.
-    include_tags: dict[str, tuple[str, ...]] = field(default_factory=dict)
-    exclude_tags: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    include_tags: TagSelection = field(default_factory=dict)
+    exclude_tags: TagSelection = field(default_factory=dict)
     min_size: int | None = None
     max_size: int | None = None
     created_after: dt.date | None = None
@@ -115,6 +121,21 @@ class FilterSpec:
     frontmatter: str = ""
     expression: str = ""
     raw: tuple[str, ...] = ()
+
+    @property
+    def tag_includes(self) -> dict[str, tuple[str, ...]]:
+        """``include_tags`` in its normalised form. The field admits the bare
+        shorthand a config may write; readers want the keyed shape."""
+        from fnd.filters.dimensions import tag_selection
+
+        return tag_selection(self.include_tags)
+
+    @property
+    def tag_excludes(self) -> dict[str, tuple[str, ...]]:
+        """``exclude_tags`` in its normalised form; see :attr:`tag_includes`."""
+        from fnd.filters.dimensions import tag_selection
+
+        return tag_selection(self.exclude_tags)
 
     def __post_init__(self) -> None:
         # Tags are a set per source: order carries no meaning, and the
