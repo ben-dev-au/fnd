@@ -19,6 +19,7 @@ the blocks.
 from __future__ import annotations
 
 import dataclasses
+import re
 from collections.abc import Iterable, Iterator
 
 from fnd.extract.base import MAX_CHUNK_CHARS, Block, Chunk
@@ -70,17 +71,23 @@ def _block_runs(blocks: list[Block]) -> Iterator[list[Block]]:
         yield held
 
 
+_LAST_SPACE = re.compile(r"\s(?=\S*$)")
+
+
 def _split_text(text: str) -> Iterator[str]:
-    """Cut at the last whitespace under the budget, so a term is never halved."""
+    """Cut at the last whitespace under the budget, so a term is never halved.
+
+    Any whitespace: a block with newlines or tabs and no spaces otherwise fell
+    to the hard cut and halved an identifier.
+    """
     start = 0
     while start < len(text):
         end = start + MAX_CHUNK_CHARS
         if end >= len(text):
             yield text[start:]
             return
-        cut = text.rfind(" ", start, end)
-        if cut <= start:
-            cut = end
+        last = _LAST_SPACE.search(text, start, end)
+        cut = last.start() if last and last.start() > start else end
         yield text[start:cut]
         start = cut
 

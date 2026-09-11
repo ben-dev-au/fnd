@@ -201,6 +201,7 @@ def test_every_markdown_block_span_covers_its_own_text(fixtures_dir: Path, tmp_p
                 if block.span is None or not block.text.split():
                     continue
                 start, end = block.span
+                assert 0 <= start < end <= len(lines), (f.name, block.kind, block.span, len(lines))
                 spanned = "\n".join(lines[start:end])
                 first_word = block.text.split()[0].strip("*_`#>-")
                 assert first_word in spanned, (f.name, block.kind, block.text[:40], spanned[:60])
@@ -213,3 +214,12 @@ def test_every_markdown_block_span_covers_its_own_text(fixtures_dir: Path, tmp_p
                 previous_end = end
                 checked += 1
     assert checked > 25, checked
+
+
+def test_a_block_with_newlines_and_no_spaces_still_cuts_at_whitespace() -> None:
+    pieces = list(bounded([_chunk([Block("code", "identifier_abc\n" * 1_200)])]))
+
+    assert len(pieces) > 1
+    assert all(w == "identifier_abc" for p in pieces for w in p.body.split()), (
+        "an identifier was halved"
+    )

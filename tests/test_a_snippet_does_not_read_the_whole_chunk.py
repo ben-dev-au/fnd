@@ -129,3 +129,13 @@ def test_an_underscore_separates_words_as_the_matcher_says() -> None:
     snippet = q._make_snippet(" ".join(words), "count")
 
     assert "row_count" in snippet, snippet[:80]
+
+
+def test_a_letter_that_lowercases_to_two_keeps_the_region_aligned() -> None:
+    """`İ`.lower() is two code points, so an offset found in a lowercased copy
+    landed past the end of the original and the snippet came back empty."""
+    body = "İ" * 24_000 + " quokka " + "filler " * 10
+
+    snippet = q._make_snippet(body, "quokka")
+
+    assert "quokka" in snippet, snippet[:60]

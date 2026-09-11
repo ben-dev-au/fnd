@@ -269,20 +269,27 @@ def _scan_region(body_text: str, spec: MatchSpec) -> str:
     """
     if len(body_text) <= _SNIPPET_SCAN_CHARS:
         return body_text
-    lower = body_text.lower()
+    # Searched in place, case-folded by the engine: lowercasing a copy changes
+    # its length (one `İ` becomes two code points), and an offset found in the
+    # copy then lands elsewhere in the original.
     hits: list[int] = []
     needles = _region_needles(spec)
     if needles:
         # Word start as `DOC_WORD_RE` defines it: `_` separates words there,
         # so `count` in `row_count` is a match the matcher will make.
-        first = re.search(r"(?<![^\W_])(?:" + "|".join(map(re.escape, needles)) + ")", lower)
+        alternation = "|".join(map(re.escape, needles))
+        first = re.search(r"(?<![^\W_])(?:" + alternation + ")", body_text, re.IGNORECASE)
         if first:
             hits.append(first.start())
-    for pattern in spec.regexes:
-        with contextlib.suppress(re.error):
-            found = re.search(pattern, lower)
-            if found:
-                hits.append(found.start())
+    if not hits:
+        # Only a regex-only query needs the patterns run here; the matcher
+        # runs them over every word of this body anyway, so the cost is
+        # the one it already carries.
+        for pattern in spec.regexes:
+            with contextlib.suppress(re.error):
+                found = re.search(pattern, body_text, re.IGNORECASE)
+                if found:
+                    hits.append(found.start())
     if not hits:
         return body_text[:_SNIPPET_REGION_CHARS]
     start = max(0, min(hits) - _SNIPPET_REGION_CHARS // 2)
