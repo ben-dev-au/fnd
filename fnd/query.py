@@ -53,6 +53,12 @@ from fnd.schema import (
 )
 
 _SNIPPET_CTX = 240
+# A chunk longer than this is anchored in a window around its first typed
+# term, not scanned whole. Honest chunks stay under it (a PDF page peaks near
+# 12k), so their window choice is unchanged. Measured: 364 pooled chunks of
+# 33,000 words (a StackExchange dump, one post per line) cost 34 s per query.
+_SNIPPET_SCAN_CHARS = 24_000
+_SNIPPET_REGION_CHARS = 6_000
 _DEFAULT_LIMIT: Final = 10
 # Content tokens that parse_query can't handle on the body field and which we
 # resolve against the stemmed dictionary ourselves:
@@ -231,6 +237,24 @@ def _window(body_text: str, pos: int, half: int) -> str:
     return sanitise_display_text(body_text[max(0, pos - half) : pos + half]).strip()
 
 
+def _scan_region(body_text: str, spec: MatchSpec) -> str:
+    """The part of ``body_text`` worth anchoring in.
+
+    A chunk under the cap is returned whole, so its window choice is unchanged.
+    Over it, `str.find` locates the first typed term at C speed and the Python
+    matcher runs over a small window around it. A term absent everywhere falls
+    back to the head, which then yields the opening characters as before.
+    """
+    if len(body_text) <= _SNIPPET_SCAN_CHARS:
+        return body_text
+    lower = body_text.lower()
+    hits = [i for i in (lower.find(term) for term in spec.raw_terms) if i >= 0]
+    if not hits:
+        return body_text[:_SNIPPET_REGION_CHARS]
+    start = max(0, min(hits) - _SNIPPET_REGION_CHARS // 2)
+    return body_text[start : start + _SNIPPET_REGION_CHARS]
+
+
 def _make_snippet(
     body_text: str,
     query: str,
@@ -253,6 +277,7 @@ def _make_snippet(
     if not body_text:
         return ""
     spec = _snippet_spec(query)
+    body_text = _scan_region(body_text, spec)
     anchors = _snippet_anchors(body_text, spec)
     if not anchors:
         return sanitise_display_text(body_text[:ctx]).strip()
