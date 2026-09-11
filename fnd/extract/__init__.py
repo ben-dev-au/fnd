@@ -39,4 +39,7 @@ def extract(path: Path, **kwargs: object) -> Iterator[Chunk]:
     if kwargs:
         accepted = set(inspect.signature(extractor).parameters)
         kwargs = {k: v for k, v in kwargs.items() if k in accepted}
-    return extractor(path, **kwargs)  # type: ignore[no-any-return]
+    from fnd.extract._bound import bounded
+
+    # Every kind, one guarantee: see fnd/extract/_bound.py.
+    return bounded(extractor(path, **kwargs))
