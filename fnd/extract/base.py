@@ -46,7 +46,7 @@ class Block:
     kind: str
     text: str
     # Line span of this block within its chunk's ``body_md``, when the
-    # extractor knows it. Read only by the chunk bound, never persisted.
+    # extractor knows it. Read by the chunk bound; not written to the index.
     span: tuple[int, int] | None = None
 
 

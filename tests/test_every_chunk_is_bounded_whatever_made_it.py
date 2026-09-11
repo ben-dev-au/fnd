@@ -196,11 +196,20 @@ def test_every_markdown_block_span_covers_its_own_text(fixtures_dir: Path, tmp_p
     for f in [*sorted(fixtures_dir.rglob("*.md")), rich]:
         for chunk in extract(f):
             lines = chunk.body_md.splitlines()
+            previous_end = 0
             for block in chunk.body_struct:
                 if block.span is None or not block.text.split():
                     continue
-                spanned = "\n".join(lines[block.span[0] : block.span[1]])
+                start, end = block.span
+                spanned = "\n".join(lines[start:end])
                 first_word = block.text.split()[0].strip("*_`#>-")
                 assert first_word in spanned, (f.name, block.kind, block.text[:40], spanned[:60])
+                # Too wide is the duplication this replaced, so it is pinned
+                # from both ends: no overlap with the block before, and no more
+                # lines than the block itself has (a fence adds its two).
+                assert start >= previous_end, (f.name, block.kind, block.span, previous_end)
+                own = block.text.count("\n") + 1 + (2 if block.kind == "code" else 0)
+                assert end - start <= own, (f.name, block.kind, block.span, own)
+                previous_end = end
                 checked += 1
     assert checked > 25, checked
