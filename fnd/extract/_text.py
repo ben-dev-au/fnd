@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-# Measured: 97.5% of 160-line Python windows fit in 8k characters, and the
-# rest split at a line boundary. A data dump with one record per line reached
-# 33,000 WORDS in one window, and every query paid for every one of them.
-MAX_WINDOW_CHARS = 8_000
+from fnd.extract.base import MAX_CHUNK_CHARS
+
+# Windowing here, before the dispatcher's guarantee, keeps every piece on an
+# exact source line. Measured: 97.5% of 160-line Python windows fit the budget.
+MAX_WINDOW_CHARS = MAX_CHUNK_CHARS
 
 
 def line_windows(text: str, *, max_lines: int, overlap_lines: int) -> Iterator[tuple[int, str]]:

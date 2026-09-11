@@ -47,6 +47,11 @@ class Block:
     text: str
 
 
+# The most body a chunk may carry. Enforced for every kind in `_bound.py`,
+# at the dispatcher every extractor's output passes through.
+MAX_CHUNK_CHARS = 8_000
+
+
 @dataclass(slots=True)
 class Chunk:
     parent_id: str
