@@ -67,9 +67,54 @@ def test_five_hundred_huge_chunks_cost_well_under_a_second() -> None:
 
 def test_a_normal_chunk_is_unchanged() -> None:
     """The control: a chunk under the cap is scanned whole, as before, so the
-    best-window choice over all its anchors is untouched."""
-    body = "quokka " + "filler " * 60 + "quokka delta " + "filler " * 60
+    best window (two terms together, far from the first lone one) still wins.
+
+    Over the region size and under the cap, or it passes with the early
+    return deleted: the region around the first term would never see the
+    better window 9,000 characters later.
+    """
+    body = "quokka " + "filler " * 1_300 + "quokka delta " + "filler " * 200
 
     snippet = q._make_snippet(body, "quokka delta")
 
     assert "quokka delta" in snippet, snippet
+
+
+def _deep(match: str, total_words: int = 40_000) -> str:
+    words = ["filler"] * total_words
+    words[35_000] = match
+    return " ".join(words)
+
+
+@pytest.mark.parametrize(
+    ("query", "body"),
+    [
+        ("test*", _deep("testing")),
+        ('"quokka delta"', _deep("quokka delta")),
+        ("testing", _deep("test")),
+        ("count", _deep("counts")),
+    ],
+    ids=["wildcard", "phrase", "stem", "plural"],
+)
+def test_a_match_the_matcher_finds_is_found_over_the_cap(query: str, body: str) -> None:
+    """`str.find` on the typed words alone missed a wildcard, a phrase and a
+    stem, so a chunk over the cap showed its opening characters where `main`
+    showed the match."""
+    from fnd.render import text_has_any_match
+
+    snippet = q._make_snippet(body, query)
+
+    assert text_has_any_match(snippet, q._snippet_spec(query)), snippet[:80]
+
+
+def test_a_decoy_substring_does_not_place_the_region() -> None:
+    """`count` inside `accountant` centred the region where the matcher has no
+    anchor, so the snippet was mid-chunk text with no match in it."""
+    words = ["filler"] * 40_000
+    words[100] = "accountant"
+    words[35_000] = "count"
+
+    snippet = q._make_snippet(" ".join(words), "count")
+
+    assert " count" in f" {snippet}", snippet[:80]
+    assert "accountant" not in snippet

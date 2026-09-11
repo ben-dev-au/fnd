@@ -13,6 +13,7 @@ caller still gets ``limit`` survivors when the filter is strict.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import re
 from dataclasses import dataclass
@@ -237,18 +238,49 @@ def _window(body_text: str, pos: int, half: int) -> str:
     return sanitise_display_text(body_text[max(0, pos - half) : pos + half]).strip()
 
 
+def _region_needles(spec: MatchSpec) -> list[str]:
+    """What the matcher will anchor on, as word-start literals.
+
+    Stems are prefixes of the words they match, a wildcard's literal head is a
+    prefix of its matches, and a phrase or proximity group anchors on its own
+    words. Fuzzy-only hits have no literal to look for and fall back to the head.
+    """
+    out = set(spec.raw_terms) | set(spec.exact_stems)
+    for pattern in spec.wildcards:
+        head = re.split(r"[*?]", pattern, maxsplit=1)[0]
+        if len(head) >= 2:
+            out.add(head)
+    for phrase in spec.phrases:
+        out.update(phrase)
+    for members, _slop in spec.proximity_groups:
+        out.update(m for m in members if "*" not in m and "?" not in m)
+    return sorted(n.lower() for n in out if n)
+
+
 def _scan_region(body_text: str, spec: MatchSpec) -> str:
     """The part of ``body_text`` worth anchoring in.
 
     A chunk under the cap is returned whole, so its window choice is unchanged.
-    Over it, `str.find` locates the first typed term at C speed and the Python
-    matcher runs over a small window around it. A term absent everywhere falls
-    back to the head, which then yields the opening characters as before.
+    Over it, a word-start search over the matcher's own needles locates the
+    first occurrence at C speed and the Python matcher runs over a small window
+    around it. Word-start, or `count` inside `accountant` placed the region
+    where the matcher has no anchor. A needle absent everywhere falls back to
+    the head, which then yields the opening characters.
     """
     if len(body_text) <= _SNIPPET_SCAN_CHARS:
         return body_text
     lower = body_text.lower()
-    hits = [i for i in (lower.find(term) for term in spec.raw_terms) if i >= 0]
+    hits: list[int] = []
+    needles = _region_needles(spec)
+    if needles:
+        first = re.search(r"(?<!\w)(?:" + "|".join(map(re.escape, needles)) + ")", lower)
+        if first:
+            hits.append(first.start())
+    for pattern in spec.regexes:
+        with contextlib.suppress(re.error):
+            found = re.search(pattern, lower)
+            if found:
+                hits.append(found.start())
     if not hits:
         return body_text[:_SNIPPET_REGION_CHARS]
     start = max(0, min(hits) - _SNIPPET_REGION_CHARS // 2)
@@ -273,6 +305,9 @@ def _make_snippet(
     When ``intent`` is supplied (UX-pass-4 §3), prefers a window whose context
     overlaps with intent tokens. Otherwise prefers the window covering the most
     distinct terms (the actual proximity / phrase match), then the earliest.
+
+    A chunk over ``_SNIPPET_SCAN_CHARS`` is anchored within :func:`_scan_region`
+    rather than scanned whole; see that function for what it can and cannot find.
     """
     if not body_text:
         return ""
