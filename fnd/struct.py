@@ -7,13 +7,14 @@ The schema stores ``body_struct`` as bytes; we serialize the small list of
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 
 from fnd.extract.base import Block
 
 
 def encode(blocks: list[Block]) -> bytes:
-    return json.dumps([asdict(b) for b in blocks], ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        [{"kind": b.kind, "text": b.text} for b in blocks], ensure_ascii=False
+    ).encode("utf-8")
 
 
 def decode(data: bytes) -> list[Block]:

@@ -45,6 +45,14 @@ class Block:
 
     kind: str
     text: str
+    # Line span of this block within its chunk's ``body_md``, when the
+    # extractor knows it. Read by the chunk bound; not written to the index.
+    span: tuple[int, int] | None = None
+
+
+# The most body a chunk may carry. Enforced for every kind in `_bound.py`,
+# at the dispatcher every extractor's output passes through.
+MAX_CHUNK_CHARS = 8_000
 
 
 @dataclass(slots=True)

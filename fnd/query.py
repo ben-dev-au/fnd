@@ -13,6 +13,7 @@ caller still gets ``limit`` survivors when the filter is strict.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import re
 from dataclasses import dataclass
@@ -53,6 +54,12 @@ from fnd.schema import (
 )
 
 _SNIPPET_CTX = 240
+# A chunk longer than this is anchored in a window around its first typed
+# term, not scanned whole. Honest chunks stay under it (a PDF page peaks near
+# 12k), so their window choice is unchanged. Measured: 364 pooled chunks of
+# 33,000 words (a StackExchange dump, one post per line) cost 34 s per query.
+_SNIPPET_SCAN_CHARS = 24_000
+_SNIPPET_REGION_CHARS = 6_000
 _DEFAULT_LIMIT: Final = 10
 # Content tokens that parse_query can't handle on the body field and which we
 # resolve against the stemmed dictionary ourselves:
@@ -231,6 +238,64 @@ def _window(body_text: str, pos: int, half: int) -> str:
     return sanitise_display_text(body_text[max(0, pos - half) : pos + half]).strip()
 
 
+def _region_needles(spec: MatchSpec) -> list[str]:
+    """What the matcher will anchor on, as word-start literals.
+
+    Stems are prefixes of the words they match, a wildcard's literal head is a
+    prefix of its matches, and a phrase or proximity group anchors on its own
+    words. Fuzzy-only hits have no literal to look for and fall back to the head.
+    """
+    out = set(spec.raw_terms) | set(spec.exact_stems)
+    for pattern in spec.wildcards:
+        head = re.split(r"[*?]", pattern, maxsplit=1)[0]
+        if len(head) >= 2:
+            out.add(head)
+    for phrase in spec.phrases:
+        out.update(phrase)
+    for members, _slop in spec.proximity_groups:
+        out.update(m for m in members if "*" not in m and "?" not in m)
+    return sorted(n.lower() for n in out if n)
+
+
+def _scan_region(body_text: str, spec: MatchSpec) -> str:
+    """The part of ``body_text`` worth anchoring in.
+
+    A chunk under the cap is returned whole, so its window choice is unchanged.
+    Over it, a word-start search over the matcher's own needles locates the
+    first occurrence at C speed and the Python matcher runs over a small window
+    around it. Word-start, or `count` inside `accountant` placed the region
+    where the matcher has no anchor. A needle absent everywhere falls back to
+    the head, which then yields the opening characters.
+    """
+    if len(body_text) <= _SNIPPET_SCAN_CHARS:
+        return body_text
+    # Searched in place, case-folded by the engine: lowercasing a copy changes
+    # its length (one `İ` becomes two code points), and an offset found in the
+    # copy then lands elsewhere in the original.
+    hits: list[int] = []
+    needles = _region_needles(spec)
+    if needles:
+        # Word start as `DOC_WORD_RE` defines it: `_` separates words there,
+        # so `count` in `row_count` is a match the matcher will make.
+        alternation = "|".join(map(re.escape, needles))
+        first = re.search(r"(?<![^\W_])(?:" + alternation + ")", body_text, re.IGNORECASE)
+        if first:
+            hits.append(first.start())
+    if not hits:
+        # Only a regex-only query needs the patterns run here; the matcher
+        # runs them over every word of this body anyway, so the cost is
+        # the one it already carries.
+        for pattern in spec.regexes:
+            with contextlib.suppress(re.error):
+                found = re.search(pattern, body_text, re.IGNORECASE)
+                if found:
+                    hits.append(found.start())
+    if not hits:
+        return body_text[:_SNIPPET_REGION_CHARS]
+    start = max(0, min(hits) - _SNIPPET_REGION_CHARS // 2)
+    return body_text[start : start + _SNIPPET_REGION_CHARS]
+
+
 def _make_snippet(
     body_text: str,
     query: str,
@@ -249,10 +314,14 @@ def _make_snippet(
     When ``intent`` is supplied (UX-pass-4 §3), prefers a window whose context
     overlaps with intent tokens. Otherwise prefers the window covering the most
     distinct terms (the actual proximity / phrase match), then the earliest.
+
+    A chunk over ``_SNIPPET_SCAN_CHARS`` is anchored within :func:`_scan_region`
+    rather than scanned whole; see that function for what it can and cannot find.
     """
     if not body_text:
         return ""
     spec = _snippet_spec(query)
+    body_text = _scan_region(body_text, spec)
     anchors = _snippet_anchors(body_text, spec)
     if not anchors:
         return sanitise_display_text(body_text[:ctx]).strip()
