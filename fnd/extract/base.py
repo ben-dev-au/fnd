@@ -45,6 +45,9 @@ class Block:
 
     kind: str
     text: str
+    # Line span of this block within its chunk's ``body_md``, when the
+    # extractor knows it. Read only by the chunk bound, never persisted.
+    span: tuple[int, int] | None = None
 
 
 # The most body a chunk may carry. Enforced for every kind in `_bound.py`,

@@ -273,7 +273,9 @@ def _scan_region(body_text: str, spec: MatchSpec) -> str:
     hits: list[int] = []
     needles = _region_needles(spec)
     if needles:
-        first = re.search(r"(?<!\w)(?:" + "|".join(map(re.escape, needles)) + ")", lower)
+        # Word start as `DOC_WORD_RE` defines it: `_` separates words there,
+        # so `count` in `row_count` is a match the matcher will make.
+        first = re.search(r"(?<![^\W_])(?:" + "|".join(map(re.escape, needles)) + ")", lower)
         if first:
             hits.append(first.start())
     for pattern in spec.regexes:

@@ -47,11 +47,13 @@ def test_an_oversized_chunk_is_cut_at_block_boundaries() -> None:
 
 
 def test_a_lone_block_over_the_budget_is_cut_at_whitespace() -> None:
-    pieces = list(bounded([_chunk([Block("p", "word " * 5_000)])]))
+    """Nine-character words: 8,000 is not a multiple of 9, so a hard cut lands
+    mid-word and shows up as a fragment at a piece boundary."""
+    pieces = list(bounded([_chunk([Block("p", "abcdefgh " * 3_000)])]))
 
     assert len(pieces) > 1
     assert all(len(p.body) <= MAX_CHUNK_CHARS for p in pieces)
-    assert all(not p.body.startswith("ord ") for p in pieces), "a term was halved"
+    assert all(w == "abcdefgh" for p in pieces for w in p.body.split()), "a term was halved"
 
 
 def test_pieces_keep_the_deep_link_and_are_renumbered() -> None:
@@ -74,27 +76,49 @@ def test_a_chunk_under_the_budget_passes_through_untouched() -> None:
     assert piece.body_md == "## Title\n\nbody\n"
 
 
-def test_the_source_is_sliced_for_each_piece_or_left_empty() -> None:
-    """The preview prefers verbatim markdown; a piece carries the part behind
-    its own blocks, or nothing, and nothing means the block renderer."""
-    paras = [f"paragraph {i} " + "text " * 700 for i in range(4)]  # 3.5k each, two per piece
+def test_the_source_is_sliced_by_the_spans_the_extractor_stamped() -> None:
+    """The preview prefers verbatim markdown; a piece carries exactly the lines
+    behind its own blocks. Two paragraphs open identically, which is what broke
+    locating them by their text."""
+    paras = ["**Note:** " + "text " * 700 for _ in range(4)]  # 3.5k each, two per piece
     source = "\n\n".join(paras) + "\n"
-    blocks = [Block("p", t) for t in paras]
+    blocks = [Block("p", t.replace("**", ""), span=(i * 2, i * 2 + 1)) for i, t in enumerate(paras)]
 
     pieces = list(bounded([_chunk(blocks, body_md=source)]))
 
     assert len(pieces) == 2
-    assert pieces[0].body_md.startswith("paragraph 0 ")
-    assert "paragraph 2" not in pieces[0].body_md
-    assert pieces[1].body_md.startswith("paragraph 2 ")
+    assert pieces[0].body_md == "\n".join(source.splitlines()[0:3])
+    assert pieces[1].body_md == "\n".join(source.splitlines()[4:7])
 
 
-def test_a_rendering_the_source_cannot_be_found_in_yields_no_source() -> None:
-    blocks = [Block("p", "rendered " * 1_100)] * 2
+def test_a_run_with_any_unspanned_block_carries_no_source() -> None:
+    """Exact or empty. A split single block has no span (a textured PDF page is
+    one block), and a kind with no source map stamps none."""
+    single = [Block("p", "rendered " * 1_100)]  # over the budget: split by text
+    unspanned = [Block("p", "a " * 3_000), Block("p", "b " * 3_000)]
 
-    pieces = list(bounded([_chunk(blocks, body_md="# entirely different\n")]))
+    from_single = list(bounded([_chunk(single, body_md="whole page markdown\n")]))
+    from_unspanned = list(bounded([_chunk(unspanned, body_md="two paras\n")]))
 
-    assert all(p.body_md == "" for p in pieces)
+    assert len(from_single) > 1
+    assert all(p.body_md == "" for p in from_single)
+    assert len(from_unspanned) > 1
+    assert all(p.body_md == "" for p in from_unspanned)
+
+
+def test_a_fence_at_a_cut_keeps_both_fence_lines(tmp_path: Path) -> None:
+    """Through the real extractor: a piece that starts or ends with a fenced
+    block keeps its fences, because the fence token's span covers them."""
+    code = "```python\n" + "\n".join(f"x{i} = {i}" for i in range(600)) + "\n```"
+    body = "# H\n\n" + "prose " * 1_300 + "\n\n" + code + "\n\n" + "after " * 200 + "\n"
+    f = tmp_path / "fence.md"
+    f.write_text(body, encoding="utf-8")
+
+    chunks = list(extract(f))
+
+    fenced = [c for c in chunks if "x1 = 1" in c.body]
+    assert fenced, [c.body[:30] for c in chunks]
+    assert fenced[0].body_md.count("```") == 2, fenced[0].body_md[:60]
 
 
 def test_the_dispatcher_bounds_whatever_an_extractor_yields(
@@ -154,3 +178,29 @@ def test_a_real_oversized_file_of_each_text_kind_comes_out_bounded(
     assert chunks, name
     assert all(len(c.body) <= MAX_CHUNK_CHARS for c in chunks), max(len(c.body) for c in chunks)
     assert [c.chunk_seq for c in chunks] == list(range(len(chunks)))
+
+
+def test_every_markdown_block_span_covers_its_own_text(fixtures_dir: Path, tmp_path: Path) -> None:
+    """The slice is only as good as the spans. Over every markdown fixture, plus
+    one file carrying every block kind, every block that has a span finds its
+    first word inside the lines the span names in the chunk's verbatim source."""
+    rich = tmp_path / "rich.md"
+    rich.write_text(
+        "# Title\n\nOpening **bold** para.\n\n## Second\n\n"
+        "- item one\n- item two\n\n> quoted words here\n\n"
+        "```py\nx = 1\n```\n\n    indented code\n\n"
+        "Closing para with *emphasis* and `code`.\n\n### Third\n\nLast words.\n",
+        encoding="utf-8",
+    )
+    checked = 0
+    for f in [*sorted(fixtures_dir.rglob("*.md")), rich]:
+        for chunk in extract(f):
+            lines = chunk.body_md.splitlines()
+            for block in chunk.body_struct:
+                if block.span is None or not block.text.split():
+                    continue
+                spanned = "\n".join(lines[block.span[0] : block.span[1]])
+                first_word = block.text.split()[0].strip("*_`#>-")
+                assert first_word in spanned, (f.name, block.kind, block.text[:40], spanned[:60])
+                checked += 1
+    assert checked > 25, checked

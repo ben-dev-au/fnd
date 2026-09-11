@@ -10,6 +10,10 @@ Pieces are cut at block boundaries, so one never starts mid-paragraph; a lone
 block over the budget is cut at whitespace. Pieces inherit page, line, heading
 path and timestamps, so deep-links stay exact. ``chunk_seq`` is assigned here,
 monotonic per file, since splitting invalidates any numbering an extractor did.
+
+A piece's ``body_md`` is sliced by the source spans its extractor stamped on
+the blocks, or left empty. A wrong slice paints the wrong text; empty paints
+the blocks.
 """
 
 from __future__ import annotations
@@ -20,9 +24,6 @@ from collections.abc import Iterable, Iterator
 from fnd.extract.base import MAX_CHUNK_CHARS, Block, Chunk
 
 __all__ = ["bounded"]
-
-#: How much of a block's text is used to locate it in the verbatim source.
-_LOCATE_CHARS = 48
 
 
 def bounded(chunks: Iterable[Chunk]) -> Iterator[Chunk]:
@@ -58,7 +59,7 @@ def _block_runs(blocks: list[Block]) -> Iterator[list[Block]]:
                 yield held
                 held, size = [], 0
             for text in _split_text(block.text):
-                yield [Block(kind=block.kind, text=text)]
+                yield [Block(kind=block.kind, text=text, span=None)]
             continue
         if held and size + len(block.text) + 1 > MAX_CHUNK_CHARS:
             yield held
@@ -85,24 +86,20 @@ def _split_text(text: str) -> Iterator[str]:
 
 
 def _slice_source(source: str, run: list[Block]) -> str:
-    """The verbatim source behind ``run``, or "" when it cannot be located.
+    """The verbatim source behind ``run``, by the spans its extractor stamped.
 
-    Block text is a rendering of the source (markers and emphasis stripped),
-    so the first and last blocks are found by their opening characters. A
-    miss yields "", and the preview then lays out ``body_struct``, the path
-    every kind without a markdown renderer already takes.
+    Exact or empty, never a guess: a run holding any block without a span
+    (a split single block, or a kind whose extractor has no source map) yields
+    "", and the preview lays out ``body_struct`` instead, the path every kind
+    without a markdown renderer already takes.
     """
     if not source or not run:
         return ""
-    head = run[0].text.strip()[:_LOCATE_CHARS]
-    tail = run[-1].text.strip()[:_LOCATE_CHARS]
-    if not head or not tail:
+    spans = [b.span for b in run]
+    if any(s is None for s in spans):
         return ""
-    start = source.find(head)
-    if start < 0:
-        return ""
-    last = source.find(tail, start)
-    if last < 0:
-        return ""
-    end = source.find("\n", last + len(run[-1].text.strip()))
-    return source[start:] if end < 0 else source[start:end]
+    first, last = spans[0], spans[-1]
+    assert first is not None
+    assert last is not None
+    lines = source.splitlines()
+    return "\n".join(lines[max(first[0], 0) : last[1]])

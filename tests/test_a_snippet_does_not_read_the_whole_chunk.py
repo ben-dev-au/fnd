@@ -118,3 +118,14 @@ def test_a_decoy_substring_does_not_place_the_region() -> None:
 
     assert " count" in f" {snippet}", snippet[:80]
     assert "accountant" not in snippet
+
+
+def test_an_underscore_separates_words_as_the_matcher_says() -> None:
+    """`DOC_WORD_RE` is `[^\\W_]+`, so `count` in `row_count` is a match and the
+    region must land on it, not skip to a later bare `count` or the head."""
+    words = ["filler"] * 40_000
+    words[30_000] = "row_count"
+
+    snippet = q._make_snippet(" ".join(words), "count")
+
+    assert "row_count" in snippet, snippet[:80]

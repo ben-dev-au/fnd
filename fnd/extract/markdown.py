@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 from markdown_it import MarkdownIt
 
@@ -87,6 +88,20 @@ def _flush_section(
         # templates want 1-based.
         line=section_start_line + 1,
     )
+
+
+def _span(tokens: list[Any], i: int, section_start_line: int) -> tuple[int, int] | None:
+    """Line span of the block token at ``i``, relative to its section source.
+
+    An ``inline`` token carries no map; its opening block token, the one just
+    before it, does. Fence and code tokens carry their own, fences included.
+    """
+    tok = tokens[i]
+    if tok.type == "inline" and i > 0:
+        tok = tokens[i - 1]
+    if not tok.map:
+        return None
+    return (tok.map[0] - section_start_line, tok.map[1] - section_start_line)
 
 
 def _section_source(source_lines: list[str], start_line: int, end_line: int) -> str:
@@ -208,7 +223,13 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
             text = tok.content.strip()
             # Truncate the heading stack to the level above and push.
             heading_stack[pending_heading_level - 1 :] = [text]
-            blocks.append(Block(kind=f"h{pending_heading_level}", text=text))
+            blocks.append(
+                Block(
+                    kind=f"h{pending_heading_level}",
+                    text=text,
+                    span=_span(tokens, i, section_start_line),
+                )
+            )
             # Index the chunk's own heading as part of its searchable
             # body so a query that matches the heading text returns this
             # chunk. Ancestor headings live in heading_path (separately
@@ -220,7 +241,7 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
         if tok.type == "inline":
             text = tok.content.strip()
             if text:
-                blocks.append(Block(kind="p", text=text))
+                blocks.append(Block(kind="p", text=text, span=_span(tokens, i, section_start_line)))
                 body_parts.append(text)
                 section_has_content = True
             i += 1
@@ -233,7 +254,9 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
         if tok.type in ("fence", "code_block"):
             code = tok.content.strip()
             if code:
-                blocks.append(Block(kind="code", text=code))
+                blocks.append(
+                    Block(kind="code", text=code, span=_span(tokens, i, section_start_line))
+                )
                 body_parts.append(code)
             section_has_content = True
             i += 1
