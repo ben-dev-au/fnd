@@ -312,11 +312,16 @@ def _format_hit_label(
         loc = _shorten(trimmed, 18) if trimmed else f"§{h.chunk_seq + 1}"
     snippet = _shorten(h.snippet, 80) if h.snippet else ""
     body = f"{loc}  {snippet}" if snippet else loc
-    if body_budget > 0 and len(body) > body_budget:
-        # Out of width this row kept the label and dropped the value: 24
-        # siblings all painted `section`, one string, one score. The locator's
-        # tail is what tells them apart; the snippet is the expendable half.
-        body = _elide_middle_keep_suffix(loc, body_budget)
+    if body_budget > 0 and cell_len(body) > body_budget:
+        # The locator always survives; the space after it is the snippet's.
+        # Dropping the snippet whole left `p.57` alone on a half-empty line at
+        # any real pane width. Only when the locator itself overruns does it
+        # fall back to its distinguishing tail (24 sibling `section` rows).
+        room = body_budget - cell_len(loc) - 2
+        if snippet and room >= 4:
+            body = f"{loc}  {_shorten(snippet, room)}"
+        else:
+            body = _elide_middle_keep_suffix(loc, body_budget)
     glyph = _PASS_GLYPHS.get(h.pass_index, "")
     pass_marker = f" {glyph}" if h.pass_index > 0 else ""
     # Leading, not trailing: locator + 80-char snippet routinely overruns the
