@@ -217,6 +217,7 @@ class FileChunk:
     page_label: str = ""
     body_md: str = ""
     score: float | None = None
+    mtime: int = 0
 
     @property
     def body_text(self) -> str:
@@ -227,6 +228,25 @@ class FileChunk:
         serves the results pane and the preview alike.
         """
         return "\n".join(b.text for b in self.blocks)
+
+
+def _freshest_per_chunk_seq(chunks: list[FileChunk]) -> list[FileChunk]:
+    """One chunk per ``chunk_seq``, in document order, keeping the copy with the
+    newest file mtime.
+
+    A file listed under several collections (an Obsidian vault reached via two
+    nested source roots) is stored once per collection: same parent_id, distinct
+    ``collection``. Their content can DIVERGE when the collections were rebuilt
+    at different times, and keeping the first copy tantivy returned served the
+    stale one, so the preview rendered old fenced-code languages it could not
+    highlight. The newest mtime is the current file.
+    """
+    best: dict[int, FileChunk] = {}
+    for c in chunks:
+        current = best.get(c.chunk_seq)
+        if current is None or c.mtime > current.mtime:
+            best[c.chunk_seq] = c
+    return sorted(best.values(), key=lambda c: c.chunk_seq)
 
 
 @dataclass(slots=True, frozen=True)
@@ -797,6 +817,7 @@ class Searcher:
             blocks=blocks,
             page_label=_first_str(doc, F_PAGE_LABEL),
             body_md=body_md,
+            mtime=_first_int(doc, F_MTIME),
         )
 
     def get_file_chunks(self, parent_id: str, *, max_workers: int | None = None) -> list[FileChunk]:
@@ -839,21 +860,7 @@ class Searcher:
                 chunks = list(pool.map(partial(self._decode_chunk, searcher), addresses))
         else:
             chunks = [self._decode_chunk(searcher, a) for a in addresses]
-        chunks.sort(key=lambda c: c.chunk_seq)
-        # A file listed under several collections (typical: an Obsidian
-        # vault reachable via two nested source roots) is stored once per
-        # collection — same parent_id, same content, distinct `collection`
-        # field. The query above is scoped only by parent_id, so it sees
-        # every collection's copy. Collapse to one chunk per chunk_seq so
-        # the full-document preview renders each chunk once, not N times.
-        seen: set[int] = set()
-        deduped = []
-        for c in chunks:
-            if c.chunk_seq in seen:
-                continue
-            seen.add(c.chunk_seq)
-            deduped.append(c)
-        return deduped
+        return _freshest_per_chunk_seq(chunks)
 
     def search_grouped(
         self,
