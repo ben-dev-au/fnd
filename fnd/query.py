@@ -43,6 +43,7 @@ from fnd.schema import (
     F_HEADING_PATH,
     F_KIND,
     F_LINE,
+    F_MEMBERSHIP,
     F_META_BLOB,
     F_MTIME,
     F_PAGE,
@@ -50,10 +51,10 @@ from fnd.schema import (
     F_PARENT_ID,
     F_PATH,
     F_SLIDE,
-    F_SOURCE_PATH,
     F_TITLE,
     SCHEMA_VERSION,
     build_schema,
+    membership_token,
 )
 
 _SNIPPET_CTX = 240
@@ -111,24 +112,19 @@ def scope_arms(
     )
     arms: list[Query] = [tantivy.Query.term_query(schema, F_COLLECTION, c) for c in cols]
     for name, sids in (source_scope or {}).items():
-        srcs = [tantivy.Query.term_query(schema, F_SOURCE_PATH, s) for s in sids]
+        # One compound (collection, source) term per source. A file is stored
+        # once with multi-valued collection and source fields, so ANDing them
+        # would match a file in this collection via a DIFFERENT source; the
+        # membership token keeps the pairing exact.
+        srcs = [
+            tantivy.Query.term_query(schema, F_MEMBERSHIP, membership_token(name, s)) for s in sids
+        ]
         if not srcs:
             continue
-        src_arm = (
+        arms.append(
             srcs[0]
             if len(srcs) == 1
             else tantivy.Query.boolean_query([(tantivy.Occur.Should, s) for s in srcs])
-        )
-        # ANDed with its OWN collection: that provenance is what a flat source
-        # list threw away, so a folder listed under two collections was in
-        # scope for both.
-        arms.append(
-            tantivy.Query.boolean_query(
-                [
-                    (tantivy.Occur.Must, tantivy.Query.term_query(schema, F_COLLECTION, name)),
-                    (tantivy.Occur.Must, src_arm),
-                ]
-            )
         )
     return arms
 
@@ -217,7 +213,6 @@ class FileChunk:
     page_label: str = ""
     body_md: str = ""
     score: float | None = None
-    mtime: int = 0
 
     @property
     def body_text(self) -> str:
@@ -228,25 +223,6 @@ class FileChunk:
         serves the results pane and the preview alike.
         """
         return "\n".join(b.text for b in self.blocks)
-
-
-def _freshest_per_chunk_seq(chunks: list[FileChunk]) -> list[FileChunk]:
-    """One chunk per ``chunk_seq``, in document order, keeping the copy with the
-    newest file mtime.
-
-    A file listed under several collections (an Obsidian vault reached via two
-    nested source roots) is stored once per collection: same parent_id, distinct
-    ``collection``. Their content can DIVERGE when the collections were rebuilt
-    at different times, and keeping the first copy tantivy returned served the
-    stale one, so the preview rendered old fenced-code languages it could not
-    highlight. The newest mtime is the current file.
-    """
-    best: dict[int, FileChunk] = {}
-    for c in chunks:
-        current = best.get(c.chunk_seq)
-        if current is None or c.mtime > current.mtime:
-            best[c.chunk_seq] = c
-    return sorted(best.values(), key=lambda c: c.chunk_seq)
 
 
 @dataclass(slots=True, frozen=True)
@@ -817,7 +793,6 @@ class Searcher:
             blocks=blocks,
             page_label=_first_str(doc, F_PAGE_LABEL),
             body_md=body_md,
-            mtime=_first_int(doc, F_MTIME),
         )
 
     def get_file_chunks(self, parent_id: str, *, max_workers: int | None = None) -> list[FileChunk]:
@@ -860,7 +835,9 @@ class Searcher:
                 chunks = list(pool.map(partial(self._decode_chunk, searcher), addresses))
         else:
             chunks = [self._decode_chunk(searcher, a) for a in addresses]
-        return _freshest_per_chunk_seq(chunks)
+        # Normalised storage keeps one document per (parent_id, chunk_seq), so
+        # a shared file is not duplicated here; order by chunk_seq for the preview.
+        return sorted(chunks, key=lambda c: c.chunk_seq)
 
     def search_grouped(
         self,

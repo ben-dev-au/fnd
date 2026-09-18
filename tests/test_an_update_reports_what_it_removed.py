@@ -71,14 +71,14 @@ def test_a_run_that_removed_nothing_stays_quiet() -> None:
 
 
 def test_a_rebuild_counts_what_did_not_come_back(corpus: Path, tmp_index_dir: Path) -> None:
-    """A rebuild wipes and re-adds, so the prune pass never runs. Removing a
-    source takes that path, and reported its departures as arrivals."""
+    """A rebuild re-processes files in place (no wipe under normalised storage),
+    so a survivor is already-indexed, not new; the point is the departure."""
     _run(_collection(corpus, max_size=None), tmp_index_dir)
 
     narrowed = _run(_collection(corpus, max_size=100), tmp_index_dir, rebuild=True)
 
     assert narrowed.kind == "done"
-    assert narrowed.indexed_newly_total == 1, "a rebuild re-adds what survives"
+    assert narrowed.indexed_newly_total == 0, "the survivor was already a member"
     assert narrowed.removed_total == 1, "and one file did not come back"
 
 

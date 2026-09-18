@@ -54,14 +54,11 @@ from fnd.index import (
     _ensure_index,
     _path_parent_id,
     collections_still_holding,
-    commit,
     commit_async,
-    indexed_parent_ids,
     prune_removed_files,
     read_file_metadata,
     unreadable_roots,
 )
-from fnd.schema import F_COLLECTION
 from fnd.walk import walk_sources
 
 EventKind = Literal[
@@ -389,39 +386,52 @@ def _should_reprocess(
 
 
 def _prior_indexed_state(
-    searcher: Any, schema: Any, collection: str, parent_id: str
-) -> tuple[int | None, int, bool]:
-    """``(stored_mtime, stored_inode_ctime, has_textured)`` for this file's
-    prior-committed chunks in this collection, or ``(None, 0, False)`` if absent.
+    searcher: Any, schema: Any, parent_id: str
+) -> tuple[int | None, int, bool, frozenset[tuple[str, str]]]:
+    """``(stored_mtime, stored_inode_ctime, has_textured, membership)`` for a
+    file's prior-committed chunks, or ``(None, 0, False, frozenset())`` if absent.
 
-    All of a file's chunks share both timestamps, so the first hit settles
-    them; ``has_textured`` scans a handful of chunks for a non-empty
-    ``body_md``. Used by the incremental skip to decide whether an unchanged
-    file needs any work this run.
+    Normalised storage keeps one document per file across collections, so this
+    reads per file (by ``parent_id``). All chunks share the timestamps and the
+    membership, so the first hit settles them; ``has_textured`` scans a handful
+    of chunks for a non-empty ``body_md``. ``membership`` names which
+    collections hold the file, so the incremental skip can tell an unchanged
+    member from a file that is merely in the index via a sibling collection.
     """
-    from fnd.index import _scoped_delete_query
-    from fnd.schema import F_BODY_MD, F_INODE_CTIME, F_MTIME
+    import tantivy
+
+    from fnd.schema import (
+        F_BODY_MD,
+        F_INODE_CTIME,
+        F_MEMBERSHIP,
+        F_MTIME,
+        F_PARENT_ID,
+        MEMBERSHIP_SEP,
+    )
 
     try:
-        result = searcher.search(_scoped_delete_query(schema, collection, parent_id), limit=16)
+        result = searcher.search(tantivy.Query.term_query(schema, F_PARENT_ID, parent_id), limit=16)
     except Exception:
-        return None, 0, False
+        return None, 0, False, frozenset()
     mtime: int | None = None
     inode_ctime = 0
     has_textured = False
+    membership: set[tuple[str, str]] = set()
     for _score, addr in result.hits:
         doc = searcher.doc(addr)
         if mtime is None:
             mv = doc.get_first(F_MTIME)  # type: ignore[attr-defined]
             if mv is not None:
                 mtime = int(mv)
-            # Absent on v7 docs read mid-migration; 0 means "no information".
             cv = doc.get_first(F_INODE_CTIME)  # type: ignore[attr-defined]
             if cv is not None:
                 inode_ctime = int(cv)
+            for token in doc.get_all(F_MEMBERSHIP):  # type: ignore[attr-defined]
+                name, _, source = str(token).partition(MEMBERSHIP_SEP)
+                membership.add((name, source))
         if doc.get_first(F_BODY_MD):  # type: ignore[attr-defined]
             has_textured = True
-    return mtime, inode_ctime, has_textured
+    return mtime, inode_ctime, has_textured, frozenset(membership)
 
 
 @dataclass(slots=True)
@@ -540,18 +550,24 @@ def _process_one_file(
     is_pdf = path.suffix.lower() == ".pdf"
     parent_id = _path_parent_id(path)
 
+    from fnd.membership import after_index, collections_of
+
     prior_mtime: int | None = None
     prior_ctime = 0
     prior_textured = False
+    prior_membership: frozenset[tuple[str, str]] = frozenset()
     if prior_searcher is not None:
-        prior_mtime, prior_ctime, prior_textured = _prior_indexed_state(
-            prior_searcher, schema, collection, parent_id
+        prior_mtime, prior_ctime, prior_textured, prior_membership = _prior_indexed_state(
+            prior_searcher, schema, parent_id
         )
-    already_indexed = prior_mtime is not None
+    # "Already indexed" means already a member of THIS collection: a file in the
+    # index only via a sibling collection still needs adding to this one.
+    already_indexed = collection in collections_of(prior_membership)
+    memberships = after_index(prior_membership, collection, source_id)
 
     # Incremental skip: an unchanged file already in this collection's
     # committed index needs no work this run.
-    if skip_unchanged and prior_mtime is not None:
+    if skip_unchanged and already_indexed and prior_mtime is not None:
         times = read_file_times(path)
         # read_file_times zeroes on stat failure; fall back to the stored
         # values so a transient error reads as "unchanged", not "changed".
@@ -613,47 +629,41 @@ def _process_one_file(
         except OSError:
             non_pdf_sha = ""
 
-    # Delete only THIS collection's chunks for this file. The previous
-    # unscoped delete_documents(F_PARENT_ID, ...) was a per-path nuke
-    # that wiped sibling collections' chunks too when a file was
-    # shared (typical case: an Obsidian Vault listed under multiple
-    # collections' sources). See fnd.index._scoped_delete_query.
-    from fnd.index import _scoped_delete_query
+    # Extract in full before deleting, so a failure leaves the prior document
+    # (and any sibling collection's membership on it) untouched. One file's
+    # chunks are held in memory only for the duration of its own write.
+    from fnd.index import _parent_delete_query
 
-    _delete_q = _scoped_delete_query(schema, collection, parent_id)
-    writer.delete_documents_by_query(_delete_q)
-    n_chunks = 0
-    has_textured = False
-    # Per-page beats from the PDF worker feed the live-progress
-    # channel so the modal's 1Hz ETA can refine while a long PDF is
-    # mid-extraction (instead of waiting for the file_complete event).
+    # Per-page beats from the PDF worker feed the live-progress channel so the
+    # modal's 1Hz ETA can refine mid-extraction, not only at file_complete.
     from fnd.tui.live_progress import report_heartbeat as _report_heartbeat
 
+    has_textured = False
+    docs = []
     try:
         for chunk in extract(path, on_heartbeat=_report_heartbeat):
             if chunk.body_md:
                 has_textured = True
-            writer.add_document(
+            docs.append(
                 _doc_for_chunk(
                     chunk,
-                    collection=collection,
-                    source_path=source_id,
+                    memberships=memberships,
                     meta_blob_bytes=meta_blob_bytes,
                     tags=file_tags,
                 )
             )
-            n_chunks += 1
     except ExtractError as e:
-        # Same collection-scoped delete as above: never touch sibling
-        # collections' chunks on an extraction error.
-        writer.delete_documents_by_query(_delete_q)
-        return _FileOutcome(n_chunks, False, already_indexed, False, str(e))
+        return _FileOutcome(0, False, already_indexed, False, str(e))
 
-    # Extraction that yields nothing raises nothing, so a caller counting
-    # files would report this one as indexed while the index holds none of
-    # it. The scoped delete above already ran, so it is genuinely absent.
-    if n_chunks == 0:
+    # Extraction that yields nothing raises nothing; keep the prior document
+    # rather than delete on a possibly transient empty read.
+    if not docs:
         return _FileOutcome(0, False, already_indexed, False, no_text_reason(path))
+
+    writer.delete_documents_by_query(_parent_delete_query(schema, parent_id))
+    for doc in docs:
+        writer.add_document(doc)
+    n_chunks = len(docs)
 
     if not is_pdf and non_pdf_sha:
         from fnd.seen_log import mark_seen
@@ -661,7 +671,12 @@ def _process_one_file(
         mark_seen(non_pdf_sha)
 
     reused = (cache.hits > cache_before_hits) if is_pdf else non_pdf_was_seen
-    return _FileOutcome(n_chunks, reused, already_indexed, has_textured, "")
+    # A literal rebuild (``wipe``) clears each file's seen-marker and cache, so
+    # it is genuine fresh work and is reported as newly indexed, not "already" —
+    # even though the file stays a member of the collection under normalised
+    # storage. Membership drives the skip decision above; the count follows work.
+    reported_already = already_indexed and not wipe
+    return _FileOutcome(n_chunks, reused, reported_already, has_textured, "")
 
 
 async def run_indexer(
@@ -868,7 +883,7 @@ async def run_indexer(
     _walked = {p for p, _src in paths}
     scan_blocked = [(p, reason) for p, reason in scan_blocked if p not in _walked]
 
-    def _prepare() -> tuple[dict[str, int], int, int, Any, Any, Any, set[str], list[Path]]:
+    def _prepare() -> tuple[dict[str, int], int, int, Any, Any, Any, list[Path]]:
         local_paths = paths
         local_sizes: dict[str, int] = {}
         for p, _src in local_paths:
@@ -885,23 +900,18 @@ async def run_indexer(
         local_blocked = unreadable_roots(Path(s.path).expanduser() for s in config.sources)
         local_index = _ensure_index(index_dir, force=rebuild and not local_blocked)
         local_writer = local_index.writer(heap_size=_WRITER_HEAP)
-        local_held: set[str] = set()
-        if rebuild and not local_blocked:
-            # What the collection held before the wipe. A rebuild deletes and
-            # re-adds, so the prune pass never runs and nothing counted what
-            # left: removing a source reported its departures as arrivals.
-            with contextlib.suppress(Exception):
-                local_held = indexed_parent_ids(local_index, collection)
-            local_writer.delete_documents(F_COLLECTION, collection)
-            commit(local_writer)
-        # Prior-committed snapshot for the incremental skip. A point-in-time
-        # searcher reflects only what previous runs committed; files we
-        # process this run are deleted+re-added, never skipped later, so the
-        # start-of-run snapshot is the correct "already indexed?" oracle.
+        # Normalised storage keeps one document per file across collections, so
+        # a rebuild no longer bulk-deletes by collection (that would strip a
+        # shared file's sibling memberships). Every walked file is re-extracted
+        # and whole-file-replaced with its membership merged; prune drops the
+        # files the walk did not reach.
+        #
+        # Prior-committed snapshot: a point-in-time searcher reflects only what
+        # previous runs committed. Every file this run processes reads its prior
+        # membership from here to merge, so it is always needed, rebuild too.
         local_prior_searcher = None
-        if not rebuild or local_blocked:
-            with contextlib.suppress(Exception):
-                local_prior_searcher = local_index.searcher()
+        with contextlib.suppress(Exception):
+            local_prior_searcher = local_index.searcher()
         return (
             local_sizes,
             local_pdfs_total,
@@ -909,7 +919,6 @@ async def run_indexer(
             local_index,
             local_writer,
             local_prior_searcher,
-            local_held,
             local_blocked,
         )
 
@@ -921,7 +930,6 @@ async def run_indexer(
             index,
             writer,
             prior_searcher,
-            held_before,
             blocked_roots,
         ) = await asyncio.to_thread(_prepare)
     except Exception as e:
@@ -1016,7 +1024,7 @@ async def run_indexer(
                     cache_before_hits=hits_before,
                     cache=cache,
                     prior_searcher=prior_searcher,
-                    skip_unchanged=skip_unchanged,
+                    skip_unchanged=skip_unchanged and not rebuild,
                     texturise_on=texturise_on,
                     wipe=force_fresh,
                     tag_sources=tag_sources,
@@ -1162,13 +1170,17 @@ async def run_indexer(
         if not (cancel is not None and cancel.is_set()):
             live_parent_ids = {_path_parent_id(p) for p, _src in paths}
             live_parent_ids.update(_path_parent_id(p) for p, _reason in scan_blocked)
-            if rebuild:
-                # The wipe already removed them; this is the count of the ones
-                # the walk did not bring back.
-                pruned = held_before - live_parent_ids
-            elif not blocked_roots:
+            if not blocked_roots:
+                # Rebuild no longer wipes, so it prunes like an update: a file
+                # the walk did not reach loses this collection, keeping its
+                # document only if another collection still holds it.
                 pruned = prune_removed_files(
-                    index, writer, collection=collection, live_parent_ids=live_parent_ids
+                    index,
+                    writer,
+                    collection=collection,
+                    live_parent_ids=live_parent_ids,
+                    tag_sources=tag_sources,
+                    tag_frontmatter_keys=tag_frontmatter_keys,
                 )
             removed = len(pruned)
             if blocked_roots:

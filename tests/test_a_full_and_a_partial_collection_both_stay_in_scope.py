@@ -84,36 +84,36 @@ def test_a_full_collection_survives_beside_a_partial_one(
     assert "Archive" not in found, "Personal's unticked source must stay out"
 
 
-def test_a_partial_selection_does_not_reach_the_other_collections_copy(
+def test_a_partial_selection_reaches_a_shared_file_only_through_its_source(
     two_collections: Config, tmp_path: Path, tmp_index_dir: Path
 ) -> None:
     """The provenance a flat path list threw away: Vault is listed in BOTH
-    configs, so ticking Personal's copy must not pull Work's chunks in.
-
-    Asserted on raw chunks, not on files. `search` dedups per file, so the
-    shared note appears once either way and a file-level assertion holds with
-    the collection half of the fix deleted.
+    configs and is stored once with membership (Work, Vault) and
+    (Personal, Vault). Scoping Personal to its Vault source reaches it; scoping
+    Personal to a DIFFERENT source (PersonalDocs) does not, because the
+    membership pairs each collection with the source that reached the file.
     """
     searcher = Searcher(index_dir=tmp_index_dir)
     vault = str((tmp_path / "Vault").resolve())
+    personaldocs = str((tmp_path / "PersonalDocs").resolve())
 
-    one = searcher._filtered_raw_hits(
+    via_vault = searcher._filtered_raw_hits(
         "markervault",
         target=50,
         collection=None,
         metadata_filter=None,
         source_scope={"Personal": [vault]},
     )
-    both = searcher._filtered_raw_hits(
+    via_personaldocs = searcher._filtered_raw_hits(
         "markervault",
         target=50,
         collection=None,
         metadata_filter=None,
-        source_scope={"Personal": [vault], "Work": [vault]},
+        source_scope={"Personal": [personaldocs]},
     )
 
-    assert len(one) == 1, one
-    assert len(both) == 2, both
+    assert len(via_vault) == 1, via_vault
+    assert len(via_personaldocs) == 0, "the Vault note is not in Personal via PersonalDocs"
 
 
 def test_the_fuzzy_cascade_honours_a_partial_scope(

@@ -41,7 +41,7 @@ def _stored(index: tantivy.Index) -> tantivy.Document:
 def test_both_sources_land_on_one_document(tmp_path: Path) -> None:
     doc = _doc_for_chunk(
         _chunk(0),
-        collection="c",
+        memberships=[("c", "")],
         tags={"frontmatter": frozenset({"recipe"}), "os": frozenset({"red"})},
     )
     stored = _stored(_index_with(tmp_path, [doc]))
@@ -52,14 +52,16 @@ def test_both_sources_land_on_one_document(tmp_path: Path) -> None:
 def test_tags_repeat_on_every_chunk(tmp_path: Path) -> None:
     """A file's tags must be findable from any of its chunks."""
     tags = {"frontmatter": frozenset({"recipe"})}
-    docs = [_doc_for_chunk(_chunk(i), collection="c", tags=tags) for i in range(3)]
+    docs = [_doc_for_chunk(_chunk(i), memberships=[("c", "")], tags=tags) for i in range(3)]
     index = _index_with(tmp_path, docs)
     q = tantivy.Query.term_query(build_schema(), F_TAGS_FM, "recipe")
     assert len(index.searcher().search(q, 10).hits) == 3
 
 
 def test_no_tags_writes_no_values(tmp_path: Path) -> None:
-    stored = _stored(_index_with(tmp_path, [_doc_for_chunk(_chunk(0), collection="c", tags=None)]))
+    stored = _stored(
+        _index_with(tmp_path, [_doc_for_chunk(_chunk(0), memberships=[("c", "")], tags=None)])
+    )
     assert stored.get_all(F_TAGS_FM) == []
 
 
@@ -67,7 +69,7 @@ def test_unknown_provider_id_is_ignored(tmp_path: Path) -> None:
     """A future provider must not crash an older index writer."""
     doc = _doc_for_chunk(
         _chunk(0),
-        collection="c",
+        memberships=[("c", "")],
         tags={"frontmatter": frozenset({"ok"}), "quantum": frozenset({"x"})},
     )
     stored = _stored(_index_with(tmp_path, [doc]))

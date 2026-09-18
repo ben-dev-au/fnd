@@ -9,7 +9,15 @@ import tempfile
 import tantivy
 
 from fnd.kind_catalogue import present_kinds
-from fnd.schema import F_COLLECTION, F_KIND, F_PARENT_ID, F_SOURCE_PATH, build_schema
+from fnd.schema import (
+    F_COLLECTION,
+    F_KIND,
+    F_MEMBERSHIP,
+    F_PARENT_ID,
+    F_SOURCE_PATH,
+    build_schema,
+    membership_token,
+)
 
 
 def _index(docs: list[tuple[str, str, str]]) -> tantivy.Index:
@@ -21,6 +29,7 @@ def _index(docs: list[tuple[str, str, str]]) -> tantivy.Index:
         d.add_text(F_PARENT_ID, f"p{i}")
         d.add_text(F_COLLECTION, col)
         d.add_text(F_SOURCE_PATH, src)
+        d.add_text(F_MEMBERSHIP, membership_token(col, src))
         d.add_text(F_KIND, kind)
         w.add_document(d)
     w.commit()
