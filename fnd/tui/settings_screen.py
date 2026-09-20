@@ -3988,10 +3988,19 @@ class RenameCollectionScreen(Screen[None]):
                 )
             app._indexer.reindex_with_warning(new_name, rebuild=True)  # type: ignore[attr-defined]
 
+        _defaults = getattr(getattr(app, "_config", None), "defaults", None)
+
         def _work() -> None:
             error: str | None = None
             try:
-                drop_collection(index_dir, old)
+                drop_collection(
+                    index_dir,
+                    old,
+                    tag_sources=tuple(_defaults.tag_sources)
+                    if _defaults
+                    else ("frontmatter", "os"),
+                    tag_frontmatter_keys=tuple(_defaults.tag_frontmatter_keys) if _defaults else (),
+                )
             except Exception as e:
                 error = str(e)
             with contextlib.suppress(Exception):
@@ -4125,12 +4134,20 @@ class DeleteCollectionScreen(Screen[None]):
         self._show_deleting()
         name = self._name
         index_dir = app._index_dir  # type: ignore[attr-defined]
+        _defaults = getattr(getattr(app, "_config", None), "defaults", None)
 
         def _drop() -> str | None:
             from fnd.index import drop_collection
 
             try:
-                drop_collection(index_dir, name)
+                drop_collection(
+                    index_dir,
+                    name,
+                    tag_sources=tuple(_defaults.tag_sources)
+                    if _defaults
+                    else ("frontmatter", "os"),
+                    tag_frontmatter_keys=tuple(_defaults.tag_frontmatter_keys) if _defaults else (),
+                )
             except Exception as e:
                 return str(e)
             return None
@@ -6520,14 +6537,29 @@ class FilterBrowserScreen(Screen[None]):
         self._sampled_spec = spec
         self._rebuild(focus_tree=False)
 
-    def _resample_if_stale(self) -> None:
-        """Re-scan when the spec on screen is not the one the counts describe.
+    def _gating_spec(self, spec: Any) -> Any:
+        """What the counts are actually gated with: the spec minus its kinds.
 
-        Debounced, because ticking through a branch changes the spec once per
-        keypress and each scan walks the source. The timer is the only thing
-        that starts a scan after mount, so the two cannot race.
+        `_sample` strips `kinds` before building the gate, so a file-type tick
+        cannot change any count and must not buy a walk of the source.
         """
-        if self._sample_provider is None or self._spec == self._sampled_spec:
+        import dataclasses
+
+        if spec is None:
+            return None
+        return dataclasses.replace(spec, kinds=())
+
+    def _resample_if_stale(self) -> None:
+        """Re-scan when the rules on screen are not the ones the counts describe.
+
+        Debounced: ticking through a branch changes the spec once per keypress
+        and each scan walks the source. Grouped, because the mount scan is
+        started directly by `on_mount` and a timer firing during it otherwise
+        puts two walks in `sample_source` at once.
+        """
+        if self._sample_provider is None:
+            return
+        if self._gating_spec(self._spec) == self._gating_spec(self._sampled_spec):
             return
         if self._resample_timer is not None:
             self._resample_timer.stop()
@@ -6535,10 +6567,13 @@ class FilterBrowserScreen(Screen[None]):
 
     def _start_resample(self) -> None:
         self._resample_timer = None
-        if self._spec == self._sampled_spec:
+        if self._gating_spec(self._spec) == self._gating_spec(self._sampled_spec):
             return
         self._scanning = True
-        self.run_worker(self._load_sample, thread=True)
+        # Painted, or the pane shows the old counts with nothing saying they
+        # are being recomputed and the flag is False again by the next repaint.
+        self._refresh_summary()
+        self.run_worker(self._load_sample, thread=True, exclusive=True, group="sample")
 
     def _rebuild(self, *, focus_tree: bool = True) -> None:
         """``focus_tree`` False where the user is typing or a worker landed.
@@ -6599,6 +6634,9 @@ class FilterBrowserScreen(Screen[None]):
         if settled != set(ev.selected) or settled_out != set(ev.excluded):
             self._rebuild(focus_tree=False)
             return
+        # The ordinary tick ends here, so this is where the counts learn that
+        # their rules moved. `_rebuild` is the other caller, not the only one.
+        self._resample_if_stale()
         self._refresh_summary()
 
     def _say_when_nothing_matches(self, any_rows: bool) -> None:

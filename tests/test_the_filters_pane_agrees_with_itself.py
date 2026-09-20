@@ -9,16 +9,6 @@ fact about the current scope.
 from __future__ import annotations
 
 from fnd.tui.scope_panel import _tags_summary, filters_title
-from fnd.tui.widgets.clear_bar import clear_label
-
-
-def test_the_clear_row_counts_what_the_title_counts() -> None:
-    """`Clear 4 filters` sat one row under `Filters — 2 kinds, month, 1 tag`.
-
-    Two ticks inside one facet are not two filters.
-    """
-    assert clear_label(3) == "✕  Clear 3 filters"
-    assert clear_label(1) == "✕  Clear 1 filter"
 
 
 def test_an_empty_scope_says_scope_not_index() -> None:

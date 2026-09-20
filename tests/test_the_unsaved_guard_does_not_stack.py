@@ -97,3 +97,53 @@ async def test_pressing_the_menu_key_twice_leaves_one_guard(built_index: Path) -
     assert len(after) == 1, f"a second guard was stacked: {len(after)}"
     assert same, "the standing guard was replaced rather than left alone"
     assert offers, "the standing guard lost the option that saves the work"
+
+
+@pytest.mark.asyncio
+async def test_quitting_twice_leaves_one_guard(built_index: Path) -> None:
+    """`q` and ctrl+c are the third route that asks the question, and it kept
+    stacking after the other two stopped."""
+    app = FNDApp(index_dir=built_index)
+    async with app.run_test(size=(110, 34)) as pilot:
+        screen = FilterBrowserScreen(
+            title="Index filters",
+            spec=_MINE,
+            gitignore=True,
+            fndignore=True,
+            inherited=_INHERITED,
+            sample_provider=lambda _spec: _SAMPLE,
+            on_save=lambda *_a: None,
+        )
+        app.push_screen(screen)
+        await wait_until(
+            pilot,
+            lambda: app.screen is screen and bool(screen.query("#filter_tree")),
+            timeout=20.0,
+            message="the filter tree never composed",
+        )
+        screen.action_clear_all()
+        await pilot.pause()
+
+        app.action_quit()
+        await wait_until(
+            pilot,
+            lambda: bool(_guards(app)) and bool(_guards(app)[-1].query("#confirm_list")),
+            timeout=20.0,
+            message="quit never asked",
+        )
+        first = _guards(app)
+
+        app.action_quit()
+        await wait_until(
+            pilot,
+            lambda: bool(_guards(app)) and bool(_guards(app)[-1].query("#confirm_list")),
+            timeout=20.0,
+            message="no guard on screen after the second quit",
+        )
+        after = _guards(app)
+        same = after[0] is first[0]
+        offers = _offers_save(after[-1])
+
+    assert len(after) == 1, f"a second guard was stacked: {len(after)}"
+    assert same, "the standing guard was replaced rather than left alone"
+    assert offers, "the standing guard lost the option that saves the work"

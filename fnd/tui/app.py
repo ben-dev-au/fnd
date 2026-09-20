@@ -1046,6 +1046,11 @@ class FNDApp(App[None]):
         """
         from fnd.tui.settings_screen import UnsavedChangesScreen, unsaved_on_stack
 
+        if isinstance(self.screen, UnsavedChangesScreen):
+            # The third route that asks it. The question is already on screen
+            # waiting for an answer, and asking again stacks a guard that has
+            # dropped its own Save option.
+            return
         pending = unsaved_on_stack(self.screen_stack)
         if pending is None:
             self.exit()
