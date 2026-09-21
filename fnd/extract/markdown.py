@@ -24,7 +24,11 @@ from markdown_it import MarkdownIt
 from fnd.extract.base import Block, Chunk, ExtractError
 from fnd.fsmeta import FileTimes, read_file_times
 
-_md = MarkdownIt("commonmark")
+# CommonMark plus the GFM table rule: without it a table parses as a paragraph
+# of raw pipes, which inflates the body over the chunk budget and renders as raw
+# source in the preview. Only the table rule is added, so nothing else about the
+# parse changes.
+_md = MarkdownIt("commonmark").enable("table")
 
 # Token types that carry "real" content. A section is worth flushing as a
 # chunk when *any* of these appeared inside it — even if no `inline`
@@ -217,6 +221,30 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
         if tok.type == "heading_close":
             in_heading = False
             i += 1
+            continue
+
+        if tok.type == "table_open":
+            # One block per table. Its cell text is the searchable body, and its
+            # span comes from table_open (a block token with a line map, unlike
+            # the cell tokens), so the bounder can slice body_md if the section
+            # splits. Kept whole downstream (see fnd.extract._bound) because a
+            # table is a semantic unit: splitting it would break ranking and
+            # proximity, both scored per chunk.
+            span = _span(tokens, i, section_start_line)
+            j = i + 1
+            cells: list[str] = []
+            while j < len(tokens) and tokens[j].type != "table_close":
+                if tokens[j].type == "inline":
+                    cell = tokens[j].content.strip()
+                    if cell:
+                        cells.append(cell)
+                j += 1
+            text = " ".join(cells)
+            if text:
+                blocks.append(Block(kind="table", text=text, span=span))
+                body_parts.append(text)
+            section_has_content = True
+            i = j + 1
             continue
 
         if in_heading and tok.type == "inline":
