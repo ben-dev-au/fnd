@@ -55,6 +55,15 @@ def _block_runs(blocks: list[Block]) -> Iterator[list[Block]]:
     held: list[Block] = []
     size = 0
     for block in blocks:
+        if block.kind == "table":
+            # A table is a semantic unit kept whole even over budget: splitting
+            # it would break ranking and proximity (both per chunk) and strand
+            # its source. It gets its own run so it is never split nor merged.
+            if held:
+                yield held
+                held, size = [], 0
+            yield [block]
+            continue
         if len(block.text) > MAX_CHUNK_CHARS:
             if held:
                 yield held
