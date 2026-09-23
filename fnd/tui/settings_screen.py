@@ -3081,6 +3081,7 @@ class SourceFormScreen(Screen[None]):
             DeleteSourceScreen(
                 collection_name=self._collection_name,
                 source_index=self._source_index,
+                source_path=str(self._snapshot.get("path") or ""),
             )
         )
 
@@ -3901,9 +3902,24 @@ class RenameCollectionScreen(Screen[None]):
         )
 
         app: FNDApp = self.app  # type: ignore[assignment]
-        cfg = app._config  # type: ignore[attr-defined]
-        if cfg is None or self._old_name not in cfg.collections:
-            self.notify("Collection vanished", severity="error")
+        # The file, not `app._config`: the collection is copied whole under the
+        # new name, so a stale model drops or resurrects sources.
+        try:
+            cfg = load()
+        except Exception as e:
+            self.notify(
+                f"The config file cannot be read, so nothing was renamed: {_summarise(e)}",
+                severity="error",
+                timeout=8,
+            )
+            return
+        if self._old_name not in cfg.collections:
+            app._config = cfg  # type: ignore[attr-defined]
+            self.notify(
+                f"{self._old_name!r} is no longer in the config file, so nothing was renamed.",
+                severity="error",
+                timeout=8,
+            )
             self.app.pop_screen()
             return
         if new_name in cfg.collections:
@@ -4938,6 +4954,14 @@ class RebuildConfirmScreen(Screen[None]):
             self._on_confirm()
 
 
+def _find_source(sources: Sequence[Any], path: str, hint: int) -> int | None:
+    """Row of the source at ``path``: ``hint`` if it still holds it, else its only row."""
+    if 0 <= hint < len(sources) and str(sources[hint].path) == path:
+        return hint
+    rows = [i for i, src in enumerate(sources) if str(src.path) == path]
+    return rows[0] if len(rows) == 1 else None
+
+
 class DeleteSourceScreen(Screen[None]):
     """Confirm + remove a single source from a collection.
 
@@ -4945,6 +4969,10 @@ class DeleteSourceScreen(Screen[None]):
     editing an existing source). The source's path is dropped from
     ``[collections.<name>.sources]`` via :func:`fnd.config.write_collection`.
     Reindex of the collection follows because the source set changed.
+
+    The source is found by its path in the file as it is at each step, never by
+    row index into ``app._config``: any reload replaces that model, and
+    ``write_collection`` writes the whole collection table back.
     """
 
     BINDINGS = [  # noqa: RUF012
@@ -4956,52 +4984,76 @@ class DeleteSourceScreen(Screen[None]):
 
     CSS = chrome_css("DeleteSourceScreen", confirm=True)
 
-    def __init__(self, *, collection_name: str, source_index: int) -> None:
+    def __init__(
+        self, *, collection_name: str, source_index: int, source_path: str | None = None
+    ) -> None:
         super().__init__()
         self._collection_name = collection_name
         self._source_index = source_index
+        # None pins whichever source sits at `source_index` when the dialog opens.
+        self._source_path = source_path
+
+    def _locate(self) -> tuple[Any, int | None, str]:
+        """The config as the file holds it now, this source's row in it, and why not.
+
+        A read that cannot find the source is adopted as ``app._config``, so
+        reopening Sources shows the file rather than the model that lost it.
+        """
+        from fnd.config import load
+
+        try:
+            cfg = load()
+        except Exception as e:
+            return None, None, f"The config file cannot be read: {_summarise(e)}"
+        name = self._collection_name
+        col = cfg.collections.get(name)
+        sources = [] if col is None else col.sources
+        if self._source_path is None and 0 <= self._source_index < len(sources):
+            self._source_path = str(sources[self._source_index].path)
+        index = _find_source(sources, self._source_path or "", self._source_index)
+        if index is not None:
+            return cfg, index, ""
+        self.app._config = cfg  # type: ignore[attr-defined]
+        where = f"\nPath: {self._source_path}" if self._source_path else ""
+        return cfg, None, f"This source is no longer in {name!r} in the config file.{where}"
 
     def compose(self) -> ComposeResult:
-        app: FNDApp = self.app  # type: ignore[assignment]
-        cfg = app._config  # type: ignore[attr-defined]
-        path_display = "(unknown)"
-        others = 0
-        if (
-            cfg is not None
-            and self._collection_name in cfg.collections
-            and 0 <= self._source_index < len(cfg.collections[self._collection_name].sources)
-        ):
-            sources = cfg.collections[self._collection_name].sources
-            src = sources[self._source_index]
-            path_display = str(src.path) or "(no path)"
-            others = len(sources) - 1
-        # "Files another source still reaches stay" is false comfort where
-        # there is no other source: everything this one reached leaves.
-        shared = (
-            "Files another source still reaches stay."
-            if others
-            else "It is the only source, so the collection is left empty."
-        )
-
+        cfg, index, problem = self._locate()
+        name = self._collection_name
         with Vertical(id="settings_box") as box:
             box.border_title = (
-                f"Collections › {self._collection_name} › Sources › "
-                f"Source {self._source_index + 1} › Delete"
+                f"Collections › {name} › Sources › "
+                f"Source {(self._source_index if index is None else index) + 1} › Delete"
             )
-            yield Static(
-                f"Remove this source from {self._collection_name!r}?\n"
-                f"Path: {path_display}\n\n"
-                "The files on disk are untouched.\n"
-                f"{self._collection_name!r} is rebuilt straight afterwards, which "
-                "takes as long as indexing it does and drops the chunks only "
-                f"this source reached. {shared}",
-                classes="warning",
-            )
-            yield ConfirmList(
-                Option(Text("Yes, remove this source", style="bold"), id="yes"),
-                Option("Cancel", id="no"),
-                id="confirm_list",
-            )
+            if problem:
+                yield Static(
+                    f"{problem}\n\nNothing was removed. Press Esc and reopen Sources "
+                    "to see the file as it is now.",
+                    classes="warning",
+                )
+                yield ConfirmList(Option("Back", id="no"), id="confirm_list")
+            else:
+                # "Files another source still reaches stay" is false comfort
+                # where there is no other source: everything this one reached leaves.
+                shared = (
+                    "Files another source still reaches stay."
+                    if len(cfg.collections[name].sources) > 1
+                    else "It is the only source, so the collection is left empty."
+                )
+                yield Static(
+                    f"Remove this source from {name!r}?\n"
+                    f"Path: {self._source_path}\n\n"
+                    "The files on disk are untouched.\n"
+                    f"{name!r} is rebuilt straight afterwards, which "
+                    "takes as long as indexing it does and drops the chunks only "
+                    f"this source reached. {shared}",
+                    classes="warning",
+                )
+                yield ConfirmList(
+                    Option(Text("Yes, remove this source", style="bold"), id="yes"),
+                    Option("Cancel", id="no"),
+                    id="confirm_list",
+                )
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
@@ -5032,16 +5084,12 @@ class DeleteSourceScreen(Screen[None]):
         from fnd.config import default_config_path, load, write_collection
 
         app: FNDApp = self.app  # type: ignore[assignment]
-        cfg = app._config  # type: ignore[attr-defined]
-        if cfg is None or self._collection_name not in cfg.collections:
-            self.notify("Collection vanished", severity="error")
+        cfg, index, problem = self._locate()
+        if index is None:
+            self.notify(f"{problem}\nNothing was removed.", severity="error", timeout=8)
             self.app.pop_screen()
             return
         col = cfg.collections[self._collection_name]
-        if not 0 <= self._source_index < len(col.sources):
-            self.notify("Source vanished", severity="error")
-            self.app.pop_screen()
-            return
         busy = _indexing_now(app)
         if busy is not None:
             # The dialog promises the collection is rebuilt straight
@@ -5054,7 +5102,7 @@ class DeleteSourceScreen(Screen[None]):
                 timeout=8,
             )
             return
-        del col.sources[self._source_index]
+        del col.sources[index]
         try:
             write_collection(
                 config_path=default_config_path(),
@@ -5182,6 +5230,7 @@ class CloneSourcePickSourceScreen(Screen[None]):
         super().__init__()
         self._source_coll = source_collection
         self._target = target_collection
+        self._paths: list[str] = []
 
     def compose(self) -> ComposeResult:
         app: FNDApp = self.app  # type: ignore[assignment]
@@ -5197,6 +5246,7 @@ class CloneSourcePickSourceScreen(Screen[None]):
             options: list[Option] = []
             if cfg is not None and self._source_coll in cfg.collections:
                 sources = cfg.collections[self._source_coll].sources
+                self._paths = [str(src.path) for src in sources]
                 for i, src in enumerate(sources):
                     base = Path(str(src.path)).name or str(src.path)
                     types = (
@@ -5247,18 +5297,39 @@ class CloneSourcePickSourceScreen(Screen[None]):
             return
         from fnd.config import clone_source, default_config_path, load
 
+        app: FNDApp = self.app  # type: ignore[assignment]
+        # `clone_source` indexes the file, and these rows came from `app._config`.
+        try:
+            cfg = load()
+        except Exception as e:
+            self.notify(
+                f"The config file cannot be read, so nothing was cloned: {_summarise(e)}",
+                severity="error",
+                timeout=8,
+            )
+            return
+        col = cfg.collections.get(self._source_coll)
+        found = _find_source([] if col is None else col.sources, self._paths[idx], idx)
+        if found is None:
+            app._config = cfg  # type: ignore[attr-defined]
+            self.notify(
+                f"That source is no longer in {self._source_coll!r} in the config file, "
+                "so nothing was cloned.",
+                severity="error",
+                timeout=8,
+            )
+            return
         try:
             clone_source(
                 config_path=default_config_path(),
                 source_collection=self._source_coll,
-                source_index=idx,
+                source_index=found,
                 target_collection=self._target,
             )
         except (KeyError, IndexError, ValueError) as e:
             self.notify(f"Clone failed: {e}", severity="error")
             return
 
-        app: FNDApp = self.app  # type: ignore[assignment]
         app._config = load()  # type: ignore[attr-defined]
         app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
         self.notify(
