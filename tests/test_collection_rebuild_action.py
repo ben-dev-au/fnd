@@ -5,6 +5,11 @@ a Rebuild that silently ran a plain incremental update.
 
 Drives the real menu action callback against the real app, capturing the
 exact kwargs start_indexer receives — the layer where the bug would hide.
+
+The action asks first, because it empties the collection before
+refilling it, so the test confirms as a user would. That also proves the
+confirmation passes the flags through untouched, which is the way this same
+regression could return.
 """
 
 from __future__ import annotations
@@ -32,6 +37,15 @@ def _make_cfg(tmp_path: Path) -> tuple[Config, Path]:
     return cfg, index_dir
 
 
+def _confirm(app: FNDApp) -> None:
+    """Choose "yes" on the rebuild confirmation, as a user would."""
+    from textual.widgets import OptionList
+
+    options = app.screen.query_one("#confirm_list", OptionList)
+    options.highlighted = next(i for i, o in enumerate(options._options) if o.id == "yes")
+    options.action_select()
+
+
 @pytest.mark.asyncio
 async def test_collection_rebuild_action_passes_rebuild_flags(tmp_path: Path) -> None:
     from fnd.tui.menu import _make_rebuild
@@ -51,7 +65,12 @@ async def test_collection_rebuild_action_passes_rebuild_flags(tmp_path: Path) ->
 
         app.start_indexer = _fake_start  # type: ignore[assignment]
         _make_rebuild("papers")(app)
-        await pilot.pause()
+        for _ in range(10):
+            await pilot.pause()
+        assert not captured, "it emptied the collection before asking"
+        _confirm(app)
+        for _ in range(10):
+            await pilot.pause()
 
     assert captured, "Rebuild action never reached start_indexer"
     kw = captured[0]

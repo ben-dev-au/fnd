@@ -94,11 +94,11 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
     Three keyed actions:
       1 / e   Open the file in ``$EDITOR``; re-validate on return.
       2 / r   Reset to defaults (current file is renamed to a timestamped
-              backup; a fresh ``CONFIG_TEMPLATE`` is written in its place).
-      3 / q   Dismiss (back to caller). At TUI startup the standalone
-              :class:`ConfigRecoveryApp` exits the process; in-session
-              the main app stays open and the user lands back where they
-              were.
+              backup; a fresh starter config is written in its place).
+      3 / q   Back out. In-session the main app stays open and the user
+              lands where they were; at startup the standalone
+              :class:`ConfigRecoveryApp` is all there is, so the row says
+              "Quit fnd" rather than "Dismiss".
 
     Returns ``"valid"`` if the recovery succeeded and ``"exit"`` if the
     user backed out without fixing the file.
@@ -132,10 +132,14 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
     #recovery_hints { padding-top: 1; color: $text-muted; }
     """
 
-    def __init__(self, *, error_text: str, config_path: Path) -> None:
+    def __init__(self, *, error_text: str, config_path: Path, standalone: bool = False) -> None:
         super().__init__()
         self._error_text = error_text
         self._config_path = config_path
+        # Backing out of the startup flow ends the process (there is no
+        # session behind it to return to), so the row cannot say "Dismiss"
+        # on both routes.
+        self._standalone = standalone
 
     def compose(self) -> ComposeResult:
         with Vertical(id="recovery_box"):
@@ -149,7 +153,10 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
             yield Static(
                 "[2] Reset to defaults (current file backed up)", classes="recovery_choice"
             )
-            yield Static("[3] Dismiss", classes="recovery_choice")
+            yield Static(
+                "[3] Quit fnd" if self._standalone else "[3] Dismiss",
+                classes="recovery_choice",
+            )
             yield Static(
                 "Press 1, 2, or 3, or e / r / q.",
                 id="recovery_hints",
@@ -161,9 +168,10 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
         editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
         self._config_path.parent.mkdir(parents=True, exist_ok=True)
         if not self._config_path.exists():
-            from fnd.config import CONFIG_TEMPLATE
+            from fnd._perms import secure_write_text
+            from fnd.config import starter_config
 
-            self._config_path.write_text(CONFIG_TEMPLATE, encoding="utf-8")
+            secure_write_text(self._config_path, starter_config())
         with self.app.suspend():
             subprocess.call([editor, str(self._config_path)])
         try:
@@ -184,14 +192,15 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
     def _on_reset_confirmed(self, confirmed: bool | None) -> None:
         if not confirmed:
             return
-        from fnd.config import CONFIG_TEMPLATE, load
+        from fnd._perms import secure_write_text
+        from fnd.config import load, starter_config
 
         backup = _backup_name(self._config_path)
         try:
             if self._config_path.exists():
                 self._config_path.rename(backup)
             self._config_path.parent.mkdir(parents=True, exist_ok=True)
-            self._config_path.write_text(CONFIG_TEMPLATE, encoding="utf-8")
+            secure_write_text(self._config_path, starter_config())
             load(self._config_path)
         except Exception as e:
             self._error_text = f"Reset failed: {e}"
@@ -212,8 +221,8 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
 class ConfigRecoveryApp(App[None]):
     """Standalone wrapper used at TUI startup before the main app exists.
 
-    Behaviour is unchanged from Phase 1 — pushes the reusable
-    :class:`ConfigRecoveryScreen` and exits when the user resolves it.
+    Pushes the reusable :class:`ConfigRecoveryScreen` and exits when the user
+    resolves it.
     """
 
     CSS = """
@@ -228,7 +237,11 @@ class ConfigRecoveryApp(App[None]):
 
     def on_mount(self) -> None:
         self.push_screen(
-            ConfigRecoveryScreen(error_text=self._error_text, config_path=self._config_path),
+            ConfigRecoveryScreen(
+                error_text=self._error_text,
+                config_path=self._config_path,
+                standalone=True,
+            ),
             callback=self._on_done,
         )
 

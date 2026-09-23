@@ -6,11 +6,19 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from textual.widgets import OptionList
 
 from fnd.config import Config
 from fnd.tui import FNDApp
 
 from .conftest import wait_until
+
+
+def _choose(app: FNDApp, option_id: str) -> None:
+    """Pick a confirm row by name. The cursor starts on Cancel, and a test
+    that pressed a direction was asserting where the cursor was."""
+    options = app.screen.query_one("#confirm_list", OptionList)
+    options.highlighted = next(i for i, o in enumerate(options._options) if o.id == option_id)
 
 
 @pytest.mark.asyncio
@@ -47,8 +55,7 @@ async def test_delete_cancel_keeps_collection(
         await pilot.pause()
         app.push_screen(DeleteCollectionScreen(collection_name="beta"))
         await pilot.pause()
-        # Yes is first; arrow down to Cancel, Enter to select.
-        await pilot.press("down")
+        _choose(app, "no")
         await pilot.press("enter")
         await pilot.pause()
         # 'beta' should still be in the config.
@@ -106,7 +113,8 @@ async def test_delete_drops_index_off_main_thread(
         await pilot.pause()
         app.push_screen(DeleteCollectionScreen(collection_name="alpha"))
         await pilot.pause()
-        await pilot.press("enter")  # Yes is the first option
+        _choose(app, "yes")
+        await pilot.press("enter")
         ok = await wait_until(
             pilot,
             lambda: "thread" in seen and len(app.screen_stack) == base_depth,
@@ -151,7 +159,8 @@ async def test_delete_freezes_screen_during_worker(
         screen = app.screen
         assert isinstance(screen, DeleteCollectionScreen)
         depth = len(app.screen_stack)
-        await pilot.press("enter")  # Yes → dispatch the (stubbed) worker
+        _choose(app, "yes")
+        await pilot.press("enter")  # dispatch the (stubbed) worker
         await pilot.pause()
         assert screen._deleting is True
         assert len(calls) == 1
@@ -162,3 +171,35 @@ async def test_delete_freezes_screen_during_worker(
         assert len(calls) == 1, "second Enter spawned another delete worker"
         assert app.screen is screen, "Escape popped the screen mid-delete"
         assert len(app.screen_stack) == depth
+
+
+@pytest.mark.asyncio
+async def test_a_finished_delete_says_so(
+    app_factory: Callable[[Config], FNDApp],
+    cfg_three: Config,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """It popped two screens and left the row gone, saying nothing at all."""
+    from pathlib import Path as _Path
+
+    cfg_path = _Path(str(tmp_path)) / "config.toml"
+    cfg_path.write_text("")
+    monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+    from fnd.tui.settings_screen import DeleteCollectionScreen
+
+    app = app_factory(cfg_three)
+    said: list[str] = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.notify = lambda msg, **kw: said.append(str(msg))  # type: ignore[method-assign]
+        app.push_screen(DeleteCollectionScreen(collection_name="beta"))
+        await pilot.pause()
+        _choose(app, "yes")
+        await pilot.press("enter")
+        ok = await wait_until(pilot, lambda: bool(said), timeout=20.0)
+        await app.workers.wait_for_complete()
+
+    assert ok, "the delete finished and said nothing"
+    assert any("beta" in m for m in said), said
+    assert any("untouched" in m for m in said), said

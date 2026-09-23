@@ -1,5 +1,5 @@
 """Structured PDF section + confirm screen — tests follow
-docs/test_patterns/settings_screen.md.
+dev/docs/test_patterns/settings_screen.md.
 
 The confirm screen body is state-dependent (install vs uninstall copy).
 Step 6b wires the actual install/uninstall worker — these tests only
@@ -145,7 +145,9 @@ async def test_install_confirm_chrome_when_not_installed(built_index: Path, cfg:
         assert opts.option_count == 2
         hint = str(screen.query_one("#footer_hints", Static).content)
         assert "Nav" in hint
-        assert "Confirm" in hint
+        # The hint is computed at mount and nothing recomputes it on a move,
+        # so no confirm screen may promise `Confirm`.
+        assert "Select" in hint
         assert "Cancel" in hint
 
 
@@ -164,7 +166,7 @@ async def test_uninstall_confirm_chrome_when_installed(built_index: Path, cfg: C
         assert isinstance(screen, StructuredPdfConfirmScreen)
         box = screen.query_one("#settings_box")
         assert "Uninstall" in (box.border_title or "")
-        # Phase E: uninstall is recoverable severity → -recoverable class.
+        # Uninstall is recoverable severity → -recoverable class.
         assert screen.has_class("-recoverable")
 
 
@@ -175,7 +177,7 @@ async def test_uninstall_confirm_chrome_when_installed(built_index: Path, cfg: C
 @pytest.mark.asyncio
 async def test_install_disclosure_covers_costs(built_index: Path, cfg: Config) -> None:
     """Install body must mention disk + ML weights + per-PDF cost so
-    the user knows what they're opting into. Phase E body uses the
+    the user knows what they're opting into. The body uses the
     Outcome / Cost / Safety template — checks reflect that."""
     from fnd.tui.menu import _open_pdf_install_confirm
 

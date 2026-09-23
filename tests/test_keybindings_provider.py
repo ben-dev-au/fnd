@@ -1,4 +1,4 @@
-"""Phase 2c: Keybindings cheat-sheet derives from the live action
+"""Keybindings cheat-sheet derives from the live action
 registry and reorders per the calling-screen context hint.
 
 The old _provider_keybindings used hand-curated tables that drifted
@@ -16,6 +16,7 @@ from fnd import os_labels
 from fnd.tui import FNDApp
 from fnd.tui.actions import REGISTRY
 from fnd.tui.menu import MenuItem, _provider_keybindings
+from fnd.tui.widgets import COMMIT_KEY
 
 
 def _fake_app() -> FNDApp:
@@ -77,11 +78,13 @@ def test_static_sections_present() -> None:
 
 
 def test_source_form_section_lists_ctrl_d_and_ctrl_s() -> None:
-    """Phase 5 added Ctrl+D source delete — must be in the cheat sheet."""
+    """Ctrl+D source delete must be in the cheat sheet."""
     items = _provider_keybindings(_fake_app())
     rows = _rows_under(items, "Source form")
     keys = [k for k, _ in rows]
-    assert any("Ctrl+S" in k for k in keys), keys
+    # The constant, not a literal: the label was spelled two ways and this
+    # test pinned one of them.
+    assert any(COMMIT_KEY in k for k in keys), keys
     assert any("Ctrl+D" in k for k in keys), keys
 
 

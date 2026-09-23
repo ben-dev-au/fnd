@@ -83,10 +83,22 @@ async def test_footer_results_context_shows_open(built_index: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_footer_global_actions_always_visible(built_index: Path) -> None:
-    """Help and Quit are always relevant — must appear in every context."""
+    """Help and Quit are relevant in every context that can receive them.
+
+    The exception, and it is the state the app opens in: a focused text box
+    takes `?` and `q` as characters. The settings screens and the main screen
+    drop the anchors while one has focus, so this asserts the rule from a
+    context where the keys actually arrive.
+    """
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:
         await pilot.pause()
+        typing = _footer_text(app)
+        await pilot.press("escape")
+        for _ in range(4):
+            await pilot.pause()
         text = _footer_text(app)
-        assert "Help" in text or "?" in text, f"Help missing: {text!r}"
-        assert "Quit" in text or " q:" in text, f"Quit missing: {text!r}"
+
+    assert "Help" in text or "?" in text, f"Help missing: {text!r}"
+    assert "Quit" in text or " q:" in text, f"Quit missing: {text!r}"
+    assert "Quit" not in typing, f"advertised where it types: {typing!r}"
