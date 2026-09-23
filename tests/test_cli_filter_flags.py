@@ -9,6 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from fnd.cli import app
+from tests._cli_subprocess import run_fnd
 
 runner = CliRunner()
 
@@ -273,40 +274,21 @@ class TestReportingCommandsLeaveTheConfigAlone:
         assert config.read_text() == original
 
 
+def _run(scratch: Path, *args: str) -> tuple[str, str]:
+    result = run_fnd(scratch / "d", *args)
+    return result.stdout, result.stderr
+
+
 class TestIndexingIntoAnUnconfiguredCollection:
     """`fnd index --collection ghost` writes chunks under a name that
     `collection list` reports as not existing, so the documents are
     searchable but nothing can reindex or remove them."""
 
-    @staticmethod
-    def _run(scratch: Path, *args: str) -> tuple[str, str]:
-        import os
-        import subprocess
-
-        env = dict(
-            os.environ,
-            XDG_DATA_HOME=str(scratch / "d"),
-            XDG_CACHE_HOME=str(scratch / "c"),
-            PYTHONPATH=os.getcwd(),
-        )
-        result = subprocess.run(
-            [
-                "python",
-                "-c",
-                "import sys; from fnd.cli import main; sys.argv=['fnd', *sys.argv[1:]]; main()",
-                *args,
-            ],
-            env=env,
-            capture_output=True,
-            text=True,
-        )
-        return result.stdout, result.stderr
-
     def test_it_says_the_collection_will_be_unreachable(self, tmp_path: Path) -> None:
         src = tmp_path / "src"
         src.mkdir()
         (src / "a.md").write_text("ghosty\n")
-        out, err = self._run(tmp_path, "index", str(src), "--collection", "ghost")
+        out, err = _run(tmp_path, "index", str(src), "--collection", "ghost")
         assert "indexed" in out
         assert "not in your config" in err, err
         assert "collection add ghost" in err, "it must name the way to fix it"
@@ -315,8 +297,8 @@ class TestIndexingIntoAnUnconfiguredCollection:
         src = tmp_path / "src"
         src.mkdir()
         (src / "a.md").write_text("real\n")
-        self._run(tmp_path, "collection", "add", "real", "--source", str(src))
-        _out, err = self._run(tmp_path, "index", str(src), "--collection", "real")
+        _run(tmp_path, "collection", "add", "real", "--source", str(src))
+        _out, err = _run(tmp_path, "index", str(src), "--collection", "real")
         assert "not in your config" not in err, err
 
 
@@ -331,46 +313,18 @@ class TestCollectionAddWritesTheCurrentShape:
         src = tmp_path / "src"
         src.mkdir()
         (src / "a.md").write_text("---\nCourse: X\n---\nhi\n")
-        self._run(
-            tmp_path, "collection", "add", "n", "--source", str(src), "--filter", "Course == 'X'"
-        )
-        raw = tomllib.loads((tmp_path / "d" / "fnd" / "config.toml").read_text())
+        _run(tmp_path, "collection", "add", "n", "--source", str(src), "--filter", "Course == 'X'")
+        raw = tomllib.loads((tmp_path / "d" / "fnd" / "config.toml").read_text(encoding="utf-8"))
         source = raw["collections"]["n"]["sources"][0]
         assert source["filters"]["frontmatter"] == "Course == 'X'"
         assert "frontmatter_filter" not in source, "a new write must not use the deprecated key"
 
     def test_a_missing_path_is_called_out(self, tmp_path: Path) -> None:
-        _out, err = self._run(
-            tmp_path, "collection", "add", "g", "--source", str(tmp_path / "nope")
-        )
+        _out, err = _run(tmp_path, "collection", "add", "g", "--source", str(tmp_path / "nope"))
         assert "does not exist" in err, err
 
     def test_a_real_path_says_nothing(self, tmp_path: Path) -> None:
         src = tmp_path / "src"
         src.mkdir()
-        _out, err = self._run(tmp_path, "collection", "add", "r", "--source", str(src))
+        _out, err = _run(tmp_path, "collection", "add", "r", "--source", str(src))
         assert "does not exist" not in err, err
-
-    @staticmethod
-    def _run(scratch: Path, *args: str) -> tuple[str, str]:
-        import os
-        import subprocess
-
-        env = dict(
-            os.environ,
-            XDG_DATA_HOME=str(scratch / "d"),
-            XDG_CACHE_HOME=str(scratch / "c"),
-            PYTHONPATH=os.getcwd(),
-        )
-        result = subprocess.run(
-            [
-                "python",
-                "-c",
-                "import sys; from fnd.cli import main; sys.argv=['fnd', *sys.argv[1:]]; main()",
-                *args,
-            ],
-            env=env,
-            capture_output=True,
-            text=True,
-        )
-        return result.stdout, result.stderr

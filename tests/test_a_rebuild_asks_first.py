@@ -39,7 +39,7 @@ def sandboxed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     cfg_path.write_text(
         textwrap.dedent(f"""
             [[collections.papers.sources]]
-            path = "{root}"
+            path = "{root.as_posix()}"
         """),
         encoding="utf-8",
     )

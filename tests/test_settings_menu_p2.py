@@ -279,6 +279,11 @@ async def test_root_has_open_config_file_row(built_index: Path) -> None:
         assert "Config file" in labels
 
 
+def _native(*labels: str) -> list[str]:
+    """Labels as a row shows them: joined with the host's separator."""
+    return [str(Path(label)) for label in labels]
+
+
 class TestSourceRowsCanBeToldApart:
     """A basename alone left two rows both reading `notes`, with the column
     spare to say which."""
@@ -286,17 +291,16 @@ class TestSourceRowsCanBeToldApart:
     def test_colliding_names_gain_a_parent(self) -> None:
         from fnd.tui.menu import _source_labels
 
-        assert _source_labels(["/a/notes", "/b/notes"]) == ["a/notes", "b/notes"]
+        assert _source_labels(["/a/notes", "/b/notes"]) == _native("a/notes", "b/notes")
 
     def test_it_keeps_going_past_a_shared_middle_segment(self) -> None:
         """Stopping when one step did not help gave up one short of the
         segment that separates."""
         from fnd.tui.menu import _source_labels
 
-        assert _source_labels(["/x/uni/2026/notes", "/x/work/2026/notes"]) == [
-            "uni/2026/notes",
-            "work/2026/notes",
-        ]
+        assert _source_labels(["/x/uni/2026/notes", "/x/work/2026/notes"]) == _native(
+            "uni/2026/notes", "work/2026/notes"
+        )
 
     def test_a_lone_source_stays_short(self) -> None:
         from fnd.tui.menu import _source_labels
@@ -320,11 +324,9 @@ class TestSourceRowsCanBeToldApart:
         clone of an existing source took every other row to a full path."""
         from fnd.tui.menu import _source_labels
 
-        assert _source_labels(["/a/notes", "/b/notes", "/c/other"]) == [
-            "a/notes",
-            "b/notes",
-            "other",
-        ]
+        assert _source_labels(["/a/notes", "/b/notes", "/c/other"]) == _native(
+            "a/notes", "b/notes", "other"
+        )
 
     def test_an_unresolvable_pair_leaves_the_rest_alone(self) -> None:
         from fnd.tui.menu import _source_labels
@@ -338,4 +340,4 @@ class TestSourceRowsCanBeToldApart:
     def test_a_label_that_reaches_the_root_keeps_it(self) -> None:
         from fnd.tui.menu import _source_labels
 
-        assert _source_labels(["/notes", "/x/notes"]) == ["/notes", "x/notes"]
+        assert _source_labels(["/notes", "/x/notes"]) == _native("/notes", "x/notes")

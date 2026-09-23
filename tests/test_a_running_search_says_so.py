@@ -26,7 +26,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     cfg_path.write_text(
         textwrap.dedent(f"""
             [[collections.papers.sources]]
-            path = "{tmp_path / "papers"}"
+            path = "{(tmp_path / "papers").as_posix()}"
         """),
         encoding="utf-8",
     )

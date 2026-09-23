@@ -33,7 +33,7 @@ def three_collections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[
         root = tmp_path / f"c{n}"
         root.mkdir()
         (root / "note.md").write_text(f"---\ntags: [only_in_c{n}]\n---\n\nbody\n", encoding="utf-8")
-        lines.append(f'[[collections.c{n}.sources]]\npath = "{root}"\n')
+        lines.append(f'[[collections.c{n}.sources]]\npath = "{root.as_posix()}"\n')
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(textwrap.dedent("".join(lines)), encoding="utf-8")
     monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
@@ -106,7 +106,7 @@ async def test_an_unbuilt_corpus_offers_no_tags(
     cfg_path.write_text(
         textwrap.dedent(f"""
             [[collections.fresh.sources]]
-            path = "{root}"
+            path = "{root.as_posix()}"
         """),
         encoding="utf-8",
     )
@@ -186,7 +186,7 @@ async def test_an_indexed_but_tagless_corpus_is_not_called_unindexed(
     cfg_path.write_text(
         textwrap.dedent(f"""
             [[collections.plain.sources]]
-            path = "{root}"
+            path = "{root.as_posix()}"
         """),
         encoding="utf-8",
     )

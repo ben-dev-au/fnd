@@ -213,7 +213,7 @@ def test_a_nested_file_stays_in_the_index_end_to_end(tree: Path, tmp_path: Path)
 
     path = tmp_path / "config.toml"
     path.write_text(
-        f'[[collections.n.sources]]\npath = "{tree}"\n'
+        f'[[collections.n.sources]]\npath = "{tree.as_posix()}"\n'
         'includes = ["notes/*.md", "drafts/*", "Projects/*/README.md"]\n'
         'excludes = ["notes/sub/deeper/*"]\n',
         encoding="utf-8",

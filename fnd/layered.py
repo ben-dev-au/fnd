@@ -4,7 +4,7 @@ One entry point — :func:`search_layered` — chosen by both the TUI and
 the CLI. Encapsulates the three search regimes through a single
 decision tree:
 
-* **strong-signal**: literal probe alone, when the normalized top BM25
+* **strong-signal**: literal probe alone, when the normalised top BM25
   ≥ 0.85 AND gap ≥ 0.15 AND no intent provided.
   Bypasses fusion's phrase + syn passes entirely.
 * **fusion**: phrase + lex + syn sub-queries, RRF-fused. Default.

@@ -115,7 +115,7 @@ def fuzzy_body_clauses(
 ) -> list[tuple[tantivy.Occur, tantivy.Query]] | None:
     """The fuzzy pass's body clauses, or None where it would not run.
 
-    ``F_BODY`` is en_stem-analyzed, so the on-disk token form for "Templates"
+    ``F_BODY`` is en_stem-analysed, so the on-disk token form for "Templates"
     is ``templat``. This bypasses parse_query (and its query-time stemming),
     so each query term is lowercased and Snowball-stemmed before the
     dictionary is consulted; otherwise the Levenshtein distance is computed

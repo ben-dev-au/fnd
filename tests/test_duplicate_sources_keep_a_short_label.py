@@ -8,6 +8,8 @@ distinguishes them.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fnd.tui.menu import _source_labels
 
 
@@ -17,7 +19,10 @@ def test_duplicates_stay_short() -> None:
 
 def test_genuinely_different_paths_still_separate() -> None:
     """The control, and the reason the deepening exists at all."""
-    assert _source_labels(["/a/b/papers", "/c/d/papers"]) == ["b/papers", "d/papers"]
+    assert _source_labels(["/a/b/papers", "/c/d/papers"]) == [
+        str(Path("b/papers")),
+        str(Path("d/papers")),
+    ]
 
 
 def test_a_duplicate_does_not_stop_its_neighbours_separating() -> None:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as dt
 import inspect
-import os
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
@@ -26,6 +25,7 @@ from fnd.config_render import (
     path_value,
     render_config,
 )
+from tests._cli_subprocess import run_fnd
 
 
 def _models() -> list[tuple[str, type[BaseModel]]]:
@@ -332,7 +332,8 @@ class TestPortability:
         assert '"~/Notes"' in render_config(_sample())
 
     def test_a_path_outside_home_is_left_absolute(self) -> None:
-        assert path_value(Path("/opt/corpus")) == '"/opt/corpus"'
+        outside = Path("/opt/corpus")
+        assert tomllib.loads(f"p = {path_value(outside)}")["p"] == str(outside)
 
     def test_a_collection_name_needing_quotes_gets_them(self) -> None:
         assert key("Soft Eng Books") == '"Soft Eng Books"'
@@ -523,23 +524,14 @@ class TestABadConfigIsLegible:
     """Refusing an unknown key is only an improvement if the refusal reads."""
 
     def test_the_cli_names_the_key_instead_of_dumping_a_validation_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path
     ) -> None:
-        import subprocess
-        import sys
-
         home = tmp_path / "data"
         (home / "fnd").mkdir(parents=True)
         (home / "fnd" / "config.toml").write_text(
             "[defaults]\nresult_limitt = 5\n", encoding="utf-8"
         )
-        result = subprocess.run(
-            [sys.executable, "-m", "fnd", "search", "x"],
-            capture_output=True,
-            text=True,
-            env={**os.environ, "XDG_DATA_HOME": str(home), "PYTHONPATH": str(Path.cwd())},
-            timeout=120,
-        )
+        result = run_fnd(home, "search", "x")
         assert result.returncode == 1
         assert "could not be loaded" in result.stderr
         assert "defaults.result_limitt" in result.stderr

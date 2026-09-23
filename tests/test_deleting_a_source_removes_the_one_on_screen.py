@@ -135,7 +135,7 @@ async def test_a_reload_underneath_does_not_move_the_target(
         await _choose_yes(app, pilot)
 
     assert _names(cfg_path) == ["two"]
-    assert (tmp_path / "one").as_posix() in body, body
+    assert str(tmp_path / "one") in body, body
 
 
 @pytest.mark.asyncio
@@ -153,7 +153,7 @@ async def test_a_source_gone_from_the_file_is_named_and_not_offered(
 
     assert "(unknown)" not in body, body
     assert "only source" not in body, body
-    assert (tmp_path / "two").as_posix() in body, body
+    assert str(tmp_path / "two") in body, body
     assert "yes" not in choices, choices
     assert _names(cfg_path) == ["one"]
 

@@ -41,7 +41,7 @@ def cfg_and_index(tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.Monke
     cfg_path.write_text(
         textwrap.dedent(f"""
             [[collections.papers.sources]]
-            path = "{root}"
+            path = "{root.as_posix()}"
         """),
         encoding="utf-8",
     )

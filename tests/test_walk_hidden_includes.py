@@ -24,7 +24,7 @@ def _corpus(root: Path, *rels: str) -> None:
 
 
 def _walk(root: Path, includes: list[str] | None) -> set[str]:
-    return {str(p.relative_to(root)) for p in walk(roots=[root], includes=includes)}
+    return {p.relative_to(root).as_posix() for p in walk(roots=[root], includes=includes)}
 
 
 @pytest.fixture

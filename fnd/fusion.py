@@ -15,7 +15,7 @@ Auto-derived sub-queries:
 * ``syn`` — synonym-expanded version of the query (weight 0.6). Only emitted
   when the expansion actually changes the query string.
 
-A ``stem`` sub-query is omitted: the body field is already analyzed with
+A ``stem`` sub-query is omitted: the body field is already analysed with
 ``en_stem`` (Snowball English), so an explicit stemmed pass would duplicate
 the lex pass.
 
@@ -106,7 +106,7 @@ _SOURCE_TO_PASS_INDEX: dict[str, int] = {
     "phrase": 3,
 }
 
-# Strong-signal bypass thresholds. Operate on a normalized BM25 score
+# Strong-signal bypass thresholds. Operate on a normalised BM25 score
 # ``s_norm = s / (1 + s)``, monotone in [0, 1), so query-independent and
 # corpus-stable. Adapted from tobi/qmd (MIT); see the README's Acknowledgments.
 STRONG_SIGNAL_MIN_NORM_SCORE: float = 0.85

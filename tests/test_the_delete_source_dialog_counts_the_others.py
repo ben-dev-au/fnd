@@ -23,7 +23,7 @@ def _config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, n: int) -> Config:
     for i in range(n):
         root = tmp_path / f"src{i}"
         root.mkdir()
-        lines.append(f'[[collections.notes.sources]]\npath = "{root}"\n')
+        lines.append(f'[[collections.notes.sources]]\npath = "{root.as_posix()}"\n')
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(textwrap.dedent("".join(lines)), encoding="utf-8")
     monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
