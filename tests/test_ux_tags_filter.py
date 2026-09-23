@@ -476,3 +476,107 @@ async def test_leaf_markers_align_with_branch_markers(
         # Branch rows get Textual's 2-cell arrow; leaves pad to match.
         assert str(leaves[0].label).startswith("  "), str(leaves[0].label)
         assert not str(branch.label).startswith("  "), str(branch.label)
+
+
+class TestTheTagsBranchDoesNotOverclaim:
+    """The catalogue is scoped to the TICKED tag sources, so an empty one said
+    "none indexed" while the index held plenty and the user had merely
+    switched the sources off, and with nothing to draw, the branch returned
+    early, leaving a live tag filter narrowing the search with no row."""
+
+    def test_switching_the_sources_off_is_not_an_empty_index(self) -> None:
+        from fnd.tui.scope_panel import _tags_summary
+
+        assert _tags_summary(0, 0, sources_on=False) == "tag sources off"
+        # Scope, not index: narrowing the collections to empty leaves the tags
+        # indexed and unreachable, and this row is scoped to what is reachable.
+        assert _tags_summary(0, 0, sources_on=True) == "none in scope"
+
+    def test_a_live_filter_with_no_rows_says_it_is_still_filtering(self) -> None:
+        from fnd.tui.scope_panel import _tags_summary
+
+        for sources_on in (True, False):
+            summary = _tags_summary(2, 0, sources_on=sources_on)
+            assert "still filtering" in summary, summary
+            assert "none indexed" not in summary
+
+    def test_the_ordinary_case_is_unchanged(self) -> None:
+        from fnd.tui.scope_panel import _tags_summary
+
+        assert _tags_summary(2, 7, sources_on=True) == "2 of 7"
+        assert _tags_summary(0, 7, sources_on=True) == "0 of 7"
+
+
+class TestATagThatOutlivedItsCollection:
+    """Deleting a collection took its tags out of the catalogue and left them
+    in the saved selection: counted in "2 of 4", still narrowing every search,
+    and with no row to untick. With Match: all the query returned nothing."""
+
+    def test_a_selection_absent_from_the_catalogue_is_named(self) -> None:
+        from fnd.tui.scope_panel import _tags_summary
+
+        assert _tags_summary(2, 4, sources_on=True, n_missing=1) == "2 of 4, 1 not in the index"
+        assert _tags_summary(2, 4, sources_on=True, n_missing=0) == "2 of 4"
+
+    @pytest.mark.asyncio
+    async def test_the_ghost_gets_a_row_that_unticks_it(
+        self, cfg: Config, tagged_index: Path
+    ) -> None:
+        app = FNDApp(index_dir=tagged_index, config=cfg)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # As a deleted collection leaves it: a live tag and a dead one.
+            app._scope.tag_include["frontmatter"] = {"recipe", "gamma"}
+            app._scope.refresh_filters_panel()
+            await pilot.pause()
+
+            tree = app.query_one("#filters_panel_tree", Tree)
+            tags = _branch(tree, "Tags")
+            # Wording narrows with the pane ("3 not in the index" / "3 missing");
+            # the count of lost tags is the fact, and it survives either way.
+            assert "1 missing" in str(tags.label) or "1 not in the index" in str(tags.label), str(
+                tags.label
+            )
+            tags.expand()
+            await pilot.pause()
+            missing = _descend(tags, "Not in the index")
+            row = _descend(missing, "gamma")
+            assert "●" in str(row.label), str(row.label)
+
+            tree.select_node(row)
+            await pilot.pause()
+            assert "gamma" not in app._scope.tag_include.get("frontmatter", set())
+            assert "gamma" in app._scope.tag_exclude.get("frontmatter", set())
+            tree.select_node(_descend(_descend(_branch(tree, "Tags"), "Not in"), "gamma"))
+            await pilot.pause()
+            assert "gamma" not in app._scope.tag_exclude.get("frontmatter", set())
+
+    @pytest.mark.asyncio
+    async def test_a_live_tag_is_not_called_missing(self, cfg: Config, tagged_index: Path) -> None:
+        app = FNDApp(index_dir=tagged_index, config=cfg)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._scope.tag_include["frontmatter"] = {"recipe"}
+            app._scope.refresh_filters_panel()
+            await pilot.pause()
+            tags = _branch(app.query_one("#filters_panel_tree", Tree), "Tags")
+            assert "not in the index" not in str(tags.label), str(tags.label)
+
+    @pytest.mark.asyncio
+    async def test_an_unopened_index_is_not_reported_as_loss(
+        self, cfg: Config, tagged_index: Path
+    ) -> None:
+        """An index that is not open yet returns an empty catalogue too, and
+        every selection would read as missing."""
+        app = FNDApp(index_dir=tagged_index, config=cfg)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._scope.tag_include["frontmatter"] = {"recipe"}
+            app._scope.tag_catalogue_for_scope = lambda: {}  # type: ignore[method-assign]
+            app._scope.refresh_filters_panel()
+            await pilot.pause()
+            tags = _branch(app.query_one("#filters_panel_tree", Tree), "Tags")
+            assert "missing" not in str(tags.label), str(tags.label)
+            assert "not in the index" not in str(tags.label), str(tags.label)
+            assert "filtering" in str(tags.label), str(tags.label)
+            assert "Not in the index" not in " ".join(_all_labels(tags))

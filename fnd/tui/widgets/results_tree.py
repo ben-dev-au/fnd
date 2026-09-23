@@ -14,11 +14,14 @@ from textual.widgets import Tree
 from textual.widgets.tree import TreeNode
 
 from fnd.tui.preview.warmth import WarmState
+from fnd.tui.widgets.arrow_expansion import ArrowsExpand, HomeToFirstRow
+from fnd.tui.widgets.clear_bar import focus_clear_bar
+from fnd.tui.widgets.state_marker import StateMarkerLabel
 
 __all__ = ["ResultsTree"]
 
 
-class ResultsTree(Tree[dict[str, Any]]):
+class ResultsTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str, Any]]):
     """Results tree where expanded parents (file rows) are literally
     unselectable.
 
@@ -42,6 +45,7 @@ class ResultsTree(Tree[dict[str, Any]]):
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("home", "cursor_first", "First row", show=False),
         Binding("alt+down", "scan_cursor_down", "Scan down", show=False),
         Binding("alt+up", "scan_cursor_up", "Scan up", show=False),
     ]
@@ -163,14 +167,8 @@ class ResultsTree(Tree[dict[str, Any]]):
         # In the filters pane, Up from the top row focuses the docked clear bar
         # above the tree (when shown), so the bar is keyboard-reachable like any
         # row. Everywhere else this is a normal cursor move.
-        if self.id == "filters_panel_tree" and int(self.cursor_line) <= 0:
-            try:
-                bar = self.app.query_one("#clear_filters_bar")
-            except Exception:
-                bar = None
-            if bar is not None and bar.visible:
-                bar.focus()
-                return
+        if self.id == "filters_panel_tree" and int(self.cursor_line) <= 0 and focus_clear_bar(self):
+            return
         super().action_cursor_up()
 
     def action_scan_cursor_down(self) -> None:
@@ -364,7 +362,7 @@ class ResultsTree(Tree[dict[str, Any]]):
         ``set_label`` with the node's own label is how a row is invalidated:
         it bumps the node's update counter, which is part of the line-cache
         key, so the next paint re-runs ``render_label``. Same mechanism
-        ``ResultsView.relabel_file_rows`` already relies on.
+        ``ResultsView.relabel_rows`` already relies on.
         """
         if states == self.warm_states:
             return False

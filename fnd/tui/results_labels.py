@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from rich.cells import cell_len
 
 from fnd.display_text import sanitise_display_text
 
@@ -21,7 +24,11 @@ __all__ = [
     "_shorten",
     "_styled_action_label",
     "_styled_parent_label",
+    "_styled_state_row",
     "_trim_redundant_heading",
+    "disambiguated_names",
+    "reapply_state_marker",
+    "state_colour",
 ]
 
 _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
@@ -32,6 +39,12 @@ _PASS_GLYPHS = {0: "●", 1: "~", 2: "⊕", 3: "❝"}
 # highlighting regression shows up as marks on screen instead of results
 # quietly disappearing. See :mod:`fnd.tui.match_evidence`.
 _UNLOCATABLE_GLYPH = "◌"
+
+# The index's copy no longer matches the disk. One glyph for gone and for
+# edited, because the user's move is the same either way: reindex.
+_STALE_GLYPH = "⚠"
+
+_MARKER_STYLES: dict[str, Any] = {}
 
 
 def _score_bar(  # pyright: ignore[reportUnusedFunction]
@@ -75,6 +88,77 @@ def _score_style(score: float, max_score: float) -> str:
     if ratio >= 0.15:
         return "#bb9af7"  # cool magenta — fades from accent
     return "dim #565f89"
+
+
+#: Which theme colour a tri-state marker carries. Only the two states that
+#: change what is indexed get a hue; ``○`` stays neutral so it does not
+#: compete with them, and ``◐`` is a roll-up rather than a state of its own.
+STATE_COLOUR_VARIABLE = {"●": "success", "⊘": "error"}
+
+#: Used when the theme names no such variable, which a theme may omit: a
+#: colour dropped in silence is indistinguishable from the feature being absent.
+STATE_COLOUR_FALLBACK = {"●": "green", "⊘": "red"}
+
+
+def state_colour(marker: str, variables: Mapping[str, str]) -> str:
+    """The colour a state marker carries, given a theme's variables.
+
+    Stripped first: callers pad a marker to align a leaf under its branch,
+    and a padded marker that silently lost its colour is the exact bug this
+    is meant to prevent. Falls back where the theme names no such colour.
+    """
+    variable = STATE_COLOUR_VARIABLE.get(marker.strip())
+    if not variable:
+        return ""
+    return variables.get(variable, "") or STATE_COLOUR_FALLBACK.get(marker, "")
+
+
+def _styled_state_row(marker: str, rest: str, colour: str) -> Any:
+    """A tri-state row whose marker carries its meaning as colour too.
+
+    ``⊘`` and ``○`` differ by a hairline and mean opposites, so shape alone
+    was doing all the work. The span covers the glyph only, and it is a span
+    rather than a base style because a tree paints rows with its own style and
+    a base one loses to it.
+    """
+    from rich.text import Text
+
+    text = Text(f"{marker}{rest}")
+    if colour:
+        text.stylize(_marker_style(colour), 0, len(marker))
+    return text
+
+
+def _marker_style(colour: str) -> Any:
+    """Cached so a rendered span can be recognised as a marker's by identity."""
+    from rich.style import Style
+
+    style = _MARKER_STYLES.get(colour)
+    if style is None:
+        style = Style(color=colour)
+        _MARKER_STYLES[colour] = style
+    return style
+
+
+def reapply_state_marker(rendered: Any, label: Any) -> Any:
+    """Put a marker's colour back over a row style applied on top of it.
+
+    Textual stylises a whole label with the cursor's component style, and a
+    span added last wins, so the marker would lose its colour on exactly the
+    row the user is looking at. Only styles this module minted are restored.
+    """
+    from rich.text import Text
+
+    if not isinstance(label, Text) or not isinstance(rendered, Text):
+        return rendered
+    offset = len(rendered.plain) - len(label.plain)
+    if offset < 0:
+        return rendered
+    known = set(_MARKER_STYLES.values())
+    for span in label.spans:
+        if span.style in known:
+            rendered.stylize(span.style, span.start + offset, span.end + offset)
+    return rendered
 
 
 def _styled_parent_label(label: Any) -> Any:
@@ -204,7 +288,9 @@ def _elide_middle_keep_suffix(name: str, max_width: int) -> str:
     return stem[:head] + "…" + (stem[-tail:] if tail else "") + suffix
 
 
-def _format_hit_label(h: Hit, *, max_score: float = 0.0, match_visible: bool = True) -> Any:
+def _format_hit_label(
+    h: Hit, *, max_score: float = 0.0, match_visible: bool = True, body_budget: int = 0
+) -> Any:
     """Result-tree row label: short locator left, snippet right.
 
     Locator is a few chars (page / slide / trimmed heading / chunk N)
@@ -225,6 +311,15 @@ def _format_hit_label(h: Hit, *, max_score: float = 0.0, match_visible: bool = T
         loc = _shorten(trimmed, 18) if trimmed else f"§{h.chunk_seq + 1}"
     snippet = _shorten(h.snippet, 80) if h.snippet else ""
     body = f"{loc}  {snippet}" if snippet else loc
+    if body_budget > 0 and cell_len(body) > body_budget:
+        # The locator always survives and the snippet, never dropped whole,
+        # fills the space after it. Only a locator that overruns falls back to
+        # its distinguishing tail (24 sibling `section` rows).
+        room = body_budget - cell_len(loc) - 2
+        if snippet and room >= 4:
+            body = f"{loc}  {_shorten(snippet, room)}"
+        else:
+            body = _elide_middle_keep_suffix(loc, body_budget)
     glyph = _PASS_GLYPHS.get(h.pass_index, "")
     pass_marker = f" {glyph}" if h.pass_index > 0 else ""
     # Leading, not trailing: locator + 80-char snippet routinely overruns the
@@ -235,8 +330,88 @@ def _format_hit_label(h: Hit, *, max_score: float = 0.0, match_visible: bool = T
     return _build_label(f"{prefix}{body}{pass_marker}", h.score, max_score)
 
 
-def _format_file_label(g: FileGroup, *, max_score: float = 0.0, name_budget: int = 0) -> Any:
-    name = Path(g.path).name
+def disambiguated_names(paths: Sequence[str]) -> dict[str, str]:
+    """path → the shortest tail that tells it apart from the others shown.
+
+    Rows carry the basename, so a build folder's `out-01.md` and a note of the
+    same name were two identical rows: a user asking "which ones?" could not
+    tell from the result which file it was.
+    """
+    from collections import defaultdict
+
+    # Split each path once and group the rivals once. Recomputing `Path(q).parts`
+    # inside the depth loop, over every other path, measured 73 ms at 200 rows,
+    # and `_refresh_status` reaches this from twenty call sites.
+    parts_by: dict[str, tuple[str, ...]] = {p: Path(p).parts for p in paths}
+    by_name: dict[str, list[str]] = defaultdict(list)
+    for path, parts in parts_by.items():
+        by_name[parts[-1] if parts else path].append(path)
+
+    def _shared_tail(a: tuple[str, ...], b: tuple[str, ...]) -> int:
+        n = 0
+        while n < len(a) and n < len(b) and a[-1 - n] == b[-1 - n]:
+            n += 1
+        return n
+
+    out: dict[str, str] = {}
+    for name, group in by_name.items():
+        if len(group) == 1:
+            out[group[0]] = name
+            continue
+        # Sorted on the reversed path, the rival sharing the deepest tail with
+        # a row is one of its two neighbours, so each row compares twice
+        # instead of against every other row.
+        order = sorted(group, key=lambda q: tuple(reversed(parts_by[q])))
+        for i, path in enumerate(order):
+            parts = parts_by[path]
+            deepest = max(
+                (
+                    _shared_tail(parts, parts_by[order[j]])
+                    for j in (i - 1, i + 1)
+                    if 0 <= j < len(order)
+                ),
+                default=0,
+            )
+            depth = min(max(2, deepest + 1), len(parts))
+            out[path] = "/".join(parts[-depth:])
+    return out
+
+
+def is_stale(g: FileGroup) -> bool:
+    """Whether the index's copy of this file no longer matches the disk.
+
+    Three answers, not two. Gone and edited both mean the preview would show
+    something the file does not say. A file we cannot STAT is unknown, and
+    marking unknown as changed is the same conflation that let an unreadable
+    source read as an empty one.
+
+    ``!=``, not ``>``: a file restored from a backup carries an older mtime and
+    is just as stale. Matches `index_runner._should_reprocess`, which is what
+    decides whether the indexer would re-read it.
+    """
+    indexed = max((h.mtime for h in g.hits), default=0)
+    try:
+        on_disk = int(Path(g.path).stat().st_mtime)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        # Cannot look. Saying nothing beats saying the wrong thing.
+        return False
+    return indexed > 0 and on_disk != indexed
+
+
+def _format_file_label(
+    g: FileGroup,
+    *,
+    max_score: float = 0.0,
+    name_budget: int = 0,
+    display_name: str = "",
+    stale: bool = False,
+) -> Any:
+    name = display_name or Path(g.path).name
+    # Charged BEFORE eliding: added afterwards it pushed the row 2 cells past
+    # its budget, and the cells it took were the suffix the elision keeps.
+    marker = f"{_STALE_GLYPH} " if stale else ""
     if name_budget > 0:
-        name = _elide_middle_keep_suffix(name, name_budget)
-    return _build_label(name, g.top_score, max_score)
+        name = _elide_middle_keep_suffix(name, max(1, name_budget - cell_len(marker)))
+    return _build_label(f"{marker}{name}", g.top_score, max_score)

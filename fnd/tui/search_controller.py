@@ -26,13 +26,14 @@ that keeps a stale result out, not a belt-and-braces extra.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from textual.widgets import Static
 
 from fnd.matching import MatchSpec
-from fnd.query import FileGroup, Hit, Searcher
+from fnd.query import FileGroup, Hit, Searcher, SourceScope
 from fnd.rerank import RankingProfile, profile_from_config
 from fnd.tui.progress.facility import ProgressSession
 from fnd.tui.progress.operations import SEARCH
@@ -60,11 +61,12 @@ class _SearchRequest:
     generation: int
     query: str
     lexical: str
-    filter_prefix: str
+    filter_clauses: tuple[str, ...]
     metadata_filter: str | None
     collection: str | list[str] | None
-    active_sources: list[str] | None
+    source_scope: SourceScope | None
     tag_filter: TagFilter | None
+    limit: int
     sections_per_file: int
     sections_score_threshold: float
     auto_fuzzy_enabled: bool
@@ -87,9 +89,14 @@ class _PrefixingSearcher:
     behaviour without changing their public signatures.
     """
 
-    def __init__(self, inner: Searcher, *, prefix: str) -> None:
+    def __init__(self, inner: Searcher, *, clauses: Sequence[str]) -> None:
         self._inner = inner
-        self._prefix = prefix.strip()
+        # The join must be AND: the parser is OR-default, so a space join makes
+        # a second filter WIDEN the results. Passes building their own boolean
+        # query read the clauses; `extract_filters` will not lift one by `AND`.
+        self.filter_clauses = tuple(c for c in (c.strip() for c in clauses) if c)
+        self._prefix = " AND ".join(self.filter_clauses)
+        self.filter_prefix = self._prefix
 
     def _wrap(self, query: str) -> str:
         if not self._prefix:
@@ -137,7 +144,7 @@ class SearchController:
         # the action registry.
         self.highlights_enabled: bool = True
         # Last :multi block's intent line, if any. Disables strong-signal
-        # bypass and biases snippet selection (UX-pass-4 §3). None until
+        # bypass and biases snippet selection. None until
         # the user submits a :multi block.
         self.intent: str | None = None
         self.groups: list[FileGroup] = []
@@ -149,10 +156,10 @@ class SearchController:
         # top results are worth prefetching, so keep just the last timer alive.
         self._prefetch_timer: Timer | None = None
         # Most-recent SearchTrace, populated on every _run_query so the
-        # :explain overlay (UX-pass-4 §2) can dump it as JSON. None until
+        # :explain overlay can dump it as JSON. None until
         # the first search runs.
         self.latest_trace: SearchTrace | None = None
-        # Synonyms for §9c cascade and §9d fusion's ``syn`` sub-query.
+        # Synonyms for the cascade and fusion's ``syn`` sub-query.
         # Bundled curated defaults + the user's optional personal table;
         # missing personal file is fine (defaults still apply).
         from fnd.config import app_data_dir
@@ -210,6 +217,10 @@ class SearchController:
             exclusive=True,
             group="search",
         )
+        # Say the search is running before it can say anything else. A preview
+        # already on screen stays: it is the last thing the user chose.
+        self._app._preview.show_pane_message(f"Searching for {query.strip()!r}…", replace_only=True)
+        self._app._refresh_status()
 
     def _searches_running(self) -> bool:
         """Whether any search worker is still pending or executing.
@@ -330,12 +341,9 @@ class SearchController:
             multicolour=defaults.multicolour_highlights if defaults else True,
         )
 
-        # Phase F: build the filter scaffolding (kind:, mtime:) and
-        # multi-collection scope (c:) as a SEPARATE prefix. The lexical
-        # part stays clean so the §9d fusion phrase-pass can wrap it
-        # in quotes without dragging field qualifiers inside the
-        # phrase (which Tantivy would parse as a literal phrase
-        # ``kind:md glimmer`` rather than a field-restricted query).
+        # Filters (kind:, mtime:) and scope (c:) form a SEPARATE prefix, so the
+        # fusion phrase-pass can quote the lexical part without Tantivy reading
+        # ``kind:md glimmer`` as a literal phrase.
         filter_clauses: list[str] = []
         if self._app._scope.filter_kinds:
             if len(self._app._scope.filter_kinds) == 1:
@@ -365,6 +373,16 @@ class SearchController:
         # collection names on spaces, so a multi-collection scope leaked
         # other collections and dropped spaced names like ``SSD Exam``.
         cols = self._app._scope.collections
+        # A fresh dict of fresh lists, so the worker cannot read a scope the
+        # panel is mutating on the event loop.
+        scoped = self._app._scope.source_scope
+        # An empty selection map means "the user unticked everything" only where
+        # collections exist to tick; both toggle paths pop their key, so the map
+        # alone cannot tell that from an app with no config to scope by.
+        cfg = self._app._config
+        scopeable = bool(cfg and cfg.collections)
+        from fnd.config import DEFAULT_RESULT_LIMIT
+
         cfg_defaults = self._app._config.defaults if self._app._config else None
 
         try:
@@ -376,13 +394,17 @@ class SearchController:
             generation=generation,
             query=query,
             lexical=lexical,
-            filter_prefix=" ".join(filter_clauses),
+            # One clause per dimension. Values inside one clause,
+            # `kind:(md pdf)`, stay a deliberate OR.
+            filter_clauses=tuple(filter_clauses),
             metadata_filter=plan.metadata_filter,
-            # Copied, not referenced: the scope panel mutates these lists on
-            # the event loop while the worker is reading them.
-            collection=list(cols) if cols else None,
-            active_sources=list(self._app._scope.active_sources) or None,
+            # A partly-ticked collection contributes no name and is scoped by its
+            # own sources, so the channel stays open (None), as it does with
+            # nothing to scope by. An empty list means the user unticked all.
+            collection=list(cols) if cols else (None if (scoped or not scopeable) else []),
+            source_scope=scoped or None,
             tag_filter=tag_filter,
+            limit=cfg_defaults.result_limit if cfg_defaults else DEFAULT_RESULT_LIMIT,
             sections_per_file=cfg_defaults.sections_per_file_max if cfg_defaults else 200,
             sections_score_threshold=(
                 cfg_defaults.sections_score_threshold if cfg_defaults else 0.5
@@ -449,20 +471,20 @@ class SearchController:
         from fnd.layered import search_layered
 
         searcher = (
-            _PrefixingSearcher(handle, prefix=request.filter_prefix)
-            if request.filter_prefix
+            _PrefixingSearcher(handle, clauses=request.filter_clauses)
+            if request.filter_clauses
             else handle
         )
         groups, trace = search_layered(
             searcher,  # type: ignore[arg-type]
             query=request.lexical,
-            limit=50,
+            limit=request.limit,
             sections_per_file=request.sections_per_file,
             sections_score_threshold=request.sections_score_threshold,
             collection=request.collection,
             synonyms=self.synonyms,
             metadata_filter=request.metadata_filter,
-            active_sources=request.active_sources,
+            source_scope=request.source_scope,
             tag_filter=request.tag_filter,
             intent=request.intent,
             profile=request.profile,
@@ -615,7 +637,7 @@ class SearchController:
         """Stable signature for the current query — match-bearing
         widgets are baked with this query's highlights, so the cache
         must invalidate when it changes. Includes intent because intent
-        biases snippet selection (UX-pass-4 §3), and the highlight
+        biases snippet selection, and the highlight
         toggle state because the rendered spans differ on/off: without
         it, toggling highlights re-uses the opposite-state cached
         container for the same file + query and the toggle has no
