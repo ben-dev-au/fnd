@@ -50,11 +50,12 @@ def test_backslash_path_round_trips_through_toml(
     ``tomllib.loads`` doesn't choke on an invalid escape (WinError-class
     regression: a raw ``path = "C:\\Users\\..."`` fails to parse)."""
     cfg = tmp_path / "config.toml"
-    win_path = Path(r"C:\Users\runneradmin\AppData\Local\Temp\notes")
+    # Outside every home: a path under one is written `~/...` with forward slashes.
+    win_path = Path(r"D:\Users\corpus\notes")
     write_collection_source(
         config_path=cfg, collection_name="notes", source=SourceConfig(path=win_path)
     )
-    assert r"\\Users\\" in cfg.read_text(encoding="utf-8")  # escaped, not raw
+    assert r"D:\\Users\\corpus" in cfg.read_text(encoding="utf-8")  # escaped, not raw
     loaded = load(cfg)  # would raise TOMLDecodeError if unescaped
     assert loaded.collections["notes"].sources[0].path == win_path
 

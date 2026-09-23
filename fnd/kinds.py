@@ -18,6 +18,7 @@ import from anywhere without an import cycle.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 
@@ -40,6 +41,15 @@ class KindSpec:
     extractor_module: str  # module under fnd.extract exposing extract()
     category: str  # Category.id this kind belongs to
     markdown_rendered: bool  # populates body_md → structural preview renderer
+    carries_frontmatter: bool
+    """Whether this format can carry a YAML frontmatter block at its head.
+
+    Declared per kind and REQUIRED, so a format added without an answer is an
+    import error rather than a silent no. An index filter asking about a
+    frontmatter key judges exactly these kinds and leaves every other alone:
+    a note with no block has answered, a PDF cannot answer at all. Never
+    derive this from a category.
+    """
     highlight_lang: str = ""  # code-fence language; defaults to id
 
     @property
@@ -62,29 +72,37 @@ CATEGORIES: tuple[Category, ...] = (
 
 def _code(id: str, label: str, suffixes: tuple[str, ...], highlight_lang: str = "") -> KindSpec:
     """A source-code kind: parsed by extract/code.py, rendered as a fence."""
-    return KindSpec(id, label, suffixes, "code", "code", True, highlight_lang)
+    return KindSpec(id, label, suffixes, "code", "code", True, False, highlight_lang)
 
 
 KIND_SPECS: tuple[KindSpec, ...] = (
     # Documents
-    KindSpec("pdf", "PDF", (".pdf",), "pdf", "documents", True),
-    KindSpec("docx", "Word", (".docx",), "docx", "documents", True),
-    KindSpec("odt", "OpenDocument Text", (".odt",), "odf", "documents", True),
+    KindSpec("pdf", "PDF", (".pdf",), "pdf", "documents", True, False),
+    KindSpec("docx", "Word", (".docx",), "docx", "documents", True, False),
+    KindSpec("odt", "OpenDocument Text", (".odt",), "odf", "documents", True, False),
     # Notes & text
-    KindSpec("md", "Markdown", (".md", ".markdown"), "markdown", "notes", True),
-    KindSpec("txt", "Plain text", (".txt",), "plain", "notes", False),
+    KindSpec(
+        "md",
+        "Markdown",
+        (".md", ".markdown", ".mdown", ".mkd", ".mkdn", ".mdwn", ".mdx", ".qmd", ".rmd"),
+        "markdown",
+        "notes",
+        True,
+        True,
+    ),
+    KindSpec("txt", "Plain text", (".txt",), "plain", "notes", False, True),
     # Presentations
-    KindSpec("pptx", "PowerPoint", (".pptx",), "pptx", "presentations", True),
-    KindSpec("odp", "OpenDocument Presentation", (".odp",), "odf", "presentations", True),
+    KindSpec("pptx", "PowerPoint", (".pptx",), "pptx", "presentations", True, False),
+    KindSpec("odp", "OpenDocument Presentation", (".odp",), "odf", "presentations", True, False),
     # Data & config
-    KindSpec("json", "JSON", (".json",), "data", "data", True),
-    KindSpec("yaml", "YAML", (".yaml", ".yml"), "data", "data", True),
-    KindSpec("toml", "TOML", (".toml",), "data", "data", True),
-    KindSpec("xml", "XML", (".xml",), "data", "data", True),
-    KindSpec("ini", "INI", (".ini",), "data", "data", True),
-    KindSpec("csv", "CSV", (".csv",), "data", "data", True),
-    KindSpec("tsv", "TSV", (".tsv",), "data", "data", True),
-    KindSpec("ods", "OpenDocument Spreadsheet", (".ods",), "odf", "data", True),
+    KindSpec("json", "JSON", (".json",), "data", "data", True, False),
+    KindSpec("yaml", "YAML", (".yaml", ".yml"), "data", "data", True, False),
+    KindSpec("toml", "TOML", (".toml",), "data", "data", True, False),
+    KindSpec("xml", "XML", (".xml",), "data", "data", True, False),
+    KindSpec("ini", "INI", (".ini",), "data", "data", True, False),
+    KindSpec("csv", "CSV", (".csv",), "data", "data", True, False),
+    KindSpec("tsv", "TSV", (".tsv",), "data", "data", True, False),
+    KindSpec("ods", "OpenDocument Spreadsheet", (".ods",), "odf", "data", True, False),
     # Code (curated; extend by adding a row)
     _code("python", "Python", (".py", ".pyi", ".pyw")),
     _code("javascript", "JavaScript", (".js", ".mjs", ".cjs")),
@@ -109,11 +127,11 @@ KIND_SPECS: tuple[KindSpec, ...] = (
     _code("perl", "Perl", (".pl", ".pm")),
     _code("dart", "Dart", (".dart",)),
     # E-books
-    KindSpec("epub", "EPUB", (".epub",), "epub", "ebooks", True),
+    KindSpec("epub", "EPUB", (".epub",), "epub", "ebooks", True, False),
     # Web
-    KindSpec("html", "HTML", (".html", ".htm"), "web", "web", True),
+    KindSpec("html", "HTML", (".html", ".htm"), "web", "web", True, False),
     # Notebooks
-    KindSpec("ipynb", "Jupyter Notebook", (".ipynb",), "notebook", "notebooks", True),
+    KindSpec("ipynb", "Jupyter Notebook", (".ipynb",), "notebook", "notebooks", True, False),
 )
 
 
@@ -127,6 +145,9 @@ SUFFIX_TO_MODULE: dict[str, str] = {
 }
 SUFFIX_TO_KIND: dict[str, str] = {sfx: k.id for k in KIND_SPECS for sfx in k.suffixes}
 MARKDOWN_RENDERED_KINDS: frozenset[str] = frozenset(k.id for k in KIND_SPECS if k.markdown_rendered)
+#: Kinds that can carry a YAML frontmatter block. The ONE source for it:
+#: derive from this, never from a category or a hand-written set.
+FRONTMATTER_KINDS: frozenset[str] = frozenset(k.id for k in KIND_SPECS if k.carries_frontmatter)
 
 
 def _kinds_in_category() -> dict[str, tuple[str, ...]]:
@@ -172,3 +193,20 @@ def _validate() -> None:
 
 
 _validate()
+
+
+def split_type_globs(globs: Sequence[str]) -> tuple[list[str], list[str]]:
+    """``(kind ids, the globs that are not a plain file-type glob)``.
+
+    A kind is selected only when **every** one of its suffix globs is present,
+    because a kind covers all its suffixes: reading ``**/*.c`` as the kind
+    ``c`` would silently start indexing ``.h`` as well.
+    """
+    remaining = list(globs)
+    kinds: list[str] = []
+    for spec in KIND_SPECS:
+        kglobs = [f"**/*{sfx}" for sfx in spec.suffixes]
+        if all(g in remaining for g in kglobs):
+            kinds.append(spec.id)
+            remaining = [g for g in remaining if g not in kglobs]
+    return kinds, remaining

@@ -169,6 +169,9 @@ async def test_tag_fanned_across_sources_counts_once(cfg: Config, wine_index: Pa
         s.tag_include = {"frontmatter": {"strategy-pattern"}, "os": {"strategy-pattern"}}
         assert s.active_filter_count == 1
         assert s._distinct_tag_values(s.tag_include) == {"strategy-pattern"}
-        # A genuinely different value still counts separately.
+        # Excluding is a second filter, and the count is of filters, so a
+        # second excluded value would not make it three.
         s.tag_exclude = {"os": {"draft"}}
+        assert s.active_filter_count == 2
+        s.tag_exclude = {"os": {"draft", "old"}}
         assert s.active_filter_count == 2

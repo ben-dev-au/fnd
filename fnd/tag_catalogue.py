@@ -12,12 +12,12 @@ buckets by file and tallies tags within each, which is exact — see the note in
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 import tantivy
 
-from fnd.schema import F_COLLECTION, F_PARENT_ID, TAG_FIELD_BY_SOURCE
+from fnd.schema import F_PARENT_ID, TAG_FIELD_BY_SOURCE
 
 __all__ = ["TagCount", "TagNode", "build_tag_tree", "tag_catalogue"]
 
@@ -39,20 +39,32 @@ class TagCount:
 
 def _scope_query(
     index: tantivy.Index,
-    collections: Sequence[str],
+    collections: Sequence[str] | None,
+    source_scope: Mapping[str, Sequence[str]] | None = None,
     query: tantivy.Query | None = None,
 ) -> tantivy.Query:
-    """Restrict the aggregation to the active collections, and to ``query``
-    when a search is active. Empty collections means every collection."""
+    """Restrict the aggregation to the active scope, and to ``query`` when a
+    search is active.
+
+    Same builder as the search, so the Tags branch cannot offer a tag the
+    results exclude. ``collections=None`` is unscoped; an empty list means the
+    user unticked everything, which matches NOTHING.
+    """
+    from fnd.query import scope_arms, scope_or
+
     clauses: list[tuple[tantivy.Occur, tantivy.Query]] = []
-    if collections:
-        terms = [tantivy.Query.term_query(index.schema, F_COLLECTION, c) for c in collections]
-        col_q = (
-            terms[0]
-            if len(terms) == 1
-            else tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in terms])
+    arms = scope_arms(
+        index.schema, None if collections is None else list(collections), source_scope
+    )
+    if arms is not None:
+        if not arms:
+            return tantivy.Query.empty_query()
+        clauses.append(
+            (
+                tantivy.Occur.Must,
+                scope_or(arms),
+            )
         )
-        clauses.append((tantivy.Occur.Must, col_q))
     if query is not None:
         clauses.append((tantivy.Occur.Must, query))
     if not clauses:
@@ -65,7 +77,8 @@ def _scope_query(
 def tag_catalogue(
     index: tantivy.Index,
     *,
-    collections: Sequence[str],
+    collections: Sequence[str] | None,
+    source_scope: Mapping[str, Sequence[str]] | None = None,
     sources: Sequence[str] | None = None,
     query: tantivy.Query | None = None,
     limit: int = _DEFAULT_LIMIT,
@@ -110,7 +123,7 @@ def tag_catalogue(
         }
     }
     try:
-        raw = index.searcher().aggregate(_scope_query(index, collections, query), agg)
+        raw = index.searcher().aggregate(_scope_query(index, collections, source_scope, query), agg)
         file_buckets = raw["files"]["buckets"]
     except Exception:
         # An unreadable catalogue must not take the filters pane down.

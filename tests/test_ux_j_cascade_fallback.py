@@ -81,8 +81,8 @@ async def test_exact_query_uses_fusion_path(cfg: Config, fuzzy_index: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_cascade_path_honours_active_sources(cfg: Config, fuzzy_index: Path) -> None:
-    """When ``active_sources`` is set, every cascade pass (including the
+async def test_cascade_path_honours_source_scope(cfg: Config, fuzzy_index: Path) -> None:
+    """When ``source_scope`` is set, every cascade pass (including the
     programmatic fuzzy pass) should respect the source-set so a bogus
     path filters out hits even via fuzzy."""
     from fnd.cascade import cascade_search
@@ -94,7 +94,7 @@ async def test_cascade_path_honours_active_sources(cfg: Config, fuzzy_index: Pat
         query="glimer",
         threshold=10,
         limit=10,
-        collection="notes",
-        active_sources=["/no/such/source"],
+        collection=None,
+        source_scope={"notes": ["/no/such/source"]},
     )
     assert out == [], out

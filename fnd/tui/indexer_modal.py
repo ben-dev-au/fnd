@@ -123,6 +123,17 @@ def _format_current_line(
             f"[dim]Fetching from {wait.provider}:[/] {_short_name(wait.path)}"
             f"   [yellow]· waiting {int(wait.seconds_waiting())}s[/]"
         )
+    return _current_line(current_path, stuck_suffix)
+
+
+def _current_line(current_path: str, stuck_suffix: str = "") -> str:
+    """The "what is happening right now" line, or nothing.
+
+    `_short_name("")` is `?`, which reads as a file the modal cannot name. On a
+    finished run there is no current file, so the line says nothing at all.
+    """
+    if not current_path:
+        return ""
     return f"[dim]Current:[/] {_short_name(current_path)}{stuck_suffix}"
 
 
@@ -161,9 +172,15 @@ class IndexerScreen(ModalScreen[None]):
         padding: 1 2;
         background: $surface;
     }
+    /* Text that will not fit at 60 columns: shorten the label, wrap it,
+       or elide it. Shorten first; never elide a count or a name, because
+       a clipped number is a different number. */
     #indexer_history_tree {
         height: auto;
         max-height: 10;
+        /* Measured at 80 cols: a horizontal scrollbar paints a row of dashes
+           inside the tree that reads as a broken row, not as a control. */
+        overflow-x: hidden;
         margin: 0 0 1 0;
         border: none;
         background: $surface;
@@ -172,8 +189,15 @@ class IndexerScreen(ModalScreen[None]):
     #indexer_history_tree:focus-within { color: $text; }
     #indexer_history_tree.hidden { display: none; }
     #indexer_status, #indexer_pages_label, #indexer_current_file,
-    #indexer_timing, #indexer_indexed_line, #indexer_texture_line {
+    #indexer_timing {
         height: 1;
+        padding: 0;
+    }
+    /* These two carry counts, and a clipped count is a different number (at
+       80 columns `2 removed` clips to a bare `2`), so they wrap rather than
+       lose a word. */
+    #indexer_indexed_line, #indexer_texture_line {
+        height: auto;
         padding: 0;
     }
     #indexer_progress, #indexer_pages_progress {
@@ -228,6 +252,9 @@ class IndexerScreen(ModalScreen[None]):
             # search Results pane.
             history_tree: Tree[str] = Tree("Completed", id="indexer_history_tree")
             history_tree.show_root = True
+            # Two, as the sidebar and results trees use: the default four put
+            # the texturising line past the panel edge, cut mid-word.
+            history_tree.guide_depth = 2
             # Start collapsed so it doesn't eat vertical space on a
             # fresh chain start, and so the modal's initial focus
             # (the Actions OptionList) stays the primary interaction.
@@ -259,6 +286,9 @@ class IndexerScreen(ModalScreen[None]):
                     Option("Cancel", id="cancel"),
                     id="indexer_actions",
                 )
+        # A modal screen is see-through, so without its own footer the app's
+        # shows under it: `/`, `:`, `?` and `q`, none of which work here.
+        yield Static("", id="footer_hints")
 
     def _title_text(self) -> str:
         if self._chain_total > 1:
@@ -398,12 +428,12 @@ class IndexerScreen(ModalScreen[None]):
 
         pages, page_secs = live_progress.session_snapshot()
         per_page = fmt_per_page(pages, page_secs)
+        # `?` is honest while pages are still being counted and noise on a run
+        # that has none to count: a corpus with no PDFs never gets an average.
+        average = "" if per_page == "?" else f"    [dim]·[/]    [dim]Avg:[/] {per_page}"
         with contextlib.suppress(Exception):
             timing = self.query_one("#indexer_timing", Static)
-            timing.update(
-                f"[dim]Elapsed:[/] {fmt_duration(elapsed_seconds)}    "
-                f"[dim]·[/]    [dim]Avg:[/] {per_page}"
-            )
+            timing.update(f"[dim]Elapsed:[/] {fmt_duration(elapsed_seconds)}{average}")
 
     def _render_timing_from_event(self, ev: Any) -> None:
         self._render_timing(getattr(ev, "elapsed_s", 0.0))
@@ -481,6 +511,36 @@ class IndexerScreen(ModalScreen[None]):
                 with contextlib.suppress(Exception):
                     opts.remove_option(opt_id)
                     self._removed_options.add(opt_id)
+        self._sync_footer(
+            done=want_done,
+            todo=want_todo,
+            history=bool(getattr(app._indexer, "chain_history", None)),
+        )
+
+    def _sync_footer(self, *, done: bool, todo: bool, history: bool) -> None:
+        """The keys this screen answers, in the state it is in. Read from the
+        same call that decides the action rows, so the two cannot disagree.
+
+        ``history`` comes from the chain state rather than the band's own
+        class, so the footer does not depend on which refresh ran first.
+        """
+        from fnd.tui.app import render_hint_bar
+
+        hints: tuple[tuple[str, str], ...] = (("↑↓", "Choose"), ("⏎", "Select"))
+        # The per-collection summary (where the removed-file counts are read)
+        # is focusable, so the footer names it.
+        if history:
+            hints = (*hints, ("Tab", "Completed"))
+        if done:
+            hints = (*hints, ("Esc", "Close"))
+        else:
+            # `p` is Cancel under another name (see `action_pause`), so naming
+            # it would advertise two keys for one act.
+            hints = (*hints, ("Esc/b", "Background"), ("c", "Cancel"))
+        if todo:
+            hints = (*hints, ("f", "Flat PDFs"))
+        with contextlib.suppress(Exception):
+            self.query_one("#footer_hints", Static).update(render_hint_bar((), hints))
 
     def _todo_scope(self) -> str | None:
         """Collection scope for the flat-PDF badge + drill-in: the active
@@ -558,7 +618,7 @@ class IndexerScreen(ModalScreen[None]):
             bar = self.query_one("#indexer_progress", ProgressBar)
             bar.update(total=max(1, state.total_files), progress=state.files_completed)
             self.query_one("#indexer_current_file", Static).update(
-                f"[dim]Current:[/] {_short_name(state.current_file)}"
+                _current_line(state.current_file)
             )
             self._update_status_lines(
                 pdfs_total=state.pdfs_total,
@@ -605,7 +665,7 @@ class IndexerScreen(ModalScreen[None]):
             status.update(f"[green]Done.[/]   {ev.files_done} / {ev.files_total} files")
             self._refresh_todo_after_run()
 
-        current.update(f"[dim]Current:[/] {_short_name(ev.current_file)}")
+        current.update(_current_line(ev.current_file))
         self._render_timing(ev.elapsed_s)
         self._update_status_lines(
             pdfs_total=ev.pdfs_total,
@@ -615,6 +675,9 @@ class IndexerScreen(ModalScreen[None]):
             textured_already=ev.textured_already_total,
             still_flat=ev.still_flat_total,
             failed=ev.failed_total,
+            removed=ev.removed_total,
+            still_in=ev.removed_still_in,
+            unreadable=ev.unreadable_sources,
         )
         self._sync_action_options(self._fnd_app())
 
@@ -628,13 +691,20 @@ class IndexerScreen(ModalScreen[None]):
         textured_already: int,
         still_flat: int,
         failed: int,
+        removed: int = 0,
+        still_in: tuple[str, ...] = (),
+        unreadable: tuple[str, ...] = (),
     ) -> None:
         try:
             indexed_line = self.query_one("#indexer_indexed_line", Static)
             texture_line = self.query_one("#indexer_texture_line", Static)
         except Exception:
             return
-        indexed_line.update(_format_indexed_line(indexed_newly, indexed_already, failed))
+        indexed_line.update(
+            _format_indexed_line(
+                indexed_newly, indexed_already, failed, removed, still_in, unreadable
+            )
+        )
         if pdfs_total > 0:
             texture_line.remove_class("hidden")
             texture_line.update(
@@ -681,12 +751,23 @@ class IndexerScreen(ModalScreen[None]):
         for snap in history:
             collection_node = tree.root.add(snap.collection, data=snap.collection)
             collection_node.add_leaf(
-                _format_indexed_line(snap.indexed_newly, snap.indexed_already, snap.failed)
+                _format_indexed_line(
+                    snap.indexed_newly,
+                    snap.indexed_already,
+                    snap.failed,
+                    snap.removed,
+                    snap.still_in,
+                    snap.unreadable,
+                    compact=True,
+                )
             )
             if snap.pdfs_total > 0:
                 collection_node.add_leaf(
                     _format_texturising_line(
-                        snap.textured_newly, snap.textured_already, snap.still_flat
+                        snap.textured_newly,
+                        snap.textured_already,
+                        snap.still_flat,
+                        compact=True,
                     )
                 )
             collection_node.expand()
@@ -694,6 +775,17 @@ class IndexerScreen(ModalScreen[None]):
             tree.root.expand()
 
     # ---- bindings ----
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Post-run, cancel/pause/skip are meaningless; the rule
+        `_sync_action_options` already applies to the option list. The keys
+        were never gated, so `c` wrote "Cancelling… waiting for current file
+        to abort." over a finished run and left it there. `background` stays
+        live: Esc is how the modal is left."""
+        if action in ("cancel", "pause", "skip_cloud"):
+            with contextlib.suppress(Exception):
+                return not self._chain_finished(self._fnd_app())
+        return True
 
     async def action_background(self) -> None:
         """Dismiss the modal; task keeps running on the app."""
@@ -885,7 +977,10 @@ class ChainStepSummary:
     textured_already: int
     still_flat: int
     failed: int
+    removed: int
     elapsed_s: float
+    still_in: tuple[str, ...] = ()
+    unreadable: tuple[str, ...] = ()
 
 
 def _short_name(path: str) -> str:
@@ -895,24 +990,59 @@ def _short_name(path: str) -> str:
     return name if len(name) <= 68 else name[:65] + "…"
 
 
-def _format_indexed_line(newly: int, already: int, failed: int) -> str:
-    parts = [
-        f"{newly} newly indexed",
-        f"{already} already indexed",
-    ]
+def _format_indexed_line(
+    newly: int,
+    already: int,
+    failed: int,
+    removed: int = 0,
+    still_in: tuple[str, ...] = (),
+    unreadable: tuple[str, ...] = (),
+    *,
+    compact: bool = False,
+) -> str:
+    """Short enough to survive a 75%-wide modal at 80 columns.
+
+    `12 newly indexed    340 already indexed    2 removed` overflows and
+    paints the last count as a bare `2`. A non-breaking space does not help:
+    Rich wraps on it too.
+    """
+    warnings = []
+    # First, because it changes what every other number on the line means: a
+    # folder the run could not list contributed nothing and was NOT pruned.
+    if unreadable:
+        n = len(unreadable)
+        warnings.append(f"[yellow]⚠ {n} folder{'s' if n != 1 else ''} unreadable[/]")
     if failed > 0:
-        parts.append(f"[yellow]⚠ {failed} failed[/]")
-    return "[dim]Indexed:[/]     " + "    ".join(parts)
+        warnings.append(f"[yellow]⚠ {failed} failed[/]")
+    # `N removed` is true of this collection and false of the corpus while a
+    # folder listed under two collections still holds the file.
+    if still_in:
+        warnings.append(f"[yellow]⚠ still in {', '.join(still_in)}[/]")
+    # A run that adds nothing and removes three read as "nothing happened".
+    changed = [f"{newly} new"] + ([f"{removed} removed"] if removed > 0 else [])
+    if compact:
+        # The tree indents these rows and CLIPS them (measured: 54 columns at
+        # both 60 and 80), so the clip eats `already` before a warning or the
+        # label, which alone tells this row from the PDF one below it.
+        return "[dim]Files[/] " + " · ".join([*warnings, *changed, f"{already} already"])
+    return "[dim]Indexed:[/]     " + "    ".join(
+        [*changed[:1], f"{already} already", *changed[1:], *warnings]
+    )
 
 
-def _format_texturising_line(newly: int, already: int, still_flat: int) -> str:
-    parts = [
-        f"{newly} newly textured",
-        f"{already} already textured",
-    ]
-    if still_flat > 0:
-        parts.append(f"[yellow]⚠ {still_flat} still flat[/]")
-    return "[dim]Texturising:[/] " + "    ".join(parts)
+def _format_texturising_line(
+    newly: int, already: int, still_flat: int, *, compact: bool = False
+) -> str:
+    """Short for the same reason as :func:`_format_indexed_line`.
+
+    These lines also appear inside the Completed tree, which indents them and
+    CLIPS rather than wrapping: at 80 columns the long form loses
+    `⚠ 1 still flat` entirely, with no scrollbar to hint at it.
+    """
+    flat = [f"[yellow]⚠ {still_flat} still flat[/]"] if still_flat > 0 else []
+    if compact:
+        return "[dim]PDFs[/] " + " · ".join([*flat, f"{newly} new", f"{already} already"])
+    return "[dim]Texturising:[/] " + "    ".join([f"{newly} new", f"{already} already", *flat])
 
 
 # ---- App-side helpers ---------------------------------------------------
@@ -989,6 +1119,9 @@ async def drive_indexer(
                 textured_already=final_event.textured_already_total,
                 still_flat=final_event.still_flat_total,
                 failed=final_event.failed_total,
+                removed=final_event.removed_total,
+                still_in=final_event.removed_still_in,
+                unreadable=final_event.unreadable_sources,
                 elapsed_s=final_event.elapsed_s,
             )
         )

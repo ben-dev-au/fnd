@@ -21,10 +21,14 @@ from typing import Any
 
 from markdown_it import MarkdownIt
 
-from fnd.extract.base import Block, Chunk, ExtractError
+from fnd.extract.base import MAX_CHUNK_CHARS, MAX_TABLE_CHARS, Block, Chunk, ExtractError
 from fnd.fsmeta import FileTimes, read_file_times
 
-_md = MarkdownIt("commonmark")
+# CommonMark plus the GFM table rule: without it a table parses as a paragraph
+# of raw pipes, which inflates the body over the chunk budget and renders as raw
+# source in the preview. Only the table rule is added, so nothing else about the
+# parse changes.
+_md = MarkdownIt("commonmark").enable("table")
 
 # Token types that carry "real" content. A section is worth flushing as a
 # chunk when *any* of these appeared inside it — even if no `inline`
@@ -102,6 +106,58 @@ def _span(tokens: list[Any], i: int, section_start_line: int) -> tuple[int, int]
     if not tok.map:
         return None
     return (tok.map[0] - section_start_line, tok.map[1] - section_start_line)
+
+
+def _table_blocks(tokens: list[Any], i: int, section_start_line: int) -> tuple[list[Block], int]:
+    """The table opening at ``tokens[i]`` as blocks, and the index just past it.
+
+    One block while the table fits ``MAX_TABLE_CHARS`` (see fnd.extract._bound for
+    why a table stays whole). Past that, runs of body rows under the chunk budget,
+    each carrying the header's text and span so every piece renders as a table.
+    """
+    span = _span(tokens, i, section_start_line)
+    rows: list[tuple[tuple[int, int] | None, list[str]]] = []
+    body_start: int | None = None
+    j = i + 1
+    while j < len(tokens) and tokens[j].type != "table_close":
+        tok = tokens[j]
+        if tok.type == "tbody_open" and tok.map:
+            body_start = tok.map[0] - section_start_line
+        elif tok.type == "tr_open":
+            rows.append((_span(tokens, j, section_start_line), []))
+        elif tok.type == "inline" and rows and (cell := tok.content.strip()):
+            rows[-1][1].append(cell)
+        j += 1
+    text = " ".join(cell for _, cells in rows for cell in cells)
+    if not text:
+        return [], j + 1
+    body = [
+        (s, " ".join(cells))
+        for s, cells in rows
+        if s and body_start is not None and s[0] >= body_start
+    ]
+    if len(text) <= MAX_TABLE_CHARS or span is None or body_start is None or not body:
+        return [Block(kind="table", text=text, span=span)], j + 1
+    header = " ".join(cell for s, cells in rows if s and s[0] < body_start for cell in cells)
+    head = (span[0], body_start)
+    pieces: list[Block] = []
+    run: list[tuple[tuple[int, int], str]] = []
+    size = len(header)
+    for row_span, row_text in body:
+        if run and size + len(row_text) + 1 > MAX_CHUNK_CHARS:
+            pieces.append(_table_piece(header, run, head))
+            run, size = [], len(header)
+        run.append((row_span, row_text))
+        size += len(row_text) + 1
+    pieces.append(_table_piece(header, run, head))
+    return pieces, j + 1
+
+
+def _table_piece(
+    header: str, run: list[tuple[tuple[int, int], str]], head: tuple[int, int]
+) -> Block:
+    text = " ".join([header, *(row_text for _, row_text in run)]).strip()
+    return Block(kind="table", text=text, span=(run[0][0][0], run[-1][0][1]), head=head)
 
 
 def _section_source(source_lines: list[str], start_line: int, end_line: int) -> str:
@@ -217,6 +273,13 @@ def _extract_inner(path: Path) -> Iterator[Chunk]:
         if tok.type == "heading_close":
             in_heading = False
             i += 1
+            continue
+
+        if tok.type == "table_open":
+            table_blocks, i = _table_blocks(tokens, i, section_start_line)
+            blocks.extend(table_blocks)
+            body_parts.extend(b.text for b in table_blocks)
+            section_has_content = True
             continue
 
         if in_heading and tok.type == "inline":

@@ -243,16 +243,20 @@ def apply_chunk_highlights(md: FNDMarkdown, blocks: list[MarkdownBlock]) -> None
 
     Runs pre-mount, off the parsed block tree, so ``set_content`` costs no
     layout and the table cells are still reachable."""
-    spec = getattr(md, "match_spec", None)
-    if spec is None or spec.is_empty:
-        return
     targets = list(_content_blocks(blocks))
-    if not targets:
+    md.block_plains = tuple(_block_plain(b) for b in targets)
+    spec = md.match_spec
+    if spec.is_empty or not targets:
         return
-    for block, spans in zip(
-        targets, _build_match_spans_multi([_block_plain(b) for b in targets], spec), strict=True
-    ):
+    for block, spans in zip(targets, _build_match_spans_multi(md.block_plains, spec), strict=True):
         _set_block_spans(block, spans)
+        md.painted_match = md.painted_match or bool(spans)
+
+
+def paints_match(plains: Sequence[str], spec: MatchSpec) -> bool:
+    """Whether ``spec`` would highlight anything in a chunk whose content blocks
+    render as ``plains``: the same decision :func:`apply_chunk_highlights` makes."""
+    return not spec.is_empty and any(_build_match_spans_multi(plains, spec))
 
 
 def _apply_inline_code_highlights(block: MarkdownBlock) -> None:
@@ -970,6 +974,12 @@ class FNDMarkdown(Markdown):
 
         super().__init__(markdown=markdown, name=name, id=id, classes=classes)
         self.match_spec: MatchSpec = match_spec or MatchSpec()
+        # What a capture of this chunk needs to stand in for it under another
+        # query: the source it was built from, its blocks' rendered text, and
+        # whether any of that text was highlighted.
+        self.source_text: str = markdown or ""
+        self.block_plains: tuple[str, ...] = ()
+        self.painted_match: bool = False
         # Read by ``FNDMarkdownFence`` to decide whether a mermaid fence
         # renders as a diagram (default-on flag, off in tests unless set).
         self.render_mermaid: bool = render_mermaid
@@ -1025,6 +1035,9 @@ class FNDMarkdown(Markdown):
         self._first_dim_match_block = None
         self._match_blocks = []
         self._dim_match_blocks = []
+        self.source_text = markdown
+        self.block_plains = ()
+        self.painted_match = False
         self._build_gen += 1
         gen = self._build_gen
         aw = super().update(markdown)

@@ -1,4 +1,4 @@
-"""Phase 5.5e-2: extract a single inline [metadata filter] clause from a query."""
+"""Extract a single inline [metadata filter] clause from a query."""
 
 from __future__ import annotations
 

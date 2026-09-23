@@ -1,4 +1,4 @@
-"""Phase 5: opener URL formatting + dispatch."""
+"""Opener URL formatting + dispatch."""
 
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def urlsafe_unquote(s: str) -> str:
     return urllib.parse.unquote(s)
 
 
-# ── Phase 1d: conditional PDF auto-promote ──────────────────────────────
+# ── Conditional PDF auto-promote ────────────────────────────────────────
 
 
 def test_open_smart_auto_promotes_preview_when_no_skim_and_ax_granted(

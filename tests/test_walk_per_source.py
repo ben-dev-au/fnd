@@ -1,4 +1,4 @@
-"""Phase 5.5e-1: per-source walker."""
+"""Per-source walker."""
 
 from __future__ import annotations
 
@@ -28,6 +28,14 @@ def test_walks_two_sources_with_disjoint_filetypes(tmp_path: Path) -> None:
 
 
 def test_frontmatter_filter_excludes_non_matching_md(tmp_path: Path) -> None:
+    """A note is judged by a frontmatter rule whether or not it has a block.
+
+    A note with no ``Course`` is not a note for that course, so the question
+    is answerable and the answer is no. Waiving it turned "index this course"
+    into "index everything except other courses": every untagged note in a
+    vault reached the index. A file that could not carry a block at all is a
+    different case, and the test below keeps it out of this one.
+    """
     root = tmp_path / "notes"
     _touch(root / "in.md", "---\nCourse: DPwC\n---\nbody\n")
     _touch(root / "out.md", "---\nCourse: Algorithms\n---\nbody\n")

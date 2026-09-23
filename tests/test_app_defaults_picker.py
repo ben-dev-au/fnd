@@ -1,4 +1,4 @@
-"""Phase 2c: Preferences-level per-filetype default-app picker.
+"""Preferences-level per-filetype default-app picker.
 
 Pure tests of the new ``pref.app_defaults.<kind>`` menu rows in
 ``_provider_preferences``. The picker writes to ``[app_defaults]``

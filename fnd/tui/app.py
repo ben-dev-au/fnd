@@ -1,16 +1,12 @@
-"""FND TUI — phase 5 shell.
+"""FND TUI shell.
 
-Layout (per §5 wireframe):
+Layout:
 
   ┌─ Status bar (collection · result count) ─┐
   ├─ Query input ────────────────────────────┤
   ├─ Results tree (left)  │  Preview pane ──┤
   └──────────────────────────────────────────┘
    /  search   Tab  focus   ⏎  open   z  reading-view   o  default-app   q  quit
-
-Phase 5 ships the structural layout + opener wired to Enter; phase 6 adds
-the full action map (filter chips, command palette, customisable keymap),
-phase 7 adds reranker live-tuning.
 """
 
 from __future__ import annotations
@@ -26,6 +22,7 @@ if TYPE_CHECKING:
     from fnd.query import FileGroup, Hit
 
 
+from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -77,6 +74,7 @@ from fnd.tui.widgets.preview_container import (
     _HitWithQuery,
 )
 from fnd.tui.widgets.results_tree import ResultsTree
+from fnd.tui.widgets.scope_tree import ScopeTree
 
 # App-wide thin scrollbars: every stock Textual ScrollBar (results/sidebar
 # trees, code fences, settings lists) renders the thumb as a hairline glyph
@@ -118,6 +116,146 @@ def _action_priority(action_id: str) -> bool:
     return False
 
 
+#: Marks the join where hints were dropped, rather than the end of the bar.
+_ELISION = ("…", "")
+
+
+def _hint_clusters(
+    anchors: tuple[tuple[str, str], ...],
+    contextual: tuple[tuple[str, str], ...],
+    *,
+    elided: bool = False,
+) -> Any:
+    from rich.markup import escape
+    from rich.text import Text
+
+    def _cluster(pairs: tuple[tuple[str, str], ...]) -> Text:
+        sep = Text("  │  ", style="dim")
+        out = Text("")
+        for i, (key, label) in enumerate(pairs):
+            if i:
+                out.append_text(sep)
+            if (key, label) == _ELISION:
+                out.append_text(Text("…", style="dim"))
+                continue
+            # Both clusters run through localise so a hint table can hold
+            # ``{alt_key}`` and render ⌥ on macOS, Alt elsewhere — the footer
+            # and the Keybindings page then can't disagree.
+            key = os_labels.localise(key)
+            label = os_labels.localise(label)
+            # `[key]` is markup to Rich; unescaped, the chip paints a reversed blank.
+            out.append_text(Text.from_markup(f"[reverse] {escape(key)} [/] {escape(label)}"))
+        return out
+
+    from rich.text import Text as _Text
+
+    joined = _cluster(anchors)
+    # Anchors are dropped off the LEFT, so their marker goes there; a trailing
+    # one points at contextual keys that are all still on screen.
+    if elided and _ELISION not in contextual:
+        head = _Text("…  ", style="dim")
+        head.append_text(joined)
+        joined = head
+    if contextual:
+        if anchors:
+            joined.append_text(Text("      ", style=""))
+        joined.append_text(_cluster(contextual))
+    return joined
+
+
+def _is_commit(key: str) -> bool:
+    """Whether a hint's key is the app's save gesture, in any spelling."""
+    return key.replace(" ", "").lower() in {"^s", "ctrl+s"}
+
+
+def _is_leave(key: str) -> bool:
+    """Whether a hint's key is how you get off this screen."""
+    return "esc" in key.lower()
+
+
+# Keys a user tries without being told. They go first when the bar must shrink,
+# because the hint that is worth its cells is the one nobody would guess.
+_GUESSABLE = frozenset({"↑↓", "↑", "↓", "←", "→", "←→", "⏎", "space"})
+
+
+def _is_guessable(key: str) -> bool:
+    return key.strip().lower() in _GUESSABLE
+
+
+class _HintBar:
+    """The hint bar, refitted to the width it is painted at.
+
+    Anchors repeat on every screen and are listed under `?`; a screen's own
+    keys are neither, so an overlong bar drops anchors from the right first.
+    Otherwise the terminal crops the tail, and with it the form's `^S Save`.
+    Not a :class:`Text` subclass: Rich renders one through a
+    fast path that never consults ``__rich_console__``.
+    """
+
+    def __init__(
+        self,
+        anchors: tuple[tuple[str, str], ...],
+        contextual: tuple[tuple[str, str], ...],
+    ) -> None:
+        self._anchors = anchors
+        self._contextual = contextual
+        self._full = _hint_clusters(anchors, contextual)
+
+    @property
+    def plain(self) -> str:
+        return self._full.plain
+
+    @property
+    def cell_len(self) -> int:
+        return self._full.cell_len
+
+    def __str__(self) -> str:
+        return self._full.plain
+
+    def _kept(self, n: int) -> tuple[tuple[str, str], ...]:
+        """The first ``n`` hints, always including the keys that save and leave.
+
+        Dropping from the right would cut `^s Save` while keeping `c Clear` (a
+        destructive key outliving the one that keeps the work), then `Esc
+        Discard`, leaving a narrow terminal no way off the screen.
+        """
+        must = [h for h in self._contextual if _is_commit(h[0]) or _is_leave(h[0])]
+        room = max(0, n - len(must))
+        # Ranked, not sliced: `Tab Completed` sat third and was the first to
+        # go at 62 columns, leaving the three keys anyone would have tried and
+        # dropping the only route to the run history.
+        rest = [h for h in self._contextual if h not in must]
+        ranked = [h for h in rest if not _is_guessable(h[0])] + [
+            h for h in rest if _is_guessable(h[0])
+        ]
+        kept = ranked[:room]
+        # Back into bar order, so the keys do not reshuffle as the pane resizes.
+        kept = [h for h in rest if h in kept]
+        dropped = len(rest) - len(kept)
+        # The cut is in the MIDDLE (the keys that save and leave are held back
+        # to the end), so the ellipsis marks the join, not the tail.
+        gap = (_ELISION,) if dropped > 0 else ()
+        return (*kept, *gap, *must)
+
+    def fitted(self, width: int) -> Text:
+        for n in range(len(self._anchors), -1, -1):
+            text = _hint_clusters(
+                self._anchors[:n], self._contextual, elided=n < len(self._anchors)
+            )
+            if text.cell_len <= width:
+                return text
+        for n in range(len(self._contextual) - 1, 0, -1):
+            text = _hint_clusters((), self._kept(n), elided=True)
+            if text.cell_len <= width:
+                return text
+        return _hint_clusters((), self._kept(1), elided=True)
+
+    def __rich_console__(self, console: Any, options: Any) -> Any:
+        text = self.fitted(options.max_width)
+        text.no_wrap = True
+        yield text
+
+
 def render_hint_bar(
     anchors: tuple[tuple[str, str], ...],
     contextual: tuple[tuple[str, str], ...] = (),
@@ -128,29 +266,9 @@ def render_hint_bar(
     (always present, builds muscle memory), ``contextual`` on the right
     (changes by focus / screen). Both use the same key-glyph rendering
     so the visual is identical across the main app and the Settings
-    menu — this is the renderer both call into.
+    menu; this is the renderer both call into.
     """
-    from rich.text import Text
-
-    def _cluster(pairs: tuple[tuple[str, str], ...]) -> Text:
-        sep = Text("  │  ", style="dim")
-        out = Text("")
-        for i, (key, label) in enumerate(pairs):
-            if i:
-                out.append_text(sep)
-            # Both clusters run through localise so a hint table can hold
-            # ``{alt_key}`` and render ⌥ on macOS, Alt elsewhere — the footer
-            # and the Keybindings page then can't disagree.
-            key = os_labels.localise(key)
-            label = os_labels.localise(label)
-            out.append_text(Text.from_markup(f"[reverse] {key} [/] {label}"))
-        return out
-
-    joined = _cluster(anchors)
-    if contextual:
-        joined.append_text(Text("      ", style=""))
-        joined.append_text(_cluster(contextual))
-    return joined
+    return _HintBar(anchors, contextual)
 
 
 # How long quit waits for the prefetch drainer to accept its cancellation
@@ -160,7 +278,7 @@ _DRAINER_STOP_TIMEOUT = 0.5
 
 
 class FNDApp(App[None]):
-    """Phase 5 shell."""
+    """Root Textual application: layout, screens and actions."""
 
     CSS = """
     Screen { background: $surface; }
@@ -262,14 +380,40 @@ class FNDApp(App[None]):
     #filters_panel_tree { width: 100%; height: 1fr; border: none; overflow-x: hidden; }
     /* Docked at the top so it floats above the scrolling tree, always in view
        while a filter is active; hidden otherwise. */
-    #clear_filters_bar {
+    #filters_pane #clear_filters_bar {
         /* visibility (not display) so the row is always reserved — the bar
            appearing on the first active filter must not shove the tree down. */
         dock: top; height: 1; padding: 0 1; visibility: hidden;
         color: $primary 50%;
     }
-    #clear_filters_bar:hover { color: $accent; text-style: bold; }
-    #clear_filters_bar:focus { color: $accent; text-style: bold; background: $accent 15%; }
+    #filters_pane #clear_filters_bar:hover { color: $accent; text-style: bold; }
+    #filters_pane #clear_filters_bar:focus { color: $accent; text-style: bold; background: $accent 15%; }
+    /* Notices wear the app's chrome, not Textual's. The stock toast is a
+       filled $panel-lighten-1 slab with a thick outer bar down one side,
+       padded 1 1 and fixed at 60 columns; dropped over panes that are all
+       thin round outlines on $surface, it reads as something else's widget.
+       Same border grammar as every pane here: round, severity-coloured, and
+       sized to what it says. */
+    /* Top right, not bottom: the bottom rows carry the hint bar and the
+       progress strip, and a notice landing there covered the line that says
+       what is running. */
+    ToastRack {
+        dock: top; align: right top; margin-bottom: 0; margin-top: 1;
+    }
+    Toast {
+        width: auto; max-width: 60%; height: auto;
+        padding: 0 1; margin: 0 1 1 0;
+        background: $surface; color: $text;
+        border: round $primary 50%;
+    }
+    Toast.-information { border: round $primary 50%; }
+    /* The two that matter carry the colour the confirm screens already use. */
+    Toast.-warning { border: round $warning; }
+    Toast.-error { border: round $error; }
+    Toast .toast--title { text-style: bold; color: $text; }
+    Toast.-information .toast--title { color: $text-muted; }
+    Toast.-warning .toast--title { color: $warning; }
+    Toast.-error .toast--title { color: $error; }
     /* Section collapse-to-header: Left at the panel root shrinks the
        whole panel down to its border-title strip. ``overflow: hidden``
        suppresses any rogue scrollbar that would otherwise sneak past
@@ -321,12 +465,21 @@ class FNDApp(App[None]):
        Zero the pane's own scrollbar too: for flat-buffer previews the
        inner LineBufferPreview already shows the match-marker bar, so the
        pane's bar is a bare duplicate. */
-    #preview_pane.-reading { border: none; padding: 0; scrollbar-size-vertical: 0; }
+    /* Top edge only: a full frame would be copied with the text, a top edge
+       is not inside a selection, and nothing else on screen names the
+       document. */
+    #preview_pane.-reading {
+        border: none;
+        border-top: round $accent;
+        padding: 0;
+        scrollbar-size-vertical: 0;
+    }
     /* While a partial mount is in flight we hide the scrollbar (its
        virtual size keeps growing as chunks land, so the thumb would
-       jitter). Programmatic ``scroll_to_widget`` calls during phase 2b
-       still need to work — using ``overflow-y: hidden`` would prevent
-       that, so we only suppress the bar's chrome, not scrolling.
+       jitter). Programmatic ``scroll_to_widget`` calls during the hidden
+       prepend above the window still need to work; using
+       ``overflow-y: hidden`` would prevent that, so we only suppress the
+       bar's chrome, not scrolling.
 
        Hidden by COLOUR, not by size. ``scrollbar-size-vertical: 0`` removes
        the gutter, which changes the pane's content width — so every chunk in
@@ -499,7 +652,7 @@ class FNDApp(App[None]):
                 # whole collection in/out of scope). Filters tree uses
                 # the skip-expanded-parent subclass so File-type /
                 # Modified headers behave the same as file rows.
-                yield Tree("Collections", id="collections_panel_tree")
+                yield ScopeTree("Collections", id="collections_panel_tree")
                 # The filters tree lives inside a bordered container so a clear
                 # affordance can dock at the top and stay in view whatever the
                 # tag list's scroll. The container wears the border / title /
@@ -753,7 +906,7 @@ class FNDApp(App[None]):
         # Texture, not via a startup popup — re-texturising is a
         # preview-quality refresh the user opts into, never urgent.
 
-    # ── Ranking profile (§7) ──────────────────────────────────────
+    # ── Ranking profile ───────────────────────────────────────────
 
     def _preview_title(self, edge_width: int = 0) -> str:
         """Border title for the preview pane — ``Preview — <file>``.
@@ -766,14 +919,35 @@ class FNDApp(App[None]):
         """
         if self._preview.parent_id is None:
             return "Preview"
+        # The same disambiguation the results rows use: two files sharing a
+        # basename gave both panes the same title, so the tree could tell them
+        # apart and the pane above it could not.
+        from fnd.tui.results_labels import disambiguated_names
+
+        names = disambiguated_names([g.path for g in self._search.groups])
         for g in self._search.groups:
             if g.parent_id == self._preview.parent_id:
-                name = Path(g.path).name
+                name = names.get(g.path) or Path(g.path).name
                 if edge_width > 0:
                     prefix = "Preview: "
                     name = _elide_middle_keep_suffix(name, edge_width - 6 - len(prefix))
                 return f"Preview: {name}"
         return "Preview"
+
+    def _refresh_results_title(self) -> None:
+        """Just the title. `_refresh_status` also queues a sidebar reflow, and
+        the collapse gesture is required to reflow synchronously."""
+        with contextlib.suppress(Exception):
+            self.query_one("#results_pane", Tree).border_title = self._results.title()
+
+    def _refresh_panel_titles(self) -> None:
+        """All three collapsible panels, because the gesture that closes one
+        can be aimed at any of them and the marker is what says which."""
+        self._refresh_results_title()
+        with contextlib.suppress(Exception):
+            self._scope._refresh_collections_panel_title()
+        with contextlib.suppress(Exception):
+            self._scope.refresh_filters_panel_title()
 
     def _refresh_status(self) -> None:
         try:
@@ -857,6 +1031,34 @@ class FNDApp(App[None]):
             pass_index,
             strict=self._effective_evidence_spec,
             painting=self._effective_match_spec,
+        )
+
+    def action_quit(self) -> None:  # type: ignore[override]
+        """Quit, unless the screen is holding work nobody has saved.
+
+        Esc is back and `q` is quit on every screen; both ask first, so a quit
+        never throws an unsaved edit away.
+        """
+        from fnd.tui.settings_screen import UnsavedChangesScreen, unsaved_on_stack
+
+        if isinstance(self.screen, UnsavedChangesScreen):
+            # The third route that asks it. The question is already on screen
+            # waiting for an answer, and asking again stacks a guard that has
+            # dropped its own Save option.
+            return
+        pending = unsaved_on_stack(self.screen_stack)
+        if pending is None:
+            self.exit()
+            return
+        what, save, blocked = pending
+        self.push_screen(
+            UnsavedChangesScreen(
+                what=what,
+                on_save=save,
+                on_leave=self.exit,
+                leave_label="Discard and quit",
+                blocked=blocked,
+            )
         )
 
     def _dispatch_apps_notice(self, message: str) -> None:
@@ -952,6 +1154,11 @@ class FNDApp(App[None]):
         Delegates the actual rendering to :func:`render_hint_bar` so the
         Settings menu uses the same visual.
         """
+        # A footer refresh can land after the stack has emptied (a resize or a
+        # focus change during teardown); reading the active screen then raises
+        # `ScreenStackError` into whatever was running.
+        if not self.screen_stack:
+            return
         ctx = self._focus_context()
 
         # Overlay state (explain / multi DSL) preempts the per-pane table.
@@ -984,10 +1191,14 @@ class FNDApp(App[None]):
         ):
             contextual = (("n/b", "Matches"), *contextual)
 
+        # Every anchor reaches a focused text box as a character, so naming
+        # them while the query bar (the app's opening focus) has focus
+        # advertises four dead keys.
+        from textual.widgets import Input, TextArea
+
         with contextlib.suppress(Exception):
-            self.query_one("#footer_hints", Static).update(
-                render_hint_bar(self._FOOTER_ANCHORS, contextual)
-            )
+            anchors = () if isinstance(self.focused, Input | TextArea) else self._FOOTER_ANCHORS
+            self.query_one("#footer_hints", Static).update(render_hint_bar(anchors, contextual))
 
     # Maps a ``_focus_context`` result to the pane id that wears the accent
     # border. ``query``/``global`` map to nothing — no pane is accented.
@@ -1254,11 +1465,31 @@ class FNDApp(App[None]):
         else:
             tree.focus()
 
+    def _refuse_if_missing(self, path: Path) -> bool:
+        """Say so when the file behind a row is not there any more.
+
+        The index keeps serving a deleted file's stored body, so the row and
+        the preview look ordinary. A keypress that cannot work must not look
+        like one that worked. Only a path that is PROVABLY gone earns the
+        notice: `exists()` raises on an unreadable parent, and that took the
+        app down on the keypress meant to explain itself.
+        """
+        from fnd.fsmeta import path_is_absent
+
+        if not path_is_absent(path):
+            return False
+        self.notify(
+            f"{path.name} is no longer on disk. Update the index to drop it.",
+            severity="warning",
+            timeout=6,
+        )
+        return True
+
     def action_open_at_locator(self) -> None:
         """Open the focused result at its page/section.
 
         For PDFs with a non-empty query, routes through Skim's URL form
-        so ``&search=`` highlights the term in the opened PDF (§22 Spike C).
+        so ``&search=`` highlights the term in the opened PDF.
         For MD / TXT, the chunk's ``line`` (plus per-source app override
         and Obsidian vault from app_params) flows through to the
         resolved handler so templates like ``code -g {path}:{line}:1``
@@ -1271,6 +1502,8 @@ class FNDApp(App[None]):
         if target is None:
             return
         _, hit = target
+        if self._refuse_if_missing(Path(hit.path)):
+            return
         opener.open_smart(
             path=Path(hit.path),
             kind=hit.kind,
@@ -1292,6 +1525,8 @@ class FNDApp(App[None]):
         if target is None:
             return
         _, hit = target
+        if self._refuse_if_missing(Path(hit.path)):
+            return
         opener.open_default(Path(hit.path))
 
     def action_warm_whole_file(self) -> None:
@@ -1358,6 +1593,8 @@ class FNDApp(App[None]):
         if target is None:
             return
         _, hit = target
+        if self._refuse_if_missing(Path(hit.path)):
+            return
         opener.reveal(Path(hit.path))
 
     def action_open_with_menu(self) -> None:
@@ -1376,6 +1613,8 @@ class FNDApp(App[None]):
         if target is None:
             return
         _, hit = target
+        if self._refuse_if_missing(Path(hit.path)):
+            return
 
         from fnd import apps as apps_mod
         from fnd.config import load as load_config
@@ -1597,6 +1836,7 @@ class FNDApp(App[None]):
                     self._scope.collapsed_panels.add(frame.id)
                     self._scope.persist()
                     self._reflow_sidebar(immediate=True)  # collapse in one frame
+                    self._refresh_panel_titles()
                 return
             parent.collapse()
             tree.move_cursor(parent)
@@ -1627,6 +1867,7 @@ class FNDApp(App[None]):
                 self._scope.collapsed_panels.discard(frame.id)
                 self._scope.persist()
             self._reflow_sidebar(immediate=True)  # expand in one frame
+            self._refresh_panel_titles()
             return
         node = tree.cursor_node
         if node is None or not node.children:
@@ -1647,6 +1888,27 @@ class FNDApp(App[None]):
         node = tree.cursor_node
         if node is not None and node.children:
             node.expand_all()
+
+    def action_scope_toggle_batch(self) -> None:
+        """Toggle the focused scope or filter row without re-running the query.
+
+        Each re-run also re-preloads the top hits, so changing several things
+        one at a time is a lot of thrown-away work. Holding the modifier
+        batches them; the query runs once, on the next Enter in the query bar.
+        """
+        # Only the scope trees: ``contexts`` gates nothing, and from the results
+        # pane this would post NodeSelected on a result row and leave the
+        # deferral set for the next real toggle.
+        if self._focus_context() not in ("collections", "filters"):
+            return
+        tree = self._focused_tree()
+        if tree is None:
+            return
+        node = tree.cursor_node
+        if node is None:
+            return
+        self._scope.defer_next_search()
+        tree.post_message(Tree.NodeSelected(node))
 
     def action_tree_collapse_all_children(self) -> None:
         """Collapse the focused node's *children* (each child and its subtree),
@@ -1683,7 +1945,7 @@ class FNDApp(App[None]):
     @on(ResultsTree.GeometryChanged)
     def _on_results_geometry_changed(self, _ev: ResultsTree.GeometryChanged) -> None:
         """Re-elide the file rows against the width the tree has settled at."""
-        self._results.relabel_file_rows()
+        self._results.relabel_rows()
 
     @on(ResultsTree.ReopenRequested)
     def _on_results_reopen_requested(self, ev: ResultsTree.ReopenRequested) -> None:
@@ -1717,6 +1979,7 @@ class FNDApp(App[None]):
             self._scope.collapsed_panels.discard(frame.id)
             self._scope.persist()
         self._reflow_sidebar(immediate=True)  # reopen in one frame
+        self._refresh_panel_titles()
         return True
 
     @on(events.Click, "#filters_pane")
@@ -1810,11 +2073,6 @@ class FNDApp(App[None]):
     def action_focus_collections_panel(self) -> None:
         """Single-key teleport from anywhere → collections sidebar panel."""
         self.query_one("#collections_panel_tree", Tree).focus()
-
-    @on(events.Click, "#clear_filters_bar")
-    def _on_clear_bar_click(self, event: events.Click) -> None:
-        event.stop()
-        self._scope.clear_filters()
 
     @on(Tree.NodeSelected, "#filters_panel_tree")
     def _on_filters_panel_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
@@ -1949,7 +2207,11 @@ class FNDApp(App[None]):
         """Map the current screen / focused panel to the Keybindings
         section that should appear right after Global. Returns ``None``
         when nothing more specific than Global is appropriate."""
-        from fnd.tui.settings_screen import SettingsScreen, SourceFormScreen
+        from fnd.tui.settings_screen import (
+            FilterBrowserScreen,
+            SettingsScreen,
+            SourceFormScreen,
+        )
 
         # If we're inside the Settings stack, the relevant section
         # depends on which screen the user is on. SourceFormScreen
@@ -1957,6 +2219,8 @@ class FNDApp(App[None]):
         # (Preferences / Collections / Keybindings sub-screens — the
         # SettingsList widget bindings apply across all of them).
         current = self.screen
+        if isinstance(current, FilterBrowserScreen):
+            return "Index filters"
         if isinstance(current, SourceFormScreen):
             return "Source form"
         if isinstance(current, SettingsScreen):
@@ -1987,7 +2251,7 @@ class FNDApp(App[None]):
         Markdown widget rendering the SearchTrace as a fenced ``json``
         block. The trace covers the entire search call, not just the
         focused hit — focused-hit details are visible in the trace's
-        per-hit ``contributions`` list (UX-pass-4 §2).
+        per-hit ``contributions`` list.
         """
         existing = self.query("#explain_overlay")
         if existing:
@@ -2021,21 +2285,89 @@ class FNDApp(App[None]):
         full-screen list of every action and setting, with a search Input
         at the top for free-text filtering across all sections.
         """
-        from fnd.tui.settings_screen import SettingsScreen, open_settings
+        from fnd.tui.settings_screen import (
+            SettingsScreen,
+            UnsavedChangesScreen,
+            open_settings,
+            unsaved_on_stack,
+        )
 
+        if isinstance(self.screen, UnsavedChangesScreen):
+            # The question is already on screen. A second guard would lose its
+            # Save option (the work is then two screens deep) and render
+            # identically over the first.
+            return
         if isinstance(self.screen, SettingsScreen):
             self._close_settings_stack()
             return
+        # The filter browser is not a SettingsScreen: a second settings stack
+        # over it could open and save a second Index filters, leaving the
+        # first holding stale values that its own `^s` then writes back.
+        pending = unsaved_on_stack(self.screen_stack)
+        if pending is not None:
+            what, save, blocked = pending
+            self.push_screen(
+                UnsavedChangesScreen(
+                    what=what,
+                    on_save=save,
+                    on_leave=self._discard_and_open_settings,
+                    leave_label="Discard and open the menu",
+                    blocked=blocked,
+                )
+            )
+            return
         open_settings(self)
 
-    def _close_settings_stack(self) -> None:
+    def _close_settings_stack(self, *, ask: bool = True) -> None:
         """Pop every nested SettingsScreen so the user returns to the
         main app. Used by the Esc cascade and by re-pressing ``:`` while
-        the menu is open."""
-        from fnd.tui.settings_screen import SettingsScreen
+        the menu is open.
 
-        while isinstance(self.screen, SettingsScreen):
+        ``ask`` routes through the unsaved-changes gate, because this is an
+        exit like any other: Esc, ←, `q`, the menu and `:` (which the screen's
+        own footer advertises) all ask before discarding.
+        """
+        from fnd.tui.settings_screen import (
+            UnsavedChangesScreen,
+            unsaved_on_stack,
+        )
+
+        if isinstance(self.screen, UnsavedChangesScreen):
+            return
+        pending = unsaved_on_stack(self.screen_stack) if ask else None
+        if pending is not None:
+            what, save, blocked = pending
+            self.push_screen(
+                UnsavedChangesScreen(
+                    what=what,
+                    on_save=save,
+                    on_leave=lambda: self._close_settings_stack(ask=False),
+                    leave_label="Discard and close",
+                    blocked=blocked,
+                )
+            )
+            return
+        self._discard_settings_stack()
+
+    def _discard_settings_stack(self) -> None:
+        """Pop the settings stack down to the app, unsaved editors included.
+
+        The editors that can hold unsaved work are not SettingsScreens, so
+        popping only those stopped at the editor and discarded nothing.
+        """
+        from fnd.tui.settings_screen import SettingsScreen, unsaved_on_stack
+
+        while len(self.screen_stack) > 1 and (
+            isinstance(self.screen, SettingsScreen)
+            or unsaved_on_stack(self.screen_stack) is not None
+        ):
             self.pop_screen()
+
+    def _discard_and_open_settings(self) -> None:
+        from fnd.tui.settings_screen import open_settings
+
+        self._discard_settings_stack()
+        open_settings(self)
 
     def action_open_multi_input(self) -> None:
         """Open the :multi DSL panel for typed sub-queries + intent line.
@@ -2076,9 +2408,7 @@ class FNDApp(App[None]):
         result = parse_multi_input(text, synonyms=self._search.synonyms)
         self._search.intent = result.intent
         # Use lex line(s) as the search query (auto_subqueries inside
-        # fusion_search will re-derive phrase + syn from this). Keeping
-        # intent-only as the UX-pass-4 §3 hook; explicit sub-query
-        # override is a future extension.
+        # fusion_search will re-derive phrase + syn from this).
         lexical_parts = [s.query for s in result.subqueries if s.source == "lex"]
         if lexical_parts:
             self._search.run(" ".join(lexical_parts))
@@ -2101,16 +2431,17 @@ class FNDApp(App[None]):
         import os
         import subprocess
 
+        from fnd._perms import secure_write_text
         from fnd.config import (
-            CONFIG_TEMPLATE,
             default_config_path,
             load,
+            starter_config,
         )
 
         path = default_config_path()
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(CONFIG_TEMPLATE, encoding="utf-8")
+            secure_write_text(path, starter_config())
         # Close any settings screens so the editor takes over the terminal
         # cleanly; otherwise Textual's screen_stack restoration can flash a
         # half-painted menu over the freshly-loaded TUI.

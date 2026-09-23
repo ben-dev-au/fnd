@@ -1,4 +1,4 @@
-"""Phase 5.5e-2: schema bump and meta_blob field declaration."""
+"""Schema bump and meta_blob field declaration."""
 
 from __future__ import annotations
 

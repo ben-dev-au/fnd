@@ -1,4 +1,4 @@
-"""Phase E — ConfirmBody helper + tri-band severity colour.
+"""ConfirmBody helper + tri-band severity colour.
 
 Every confirm screen renders three labelled rows (Outcome / Cost /
 Safety) via :func:`build_confirm_body`. Severity controls:

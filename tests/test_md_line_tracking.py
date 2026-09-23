@@ -1,4 +1,4 @@
-"""Phase 4: Markdown / plain-text extractors emit 1-based ``line`` per chunk.
+"""Markdown / plain-text extractors emit 1-based ``line`` per chunk.
 
 Index-time → search-time round-trip: build a fresh Tantivy index from a
 known MD fixture, search it, and assert that ``Hit.line`` matches the

@@ -1,4 +1,4 @@
-"""Phase 6: action registry, keymap loader, command palette."""
+"""Action registry, keymap loader, command palette."""
 
 from __future__ import annotations
 
@@ -157,7 +157,8 @@ async def test_root_menu_search_is_cross_section(built_index: Path) -> None:
         # rows or to the root-level open-keybindings-file action.
         valid_breadcrumbs = {("Keybindings",), ()}
         assert all(
-            screen._search_breadcrumbs.get(id(item)) in valid_breadcrumbs for item in selectable
+            screen.query_one(SettingsList)._search_breadcrumbs.get(id(item)) in valid_breadcrumbs
+            for item in selectable
         )
 
 

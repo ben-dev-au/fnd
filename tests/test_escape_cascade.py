@@ -2,7 +2,8 @@
 
 The Settings menu lives on the screen stack with its own Esc handler;
 this test exercises only the main-app cascade. Esc inside the menu is
-covered by tests/test_actions_keymap.py and tests/test_phase_5_6_polish.py.
+covered by tests/test_actions_keymap.py and
+tests/test_rich_highlights_and_skim_search.py.
 """
 
 from __future__ import annotations

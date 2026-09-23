@@ -1,4 +1,4 @@
-"""Phase 2b: SourceFormScreen App picker + Obsidian vault auto-detect.
+"""SourceFormScreen App picker + Obsidian vault auto-detect.
 
 Pure tests of the form's app handling without driving the full Pilot
 flow (that's covered by the lower-level config tests). Verifies:

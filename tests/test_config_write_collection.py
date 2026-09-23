@@ -1,4 +1,4 @@
-"""Phase 5.5e-3: write_collection round-trips a CollectionConfig via tomlkit."""
+"""write_collection round-trips a CollectionConfig through the renderer."""
 
 from __future__ import annotations
 
@@ -25,40 +25,29 @@ def test_write_creates_collection_in_empty_file(tmp_path: Path) -> None:
     write_collection(config_path=cfg_path, name="notes", collection=cc)
     out = load(cfg_path)
     assert out.collection("notes").sources[0].path == Path("/tmp/notes")
+    # ``**/*.md`` is not the ``md`` kind (that also covers ``.markdown``),
+    # so it stays a glob rather than being folded into ``filters.kinds``.
     assert out.collection("notes").sources[0].includes == ["**/*.md"]
 
 
-def test_write_preserves_user_comments(tmp_path: Path) -> None:
+def test_a_write_keeps_the_notes_block(tmp_path: Path) -> None:
+    """Comments outside the notes block are regenerated; that is the trade the
+    canonical renderer makes."""
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(
-        textwrap.dedent("""
-            # I love this config.
-            [defaults]
-            # important note
-            collection = "notes"
-
-            [[collections.papers.sources]]
-            path = "/tmp/papers"
-        """),
+        "# >>> notes: kept verbatim when fnd rewrites this file\n# mine\n# <<< notes\n"
+        '[[collections.papers.sources]]\npath = "/tmp/papers"\n',
         encoding="utf-8",
     )
-    cc = CollectionConfig(
-        sources=[
-            SourceConfig(path=Path("/tmp/notes"), includes=["**/*.md"]),
-        ]
+    write_collection(
+        config_path=cfg_path,
+        name="notes",
+        collection=CollectionConfig(sources=[SourceConfig(path=Path("/tmp/notes"))]),
     )
-    write_collection(config_path=cfg_path, name="notes", collection=cc)
     text = cfg_path.read_text(encoding="utf-8")
-    assert "# I love this config." in text
-    assert "# important note" in text
-    # papers collection still present (a verbatim forward-slash literal in the
-    # pre-written config — preserved as-is by tomlkit on every OS)
-    assert "/tmp/papers" in text
-    # notes collection added — assert via reload, not a POSIX-literal substring:
-    # a Path("/tmp/notes") stringifies with backslashes on Windows and tomlkit
-    # escapes them in the written TOML.
-    reloaded = load(cfg_path)
-    assert Path("/tmp/notes") in [s.path for s in reloaded.collection("notes").sources]
+    assert "# mine" in text
+    assert "papers" in load(cfg_path).collections
+    assert "notes" in load(cfg_path).collections
 
 
 def test_write_replaces_existing_collection(tmp_path: Path) -> None:
@@ -105,7 +94,6 @@ def test_delete_collection_removes_table(tmp_path: Path) -> None:
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(
         textwrap.dedent("""
-            # important
             [[collections.papers.sources]]
             path = "/tmp/papers"
 
@@ -118,8 +106,6 @@ def test_delete_collection_removes_table(tmp_path: Path) -> None:
     out = load(cfg_path)
     assert "papers" in out.collections
     assert "notes" not in out.collections
-    text = cfg_path.read_text(encoding="utf-8")
-    assert "# important" in text
 
 
 def test_delete_missing_collection_is_idempotent(tmp_path: Path) -> None:

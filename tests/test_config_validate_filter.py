@@ -1,4 +1,4 @@
-"""Phase 5.5e-1: `fnd config validate` reports filter syntax errors."""
+"""`fnd config validate` reports filter syntax errors."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Phase 5.5e-2: query-time post-filter using compile_filter on meta_blob."""
+"""Query-time post-filter using compile_filter on meta_blob."""
 
 from __future__ import annotations
 

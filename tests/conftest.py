@@ -148,6 +148,26 @@ def isolated_config(  # pyright: ignore[reportUnusedFunction]
 
 
 @pytest.fixture(autouse=True)
+def isolated_config_path(  # pyright: ignore[reportUnusedFunction]
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point every `default_config_path` at a temp file, in EVERY module that
+    bound the name.
+
+    `fnd.cli` and several TUI modules do `from fnd.config import
+    default_config_path` at import, so patching `fnd.config`'s copy alone
+    leaves them pointed at the user's real config. A test wanting a specific
+    path still patches over this; a test that forgets hits a temp file.
+    """
+    # Not under the test's own `tmp_path`: two tests enumerate that directory
+    # and assert exactly what is in it.
+    p = tmp_path_factory.mktemp("isolated_config") / "config.toml"
+    for module in ("fnd.config", "fnd.cli"):
+        monkeypatch.setattr(f"{module}.default_config_path", lambda: p, raising=False)
+    return p
+
+
+@pytest.fixture(autouse=True)
 def isolated_ui_state(  # pyright: ignore[reportUnusedFunction]
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
@@ -290,7 +310,7 @@ def _quiet_preview_load_paths() -> Generator[None]:  # pyright: ignore[reportUnu
     the background worker. Pydantic v2 caches validators at class
     definition, so flipping ``model_fields[..].default`` needs
     ``model_rebuild(force=True)`` to take effect."""
-    from fnd.config import Defaults
+    from fnd.config import Config, Defaults
 
     debounce_field = Defaults.model_fields["preview_load_debounce_ms"]
     prefetch_field = Defaults.model_fields["preview_prefetch_count"]
@@ -298,13 +318,18 @@ def _quiet_preview_load_paths() -> Generator[None]:  # pyright: ignore[reportUnu
     prefetch_original = prefetch_field.default
     debounce_field.default = 0
     prefetch_field.default = 0
+    # Config caches its own core schema with the original defaults, so
+    # rebuilding only Defaults leaves a directly-built Defaults disagreeing
+    # with one validated inside a Config.
     Defaults.model_rebuild(force=True)
+    Config.model_rebuild(force=True)
     try:
         yield
     finally:
         debounce_field.default = debounce_original
         prefetch_field.default = prefetch_original
         Defaults.model_rebuild(force=True)
+        Config.model_rebuild(force=True)
 
 
 # ── Machine lock for ad-hoc runs ───────────────────────────────────

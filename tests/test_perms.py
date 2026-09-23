@@ -12,6 +12,8 @@ import stat
 import sys
 from pathlib import Path
 
+import pytest
+
 from fnd._perms import secure_mkdir, secure_write_text
 
 # The 0o700/0o600 hardening is POSIX-only; os.chmod merely toggles the read-only
@@ -66,9 +68,32 @@ def test_secure_write_text_atomic_replaces_via_tmp(tmp_path: Path) -> None:
     target.write_text("old\n", encoding="utf-8")
     secure_write_text(target, "new\n", atomic=True)
     assert target.read_text() == "new\n"
-    # The .tmp sibling must not be left behind.
-    assert not target.with_suffix(target.suffix + ".tmp").exists()
+    # Any sibling, not one spelling of it: the name carries a pid and a
+    # counter, so asserting `.tmp` alone passed however the write behaved.
+    assert [f.name for f in tmp_path.iterdir()] == [target.name]
     _expect_mode(target, 0o600)
+
+
+def test_secure_write_text_atomic_leaves_the_old_file_on_failure(tmp_path: Path) -> None:
+    """The point of the temp file: a failed write must not truncate what is
+    already there, and must not litter the directory."""
+    import fnd._perms as perms
+
+    target = tmp_path / "state.toml"
+    target.write_text("old\n", encoding="utf-8")
+    broken = perms.os.replace
+
+    def fail(*_args: object, **_kw: object) -> None:
+        raise OSError("no space left on device")
+
+    perms.os.replace = fail
+    try:
+        with pytest.raises(OSError, match="no space"):
+            secure_write_text(target, "new\n", atomic=True)
+    finally:
+        perms.os.replace = broken
+    assert target.read_text() == "old\n", "the previous config was lost"
+    assert [f.name for f in tmp_path.iterdir()] == [target.name], "temp file left behind"
 
 
 def test_secure_mkdir_idempotent(tmp_path: Path) -> None:

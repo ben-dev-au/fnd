@@ -12,7 +12,6 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from rich.cells import cell_len
 from textual.widgets import Static, Tree
 
 from fnd.config import Config, load
@@ -23,18 +22,13 @@ from tests._pilot_wait import wait_until
 
 
 def _visible_footer(app: FNDApp) -> str:
-    """The footer text that actually fits within the footer widget's width."""
-    ft = app.query_one("#footer_hints", Static)
-    plain = ft.render().plain  # type: ignore[union-attr]
-    width = ft.size.width
-    out, acc = "", 0
-    for ch in plain:
-        w = cell_len(ch)
-        if acc + w > width:
-            break
-        out += ch
-        acc += w
-    return out
+    """The footer row as painted.
+
+    Read from the strip rather than cropping the bar's full text by hand: the
+    bar drops whole hints to fit, so a hand-cropped string names the wrong
+    ones as visible.
+    """
+    return app.query_one("#footer_hints", Static).render_line(0).text.rstrip()
 
 
 @pytest.fixture

@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from textual.widgets import OptionList, Static
 
 from fnd.config import (
     CollectionConfig,
@@ -110,9 +111,10 @@ async def test_delete_modal_confirm_removes_source_and_lands_above(
         await pilot.pause()
         await pilot.press("ctrl+d")
         await pilot.pause()
-        # Confirm modal — first option is "Yes, remove this source".
         modal = app.screen
         assert isinstance(modal, DeleteSourceScreen)
+        options = app.screen.query_one("#confirm_list", OptionList)
+        options.highlighted = next(i for i, o in enumerate(options._options) if o.id == "yes")
         await pilot.press("enter")
         await pilot.pause()
 
@@ -157,11 +159,61 @@ async def test_delete_modal_cancel_keeps_source(
         await pilot.pause()
         await pilot.press("ctrl+d")
         await pilot.pause()
-        # Cursor down to "Cancel" then enter.
-        await pilot.press("down")
+        options = app.screen.query_one("#confirm_list", OptionList)
+        options.highlighted = next(i for i, o in enumerate(options._options) if o.id == "no")
         await pilot.press("enter")
         await pilot.pause()
         # Back to SourceFormScreen, TOML unchanged.
         assert isinstance(app.screen, SourceFormScreen)
         reloaded = load()
         assert len(reloaded.collections["probe"].sources) == 2
+
+
+class TestTheDialogDescribesWhatItDoes:
+    """It promised orphans "until the next reindex" while _on_select runs
+    reindex_with_warning(rebuild=True) immediately, so the promise held only
+    in the case where the reindex fails to start. The rebuild is the whole
+    collection, and the sibling delete-collection dialog warns about cost
+    while this one said nothing."""
+
+    @pytest.mark.asyncio
+    async def test_the_text_names_the_rebuild_and_not_orphans(
+        self,
+        built_index: Path,
+        fixtures_dir: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        cfg_path = tmp_path / "config.toml"
+        monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
+        extra = tmp_path / "extra"
+        extra.mkdir()
+        write_collection(
+            config_path=cfg_path,
+            name="probe",
+            collection=CollectionConfig(
+                sources=[SourceConfig(path=fixtures_dir), SourceConfig(path=extra)]
+            ),
+        )
+
+        app = FNDApp(index_dir=built_index)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app._config = load()
+            app.push_screen(DeleteSourceScreen(collection_name="probe", source_index=1))
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, DeleteSourceScreen)
+            said = str(screen.query_one(".warning", Static).render())
+
+        assert "orphaned" not in said, said
+        assert "rebuilt" in said
+        assert "files on disk are untouched" in said
+        assert "another source still reaches" in said
+
+    def test_the_confirm_still_rebuilds(self) -> None:
+        """Guard: the text is pinned against the code it describes."""
+        import inspect
+
+        source = inspect.getsource(DeleteSourceScreen._on_select)
+        assert "rebuild=True" in source

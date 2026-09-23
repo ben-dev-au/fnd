@@ -90,9 +90,7 @@ PDF_STRUCTURE = Extra(
     ],
     # ML model weights live alongside docling-slim's uv-tool install
     # (``~/.local/share/uv/tools/docling-slim/...``) which is already
-    # walked by ``actual_disk_mb`` via ``tool_root``. The ``bakeoff/``
-    # path that used to be here was a Phase 0 harness leftover — fnd
-    # never wrote there in production. cache_dirs stays empty.
+    # walked by ``actual_disk_mb`` via ``tool_root``. cache_dirs stays empty.
     cache_dirs=[],
 )
 

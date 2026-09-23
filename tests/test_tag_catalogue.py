@@ -88,8 +88,20 @@ def test_no_collection_scope_covers_everything(tmp_path: Path) -> None:
     index = _index(
         tmp_path, [("a.md", "vault", ["recipe"], [], 1), ("b.md", "work", ["report"], [], 1)]
     )
-    got = tag_catalogue(index, collections=[])
+    got = tag_catalogue(index, collections=None)
     assert {t.value for t in got["frontmatter"]} == {"recipe", "report"}
+
+
+def test_an_explicitly_empty_scope_offers_no_tags(tmp_path: Path) -> None:
+    """Unticking every collection returns no results, so the Tags branch must
+    not go on offering the tags of collections that are switched off."""
+    index = _index(
+        tmp_path, [("a.md", "vault", ["recipe"], [], 1), ("b.md", "work", ["report"], [], 1)]
+    )
+
+    got = tag_catalogue(index, collections=[])
+
+    assert not any(got.values()), got
 
 
 def test_sorted_by_count_then_name(tmp_path: Path) -> None:

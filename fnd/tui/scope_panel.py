@@ -12,21 +12,30 @@ import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from rich.cells import cell_len
 from textual.widgets import Tree
 
 from fnd.config import is_all_collections
+from fnd.fsmeta import path_is_absent
 from fnd.kinds import CATEGORIES, CATEGORY_BY_ID, KIND_BY_ID, KINDS_IN_CATEGORY
 from fnd.launch_command import LaunchScope, SearchSnapshot
-from fnd.tui.results_labels import _styled_action_label, _styled_parent_label
+from fnd.tui.results_labels import (
+    _styled_action_label,
+    _styled_parent_label,
+    _styled_state_row,
+    state_colour,
+)
+from fnd.tui.widgets.clear_bar import clear_label
 
 if TYPE_CHECKING:
     from textual.timer import Timer
 
+    from fnd.config import CollectionConfig
     from fnd.tui.app import FNDApp
 
 __all__ = ["ScopeController"]
 
-# Phase F filters: panel layout. ``kinds`` is multi-select (each value
+# Filters panel layout. ``kinds`` is multi-select (each value
 # toggles independently) and nested category → type (mirroring the
 # Collections tree tri-state); ``date`` is a radio (single-select). The
 # file-type universe and its category grouping come from the central
@@ -61,6 +70,135 @@ FULL = _FullScope()
 # source ids (partial / granular). Absence from the map = out of scope.
 
 
+_FILTER_LABEL_COLUMN = 17
+
+
+def _missing_sources(col: CollectionConfig | None) -> int:
+    """How many of a collection's source paths are provably not on disk.
+
+    One stat each, not a listing: the sidebar rebuilds on every scope toggle,
+    and a folder that has GONE is what a stale config points at. Present-but-
+    unreadable is rarer, and the index run reports that one itself.
+    """
+    if col is None:
+        return 0
+    return sum(1 for s in col.sources if path_is_absent(Path(str(s.path)).expanduser()))
+
+
+def _branch_row(
+    label: str, value: str, compact: str, budget: int, *, column: int = _FILTER_LABEL_COLUMN
+) -> str:
+    """A `label (value)` row, collapsing toward the VALUE as room runs out.
+
+    At 62 columns the padded form does not fit, and dropping the value would
+    paint an inert `Tags (none indexed)` identically to a live filter.
+    ``column`` aligns a fixed set of rows; 0 suits a label that is user data
+    and has no column to line up with.
+    """
+    padded = f"{label:<{column}}({value})" if column > 0 else f"{label} ({value})"
+    # Painted cells, not code points: a collection name can hold wide or
+    # combining characters, and the budget is a column count.
+    if budget <= 0 or cell_len(padded) <= budget:
+        return padded
+    for text in (f"{label} ({value})", f"{label} ({compact})"):
+        if cell_len(text) <= budget:
+            return text
+    keep = budget - cell_len(compact) - 4
+    if keep >= 1:
+        return f"{label[:keep]}\u2026 ({compact})"
+    # Neither half fits whole. Elide the value rather than drop it, and never
+    # drop the label: it is what the row is found by, and a row that silently
+    # loses its value paints identically to a different state.
+    room = budget - cell_len(label) - 4
+    if room >= 1:
+        return f"{label} ({compact[:room]}\u2026)"
+    # Nothing fits. A fixed label is short and known, so it stays whole and
+    # the row clips; a name is user data and must never read as a DIFFERENT
+    # name, so it keeps an ellipsis instead.
+    return f"{label} ({compact})" if column > 0 else f"{label[:1]}\u2026 ({compact})"
+
+
+def _absent(searching: bool) -> str:
+    """Where a selected tag has gone.
+
+    The catalogue is scoped to the active query, so under one a missing tag is
+    absent from the RESULTS. Saying "index" there tells a user checking whether
+    their private tags disappeared the opposite of the truth.
+    """
+    return "not in these results" if searching else "not in the index"
+
+
+def _tags_summary(
+    n_selected: int,
+    n_available: int,
+    *,
+    sources_on: bool,
+    n_missing: int = 0,
+    compact: bool = False,
+    searching: bool = False,
+) -> str:
+    """What the Tags branch is doing, without claiming more than it knows.
+
+    The catalogue is scoped to the TICKED tag sources, so an empty one said
+    "none indexed" when the index held plenty and the user had merely switched
+    the sources off. And with nothing to draw the branch returned early, so a
+    live tag filter kept narrowing the search with no row to show for it.
+    """
+    if n_available:
+        if compact:
+            return (
+                f"{n_selected}/{n_available}, {n_missing} missing"
+                if n_missing
+                else f"{n_selected}/{n_available}"
+            )
+        if n_missing:
+            return f"{n_selected} of {n_available}, {n_missing} {_absent(searching)}"
+        return f"{n_selected} of {n_available}"
+    if n_selected:
+        return (
+            f"{n_selected} filtering, no rows"
+            if compact
+            else f"{n_selected} still filtering, no rows to show"
+        )
+    if not sources_on:
+        return "sources off" if compact else "tag sources off"
+    # Scope, not index: narrowing the collections to an empty set left ten
+    # tags indexed and none reachable, and this row called that "none indexed".
+    # The File type branch says `(1 of 1)` in the same situation.
+    return "0 tags" if compact else "none in scope"
+
+
+def filters_title(
+    *,
+    n_kinds: int,
+    date: str,
+    created: str,
+    n_included_tags: int,
+    n_excluded_tags: int,
+    match_all: bool,
+) -> str:
+    """The pane's border title: what is narrowing the search, in a phrase.
+
+    The match mode is named because it is the difference between 16 files and
+    53, and its own row lives inside the Tags branch, invisible exactly when
+    that branch is collapsed and the title is all there is. One tag is not
+    matched any way, so it is not said there.
+    """
+    bits: list[str] = []
+    if n_kinds:
+        bits.append(f"{n_kinds} kind{'s' if n_kinds != 1 else ''}")
+    if date and date != "any":
+        bits.append(date)
+    if created and created != "any":
+        bits.append(f"created {created}")
+    if n_included_tags:
+        mode = "" if n_included_tags == 1 else (" all" if match_all else " any")
+        bits.append(f"{n_included_tags} tag{'s' if n_included_tags != 1 else ''}{mode}")
+    if n_excluded_tags:
+        bits.append(f"−{n_excluded_tags} tag{'s' if n_excluded_tags != 1 else ''}")
+    return "Filters" if not bits else f"Filters: {', '.join(bits)}"
+
+
 class ScopeController:
     """Owns scope state (collections / sources / filters), the sidebar
     panel layout, and their persistence to the UI-state file."""
@@ -77,15 +215,24 @@ class ScopeController:
         # Kind ids present in scope (for pruning the file-type filter). None =
         # not yet computed / unknown → show all. Recomputed on each panel refresh.
         self._present_kinds: set[str] | None = None
+        # Whether the last tag catalogue was narrowed by a parseable query.
+        # Decides whether a selected tag it lacks is absent from the RESULTS or
+        # from the index.
+        self._catalogue_narrowed: bool = False
         # Cache of the present-kinds aggregation, keyed by the full active scope
         # (full collections, active sources), so it runs once per scope change
         # instead of on every search.
         self._present_kinds_cache: (
-            tuple[tuple[frozenset[str], frozenset[str]], set[str] | None] | None
+            tuple[
+                tuple[frozenset[str] | None, frozenset[tuple[str, tuple[str, ...]]]],
+                set[str] | None,
+            ]
+            | None
         ) = None
         # Debounce handle for the re-search after a filter toggle (see
         # _commit_filter_change) so a burst of multi-select toggles coalesces.
         self._filter_search_timer: Timer | None = None
+        self._batch_next = False
         # Sidebar panel state — always loaded from disk so user-tuned
         # collapse / expand state survives the next launch, even when
         # ``--collection`` is passed. The CLI flag overrides search
@@ -105,6 +252,9 @@ class ScopeController:
             "filters_pane" if p == "filters_panel_tree" else p for p in saved.collapsed_panels
         }
         self.expanded_collections: set[str] = set(saved.expanded_collections)
+        # What the Filters title says without its collapse marker, so the
+        # collapse gesture can restyle it without recomputing the counts.
+        self._filters_title: str = "Filters"
         # Prune unknown branch names so a renamed branch doesn't get
         # stuck "expanded" forever.
         self.expanded_filter_branches: set[str] = {
@@ -127,8 +277,13 @@ class ScopeController:
             # list and keep only names that exist in the config. Without this
             # a value like ``-c "SSD,SSD Exam"`` becomes a single phantom key
             # that no panel row can toggle yet still pins every search.
+            # An empty map is about to mean "the user unticked everything", so
+            # a launch carrying only ``--filter`` must seed the same scope an
+            # unflagged launch gets rather than leaving it empty.
             self.selection: dict[str, _FullScope | set[str]] = (
-                dict.fromkeys(self._valid_collection_names(collection), FULL) if collection else {}
+                dict.fromkeys(self._valid_collection_names(collection), FULL)
+                if collection
+                else self._seed_from_defaults()
             )
             self.filter_kinds: list[str] = []
             self.filter_date: str = "any"
@@ -283,6 +438,42 @@ class ScopeController:
                     out.append(sid)
         return out
 
+    @property
+    def scope_collections(self) -> list[str] | None:
+        """Fully ticked collections, or ``None`` when nothing can be scoped by.
+
+        The same rule the search request uses: an empty list means the user
+        unticked everything and the answer is NOTHING, while an app with no
+        collections to tick simply has no scope. Only this class can tell the
+        two apart, so it decides and the aggregations are told.
+        """
+        cfg = self._app._config
+        if not (cfg and cfg.collections):
+            return None
+        full = self.collections
+        if full or self.source_scope:
+            return list(full)
+        return []
+
+    @property
+    def source_scope(self) -> dict[str, list[str]]:
+        """Ticked sources per PARTIALLY selected collection, in config order.
+
+        `collections` and `active_sources` are disjoint channels and the query
+        ANDs them, so one FULL collection beside one PARTIAL one intersected a
+        collection name with another collection's source path and matched
+        nothing. The selection map knows which collection each source came
+        from; this is that provenance, kept.
+        """
+        out: dict[str, list[str]] = {}
+        for name, sel in self.selection.items():
+            if not isinstance(sel, set):
+                continue
+            ticked = [sid for sid in self.collection_source_ids(name) if sid in sel]
+            if ticked:
+                out[name] = ticked
+        return out
+
     def snapshot(self, query: str) -> SearchSnapshot:
         """Project the live scope into the read-only value object the command
         serializer consumes — the one seam between scope state and
@@ -382,11 +573,32 @@ class ScopeController:
         self.expanded_collections &= set(names)
         tree.show_root = False
         tree.clear()
+        budget = self._branch_budget(tree)
         for name in names:
             col = cfg.collections[name] if cfg else None
             marker = self.collection_marker(name)
             n_sources = len(col.sources) if col else 0
-            label = f"{marker}  {name}  ({n_sources} source{'s' if n_sources != 1 else ''})"
+            plural = "s" if n_sources != 1 else ""
+            # A source that is not there indexes nothing, and every other column
+            # on this row reads perfectly healthy while it does. One stat each,
+            # because this rebuilds on every scope toggle.
+            gone = _missing_sources(col)
+            # The row elides from the name inwards with an ellipsis, marker kept
+            # at the front: a bare cut (`research-note`) names a collection that
+            # could exist.
+            prefix = f"{marker}  "
+            value = f"{n_sources} source{plural}"
+            compact = f"{n_sources} src"
+            if gone:
+                value = f"⚠ {gone} of {n_sources} missing"
+                compact = f"⚠ {gone} missing"
+            label = prefix + _branch_row(
+                name,
+                value,
+                compact,
+                max(0, budget - len(prefix)),
+                column=0,
+            )
             node = tree.root.add(
                 _styled_parent_label(label),
                 data={"kind": "collection", "name": name},
@@ -412,6 +624,14 @@ class ScopeController:
 
     # ── Filters panel (UX-F) ──────────────────────────────────────
 
+    def present_kinds_for_scope(self) -> set[str] | None:
+        """Public name for the cached scope aggregation.
+
+        An empty set means the scope holds no indexed file; ``None`` means the
+        aggregation could not run, which is not the same answer.
+        """
+        return self._present_kinds_for_scope()
+
     def _present_kinds_for_scope(self) -> set[str] | None:
         """Kind ids present in the active collections, or ``None`` when the
         index isn't open / the aggregation fails (caller then shows all kinds).
@@ -432,13 +652,16 @@ class ScopeController:
         # of partially-selected collections — so a source toggle recomputes and
         # the filter never reveals kinds from unselected sources of the same
         # collection.
-        key = (frozenset(self.collections), frozenset(self.active_sources))
+        scope = self.source_scope
+        cols = self.scope_collections
+        key = (
+            frozenset(cols) if cols is not None else None,
+            frozenset((name, tuple(sids)) for name, sids in scope.items()),
+        )
         cached = self._present_kinds_cache
         if cached is not None and cached[0] == key:
             return cached[1]
-        result = present_kinds(
-            index, collections=self.collections, source_paths=self.active_sources
-        )
+        result = present_kinds(index, collections=cols, source_scope=scope)
         self._present_kinds_cache = (key, result)
         return result
 
@@ -515,16 +738,14 @@ class ScopeController:
         keep = self._row_key(tree.cursor_node.data) if tree.cursor_node is not None else None
         tree.show_root = False
         tree.clear()
+        budget = self._branch_budget(tree)
 
         # Prune the file-type filter to kinds actually present in scope, like
         # the Tags filter (None = couldn't determine → show all).
         self._present_kinds = self._present_kinds_for_scope()
         active_kinds = set(self.filter_kinds)
-        visible = [k for cat in CATEGORIES for k in self._visible_members(cat.id)]
-        n_active = len(active_kinds.intersection(visible))
-        kind_summary = f"{n_active} of {len(visible)}" if n_active else "any"
         kind_node = tree.root.add(
-            _styled_parent_label(f"File type        ({kind_summary})"),
+            self._filetype_summary_label(budget),
             data={"kind": "filter_category", "category": "kinds"},
             expand="kinds" in self.expanded_filter_branches,
         )
@@ -537,7 +758,7 @@ class ScopeController:
             if not members:
                 continue
             cat_node = kind_node.add(
-                f"{self._kind_category_marker(cat.id)}  {cat.label}",
+                self._state_row(self._kind_category_marker(cat.id), f"  {cat.label}"),
                 data={"kind": "kind_category", "category": "kinds", "value": cat.id},
                 expand=f"kinds:{cat.id}" in self.expanded_filter_branches,
             )
@@ -546,33 +767,33 @@ class ScopeController:
                 cat_node.add_leaf(
                     # Pad so the kind marker indents past the category's arrow
                     # (matching the Tags leaves), instead of aligning with it.
-                    f"{_LEAF_MARKER_PAD * 2}{marker}  {KIND_BY_ID[k].label}",
+                    self._state_row(f"{_LEAF_MARKER_PAD * 2}{marker}", f"  {KIND_BY_ID[k].label}"),
                     data={"kind": "filter_value", "category": "kinds", "value": k},
                 )
 
         date_summary = self.filter_date or "any"
         date_node = tree.root.add(
-            _styled_parent_label(f"Modified         ({date_summary})"),
+            _styled_parent_label(_branch_row("Modified", date_summary, date_summary, budget)),
             data={"kind": "filter_category", "category": "date"},
             expand="date" in self.expanded_filter_branches,
         )
         for d in _FILTER_DATES:
             marker = "●" if d == self.filter_date else "○"
             date_node.add_leaf(
-                f"{marker}  {d}",
+                self._state_row(marker, f"  {d}"),
                 data={"kind": "filter_value", "category": "date", "value": d},
             )
 
         created_summary = self.filter_created or "any"
         created_node = tree.root.add(
-            _styled_parent_label(f"Created          ({created_summary})"),
+            _styled_parent_label(_branch_row("Created", created_summary, created_summary, budget)),
             data={"kind": "filter_category", "category": "created"},
             expand="created" in self.expanded_filter_branches,
         )
         for c in _FILTER_CREATED:
             marker = "●" if c == self.filter_created else "○"
             created_node.add_leaf(
-                f"{marker}  {c}",
+                self._state_row(marker, f"  {c}"),
                 data={"kind": "filter_value", "category": "created", "value": c},
             )
 
@@ -586,48 +807,58 @@ class ScopeController:
         """Pane border title + clear bar + sidebar reflow. Shared by the full
         filters rebuild and the in-place file-type repaint so both keep the
         header, the clear-bar visibility, and the pane sizing in sync."""
-        active_bits: list[str] = []
-        n_kinds = len(self.filter_kinds)
-        if n_kinds:
-            active_bits.append(f"{n_kinds} kind{'s' if n_kinds != 1 else ''}")
-        if self.filter_date and self.filter_date != "any":
-            active_bits.append(self.filter_date)
-        if self.filter_created and self.filter_created != "any":
-            active_bits.append(f"created {self.filter_created}")
-        n_inc = len(self._distinct_tag_values(self.tag_include))
-        n_exc = len(self._distinct_tag_values(self.tag_exclude))
-        if n_inc:
-            active_bits.append(f"{n_inc} tag{'s' if n_inc != 1 else ''}")
-        if n_exc:
-            active_bits.append(f"−{n_exc} tag{'s' if n_exc != 1 else ''}")
-        title = "Filters" if not active_bits else f"Filters: {', '.join(active_bits)}"
+        self._filters_title = filters_title(
+            n_kinds=len(self.filter_kinds),
+            date=self.filter_date,
+            created=self.filter_created,
+            n_included_tags=len(self._distinct_tag_values(self.tag_include)),
+            n_excluded_tags=len(self._distinct_tag_values(self.tag_exclude)),
+            match_all=self.tag_match_all,
+        )
+        self.refresh_filters_panel_title()
+        self._update_clear_bar()
+        # Clear-bar showing/hiding (and a rebuilt tag list) change the pane's
+        # row demand, so reflow the sidebar heights.
+        self._app._reflow_sidebar()
+
+    def refresh_filters_panel_title(self) -> None:
+        """Just the title, for the collapse gesture: `_update_filters_chrome`
+        also queues a sidebar reflow, and that gesture reflows synchronously."""
+        title = self.collapsed_marker("filters_pane") + self._filters_title
         try:
             self._app.query_one("#filters_pane").border_title = title
         except Exception:
             with contextlib.suppress(Exception):
                 self._app.query_one("#filters_panel_tree", Tree).border_title = title
-        self._update_clear_bar()
-        # Clear-bar showing/hiding (and a rebuilt tag list) change the pane's
-        # row demand — reflow the sidebar heights.
-        self._app._reflow_sidebar()
 
     # ── File-type in-place repaint (no rebuild → cursor never jumps) ───────
 
-    def _filetype_summary_label(self) -> Any:
+    @staticmethod
+    def _branch_budget(tree: Tree[Any]) -> int:
+        """Char budget for a branch row: content width less the 2-cell arrow
+        prefix. 0 before layout, which the row helper reads as "no limit"."""
+        return max(0, tree.scrollable_content_region.width - 2)
+
+    def _filetype_summary_label(self, budget: int = 0) -> Any:
         active = set(self.filter_kinds)
         visible = [k for cat in CATEGORIES for k in self._visible_members(cat.id)]
         n = len(active.intersection(visible))
         summary = f"{n} of {len(visible)}" if n else "any"
-        return _styled_parent_label(f"File type        ({summary})")
+        compact = f"{n}/{len(visible)}" if n else "any"
+        return _styled_parent_label(_branch_row("File type", summary, compact, budget))
 
     def _repaint_filetype_leaf(self, leaf: Any) -> None:
         kid = str((leaf.data or {}).get("value") or "")
         marker = "●" if kid in set(self.filter_kinds) else "○"
-        leaf.set_label(f"{_LEAF_MARKER_PAD * 2}{marker}  {KIND_BY_ID[kid].label}")
+        leaf.set_label(
+            self._state_row(f"{_LEAF_MARKER_PAD * 2}{marker}", f"  {KIND_BY_ID[kid].label}")
+        )
 
     def _repaint_filetype_category(self, cat_node: Any) -> None:
         cat_id = str((cat_node.data or {}).get("value") or "")
-        cat_node.set_label(f"{self._kind_category_marker(cat_id)}  {CATEGORY_BY_ID[cat_id].label}")
+        cat_node.set_label(
+            self._state_row(self._kind_category_marker(cat_id), f"  {CATEGORY_BY_ID[cat_id].label}")
+        )
         for child in cat_node.children:
             self._repaint_filetype_leaf(child)
 
@@ -639,8 +870,17 @@ class ScopeController:
         for node in tree.root.children:
             data = node.data if isinstance(node.data, dict) else {}
             if data.get("kind") == "filter_category" and data.get("category") == "kinds":
-                node.set_label(self._filetype_summary_label())
+                node.set_label(self._filetype_summary_label(self._branch_budget(tree)))
                 return
+
+    def defer_next_search(self) -> None:
+        """Skip the re-search for the next toggle only.
+
+        A one-shot flag rather than a scope guard: the toggle arrives as a
+        posted message, so a ``with`` block would have exited long before the
+        handler ran.
+        """
+        self._batch_next = True
 
     def _commit_filter_change(self) -> None:
         """Shared tail after any filter toggle: status, persist, re-run search.
@@ -653,7 +893,7 @@ class ScopeController:
         stay immediate (cheap, and the marker must update at once)."""
         self._app._refresh_status()
         self.persist()
-        if not self._app._search.current_query:
+        if self._batch_next or not self._app._search.current_query:
             return
         if self._filter_search_timer is not None:
             self._filter_search_timer.stop()
@@ -666,8 +906,37 @@ class ScopeController:
         query = self._app._search.current_query
         if query:
             self._app._search.run(query)
+        # Results arriving re-lay the sidebar out, and Textual clamps a tree's
+        # scroll offset without moving its cursor, so the row the user was on
+        # can end up off screen until the next keypress snaps back to it.
+        self._app.call_after_refresh(self._keep_scope_cursors_visible)
+
+    def _keep_scope_cursors_visible(self) -> None:
+        for widget_id in ("#collections_panel_tree", "#filters_panel_tree"):
+            try:
+                tree = self._app.query_one(widget_id, Tree)
+            except Exception:
+                continue
+            line = tree.cursor_line
+            height = tree.size.height
+            top = tree.scroll_offset.y
+            if line < 0 or not height or top <= line < top + height:
+                continue
+            tree.scroll_to_line(line, animate=False)
 
     # ── Clear all filters ─────────────────────────────────────────
+
+    def _state_row(self, marker: str, rest: str) -> Any:
+        """A tri-state row whose marker carries its meaning as colour too."""
+        return _styled_state_row(marker, rest, self._state_colour(marker))
+
+    def _state_colour(self, marker: str) -> str:
+        """The colour this state marker carries, or none for a neutral one."""
+        try:
+            variables = self._app.get_css_variables()
+        except Exception:
+            variables = {}
+        return state_colour(marker, variables)
 
     def _action_colour(self) -> str:
         """Control rows take the *inactive pane border* colour so they read as
@@ -706,14 +975,17 @@ class ScopeController:
 
     @property
     def active_filter_count(self) -> int:
-        """How many individual filter selections are active — the number shown
-        on the Clear bar (kinds + date + created + each included/excluded tag)."""
+        """How many FILTERS are active, as the pane title counts them.
+
+        Two ticks inside one facet are one filter, so `Clear 3 filters` agrees
+        with `Filters: 2 kinds, month, 1 tag` on the row above it.
+        """
         return (
-            len(self.filter_kinds)
+            (1 if self.filter_kinds else 0)
             + (1 if self.filter_date not in ("", "any") else 0)
             + (1 if self.filter_created not in ("", "any") else 0)
-            + len(self._distinct_tag_values(self.tag_include))
-            + len(self._distinct_tag_values(self.tag_exclude))
+            + (1 if self._distinct_tag_values(self.tag_include) else 0)
+            + (1 if self._distinct_tag_values(self.tag_exclude) else 0)
         )
 
     @property
@@ -744,9 +1016,7 @@ class ScopeController:
         # bar never shifts the tree content down.
         bar.visible = active
         if active:
-            n = self.active_filter_count
-            plural = "" if n == 1 else "s"
-            bar.update(f"✕  Clear {n} filter{plural}")
+            bar.update(clear_label(self.active_filter_count))
 
     def clear_filters(self) -> None:
         """Reset every filter to its default and re-run the active query.
@@ -786,12 +1056,18 @@ class ScopeController:
             return {}
         cfg = self._app._config
         sources = list(cfg.defaults.tag_sources) if cfg else None
+        facet_query = self._facet_query(index)
+        # What NARROWED the catalogue, not what the user typed. `_facet_query`
+        # returns None for a query it cannot parse, and an unnarrowed catalogue
+        # speaks for the whole scope.
+        self._catalogue_narrowed = facet_query is not None
         try:
             return tag_catalogue(
                 index,
-                collections=self.collections,
+                collections=self.scope_collections,
+                source_scope=self.source_scope,
                 sources=sources,
-                query=self._facet_query(index),
+                query=facet_query,
             )
         except Exception:
             return {}
@@ -818,9 +1094,38 @@ class ScopeController:
             lexical = QueryPlan.from_user_text(raw).lexical.strip()
             if not lexical:
                 return None
-            return index.parse_query(lexical, DEFAULT_SEARCH_FIELDS)
+            exact = index.parse_query(lexical, DEFAULT_SEARCH_FIELDS)
+            return self._widen_to_fuzzy(index, exact, lexical)
         except Exception:
             return None
+
+    def _widen_to_fuzzy(self, index: Any, exact: Any, lexical: str) -> Any:
+        """The fuzzy expansion too, where the exact query matches nothing.
+
+        A typo the cascade recovers from put tagged files on screen while the
+        branch, parsing exactly, found none and reported "none indexed". Only
+        when exact matches nothing: everything listed then came from the
+        widened passes, so this cannot over-report.
+        """
+        import tantivy
+
+        from fnd.cascade import fuzzy_body_clauses
+
+        if index.searcher().search(exact, 1).count:
+            return exact
+        searcher = getattr(self._app._search, "searcher", None)
+        if searcher is None:
+            return exact
+        defaults = self._app._config.defaults if self._app._config else None
+        clauses = fuzzy_body_clauses(
+            searcher,
+            lexical,
+            auto_fuzzy_enabled=defaults.fuzzy_enabled if defaults else True,
+            min_term_chars=defaults.fuzzy_min_term_chars if defaults else 0,
+        )
+        if not clauses:
+            return exact
+        return tantivy.Query.boolean_query(clauses)
 
     def tag_marker(self, source: str, node: Any) -> str:
         """``●`` included, ``⊘`` excluded, ``◐`` a descendant is selected, ``○`` off.
@@ -875,7 +1180,7 @@ class ScopeController:
             }
             if node.children:
                 branch = parent.add(
-                    f"{marker}  {node.label}  ({node.files})",
+                    self._state_row(marker, f"  {node.label}  ({node.files})"),
                     data=data,
                     expand=key in self.expanded_filter_branches,
                 )
@@ -885,7 +1190,10 @@ class ScopeController:
                 # leaves none on leaves, so a leaf's marker would sit two
                 # columns left of its branch siblings'. Pad to line them up.
                 parent.add_leaf(
-                    f"{_LEAF_MARKER_PAD}{marker}  {node.label}  ({node.files})", data=data
+                    self._state_row(
+                        f"{_LEAF_MARKER_PAD}{marker}", f"  {node.label}  ({node.files})"
+                    ),
+                    data=data,
                 )
 
     def _frontmatter_namespaces(self) -> frozenset[str]:
@@ -903,6 +1211,19 @@ class ScopeController:
             t for t in (normalise_tag(k) for k in cfg.defaults.tag_frontmatter_keys) if t
         )
 
+    def _ghost_tag_values(self, catalogue: dict[str, list[Any]]) -> list[tuple[str, str]]:
+        """Selected tags the catalogue no longer offers, source by source.
+
+        Only asked of a catalogue that produced something: an unopened index
+        returns nothing, and every selection would read as missing.
+        """
+        out: list[tuple[str, str]] = []
+        for source in sorted(set(self.tag_include) | set(self.tag_exclude)):
+            live = {entry.value for entry in catalogue.get(source, ())}
+            selected = self.tag_include.get(source, set()) | self.tag_exclude.get(source, set())
+            out.extend((source, value) for value in sorted(selected - live))
+        return out
+
     def _render_tags_branch(self, tree: Tree[dict[str, object]]) -> None:
         from fnd.tag_catalogue import build_tag_tree
 
@@ -912,9 +1233,26 @@ class ScopeController:
             self._distinct_tag_values(self.tag_exclude)
         )
         n_available = sum(len(v) for v in catalogue.values())
-        summary = f"{n_selected} of {n_available}" if n_available else "none indexed"
+        ghosts = self._ghost_tag_values(catalogue) if n_available else []
+        sources_on = bool(self._tag_source_ids())
+        searching = self._catalogue_narrowed
+        summary = _tags_summary(
+            n_selected,
+            n_available,
+            sources_on=sources_on,
+            n_missing=len(ghosts),
+            searching=searching,
+        )
+        compact = _tags_summary(
+            n_selected,
+            n_available,
+            sources_on=sources_on,
+            n_missing=len(ghosts),
+            compact=True,
+            searching=searching,
+        )
         tags_node = tree.root.add(
-            _styled_parent_label(f"Tags             ({summary})"),
+            _styled_parent_label(_branch_row("Tags", summary, compact, self._branch_budget(tree))),
             data={"kind": "filter_category", "category": "tags"},
             expand="tags" in self.expanded_filter_branches,
         )
@@ -935,6 +1273,34 @@ class ScopeController:
                 expand=f"tags:{source}" in self.expanded_filter_branches,
             )
             self._add_tag_nodes(branch, source, build_tag_tree(counts), 0, namespaces)
+        self._add_ghost_tag_branch(tags_node, ghosts)
+
+    def _add_ghost_tag_branch(self, tags_node: Any, ghosts: list[tuple[str, str]]) -> None:
+        """Rows for tags that still filter but no longer exist.
+
+        Expanded whether or not the branch was left open: a filter the user
+        cannot see is the whole defect, and the branch goes away once unticked.
+        """
+        from fnd.tag_catalogue import TagNode
+
+        if not ghosts:
+            return
+        branch = tags_node.add(
+            _styled_parent_label(_absent(self._catalogue_narrowed).capitalize()),
+            data={"kind": "filter_category", "category": "tags:missing"},
+            expand=True,
+        )
+        for source, value in ghosts:
+            marker = self.tag_marker(source, TagNode(label=value, value=value))
+            branch.add_leaf(
+                self._state_row(f"{_LEAF_MARKER_PAD}{marker}", f"  {value}"),
+                data={
+                    "kind": "filter_value",
+                    "category": "tags",
+                    "source": source,
+                    "value": value,
+                },
+            )
 
     def _cycle_tag(self, source: str, value: str) -> None:
         """``○ off → ● include → ⊘ exclude → off``."""
@@ -982,6 +1348,18 @@ class ScopeController:
                 return
 
     def on_filters_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
+        """Consume the batch-toggle deferral however this handler exits.
+
+        Most of its paths return without committing (a section header, an
+        unknown node kind), and a flag left set would silence the *next*
+        real toggle instead of this one.
+        """
+        try:
+            self._on_filters_selected(ev)
+        finally:
+            self._batch_next = False
+
+    def _on_filters_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
         """Enter on a filter value toggles it.
 
         - File type: each value toggles independently (multi-select).
@@ -1056,6 +1434,18 @@ class ScopeController:
         self._commit_filter_change()
 
     def on_collections_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
+        """Consume the batch-toggle deferral however this handler exits.
+
+        Most of its paths return without committing (a section header, an
+        unknown node kind), and a flag left set would silence the *next*
+        real toggle instead of this one.
+        """
+        try:
+            self._on_collections_selected(ev)
+        finally:
+            self._batch_next = False
+
+    def _on_collections_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
         """Enter on a collection node toggles the whole collection's scope
         (all sources at once); Enter on a single source row toggles that
         source independently. Every change mutates the ``selection`` map —
@@ -1092,17 +1482,14 @@ class ScopeController:
         # toggles.
         self._update_collections_panel_node(ev.node)
         self._refresh_collections_panel_title()
+        # The tag and file-type rows are index-derived and scoped to the active
+        # collections, so a scope change changes which of them exist.
+        self.refresh_filters_panel()
         self._app._refresh_status()
         self.persist()
-        # Don't auto-rerun the active query: the user may be batch-
-        # toggling several collections, and each rerun would shift focus
-        # to the results pane (via _refresh_results_tree.focus()) and
-        # interrupt the run. Drop the now-stale results so it's obvious
-        # the next Enter in the query bar re-runs against the new scope;
-        # keep _current_query so the user's last query is recallable in
-        # the input.
-        if self._app._search.current_query and self._app._search.groups:
-            self._app._search.clear_results()
+        # Re-run on the filter toggles' debounce so a scope change shows its
+        # result; batch-toggling is the modifier's job (see ``batched``).
+        self._commit_filter_change()
 
     def _toggle_source(self, collection: str, source_id: str) -> None:
         """Flip one source's bit within its collection. FULL resolves to
@@ -1180,6 +1567,14 @@ class ScopeController:
         else:
             node.set_label(current_label)
 
+    def collapsed_marker(self, panel_id: str) -> str:
+        """``▶ `` when that panel is collapsed to its two border rows.
+
+        Read from the persisted set rather than the DOM class, so the three
+        panels and the restore at mount all answer from one place.
+        """
+        return "▶ " if panel_id in self.collapsed_panels else ""
+
     def _panel_title(self, names: list[str]) -> str:
         """Border-title string from the selection map. Source counts use
         ``_source_active`` — the same rule the row markers use — so the
@@ -1188,7 +1583,10 @@ class ScopeController:
         cfg = self._app._config
         n_full = active = total = 0
         for n in names:
-            if self.collection_marker(n) == "●":
+            # Anything not empty contributes to the search, so counting only
+            # the fully-ticked ones read "0/3 active" while all three were
+            # being searched.
+            if self.collection_marker(n) != "○":
                 n_full += 1
             col = cfg.collections.get(n) if cfg else None
             if not col:
@@ -1201,7 +1599,7 @@ class ScopeController:
         title = f"Collections · {n_full}/{len(names)} active"
         if total and active:
             title += f", {active}/{total} sources"
-        return title
+        return self.collapsed_marker("collections_panel_tree") + title
 
     def _refresh_collections_panel_title(self) -> None:
         """Recompute the panel's border-title after a toggle without the

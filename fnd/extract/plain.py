@@ -1,6 +1,6 @@
 """TXT extractor: fixed-window chunks with overlap.
 
-Per plan §11: TXT has no structural metadata, so we slice on a fixed character
+TXT has no structural metadata, so we slice on a fixed character
 window with overlap so a phrase that straddles a window boundary is still found
 intact in the next chunk.
 """

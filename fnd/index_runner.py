@@ -45,7 +45,7 @@ from fnd.cloud_files import (
     provider_label,
 )
 from fnd.config import CollectionConfig
-from fnd.extract import ExtractError, extract
+from fnd.extract import ExtractError, extract, no_text_reason
 from fnd.fsmeta import read_file_times
 from fnd.index import (
     _COMMIT_BATCH,
@@ -53,13 +53,12 @@ from fnd.index import (
     _doc_for_chunk,
     _ensure_index,
     _path_parent_id,
-    commit,
+    collections_still_holding,
     commit_async,
     prune_removed_files,
     read_file_metadata,
-    sources_are_enumerable,
+    unreadable_roots,
 )
-from fnd.schema import F_COLLECTION
 from fnd.walk import walk_sources
 
 EventKind = Literal[
@@ -108,6 +107,16 @@ class ProgressEvent:
     # Texturising lines from these.
     indexed_newly_total: int = 0
     indexed_already_total: int = 0
+    removed_total: int = 0
+    """Files this run dropped from the collection. Known only at the end, so
+    it is carried on the terminal event."""
+    # Collections that still index a file this run removed. `N removed` is
+    # true of the collection and false of the corpus without it.
+    removed_still_in: tuple[str, ...] = ()
+    # Folders the run could not list: a source root or a directory under one.
+    # Their files were KEPT rather than pruned, and a run that stayed silent
+    # about it read like a healthy one.
+    unreadable_sources: tuple[str, ...] = ()
     textured_newly_total: int = 0
     textured_already_total: int = 0
     still_flat_total: int = 0
@@ -296,6 +305,7 @@ def _enumerate_iter(
     config: CollectionConfig,
     *,
     read_frontmatter: Callable[[Path], dict[str, object] | None] | None = None,
+    on_unreadable: Callable[[Path], None] | None = None,
 ) -> Iterator[tuple[Path, str]]:
     """Lazily walk all sources, yielding ``(path, source_id)`` pairs in
     deterministic walk order.
@@ -313,14 +323,25 @@ def _enumerate_iter(
         skip = resolve_skip_dirs(_load_config().defaults)
     except Exception:
         skip = resolve_skip_dirs(None)
+    # The first source to reach a file owns it, as in build_index_from_config:
+    # a folder listed twice, or nested inside another source, would otherwise
+    # count seven files for five and extract twice.
+    claimed: set[str] = set()
     for source in config.sources:
         try:
             source_id = str(Path(source.path).expanduser().resolve())
         except OSError:
             source_id = str(Path(source.path).expanduser())
         for path in walk_sources(
-            sources=[source], skip_dirs=skip, read_frontmatter=read_frontmatter
+            sources=[source],
+            skip_dirs=skip,
+            read_frontmatter=read_frontmatter,
+            on_unreadable=on_unreadable,
         ):
+            key = str(path.resolve())
+            if key in claimed:
+                continue
+            claimed.add(key)
             yield (path, source_id)
 
 
@@ -370,39 +391,52 @@ def _should_reprocess(
 
 
 def _prior_indexed_state(
-    searcher: Any, schema: Any, collection: str, parent_id: str
-) -> tuple[int | None, int, bool]:
-    """``(stored_mtime, stored_inode_ctime, has_textured)`` for this file's
-    prior-committed chunks in this collection, or ``(None, 0, False)`` if absent.
+    searcher: Any, schema: Any, parent_id: str
+) -> tuple[int | None, int, bool, frozenset[tuple[str, str]]]:
+    """``(stored_mtime, stored_inode_ctime, has_textured, membership)`` for a
+    file's prior-committed chunks, or ``(None, 0, False, frozenset())`` if absent.
 
-    All of a file's chunks share both timestamps, so the first hit settles
-    them; ``has_textured`` scans a handful of chunks for a non-empty
-    ``body_md``. Used by the incremental skip to decide whether an unchanged
-    file needs any work this run.
+    Normalised storage keeps one document per file across collections, so this
+    reads per file (by ``parent_id``). All chunks share the timestamps and the
+    membership, so the first hit settles them; ``has_textured`` scans a handful
+    of chunks for a non-empty ``body_md``. ``membership`` names which
+    collections hold the file, so the incremental skip can tell an unchanged
+    member from a file that is merely in the index via a sibling collection.
     """
-    from fnd.index import _scoped_delete_query
-    from fnd.schema import F_BODY_MD, F_INODE_CTIME, F_MTIME
+    import tantivy
+
+    from fnd.schema import (
+        F_BODY_MD,
+        F_INODE_CTIME,
+        F_MEMBERSHIP,
+        F_MTIME,
+        F_PARENT_ID,
+        MEMBERSHIP_SEP,
+    )
 
     try:
-        result = searcher.search(_scoped_delete_query(schema, collection, parent_id), limit=16)
+        result = searcher.search(tantivy.Query.term_query(schema, F_PARENT_ID, parent_id), limit=16)
     except Exception:
-        return None, 0, False
+        return None, 0, False, frozenset()
     mtime: int | None = None
     inode_ctime = 0
     has_textured = False
+    membership: set[tuple[str, str]] = set()
     for _score, addr in result.hits:
         doc = searcher.doc(addr)
         if mtime is None:
             mv = doc.get_first(F_MTIME)  # type: ignore[attr-defined]
             if mv is not None:
                 mtime = int(mv)
-            # Absent on v7 docs read mid-migration; 0 means "no information".
             cv = doc.get_first(F_INODE_CTIME)  # type: ignore[attr-defined]
             if cv is not None:
                 inode_ctime = int(cv)
+            for token in doc.get_all(F_MEMBERSHIP):  # type: ignore[attr-defined]
+                name, _, source = str(token).partition(MEMBERSHIP_SEP)
+                membership.add((name, source))
         if doc.get_first(F_BODY_MD):  # type: ignore[attr-defined]
             has_textured = True
-    return mtime, inode_ctime, has_textured
+    return mtime, inode_ctime, has_textured, frozenset(membership)
 
 
 @dataclass(slots=True)
@@ -455,13 +489,29 @@ class CloudPolicy:
         self.fetch(_touch, path)
 
 
-async def _process_file_task(fn: Any, /, **kwargs: Any) -> tuple[int, bool, bool, str]:
+@dataclass(frozen=True, slots=True)
+class _FileOutcome:
+    """What one file's processing did, split by the question each caller asks.
+
+    ``extraction_reused`` answers "did we do the work" and feeds the ETA rate;
+    ``already_indexed`` answers "was this file already in THIS collection".
+    Conflating them reports 0 newly indexed for files that have just landed.
+    """
+
+    chunks: int
+    extraction_reused: bool
+    already_indexed: bool
+    has_textured: bool
+    error: str
+
+
+async def _process_file_task(fn: Any, /, **kwargs: Any) -> _FileOutcome:
     """Run one file's work off-loop.
 
     A thin named seam over ``asyncio.to_thread`` so the call site can stay
     readable while wrapped in the cancellation handler.
     """
-    return cast("tuple[int, bool, bool, str]", await asyncio.to_thread(fn, **kwargs))
+    return cast("_FileOutcome", await asyncio.to_thread(fn, **kwargs))
 
 
 def _process_one_file(
@@ -480,11 +530,10 @@ def _process_one_file(
     tag_sources: Sequence[str] = ("frontmatter", "os"),
     tag_frontmatter_keys: Sequence[str] = (),
     cloud_policy: CloudPolicy | None = None,
-) -> tuple[int, bool, bool, str]:
+) -> _FileOutcome:
     """Synchronous per-file work — extraction + write to Tantivy.
 
-    Returns ``(chunks_written, cache_hit, has_textured_chunk, error_msg)``.
-    ``has_textured_chunk`` is True iff any emitted chunk carries a non-empty
+    ``has_textured`` is True iff any emitted chunk carries a non-empty
     ``body_md`` (PDFs that hit the structured pipeline). Run inside
     ``asyncio.to_thread`` so the caller's event loop stays responsive.
 
@@ -506,30 +555,41 @@ def _process_one_file(
     is_pdf = path.suffix.lower() == ".pdf"
     parent_id = _path_parent_id(path)
 
+    from fnd.membership import after_index, collections_of
+
+    prior_mtime: int | None = None
+    prior_ctime = 0
+    prior_textured = False
+    prior_membership: frozenset[tuple[str, str]] = frozenset()
+    if prior_searcher is not None:
+        prior_mtime, prior_ctime, prior_textured, prior_membership = _prior_indexed_state(
+            prior_searcher, schema, parent_id
+        )
+    # "Already indexed" means already a member of THIS collection: a file in the
+    # index only via a sibling collection still needs adding to this one.
+    already_indexed = collection in collections_of(prior_membership)
+    memberships = after_index(prior_membership, collection, source_id)
+
     # Incremental skip: an unchanged file already in this collection's
     # committed index needs no work this run.
-    if skip_unchanged and prior_searcher is not None:
-        prior_mtime, prior_ctime, prior_textured = _prior_indexed_state(
-            prior_searcher, schema, collection, parent_id
+    if skip_unchanged and already_indexed and prior_mtime is not None:
+        times = read_file_times(path)
+        # read_file_times zeroes on stat failure; fall back to the stored
+        # values so a transient error reads as "unchanged", not "changed".
+        cur_mtime = times.mtime or prior_mtime
+        cur_ctime = times.inode_changed or prior_ctime
+        # Re-process only if changed, or if it's a flat PDF this run
+        # could texturise: the one improvement an incremental pass
+        # should still make.
+        improvable = is_pdf and texturise_on and not prior_textured
+        changed = _should_reprocess(
+            prior_mtime=prior_mtime,
+            prior_ctime=prior_ctime,
+            cur_mtime=cur_mtime,
+            cur_ctime=cur_ctime,
         )
-        if prior_mtime is not None:
-            times = read_file_times(path)
-            # read_file_times zeroes on stat failure; fall back to the stored
-            # values so a transient error reads as "unchanged", not "changed".
-            cur_mtime = times.mtime or prior_mtime
-            cur_ctime = times.inode_changed or prior_ctime
-            # Re-process only if changed, or if it's a flat PDF this run
-            # could texturise — the one improvement an incremental pass
-            # should still make.
-            improvable = is_pdf and texturise_on and not prior_textured
-            changed = _should_reprocess(
-                prior_mtime=prior_mtime,
-                prior_ctime=prior_ctime,
-                cur_mtime=cur_mtime,
-                cur_ctime=cur_ctime,
-            )
-            if not changed and not improvable:
-                return 0, True, prior_textured, ""
+        if not changed and not improvable:
+            return _FileOutcome(0, True, True, prior_textured, "")
 
     # The file survived the unchanged-skip, so it genuinely needs reading —
     # which for a cloud-only file means a download. Do it here rather than
@@ -537,11 +597,11 @@ def _process_one_file(
     # announced instead of looking like a wedged extractor.
     if is_cloud_only:
         if policy.skipping():
-            return 0, False, False, policy.skip_reason(path)
+            return _FileOutcome(0, False, already_indexed, False, policy.skip_reason(path))
         try:
             policy.materialise(path)
         except (CloudFetchError, OSError) as e:
-            return 0, False, False, policy.blocked_reason(path, e)
+            return _FileOutcome(0, False, already_indexed, False, policy.blocked_reason(path, e))
 
     # Read once per file, stamped onto every chunk. Shared with build_index so
     # an ad-hoc `fnd index <root>` captures the same metadata as a reindex.
@@ -574,49 +634,53 @@ def _process_one_file(
         except OSError:
             non_pdf_sha = ""
 
-    # Delete only THIS collection's chunks for this file. The previous
-    # unscoped delete_documents(F_PARENT_ID, ...) was a per-path nuke
-    # that wiped sibling collections' chunks too when a file was
-    # shared (typical case: an Obsidian Vault listed under multiple
-    # collections' sources). See fnd.index._scoped_delete_query.
-    from fnd.index import _scoped_delete_query
+    # Extract in full before deleting, so a failure leaves the prior document
+    # (and any sibling collection's membership on it) untouched. One file's
+    # chunks are held in memory only for the duration of its own write.
+    from fnd.index import _parent_delete_query
 
-    _delete_q = _scoped_delete_query(schema, collection, parent_id)
-    writer.delete_documents_by_query(_delete_q)
-    n_chunks = 0
-    has_textured = False
-    # Per-page beats from the PDF worker feed the live-progress
-    # channel so the modal's 1Hz ETA can refine while a long PDF is
-    # mid-extraction (instead of waiting for the file_complete event).
+    # Per-page beats from the PDF worker feed the live-progress channel so the
+    # modal's 1Hz ETA can refine mid-extraction, not only at file_complete.
     from fnd.tui.live_progress import report_heartbeat as _report_heartbeat
 
+    has_textured = False
+    docs = []
     try:
         for chunk in extract(path, on_heartbeat=_report_heartbeat):
             if chunk.body_md:
                 has_textured = True
-            writer.add_document(
+            docs.append(
                 _doc_for_chunk(
                     chunk,
-                    collection=collection,
-                    source_path=source_id,
+                    memberships=memberships,
                     meta_blob_bytes=meta_blob_bytes,
                     tags=file_tags,
                 )
             )
-            n_chunks += 1
     except ExtractError as e:
-        # Same collection-scoped delete as above: never touch sibling
-        # collections' chunks on an extraction error.
-        writer.delete_documents_by_query(_delete_q)
-        return n_chunks, False, False, str(e)
+        return _FileOutcome(0, False, already_indexed, False, str(e))
+
+    # Extraction that yields nothing raises nothing; keep the prior document
+    # rather than delete on a possibly transient empty read.
+    if not docs:
+        return _FileOutcome(0, False, already_indexed, False, no_text_reason(path))
+
+    writer.delete_documents_by_query(_parent_delete_query(schema, parent_id))
+    for doc in docs:
+        writer.add_document(doc)
+    n_chunks = len(docs)
 
     if not is_pdf and non_pdf_sha:
         from fnd.seen_log import mark_seen
 
         mark_seen(non_pdf_sha)
 
-    hit = (cache.hits > cache_before_hits) if is_pdf else non_pdf_was_seen
-    return n_chunks, hit, has_textured, ""
+    reused = (cache.hits > cache_before_hits) if is_pdf else non_pdf_was_seen
+    # A literal rebuild (``wipe``) clears each file's seen-marker and cache, so it
+    # is fresh work, reported as newly indexed although the file stays a member:
+    # membership drives the skip decision above, and the count follows work.
+    reported_already = already_indexed and not wipe
+    return _FileOutcome(n_chunks, reused, reported_already, has_textured, "")
 
 
 async def run_indexer(
@@ -759,6 +823,7 @@ async def run_indexer(
     # Files the scan could not resolve. Recorded once the run starts so they
     # surface in the same failure list as extraction errors.
     scan_blocked: list[tuple[Path, str]] = []
+    unreadable_dirs: list[Path] = []
 
     def _scan_frontmatter(path: Path) -> dict[str, object] | None:
         """Frontmatter for a filter candidate, fetching it if it is
@@ -796,7 +861,9 @@ async def run_indexer(
     # minutes; draining it in slices keeps cancel responsive and lets the
     # modal show a growing file count instead of a static "Scanning
     # sources…" the user reads as a hang.
-    walk_iter = _enumerate_iter(config, read_frontmatter=_scan_frontmatter)
+    walk_iter = _enumerate_iter(
+        config, read_frontmatter=_scan_frontmatter, on_unreadable=unreadable_dirs.append
+    )
     while True:
         try:
             batch, exhausted = await asyncio.to_thread(
@@ -817,7 +884,13 @@ async def run_indexer(
         if exhausted:
             break
 
-    def _prepare() -> tuple[dict[str, int], int, int, Any, Any, Any]:
+    # A declined read only loses a file when a rule needed the content to
+    # reach a verdict. The tag filter fails open and keeps it, so reporting
+    # every decline would flag files that then index normally.
+    _walked = {p for p, _src in paths}
+    scan_blocked = [(p, reason) for p, reason in scan_blocked if p not in _walked]
+
+    def _prepare() -> tuple[dict[str, int], int, int, Any, Any, Any, list[Path]]:
         local_paths = paths
         local_sizes: dict[str, int] = {}
         for p, _src in local_paths:
@@ -827,19 +900,18 @@ async def run_indexer(
                 local_sizes[str(p)] = 0
         local_pdfs_total = sum(1 for p, _src in local_paths if p.suffix.lower() == ".pdf")
         local_bytes_total = sum(local_sizes.values())
-        local_index = _ensure_index(index_dir, force=rebuild)
+        # A rebuild that cannot read its sources must not wipe: the walk would
+        # bring nothing back, emptying the collection past the prune guard. Asked
+        # BEFORE `_ensure_index(force=)`, which is the wipe for a whole-index rebuild.
+        local_blocked = unreadable_roots(Path(s.path).expanduser() for s in config.sources)
+        local_index = _ensure_index(index_dir, force=rebuild and not local_blocked)
         local_writer = local_index.writer(heap_size=_WRITER_HEAP)
-        if rebuild:
-            local_writer.delete_documents(F_COLLECTION, collection)
-            commit(local_writer)
-        # Prior-committed snapshot for the incremental skip. A point-in-time
-        # searcher reflects only what previous runs committed; files we
-        # process this run are deleted+re-added, never skipped later, so the
-        # start-of-run snapshot is the correct "already indexed?" oracle.
+        # One document per file across collections, so a rebuild never bulk-deletes
+        # by collection (that strips siblings' memberships); each walked file merges
+        # its prior membership from this committed snapshot, and prune drops the rest.
         local_prior_searcher = None
-        if skip_unchanged and not rebuild:
-            with contextlib.suppress(Exception):
-                local_prior_searcher = local_index.searcher()
+        with contextlib.suppress(Exception):
+            local_prior_searcher = local_index.searcher()
         return (
             local_sizes,
             local_pdfs_total,
@@ -847,6 +919,7 @@ async def run_indexer(
             local_index,
             local_writer,
             local_prior_searcher,
+            local_blocked,
         )
 
     try:
@@ -857,6 +930,7 @@ async def run_indexer(
             index,
             writer,
             prior_searcher,
+            blocked_roots,
         ) = await asyncio.to_thread(_prepare)
     except Exception as e:
         # Without this backstop a LockBusy (concurrent indexer on the
@@ -940,7 +1014,7 @@ async def run_indexer(
             hits_before = cache.hits
             t_file = time.perf_counter()
             try:
-                chunks_written, was_hit, has_textured, err = await _process_file_task(
+                outcome = await _process_file_task(
                     _process_one_file,
                     path=path,
                     source_id=source_id,
@@ -950,7 +1024,7 @@ async def run_indexer(
                     cache_before_hits=hits_before,
                     cache=cache,
                     prior_searcher=prior_searcher,
-                    skip_unchanged=skip_unchanged,
+                    skip_unchanged=skip_unchanged and not rebuild,
                     texturise_on=texturise_on,
                     wipe=force_fresh,
                     tag_sources=tag_sources,
@@ -966,12 +1040,16 @@ async def run_indexer(
                 yield _emit("cancelled")
                 return
             file_elapsed_ms = (time.perf_counter() - t_file) * 1000.0
+            chunks_written = outcome.chunks
+            already = outcome.already_indexed
+            has_textured = outcome.has_textured
+            err = outcome.error
 
             if err:
                 state.failed += 1
             else:
                 if is_pdf:
-                    if was_hit:
+                    if already:
                         # Cache hits can be either textured or flat -
                         # the cache stores whatever the original
                         # extraction produced. Older entries (or runs
@@ -992,7 +1070,7 @@ async def run_indexer(
                         state.still_flat += 1
                         state.indexed_newly += 1
                 else:
-                    if was_hit:
+                    if already:
                         state.indexed_already += 1
                     else:
                         state.indexed_newly += 1
@@ -1014,7 +1092,7 @@ async def run_indexer(
             # crush the per-byte rate and ETA would read 0 even with
             # a multi-minute uncached PDF still pending. Only the
             # actual extraction work feeds the rate.
-            if not was_hit:
+            if not outcome.extraction_reused:
                 extract_bytes_state[0] += file_size
                 extract_seconds_state[0] += file_elapsed_ms / 1000.0
             # Atomic state update per file = resume granularity per file.
@@ -1075,7 +1153,7 @@ async def run_indexer(
                 "file_complete",
                 current_file=str(path),
                 file_elapsed_ms=file_elapsed_ms,
-                cache_hit=was_hit,
+                cache_hit=outcome.extraction_reused,
                 is_pdf=is_pdf,
                 has_textured_chunk=has_textured,
             )
@@ -1085,13 +1163,32 @@ async def run_indexer(
         # so only files that genuinely left the collection get pruned.
         # Skipped on cancel, where the partial walk would read as mass
         # deletion, and on a missing root (offline volume, same trap).
-        if not rebuild and not (cancel is not None and cancel.is_set()):
+        removed = 0
+        pruned: set[str] = set()
+        still_in: tuple[str, ...] = ()
+        unreadable: tuple[str, ...] = ()
+        if not (cancel is not None and cancel.is_set()):
             live_parent_ids = {_path_parent_id(p) for p, _src in paths}
             live_parent_ids.update(_path_parent_id(p) for p, _reason in scan_blocked)
-            if sources_are_enumerable(Path(s.path).expanduser() for s in config.sources):
-                prune_removed_files(
-                    index, writer, collection=collection, live_parent_ids=live_parent_ids
+            if not blocked_roots:
+                # A rebuild prunes like an update: a file the walk did not reach
+                # loses this collection, keeping its document only if another
+                # collection still holds it.
+                pruned = prune_removed_files(
+                    index,
+                    writer,
+                    collection=collection,
+                    live_parent_ids=live_parent_ids,
+                    unreadable_dirs=unreadable_dirs,
+                    tag_sources=tag_sources,
+                    tag_frontmatter_keys=tag_frontmatter_keys,
                 )
+            removed = len(pruned)
+            unreadable = tuple(sorted(str(p) for p in (*blocked_roots, *unreadable_dirs)))
+            # A file leaving this collection has not left the corpus. Asked
+            # before the commit, while the other collections' chunks are still
+            # there to answer.
+            still_in = collections_still_holding(index, pruned, excluding=collection)
         await commit_async(writer)
         writer.wait_merging_threads()
     finally:
@@ -1126,7 +1223,17 @@ async def run_indexer(
     if cancel is not None and cancel.is_set():
         yield _emit("cancelled")
         return
-    yield _emit("done", chunks_written=written)
+    yield _emit(
+        "done",
+        chunks_written=written,
+        removed_total=removed,
+        removed_still_in=still_in,
+        unreadable_sources=unreadable,
+    )
+
+
+class IndexRunError(RuntimeError):
+    """A run that ended without its ``done`` event; the message is the reason it gave."""
 
 
 def run_sync(
@@ -1137,10 +1244,15 @@ def run_sync(
     rebuild: bool = False,
     progress_callback: Callable[[ProgressEvent], None] | None = None,
 ) -> int:
-    """Drive ``run_indexer`` to completion; returns the chunks written."""
+    """Drive ``run_indexer`` to completion; returns the chunks written.
+
+    Raises :class:`IndexRunError` if it ends without ``done``: nothing here
+    cancels it, so that is a refusal (an older schema, a busy lock, a failed scan).
+    """
 
     async def _drive() -> int:
-        n = 0
+        written: int | None = None
+        reason = ""
         async for ev in run_indexer(
             config=config,
             collection=collection,
@@ -1150,14 +1262,19 @@ def run_sync(
         ):
             if progress_callback is not None:
                 progress_callback(ev)
-            if ev.kind == "done":
-                n = ev.chunks_written
-        return n
+            if ev.kind == "file_error":
+                reason = ev.error
+            elif ev.kind == "done":
+                written = ev.chunks_written
+        if written is None:
+            raise IndexRunError(reason or "the run stopped before it finished")
+        return written
 
     return asyncio.run(_drive())
 
 
 __all__ = [
+    "IndexRunError",
     "IndexState",
     "ProgressEvent",
     "clear_state",

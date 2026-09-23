@@ -174,9 +174,12 @@ async def test_bar_shows_the_active_filter_count(cfg: Config, idx: Path) -> None
         app._scope.tag_include = {"frontmatter": {"t1", "t2"}}
         app._scope.refresh_filters_panel()
         await pilot.pause()
-        assert app._scope.active_filter_count == 3  # 1 kind + 2 tags
+        # Two filters, not three: the kinds facet and the tags facet. Counting
+        # each ticked VALUE read `Clear 3 filters` one row under a title
+        # saying `1 kind, 2 tags`.
+        assert app._scope.active_filter_count == 2
         text = str(app.query_one("#clear_filters_bar", Static).render())
-        assert "Clear 3 filters" in text
+        assert "Clear 2 filters" in text
         assert "(X)" not in text
 
 

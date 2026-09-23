@@ -1,9 +1,9 @@
 """Action registry — single source of truth for the TUI's behaviour surface.
 
-Per plan §5 + §7: every TUI action is declared here once, with its default
-keybinding and the ``:command`` name. Footer hints, the help overlay, and the
-keymap loader all read from this registry, so they can never drift out of
-sync with the actual bindings.
+Every TUI action is declared here once, with its default keybinding and the
+``:command`` name. Footer hints, the help overlay, and the keymap loader all
+read from this registry, so they can never drift out of sync with the actual
+bindings.
 
 User overrides live in
 ``~/Library/Application Support/fnd/keybindings.toml``::
@@ -53,7 +53,6 @@ class Action:
 
 
 # Authoritative registry. Order is the order shown in the help overlay.
-# Phase 6 covers the actions wired in phase 5; later phases extend this list.
 REGISTRY: tuple[Action, ...] = (
     Action(
         id="focus_query",
@@ -76,7 +75,9 @@ REGISTRY: tuple[Action, ...] = (
         default_key="left",
         command="collapse",
         footer_label="Collapse",
-        contexts=("results", "collections"),
+        # All three sidebar trees: `_focused_tree` serves the filters panel too,
+        # and the help sheet lists an action under every context it names.
+        contexts=("results", "collections", "filters"),
         show_in_footer=False,
     ),
     Action(
@@ -87,7 +88,7 @@ REGISTRY: tuple[Action, ...] = (
         default_key="right",
         command="expand",
         footer_label="Expand",
-        contexts=("results", "collections"),
+        contexts=("results", "collections", "filters"),
         show_in_footer=False,
     ),
     Action(
@@ -99,6 +100,17 @@ REGISTRY: tuple[Action, ...] = (
         command="expand-all",
         footer_label="Expand all",
         contexts=("filters", "collections", "results"),
+        show_in_footer=False,
+    ),
+    Action(
+        id="scope_toggle_batch",
+        description="Toggle a collection, source or filter WITHOUT re-running the "
+        f"query: hold Ctrl / {os_labels.ALT_WORD} while pressing Enter to change "
+        "several at once, then Enter in the query bar to run them together.",
+        default_key="ctrl+enter,alt+enter",
+        command="toggle-batch",
+        footer_label="Toggle (batch)",
+        contexts=("filters", "collections"),
         show_in_footer=False,
     ),
     Action(

@@ -1,4 +1,4 @@
-"""Phase 3 acceptance: collections + includes/excludes precedence."""
+"""Acceptance: collections + includes/excludes precedence."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def shaped_corpus(tmp_path: Path) -> Path:
 
 
 def test_excludes_drop_subdir_of_included_root(shaped_corpus: Path, tmp_index_dir: Path) -> None:
-    """The headline §8 case: include a root, exclude one of its subdirs."""
+    """The headline case: include a root, exclude one of its subdirs."""
     written = build_index(
         roots=[shaped_corpus],
         index_dir=tmp_index_dir,

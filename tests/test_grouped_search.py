@@ -1,4 +1,4 @@
-"""Phase 2 acceptance: per-section ranking within files."""
+"""Acceptance: per-section ranking within files."""
 
 from __future__ import annotations
 
