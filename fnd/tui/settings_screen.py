@@ -2022,9 +2022,11 @@ class PickerScreen(Screen[None]):
         options = self.query_one("#picker_list", OptionList)
         options.focus()
         if options.option_count and options.highlighted is None:
-            # Nothing is highlighted on open, so the first ⏎ selects nothing
-            # and reads as a dead key.
-            options.highlighted = 0
+            # On the current value: unhighlighted, ⏎ is a dead key; on option 0,
+            # a single-select ⏎ changes the setting the user only opened to read.
+            options.highlighted = next(
+                (i for i, c in enumerate(self._choices) if c.value in self._selected), 0
+            )
         self._render_footer()
 
     def _render_footer(self) -> None:
