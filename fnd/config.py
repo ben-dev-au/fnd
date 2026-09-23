@@ -307,7 +307,8 @@ class DefaultFilters(_ConfigModel):
 
     frontmatter: str | None = None
     """Filter expression over a note's YAML frontmatter, e.g.
-    `Course == 'Design Patterns'`. Files with no frontmatter block pass."""
+    `Course == 'Design Patterns'`. A note with no frontmatter block matches no
+    field test."""
 
     expression: str | None = None
     """Filter expression over file facts: `file.name`, `file.ext`,

@@ -114,12 +114,8 @@ def render(spec: FilterSpec) -> str:
         if value is not None:
             clauses.append(f"{fact} {op} {_value(value)}")
     if spec.frontmatter:
-        # The kind scope the compiler applies is written out, so the text says
-        # what the rule actually does rather than silently dropping it.
-        # No escape clause: a rule that asks about a frontmatter field is
-        # skipped for a file that has no frontmatter, so the scope needs no
-        # spelling out. Writing it into the text produced a clause that read
-        # as excluding Markdown and had no counterpart in any other tool.
+        # No kind scope is written out: it produced a clause that read as
+        # excluding Markdown. A note with no block still fails a field test.
         clauses.append(spec.frontmatter)
     if spec.expression:
         clauses.append(spec.expression)
