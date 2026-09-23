@@ -275,6 +275,8 @@ def _cascade_regime_label(trace: CascadeTrace) -> str:
             suffixes.append("+fuzzy")
         elif p.name == "synonym" and p.new_count > 0:
             suffixes.append("+syn")
+        elif p.name == "compound" and p.new_count > 0:
+            suffixes.append("+compound")
     return f"cascade({''.join(suffixes)})" if suffixes else "cascade"
 
 

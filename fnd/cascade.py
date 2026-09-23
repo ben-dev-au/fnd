@@ -39,7 +39,7 @@ from fnd.query_resolvers import fuzzy_stem as _fuzzy_stem
 from fnd.query_resolvers import fuzzy_variants as _fuzzy_term_variants
 from fnd.schema import F_BODY, F_META_BLOB, F_PAGE_LABEL, F_PARENT_ID, build_schema
 from fnd.struct import decode as decode_body_struct
-from fnd.synonyms import SynonymTable, expand
+from fnd.synonyms import SynonymTable, compound_table, expand
 
 
 def _carries_precision_intent(query: str) -> bool:
@@ -353,12 +353,11 @@ def cascade_search(
     tag_filter: TagFilter | None = None,
     with_trace: bool = False,
 ) -> list[Hit] | tuple[list[Hit], CascadeTrace]:
-    """Run literal → fuzzy → synonym passes until ``threshold`` hits found.
+    """Run literal → fuzzy → synonym → compound passes until ``threshold`` hits found.
 
     Returns hits with :attr:`Hit.pass_index` set to the pass that first
-    surfaced each one (0=literal, 1=fuzzy, 2=synonym). Order: pass-0 hits
-    in original score order, then pass-1, then pass-2 — so the TUI shows
-    exact matches above looser matches.
+    surfaced each one (0=literal, 1=fuzzy or compound, 2=synonym), in pass
+    order, so the TUI shows exact matches above looser matches.
 
     ``metadata_filter`` and ``source_scope`` apply to every pass so
     cascade preserves the same scope a single-pass search would, even
@@ -488,6 +487,35 @@ def cascade_search(
                         pass_index=2,
                         name="synonym",
                         query=syn_q,
+                        hit_count=len(raw),
+                        new_count=new_count,
+                        bm25_top=raw[0].score if raw else 0.0,
+                    )
+                )
+    if len(out) >= threshold:
+        return _trace_result() if with_trace else out
+
+    # Pass 3: compounds, which the tokenizer splits (see `compound_table`).
+    # Tagged as fuzzy: to the reader it is a looser spelling of the word.
+    if not _carries_precision_intent(query):
+        comp_q = expand(literal_query, compound_table(literal_query))
+        if comp_q != literal_query:
+            raw = searcher._filtered_raw_hits(
+                comp_q,
+                target=pass_target,
+                collection=collection,
+                metadata_filter=metadata_filter,
+                source_scope=source_scope,
+                intent=intent,
+                tag_filter=tag_filter,
+            )
+            new_count = _ingest(raw, 1)
+            if with_trace:
+                pass_traces.append(
+                    CascadePassTrace(
+                        pass_index=3,
+                        name="compound",
+                        query=comp_q,
                         hit_count=len(raw),
                         new_count=new_count,
                         bm25_top=raw[0].score if raw else 0.0,

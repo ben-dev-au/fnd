@@ -230,3 +230,34 @@ def _format_disjunction(original: str, group: tuple[str, ...]) -> str:
         else:
             parts.append(term)
     return "(" + " OR ".join(parts) + ")"
+
+
+# A bare query word, optionally hyphenated, with only structure around it:
+# anything carrying a field qualifier, wildcard, regex or modifier stays out.
+_PLAIN_WORD = re.compile(r"[+-]?\(*([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)\)*")
+_MIN_COMPOUND = 5
+_MIN_PART = 2
+
+
+def compound_table(query: str) -> SynonymTable:
+    """Groups that let a compound reach its hyphenated or split form, for :func:`expand`.
+
+    The tokenizer splits ``drop-down`` in two, so ``dropdown`` reaches it neither
+    by spelling nor by fuzz, nor the reverse. A hyphenated word joins; a word of
+    ``_MIN_COMPOUND`` letters or more splits at every point. A split that is
+    another phrase ("not able") is a looser match, as fuzz is, and ranks after
+    the exact hits the earlier passes found.
+    """
+    groups: list[list[str]] = []
+    for token in re.sub(r'"[^"]*"', " ", query).split():
+        m = _PLAIN_WORD.fullmatch(token)
+        if m is None:
+            continue
+        parts = m.group(1).split("-")
+        word = parts[0]
+        if len(parts) > 1:
+            groups.append([" ".join(parts), "".join(parts)])
+        elif len(word) >= _MIN_COMPOUND:
+            splits = range(_MIN_PART, len(word) - _MIN_PART + 1)
+            groups.append([word, *(f"{word[:i]} {word[i:]}" for i in splits)])
+    return SynonymTable.from_groups(groups)
