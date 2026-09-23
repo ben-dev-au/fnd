@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from fnd.config import SourceConfig
 
 from fnd.extract import supported_suffixes
-from fnd.globs import GlobSet
+from fnd.globs import GlobSet, names_hidden
 from fnd.ignore_files import IgnoreStack, ancestor_stack, load_ignore_file
 
 
@@ -51,7 +51,7 @@ def _hidden_includes(globs: list[str]) -> GlobSet:
     hidden prune for the whole tree, so an Obsidian vault indexed every note in
     ``.trash``. Only these globs may admit a hidden path.
     """
-    return GlobSet.parse([g for g in globs if any(p.startswith(".") for p in g.split("/"))])
+    return GlobSet.parse([g for g in globs if names_hidden(g)])
 
 
 def resolve_skip_dirs(defaults: object | None = None) -> frozenset[str]:

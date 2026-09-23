@@ -129,7 +129,7 @@ def _migrate_config() -> None:
     except Exception:
         return
     for step in applied:
-        typer.echo(f"fnd: config updated, {step.lower()}", err=True)
+        typer.echo(f"fnd: config updated, {step[:1].lower()}{step[1:]}", err=True)
 
 
 # ── Top-level commands ────────────────────────────────────────────────────

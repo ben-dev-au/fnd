@@ -472,7 +472,7 @@ class TestSlashlessGlobsKeepTheirReach:
         conf.ensure_current(path)
         source = conf.load(path).collections["n"].sources[0]
         assert source.includes == ["**/*.md", "**/*.txt"]
-        assert source.excludes == ["drafts/**", "**/*.tmp"], "a glob with a / is left alone"
+        assert source.excludes == ["drafts/**", "**/*.tmp"], "drafts/** already says it"
 
     def test_the_anchored_glob_still_reaches_a_nested_file(self, tmp_path: Path) -> None:
         """The point of the migration, not just its text."""

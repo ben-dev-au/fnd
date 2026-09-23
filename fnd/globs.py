@@ -22,7 +22,13 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-__all__ = ["GlobSet", "PathGlob", "translate"]
+__all__ = ["GlobSet", "PathGlob", "names_hidden", "translate"]
+
+
+def names_hidden(pattern: str) -> bool:
+    """True when a glob names a dot-prefixed path component, which is what lets
+    an include glob admit a hidden file."""
+    return any(part.startswith(".") for part in pattern.split("/"))
 
 
 def _class_span(pattern: str, i: int) -> int:
