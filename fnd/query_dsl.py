@@ -190,7 +190,7 @@ def check_proximity(expanded: str) -> None:
     if _PROX_RESIDUAL.search(outside_quotes):
         raise QuerySyntaxError(
             "malformed proximity",
-            hint="proximity is {N} word word — a number in braces then two or more plain words",
+            hint="proximity is {N} word word: a number in braces then two or more plain words",
         )
 
 

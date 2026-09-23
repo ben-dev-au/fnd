@@ -152,7 +152,7 @@ class IndexerService:
                     if running != collection:
                         with contextlib.suppress(Exception):
                             self._app.notify(
-                                f"Already indexing '{running}' — "
+                                f"Already indexing '{running}'; "
                                 f"cancel it first to run this instead.",
                                 severity="warning",
                                 timeout=6,

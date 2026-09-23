@@ -3,7 +3,7 @@
 Drop minimised seed files here when Hypothesis or oss-fuzz finds an
 extractor input that leaks something other than `ExtractError`. The
 parametrised regression test in `tests/fuzz/test_extractor_fuzz.py`
-re-runs every file against `fnd.extract.extract` on every fuzz pass —
+re-runs every file against `fnd.extract.extract` on every fuzz pass,
 so once a bug is fixed, the seed pins the fix.
 
 Format: just drop the file in. Name it descriptively, e.g.

@@ -626,7 +626,7 @@ def config_validate() -> None:
         if vocab.match(want) is None:
             err = vocab.unknown(want, flag="defaults.collection")
             typer.echo(
-                f"warning: defaults.collection = {want!r} — {err.hint or 'no such collection'}"
+                f"warning: defaults.collection = {want!r} ({err.hint or 'no such collection'})"
             )
 
 
@@ -930,7 +930,7 @@ def _print_uninstall_disclosure(extra) -> None:  # type: ignore[no-untyped-def]
             typer.echo(f"  - cache: {c}")
     typer.echo(f"\nApproximate disk recovered: {_format_disk(actual_disk_mb(extra))}")
     typer.echo(
-        "Already-indexed structured chunks remain in the index — previews keep\n"
+        "Already-indexed structured chunks remain in the index; previews keep\n"
         "working. New extractions revert to flat text. To fully revert existing\n"
         "collections, run `fnd collection reindex <name>` after uninstall.\n"
     )

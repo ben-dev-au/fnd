@@ -72,6 +72,29 @@ _PROX_PHRASE = re.compile(r'"([^"]*)"~(\d+)')
 _HYPHENATED = re.compile(r"\b[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+\b")
 
 
+def _proximity_members(phrase: str) -> tuple[list[str], list[str]]:
+    """``(members, words)`` for a ``"…"~N`` body: a glob survives whole, anything
+    else contributes its stem. Split on whitespace first — DOC_WORD_RE drops
+    ``*``/``?``, reducing ``respons*`` to a stem no document token carries."""
+    members: list[str] = []
+    words: list[str] = []
+    for raw in phrase.split():
+        if "*" in raw or "?" in raw:
+            members.append(raw.lower())
+            words.append(raw.lower())
+        else:
+            found = DOC_WORD_RE.findall(raw)
+            members.extend(_stem(w) for w in found)
+            words.extend(found)
+    return members, words
+
+
+def _is_proximity_group(match: re.Match[str]) -> bool:
+    """True when a ``_PROX_PHRASE`` match became a group: slop > 0 and two or
+    more members."""
+    return int(match.group(2)) > 0 and len(_proximity_members(match.group(1))[0]) >= 2
+
+
 # Cached: a wildcard term rebuilds this per word scanned, and the translation is
 # a pure function of the glob.
 @lru_cache(maxsize=1024)
@@ -275,6 +298,10 @@ class MatchSpec:
     # ``exact_stems`` / ``wildcards``; the slop only governs which occurrences
     # highlight at full vs dim strength (see :func:`proximity_tier_indices`).
     proximity_groups: tuple[tuple[tuple[str, ...], int], ...] = field(default_factory=tuple)
+    # Stems / globs the query asserts OUTSIDE every proximity operator (the
+    # ``replication`` of ``{5}data replication OR replication``). Retrieval
+    # matches those unconditionally, so they never dim. Empty without groups.
+    unconstrained_terms: frozenset[str] = field(default_factory=frozenset)
 
     @classmethod
     def from_query(
@@ -311,26 +338,9 @@ class MatchSpec:
         proximity_groups: list[tuple[tuple[str, ...], int]] = []
         prox_words: list[str] = []
         for pm in _PROX_PHRASE.finditer(expanded_query):
-            pslop = int(pm.group(2))
-            # Split on whitespace first so a glob survives as ONE member, and
-            # keep it intact in BOTH sinks. DOC_WORD_RE drops ``*``/``?``, which
-            # used to turn ``respons*`` into the literal stem ``respon`` — a stem
-            # no document token carries, so the window never qualified. The same
-            # stripping in the loose-term run left ``spec.wildcards`` empty, so
-            # ``word_matches`` had no wildcard and the group's own term went
-            # unpainted even when it did qualify.
-            members: list[str] = []
-            group_words: list[str] = []
-            for raw in pm.group(1).split():
-                if "*" in raw or "?" in raw:
-                    members.append(raw.lower())
-                    group_words.append(raw.lower())
-                else:
-                    words = DOC_WORD_RE.findall(raw)
-                    members.extend(_stem(w) for w in words)
-                    group_words.extend(words)
-            if len(members) >= 2 and pslop > 0:
-                proximity_groups.append((tuple(members), pslop))
+            members, group_words = _proximity_members(pm.group(1))
+            if _is_proximity_group(pm):
+                proximity_groups.append((tuple(members), int(pm.group(2))))
                 prox_words.extend(group_words)
 
         # Quoted phrases are matched as contiguous spans; their words are
@@ -357,9 +367,15 @@ class MatchSpec:
         # single DOC_WORD_RE token, matching how _phrase_word_lists splits: a
         # quoted underscore identifier ("recursive_directory_iterator") is a
         # multi-token phrase, so it must NOT leak into the loose (doc-wide) set.
+        # Read from the EXPANDED query with group spans blanked: ``_RUN_TOKEN``
+        # admits a quote inside a ``{N}`` run, so ``{5}"data" "replication"``
+        # would otherwise register two free arms and exempt the whole group.
+        single_quoted_src = _PROX_PHRASE.sub(
+            lambda m: " " if _is_proximity_group(m) else m.group(0), expanded_query
+        )
         single_quoted = [
             stripped
-            for m in _QUOTED_PHRASE.finditer(query)
+            for m in _QUOTED_PHRASE.finditer(single_quoted_src)
             if (stripped := m.group(1).strip()) and len(DOC_WORD_RE.findall(stripped)) == 1
         ]
         if single_quoted:
@@ -367,7 +383,8 @@ class MatchSpec:
         # Fold proximity-group words into the loose run so they flow through the
         # normal term / exact-stem / colour machinery — their quoted ``"…"~N``
         # span was stripped from ``loose_query`` above. Duplicates dedupe
-        # downstream.
+        # downstream. Tokens below the split point are the free ones.
+        free_token_count = len(loose_query.split())
         if prox_words:
             loose_query = f"{loose_query} {' '.join(prox_words)}".strip()
 
@@ -384,9 +401,12 @@ class MatchSpec:
         regexes: list[str] = []
         plain_tokens: list[str] = []
         ordered_tokens: list[tuple[str, str]] = []  # (kind, key) in query order
+        free_keys: set[str] = set()
+        free_words: list[str] = []
         negate_next = False
         skip_depth = 0  # >0 while inside a skipped NOT-/-/field-scoped group
-        for tok in loose_query.split():
+        for tok_index, tok in enumerate(loose_query.split()):
+            is_free = tok_index < free_token_count
             if skip_depth > 0:  # inside a skipped group — track until it closes
                 skip_depth = max(0, skip_depth + tok.count("(") - tok.count(")"))
                 continue
@@ -422,10 +442,15 @@ class MatchSpec:
             elif _HL_GLOB.search(key):
                 wildcards.append(key.lower())
                 ordered_tokens.append(("wildcard", key.lower()))
+                if is_free:
+                    free_keys.add(key.lower())
             else:
                 plain_tokens.append(cleaned)
                 ordered_tokens.append(("plain", key))
+                if is_free:
+                    free_words.extend(DOC_WORD_RE.findall(_MODIFIER_RE.sub(" ", key)))
         loose_query = " ".join(plain_tokens)
+        free_keys.update(_stem(w) for w in free_words)
         # Modifier-free view for plain terms / colour slots / synonyms; the raw
         # ``loose_query`` (with ``~N``) is reserved for explicit-fuzzy extraction.
         bare_query = _MODIFIER_RE.sub(" ", loose_query)
@@ -463,6 +488,12 @@ class MatchSpec:
                     if t:
                         raw.add(t.lower())
                         exact.add(_stem(t))
+            # A free arm's synonyms are asserted just as unconditionally as the
+            # arm itself, so they exempt too — expanded apart from the group's
+            # own words, which must keep obeying the window.
+            if free_words:
+                free_expanded = expand(" ".join(free_words), synonyms)
+                free_keys.update(_stem(t) for t in _terms_from_query(free_expanded) if t)
         # Explicit per-term ~N — always honoured (user opt-in).
         explicit_pairs: dict[str, int] = {}
         for term, dist in _terms_with_fuzzy(loose_query):
@@ -521,6 +552,7 @@ class MatchSpec:
             regexes=tuple(regexes),
             order=tuple(order),
             proximity_groups=tuple(proximity_groups),
+            unconstrained_terms=frozenset(free_keys) if proximity_groups else frozenset(),
         )
 
     @property
@@ -663,19 +695,31 @@ def _group_member_positions(
 
 
 def proximity_tier_indices(
-    stems_by_token: list[str], groups: tuple[tuple[tuple[str, ...], int], ...]
+    stems_by_token: list[str],
+    groups: tuple[tuple[tuple[str, ...], int], ...],
+    unconstrained: frozenset[str] = frozenset(),
 ) -> tuple[frozenset[int], frozenset[int]]:
     """``(members, qualifying)`` token index sets across every group.
 
-    ``members`` is every token belonging to some group; ``qualifying`` is the
-    subset inside a co-occurrence window. A member outside the qualifying set is
-    what the preview renders dimmed."""
+    ``members`` is every token whose tier the window decides; ``qualifying`` is
+    the subset inside a co-occurrence window, and a member outside it renders
+    dimmed. An ``unconstrained`` term drops the tokens IT matches (not the member
+    key that matched them) out of ``members``, while they still count toward
+    every window."""
     members: set[int] = set()
     qualifying: set[int] = set()
     for group in groups:
         positions, n = _group_member_positions(stems_by_token, group[0])
         members.update(i for i, _ in positions)
         qualifying |= _qualifying_from_positions(positions, n, group[1])
+    if unconstrained and members:
+        literals, globs = _group_matchers(tuple(unconstrained))
+        members -= {
+            i
+            for i in members
+            if stems_by_token[i] in literals
+            or any(pattern.fullmatch(stems_by_token[i]) for _, pattern in globs)
+        }
     return frozenset(members), frozenset(qualifying)
 
 

@@ -185,7 +185,7 @@ class OpenWithScreen(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         kind = getattr(self._hit, "kind", "?")
         with Vertical(id="open_with_box") as box:
-            box.border_title = f" Open with — .{kind} "
+            box.border_title = f" Open with: .{kind} "
             options: list[Option] = []
             for row in self._rows:
                 options.append(Option(self._row_text(row), id=row.id))

@@ -63,13 +63,13 @@ class ResultsView:
         if not self._app._search.idle:
             # The one operation whose work happens entirely off the loop, so
             # every pane could stay byte-identical for its whole duration.
-            return "Results — searching…"
+            return "Results: searching…"
         n_files = len(self._app._search.groups)
         n_sections = sum(len(g.hits) for g in self._app._search.groups)
         if not self._app._search.groups:
             # "Results" alone is what an untouched app shows, so a search that
             # matched nothing was indistinguishable from never having run.
-            return "Results" if not self._searched() else "Results — nothing matched"
+            return "Results" if not self._searched() else "Results: nothing matched"
         # A capped list read as a fact about the corpus: at limit 50 over 290
         # matches the title said `50 files`, identical to a search that really
         # matched 50. `+` marks a floor.
@@ -77,7 +77,7 @@ class ResultsView:
         files_mark = "+" if trace is not None and trace.files_truncated else ""
         sections_mark = "+" if trace is not None and trace.sections_truncated else ""
         return (
-            f"Results — {_count(n_files, files_mark, 'file')}"
+            f"Results: {_count(n_files, files_mark, 'file')}"
             f" / {_count(n_sections, sections_mark, 'section')}"
         )
 
@@ -97,12 +97,12 @@ class ResultsView:
         # Nothing ticked searches nothing, and the message explained the tag
         # filters while saying nothing about the emptier reason above them.
         if not scope.collections and not scope.active_sources:
-            lines.append("No collections are in scope — tick one in the Collections panel.")
+            lines.append("No collections are in scope: tick one in the Collections panel.")
         elif scope.present_kinds_for_scope() == set():
             # An index holding nothing reads exactly like a query matching
             # nothing, and only one of those is about the query. `None` is
             # "could not tell", which is not the same and stays silent.
-            lines.append("Nothing is indexed in this scope yet — run Update index from the menu.")
+            lines.append("Nothing is indexed in this scope yet: run Update index from the menu.")
         n_filters = scope.active_filter_count if scope.has_active_filters else 0
         if n_filters:
             # A place, not a keystroke. Focus is in the query bar when this
@@ -112,7 +112,7 @@ class ResultsView:
             one = n_filters == 1
             noun = "filter is" if one else "filters are"
             lines.append(
-                f"{n_filters} {noun} narrowing this — "
+                f"{n_filters} {noun} narrowing this; "
                 f"clear {'it' if one else 'them'} in the Filters panel."
             )
         return "\n\n".join(lines)

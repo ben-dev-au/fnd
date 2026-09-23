@@ -69,8 +69,8 @@ REGISTRY: tuple[Action, ...] = (
     ),
     Action(
         id="tree_smart_collapse",
-        description="Collapse the focused node, or — when the cursor is on "
-        "a leaf or an already-collapsed branch — collapse the parent and "
+        description="Collapse the focused node, or (when the cursor is on "
+        "a leaf or an already-collapsed branch) collapse the parent and "
         "move up to it. Lazygit-style 'back out' gesture.",
         default_key="left",
         command="collapse",
@@ -93,7 +93,7 @@ REGISTRY: tuple[Action, ...] = (
     ),
     Action(
         id="tree_expand_all_children",
-        description="Expand the focused node and its whole subtree — the node "
+        description="Expand the focused node and its whole subtree: the node "
         f"plus every descendant. Ctrl+Right / {os_labels.ALT_WORD}+Right, whichever "
         "your terminal delivers.",
         default_key="ctrl+right,alt+right",
@@ -115,7 +115,7 @@ REGISTRY: tuple[Action, ...] = (
     ),
     Action(
         id="tree_collapse_all_children",
-        description="Collapse the focused node's children — every descendant "
+        description="Collapse the focused node's children: every descendant "
         f"folds away but the node itself stays open. Ctrl+Left / {os_labels.ALT_WORD}+Left.",
         default_key="ctrl+left,alt+left",
         command="collapse-all",
@@ -136,7 +136,7 @@ REGISTRY: tuple[Action, ...] = (
     Action(
         id="open_with_menu",
         description=(
-            "Open the focused file with… — picker showing every app that "
+            "Open the focused file with… Picker showing every app that "
             "handles this file type. Default highlighted (Enter), letter "
             "keys pick others, Esc dismisses."
         ),
@@ -150,7 +150,7 @@ REGISTRY: tuple[Action, ...] = (
         id="open_default_app",
         description=(
             "Open the focused file in the system default app (no page "
-            "jump). Reachable only via the command palette — `O` now "
+            "jump). Reachable only via the command palette; `O` now "
             "opens the 'Open with…' picker instead."
         ),
         default_key=None,
@@ -162,7 +162,7 @@ REGISTRY: tuple[Action, ...] = (
     Action(
         id="reveal_in_file_manager",
         description=(
-            f"Show the focused result in {os_labels.FILE_MANAGER} — selects the file "
+            f"Show the focused result in {os_labels.FILE_MANAGER}: selects the file "
             "in place without opening it, so it can be moved, renamed, or checked "
             "against its neighbours."
         ),
@@ -192,7 +192,7 @@ REGISTRY: tuple[Action, ...] = (
         id="warm_whole_file",
         description=(
             "Warm the focused file completely, so scrolling anywhere in it is "
-            "instant — not just jumping between its matches. Runs in the "
+            "instant, not just jumping between its matches. Runs in the "
             "background; press again on the same file to stop."
         ),
         default_key="w",

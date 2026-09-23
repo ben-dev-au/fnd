@@ -679,7 +679,7 @@ BUILTIN_APPS: Final[dict[str, App]] = {
         handler=_handle_system,
         available=lambda: True,
         positional=False,
-        notes="LaunchServices default — never deep-links to a page or line.",
+        notes="LaunchServices default; never deep-links to a page or line.",
     ),
     "preview": App(
         id="preview",
@@ -707,7 +707,7 @@ BUILTIN_APPS: Final[dict[str, App]] = {
         handler=_handle_pdf_expert,
         available=lambda: _pdf_expert_app_exists(),
         positional=False,  # opens via `open -a`; no documented page-jump
-        notes="open -a 'PDF Expert' <path> — no page-jump on macOS.",
+        notes="open -a 'PDF Expert' <path>; no page-jump on macOS.",
     ),
     "obsidian": App(
         id="obsidian",

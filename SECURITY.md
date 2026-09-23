@@ -73,12 +73,12 @@ Out of scope (today):
 
 - Runtime deps use the three-component compatible-release operator
   (`~=X.Y.Z`) in `pyproject.toml`, so only patch releases float. These
-  ranges — not `uv.lock` — are what an installer resolves against, and
+  ranges, not `uv.lock`, are what an installer resolves against, and
   so they are what every user actually gets.
 - `uv.lock` governs the development environment and the `uv sync
   --frozen` CI jobs. It is not shipped to installers: `pip`, `pipx`, `uv
   tool install` and the Homebrew formula all resolve the ranges above.
-  `deps-latest.yml` is the deliberate exception — it runs `uv lock
+  `deps-latest.yml` is the deliberate exception: it runs `uv lock
   --upgrade` first, precisely to test outside the lock.
 - CI runs `pip-audit --strict` against the exported lockfile on every
   push and weekly on a cron (`.github/workflows/security.yml`). The
@@ -87,13 +87,13 @@ Out of scope (today):
   and it is a required check: a user-facing dependency that is not
   pinned `~=X.Y.Z` fails the build. Dependabot rewrites these pins into
   wide ranges by default and `versioning-strategy: increase` does not
-  stop it, so this guard — not the Dependabot config — is what holds
+  stop it, so this guard, not the Dependabot config, is what holds
   the convention. A patch bump is lock-only and passes untouched; a minor
   or major bump falls outside the pin, so Dependabot rewrites the range
   and the specifier needs correcting by hand in that PR.
 - `.github/workflows/deps-latest.yml` runs weekly, resolves every
   dependency at its newest allowed version ignoring `uv.lock`, and runs
-  the suite against it. With `~=X.Y.Z` pins that is the patch float —
+  the suite against it. With `~=X.Y.Z` pins that is the patch float:
   the versions reaching users with no PR to review, and this is their
   only gate. A new minor is gated instead by the Dependabot PR that
   raises the pin, which `ci.yml` runs the full suite against.

@@ -8,7 +8,7 @@ build-backend = "hatchling.build"
 # [tool.hatch.build.targets.wheel] and [project.scripts]).
 name = "fndr"
 version = "1.0.1"
-description = "Fast, free, keyboard-driven document search for macOS (Linux and Windows in early beta)"
+description = "Fast, free, keyboard-driven document search for macOS (Linux and Windows in alpha)"
 readme = "README.md"
 requires-python = ">=3.13"
 license = "AGPL-3.0-or-later"

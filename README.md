@@ -3,14 +3,14 @@
 [![CI](https://github.com/ben-dev-au/fnd/actions/workflows/ci.yml/badge.svg)](https://github.com/ben-dev-au/fnd/actions/workflows/ci.yml)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
-[![Platform: macOS | Linux (beta) | Windows (beta)](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20(beta)%20%7C%20Windows%20(beta)-lightgrey.svg)](#platform-support)
+[![Platform: macOS | Linux (alpha) | Windows (alpha)](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20(alpha)%20%7C%20Windows%20(alpha)-lightgrey.svg)](#platform-support)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/ben.dev.au)
 
 Fast, free, keyboard-driven document search for macOS. Indexes PDF, DOCX, PPTX,
 MD and 60 different file types, with strong BM25 ranking, in-file navigation, an
 "Open with…" launcher, and a lazygit-style TUI.
 
-> **Linux and Windows are early beta**: CI-tested, never used in anger.
+> **Linux and Windows are alpha**: CI-tested, never used in anger.
 > [Open an issue](https://github.com/ben-dev-au/fnd/issues) when you hit
 > something. See [Platform support](#platform-support).
 
@@ -22,7 +22,7 @@ Linux and Windows, treat everything as unproven.
 ## Requirements
 
 - **macOS** (Apple Silicon or Intel): the supported, tested platform.
-- **Linux** or **Windows**: early beta, largely untested. See
+- **Linux** or **Windows**: alpha, largely untested. See
   [Platform support](#platform-support).
 - Nothing else to set up. Each install option below brings Python 3.13 with it.
 - A modern terminal is recommended (see [Terminal compatibility](#terminal-compatibility)).
@@ -41,7 +41,7 @@ brew install ben-dev-au/tap/fnd
 once, then run the line above. Apple Silicon installs a prebuilt binary; Intel
 builds from source, which takes a few minutes.
 
-### Option 2: uv or pipx (macOS, or Linux / Windows in beta)
+### Option 2: uv or pipx (macOS, or Linux / Windows in alpha)
 
 ```sh
 uv tool install fndr        # or:  pipx install fndr
@@ -88,7 +88,7 @@ CI on `ubuntu-latest` and `windows-latest`, but have had almost no hands-on use.
 
 Read the table as **what is implemented**, not what is verified:
 
-| Capability                        | macOS          | Linux (beta)                     | Windows (beta)     |
+| Capability                        | macOS          | Linux (alpha)                    | Windows (alpha)    |
 | --------------------------------- | -------------- | -------------------------------- | ------------------ |
 | Maturity                          | tested in use  | CI only                          | CI only            |
 | Search · indexing · TUI · preview | ✓              | ✓                                | ✓                  |
@@ -326,7 +326,7 @@ Index filters** edits the defaults; a source's **Index filters** row edits it.
 
 | Filter | What it does |
 | --- | --- |
-| *(always on)* | Hidden files and folders (`.foo`) are skipped, whatever the filters say. Only an `includes` glob naming a dot-prefixed component admits one — `.obsidian/**` — and then only the paths that glob itself matches. |
+| *(always on)* | Hidden files and folders (`.foo`) are skipped, whatever the filters say. Only an `includes` glob naming a dot-prefixed component (`.obsidian/**`) admits one, and then only the paths that glob itself matches. |
 | `respect_gitignore` | Honours every `.gitignore` down the tree, with git's rules: negation, directory patterns, nearest file wins. Not `.git/info/exclude` and not `core.excludesFile`: neither is in the tree, so honouring them would make one corpus index differently on two machines. Use `.fndignore` for a rule that is yours alone. **On by default.** |
 | `respect_fndignore` | The same syntax in a `.fndignore`, read only by fnd: how to hide something from search without hiding it from git. **On by default.** |
 | `include_tags` | Index only files carrying one of these tags; the tag rows' `●`. Empty means the tag is not consulted. |
@@ -335,7 +335,7 @@ Index filters** edits the defaults; a source's **Index filters** row edits it.
 | `min_size` / `max_size` | Bytes. Keeps stubs, and multi-hundred-megabyte scans, out. |
 | `created_after` / `created_before` | ISO dates (`2024-01-01`). A fixed bound, not the Filters pane's rolling window: a window would change what the index holds as time passed. A file with no creation date (best-effort on Linux) is kept. |
 | `modified_after` / `modified_before` | ISO dates, same semantics. |
-| `frontmatter` | A frontmatter predicate, same syntax as a query: `type == 'note' AND status != 'draft'`. Applies to the kinds that carry frontmatter — **`.md` and its variants, and `.txt`**. A note without a block, or with one that fails the rule, is kept out; a PDF is out of scope and passes. A block that fails to parse fails the rule. |
+| `frontmatter` | A frontmatter predicate, same syntax as a query: `type == 'note' AND status != 'draft'`. Applies to the kinds that carry frontmatter: **`.md` and its variants, and `.txt`**. A note without a block, or with one that fails the rule, is kept out; a PDF is out of scope and passes. A block that fails to parse fails the rule. |
 | `expression` | A predicate over any file, using `file.kind`, `file.size`, `file.modified`, `file.tags.os`, `file.path` and the like. The rows above are written in terms of it. |
 
 The tree shows one branch per rule. Markers: `●` keep only these, `⊘` never

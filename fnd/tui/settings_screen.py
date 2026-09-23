@@ -4365,7 +4365,7 @@ class UpdateAllConfirm(Screen[None]):
 
     def _mode_label(self) -> str:
         if self._rebuild:
-            return "Rebuild — drop chunks and re-texturise every PDF from scratch"
+            return "Rebuild: drop chunks and re-texturise every PDF from scratch"
         if self._force_fresh:
             return "Re-texturise documents on an older engine version"
         if self._texturise_override is True:
@@ -4390,7 +4390,7 @@ class UpdateAllConfirm(Screen[None]):
             if self._rebuild:
                 text.append(
                     "Every PDF is re-texturised from scratch (cache bypassed). "
-                    "Costly — use to rebuild all previews under the current engine.\n"
+                    "Costly: use to rebuild all previews under the current engine.\n"
                 )
             elif self._force_fresh:
                 text.append(
@@ -5583,7 +5583,7 @@ class StillFlatDrillIn(Screen[None]):
         self._cursor = 0
 
     def compose(self) -> ComposeResult:
-        title = "Flat PDFs — review & retry"
+        title = "Flat PDFs: review & retry"
         if self._collection_filter:
             title += f" - {self._collection_filter}"
         with Vertical(id="settings_box") as box:

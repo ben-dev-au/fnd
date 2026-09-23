@@ -181,16 +181,20 @@ def _proximity_tiers(
 ) -> tuple[frozenset[int], frozenset[int]]:
     """For a spec's proximity groups, return ``(members, full)`` token index sets.
 
-    ``members`` are the tokens belonging to some group (by literal stem or by a
-    glob member such as ``respons*``); ``full`` are those inside a qualifying
-    window. A member outside ``full`` renders dimmed. Returns empties when the
-    query carries no proximity operator — so plain queries skip stemming
-    entirely."""
+    ``members`` are the tokens whose tier the window decides (by literal stem or
+    by a glob member such as ``respons*``), minus any the query also asserts
+    outside the group; ``full`` are those inside a qualifying window. A member
+    outside ``full`` renders dimmed. Returns empties when the query carries no
+    proximity operator — so plain queries skip stemming entirely."""
     if not spec.proximity_groups:
         return frozenset(), frozenset()
     from fnd.matching import _stem, proximity_tier_indices
 
-    return proximity_tier_indices([_stem(w) for w in words_by_token], spec.proximity_groups)
+    return proximity_tier_indices(
+        [_stem(w) for w in words_by_token],
+        spec.proximity_groups,
+        spec.unconstrained_terms,
+    )
 
 
 def match_word_spans_multi(

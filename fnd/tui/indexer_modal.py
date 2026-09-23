@@ -488,7 +488,7 @@ class IndexerScreen(ModalScreen[None]):
             with contextlib.suppress(Exception):
                 if "todo" in self._added_options:
                     opts.remove_option("todo")
-                opts.add_option(Option(f"Flat PDFs — review & retry ({todo_count})", id="todo"))
+                opts.add_option(Option(f"Flat PDFs: review & retry ({todo_count})", id="todo"))
                 self._added_options.add("todo")
                 self._last_todo_count = todo_count
         elif not want_todo and "todo" in self._added_options:

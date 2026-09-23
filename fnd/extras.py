@@ -66,7 +66,7 @@ class Extra:
 
 PDF_STRUCTURE = Extra(
     name="pdf-structure",
-    description="Structured PDF rendering — headings, lists, tables, bold/italic.",
+    description="Structured PDF rendering: headings, lists, tables, bold/italic.",
     packages=[
         Package(
             install_via="pip-extra",

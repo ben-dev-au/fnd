@@ -406,12 +406,12 @@ class PreviewPresenter:
             # subsystem re-dispatched on every failed reveal and produced a
             # cascade that was far worse than the strand; this cap is what
             # keeps a failing repair from doing that again.
-            self.diag_log(f"paint check unresolved parent={target[0][:8]} — repair spent")
+            self.diag_log(f"paint check unresolved parent={target[0][:8]}, repair spent")
             return
         self._paint_repair_target = target
         self.diag_log(
             f"paint check FAILED cursor={target[0][:8]}/{target[1]} "
-            f"showing={str(self.showing_parent())[:8]} painted={self.is_painted()} — rebuilding"
+            f"showing={str(self.showing_parent())[:8]} painted={self.is_painted()}, rebuilding"
         )
         parent_id, focus_chunk_seq = target
         # Drop whatever half-state we are looking at so the rebuild starts clean
@@ -1034,7 +1034,7 @@ class PreviewPresenter:
             # the async rebuild — a fresh one is coming.
             if self.active is cached:
                 self.active = None
-            self.diag_log(f"cache hit not live parent={parent_id[:8]} — rebuilding fresh")
+            self.diag_log(f"cache hit not live parent={parent_id[:8]}, rebuilding fresh")
             cached = None
         if cached is None:
             for c in self._app.query(PreviewContainer):
@@ -2439,7 +2439,7 @@ class PreviewPresenter:
                 break
             await asyncio.sleep(0.05)
         else:
-            self.diag_log("freeze skipped — container never revealed")
+            self.diag_log("freeze skipped, container never revealed")
             return
         try:
             pane_width = self.capture_width(self._app.query_one("#preview_pane", VerticalScroll))
@@ -3593,7 +3593,7 @@ class PreviewPresenter:
                 # for the requested seq either. Say so, then fall back.
                 self.diag_log(
                     f"mount seq={focus_chunk_seq} miss=not-in-decoded-chunks "
-                    f"chunks={len(chunks)} — falling back to the first chunk"
+                    f"chunks={len(chunks)}, falling back to the first chunk"
                 )
                 focus_idx = 0
             win_start = self.above_window_start(chunks, focus_idx, pane.size.height or 40)
@@ -3808,7 +3808,7 @@ class PreviewPresenter:
                 # tree — the "stuck mid-mount after a new query" bug. Drop it.
                 self.diag_log(
                     f"mount superseded gen={my_generation}->{self.reset_generation} "
-                    f"parent={container.parent_doc_id[:8]} — dropping stale container"
+                    f"parent={container.parent_doc_id[:8]}, dropping stale container"
                 )
                 # The cold path spawns a DETACHED _finalise_via_lock task that, on
                 # completion, unconditionally hides the progress bar and clears
@@ -3840,7 +3840,7 @@ class PreviewPresenter:
                 # one tick later. Never cache it, and drop any dangling reference.
                 self.diag_log(
                     f"mount finally: container not live "
-                    f"parent={container.parent_doc_id[:8]} — not caching"
+                    f"parent={container.parent_doc_id[:8]}, not caching"
                 )
                 if self.active is container:
                     self.active = None

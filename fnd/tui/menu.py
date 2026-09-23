@@ -549,7 +549,7 @@ def _keys_filter_browser() -> tuple[tuple[str, str, str, str], ...]:
 def _keys_results_widget() -> tuple[tuple[str, str, str, str], ...]:
     skim_hint = (
         f"Hold {os_labels.ALT_WORD} and arrow through results to move the cursor "
-        "WITHOUT loading each preview — browse fast with no mount or lag per row. "
+        "WITHOUT loading each preview: browse fast with no mount or lag per row. "
         "The preview loads again on a normal ↑/↓ (the row you land on) or Enter "
         "(the exact row you skimmed to)."
     )
@@ -569,7 +569,7 @@ def _keys_results_widget() -> tuple[tuple[str, str, str, str], ...]:
             "Enter",
             "Load skimmed row",
             "",
-            f"Load the highlighted result into the preview — handy right after an "
+            f"Load the highlighted result into the preview, handy right after an "
             f"{os_labels.ALT_WORD}-skim to mount exactly the row you stopped on, "
             f"without stepping.",
         ),
@@ -1071,7 +1071,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             label="Glide to matches",
             description=(
                 "Glide the preview to a match inside the file already on screen, "
-                "instead of cutting to it. Off makes every landing an instant jump — "
+                "instead of cutting to it. Off makes every landing an instant jump, "
                 "also the way to tell a mislanding from the glide passing over it."
             ),
             kind=KIND_TOGGLE,
@@ -1125,7 +1125,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             id="pref.default_collection",
             label="Default collection",
             description=(
-                "Scope a fresh profile starts with — All collections, or one "
+                "Scope a fresh profile starts with: All collections, or one "
                 "named collection. Your sidebar selection is remembered and "
                 "wins once you've made one, so changing this only affects a "
                 "profile that has never saved a scope. Use `-c all` (or "
@@ -1704,7 +1704,7 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
             description=(
                 "Add new / changed files and drop deleted ones; unchanged files "
                 "are skipped and their existing texturing is left untouched. The "
-                "cheap, battery-friendly pass — it never re-texturises what's "
+                "cheap, battery-friendly pass: it never re-texturises what's "
                 "already done."
             ),
             kind=KIND_ACTION,
@@ -1718,7 +1718,7 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
             description=(
                 "Drop this collection's chunks and re-extract every file from "
                 "scratch, re-texturising every PDF under the current engine "
-                "(cache bypassed). The deliberate, costly redo — use after an "
+                "(cache bypassed). The deliberate, costly redo: use after an "
                 "engine upgrade or to refresh every preview."
             ),
             kind=KIND_ACTION,
@@ -2116,7 +2116,7 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
                 "for. A manual Update index still resumes where a quit left "
                 "off, skipping files already indexed. "
                 "✓ On: an interrupted Update index (force-quit, sleep, Ctrl+C) "
-                "resumes silently in the background next launch — progress "
+                "resumes silently in the background next launch: progress "
                 "shows in the footer, not a modal."
             ),
             kind=KIND_TOGGLE,
@@ -2230,7 +2230,7 @@ def _provider_pdf_texture(_app: FNDApp) -> tuple[MenuItem, ...]:
                 "Drop every collection's chunks and re-extract all files from "
                 "scratch, re-texturising every PDF under the current engine "
                 "(cache bypassed). The deliberate, costly redo across all "
-                "collections — use after an engine upgrade or to refresh every "
+                "collections: use after an engine upgrade or to refresh every "
                 "preview. Searchable text is unchanged; only the preview "
                 "rendering improves."
             ),
@@ -2258,7 +2258,7 @@ def _provider_pdf_texture(_app: FNDApp) -> tuple[MenuItem, ...]:
             description=(
                 "Per-file texturing results fnd has saved. Shared across "
                 "collections; the same PDF in two collections is texturised "
-                "once and reused. Clearing the cache only frees disk — your "
+                "once and reused. Clearing the cache only frees disk; your "
                 "built previews keep working."
             ),
             kind=KIND_DISPLAY,
@@ -2305,7 +2305,7 @@ def _provider_pdf_texture(_app: FNDApp) -> tuple[MenuItem, ...]:
             id="pdf_texture.prune_orphans",
             label="Remove orphaned texturings",
             description=(
-                "Delete saved texturings for files no longer on disk — removed, "
+                "Delete saved texturings for files no longer on disk: removed, "
                 "renamed, or de-configured. The cache is shared across "
                 "collections and content-addressed, so a per-collection Rebuild "
                 "can't reach these; this frees their space without disturbing "
@@ -3069,7 +3069,7 @@ def _run_prune_orphans(app: FNDApp) -> None:
             msg = (
                 f"Removed {removed} orphaned texturing(s)."
                 if removed
-                else "No orphaned texturings — cache is clean."
+                else "No orphaned texturings; cache is clean."
             )
         except Exception as e:
             msg = f"Orphan prune failed: {e}"
@@ -3109,7 +3109,7 @@ def _run_cache_clear(app: FNDApp) -> None:
     summary.append(
         "Frees this disk space. Previews you've already built keep working "
         "(texturing lives in the index, not the cache). A later Rebuild "
-        f"re-creates entries as needed — re-texturing cost then ~{format_duration(eta_s)}.",
+        f"re-creates entries as needed: re-texturing cost then ~{format_duration(eta_s)}.",
         style="dim",
     )
 
@@ -3146,7 +3146,7 @@ def _provider_filters(app: FNDApp) -> tuple[MenuItem, ...]:
             label="Extra frontmatter tag keys",
             description=(
                 "Frontmatter fields to treat as tags beyond tags:, "
-                "comma-separated — e.g. Course, Notes_Type, Topic. Values are "
+                "comma-separated, e.g. Course, Notes_Type, Topic. Values are "
                 "grouped under the key in the Tags pane (course/algebra), so "
                 "they never collide with a plain tag. Matched "
                 "case-insensitively. Needs a Rebuild index: tags are read when "

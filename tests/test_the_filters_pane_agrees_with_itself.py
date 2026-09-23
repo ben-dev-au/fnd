@@ -65,4 +65,4 @@ def test_one_tag_says_no_mode() -> None:
         match_all=False,
     )
 
-    assert said == "Filters — 1 tag", said
+    assert said == "Filters: 1 tag", said

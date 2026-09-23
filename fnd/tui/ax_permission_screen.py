@@ -93,7 +93,7 @@ class AccessibilityPermissionScreen(ModalScreen[None]):
             yield Static(
                 f"fnd just tried to {self._action_desc}, but macOS blocked the "
                 "automation step because the app that launched fnd isn't in "
-                "Accessibility. The file still opens — you just won't jump to "
+                "Accessibility. The file still opens; you just won't jump to "
                 "the right page until permission is granted.",
                 id="ax_body",
             )
@@ -101,7 +101,7 @@ class AccessibilityPermissionScreen(ModalScreen[None]):
                 "1. Press 'o' (or click below) to open System Settings.\n"
                 "2. Find the app you launched fnd from (Terminal, iTerm, "
                 "VS Code, etc.) and toggle it on.\n"
-                "3. Press 'r' (or click Try again) — no need to restart fnd.",
+                "3. Press 'r' (or click Try again); no need to restart fnd.",
                 id="ax_steps",
             )
             with Horizontal(id="ax_buttons"):

@@ -196,7 +196,7 @@ def filters_title(
         bits.append(f"{n_included_tags} tag{'s' if n_included_tags != 1 else ''}{mode}")
     if n_excluded_tags:
         bits.append(f"−{n_excluded_tags} tag{'s' if n_excluded_tags != 1 else ''}")
-    return "Filters" if not bits else f"Filters — {', '.join(bits)}"
+    return "Filters" if not bits else f"Filters: {', '.join(bits)}"
 
 
 class ScopeController:

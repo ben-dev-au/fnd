@@ -86,4 +86,4 @@ async def test_a_unique_name_stays_bare(
             await pilot.pause()
         title = app._preview_title()
 
-    assert title == "Preview — alone.md", title
+    assert title == "Preview: alone.md", title

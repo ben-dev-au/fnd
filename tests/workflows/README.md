@@ -48,5 +48,5 @@ uv run python tools/workflow_audit.py
    from `conftest.py` to poll for completion rather than fixed
    `pilot.pause()` counts.
 5. Add the workflow to `tools/workflow_audit.py`'s `WORKFLOWS` dict
-   too — that script gives a faster PASS/FAIL summary during
+   too; that script gives a faster PASS/FAIL summary during
    active development.

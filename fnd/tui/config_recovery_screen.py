@@ -158,7 +158,7 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
                 classes="recovery_choice",
             )
             yield Static(
-                "Press 1, 2, or 3 — or e / r / q.",
+                "Press 1, 2, or 3, or e / r / q.",
                 id="recovery_hints",
             )
 

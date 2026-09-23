@@ -540,3 +540,165 @@ async def test_no_block_owns_both_text_and_children():
             if getattr(b, "_blocks", None) and _block_plain(b)  # type: ignore[arg-type]
         ]
         assert offenders == [], f"container blocks must own no text: {offenders}"
+
+
+def test_or_arm_member_never_dims():
+    """``{N}a b OR b`` asserts ``b`` outside the group, so ``b`` never dims."""
+    spec = MatchSpec.from_query("{5}data replication OR replication", auto_fuzzy=False)
+    assert spec.unconstrained_terms == frozenset({"replic"})
+    text = "Data replication here. " + ("filler " * 20) + "A replication engine alone."
+    assert _painted(text, spec) == {"Data": True, "replication": True}
+
+
+def test_group_only_member_still_dims_alongside_an_or_arm():
+    """The exemption is per member: ``data`` is asserted only inside the group,
+    so a lone occurrence still dims while the OR-armed sibling stays full."""
+    spec = MatchSpec.from_query("{5}data replication OR replication", auto_fuzzy=False)
+    text = "A replication engine alone. " + ("filler " * 20) + "Some data here."
+    assert _painted(text, spec) == {"replication": True, "data": False}
+
+
+def test_proximity_without_an_or_arm_still_dims():
+    """Negative control: drop the OR arm and the lone occurrence dims again."""
+    spec = MatchSpec.from_query("{5}data replication", auto_fuzzy=False)
+    assert spec.unconstrained_terms == frozenset()
+    text = "Data replication here. " + ("filler " * 20) + "A replication engine alone."
+    assert _painted(text, spec) == {"Data": True, "replication": False}
+
+
+def test_bare_term_before_a_group_is_unconstrained():
+    """Order-independent: a free term typed ahead of the ``{N}`` counts too."""
+    spec = MatchSpec.from_query("replication OR {5}data replication", auto_fuzzy=False)
+    assert spec.unconstrained_terms == frozenset({"replic"})
+
+
+def test_negated_term_is_not_unconstrained():
+    """``NOT``/``-`` terms are dropped as highlight terms, so they must not
+    exempt a group member from the window."""
+    spec = MatchSpec.from_query("{5}alpha beta -beta", auto_fuzzy=False)
+    assert spec.unconstrained_terms == frozenset()
+
+
+def test_unconstrained_wildcard_member_never_dims():
+    """A glob member exempts on its verbatim token, matching how the group
+    stores it."""
+    spec = MatchSpec.from_query("{2}respons* mobile OR respons*", auto_fuzzy=False)
+    assert spec.unconstrained_terms == frozenset({"respons*"})
+    painted = _painted("The responsive grid " + ("filler " * 20) + "is mobile.", spec)
+    assert painted == {"responsive": True, "mobile": False}
+
+
+def test_unconstrained_member_still_qualifies_its_window():
+    """Exemption removes a token from the dimmable set, not from the window —
+    the group's other member must still be able to reach full through it."""
+    spec = MatchSpec.from_query("{5}data replication OR replication", auto_fuzzy=False)
+    assert _painted("Some data replication here.", spec) == {"data": True, "replication": True}
+
+
+def test_many_arms_each_exempt_independently():
+    """The exemption is per term, not a single flag: across four groups only the
+    members that are also a free arm stay full. Every key carries signal — each
+    word here is a group member, so a blanket exemption or none both fail."""
+    pairs = [("alpha", "bravo"), ("charlie", "delta"), ("echo", "foxtrot"), ("golf", "hotel")]
+    freed = [a for a, _ in pairs]
+    spec = MatchSpec.from_query(
+        " OR ".join(f"{{5}}{a} {b}" for a, b in pairs) + " OR " + " OR ".join(freed),
+        auto_fuzzy=False,
+    )
+    assert len(spec.proximity_groups) == 4
+    gap = " " + ("filler " * 30)
+    words = [w for pair in pairs for w in pair]
+    assert _painted(gap.join(words), spec) == dict.fromkeys(freed, True) | dict.fromkeys(
+        [b for _, b in pairs], False
+    )
+
+
+def test_several_groups_exempt_only_their_own_free_members():
+    """Multiple ``{N}`` groups in one query keep independent windows; only the
+    members also typed as a free arm are exempt from dimming."""
+    spec = MatchSpec.from_query("{5}alpha bravo OR {5}charlie delta OR bravo", auto_fuzzy=False)
+    assert len(spec.proximity_groups) == 2
+    assert spec.unconstrained_terms == frozenset({"bravo"})
+    gap = " " + ("filler " * 30)
+    assert _painted(gap.join(["alpha", "bravo", "charlie", "delta"]), spec) == {
+        "alpha": False,
+        "bravo": True,
+        "charlie": False,
+        "delta": False,
+    }
+
+
+def test_quoted_word_inside_the_operator_is_not_a_free_arm():
+    """``_RUN_TOKEN`` admits a quote inside a ``{N}`` run, so ``{5}"a" "b"`` is
+    the operator's own terms — not two free arms that would exempt the group."""
+    spec = MatchSpec.from_query('{5}"data" "replication"', auto_fuzzy=False)
+    assert spec.proximity_groups == ((("data", "replic"), 5),)
+    assert spec.unconstrained_terms == frozenset()
+    gap = " " + ("filler " * 30)
+    assert _painted("data" + gap + "replication", spec) == {"data": False, "replication": False}
+
+
+def test_quoted_free_arm_still_exempts():
+    """The mirror: a quote typed OUTSIDE the operator is a free arm as usual."""
+    spec = MatchSpec.from_query('{5}data replication OR "replication"', auto_fuzzy=False)
+    assert spec.unconstrained_terms == frozenset({"replic"})
+    gap = " " + ("filler " * 30)
+    assert _painted("data" + gap + "replication", spec) == {"data": False, "replication": True}
+
+
+def test_single_word_slop_phrase_still_reaches_the_loose_terms():
+    """``"x"~N`` is one word, so it is no group — it must survive the group-span
+    blanking and still highlight."""
+    spec = MatchSpec.from_query('"replication"~5', auto_fuzzy=False)
+    assert spec.proximity_groups == ()
+    assert _painted("a replication engine", spec) == {"replication": True}
+
+
+def test_plain_free_arm_exempts_a_glob_member():
+    """Exemption matches the token, so a free ``responsive`` covers the
+    ``respons*`` member it spells differently."""
+    spec = MatchSpec.from_query("{2}respons* mobile OR responsive", auto_fuzzy=False)
+    gap = " " + ("filler " * 30)
+    assert _painted("responsive" + gap + "mobile", spec) == {
+        "responsive": True,
+        "mobile": False,
+    }
+
+
+def test_glob_free_arm_exempts_a_plain_member():
+    """The mirror crossover: a free glob covers a literal member it spans."""
+    spec = MatchSpec.from_query("{2}responsive mobile OR respons*", auto_fuzzy=False)
+    gap = " " + ("filler " * 30)
+    assert _painted("responsive" + gap + "mobile", spec) == {
+        "responsive": True,
+        "mobile": False,
+    }
+
+
+def test_free_arm_synonym_exempts_both_surface_forms():
+    """A free arm's synonyms are asserted as unconditionally as the arm, so
+    ``{2}kubernetes mobile OR k8s`` must not dim a lone ``kubernetes``."""
+    from fnd.synonyms import SynonymTable
+
+    table = SynonymTable.from_groups([["k8s", "kubernetes"]])
+    gap = " " + ("filler " * 30)
+    text = "kubernetes" + gap + "mobile"
+    for query in ("{2}kubernetes mobile OR k8s", "{2}k8s mobile OR kubernetes"):
+        spec = MatchSpec.from_query(query, synonyms=table, auto_fuzzy=False)
+        assert spec.unconstrained_terms == frozenset({"k8s", "kubernet"}), query
+        assert _painted(text, spec)["kubernetes"] is True, query
+
+
+def test_a_groups_own_synonyms_do_not_exempt_it():
+    """Only the FREE run is synonym-expanded into the exemption set — expanding
+    the whole query would let every group exempt itself."""
+    from fnd.synonyms import SynonymTable
+
+    table = SynonymTable.from_groups([["k8s", "kubernetes"]])
+    spec = MatchSpec.from_query("{2}kubernetes mobile", synonyms=table, auto_fuzzy=False)
+    assert spec.unconstrained_terms == frozenset()
+    gap = " " + ("filler " * 30)
+    assert _painted("kubernetes" + gap + "mobile", spec) == {
+        "kubernetes": False,
+        "mobile": False,
+    }

@@ -28,13 +28,13 @@ stored `F_KIND` value), its suffixes, its extractor module, and the
 display `Category` it groups under. The walker, extraction dispatch,
 preview router, config/apps validation, CLI and Filters tree all derive
 their lookups from it, so a new file type is one row plus an extractor.
-Categories are a grouping concept for the UI only — never stored; a
+Categories are a grouping concept for the UI only, never stored; a
 category filter expands to its member kind ids.
 
 **Index** (`fnd/index.py`, `fnd/index_runner.py`, `fnd/schema.py`,
 `fnd/walk.py`). `walk.py` resolves sources to files; `index_runner.py`
 is the async indexer; `schema.py` is the single source of truth for
-Tantivy fields and the schema version (currently 9 — a bump requires a
+Tantivy fields and the schema version (currently 9; a bump requires a
 reindex, gated by the `.fnd-schema-version` sidecar).
 
 A run has two phases, and both must stay answerable to the user:
@@ -56,7 +56,7 @@ Update produces a complete index. `CloudPolicy` bounds each fetch
 so the wait reads as work rather than a hang. It also carries the user's
 live "skip cloud-only files" opt-out; once that is set, the run trades
 completeness for speed and reports what it left behind. Either way a file
-is never dropped silently — one the scan couldn't resolve is counted and
+is never dropped silently: one the scan couldn't resolve is counted and
 logged alongside extraction failures, even though it never reaches the
 per-file loop.
 
@@ -72,8 +72,8 @@ highlight semantics identical to search semantics.
 
 Scope (which collections / sources are live) is owned by
 `ScopeController` and persisted to `state/scope.toml`. That saved
-selection is authoritative; `defaults.collection` — `all` by default, or
-a collection name — only seeds a profile that has never saved one, so the
+selection is authoritative; `defaults.collection` (`all` by default, or
+a collection name) only seeds a profile that has never saved one, so the
 setting can never fight the sidebar. `-c` overrides scope for one launch,
 with `all` as the pseudo-name for every collection (a real collection of
 that name still wins, and new ones can't take it).
@@ -115,11 +115,11 @@ from a test on any host: `launcher.py` takes its process runner (and
 Windows' `os.startfile`) as injected dependencies, `os_labels.py` stays
 deliberately uncached so a test can just repoint `platform.system`, and
 `cloud_files.py` reads the placeholder bit through `os.stat`. Deep-linking
-into a specific app is deliberately *not* a seam concern — that is
+into a specific app is deliberately *not* a seam concern; that is
 per-app, owned by `fnd/apps.py` handlers and `fnd/opener.py` dispatch.
 
 macOS is the tested platform; the Linux and Windows arms of these seams
-are early beta (see the README).
+are alpha (see the README).
 
 ## TUI composition
 
@@ -159,7 +159,7 @@ thread decodes the file's chunks; the mount path then splits by
   `RenderedDocument` into one shared `LineBufferPreview` widget and
   scrolls by line.
 - **Structural** (md/docx/pptx): chunks mount as widgets inside a
-  per-file `PreviewContainer` — focused window first (instant
+  per-file `PreviewContainer`: focused window first (instant
   feedback), background fill bounded by radius, then `LazyMounter`
   extends the mounted region as the user scrolls. `prune_active_to_window`
   keeps the DOM small.
@@ -180,20 +180,20 @@ at call time.
 ## The progress line
 
 One row under the panes, blank at rest, driven by `fnd/tui/progress/`.
-An operation opens a session against an `OperationPlan` — an ordered set
+An operation opens a session against an `OperationPlan`, an ordered set
 of phases, each with an expected duration. Phases with real units report
 them; phases with nothing to count (a single `await build_done`, a layout
 settle) ease on elapsed time. A phase's **weight is its share of the
-plan's total expected duration**, so `calibration` — which records what
+plan's total expected duration**, so `calibration` (which records what
 each phase actually cost and summarises the recent runs, the same shape
-as `cost_estimate.py` — reshapes the bar without any hand-tuned numbers.
+as `cost_estimate.py`) reshapes the bar without any hand-tuned numbers.
 
 A navigation ends when its **match is on screen**, not when the pipeline
 runs dry. Those were the same thing until the capture cache: now the
 mount keeps filling below the fold long after the visible window has
 arrived, and waiting for it held the line over a second past the point
 the match was readable. Arrival is `showing_parent()` reaching the target
-AND `is_painted()` AND the scroll having committed — all three, because
+AND `is_painted()` AND the scroll having committed: all three, because
 dropping the last one clears the line while the view is still moving.
 `pipeline_busy()` stays as the fallback for a navigation that never
 paints at all.
@@ -206,15 +206,15 @@ single consumer in the modal. The mount path therefore has no progress
 calls to keep in step, and no stale exit can strand or steal the line.
 
 Adding a subsystem means adding a plan and a tracker satisfying
-`ProgressTracker` — nothing else knows about it. Each tracker translates
+`ProgressTracker`; nothing else knows about it. Each tracker translates
 its own units (rendered lines, mounted chunks, indexed files) into
 `report(done, total)` at the boundary, and the phase weights turn the
 rest into one 0..1 fraction; that normalisation is what lets operations
 with no unit in common share a line.
 
 A plan also declares its `OperationKind`. INTERACTIVE work answers
-something the user just did and always owns the line; AMBIENT work — a
-background reindex — is *suspended* while that happens and resumes
+something the user just did and always owns the line; AMBIENT work (a
+background reindex) is *suspended* while that happens and resumes
 afterwards, so a run spanning hundreds of navigations is not retired by
 the first one. Since only one can be on screen at a time, ambient is
 also the only class that carries a label, and it paints in a dimmer
@@ -226,13 +226,13 @@ result rather than an inference.
 One known rough edge, left alone deliberately: the ambient label shares
 the bar's single row, and `─` is drawn at the middle of its cell while
 text sits on a baseline near the bottom of one, so the label reads as
-sitting lower than the rule beside it. That is font metrics, not layout —
+sitting lower than the rule beside it. That is font metrics, not layout;
 no alignment rule reaches inside a cell. Every fix costs either a row of
 preview height or a second place for status text, and neither is worth
 it for a label that only appears during a background index.
 
 Sessions are owned: closing one that has already been superseded does
-nothing. Visibility is policy, not caller choice — a session paints on
+nothing. Visibility is policy, not caller choice: a session paints on
 the frame it opens, holds a minimum visible duration, always eases to a
 full line before clearing, and hands its fill to a successor so a held
 cursor key doesn't saw the bar back to zero. Fast work is shown, not
@@ -241,8 +241,8 @@ fast.
 
 ## Warmth in the results list
 
-Coverage makes navigation cost bimodal — a jump whose hits are captured
-is a blit, one that still has to build can be seconds — so the results
+Coverage makes navigation cost bimodal: a jump whose hits are captured
+is a blit, one that still has to build can be seconds, so the results
 tree's toggle arrow says which is coming. `fnd/tui/preview/warmth.py`
 holds the vocabulary; the tree paints it and the progress line picks its
 plan from it, so the arrow cannot promise a fast jump the line then
@@ -253,13 +253,13 @@ not. Shape carries the fact that changes a decision, because at one cell
 a change of brightness alone is hard to read; colour carries the rest,
 with cold taking the score column's accent blue so the two differ in hue
 rather than in brightness. Both cost exactly the two cells the stock
-toggle already occupies, which matters — the pane's name budget is
+toggle already occupies, which matters: the pane's name budget is
 `width - 2 - 7`.
 
 More than two states because the warm host is **serial**: exactly one
 file is ever being captured, so WARMING is a single marker walking
 outward from the cursor rather than churn across the list. Readiness is
-judged on the listed hits alone — the margin around them is captured too,
+judged on the listed hits alone; the margin around them is captured too,
 but a jump lands on a hit and lazy mount fills the rest. FULL is the
 stronger claim that every capturable chunk is held, which is what lets a
 warmed file be mounted whole; ask `WarmState.is_served` rather than
@@ -274,15 +274,15 @@ promotes on read, so probing every listed file twice a second through it
 reordered the whole cache on results-list order and left the file on
 screen first in line for eviction. Anything the tree cannot answer fails
 towards COLD, because Textual's stock arrow is byte-identical to the
-ready glyph — an unknown row would otherwise read as "instant". Match
-rows are left alone — they already carry a glyph for matches the preview
+ready glyph, and an unknown row would otherwise read as "instant". Match
+rows are left alone; they already carry a glyph for matches the preview
 cannot highlight.
 
 ## Concurrency rules
 
 | Owner | Task / primitive | Cancelled by |
 |---|---|---|
-| `SearchController` | search worker (`search`, exclusive, thread) | a newer query. Textual cannot *interrupt* a thread worker that has STARTED, so that stale search runs to completion and is discarded by the generation guard in `_commit`. One that has not started yet is cancelled outright, inside `add_worker` and before the new worker begins — which is why "is a search running?" is asked of the worker manager rather than counted at dispatch |
+| `SearchController` | search worker (`search`, exclusive, thread) | a newer query. Textual cannot *interrupt* a thread worker that has STARTED, so that stale search runs to completion and is discarded by the generation guard in `_commit`. One that has not started yet is cancelled outright, inside `add_worker` and before the new worker begins, which is why "is a search running?" is asked of the worker manager rather than counted at dispatch |
 | `PreviewPresenter` | mount worker (`preview-load`, exclusive), debounce timer, in-flight coalescing latch | file switch / query change (`cancel_mount_task`, latch drop) |
 | `LazyMounter` | scroll-driven mount task + debounce timer | file switch / query change (`cancel`) |
 | `PrefetchEngine` | decode pool (`preview-prefetch`, exclusive), sink queue + drainer task | stale-query signature checks; user mount preempts |
@@ -292,16 +292,16 @@ Auto-resume (`IndexerService.maybe_resume`, opt-in) considers every
 `*.state.toml`, resumes the most recent and chains the rest, and sweeps
 states that can never be resumed (collection deleted, run finished). It
 is the one path that starts indexing without the user asking, so the
-opt-in gate is checked immediately before starting — never before the
+opt-in gate is checked immediately before starting, never before the
 sweep, which should tidy either way.
 
 Invariants: one scroll anchor at a time (arm → reconcile → release);
 a new query drops every preview cache and in-flight task before the
 search result lands; chain continuations re-enter through
 `app.start_indexer` and inherit the current run generation. The event
-`Queue` and the skip-cloud `Event` are reused across a chain's steps —
-the modal's drain holds one queue reference, and a mid-chain opt-out
-should stay opted out — while a fresh run allocates both.
+`Queue` and the skip-cloud `Event` are reused across a chain's steps
+(the modal's drain holds one queue reference, and a mid-chain opt-out
+should stay opted out), while a fresh run allocates both.
 
 ## Module map
 

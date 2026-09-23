@@ -9,12 +9,12 @@ Default**. Each is offered only where it's installed (auto-detected per OS), so
 the picker stays relevant on every machine.
 
 > **Linux and Windows entries are unverified.** They're written from each app's
-> documented command line and exercised only by unit tests — no one has yet
+> documented command line and exercised only by unit tests; no one has yet
 > confirmed them against a live install. If one misbehaves (wrong page, window
 > doesn't focus, app not detected), that's a bug worth reporting, and the
 > `[apps.<id>]` override below is the workaround in the meantime.
 
-The picker's last row, **Reveal in <file manager>**, isn't an opener — it shows
+The picker's last row, **Reveal in <file manager>**, isn't an opener; it shows
 the file selected in Finder / File Explorer / your Linux file manager (also
 bound to `R`). Because it never opens the file, it's deliberately absent from
 the `[app_defaults]` and per-source app pickers.
@@ -75,8 +75,8 @@ percent-encode every byte outside `A-Za-z0-9._~-`.
 
 ## Platform notes
 
-fnd provides the *mechanism* — a data-driven registry plus the `[apps.<id>]`
-config block — and ships a small, well-tested set of built-ins per OS. Anything
+fnd provides the *mechanism* (a data-driven registry plus the `[apps.<id>]`
+config block) and ships a small, well-tested set of built-ins per OS. Anything
 else is a paste-in config you own; good ones are welcome as a PR to the
 catalogue below so other users on your platform get them too.
 
@@ -112,9 +112,9 @@ argv         = ["xreader", "--page-label={page}", "{path}"]
 ### Default PDF viewer (Windows)
 
 Open-only (no page locator). `cmd /c start "" {path}` hands the file to whatever
-app Windows has registered for PDFs — that may be Acrobat, Edge, SumatraPDF, or
+app Windows has registered for PDFs, which may be Acrobat, Edge, SumatraPDF, or
 something else, so the entry is named for what it does, not a specific app. For a
-page-jump-capable viewer, install SumatraPDF (a built-in — see the table above).
+page-jump-capable viewer, install SumatraPDF (a built-in; see the table above).
 
 ```toml
 [apps.default_pdf]

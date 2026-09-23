@@ -213,7 +213,7 @@ def _describe(err: UnknownFilterValueError) -> str:
     """One line naming the problem, and the way out of it if there is one."""
     head = f"{err.flag}: {err.message}" if err.flag else err.message
     if err.hint:
-        return f"{head} — {err.hint}"
+        return f"{head} ({err.hint})"
     if err.known:
         listed = ", ".join(err.known[:_MAX_LISTED])
         more = "" if len(err.known) <= _MAX_LISTED else f", … ({len(err.known)} total)"

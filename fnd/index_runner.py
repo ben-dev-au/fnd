@@ -466,7 +466,7 @@ class CloudPolicy:
         return self.skip is not None and self.skip.is_set()
 
     def skip_reason(self, path: Path) -> str:
-        return f"Only in {provider_label(path)} — skipped for this run"
+        return f"Only in {provider_label(path)}, skipped for this run"
 
     def blocked_reason(self, path: Path, error: BaseException) -> str:
         return f"Could not fetch from {provider_label(path)}: {error}"

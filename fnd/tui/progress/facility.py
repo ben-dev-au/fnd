@@ -446,7 +446,7 @@ class ProgressFacility:
             if now - session._moved_at >= cap:
                 self._log(
                     f"progress: nothing happened for {now - session._moved_at:.1f}s in "
-                    f"{session.operation_id}/{session.phase} — retiring the line"
+                    f"{session.operation_id}/{session.phase}, retiring the line"
                 )
                 session.close()
                 return
