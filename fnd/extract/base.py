@@ -55,7 +55,7 @@ def no_text_reason(path: str | Path) -> str:
 class Block:
     """One renderable element of body_struct (preview pane).
 
-    ``kind`` is one of "h1".."h6", "p", "ul", "ol", "code", "quote".
+    ``kind`` is one of "h1".."h6", "p", "ul", "ol", "code", "quote", "table".
     """
 
     kind: str
@@ -63,11 +63,17 @@ class Block:
     # Line span of this block within its chunk's ``body_md``, when the
     # extractor knows it. Read by the chunk bound; not written to the index.
     span: tuple[int, int] | None = None
+    # A table split by rows: the span of the header its piece is rendered under.
+    head: tuple[int, int] | None = None
 
 
 # The most body a chunk may carry. Enforced for every kind in `_bound.py`,
 # at the dispatcher every extractor's output passes through.
 MAX_CHUNK_CHARS = 8_000
+
+# A table is kept whole up to this, since ranking and proximity are scored per
+# chunk; a bigger one is split by rows and each piece repeats the header.
+MAX_TABLE_CHARS = 4 * MAX_CHUNK_CHARS
 
 
 @dataclass(slots=True)

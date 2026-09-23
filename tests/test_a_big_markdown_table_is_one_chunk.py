@@ -1,10 +1,8 @@
-"""A markdown table is one coherent chunk, and its source survives.
+"""A markdown table is one coherent chunk up to a cap, and its source survives.
 
-A table over the chunk budget was parsed as a raw paragraph (CommonMark has no
-table rule), which overflowed and was split mid-rows: ranking and proximity are
-per-chunk, so a split halves both, and the split pieces lost their body_md so
-the preview rendered the raw pipes instead of a table. A table is a semantic
-unit and must stay one chunk with its verbatim source intact.
+Ranking and proximity are per chunk, so a table stays whole past the chunk
+budget. Past the table cap it is split by rows, and every piece still renders as
+a table because it carries the header.
 """
 
 from __future__ import annotations
@@ -12,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fnd.extract import extract
-from fnd.extract.base import MAX_CHUNK_CHARS
+from fnd.extract.base import MAX_CHUNK_CHARS, MAX_TABLE_CHARS
 
 
 def _table_note(rows: int) -> str:
@@ -78,3 +76,23 @@ def test_a_small_table_keeps_its_section_together(tmp_path: Path) -> None:
 
     assert len(with_table) == 1
     assert "The six dimensions:" in with_table[0].body_md, "prose and table split apart"
+
+
+def test_a_table_past_the_cap_is_split_by_rows_under_its_header(tmp_path: Path) -> None:
+    note = tmp_path / "huge.md"
+    rows = 400
+    note.write_text(_table_note(rows), encoding="utf-8")
+
+    chunks = list(extract(note))
+    pieces = [c for c in chunks if "Question number" in c.body_md]
+
+    assert sum(len(c.body) for c in pieces) > MAX_TABLE_CHARS, "precondition: over the cap"
+    assert len(pieces) > 1
+    assert all(len(c.body) <= MAX_CHUNK_CHARS for c in chunks)
+    for c in pieces:
+        assert c.body_md.startswith("| Front | Back | Category |\n| --- | --- | --- |\n"), (
+            "a piece without its header renders as raw pipes"
+        )
+    for i in range(rows):
+        holding = [c for c in pieces if f"Question number {i} " in c.body_md]
+        assert len(holding) == 1, f"row {i} is in {len(holding)} pieces"
