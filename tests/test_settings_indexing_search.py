@@ -95,7 +95,7 @@ async def test_search_breadcrumb_is_indexing(built_index: Path, cfg: Config) -> 
         lst = screen.query_one(SettingsList)
         for item in lst._items:
             if item.id == "indexing.auto_resume":
-                bc = screen._search_breadcrumbs.get(id(item))
+                bc = screen.query_one(SettingsList)._search_breadcrumbs.get(id(item))
                 assert bc == ("Indexing & PDF Texture",), f"expected combined breadcrumb; got {bc}"
                 return
         pytest.fail("indexing.auto_resume not in filtered results")

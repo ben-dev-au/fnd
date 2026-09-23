@@ -1,14 +1,18 @@
-"""Phase 3 (Settings UX redesign) — Add Collection wizard tests."""
+"""Settings UX redesign: Add Collection wizard tests."""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
+if TYPE_CHECKING:
+    from fnd.config import Config
+
 from fnd.tui import FNDApp
 from fnd.tui.indexer_service import IndexerService
-from tests._pilot_wait import settings_ready, wait_until
+from tests._pilot_wait import screen_ready, settings_ready, wait_until
 
 
 @pytest.fixture
@@ -25,7 +29,9 @@ def test_excludes_presets_exposed() -> None:
 
     assert "hidden" in EXCLUDES_PRESETS
     hidden = EXCLUDES_PRESETS["hidden"]
-    assert hidden["label"] == "Hidden / system"
+    # Not the literal: the walk prunes hidden names whatever this preset says,
+    # so the label may not offer to bring them back.
+    assert "always" in str(hidden["label"]).lower(), hidden["label"]
     assert any(".git" in g for g in hidden["globs"])
     assert hidden["default"] is True  # pre-ticked
     assert "node_modules" in EXCLUDES_PRESETS
@@ -34,8 +40,11 @@ def test_excludes_presets_exposed() -> None:
 
 @pytest.mark.asyncio
 async def test_add_collection_pushes_wizard_with_expected_fields(built_index: Path) -> None:
-    """Spec: Wizard › Single screen — Name, Source path, Includes,
-    Excludes, Frontmatter filter, Follow symlinks, plus the sample tester."""
+    """Wizard rows, named as the rest of Settings names them.
+
+    "Includes" picked file types here and path globs on the source form, from
+    the same TOML key; each row also has to say what it does.
+    """
     from fnd.tui import FNDApp
     from fnd.tui.menu import SECTION_COLLECTIONS
     from fnd.tui.settings_screen import (
@@ -64,12 +73,14 @@ async def test_add_collection_pushes_wizard_with_expected_fields(built_index: Pa
         for required in (
             "Name",
             "Source path",
-            "Includes",
+            "File types",
             "Excludes",
-            "Frontmatter filter",
+            "Frontmatter rule",
             "Follow symlinks",
         ):
             assert required in labels, f"missing field {required!r}; got {labels}"
+        undescribed = [it.label for it in wlst._items if not it.description]
+        assert not undescribed, f"rows with nothing to explain them: {undescribed}"
 
 
 @pytest.mark.asyncio
@@ -88,7 +99,7 @@ async def test_includes_field_opens_filetypes_picker(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(AddCollectionWizard())
-        await pilot.pause()
+        await screen_ready(pilot, app, AddCollectionWizard)
         wiz = app.screen
         assert isinstance(wiz, AddCollectionWizard)
         lst = wiz.query_one(SettingsList)
@@ -114,7 +125,7 @@ async def test_excludes_field_opens_presets_picker_with_defaults(built_index: Pa
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(AddCollectionWizard())
-        await pilot.pause()
+        await screen_ready(pilot, app, AddCollectionWizard)
         wiz = app.screen
         assert isinstance(wiz, AddCollectionWizard)
         lst = wiz.query_one(SettingsList)
@@ -146,7 +157,7 @@ async def test_path_validation_inline(tmp_path: Path, built_index: Path) -> None
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(AddCollectionWizard())
-        await pilot.pause()
+        await screen_ready(pilot, app, AddCollectionWizard)
         wiz = app.screen
         assert isinstance(wiz, AddCollectionWizard)
         lst = wiz.query_one(SettingsList)
@@ -230,7 +241,8 @@ async def test_save_writes_collection_and_reindexes(
         src = cfg.collections["research"].sources[0]
         assert str(src.path) == str(real_dir)
         # Includes are mapped to globs.
-        assert "**/*.md" in src.includes
+        assert src.filters is not None
+        assert "md" in (src.filters.kinds or [])
         # Excludes from the `hidden` preset are present.
         assert any(".git" in g for g in src.excludes)
 
@@ -300,7 +312,7 @@ async def test_excludes_picker_includes_custom_entry(built_index: Path) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         app.push_screen(AddCollectionWizard())
-        await pilot.pause()
+        await screen_ready(pilot, app, AddCollectionWizard)
         wiz = app.screen
         assert isinstance(wiz, AddCollectionWizard)
         lst = wiz.query_one(SettingsList)
@@ -335,11 +347,16 @@ async def test_set_includes_stores_kinds_all_maps_to_empty(built_index: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_source_form_uses_picker_for_includes(
+async def test_source_form_shows_include_globs_as_ticked_file_types(
     built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Spec: Per-source form — Includes is a multi-select picker pre-checked
-    from the existing globs (parsed back into the indexer ext set)."""
+    """Spec: existing include globs show as pre-checked file types.
+
+    They are stated once, as ``filters.kinds``, so the guarantee lives
+    in Index filters rather than a second picker beside it.
+    """
+    from textual.widgets import Static
+
     from fnd.config import (
         CollectionConfig,
         SourceConfig,
@@ -347,11 +364,10 @@ async def test_source_form_uses_picker_for_includes(
     )
     from fnd.tui import FNDApp
     from fnd.tui.settings_screen import (
+        FilterBrowserScreen,
         SettingsList,
         SourceFormScreen,
-        TreePickerScreen,
     )
-    from fnd.tui.widgets.toggle_tree import ToggleTree
 
     cfg_path = tmp_path / "config.toml"
     monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
@@ -373,22 +389,32 @@ async def test_source_form_uses_picker_for_includes(
 
         app._config = load()
         app.push_screen(SourceFormScreen(collection_name="probe2", source_index=0))
-        await pilot.pause()
+        await screen_ready(pilot, app, SourceFormScreen)
         form = app.screen
         assert isinstance(form, SourceFormScreen)
         lst = form.query_one(SettingsList)
-        idx = next(i for i, it in enumerate(lst._items) if it.id == "form.includes")
-        # The row must be a multi-select picker, not a free-text scalar.
-        assert lst._items[idx].kind == "picker"
-        lst.cursor_index = idx
-        await pilot.press("enter")
-        await pilot.pause()
-        picker = app.screen
-        assert isinstance(picker, TreePickerScreen)
-        tree = picker.query_one("#tree_picker", ToggleTree)
-        # md and pdf pre-selected from the existing globs.
-        assert "md" in tree.selected
-        assert "pdf" in tree.selected
+        assert not any(it.id == "form.includes" for it in lst._items), (
+            "a second file-type picker beside Index filters is the duplication"
+        )
+        lst.cursor_index = next(i for i, it in enumerate(lst._items) if it.id == "form.filters")
+        await pilot.press("right")
+        for _ in range(400):
+            await pilot.pause()
+            if isinstance(app.screen, FilterBrowserScreen):
+                break
+        browser = app.screen
+        assert isinstance(browser, FilterBrowserScreen)
+        while browser._scanning:
+            await pilot.pause()
+        # The globs are not shown as ticked kinds: saving them back as kinds
+        # would widen ``**/*.md`` to the whole ``md`` kind, ``.markdown``
+        # included. The browser says they are in force instead.
+        # Painted, not the stored renderable: the box refits to its width.
+        box = browser.query_one("#filter_summary", Static)
+        painted = " ".join(box.render_line(y).text for y in range(box.size.height))
+        summary = " ".join(painted.split())
+        assert "restricted to paths" in summary, summary
+        assert "**/*.md" in summary
 
 
 @pytest.mark.asyncio
@@ -436,7 +462,7 @@ async def test_source_form_excludes_picker_round_trips_hidden_preset(
 
         app._config = load()
         app.push_screen(SourceFormScreen(collection_name="probe3", source_index=0))
-        await pilot.pause()
+        await screen_ready(pilot, app, SourceFormScreen)
         form = app.screen
         assert isinstance(form, SourceFormScreen)
         lst = form.query_one(SettingsList)
@@ -481,3 +507,77 @@ async def test_save_with_missing_name_shows_inline_error(
         assert "required" in rendered
         # The widget is no longer hidden after the error fires.
         assert "-hidden" not in err.classes
+
+
+@pytest.mark.asyncio
+async def test_the_wizard_editor_stays_inside_its_panel(built_index: Path) -> None:
+    """It docked to the screen while the panel is centred, so it painted at
+    the terminal's left edge, detached from the row it was editing."""
+    from textual.widgets import Input
+
+    from fnd.tui import FNDApp
+    from fnd.tui.settings_screen import AddCollectionWizard, SettingsList
+
+    app = FNDApp(index_dir=built_index)
+    async with app.run_test(size=(94, 26)) as pilot:
+        await pilot.pause()
+        app.push_screen(AddCollectionWizard())
+        for _ in range(20):
+            await pilot.pause()
+        wizard = app.screen
+        panel = wizard.query_one("#settings_box")
+        closed_width = panel.region.width
+        wizard.query_one(SettingsList).cursor_index = 0
+        await pilot.press("enter")
+        for _ in range(8):
+            await pilot.pause()
+        editor = wizard.query_one("#editor_input", Input)
+        assert editor.has_focus
+        assert panel.region.contains_region(editor.region), "the editor left its panel"
+        assert panel.region.width == closed_width, "the panel resized as editing began"
+
+
+class TestTheWizardShowsWhatWillBeIndexed:
+    """Setting nothing does not mean "every type": the source it writes
+    inherits `defaults.filters`, so a default of `kinds = ["md"]` was painted
+    as "every type" while the new collection indexed 3 files of 12."""
+
+    @staticmethod
+    async def _rows(config: Config, pilot_size: tuple[int, int] = (110, 26)) -> dict[str, Any]:
+        from fnd.tui import FNDApp
+        from fnd.tui.settings_screen import AddCollectionWizard
+
+        app = FNDApp(index_dir=Path("/nonexistent"), config=config)
+        async with app.run_test(size=pilot_size) as pilot:
+            await pilot.pause()
+            app.push_screen(AddCollectionWizard())
+            for _ in range(20):
+                await pilot.pause()
+            wizard = app.screen
+            assert isinstance(wizard, AddCollectionWizard)
+            return {
+                item.id: item.value_getter(app)
+                for item in wizard._build_field_items()
+                if item.value_getter
+            }
+
+    @pytest.mark.asyncio
+    async def test_inherited_filters_are_named(self) -> None:
+        from fnd.config import Config, DefaultFilters, Defaults
+
+        config = Config(
+            defaults=Defaults(filters=DefaultFilters(kinds=["md"], frontmatter="Course == 'A'"))
+        )
+        rows = await self._rows(config)
+        assert "md" in rows["wiz.includes"]
+        assert "inherited" in rows["wiz.includes"], rows["wiz.includes"]
+        assert "Course == 'A'" in rows["wiz.filter"]
+        assert "every type" not in rows["wiz.includes"], "the claim that was false"
+
+    @pytest.mark.asyncio
+    async def test_without_defaults_it_still_reads_plainly(self) -> None:
+        from fnd.config import Config
+
+        rows = await self._rows(Config())
+        assert rows["wiz.includes"] == "every type"
+        assert rows["wiz.filter"] == "(none)"
