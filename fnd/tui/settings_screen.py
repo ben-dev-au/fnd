@@ -6610,8 +6610,12 @@ class FilterBrowserScreen(Screen[None]):
 
         from fnd.filters.tree_model import custom_ids, selection_for, spec_branches
 
+        # A sample lands on a worker's schedule, so it can find the browser
+        # closed or torn down; raising there fails the worker and the app.
+        tree = next(self.query("#filter_tree").results(ToggleTree), None)
+        if tree is None:
+            return
         self._resample_if_stale()
-        tree = self.query_one("#filter_tree", ToggleTree)
         keep = tree.expanded_group_ids if tree.root.children else set()
         line = tree.cursor_line
         self._kept_custom.update(custom_ids(self._spec))

@@ -23,6 +23,7 @@ from fnd.tui import FNDApp
 from fnd.tui.settings_screen import FilterBrowserScreen
 from fnd.tui.widgets.clear_bar import RETURN_TO_DEFAULTS, ClearFiltersBar, clear_label
 from fnd.tui.widgets.toggle_tree import ToggleTree
+from tests._pilot_wait import wait_until
 
 _SAMPLE = SourceSample(kinds={"md": 3}, tags={"frontmatter": {"no_index": 1, "keep": 2}})
 _DEFAULTS = (FilterSpec(exclude_tags={"frontmatter": ("no_index",)}), True, True)
@@ -50,8 +51,15 @@ async def _browser(
         on_save=lambda *_a: None,
     )
     app.push_screen(screen)
-    for _ in range(25):
-        await pilot.pause()  # type: ignore[attr-defined]
+    await wait_until(
+        pilot,  # type: ignore[arg-type]
+        lambda: (
+            app.screen is screen
+            and bool(screen.query_one("#filter_tree", ToggleTree).root.children)
+        ),
+        timeout=15,
+        message="the filter browser never drew its rows",
+    )
     return screen
 
 
@@ -119,11 +127,11 @@ async def test_up_from_the_top_row_reaches_it(tmp_index_dir: Path) -> None:
         tree = app.screen.query_one("#filter_tree", ToggleTree)
         tree.focus()
         tree.cursor_line = 0
-        for _ in range(4):
-            await pilot.pause()
+        await wait_until(pilot, lambda: app.screen.focused is tree, timeout=10)
         await pilot.press("up")
-        for _ in range(4):
-            await pilot.pause()
+        await wait_until(
+            pilot, lambda: isinstance(app.screen.focused, ClearFiltersBar), timeout=10, quiet=True
+        )
         focused = app.screen.focused
 
     assert isinstance(focused, ClearFiltersBar), focused
@@ -137,11 +145,14 @@ async def test_enter_on_the_row_returns_and_hands_focus_back(tmp_index_dir: Path
         screen = await _browser(app, pilot, FilterSpec(kinds=("md",)), inherited=_DEFAULTS)
         bar = app.screen.query_one("#clear_filters_bar", ClearFiltersBar)
         bar.focus()
-        for _ in range(4):
-            await pilot.pause()
+        await wait_until(pilot, lambda: app.screen.focused is bar, timeout=10)
         await pilot.press("enter")
-        for _ in range(8):
-            await pilot.pause()
+        await wait_until(
+            pilot,
+            lambda: isinstance(app.screen.focused, ToggleTree) and not bar.visible,
+            timeout=10,
+            quiet=True,
+        )
         spec, focused, visible = screen._spec, app.screen.focused, bar.visible
 
     assert spec == _DEFAULTS[0], spec
@@ -238,8 +249,7 @@ class TestTheKeyAndTheRowAgree:
             screen = await _browser(app, pilot, FilterSpec(kinds=("md",)), inherited=_DEFAULTS)
             key = app._fnd_keymap.for_action("clear_filters") or "X"
             await pilot.press(key)
-            for _ in range(8):
-                await pilot.pause()
+            await wait_until(pilot, lambda: screen._spec == _DEFAULTS[0], timeout=10, quiet=True)
             spec = screen._spec
 
         assert spec == _DEFAULTS[0], spec
