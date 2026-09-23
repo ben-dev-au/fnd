@@ -24,6 +24,7 @@ takes a frontmatter dict and returns a bool.
 from __future__ import annotations
 
 import datetime as dt
+import fnmatch
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -546,9 +547,12 @@ def _eval_compare(fm: Mapping[str, object], field: str, op: str, value: object) 
     if op == "~~":
         if not isinstance(actual, str) or not isinstance(value, str):
             return False
-        # The walker's glob language, so a rule over file.path answers what
-        # the walk itself would.
-        return PathGlob(value).matches(actual)
+        # A path takes the walker's glob language, so a rule over file.path
+        # answers what the walk would; any other string (a URL, a slashed tag)
+        # is not a path, and keeps the fnmatch reading legacy rules were written in.
+        if field == "file.path":
+            return PathGlob(value).matches(actual)
+        return fnmatch.fnmatchcase(actual, value)
     # Ordered compares: numeric-numeric or date-date only.
     if op in ("<", ">", "<=", ">="):
         if not _orderable(actual, value):
