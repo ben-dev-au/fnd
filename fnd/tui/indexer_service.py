@@ -164,6 +164,18 @@ class IndexerService:
                             chain_index=chain_index,
                         )
                     )
+                else:
+                    # A caller that wanted no modal still has to learn its
+                    # request was dropped: Delete-source promises a rebuild
+                    # "straight afterwards", and silence leaves the folder searchable.
+                    with contextlib.suppress(Exception):
+                        self._app.notify(
+                            f"Indexing '{self.collection or collection}' is already "
+                            f"running, so '{collection}' was not re-indexed. Run it "
+                            "again once this finishes.",
+                            severity="warning",
+                            timeout=8,
+                        )
                 return False
             # In flight but already cancelling (cancel-then-start-again):
             # serialise — bump the generation so the dying run's teardown
@@ -426,7 +438,22 @@ class IndexerService:
 
         # The opt-in gate is checked after the sweep so stale files get tidied
         # either way; it only guards actually *starting* work.
-        if not cfg.defaults.indexer_auto_resume or not resumable:
+        if not resumable:
+            return
+        if not cfg.defaults.indexer_auto_resume:
+            # Opting out of auto-resume is not opting out of being told: a run
+            # stopped at 210 of 3000 otherwise reads as whole on every screen
+            # while searches answer from 7% of it.
+            names = ", ".join(sorted({s.collection for s in resumable}))
+            first = resumable[0]
+            with contextlib.suppress(Exception):
+                self._app.notify(
+                    f"{names} indexed only {first.files_completed} of "
+                    f"{first.total_files} files. Update it to finish.",
+                    title="Interrupted index",
+                    severity="warning",
+                    timeout=10,
+                )
             return
 
         first, rest = resumable[0], resumable[1:]
@@ -495,6 +522,21 @@ class IndexerService:
 
         self._app.run_worker(_run, thread=True, exclusive=True, group=f"reindex-{name}")
 
+    def _refresh_open_settings(self) -> None:
+        """Repaint any settings screen that was left open across the run.
+
+        Backgrounding the modal resumes the settings screen mid-run, so its
+        rows describe a run still in flight and `on_screen_resume` never fires
+        again: a collection kept `⚠ nothing indexed` after its own modal
+        reported Done.
+        """
+        from fnd.tui.settings_screen import SettingsScreen
+
+        for screen in list(getattr(self._app, "screen_stack", [])):
+            if isinstance(screen, SettingsScreen):
+                with contextlib.suppress(Exception):
+                    screen.refresh_items()
+
     def on_reindex_complete(self) -> None:
         """Swap the in-memory ``Searcher`` for a fresh one after a rebuild.
 
@@ -513,5 +555,11 @@ class IndexerService:
         # A rebuild may have added a new file-type kind — drop the present-kinds
         # cache so the file-type filter recomputes on the next panel refresh.
         self._app._scope.invalidate_present_kinds_cache()
+        # And take that refresh now. The facets are index-derived, so without
+        # this the pane keeps the launch snapshot: a tag whose files have all
+        # gone stays offered, and one the run admitted cannot be reached.
+        with contextlib.suppress(Exception):
+            self._app._scope.refresh_filters_panel()
+        self._refresh_open_settings()
         if self._app._search.current_query:
             self._app._search.run(self._app._search.current_query)

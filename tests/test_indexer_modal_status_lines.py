@@ -7,8 +7,11 @@ from fnd.tui.indexer_modal import _format_indexed_line, _format_texturising_line
 
 def test_indexed_line_drops_failed_tail_when_zero() -> None:
     out = _format_indexed_line(newly=5, already=8, failed=0)
-    assert "5 newly indexed" in out
-    assert "8 already indexed" in out
+    # Not "newly indexed"/"already indexed": the long form overflows a
+    # 75%-wide modal at 80 columns and clips the last count to a bare digit.
+    # The label above them reads "Indexed:".
+    assert "5 new" in out
+    assert "8 already" in out
     assert "failed" not in out
     assert "⚠" not in out
 
@@ -20,8 +23,10 @@ def test_indexed_line_shows_failed_when_nonzero() -> None:
 
 def test_texturising_line_drops_still_flat_when_zero() -> None:
     out = _format_texturising_line(newly=4, already=2, still_flat=0)
-    assert "4 newly textured" in out
-    assert "2 already textured" in out
+    # Shortened with the Indexed line: the long form clipped inside the
+    # Completed tree, which indents and does not wrap.
+    assert "4 new" in out
+    assert "2 already" in out
     assert "still flat" not in out
     assert "⚠" not in out
 
