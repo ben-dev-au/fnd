@@ -1,4 +1,4 @@
-"""Schema-migration helpers (§5.5e-2 close-out).
+"""Schema-migration helpers.
 
 When ``SCHEMA_VERSION`` bumps, existing on-disk indexes have a stale
 sidecar. The runtime gates in :func:`fnd.index._ensure_index` and
@@ -64,11 +64,32 @@ def check_schema_status(index_dir: Path) -> tuple[SchemaStatus, str | None]:
     return SchemaStatus.READY, None
 
 
+def _next_step(config: Config, *, invoked: str = "") -> str:
+    """What to do next, given what has been done already and what was just run.
+
+    ``invoked`` names the command that is printing, and it is never the
+    advice: a user who has just run `collection add` or `fnd tui` is not told
+    to run it again.
+    """
+    names = list(config.collections)
+    if not names:
+        add = "`fnd collection add <name> --source <path>`"
+        if invoked == "tui":
+            return f"No collections yet. Add one with {add}, then run `fnd tui` again."
+        return (
+            f"No collections yet. Add one with {add}, or run `fnd tui` and choose Add Collection."
+        )
+    listed = ", ".join(f"`fnd collection reindex {name}`" for name in names[:3])
+    more = " (and your other collections)" if len(names) > 3 else ""
+    return f"Build it with {listed}{more}."
+
+
 def prompt_and_rebuild_or_exit(
     *,
     index_dir: Path,
     config: Config,
     is_tty: bool | None = None,
+    invoked: str = "",
 ) -> None:
     """Read-side CLI helper: detect schema state, prompt to rebuild on
     TTY, exit 1 with a clear command on non-TTY.
@@ -83,12 +104,7 @@ def prompt_and_rebuild_or_exit(
     if status is SchemaStatus.READY:
         return
     if status is SchemaStatus.EMPTY:
-        typer.echo(
-            f"no index at {index_dir}. Configure a collection with "
-            f"`fnd collection add <name> --source <path>` "
-            f"then run `fnd collection reindex <name>`.",
-            err=True,
-        )
+        typer.echo(f"no index at {index_dir}. {_next_step(config, invoked=invoked)}", err=True)
         raise typer.Exit(code=1)
 
     # STALE.

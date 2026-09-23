@@ -12,11 +12,12 @@ Phases 1-3 surface:
 
 from __future__ import annotations
 
+import contextlib
 import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import typer
 
@@ -75,9 +76,60 @@ def _rewrite_default_command(argv: list[str]) -> list[str]:
     return ["tui", *argv]
 
 
+#: Invocations that only report, so must not migrate: otherwise `fnd --help`
+#: rewrites the config as a side effect, and `config validate` replaces what it
+#: is validating.
+_REPORT_ONLY = frozenset({"--help", "-h", "--version", "--show-completion"})
+
+
+def _reports_only(argv: list[str]) -> bool:
+    """Whether this invocation must leave the config file alone."""
+    if any(arg in _REPORT_ONLY for arg in argv):
+        return True
+    return argv[:1] == ["version"] or argv[:2] in (["config", "validate"], ["config", "show"])
+
+
 def main() -> None:
     """Console-script entry point: rewrite argv, then dispatch to Typer."""
-    app(args=_rewrite_default_command(sys.argv[1:]))
+    import sys
+
+    from pydantic import ValidationError
+
+    if not _reports_only(sys.argv[1:]):
+        _migrate_config()
+    try:
+        app(args=_rewrite_default_command(sys.argv[1:]))
+    except ValidationError as e:
+        # An unknown or malformed key is refused rather than ignored, so it has
+        # to be legible here: a pydantic dump is not an answer to "why will fnd
+        # not start".
+        from fnd.config import default_config_path
+
+        typer.echo(f"fnd: {default_config_path()} could not be loaded.", err=True)
+        for problem in e.errors():
+            where = ".".join(str(part) for part in problem["loc"])
+            typer.echo(f"  {where}: {problem['msg']}", err=True)
+        typer.echo("Edit it with `fnd config edit`, or check `fnd config validate`.", err=True)
+        raise SystemExit(1) from e
+
+
+def _migrate_config() -> None:
+    """Bring the config file up to the current shape once, before anything
+    reads it. A failure here must not stop the app starting: the config is
+    still loadable in its old shape, and the recovery screen handles the rest.
+    """
+    from fnd.config import ensure_current
+    from fnd.config_migrations import ConfigTooNewError
+
+    try:
+        applied = ensure_current()
+    except ConfigTooNewError as e:
+        typer.echo(f"fnd: {e}", err=True)
+        raise SystemExit(1) from e
+    except Exception:
+        return
+    for step in applied:
+        typer.echo(f"fnd: config updated, {step[:1].lower()}{step[1:]}", err=True)
 
 
 # ── Top-level commands ────────────────────────────────────────────────────
@@ -98,18 +150,38 @@ def index(
 ) -> None:
     """Index documents under ROOT (ad-hoc, single-root). For configured
     collections use ``fnd collection reindex <name>``."""
-    from fnd.config import load
-    from fnd.index import build_index
+    from fnd.config import CollectionConfig, SourceConfig, load, resolve_filters
+    from fnd.index import build_index_from_config
 
-    defaults = load().defaults
-    written = build_index(
-        roots=[root],
-        index_dir=default_index_dir(),
+    config = load()
+    defaults = config.defaults
+    # Through the configured path, not the raw walk: ad-hoc means "no collection
+    # needed", not "ignore the filters you set", so `fnd index` excludes what
+    # `collection reindex` excludes (a file tagged never-index among them).
+    source = SourceConfig(path=root)
+    source._resolved_filters = resolve_filters(source.filters, defaults.filters)
+    written = build_index_from_config(
+        config=CollectionConfig(sources=[source]),
         collection=collection,
+        index_dir=default_index_dir(),
+        # One root is never the whole collection, so nothing this walk missed
+        # is stale. Pruning here would empty a configured collection down to the
+        # ad-hoc root while reporting success.
+        prune=False,
         tag_sources=tuple(defaults.tag_sources),
         tag_frontmatter_keys=tuple(defaults.tag_frontmatter_keys),
     )
     typer.echo(f"indexed {written} chunks under {root} → collection {collection}")
+    if collection not in config.collections:
+        # The chunks are searchable by name, but `collection list` reports no
+        # such collection and nothing in the TUI can reach it, so there is no
+        # way to reindex or remove it later.
+        typer.echo(
+            f"fnd: {collection!r} is not in your config, so it will not appear in "
+            f"`fnd collection list` or the sidebar. Add it with "
+            f"`fnd collection add {collection} --source {root}` to manage it.",
+            err=True,
+        )
 
 
 def parse_filter_flags(
@@ -232,7 +304,7 @@ def tui(
     collection = resolve_launch_collection(collection, cfg, issues)
     resolve_or_exit(issues)
 
-    prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg)
+    prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg, invoked="tui")
 
     # Spawn the PDF extraction worker before Textual's run() rewires
     # stdin/stderr. macOS multiprocessing.spawn validates fds_to_keep
@@ -357,6 +429,12 @@ def search(
     if prefix_clauses:
         query = f"{' '.join(prefix_clauses)} {query}".strip()
 
+    if limit < 1:
+        # Tantivy takes it unchecked: 0 panics out of Rust with a build
+        # path in the message, and a negative one overflows into usize.
+        typer.echo(f"--limit must be 1 or more, not {limit}", err=True)
+        raise typer.Exit(code=2)
+
     prompt_and_rebuild_or_exit(index_dir=default_index_dir(), config=cfg)
 
     # Tags never enter the query string — see fnd/tag_query.py. They are
@@ -422,7 +500,7 @@ def search(
         typer.echo(f"invalid filter: {e.message} (col {e.column})", err=True)
         raise typer.Exit(code=1) from e
     except QuerySyntaxError as e:
-        typer.echo(e.message if not e.hint else f"{e.message} ({e.hint})", err=True)
+        typer.echo(e.message if not e.hint else f"{e.message}: {e.hint}", err=True)
         raise typer.Exit(code=1) from e
     except QueryTooLargeError as e:
         typer.echo(str(e), err=True)
@@ -490,7 +568,8 @@ def config_path() -> None:
 @config_app.command("edit")
 def config_edit() -> None:
     """Open the config TOML in $EDITOR; create from template if missing."""
-    from fnd.config import CONFIG_TEMPLATE, app_data_dir, default_config_path
+    from fnd._perms import secure_write_text
+    from fnd.config import app_data_dir, default_config_path, starter_config
 
     path = default_config_path()
     if not path.exists():
@@ -500,7 +579,7 @@ def config_edit() -> None:
             # Fallback path was returned; create primary instead.
             path = app_data_dir() / "config.toml"
             path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(CONFIG_TEMPLATE, encoding="utf-8")
+        secure_write_text(path, starter_config())
         typer.echo(f"wrote starter template to {path}")
 
     editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
@@ -579,7 +658,8 @@ def collection_add(
     source: list[Path] = typer.Option(
         ...,
         "--source",
-        help="Root directory for this collection. Repeat to add multiple.",
+        help="Root directory for this collection. One per command; "
+        "run it again to add another source.",
     ),
     include: list[str] = typer.Option(
         [],
@@ -630,15 +710,51 @@ def collection_add(
 
     cfg_path = default_config_path()
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    from fnd.config import SourceFilters
+
     new_source = SourceConfig(
         path=source[0],
         includes=list(include),
         excludes=list(exclude),
         follow_symlinks=follow_symlinks,
-        frontmatter_filter=filter,
+        # The current shape, not the deprecated `frontmatter_filter`: a new
+        # write should not create something the next migration has to move.
+        filters=SourceFilters(frontmatter=filter) if filter else None,
     )
+    # Read before the write: the sibling set is what the new source is being
+    # compared against, and after the write it contains the new source itself.
+    from fnd.config import load as _load
+    from fnd.config import overlapping_source
+
+    existing = []
+    with contextlib.suppress(Exception):
+        prior = _load(cfg_path).collections.get(name)
+        existing = list(prior.sources) if prior else []
+    overlap, overlap_contains = overlapping_source(existing, new_source)
     write_collection_source(config_path=cfg_path, collection_name=name, source=new_source)
     typer.echo(f"added source {source[0]} to collection {name} in {cfg_path}")
+    if overlap:
+        relation = "already covers" if overlap_contains else "is already inside"
+        typer.echo(
+            f"fnd: this folder {relation} {overlap} in {name}; files "
+            f"reached by both are indexed once.",
+            err=True,
+        )
+    root = Path(source[0]).expanduser()
+    if not root.exists():
+        # Indexing it yields nothing and says nothing, so a typo looks like a
+        # working collection until the first search comes back empty.
+        typer.echo(
+            f"fnd: {source[0]} does not exist; indexing it will find no files.",
+            err=True,
+        )
+    elif root.is_symlink() and not follow_symlinks:
+        typer.echo(
+            f"fnd: {source[0]} is a symlink and follow-symlinks is off, so this "
+            f"source will index nothing. Re-add it with --follow-symlinks, or "
+            f"point it at the real folder.",
+            err=True,
+        )
 
 
 @collection_app.command("reindex")
@@ -650,7 +766,14 @@ def collection_reindex(
         "--collection",
         help="Collection(s) to index, comma-separated, or 'all' for every one.",
     ),
-    rebuild: bool = typer.Option(False, "--rebuild", help="Drop existing chunks first."),
+    rebuild: bool = typer.Option(
+        False,
+        "--rebuild",
+        help=(
+            "Re-extract every file rather than only changed ones. Required when the "
+            "index is on an older schema, which clears the whole index first."
+        ),
+    ),
 ) -> None:
     """Index (or re-index) configured collections.
 
@@ -662,12 +785,12 @@ def collection_reindex(
     """
     from fnd.cli_scope import FilterIssues, resolve_collection_option, resolve_or_exit
     from fnd.config import load
-    from fnd.index_runner import run_sync
+    from fnd.index_runner import IndexRunError, run_sync
     from fnd.query_errors import MissingFilterValueError
 
     cfg = load()
     if name is not None and collection is not None and name != collection:
-        typer.echo(f"-c: given twice ({collection!r} and {name!r}). Use one.", err=True)
+        typer.echo(f"-c: given twice, {collection!r} and {name!r}. Use one.", err=True)
         raise typer.Exit(code=2)
     raw = collection if collection is not None else name
     # A typo here used to surface as a raw KeyError traceback.
@@ -690,20 +813,44 @@ def collection_reindex(
     scoped = resolve_collection_option(raw, cfg, issues, flag="-c")
     resolve_or_exit(issues)
     targets = scoped if scoped is not None else list(cfg.collections)
-    if not targets:
-        typer.echo("no collections configured; add one with `fnd collection add`")
+    # An empty config skips the vocabulary check, since an ad-hoc
+    # `fnd index -c <name>` is legitimate. A collection you can RE-index is
+    # not: without this the name reached cfg.collection() as a raw KeyError.
+    unknown = [t for t in targets if t not in cfg.collections]
+    if not targets or unknown:
+        if not cfg.collections:
+            typer.echo("no collections configured; add one with `fnd collection add`", err=True)
+        else:
+            typer.echo(f"-c: no collection named {unknown[0]!r}", err=True)
         raise typer.Exit(1)
     if len(targets) > 1:
         typer.echo(f"indexing {len(targets)} collections: {', '.join(targets)}")
     total = 0
     for target in targets:
-        written = run_sync(
-            config=cfg.collection(target),
-            collection=target,
-            index_dir=default_index_dir(),
-            rebuild=rebuild,
-        )
+        # A run that could not read a source KEPT its files rather than
+        # pruning them, and saying nothing about that reads like a healthy run.
+        blocked: list[str] = []
+
+        def _watch(ev: Any, blocked: list[str] = blocked) -> None:
+            if ev.kind == "done" and ev.unreadable_sources:
+                blocked.extend(ev.unreadable_sources)
+
+        try:
+            written = run_sync(
+                config=cfg.collection(target),
+                collection=target,
+                index_dir=default_index_dir(),
+                rebuild=rebuild,
+                progress_callback=_watch,
+            )
+        except IndexRunError as e:
+            typer.echo(f"error: {target} was not indexed. {e}", err=True)
+            raise typer.Exit(code=1) from e
         typer.echo(f"indexed {written} chunks for collection {target}")
+        for root in blocked:
+            typer.echo(
+                f"warning: could not read {root}; kept existing chunks for {target}", err=True
+            )
         total += written
     if len(targets) > 1:
         typer.echo(f"indexed {total} chunks across {len(targets)} collections")
