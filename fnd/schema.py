@@ -1,6 +1,6 @@
 """Tantivy schema definition — single source of truth for the index format.
 
-Per plan §11. Changing fields = full reindex; the writer compares
+Changing fields = full reindex; the writer compares
 ``SCHEMA_VERSION`` against the index sidecar and refuses to load on mismatch.
 
 Fields:
@@ -9,7 +9,9 @@ Fields:
 Field             Type     Indexed   Stored  Fast  Purpose
 ================  =======  ========  ======  ====  ============================================
 parent_id         text     raw       yes     yes   groups chunks per file (sha1 of abs path)
-collection        text     raw       yes     yes   collection scoping
+collection        text     raw       yes     yes   multi-valued: collections a file belongs to
+source_path       text     raw       yes     yes   multi-valued: source roots reaching the file
+membership        text     raw       yes     no    multi-valued (collection, source) for source scope
 path              text     raw       yes     no    filesystem path (display + open)
 path_tokens       text     default   no      no    tokenized for path matching
 mtime             u64      yes       yes     yes   incremental skip + recency boost
@@ -43,12 +45,21 @@ from tantivy import Schema, SchemaBuilder
 # v9 (2026-07-23): fine-grained kinds + new suffixes (epub, html, ipynb, odf,
 # per-language code, data/config). No field or schema-shape change — the bump
 # forces a reindex so existing collections pick up the newly-supported files.
-SCHEMA_VERSION: Final[int] = 9
+# v10 (2026-09-18): normalise cross-collection storage. A file is stored once,
+# not once per collection: F_COLLECTION is multi-valued (the set a file belongs
+# to) and F_MEMBERSHIP carries compound (collection, source) tokens for exact
+# source scope. The bump forces the one reindex that collapses divergent copies.
+SCHEMA_VERSION: Final[int] = 10
 
 # Field-name constants so callers don't sprinkle string literals.
 F_PARENT_ID: Final = "parent_id"
+# Multi-valued: the set of collections a (once-stored) file belongs to.
 F_COLLECTION: Final = "collection"
 F_SOURCE_PATH: Final = "source_path"
+# Multi-valued compound (collection, source) tokens for exact source scope.
+# Separate collection/source fields cannot express the pairing: a file in
+# C1-via-S1 and C2-via-S2 would answer to C1-via-S2. See membership_token.
+F_MEMBERSHIP: Final = "membership"
 F_PATH: Final = "path"
 F_PATH_TOKENS: Final = "path_tokens"
 F_MTIME: Final = "mtime"
@@ -101,6 +112,17 @@ DEFAULT_FIELD_BOOSTS: Final[dict[str, float]] = {
 }
 
 
+# Unit Separator: forbidden in collection names (validated) and absent from
+# real filesystem paths, so (collection, source) stays one exact raw term.
+MEMBERSHIP_SEP: Final = "\x1f"
+
+
+def membership_token(collection: str, source_path: str) -> str:
+    """One exact term binding a file's membership in ``collection`` to the
+    source root it was reached through, for source-scoped queries."""
+    return f"{collection}{MEMBERSHIP_SEP}{source_path}"
+
+
 def build_schema() -> Schema:
     sb = SchemaBuilder()
 
@@ -108,6 +130,7 @@ def build_schema() -> Schema:
     sb.add_text_field(F_PARENT_ID, stored=True, fast=True, tokenizer_name="raw")
     sb.add_text_field(F_COLLECTION, stored=True, fast=True, tokenizer_name="raw")
     sb.add_text_field(F_SOURCE_PATH, stored=True, fast=True, tokenizer_name="raw")
+    sb.add_text_field(F_MEMBERSHIP, stored=True, tokenizer_name="raw")
     sb.add_text_field(F_KIND, stored=True, fast=True, tokenizer_name="raw")
     # Stored-only printed page label; raw tokenizer keeps it untouched.
     sb.add_text_field(F_PAGE_LABEL, stored=True, tokenizer_name="raw")
@@ -148,7 +171,7 @@ def build_schema() -> Schema:
     # (which wants full markdown structure) don't fight over one field.
     sb.add_bytes_field(F_BODY_MD, stored=True, indexed=False)
 
-    # JSON-encoded frontmatter for query-time metadata filter (§5.5e-2).
+    # JSON-encoded frontmatter for the query-time metadata filter.
     sb.add_bytes_field(F_META_BLOB, stored=True, indexed=False)
 
     return sb.build()

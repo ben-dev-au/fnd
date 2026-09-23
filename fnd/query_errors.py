@@ -4,10 +4,15 @@ these without risking an import cycle."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+
+def _rebuild(cls: type[QueryError], kwargs: dict[str, Any]) -> QueryError:
+    """Rebuild a keyword-only error; ``__reduce__`` can only pass positionals."""
+    return cls(**kwargs)
 
 
 class QueryError(ValueError):
@@ -53,6 +58,21 @@ class UnknownFilterValueError(QueryError):
         self.suggestions = tuple(suggestions)
         self.known = tuple(known)
 
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
+        return (
+            _rebuild,
+            (
+                UnknownFilterValueError,
+                {
+                    "label": self.label,
+                    "value": self.value,
+                    "suggestions": self.suggestions,
+                    "known": self.known,
+                    "flag": self.flag,
+                },
+            ),
+        )
+
     @property
     def hint(self) -> str | None:
         """The "did you mean" one-liner, or None when nothing is close."""
@@ -87,6 +107,20 @@ class MissingFilterValueError(UnknownFilterValueError):
     ) -> None:
         super().__init__(label=label, value="", suggestions=[proposal], known=known, flag=flag)
         self.message = f"no {label} given"
+
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
+        return (
+            _rebuild,
+            (
+                MissingFilterValueError,
+                {
+                    "label": self.label,
+                    "flag": self.flag,
+                    "proposal": self.correction or "",
+                    "known": self.known,
+                },
+            ),
+        )
 
     @property
     def hint(self) -> str | None:

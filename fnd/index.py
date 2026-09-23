@@ -1,20 +1,21 @@
 """Tantivy IndexWriter wrapper + ``build_index`` entry point.
 
-Phase 1: single-process, single-writer. Phase 7 adds reranker; phase 10 adds
-fsevents incremental updates and the long-running watcher.
+Single-process, single-writer.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from pathlib import Path
 
 from tantivy import Document, Index, IndexWriter, Query, Schema
 
 from fnd.config import CollectionConfig
-from fnd.extract import Chunk, ExtractError, extract
+from fnd.extract import Chunk, ExtractError, extract, no_text_reason
+from fnd.fsmeta import path_is_absent
+from fnd.membership import after_index, after_prune
 from fnd.meta_blob import encode as encode_meta_blob
 from fnd.schema import (
     F_AUTHOR,
@@ -28,6 +29,7 @@ from fnd.schema import (
     F_INODE_CTIME,
     F_KIND,
     F_LINE,
+    F_MEMBERSHIP,
     F_META_BLOB,
     F_MTIME,
     F_PAGE,
@@ -38,9 +40,11 @@ from fnd.schema import (
     F_SLIDE,
     F_SOURCE_PATH,
     F_TITLE,
+    MEMBERSHIP_SEP,
     SCHEMA_VERSION,
     TAG_FIELD_BY_SOURCE,
     build_schema,
+    membership_token,
 )
 from fnd.struct import encode as encode_body_struct
 from fnd.walk import walk
@@ -185,15 +189,21 @@ def _wipe_index_dir(index_dir: Path, sidecar: Path) -> None:
 def _doc_for_chunk(
     chunk: Chunk,
     *,
-    collection: str,
-    source_path: str = "",
+    memberships: Iterable[tuple[str, str]],
     meta_blob_bytes: bytes = b"",
     tags: dict[str, frozenset[str]] | None = None,
 ) -> Document:
     doc = Document()
     doc.add_text(F_PARENT_ID, chunk.parent_id)
-    doc.add_text(F_COLLECTION, collection)
-    doc.add_text(F_SOURCE_PATH, source_path)
+    # A file is stored once; F_COLLECTION and F_SOURCE_PATH are the distinct
+    # collections/sources it belongs to, and F_MEMBERSHIP the exact pairs.
+    pairs = sorted(set(memberships))
+    for collection in sorted({c for c, _ in pairs}):
+        doc.add_text(F_COLLECTION, collection)
+    for source in sorted({s for _, s in pairs}):
+        doc.add_text(F_SOURCE_PATH, source)
+    for collection, source in pairs:
+        doc.add_text(F_MEMBERSHIP, membership_token(collection, source))
     doc.add_text(F_PATH, chunk.path)
     doc.add_text(F_PATH_TOKENS, chunk.path)
     doc.add_text(F_KIND, chunk.kind)
@@ -223,6 +233,25 @@ def _doc_for_chunk(
     return doc
 
 
+def _extract_docs(
+    path: Path,
+    *,
+    memberships: frozenset[tuple[str, str]],
+    meta_blob_bytes: bytes,
+    tags: dict[str, frozenset[str]] | None,
+) -> list[Document]:
+    """Every chunk document for a file, built before any index mutation.
+
+    Extraction is the failure-prone step, so it runs in full before the caller
+    deletes the prior document: an ``ExtractError`` then leaves the existing
+    copy, and any sibling collection's membership on it, untouched.
+    """
+    return [
+        _doc_for_chunk(chunk, memberships=memberships, meta_blob_bytes=meta_blob_bytes, tags=tags)
+        for chunk in extract(path)
+    ]
+
+
 def read_file_metadata(
     path: Path,
     *,
@@ -237,12 +266,17 @@ def read_file_metadata(
     """
     import sys as _sys
 
+    from fnd.file_facts import frontmatter_kinds
     from fnd.frontmatter import FrontmatterParseError, read_frontmatter_from_file
+    from fnd.kinds import kind_for_suffix
     from fnd.tags import TagContext, providers_for, read_tags
 
     meta_blob_bytes = b""
     frontmatter: dict[str, object] | None = None
-    if path.suffix.lower() == ".md":
+    # The registry's word, not the suffix: `carries_frontmatter` is the single
+    # answer precisely so this cannot drift, and asking for `.md` here dropped
+    # the tags off every other Markdown variant as well as off `.txt`.
+    if kind_for_suffix(path.suffix) in frontmatter_kinds():
         try:
             frontmatter = read_frontmatter_from_file(path)
         except FrontmatterParseError:
@@ -271,63 +305,70 @@ def build_index(
 ) -> int:
     """Index supported files under ``roots`` into ``index_dir``.
 
-    Honours includes/excludes globs per §8 precedence rules. Returns the number
-    of chunks written. Phase 1 is single-process and single-writer; multi-
-    process extraction lands in phase 10.
+    Honours the includes/excludes glob precedence rules. Returns the number of
+    chunks written. Single-process, single-writer.
 
-    When ``rebuild=True``, all existing chunks for ``collection`` are deleted
-    before re-adding — useful when an extractor improves and the user wants
-    fresh chunks without losing other collections.
+    Every walked file is re-extracted and re-added with its membership merged,
+    so a file shared across collections keeps the others' membership. Files the
+    walk no longer reaches are pruned. ``rebuild`` forces a fresh schema when
+    the on-disk one is stale (see :func:`_ensure_index`).
     """
     index = _ensure_index(index_dir, force=rebuild)
     writer = index.writer(heap_size=_WRITER_HEAP)
-
-    if rebuild:
-        writer.delete_documents(F_COLLECTION, collection)
-        commit(writer)
+    searcher = index.searcher()
 
     written = 0
     live_parent_ids: set[str] = set()
+    unreadable_dirs: list[Path] = []
     paths: Iterable[Path] = walk(
         roots=roots,
         includes=includes,
         excludes=excludes,
         follow_symlinks=follow_symlinks,
+        on_unreadable=unreadable_dirs.append,
     )
     for path in paths:
-        # Idempotent re-index: delete chunks for THIS collection's
-        # copy of this file then re-add. Scoped by collection so a
-        # file shared across multiple collections (typical: Obsidian
-        # Vault listed under several collection sources) keeps the
-        # sibling collections' chunks intact.
         parent_id = _path_parent_id(path)
         live_parent_ids.add(parent_id)
-        _delete_q = _scoped_delete_query(index.schema, collection, parent_id)
-        writer.delete_documents_by_query(_delete_q)
+        memberships = after_index(
+            read_membership(searcher, index.schema, parent_id), collection, ""
+        )
         meta_blob_bytes, file_tags = read_file_metadata(
             path, tag_sources=tag_sources, frontmatter_keys=tag_frontmatter_keys
         )
         try:
-            for chunk in extract(path):
-                writer.add_document(
-                    _doc_for_chunk(
-                        chunk,
-                        collection=collection,
-                        meta_blob_bytes=meta_blob_bytes,
-                        tags=file_tags,
-                    )
-                )
-                written += 1
-                if written % _COMMIT_BATCH == 0:
-                    commit(writer)
+            docs = _extract_docs(
+                path, memberships=memberships, meta_blob_bytes=meta_blob_bytes, tags=file_tags
+            )
         except ExtractError as err:
-            writer.delete_documents_by_query(_delete_q)
+            # Extraction failed: leave the prior document, and any sibling
+            # collection's membership on it, untouched.
             print(f"[fnd skip {_skip_stamp()}] {err}", file=sys.stderr)
+            continue
+        if not docs:
+            # No text and no error is treated like a failure: keep what is
+            # there rather than delete on a possibly transient empty read.
+            print(f"[fnd skip {_skip_stamp()}] {no_text_reason(path)}", file=sys.stderr)
+            continue
+        writer.delete_documents_by_query(_parent_delete_query(index.schema, parent_id))
+        for doc in docs:
+            writer.add_document(doc)
+            written += 1
+            if written % _COMMIT_BATCH == 0:
+                commit(writer)
     commit(writer)
-    # See build_index_from_config: skip the prune when a root is missing, or
-    # an offline volume would read as "every file was deleted".
-    if not rebuild and sources_are_enumerable(Path(r) for r in roots):
-        prune_removed_files(index, writer, collection=collection, live_parent_ids=live_parent_ids)
+    # Skip the prune when a root is missing, or an offline volume would read
+    # as "every file was deleted".
+    if sources_are_enumerable(Path(r) for r in roots):
+        prune_removed_files(
+            index,
+            writer,
+            collection=collection,
+            live_parent_ids=live_parent_ids,
+            unreadable_dirs=unreadable_dirs,
+            tag_sources=tag_sources,
+            tag_frontmatter_keys=tag_frontmatter_keys,
+        )
         commit(writer)
     writer.wait_merging_threads()
     return written
@@ -339,6 +380,7 @@ def build_index_from_config(
     collection: str,
     index_dir: Path,
     rebuild: bool = False,
+    prune: bool = True,
     tag_sources: Sequence[str] = ("frontmatter", "os"),
     tag_frontmatter_keys: Sequence[str] = (),
 ) -> int:
@@ -349,64 +391,83 @@ def build_index_from_config(
     auto-promoted to a single implicit source by the loader, so this
     function only sees the new shape. For md files, frontmatter is read
     once per file and serialized into ``meta_blob`` on every chunk so the
-    query-time post-filter (§5.5e-2) can decode + evaluate it.
+    query-time post-filter can decode + evaluate it.
+
+    ``prune`` drops the collection's documents this walk did not reach, which
+    is how a file deleted from disk leaves the index. A caller indexing PART
+    of a collection must pass False: everything else in it is not stale, it is
+    simply not in this walk.
     """
     from fnd.walk import walk_sources
 
     index = _ensure_index(index_dir, force=rebuild)
     writer = index.writer(heap_size=_WRITER_HEAP)
-    if rebuild:
-        writer.delete_documents(F_COLLECTION, collection)
-        commit(writer)
+    searcher = index.searcher()
     written = 0
     live_parent_ids: set[str] = set()
-    # Walk per-source so each chunk carries an identifier of which
-    # source it came from — lets the search layer scope to a subset of
-    # a collection's sources without re-indexing.
+    unreadable_dirs: list[Path] = []
+    # Walk per-source so each file records which source reached it, letting the
+    # search layer scope to a subset of a collection's sources. A file reachable
+    # from two of this collection's sources is owned by the first (claimed).
+    claimed: set[str] = set()
     for source in config.sources:
         source_id = str(Path(source.path).expanduser().resolve())
-        for path in walk_sources(sources=[source]):
+        for path in walk_sources(sources=[source], on_unreadable=unreadable_dirs.append):
+            key = str(path.resolve())
+            if key in claimed:
+                continue
+            claimed.add(key)
             meta_blob_bytes, file_tags = read_file_metadata(
                 path, tag_sources=tag_sources, frontmatter_keys=tag_frontmatter_keys
             )
             parent_id = _path_parent_id(path)
             live_parent_ids.add(parent_id)
-            _delete_q = _scoped_delete_query(index.schema, collection, parent_id)
-            writer.delete_documents_by_query(_delete_q)
+            memberships = after_index(
+                read_membership(searcher, index.schema, parent_id), collection, source_id
+            )
             try:
-                for chunk in extract(path):
-                    writer.add_document(
-                        _doc_for_chunk(
-                            chunk,
-                            collection=collection,
-                            source_path=source_id,
-                            meta_blob_bytes=meta_blob_bytes,
-                            tags=file_tags,
-                        )
-                    )
-                    written += 1
-                    if written % _COMMIT_BATCH == 0:
-                        commit(writer)
+                docs = _extract_docs(
+                    path, memberships=memberships, meta_blob_bytes=meta_blob_bytes, tags=file_tags
+                )
             except ExtractError as err:
-                # See build_index above — re-stage the same scoped
-                # delete so an extractor crash mid-iteration doesn't
-                # leave partial chunks indexed.
-                writer.delete_documents_by_query(_delete_q)
+                # Leave the prior document and sibling memberships untouched.
                 print(f"[fnd skip {_skip_stamp()}] {err}", file=sys.stderr)
+                continue
+            if not docs:
+                print(f"[fnd skip {_skip_stamp()}] {no_text_reason(path)}", file=sys.stderr)
+                continue
+            writer.delete_documents_by_query(_parent_delete_query(index.schema, parent_id))
+            for doc in docs:
+                writer.add_document(doc)
+                written += 1
+                if written % _COMMIT_BATCH == 0:
+                    commit(writer)
     commit(writer)
-    # Rebuild already wiped the collection, so nothing can be stale.
-    if not rebuild:
+    if prune:
         roots = [Path(s.path).expanduser() for s in config.sources]
         if sources_are_enumerable(roots):
             prune_removed_files(
-                index, writer, collection=collection, live_parent_ids=live_parent_ids
+                index,
+                writer,
+                collection=collection,
+                live_parent_ids=live_parent_ids,
+                unreadable_dirs=unreadable_dirs,
+                tag_sources=tag_sources,
+                tag_frontmatter_keys=tag_frontmatter_keys,
             )
             commit(writer)
         else:
-            missing = ", ".join(str(r) for r in roots if not r.exists())
+            blocked = ", ".join(str(r) for r in unreadable_roots(roots))
             print(
-                f"[fnd skip {_skip_stamp()}] source unavailable ({missing}); "
+                f"[fnd skip {_skip_stamp()}] source unreadable ({blocked}); "
                 f"kept existing chunks for collection {collection}",
+                file=sys.stderr,
+            )
+        if unreadable_dirs:
+            blocked = ", ".join(str(d) for d in unreadable_dirs)
+            print(
+                f"[fnd skip {_skip_stamp()}] could not read {blocked}; "
+                f"kept existing chunks there for collection {collection}",
                 file=sys.stderr,
             )
     writer.wait_merging_threads()
@@ -427,15 +488,54 @@ _MAX_INDEXED_FILE_BUCKETS = 200_000
 
 
 def sources_are_enumerable(roots: Iterable[Path]) -> bool:
-    """True when every root exists, so an empty walk means "no files" rather
-    than "the volume went away".
+    """True when every root can be LISTED, so an empty walk means "no files"
+    rather than "could not look".
 
-    :func:`fnd.walk.walk` yields nothing for a missing root instead of
-    raising, so an unguarded prune would erase a whole collection the first
-    time an external drive or an iCloud folder was offline. Callers must gate
+    :func:`fnd.walk.walk` yields nothing for a root it cannot read instead of
+    raising, so an unguarded prune erases the collection. Callers must gate
     :func:`prune_removed_files` on this.
+
+    Listing, not ``exists()``: a directory with mode 000 exists, and reading
+    the walk's silence as "every file was deleted" took a collection from 48
+    documents to 0 in one keypress, reported as `Done.`
     """
-    return all(root.exists() for root in roots)
+    return not unreadable_roots(roots)
+
+
+def unreadable_roots(roots: Iterable[Path]) -> list[Path]:
+    """The roots that cannot be listed, in order, with the reason implicit.
+
+    Shared with the gate so a skip message can never name a different root
+    from the one that stopped the prune.
+    """
+    import os
+
+    out: list[Path] = []
+    for root in roots:
+        try:
+            # `walk` yields a file root directly (see fnd/walk.py), so there is
+            # nothing to list and stat'ing it is the whole question.
+            if root.is_file():
+                continue
+            with os.scandir(root) as entries:
+                next(iter(entries), None)
+        except OSError:
+            out.append(root)
+    return out
+
+
+def collection_is_empty(index: Index, collection: str) -> bool:
+    """Whether ``collection`` holds no documents at all.
+
+    One hit is enough to answer it, so this does not page or aggregate:
+    `indexed_parent_ids` builds a set of every file, which is far too much work
+    for a row summary that only needs to know "any?".
+    """
+    import tantivy as _tantivy
+
+    index.reload()
+    scope = _tantivy.Query.term_query(index.schema, F_COLLECTION, collection)
+    return not index.searcher().search(scope, limit=1).hits
 
 
 def indexed_parent_ids(index: Index, collection: str) -> set[str]:
@@ -454,50 +554,214 @@ def indexed_parent_ids(index: Index, collection: str) -> set[str]:
     return {str(b["key"]) for b in raw["files"]["buckets"]}
 
 
+def drop_collection(
+    index_dir: Path,
+    collection: str,
+    *,
+    tag_sources: Sequence[str] = ("frontmatter", "os"),
+    tag_frontmatter_keys: Sequence[str] = (),
+) -> None:
+    """Remove one collection from the index.
+
+    Paired with a config write that removes the collection's name: whichever
+    half is missing, the index keeps documents nothing can reach afterwards.
+    A file shared with another collection keeps its document (with this
+    collection removed); one held by nothing is deleted.
+    """
+    index = _ensure_index(index_dir)
+    writer = index.writer(heap_size=_WRITER_HEAP)
+    for parent_id in indexed_parent_ids(index, collection):
+        # No enumerability guard here (the source may already be out of config),
+        # so never delete a shared file on a missing path: it could be a transient
+        # unmount, and a dropped collection lingering in a membership is harmless.
+        _reduce_membership(
+            index,
+            writer,
+            parent_id=parent_id,
+            collection=collection,
+            tag_sources=tag_sources,
+            tag_frontmatter_keys=tag_frontmatter_keys,
+            delete_if_unreachable=False,
+        )
+    commit(writer)
+    writer.wait_merging_threads()
+
+
 def prune_removed_files(
     index: Index,
     writer: IndexWriter,
     *,
     collection: str,
     live_parent_ids: set[str],
-) -> int:
-    """Delete ``collection``'s chunks for files it no longer contains.
+    unreadable_dirs: Collection[Path] = (),
+    tag_sources: Sequence[str] = ("frontmatter", "os"),
+    tag_frontmatter_keys: Sequence[str] = (),
+) -> set[str]:
+    """Remove ``collection`` from the membership of files it no longer contains.
 
     A file leaves a collection by being deleted from disk, excluded by a new
     glob, failing a ``frontmatter_filter``, or having its whole source dropped
-    from the config. Re-indexing only ever deleted-and-re-added the files it
-    walked, so in all four cases the old chunks lingered and kept turning up
-    in results.
+    from the config. A file shared with another collection keeps its document
+    (with the collection removed); one held by nothing, or gone from disk, is
+    deleted. See :func:`_reduce_membership`.
 
     ``live_parent_ids`` must be every file the walk yielded, including ones
-    skipped as unchanged and ones that failed to extract — anything missing
-    from it is treated as gone. Returns the number of files pruned. The
-    caller commits.
+    skipped as unchanged and ones that failed to extract; anything missing
+    from it is treated as gone, except a file stored under one of
+    ``unreadable_dirs`` (the folders the walk could not list), which is kept.
+    Returns the pruned ``parent_id``s so the caller can say which of them the
+    rest of the index still holds. The caller commits.
     """
     index.reload()
     stale = indexed_parent_ids(index, collection) - live_parent_ids
+    if unreadable_dirs:
+        stale = _outside(index, stale, unreadable_dirs)
     for parent_id in stale:
-        writer.delete_documents_by_query(_scoped_delete_query(index.schema, collection, parent_id))
-    return len(stale)
+        # Callers run prune only when the sources were enumerable, so a file
+        # missing from disk is genuinely deleted, not transiently unmounted.
+        _reduce_membership(
+            index,
+            writer,
+            parent_id=parent_id,
+            collection=collection,
+            tag_sources=tag_sources,
+            tag_frontmatter_keys=tag_frontmatter_keys,
+            delete_if_unreachable=True,
+        )
+    return stale
 
 
-def _scoped_delete_query(schema: Schema, collection: str, parent_id: str) -> Query:
-    """Build a boolean Query that matches a single file's chunks
-    within a single collection.
+def _outside(index: Index, parent_ids: set[str], dirs: Collection[Path]) -> set[str]:
+    """The files among ``parent_ids`` whose stored path lies under none of ``dirs``."""
+    blocked = frozenset(dirs)
+    searcher = index.searcher()
+    out: set[str] = set()
+    for parent_id in parent_ids:
+        path = _stored_path(searcher, index.schema, parent_id)
+        if path is None or blocked.isdisjoint(path.parents):
+            out.add(parent_id)
+    return out
 
-    Required because plain ``delete_documents(F_PARENT_ID, parent_id)``
-    is unscoped: a file present in multiple collections (the same
-    Obsidian Vault listed under several collection sources, say)
-    would lose its chunks from EVERY collection whenever any one
-    collection re-indexed it. The boolean form (parent_id AND
-    collection) keeps each collection's view isolated."""
+
+def collections_still_holding(
+    index: Index, parent_ids: set[str], *, excluding: str
+) -> tuple[str, ...]:
+    """Other collections that still index any of ``parent_ids``, sorted.
+
+    A file leaving one collection has not left the corpus: a folder listed
+    under two collections keeps it, so a run's `N removed` is true of the
+    collection and silently false of the index. Costly only in the size of
+    ``parent_ids``, which is the number of files that just left.
+    """
+    if not parent_ids:
+        return ()
     import tantivy as _tantivy
 
-    parent_q = _tantivy.Query.term_query(schema, F_PARENT_ID, parent_id)
-    collection_q = _tantivy.Query.term_query(schema, F_COLLECTION, collection)
-    return _tantivy.Query.boolean_query(
-        [
-            (_tantivy.Occur.Must, parent_q),
-            (_tantivy.Occur.Must, collection_q),
-        ]
+    schema = index.schema
+    terms = [
+        (_tantivy.Occur.Should, _tantivy.Query.term_query(schema, F_PARENT_ID, p))
+        for p in parent_ids
+    ]
+    agg: dict[str, object] = {
+        "cols": {"terms": {"field": F_COLLECTION, "size": _MAX_INDEXED_FILE_BUCKETS}}
+    }
+    raw = index.searcher().aggregate(_tantivy.Query.boolean_query(terms), agg)
+    return tuple(sorted({str(b["key"]) for b in raw["cols"]["buckets"]} - {excluding}))
+
+
+def read_membership(searcher: object, schema: Schema, parent_id: str) -> frozenset[tuple[str, str]]:
+    """The (collection, source) pairs currently stored for a file.
+
+    All of a file's chunks share the membership set, so one chunk answers it.
+    Returns an empty set when the file is not in the index.
+    """
+    query = Query.term_query(schema, F_PARENT_ID, parent_id)
+    try:
+        hits = searcher.search(query, limit=1).hits  # type: ignore[attr-defined]
+    except ValueError:
+        return frozenset()
+    if not hits:
+        return frozenset()
+    doc = searcher.doc(hits[0][1])  # type: ignore[attr-defined]
+    pairs: set[tuple[str, str]] = set()
+    for token in doc.get_all(F_MEMBERSHIP):
+        collection, _, source = str(token).partition(MEMBERSHIP_SEP)
+        pairs.add((collection, source))
+    return frozenset(pairs)
+
+
+def _parent_delete_query(schema: Schema, parent_id: str) -> Query:
+    """Match every chunk of one file, across all collections. Normalised
+    storage keeps one document per file, so a re-index or prune deletes the
+    whole file and re-adds it with the recomputed membership."""
+    return Query.term_query(schema, F_PARENT_ID, parent_id)
+
+
+def _stored_path(searcher: object, schema: Schema, parent_id: str) -> Path | None:
+    """The filesystem path stored for a file, or None if it is not indexed."""
+    query = Query.term_query(schema, F_PARENT_ID, parent_id)
+    try:
+        hits = searcher.search(query, limit=1).hits  # type: ignore[attr-defined]
+    except ValueError:
+        return None
+    if not hits:
+        return None
+    stored = searcher.doc(hits[0][1]).get_first(F_PATH)  # type: ignore[attr-defined]
+    return Path(str(stored)) if stored else None
+
+
+def _reduce_membership(
+    index: Index,
+    writer: IndexWriter,
+    *,
+    parent_id: str,
+    collection: str,
+    tag_sources: Sequence[str],
+    tag_frontmatter_keys: Sequence[str],
+    delete_if_unreachable: bool,
+) -> None:
+    """Remove one collection from a file's membership.
+
+    When that empties the membership the file is deleted (no sibling holds it).
+    Otherwise it is re-extracted from disk and re-added with the reduced
+    membership so sibling collections keep it (re-extraction, not a stored-doc
+    rewrite, because ``F_BODY`` is not stored). If the file cannot be read now
+    (present but unreadable, e.g. a cloud placeholder, or empty), the existing
+    document is LEFT untouched rather than deleted, which would silently remove
+    the file from a live sibling collection. The un-reduced entry is harmless
+    (a dropped collection builds no scope arm). It does NOT clear on an ordinary
+    reindex of the sibling that holds the file: prune only reduces files the
+    reindexed collection no longer reaches, and the sibling still reaches this
+    one. It clears when the file leaves the index entirely (deleted from disk,
+    so the sibling's next prune whole-deletes the document) or a collection of
+    the same name is recreated and reindexes without reaching it. A file gone
+    from disk is deleted only when ``delete_if_unreachable`` (the caller
+    verified the source was enumerable, so absence is genuine, not a transient
+    unmount).
+    """
+    schema = index.schema
+    searcher = index.searcher()
+    remaining = after_prune(read_membership(searcher, schema, parent_id), collection)
+    delete_q = _parent_delete_query(schema, parent_id)
+    if not remaining:
+        writer.delete_documents_by_query(delete_q)
+        return
+    path = _stored_path(searcher, schema, parent_id)
+    if path is None or path_is_absent(path):
+        if delete_if_unreachable:
+            writer.delete_documents_by_query(delete_q)
+        return
+    meta_blob_bytes, file_tags = read_file_metadata(
+        path, tag_sources=tag_sources, frontmatter_keys=tag_frontmatter_keys
     )
+    try:
+        docs = _extract_docs(
+            path, memberships=remaining, meta_blob_bytes=meta_blob_bytes, tags=file_tags
+        )
+    except ExtractError:
+        return
+    if not docs:
+        return
+    writer.delete_documents_by_query(delete_q)
+    for doc in docs:
+        writer.add_document(doc)

@@ -10,10 +10,10 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
-from fnd.extract.base import Chunk, ExtractError
+from fnd.extract.base import Chunk, ExtractError, no_text_reason
 from fnd.kinds import SUFFIX_TO_MODULE, supported_suffixes
 
-__all__ = ["Chunk", "ExtractError", "extract", "supported_suffixes"]
+__all__ = ["Chunk", "ExtractError", "extract", "no_text_reason", "supported_suffixes"]
 
 # Suffix → extractor module, derived from the central registry (fnd.kinds).
 # Modules are lazily imported below to keep startup time small (pymupdf is the

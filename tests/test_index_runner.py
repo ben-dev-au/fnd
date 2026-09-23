@@ -334,20 +334,25 @@ async def test_run_indexer_counters_warm_pdf_run_is_already(
     cfg = CollectionConfig(sources=[SourceConfig(path=papers_dir)])
     state_path = tmp_path / "s.toml"
 
+    # One index across both runs, which is what a re-run is. Against a fresh
+    # index the documents are genuinely new however warm the extraction cache
+    # is, and that is what the counters say.
+    index_dir = tmp_path / "idx"
+
     async for _ev in run_indexer(
-        config=cfg, collection="t", index_dir=tmp_path / "idx1", state_path=state_path
+        config=cfg, collection="t", index_dir=index_dir, state_path=state_path
     ):
         pass
 
     final: ProgressEvent | None = None
     async for ev in run_indexer(
-        config=cfg, collection="t", index_dir=tmp_path / "idx2", state_path=state_path
+        config=cfg, collection="t", index_dir=index_dir, state_path=state_path
     ):
         if ev.kind == "done":
             final = ev
     assert final is not None
     assert final.pdfs_total == 1
-    # Cache hit on the warm run → already-indexed bucket.
+    # Already in this collection's index → already-indexed bucket.
     assert final.indexed_already_total == 1
     assert final.indexed_newly_total == 0
     # And exactly one of {already-textured, still-flat} took the hit.
@@ -459,9 +464,9 @@ def test_chunks_written_excludes_rolled_back_chunks(
 
     real_process_one_file = runner_module._process_one_file
 
-    def fake_process_one_file(*, path: Path, **kwargs: object) -> tuple[int, bool, bool, str]:
+    def fake_process_one_file(*, path: Path, **kwargs: object) -> runner_module._FileOutcome:
         if path.name == "broken.md":
-            return 5, False, False, "boom"
+            return runner_module._FileOutcome(5, False, False, False, "boom")
         return real_process_one_file(path=path, **kwargs)  # pyright: ignore[reportArgumentType]
 
     monkeypatch.setattr(runner_module, "_process_one_file", fake_process_one_file)

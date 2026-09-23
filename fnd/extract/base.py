@@ -15,6 +15,8 @@ its entire collection.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 # A fine-grained file-type id (one per format, e.g. "pdf", "python", "epub").
 # The authoritative set lives in ``fnd.kinds.KIND_SPECS``; this is a plain ``str``
@@ -35,12 +37,25 @@ class ExtractError(Exception):
         self.path = path
         self.reason = reason
 
+    def __reduce__(self) -> tuple[Any, tuple[str, str]]:
+        # Crosses the extraction pool. Without this the parent rebuilds it
+        # from a one-element ``args`` and raises BrokenProcessPool instead
+        # of the reason, after a teardown, respawn and a doomed retry.
+        return (ExtractError, (self.path, self.reason))
+
+
+def no_text_reason(path: str | Path) -> str:
+    """Why a file that raised nothing still put nothing in the index."""
+    is_pdf = Path(path).suffix.lower() == ".pdf"
+    what = "no text layer (scanned or image-only PDF)" if is_pdf else "no text found"
+    return f"{path}: {what}"
+
 
 @dataclass(slots=True, frozen=True)
 class Block:
     """One renderable element of body_struct (preview pane).
 
-    ``kind`` is one of "h1".."h6", "p", "ul", "ol", "code", "quote".
+    ``kind`` is one of "h1".."h6", "p", "ul", "ol", "code", "quote", "table".
     """
 
     kind: str
@@ -48,11 +63,17 @@ class Block:
     # Line span of this block within its chunk's ``body_md``, when the
     # extractor knows it. Read by the chunk bound; not written to the index.
     span: tuple[int, int] | None = None
+    # A table split by rows: the span of the header its piece is rendered under.
+    head: tuple[int, int] | None = None
 
 
 # The most body a chunk may carry. Enforced for every kind in `_bound.py`,
 # at the dispatcher every extractor's output passes through.
 MAX_CHUNK_CHARS = 8_000
+
+# A table is kept whole up to this, since ranking and proximity are scored per
+# chunk; a bigger one is split by rows and each piece repeats the header.
+MAX_TABLE_CHARS = 4 * MAX_CHUNK_CHARS
 
 
 @dataclass(slots=True)
