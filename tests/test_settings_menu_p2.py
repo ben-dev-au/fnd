@@ -1,4 +1,4 @@
-"""Phase 2 — Settings menu UI/UX behaviours.
+"""Settings menu UI/UX behaviours.
 
 Covers the redesign concerns the user raised:
 
@@ -53,6 +53,7 @@ async def test_root_menu_is_short_list_of_categories(built_index: Path) -> None:
         assert labels == [
             "Preferences",
             "Collections",
+            "Filters",
             "Keybindings",
             "Indexing & PDF Texture",
             "External",
@@ -61,9 +62,10 @@ async def test_root_menu_is_short_list_of_categories(built_index: Path) -> None:
         ]
         # The External row is a header; everything else is selectable.
         kinds = [it.kind for it in lst._items]
-        assert kinds[4] == KIND_HEADER
-        assert kinds[:4] == [KIND_EXTERNAL] * 4
-        assert kinds[5:] == [KIND_EXTERNAL, KIND_EXTERNAL]
+        divider = labels.index("External")
+        assert kinds[divider] == KIND_HEADER
+        assert kinds[:divider] == [KIND_EXTERNAL] * divider
+        assert kinds[divider + 1 :] == [KIND_EXTERNAL, KIND_EXTERNAL]
         # Cursor skips the header and lands on the first selectable row.
         assert lst._items[lst.cursor_index].label == "Preferences"
 
@@ -275,3 +277,67 @@ async def test_root_has_open_config_file_row(built_index: Path) -> None:
         lst = screen.query_one(SettingsList)
         labels = [item.label for item in lst._items]
         assert "Config file" in labels
+
+
+def _native(*labels: str) -> list[str]:
+    """Labels as a row shows them: joined with the host's separator."""
+    return [str(Path(label)) for label in labels]
+
+
+class TestSourceRowsCanBeToldApart:
+    """A basename alone left two rows both reading `notes`, with the column
+    spare to say which."""
+
+    def test_colliding_names_gain_a_parent(self) -> None:
+        from fnd.tui.menu import _source_labels
+
+        assert _source_labels(["/a/notes", "/b/notes"]) == _native("a/notes", "b/notes")
+
+    def test_it_keeps_going_past_a_shared_middle_segment(self) -> None:
+        """Stopping when one step did not help gave up one short of the
+        segment that separates."""
+        from fnd.tui.menu import _source_labels
+
+        assert _source_labels(["/x/uni/2026/notes", "/x/work/2026/notes"]) == _native(
+            "uni/2026/notes", "work/2026/notes"
+        )
+
+    def test_a_lone_source_stays_short(self) -> None:
+        from fnd.tui.menu import _source_labels
+
+        assert _source_labels(["/a/notes"]) == ["notes"]
+
+    def test_two_rows_for_one_path_stay_short(self) -> None:
+        """Identical sources do not grow to the whole path.
+
+        At real path lengths that costs two rows of one long shared prefix,
+        with the summary column squeezed out, and still no way to tell them
+        apart. They are the SAME path; the row number distinguishes them and
+        the column is better spent saying what each one filters.
+        """
+        from fnd.tui.menu import _source_labels
+
+        assert _source_labels(["/a/notes", "/a/notes"]) == ["notes", "notes"]
+
+    def test_only_the_colliding_rows_grow(self) -> None:
+        """One depth for every row let one collision widen all of them; a
+        clone of an existing source took every other row to a full path."""
+        from fnd.tui.menu import _source_labels
+
+        assert _source_labels(["/a/notes", "/b/notes", "/c/other"]) == _native(
+            "a/notes", "b/notes", "other"
+        )
+
+    def test_an_unresolvable_pair_leaves_the_rest_alone(self) -> None:
+        from fnd.tui.menu import _source_labels
+
+        assert _source_labels(["/tmp/h/globs", "/tmp/h/globs", "/other/vault"]) == [
+            "globs",
+            "globs",
+            "vault",
+        ]
+
+    def test_a_label_that_reaches_the_root_keeps_it(self) -> None:
+        from fnd.tui.menu import _source_labels
+
+        assert _source_labels(["/notes", "/x/notes"]) == _native("/notes", "x/notes")

@@ -32,7 +32,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fnd import os_labels
-from fnd.config import ALL_COLLECTIONS, is_all_collections
+from fnd.config import (
+    ALL_COLLECTIONS,
+    DEFAULT_RANKING_PROFILE,
+    DEFAULT_RESULT_LIMIT,
+    is_all_collections,
+)
+from fnd.fsmeta import path_is_absent
+from fnd.tui.widgets import COMMIT_KEY
 
 if TYPE_CHECKING:
     from fnd.tui.app import FNDApp
@@ -54,6 +61,7 @@ SECTION_KEYBINDINGS = "keybindings"
 SECTION_PREFERENCES = "preferences"
 SECTION_COLLECTIONS = "collections"
 SECTION_INDEXING_PDF_TEXTURE = "indexing-pdf-texture"
+SECTION_FILTERS = "filters"
 # Legacy aliases retained so any saved jump-state or external link that
 # referenced the pre-combine section ids still routes into the combined
 # screen instead of crashing.
@@ -71,6 +79,28 @@ class ChoiceOption:
     value: Any
     label: str
     description: str = ""
+
+
+def drill_summary(app: FNDApp, summary: str) -> str:
+    """A drill row's trailing text under ``defaults.drill_summary_mode``.
+
+    Shared by the renderer and :meth:`MenuItem.trailing_value`; a mode honoured
+    only by the latter, which nothing in the app calls, saves and does nothing.
+    """
+    cfg = getattr(app, "_config", None)
+    if cfg is None:
+        from fnd.config import load as _load_cfg
+
+        try:
+            cfg = _load_cfg()
+        except Exception:
+            cfg = None
+    mode = getattr(getattr(cfg, "defaults", None), "drill_summary_mode", "always_show")
+    if mode == "always_ellipsis":
+        return "…"
+    if mode == "smart":
+        return summary or "…"
+    return summary
 
 
 @dataclass(frozen=True)
@@ -111,8 +141,18 @@ class MenuItem:
     # SCALAR
     setting_path: str = ""
     hint: str = ""
+    bounds: tuple[float, float] | None = None
+    """The range the row prints, as the editor enforces it. Separate fields,
+    held together by a guard test: nine rows stated a range and enforced none
+    of it, and the same validator quoted it when refusing letters."""
+    elide: str = "tail"
+    """Which end of an over-long value to drop: ``tail``, or ``head`` for a
+    path, whose leaf is what tells two sources apart."""
     coerce: Callable[[str], Any] | None = None
     value_getter: Callable[[FNDApp], str] | None = None
+    # Takes precedence over ``setting_path``, for a row that edits screen-local
+    # state rather than the config file.
+    scalar_setter: Callable[[FNDApp, Any], None] | None = None
 
     # TOGGLE
     toggle_getter: Callable[[FNDApp], bool] | None = None
@@ -153,27 +193,8 @@ class MenuItem:
         """Right-aligned trailing column. Setting kinds carry the live
         value; drill rows obey ``drill_summary_mode`` from config."""
         try:
-            cfg = getattr(app, "_config", None)
-            if cfg is None:
-                from fnd.config import load as _load_cfg
-
-                try:
-                    cfg = _load_cfg()
-                except Exception:
-                    cfg = None
-            mode: str = (
-                cfg.defaults.drill_summary_mode
-                if cfg and hasattr(cfg.defaults, "drill_summary_mode")
-                else "always_show"
-            )
-            # Drill rows (KIND_EXTERNAL with a value_getter) obey the mode.
-            if self.kind == KIND_EXTERNAL and self.value_getter is not None:
-                if mode == "always_ellipsis":
-                    return "…"
-                if mode == "smart":
-                    v = self.value_getter(app)
-                    return v if v else "…"
-                return self.value_getter(app)
+            if self.kind in (KIND_SUBMENU, KIND_EXTERNAL) and self.value_getter is not None:
+                return drill_summary(app, self.value_getter(app))
             # Non-drill rows: setting values / toggle states always shown.
             if self.value_getter is not None:
                 return self.value_getter(app)
@@ -344,7 +365,10 @@ _KEYS_SETTINGS: tuple[tuple[str, str, str, str], ...] = (
         "1-9",
         "Jump by index",
         "",
-        "Number keys jump the cursor straight to the nth visible row in the current section.",
+        "Number keys jump the cursor to the nth visible row in the current "
+        "section AND open it: it is a shortcut, not a move. With the row "
+        "list focused: a settings screen opens with the filter box focused, "
+        "where digits type instead, so press ↓ to reach the rows first.",
     ),
     (
         "Shift+Enter",
@@ -364,9 +388,11 @@ _KEYS_SETTINGS: tuple[tuple[str, str, str, str], ...] = (
 _KEYS_SOURCE_FORM: tuple[tuple[str, str, str, str], ...] = (
     (
         "Tab / Shift+Tab",
-        "Cycle fields",
+        "Field list ↔ sample",
         "",
-        "Move forward (Tab) or backward (Shift+Tab) through the form fields and the frontmatter sample at the bottom.",
+        "Move between the field list and the frontmatter sample tester below "
+        "it. The sample is only shown once a frontmatter rule is set, so with "
+        "no rule there is nowhere else to go and the keys do nothing.",
     ),
     (
         "Enter",
@@ -375,7 +401,7 @@ _KEYS_SOURCE_FORM: tuple[tuple[str, str, str, str], ...] = (
         "Edit, pick, or toggle the focused field. Scalar fields open the inline edit bar; multi-select fields push a picker.",
     ),
     (
-        "Ctrl+S",
+        COMMIT_KEY,
         "Save & close",
         "",
         "Persist this source to config.toml. Triggers an async reindex if the source set or includes/excludes changed.",
@@ -443,6 +469,78 @@ _KEYS_AX_MODAL: tuple[tuple[str, str, str, str], ...] = (
 )
 
 
+# The filter browser's keys are screen and ToggleTree bindings the registry
+# does not know, so the sheet's Index-filters section is listed here. A
+# function because the clear key is the user's keymap, not a literal.
+def _keys_filter_browser() -> tuple[tuple[str, str, str, str], ...]:
+    from fnd.tui.settings_screen import _CLEAR_FILTERS_KEY
+
+    return (
+        (
+            "Enter",
+            "Toggle the row",
+            "",
+            "Turn the focused rule on or off. On a branch it toggles every "
+            "child at once; on a branch with nothing to toggle it expands.",
+        ),
+        (
+            "→ / ←",
+            "Open / close a branch",
+            "",
+            "Expand the focused branch or collapse it. ← on the outermost "
+            "level leaves the screen, as it does everywhere in Settings.",
+        ),
+        (
+            "/",
+            "Filter rows",
+            "",
+            "Narrow the rows by label. A vault's tags run to thousands of "
+            "rows, so this is how you reach one without arrowing to it.",
+        ),
+        (
+            "↓",
+            "Box → rows",
+            "",
+            "From the filter box, step into the rows it narrowed. ↑ at the "
+            "top row goes back to the box.",
+        ),
+        (
+            "t",
+            "Edit as text",
+            "",
+            "Open the whole filter set as its expression, for anything the "
+            "pickers cannot say. Applies back into the screen, not to disk.",
+        ),
+        (
+            "y",
+            "Copy the expression",
+            "",
+            "Put the filter set on the clipboard as text, to paste into a config file or share.",
+        ),
+        (
+            _CLEAR_FILTERS_KEY,
+            "Return to defaults",
+            "",
+            "Drop every rule on this screen. Shown only while there is something to drop.",
+        ),
+        (
+            COMMIT_KEY,
+            "Save / Apply",
+            "",
+            "On the global defaults this writes them and indexes nothing; "
+            "collections keep their current contents until the next Update "
+            "index. On a source it is Apply, handing the set back to the form, "
+            "which is what saves and rebuilds that collection.",
+        ),
+        (
+            "Esc / ←",
+            "Discard",
+            "",
+            "Leave without saving. Asks first when there are unsaved edits.",
+        ),
+    )
+
+
 # Results-pane keys owned by ``ResultsTree`` widget bindings (not the action
 # registry), so they're hand-curated here and appended to the Results section.
 # A function, not a constant: the Apple-Terminal workaround is conditional
@@ -508,6 +606,7 @@ def _key_row(
     description: str,
     *,
     section: str = "",
+    id_suffix: str = "",
 ) -> MenuItem:
     """Build a Keybindings cheat-sheet row. ``label`` is the short title
     shown in the row list; ``description`` is the long-form explanation
@@ -522,6 +621,10 @@ def _key_row(
     # Slug the row id from the *un*localised key/label so ids stay identical on
     # every OS — "⌥ ↑" and "Alt ↑" must not mint two different ids for one row.
     item_id = f"key.{action_id}" if action_id else "key." + _slug(section, key, label)
+    # An action that works in several panes is listed in each of them; the
+    # first keeps the plain id so nothing referring to it moves.
+    if id_suffix:
+        item_id = f"{item_id}.{_slug(id_suffix)}"
     # Single localise seam for the whole cheat sheet: registry-derived rows and
     # the static widget tables both land here, so neither can drift into
     # hardcoded macOS vocabulary. ``key`` is localised too — the skim row's
@@ -582,16 +685,20 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
     for action in REGISTRY:
         if action.default_key is None:
             continue  # palette-only — no key to show
-        primary_ctx = action.contexts[0] if action.contexts else ""
-        section = _CONTEXT_TO_SECTION.get(primary_ctx, "Global")
-        sections[section].append(
-            _key_row(
-                _pretty_key(action.default_key),
-                _action_label(action),
-                action.id,
-                action.description,
+        # Every pane it works in, not just the first: ←/→ expand and collapse
+        # in all three trees but were documented under Results alone, so the
+        # Filters section named neither of the keys that move around it.
+        for nth, ctx in enumerate(action.contexts or ("",)):
+            section = _CONTEXT_TO_SECTION.get(ctx, "Global")
+            sections[section].append(
+                _key_row(
+                    _pretty_key(action.default_key),
+                    _action_label(action),
+                    action.id,
+                    action.description,
+                    id_suffix=section if nth else "",
+                )
             )
-        )
 
     # Results-pane widget bindings (Option-skim, Enter-load) live on ResultsTree,
     # not the registry — append them to the registry-derived Results section.
@@ -605,6 +712,9 @@ def _provider_keybindings(_app: FNDApp, *, context_hint: str | None = None) -> t
     # sections (multiple "Cancel" rows) get distinct MenuItem ids.
     sections["Settings menu"] = [_key_row(*row, section="settings") for row in _KEYS_SETTINGS]
     sections["Source form"] = [_key_row(*row, section="source_form") for row in _KEYS_SOURCE_FORM]
+    sections["Index filters"] = [
+        _key_row(*row, section="filter_browser") for row in _keys_filter_browser()
+    ]
     sections["Open with… modal"] = [_key_row(*row, section="open_with") for row in _KEYS_OPEN_WITH]
     # AX permission gates the macOS Preview AppleScript page-jump, so the modal
     # can never surface on Linux/Windows — listing its keys there would point
@@ -655,6 +765,24 @@ def _setting_writer(path: str) -> Callable[[FNDApp, Any], None]:
 def _coerce_str_list(raw: str) -> list[str]:
     """Comma-separated text -> list. Empty input clears the list."""
     return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _choices_tag_sources(_app: FNDApp) -> list[ChoiceOption]:
+    """The tag providers, named rather than typed."""
+    import sys
+
+    from fnd.tags import TAG_PROVIDERS
+
+    labels = {
+        "frontmatter": ("Note tags (YAML)", "a note's `tags:` frontmatter"),
+        "os": (f"System tags ({os_labels.file_manager_name()})", "tags set in the file manager"),
+    }
+    out: list[ChoiceOption] = []
+    for tag_id, provider in TAG_PROVIDERS.items():
+        label, what = labels.get(tag_id, (tag_id, ""))
+        inert = "" if provider.available_on(sys.platform) else " (not available here)"
+        out.append(ChoiceOption(value=tag_id, label=label, description=what + inert))
+    return out
 
 
 def _get_str_list_default(field_name: str) -> Callable[[FNDApp], str]:
@@ -718,10 +846,16 @@ def _choices_collections(app: FNDApp) -> list[ChoiceOption]:
 
 
 def _choices_ranking(app: FNDApp) -> list[ChoiceOption]:
+    """Every configured profile, and always the one a collection starts on.
+
+    `ranking` is empty until someone writes a `[ranking.*]` block, so the
+    picker for a row reading "default" opened on nothing at all.
+    """
     cfg = app._config  # type: ignore[attr-defined]
-    if cfg is None:
-        return []
-    return [ChoiceOption(value=n, label=n) for n in sorted(cfg.ranking)]
+    names = sorted(cfg.ranking) if cfg else []
+    if DEFAULT_RANKING_PROFILE not in names:
+        names.insert(0, DEFAULT_RANKING_PROFILE)
+    return [ChoiceOption(value=n, label=n) for n in names]
 
 
 def _set_highlights(app: FNDApp, value: bool) -> None:
@@ -741,8 +875,9 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.result_limit",
             hint="1-1000",
+            bounds=(1, 1000),
             coerce=int,
-            value_getter=_get_int_default("result_limit", 200),
+            value_getter=_get_int_default("result_limit", DEFAULT_RESULT_LIMIT),
             keywords=("result", "limit"),
         ),
         MenuItem(
@@ -752,6 +887,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.debounce_ms",
             hint="0-2000",
+            bounds=(0, 2000),
             coerce=int,
             value_getter=_get_int_default("debounce_ms", 200),
             keywords=("debounce", "delay"),
@@ -766,6 +902,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.preview_load_debounce_ms",
             hint="0-1000",
+            bounds=(0, 1000),
             coerce=int,
             value_getter=_get_int_default("preview_load_debounce_ms", 150),
             keywords=("preview", "debounce", "delay", "load"),
@@ -777,6 +914,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.preview_chunks",
             hint="1-50",
+            bounds=(1, 50),
             coerce=int,
             value_getter=_get_int_default("preview_chunks", 5),
             keywords=("preview", "chunks"),
@@ -792,6 +930,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.sections_score_threshold",
             hint="0.0-1.0",
+            bounds=(0.0, 1.0),
             coerce=float,
             value_getter=_get_float_default("sections_score_threshold", 0.5),
             keywords=("section", "threshold", "score", "filter"),
@@ -807,6 +946,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.sections_per_file_max",
             hint="1-2000",
+            bounds=(1, 2000),
             coerce=int,
             value_getter=_get_int_default("sections_per_file_max", 200),
             keywords=("section", "cap", "limit"),
@@ -823,6 +963,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.preview_decode_workers",
             hint="1-16",
+            bounds=(1, 16),
             coerce=int,
             value_getter=_get_int_default("preview_decode_workers", 4),
             keywords=("preview", "decode", "workers", "threads", "parallel"),
@@ -839,6 +980,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.preview_warm_margin",
             hint="0-20",
+            bounds=(0, 20),
             coerce=int,
             value_getter=_get_int_default("preview_warm_margin", 2),
             keywords=("warm", "margin", "context", "preview", "cache", "ahead"),
@@ -848,7 +990,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             label="Auto-fuzzy matching",
             description=(
                 "Widen the cascade fallback to match typo'd query terms. "
-                "Per-term ``~N`` in the query still works when this is off."
+                "Per-term ~N in the query still works when this is off."
             ),
             kind=KIND_TOGGLE,
             toggle_getter=lambda app: (  # type: ignore[arg-type]
@@ -870,6 +1012,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_SCALAR,
             setting_path="defaults.fuzzy_min_term_chars",
             hint="0-10",
+            bounds=(0, 10),
             coerce=int,
             value_getter=_get_int_default("fuzzy_min_term_chars", 3),
             keywords=("fuzzy", "min", "length", "chars", "floor"),
@@ -878,7 +1021,10 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
         MenuItem(
             id="pref.highlights",
             label="Highlights",
-            description="Search-term highlights in the preview pane.",
+            description=(
+                "Search-term highlights in the preview pane. This session only: "
+                "h toggles it too, and it is on again next launch."
+            ),
             kind=KIND_TOGGLE,
             toggle_getter=lambda app: app._search.highlights_enabled,  # type: ignore[attr-defined]
             toggle_setter=_set_highlights,
@@ -942,7 +1088,7 @@ def _provider_preferences(_app: FNDApp) -> tuple[MenuItem, ...]:
             id="pref.render_mermaid",
             label="Render mermaid diagrams (in development)",
             description=(
-                "Render ```mermaid code fences as terminal text-art diagrams "
+                "Render mermaid code fences as terminal text-art diagrams "
                 "instead of source. Unsupported or oversized diagrams fall back "
                 "to source. Applies on next preview load."
             ),
@@ -1021,8 +1167,9 @@ def _filetype_default_app_items() -> tuple[MenuItem, ...]:
                 label=f"Default {label} app",
                 description=(
                     f"App that opens {label} files when no per-source "
-                    "override is set. '(auto-resolve)' lets the resolver "
-                    "auto-pick (eg. Skim if installed → Preview-if-AX → system)."
+                    "override is set. '(auto-resolve)' walks the ladder for "
+                    "this type: a registered app that is installed, then the "
+                    "system handler."
                 ),
                 kind=KIND_PICKER,
                 choices_provider=lambda app, k=kind: _choices_apps_for_kind(app, k),
@@ -1104,17 +1251,65 @@ def _set_app_default_for_kind(app: FNDApp, kind: str, value: Any) -> None:
 # ── Collections drill chain (per-collection / per-source) ───────────
 
 
+def interrupted_index(name: str) -> tuple[int, int] | None:
+    """``(files_completed, total_files)`` for a run of ``name`` that stopped
+    part-way, or None.
+
+    A run cancelled at 7% leaves `files_completed = 210, total_files = 3000` on
+    disk, and a search over the collection returns 7% of the corpus; this is
+    how a screen can say so.
+    """
+    import contextlib
+
+    from fnd.index_runner import saved_states
+
+    with contextlib.suppress(Exception):
+        for _path, state in saved_states():
+            if state.collection == name and 0 < state.files_completed < state.total_files:
+                return state.files_completed, state.total_files
+    return None
+
+
 def _collection_summary(app: FNDApp, name: str) -> str:
     """Trailing slot for a collection row in the Collections sub-screen —
-    shows scope dot, source count, and ranking profile."""
+    shows scope dot, source count, ranking profile, and whether the last
+    index of it stopped part-way."""
     cfg = app._config  # type: ignore[attr-defined]
     if cfg is None or name not in cfg.collections:
         return ""
     coll = cfg.collections[name]
     n = len(coll.sources)
     active = "●" if name in (app._scope.collections or []) else "○"  # type: ignore[attr-defined]
-    profile = getattr(coll, "ranking_profile", None) or "default"
-    return f"{active} {n} source{'s' if n != 1 else ''} · ranking:{profile}"
+    profile = getattr(coll, "ranking_profile", None) or DEFAULT_RANKING_PROFILE
+    summary = f"{active} {n} source{'s' if n != 1 else ''} · ranking:{profile}"
+    part = interrupted_index(name)
+    if part is not None:
+        done, total = part
+        summary = f"⚠ incomplete: {done} of {total} files · {summary}"
+    elif _holds_nothing(app, name):
+        # A filter that empties a collection leaves every other column reading
+        # exactly as it did: `● 1 source · ranking:default` over zero files.
+        summary = f"⚠ nothing indexed · {summary}"
+    return summary
+
+
+def _holds_nothing(app: FNDApp, name: str) -> bool:
+    """Whether the index holds no document for ``name``, as far as we can ask.
+
+    False when there is no index to ask: "not indexed yet" is the first-run
+    state, and the launch warning covers it.
+    """
+    import contextlib
+
+    from fnd.index import collection_is_empty
+
+    searcher = getattr(getattr(app, "_search", None), "searcher", None)
+    index = getattr(searcher, "_index", None)
+    if index is None:
+        return False
+    with contextlib.suppress(Exception):
+        return collection_is_empty(index, name)
+    return False
 
 
 def _make_open_collection_screen(name: str) -> Callable[[FNDApp], None]:
@@ -1208,13 +1403,21 @@ def _make_rebuild(name: str) -> Callable[[FNDApp], None]:
     (cache bypassed). The deliberate, costly redo."""
 
     def _run(app: FNDApp) -> None:
-        app._indexer.reindex_with_warning(  # type: ignore[attr-defined]
-            name,
-            texturise_override=True,
-            skip_unchanged=False,
-            force_fresh=True,
-            rebuild=True,
-        )
+        from fnd.tui.settings_screen import RebuildConfirmScreen
+
+        def _go() -> None:
+            app._indexer.reindex_with_warning(  # type: ignore[attr-defined]
+                name,
+                texturise_override=True,
+                skip_unchanged=False,
+                force_fresh=True,
+                rebuild=True,
+            )
+
+        # Confirmed, like every other act that removes something. This one
+        # empties the collection first and sat one Enter away, one row under
+        # "Update index", which adds and drops without emptying anything.
+        app.push_screen(RebuildConfirmScreen(collection_name=name, on_confirm=_go))
 
     return _run
 
@@ -1289,13 +1492,20 @@ def _provider_collections(app: FNDApp) -> tuple[MenuItem, ...]:
 
 
 def _summary_collection_update(app: FNDApp, name: str) -> str:
-    """Trailing context on the per-collection Update row. Counts the
-    sources configured for the collection, plus an ETA based on the
-    calibrated per-PDF cost when pdf-structure is installed."""
+    """Trailing context on the per-collection Update row, and the place an
+    interrupted run has to say so.
+
+    The Collections list warns someone browsing; this row warns someone who
+    opened the screen to act, on the row whose button fixes it.
+    """
     cfg = app._config  # type: ignore[attr-defined]
     if cfg is None or name not in cfg.collections:
         return ""
     n_sources = len(cfg.collections[name].sources)
+    part = interrupted_index(name)
+    if part is not None:
+        done, total = part
+        return f"⚠ incomplete: {done} of {total} files · {n_sources} sources"
     return f"{n_sources} sources"
 
 
@@ -1435,12 +1645,21 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
         MenuItem(
             id=f"col.{name}.rename",
             label="Rename",
+            description=(
+                "Change this collection's name. The index is rebuilt under the "
+                "new name, and your saved scope selection does not follow it; "
+                "re-tick the collection afterwards."
+            ),
             kind=KIND_EXTERNAL,
             external=_make_open_rename(name),
         ),
         MenuItem(
             id=f"col.{name}.sources",
             label="Sources",
+            description=(
+                "The folders this collection indexes, and each one's filters, "
+                "excludes and opening app."
+            ),
             kind=KIND_EXTERNAL,
             external=_make_open_sources_screen(name),
             value_getter=(
@@ -1456,6 +1675,11 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
         MenuItem(
             id=f"col.{name}.ranking_profile",
             label="Ranking profile",
+            description=(
+                "Which [ranking.<name>] block scores this collection's results: "
+                "recency, file-type and phrase-proximity weights. Applies to "
+                "the next search; no reindex."
+            ),
             kind=KIND_PICKER,
             choices_provider=_choices_ranking,
             picker_getter=(
@@ -1548,8 +1772,6 @@ def _source_trailing(collection_name: str, idx: int) -> Callable[[FNDApp], str]:
     and a path-not-found warning when the source directory is missing."""
 
     def _summary(app: FNDApp) -> str:
-        from fnd.config import INDEXER_FILETYPES
-
         cfg = app._config  # type: ignore[attr-defined]
         if cfg is None or collection_name not in cfg.collections:
             return ""
@@ -1557,24 +1779,110 @@ def _source_trailing(collection_name: str, idx: int) -> Callable[[FNDApp], str]:
         if idx >= len(sources):
             return ""
         src = sources[idx]
-        # Derive display extensions from glob patterns in src.includes.
-        exts: list[str] = []
-        for glob in src.includes:
-            for ext in INDEXER_FILETYPES:
-                if glob.endswith(f".{ext}"):
-                    exts.append(ext)
-                    break
-        types = ", ".join(exts) if exts else "Custom"
+        import re as _re
+
+        from fnd.kinds import KIND_BY_ID
+
+        kinds = list(src.effective_filters.kinds)
+        # A suffix glob restricts the type; anything else restricts the path.
+        # ``split_type_globs``' remainder is not the same question: it also
+        # holds suffix globs that name only part of a kind.
+        path_globs = [g for g in src.includes if not _re.fullmatch(r"\*\*/\*\.\w+", g)]
+        if not kinds and src.includes and not path_globs:
+            # Suffix globs restrict the types as kinds do, folded in or not. A
+            # path glob among them does not: include globs are ORed, so
+            # "notes/**" admits every type under notes/.
+            suffixes = {glob[glob.rfind(".") :] for glob in src.includes if glob.rfind(".") != -1}
+            kinds = sorted({k for k, spec in KIND_BY_ID.items() if set(spec.suffixes) & suffixes})
+        types = ", ".join(kinds) if kinds else "All types"
+        parts = [types, *(["path globs"] if path_globs else []), *_other_filters(src)]
+        types = " · ".join(parts)
         suffix = ""
         try:
             p = Path(src.path)
-            if not p.exists():
+            if path_is_absent(p):
                 suffix = " · ⚠ path not found"
+            elif p.is_symlink() and not src.follow_symlinks:
+                # A symlinked root is refused unless the user opts in, so this
+                # source indexes nothing while every other column reads healthy.
+                suffix = " · ⚠ symlink, not followed: indexes nothing"
+            else:
+                folder = _folder_glob(p, [*src.includes, *src.excludes])
+                if folder:
+                    suffix = f" · ⚠ {folder!r} names a folder; use {folder.rstrip('/') + '/**'!r}"
         except Exception:
-            suffix = " · ⚠ path not found"
+            # Not "not found": these probes raise on a path we cannot
+            # SEARCH, and a folder that is there must not be named as missing.
+            suffix = ""
         return f"{types}{suffix}"
 
     return _summary
+
+
+def _folder_glob(root: Path, globs: list[str]) -> str | None:
+    """The first glob that names a folder rather than reaching into it.
+
+    ``*`` stops at ``/``, so ``build`` and ``build/`` only ever match a FILE
+    called build: as an exclude it is inert, and as an include it leaves the
+    source indexing nothing. Bounded to the first few, one stat each.
+    """
+    for glob in globs[:8]:
+        if "*" in glob or "?" in glob or "[" in glob:
+            continue
+        name = glob.strip().rstrip("/")
+        if not name:
+            continue
+        try:
+            if (root / name).is_dir():
+                return glob
+        except OSError:
+            continue
+    return None
+
+
+_DATE_BOUNDS = ("created_after", "created_before", "modified_after", "modified_before")
+
+
+def _narrowing_dimensions(f: Any) -> list[str]:
+    """Which dimensions of a filter set narrow anything."""
+    named = []
+    if f.include_tags or f.exclude_tags:
+        named.append("tags")
+    if f.min_size is not None or f.max_size is not None:
+        named.append("size")
+    if any(getattr(f, n, None) is not None for n in _DATE_BOUNDS):
+        named.append("dates")
+    if (f.frontmatter or "").strip() or (f.expression or "").strip():
+        named.append("rule")
+    return named
+
+
+def _other_filters(src: Any) -> list[str]:
+    """Dimensions narrowing this source: its own by name, the defaults' as one.
+
+    `effective_filters` alone would put `tags` on every row (the shipped
+    `no_index` exclusion is a default) while the source's detail screen says
+    `inherited`; dropping the defaults is the opposite lie, since an inherited
+    rule can cut a source to one file in sixteen.
+    """
+    own = src.filters
+    named = []
+    # Excludes drop files before any other rule runs, and are the source's own
+    # field, never inherited.
+    if getattr(src, "excludes", None):
+        named.append("excludes")
+    if own is not None:
+        named.extend(_narrowing_dimensions(own))
+    inherited = set(_narrowing_dimensions(src.effective_filters)) - set(named)
+    if inherited or _inherits_kinds(src):
+        named.append("inherited")
+    return named
+
+
+def _inherits_kinds(src: Any) -> bool:
+    """Whether a file-type restriction on this source comes from the defaults."""
+    own = getattr(src, "filters", None)
+    return bool(src.effective_filters.kinds) and (own is None or own.kinds is None)
 
 
 def _make_open_clone_source(name: str) -> Callable[[FNDApp], None]:
@@ -1586,6 +1894,44 @@ def _make_open_clone_source(name: str) -> Callable[[FNDApp], None]:
     return _open
 
 
+def _source_labels(paths: list[str]) -> list[str]:
+    """Names that tell the sources apart, each no longer than it has to be.
+
+    Per row, not one depth for all: two rows on the same path can never
+    separate, and a shared depth took every other row to a full path with
+    them. Joined through ``Path`` so an absolute path keeps its root.
+    """
+    from collections import Counter
+    from pathlib import Path
+
+    parts = [Path(p).parts for p in paths]
+
+    def at(index: int, depth: int) -> str:
+        tail = parts[index][-depth:]
+        return str(Path(*tail)) if tail else paths[index]
+
+    depths = [1] * len(paths)
+    for _ in range(5):
+        labels = [at(i, d) for i, d in enumerate(depths)]
+        counts = Counter(labels)
+        deeper = [
+            i
+            for i, label in enumerate(labels)
+            if counts[label] > 1
+            and at(i, depths[i] + 1) != label
+            # Two rows on the SAME path never separate, so growing them only
+            # costs the summary column; the row number tells them apart.
+            and any(
+                parts[j] != parts[i] for j, other in enumerate(labels) if other == label and j != i
+            )
+        ]
+        if not deeper:
+            break
+        for i in deeper:
+            depths[i] += 1
+    return [at(i, d) for i, d in enumerate(depths)]
+
+
 def _provider_sources(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
     """Per-collection Sources list."""
     cfg = app._config  # type: ignore[attr-defined]
@@ -1595,6 +1941,9 @@ def _provider_sources(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
         MenuItem(
             id=f"sources.{name}.add",
             label="Add source",
+            description=(
+                "Add a folder to this collection. Its files enter the index on the next update."
+            ),
             kind=KIND_EXTERNAL,
             external=_make_open_source_form(name, None),
         ),
@@ -1613,12 +1962,13 @@ def _provider_sources(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
         ),
     ]
     col = cfg.collections[name]
+    labels = _source_labels([str(s.path) if s.path else "(no path)" for s in col.sources])
     for i, src in enumerate(col.sources):
         path_display = str(src.path) if src.path else "(no path)"
         items.append(
             MenuItem(
                 id=f"sources.{name}.{i}",
-                label=f"{i + 1}. {Path(path_display).name or path_display}",
+                label=f"{i + 1}. {labels[i]}",
                 description=path_display,
                 kind=KIND_EXTERNAL,
                 external=_make_open_source_form(name, i),
@@ -1669,9 +2019,16 @@ def _summary_collections(app: FNDApp) -> str:
 
 
 def _summary_keybindings(app: FNDApp) -> str:
-    keymap = app._fnd_keymap  # type: ignore[attr-defined]
-    n_keys = len(keymap.bindings)
-    return f"{n_keys} keys across 6 contexts"
+    """Counted from the sheet this row opens, not from the keymap.
+
+    The keymap holds the registry's bindings alone, while the sheet also carries
+    the static widget tables and lists a multi-pane action under each pane
+    (55 keys across 9 sections, against the keymap's 28 across 6).
+    """
+    items = _provider_keybindings(app)
+    rows = sum(1 for i in items if not i.is_header)
+    sections = sum(1 for i in items if i.is_header)
+    return f"{rows} keys across {sections} sections"
 
 
 def _summary_config_path(_app: FNDApp) -> str:
@@ -1703,10 +2060,10 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
             id="indexing.files_in_index",
             label="Files in index",
             description=(
-                "Distinct files (md, pptx, docx, txt, PDFs) that have at "
+                "Distinct files of every type fnd indexes that have at "
                 "least one chunk in the search index, totalled across "
-                "every collection. Updates the next time you open this "
-                "screen after an Update index run."
+                "every collection. Refreshes when an Update index run "
+                "finishes."
             ),
             kind=KIND_DISPLAY,
             value_getter=_summary_files_in_index,
@@ -1718,7 +2075,7 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
             label="Process new files (index only, no texturising)",
             description=(
                 "Run Update index for every collection in sequence, "
-                "indexing new and changed files (md, pptx, docx, txt, PDFs) "
+                "indexing new and changed files of every type it handles "
                 "but SKIPPING texturising for this run regardless of the "
                 "Texturise-while-indexing toggle. Incremental: unchanged "
                 "files are skipped, so this is a fast catch-up; texturise later."
@@ -1759,42 +2116,6 @@ def _provider_indexing(_app: FNDApp) -> tuple[MenuItem, ...]:
             setting_path="defaults.indexer_auto_resume",
             keywords=("auto", "resume", "indexer", "interrupted", "launch", "reindex"),
         ),
-        header("Tags", level=2),
-        MenuItem(
-            id="indexing.tag_sources",
-            label="Tag sources",
-            description=(
-                "Which sources feed the Tags filter, comma-separated. "
-                "'frontmatter' reads a note's YAML tags:; 'os' reads macOS "
-                "Finder tags"
-                + ("" if os_labels.is_macos() else " (macOS only, inert here)")
-                + ". Leave empty to turn tag filtering off. "
-                "Toggling a source takes effect immediately; no reindex."
-            ),
-            kind=KIND_SCALAR,
-            setting_path="defaults.tag_sources",
-            hint="frontmatter, os",
-            coerce=_coerce_str_list,
-            value_getter=_get_str_list_default("tag_sources"),
-            keywords=("tag", "tags", "frontmatter", "finder", "source"),
-        ),
-        MenuItem(
-            id="indexing.tag_frontmatter_keys",
-            label="Extra frontmatter tag keys",
-            description=(
-                "Frontmatter fields to treat as tags beyond tags:, "
-                "comma-separated, e.g. Course, Notes_Type, Topic. Values are "
-                "grouped under the key in the Tags pane (course/algebra), so "
-                "they never collide with a plain tag. Matched "
-                "case-insensitively. Needs a reindex to take effect."
-            ),
-            kind=KIND_SCALAR,
-            setting_path="defaults.tag_frontmatter_keys",
-            hint="Course, Notes_Type, Topic",
-            coerce=_coerce_str_list,
-            value_getter=_get_str_list_default("tag_frontmatter_keys"),
-            keywords=("tag", "tags", "frontmatter", "key", "course", "custom"),
-        ),
     )
 
 
@@ -1815,8 +2136,8 @@ def _provider_pdf_texture(_app: FNDApp) -> tuple[MenuItem, ...]:
             description=(
                 "Whether the texturising engine is installed. When installed, "
                 "the next Update index texturises any PDF that isn't already "
-                "textured. When not installed, every PDF stays flat in the "
-                "preview pane (search still works either way)."
+                "textured. When not installed, no new texturising happens; "
+                "PDFs already textured stay so, and search works either way."
             ),
             kind=KIND_DISPLAY,
             value_getter=_summary_pdf_status,
@@ -1867,11 +2188,9 @@ def _provider_pdf_texture(_app: FNDApp) -> tuple[MenuItem, ...]:
             id="pdf_texture.textured_count",
             label="PDFs textured",
             description=(
-                "Distinct PDFs in your collections whose chunks have a "
-                "non-empty body_md (rendered structurally in the preview "
-                "pane). The Y total is every PDF the indexer can see on "
-                "disk under your collection sources; ⚠ Z still flat = "
-                "Y - X. Enter to drill into the list of still-flat PDFs "
+                "Textured PDFs against every PDF the indexer can see under "
+                "your collection sources. The row shows the second number "
+                "only while some are still flat. Enter to drill into those, "
                 "with the reason per file and a Retry-per-file action."
             ),
             kind=KIND_EXTERNAL,
@@ -2061,6 +2380,193 @@ def _provider_indexing_pdf_texture(app: FNDApp) -> tuple[MenuItem, ...]:
         _dc.replace(item, subsection="PDF Texture") for item in _provider_pdf_texture(app)
     )
     return shared + indexing_items + pdf_texture_items
+
+
+# ── Index filters ────────────────────────────────────────────────────
+
+
+def _filters_defaults(app: FNDApp) -> Any:
+    """``[defaults.filters]``, or the shipped defaults under a config-less stub."""
+    from fnd.config import DefaultFilters
+
+    cfg = app._config  # type: ignore[attr-defined]
+    return cfg.defaults.filters if cfg else DefaultFilters()
+
+
+def _open_filter_browser(app: FNDApp) -> None:
+    """The defaults, as branches rather than a column of text boxes."""
+    from fnd.config import (
+        ConfigChangedError,
+        config_fingerprint,
+        default_config_path,
+        load,
+        write_settings,
+    )
+    from fnd.tui.settings_screen import (
+        FilterBrowserScreen,
+        _spec_from_filters,
+        _spec_to_mapping,
+    )
+
+    current = _filters_defaults(app)
+    # What the file looked like when this editor read it, so `^s` refuses to
+    # revert a save made meanwhile (a second Index filters, or the CLI).
+    opened_with = config_fingerprint(default_config_path())
+
+    def _save(spec: Any, gitignore: bool, fndignore: bool) -> None:
+        if config_fingerprint(default_config_path()) != opened_with:
+            raise ConfigChangedError(
+                "The config changed since this screen opened, most likely "
+                "saved from another Filters screen. Nothing was written. "
+                "Close this screen and reopen it to see the current filters."
+            )
+        values = _spec_to_mapping(spec)
+        values["respect_gitignore"] = gitignore
+        values["respect_fndignore"] = fndignore
+        # One write, so a failure cannot leave a half-old, half-new filter set.
+        # An empty list is written, not deleted: deleting the key brings back
+        # the model default (exclude_tags = ["no_index"]).
+        write_settings(
+            config_path=default_config_path(),
+            values={
+                f"defaults.filters.{name}": (None if value == "" else value)
+                for name, value in values.items()
+            },
+        )
+        app._config = load()  # type: ignore[attr-defined]
+        app._refresh_status()  # type: ignore[attr-defined]
+        # Nothing reindexes here, unlike the per-source route, so every
+        # collection keeps its current contents until the user says otherwise.
+        app.notify(
+            "Filters saved. Collections keep their current contents until the next Update index.",
+            severity="warning",
+        )
+        # These govern EVERY collection, so a save leaves all of them behind
+        # the config at once and a toast was the only thing that said so.
+        # Offered after the browser pops, so the dialog lands on the menu.
+        app.call_later(_push_update_all_confirm, app, texturise_override=None)
+
+    app.push_screen(
+        FilterBrowserScreen(
+            title="Index filters",
+            save_note="applies at the next Update index",
+            spec=_spec_from_filters(current),
+            gitignore=current.respect_gitignore,
+            fndignore=current.respect_fndignore,
+            sample_provider=lambda _spec: _indexed_tags(app),
+            no_tags_note="no tags in what is indexed",
+            unindexed_note="tags are offered once a collection is indexed",
+            on_save=_save,
+        )
+    )
+
+
+def _indexed_tags(app: FNDApp) -> Any:
+    """Every tag in the index, across every configured collection.
+
+    The index already knows them, so this asks it rather than re-walking the
+    disk: one aggregation over all collections, no file opened, nothing
+    hydrated from a cloud folder. Measured on a real 12-collection index at
+    65 ms for 141 distinct tags, where a walk reached only the first three
+    collections and called itself a partial scan.
+
+    Returns None only when it could not ASK (no config, or no index open). An
+    index that holds no tags returns an empty sample, because "nothing indexed
+    yet" and "indexed, and none of it is tagged" are different sentences and
+    the screen says one of them.
+    """
+    import contextlib
+
+    from fnd.filters.scan import SourceSample
+
+    cfg = app._config  # type: ignore[attr-defined]
+    if cfg is None:
+        return None
+    # Every getter here has to survive the settings tests' stub app, which
+    # is a SimpleNamespace carrying only `_config`.
+    searcher = getattr(getattr(app, "_search", None), "searcher", None)
+    index = getattr(searcher, "_index", None)
+    if index is None:
+        return None
+    with contextlib.suppress(Exception):
+        from fnd.tag_catalogue import tag_catalogue
+
+        catalogue = tag_catalogue(
+            index,
+            collections=list(cfg.collections),
+            sources=list(cfg.defaults.tag_sources),
+        )
+        merged = SourceSample()
+        for source, entries in catalogue.items():
+            if entries:
+                merged.tags[source] = {entry.value: entry.files for entry in entries}
+        return merged
+    return None
+
+
+def _summary_index_filters(app: FNDApp) -> str:
+    f = _filters_defaults(app)
+    bits: list[str] = []
+    on = [
+        n
+        for n, v in ((".gitignore", f.respect_gitignore), (".fndignore", f.respect_fndignore))
+        if v
+    ]
+    if on:
+        bits.append(", ".join(on))
+    from fnd.filters.dimensions import tag_selection
+
+    dropped = sorted({t for tags in tag_selection(f.exclude_tags).values() for t in tags})
+    if dropped:
+        bits.append(
+            f"never {'/'.join(dropped)}" if len(dropped) < 3 else f"never {len(dropped)} tags"
+        )
+    kept = sorted({t for tags in tag_selection(f.include_tags).values() for t in tags})
+    if kept:
+        bits.append(f"only {'/'.join(kept)}" if len(kept) < 3 else f"only {len(kept)} tags")
+    if f.kinds:
+        bits.append(f"{len(f.kinds)} types")
+    if f.max_size or f.min_size:
+        bits.append("size")
+    if any((f.created_after, f.created_before, f.modified_after, f.modified_before)):
+        bits.append("dates")
+    if f.frontmatter or f.expression:
+        bits.append("custom")
+    return " · ".join(bits) if bits else "off"
+
+
+def _provider_index_filters(_app: FNDApp) -> tuple[MenuItem, ...]:
+    """One row into the filter browser, rather than a column of typed fields."""
+    return (
+        MenuItem(
+            id="filters.browse",
+            label="Index filters",
+            description=(
+                "Which files enter the index: file types, tags, size, dates "
+                "and ignore files, as branches you tick, or as one expression "
+                "if you prefer. Applies at the next Update index: files that "
+                "now match are added, files that no longer match are dropped."
+            ),
+            kind=KIND_EXTERNAL,
+            external=_open_filter_browser,
+            value_getter=_summary_index_filters,
+            keywords=(
+                "filter",
+                "filters",
+                "ignore",
+                "gitignore",
+                "fndignore",
+                "tag",
+                "no_index",
+                "kind",
+                "type",
+                "size",
+                "date",
+                "exclude",
+                "skip",
+            ),
+        ),
+    )
 
 
 def _is_pdf_structure_installed() -> bool:
@@ -2269,12 +2775,24 @@ def _summary_indexing(app: FNDApp) -> str:
     return "✓ auto-resume" if _get_indexer_auto_resume(app) else "✗ auto-resume"
 
 
+def _engine_chip() -> str:
+    """Engine state for the trailing summary.
+
+    Off the render path with its two siblings: it stats the uv tool root and
+    calls ``importlib.invalidate_caches()``, whose cost is process-wide and
+    lands on whatever imports next rather than showing up here.
+    """
+    return "✓ engine on" if _is_pdf_structure_installed() else "✗ engine off"
+
+
 def _summary_pdf_texture(app: FNDApp) -> str:
     """Engine + cache chip — still used by tests after the section combine."""
     from fnd.tui.lazy_trailing import PLACEHOLDER, get_or_schedule
 
-    engine = "✓ engine on" if _is_pdf_structure_installed() else "✗ engine off"
-    parts = [engine]
+    parts: list[str] = []
+    engine = get_or_schedule(app, "pdf_texture.summary.engine", _engine_chip)
+    if engine and engine != PLACEHOLDER:
+        parts.append(engine)
     cache_part = get_or_schedule(app, "pdf_texture.summary.cache_short", _cache_size_short)
     if cache_part and cache_part != PLACEHOLDER:
         parts.append(cache_part)
@@ -2331,7 +2849,8 @@ def _summary_indexing_pdf_texture(app: FNDApp) -> str:
 
     Composes the two prior chip summaries so the root row carries the
     most actionable status bits from both subsections at a glance."""
-    return f"{_summary_indexing(app)} · {_summary_pdf_texture(app)}"
+    halves = [t for t in (_summary_indexing(app), _summary_pdf_texture(app)) if t]
+    return " · ".join(halves)
 
 
 def _summary_cache_size_row(app: FNDApp) -> str:
@@ -2598,6 +3117,60 @@ def _run_cache_clear(app: FNDApp) -> None:
     )
 
 
+def _provider_filters(app: FNDApp) -> tuple[MenuItem, ...]:
+    """Filters, split by when they apply.
+
+    Index-time filters decide what the index holds; query-time ones narrow
+    what a search returns from it. On one screen the difference is visible;
+    apart, the two read identically.
+    """
+    return (
+        header("What gets indexed", level=2),
+        *_provider_index_filters(app),
+        MenuItem(
+            id="filters.tag_frontmatter_keys",
+            label="Extra frontmatter tag keys",
+            description=(
+                "Frontmatter fields to treat as tags beyond tags:, "
+                "comma-separated, e.g. Course, Notes_Type, Topic. Values are "
+                "grouped under the key in the Tags pane (course/algebra), so "
+                "they never collide with a plain tag. Matched "
+                "case-insensitively. Needs a Rebuild index: tags are read when "
+                "a file is indexed, and an Update skips unchanged files."
+            ),
+            kind=KIND_SCALAR,
+            setting_path="defaults.tag_frontmatter_keys",
+            hint="Course, Notes_Type, Topic",
+            coerce=_coerce_str_list,
+            value_getter=_get_str_list_default("tag_frontmatter_keys"),
+            keywords=("tag", "tags", "frontmatter", "key", "course", "custom"),
+        ),
+        header("What a search returns", level=2),
+        MenuItem(
+            id="filters.tag_sources",
+            label="Tag sources",
+            description=(
+                "Which sources feed the Tags filter. Tags are read per file: "
+                "a tag on a folder does not apply to what is inside it. Tick "
+                "none to turn tag filtering off. Turning one off hides its tags "
+                "straight away; turning one on needs a Rebuild index, since "
+                "tags are read when a file is indexed and an Update skips "
+                "unchanged files."
+            ),
+            kind=KIND_PICKER,
+            multi=True,
+            choices_provider=_choices_tag_sources,
+            picker_getter=lambda app: (
+                list(app._config.defaults.tag_sources)  # type: ignore[attr-defined]
+                if app._config  # type: ignore[attr-defined]
+                else []
+            ),
+            picker_setter=_setting_writer("defaults.tag_sources"),
+            keywords=("tag", "tags", "frontmatter", "finder", "source"),
+        ),
+    )
+
+
 def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
     """Root settings menu — a clean, short list of categories. No
     content piled on top of each other. Each drill-in row pushes its
@@ -2618,6 +3191,17 @@ def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
             kind=KIND_EXTERNAL,
             external=_open_section(SECTION_COLLECTIONS),
             value_getter=_summary_collections,
+        ),
+        MenuItem(
+            id=f"root.{SECTION_FILTERS}",
+            label="Filters",
+            description=(
+                "What enters the index, and what a search returns from it: "
+                "file types, tags, size, dates and ignore files."
+            ),
+            kind=KIND_EXTERNAL,
+            external=_open_section(SECTION_FILTERS),
+            value_getter=_summary_index_filters,
         ),
         MenuItem(
             id=f"root.{SECTION_KEYBINDINGS}",
@@ -2702,6 +3286,7 @@ _SECTION_PROVIDERS: dict[str, Callable[[FNDApp], tuple[MenuItem, ...]]] = {
     SECTION_COLLECTIONS: _provider_collections,
     SECTION_KEYBINDINGS: _provider_keybindings,
     SECTION_INDEXING_PDF_TEXTURE: _provider_indexing_pdf_texture,
+    SECTION_FILTERS: _provider_filters,
 }
 
 _SECTION_LABELS: dict[str, str] = {
@@ -2709,6 +3294,7 @@ _SECTION_LABELS: dict[str, str] = {
     SECTION_COLLECTIONS: "Collections",
     SECTION_KEYBINDINGS: "Keybindings",
     SECTION_INDEXING_PDF_TEXTURE: "Indexing & PDF Texture",
+    SECTION_FILTERS: "Filters",
 }
 
 

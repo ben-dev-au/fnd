@@ -1,8 +1,9 @@
-"""Phase 3 (Settings UX redesign) — visual foundation tests."""
+"""Settings UX redesign: visual foundation tests."""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -18,8 +19,14 @@ def test_indexer_filetypes_exposed_and_complete() -> None:
     # Kind id -> human label, derived from the single registry source of truth.
     assert tuple(INDEXER_FILETYPES) == tuple(ALL_KIND_IDS)
     # The original document kinds are still present with descriptive labels…
-    assert INDEXER_FILETYPES["md"] == "Markdown (.md/.markdown)"
     assert INDEXER_FILETYPES["pdf"] == "PDF (.pdf)"
+    # Derived, not spelled: Markdown carries seven extensions, and a literal
+    # here would need editing for each one added.
+    from fnd.kinds import KIND_BY_ID
+
+    md = KIND_BY_ID["md"]
+    assert INDEXER_FILETYPES["md"] == f"{md.label} ({'/'.join(md.suffixes)})"
+    assert ".qmd" in INDEXER_FILETYPES["md"]
     # …and the broadened set now includes the new families.
     for kind_id in ("epub", "python", "csv", "html", "ipynb", "odt"):
         assert kind_id in INDEXER_FILETYPES
@@ -666,3 +673,103 @@ async def test_cursor_move_does_not_call_render_all(
             f"{counter['n'] - baseline} times across 10 cursor moves; "
             "should be zero — only -cursor class toggles, no row rerenders"
         )
+
+
+class TestSourceRowMatchesTheWalk:
+    """A row that names file types must not contradict what is indexed."""
+
+    @staticmethod
+    def _row(tmp_path, includes):  # type: ignore[no-untyped-def]
+        from fnd.config import Config
+        from fnd.tui.menu import _source_trailing
+
+        cfg = Config.model_validate(
+            {
+                "defaults": {"filters": {"exclude_tags": []}},
+                "collections": {"c": {"sources": [{"path": str(tmp_path), "includes": includes}]}},
+            }
+        )
+
+        class _App:
+            _config = cfg
+
+        return _source_trailing("c", 0)(_App())  # type: ignore[arg-type]
+
+    def test_a_path_glob_means_the_types_are_not_restricted(self, tmp_path: Path) -> None:
+        """Include globs are ORed, so ``notes/**`` admits every type under
+        notes/ whatever its neighbours say. Reading the suffixes alone said
+        "md" for a source that yields PDFs."""
+        assert "All types" in self._row(tmp_path, ["**/*.md", "notes/**"])
+        assert "path globs" in self._row(tmp_path, ["**/*.md", "notes/**"])
+
+    def test_a_suffix_glob_still_names_its_type(self, tmp_path: Path) -> None:
+        assert self._row(tmp_path, ["**/*.md"]) == "md"
+
+    def test_no_includes_is_every_type(self, tmp_path: Path) -> None:
+        assert self._row(tmp_path, []) == "All types"
+
+
+class TestARowNamesAGlobThatCannotReachAFolder:
+    """`*` stops at `/`, so `build` and `build/` match only a FILE called
+    build: inert as an exclude, and as an include the source indexes nothing.
+    Two warnings already cover the other ways a source yields nothing, and
+    this one read "All types" with every column healthy."""
+
+    @staticmethod
+    def _row(tmp_path: Path, **source: object) -> str:
+        from fnd.config import Config
+        from fnd.tui.menu import _source_trailing
+
+        cfg = Config.model_validate(
+            {
+                "defaults": {"filters": {"exclude_tags": []}},
+                "collections": {"c": {"sources": [{"path": str(tmp_path), **source}]}},
+            }
+        )
+
+        class _App:
+            _config = cfg
+
+        return _source_trailing("c", 0)(cast("Any", _App()))
+
+    def test_a_bare_folder_name_in_includes_is_called_out(self, tmp_path: Path) -> None:
+        (tmp_path / "src").mkdir()
+        row = self._row(tmp_path, includes=["src"])
+        assert "⚠" in row
+        assert "'src/**'" in row, row
+
+    def test_a_trailing_slash_is_no_better(self, tmp_path: Path) -> None:
+        (tmp_path / "build").mkdir()
+        assert "⚠" in self._row(tmp_path, excludes=["build/"])
+
+    def test_the_working_glob_says_nothing(self, tmp_path: Path) -> None:
+        """The control: the form it recommends must not warn about itself."""
+        (tmp_path / "build").mkdir()
+        assert "⚠" not in self._row(tmp_path, excludes=["build/**"])
+
+    def test_a_suffix_glob_says_nothing(self, tmp_path: Path) -> None:
+        (tmp_path / "build").mkdir()
+        assert "⚠" not in self._row(tmp_path, includes=["**/*.md"])
+
+    def test_a_name_that_is_not_a_folder_says_nothing(self, tmp_path: Path) -> None:
+        """A literal filename is a legitimate glob; only a real folder misleads."""
+        (tmp_path / "notes.md").write_text("x", encoding="utf-8")
+        assert "⚠" not in self._row(tmp_path, includes=["notes.md"])
+
+    def test_a_missing_path_still_reports_the_missing_path(self, tmp_path: Path) -> None:
+        row = self._row(tmp_path / "gone", includes=["src"])
+        assert "path not found" in row
+
+
+class TestTheCustomGlobPromptSaysWhatAGlobDoes:
+    """The rule box one screen over teaches this exact rule; the field that
+    takes globs had no hint, no example and no validation."""
+
+    def test_both_prompts_carry_the_hint(self) -> None:
+        import inspect
+
+        from fnd.tui.settings_screen import _GLOB_HINT, AddCollectionWizard, SourceFormScreen
+
+        assert "/**" in _GLOB_HINT
+        for screen in (SourceFormScreen, AddCollectionWizard):
+            assert "_GLOB_HINT" in inspect.getsource(screen._prompt_custom), screen.__name__
