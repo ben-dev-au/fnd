@@ -1,4 +1,4 @@
-"""Predicate DSL parser + evaluator (§5.5e-1).
+"""Predicate DSL parser + evaluator.
 
 Grammar::
 
@@ -8,14 +8,17 @@ Grammar::
     not_expr    ::= NOT? atom
     atom        ::= "(" expr ")" | comparison
     comparison  ::= ident OP value
-                  | value "in" ident
+                  | value "in" ident            (value is IN the field's list)
                   | value "not in" ident
+                  | ident "in" "[" value,* "]"  (field's scalar is IN the list)
+                  | ident "not in" "[" value,* "]"
     OP          ::= "==" | "!=" | "<" | ">" | "<=" | ">=" | "~~"
     value       ::= 'string' | "string" | number | iso_date | true | false | null
+                    (numbers accept TOML-style separators: 50_000_000)
     ident       ::= word | "quoted word"
 
-Same DSL is reused at query time (phase 5.5e-2) — the evaluator is
-purely functional, takes a frontmatter dict, returns bool.
+The same DSL is reused at query time: the evaluator is purely functional,
+takes a frontmatter dict and returns a bool.
 """
 
 from __future__ import annotations
@@ -26,6 +29,9 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum, auto
+from typing import Any
+
+from fnd.globs import PathGlob
 
 
 class TokenKind(Enum):
@@ -44,6 +50,9 @@ class TokenKind(Enum):
     NULL = auto()
     LPAREN = auto()
     RPAREN = auto()
+    LBRACKET = auto()
+    RBRACKET = auto()
+    COMMA = auto()
     EOF = auto()
 
 
@@ -64,6 +73,9 @@ class FilterError(Exception):
         self.message = message
         self.column = column
 
+    def __reduce__(self) -> tuple[Any, tuple[str, int]]:
+        return (FilterError, (self.message, self.column))
+
 
 _KEYWORDS = {
     "and": TokenKind.AND,
@@ -82,8 +94,31 @@ _OPERATORS = ("==", "!=", "<=", ">=", "~~", "<", ">")
 
 
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
-_NUMBER_RE = re.compile(r"\d+(\.\d+)?")
-_BARE_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_\-]*")
+# Separators sit between digits, as TOML requires: 50_000_000 but not 1__0 or 1_.
+_NUMBER_RE = re.compile(r"\d+(?:_\d+)*(?:\.\d+(?:_\d+)*)?")
+_BARE_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_\-.]*")
+
+
+def _scan_string(text: str, start: int, quote: str) -> tuple[str, int] | None:
+    """``(value, index past the closing quote)``, or None if unterminated.
+
+    Backslash escapes the quote and itself. A trailing backslash is read as a
+    literal instead when escaping it would run off the end, so a value that
+    ends in one (a Windows path, say) still parses.
+    """
+    for escaping in (True, False):
+        parts: list[str] = []
+        j = start + 1
+        while j < len(text) and text[j] != quote:
+            if escaping and text[j] == "\\" and j + 1 < len(text) and text[j + 1] in (quote, "\\"):
+                parts.append(text[j + 1])
+                j += 2
+                continue
+            parts.append(text[j])
+            j += 1
+        if j < len(text):
+            return "".join(parts), j + 1
+    return None
 
 
 def tokenize(text: str) -> list[Token]:
@@ -106,6 +141,18 @@ def tokenize(text: str) -> list[Token]:
             out.append(Token(TokenKind.RPAREN, ")", col))
             i += 1
             continue
+        if ch == "[":
+            out.append(Token(TokenKind.LBRACKET, "[", col))
+            i += 1
+            continue
+        if ch == "]":
+            out.append(Token(TokenKind.RBRACKET, "]", col))
+            i += 1
+            continue
+        if ch == ",":
+            out.append(Token(TokenKind.COMMA, ",", col))
+            i += 1
+            continue
         # Operators (longest match first).
         matched_op = next((op for op in _OPERATORS if text.startswith(op, i)), None)
         if matched_op is not None:
@@ -115,13 +162,15 @@ def tokenize(text: str) -> list[Token]:
         # Quoted tokens: double-quotes → IDENT (field names with spaces),
         # single-quotes → STRING (string literal values).
         if ch in ('"', "'"):
-            close = text.find(ch, i + 1)
-            if close == -1:
+            # ``\'`` and ``\\`` escape, so a tag or field carrying a quote can
+            # be written. Without it such a value had no text form at all and
+            # was silently mangled on the way through.
+            scanned = _scan_string(text, i, ch)
+            if scanned is None:
                 raise FilterError("unterminated string", col)
-            inner = text[i + 1 : close]
+            value, i = scanned
             kind = TokenKind.IDENT if ch == '"' else TokenKind.STRING
-            out.append(Token(kind, inner, col))
-            i = close + 1
+            out.append(Token(kind, value, col))
             continue
         # Date literal (must precede number — same leading digits).
         date_match = _DATE_RE.match(text, i)
@@ -136,7 +185,7 @@ def tokenize(text: str) -> list[Token]:
             continue
         num_match = _NUMBER_RE.match(text, i)
         if num_match:
-            raw = num_match.group(0)
+            raw = num_match.group(0).replace("_", "")
             num_value: int | float = float(raw) if "." in raw else int(raw)
             out.append(Token(TokenKind.NUMBER, num_value, col))
             i = num_match.end()
@@ -201,6 +250,19 @@ class In:
 
 
 @dataclass(slots=True, frozen=True)
+class FieldIn:
+    """The field's scalar is one of a literal list: ``file.kind in ['pdf','md']``.
+
+    The mirror image of :class:`In`, which tests a literal against a *list*
+    field. A list-valued field never matches here; use ``In`` for that.
+    """
+
+    field: str
+    values: tuple[object, ...]
+    negated: bool
+
+
+@dataclass(slots=True, frozen=True)
 class And:
     left: object
     right: object
@@ -229,8 +291,23 @@ def parse(text: str) -> object:
     parser = _Parser(tokens)
     tree = parser.parse_or()
     if parser.peek().kind is not TokenKind.EOF:
-        raise FilterError(f"unexpected token {parser.peek().value!r}", parser.peek().column)
+        leftover = parser.peek()
+        raise FilterError(
+            f"unexpected token {leftover.value!r}{_unit_hint(leftover.value)}", leftover.column
+        )
     return tree
+
+
+#: Suffixes a user reaches for on a size bound. The DSL has no units: sizes are
+#: bytes, and `200kb` failed with nothing pointing at that.
+_SIZE_SUFFIXES = ("kb", "mb", "gb", "tb", "k", "m", "g", "b", "kib", "mib", "gib", "bytes")
+
+
+def _unit_hint(value: object) -> str:
+    """A pointer at the unit, when the leftover token looks like one."""
+    if isinstance(value, str) and value.strip().lower() in _SIZE_SUFFIXES:
+        return "; sizes are in bytes, so 200 kB is 200000"
+    return ""
 
 
 class _Parser:
@@ -300,8 +377,10 @@ class _Parser:
                 self.advance()
                 value = self._parse_value()
                 return Compare(str(first.value), str(op_tok.value), value)
-            # Form B: ident is the LHS of an "in"/"not in" — but that's
-            # Form C below. Re-raise with the actual context.
+            if op_tok.kind in (TokenKind.IN, TokenKind.NOT_IN):
+                self.advance()
+                values = self._parse_value_list()
+                return FieldIn(str(first.value), values, negated=op_tok.kind is TokenKind.NOT_IN)
             raise FilterError(f"expected operator after {first.value!r}", op_tok.column)
         # Form C: value ("in"|"not in") ident
         if first.kind in (
@@ -324,6 +403,26 @@ class _Parser:
                 return In(value, str(ident.value), negated=True)
             raise FilterError("expected 'in' / 'not in' after value", mem.column)
         raise FilterError(f"unexpected token {first.value!r}", first.column)
+
+    def _parse_value_list(self) -> tuple[object, ...]:
+        """``[ value, value, ... ]``; a trailing comma and an empty list are
+        rejected, so a typo can't silently become a filter that matches nothing."""
+        open_tok = self.expect(TokenKind.LBRACKET)
+        values: list[object] = []
+        while True:
+            values.append(self._parse_value())
+            nxt = self.peek()
+            if nxt.kind is TokenKind.COMMA:
+                self.advance()
+                continue
+            break
+        end = self.peek()
+        if end.kind is not TokenKind.RBRACKET:
+            raise FilterError("expected ',' or ']' in list", end.column)
+        self.advance()
+        if not values:
+            raise FilterError("empty list", open_tok.column)
+        return tuple(values)
 
     def _parse_value(self) -> object:
         t = self.advance()
@@ -355,11 +454,50 @@ class _Parser:
 Predicate = Callable[[Mapping[str, object]], bool]
 
 
+def referenced_fields(node: object) -> frozenset[str]:
+    """Every field name an AST references. Lets a caller decide policy for a
+    field before evaluating, which the strict-null evaluator cannot express."""
+    if isinstance(node, Compare):
+        return frozenset({node.field})
+    if isinstance(node, (In, FieldIn)):
+        return frozenset({node.field})
+    if isinstance(node, Not):
+        return referenced_fields(node.operand)
+    if isinstance(node, (And, Or)):
+        return referenced_fields(node.left) | referenced_fields(node.right)
+    return frozenset()
+
+
+def _reject_unknown_facts(tree: object, text: str) -> None:
+    """Raise on a `file.` name that is not a fact.
+
+    An unknown fact is *unknown*, not false, so its rule is waived, and a
+    typo therefore admits every file rather than none. Frontmatter keys
+    provably cannot contain a dot, so anything dotted here is a mistake.
+    """
+    from fnd.file_facts import RESERVED_FACTS, is_fact_name
+
+    stack = [tree]
+    while stack:
+        node = stack.pop()
+        field = getattr(node, "field", None)
+        if isinstance(field, str) and is_fact_name(field) and field not in RESERVED_FACTS:
+            column = text.find(field) + 1
+            known = ", ".join(sorted(RESERVED_FACTS))
+            raise FilterError(f"no such field {field!r}; known fields are {known}", max(column, 1))
+        stack.extend(
+            child
+            for name in ("left", "right", "operand", "node")
+            if (child := getattr(node, name, None)) is not None
+        )
+
+
 def compile_filter(text: str) -> Predicate:
     """Parse ``text`` into a callable predicate. Raises FilterError on
     syntax issues. The returned predicate is pure: it never raises and
     returns False on type mismatches or missing fields (strict null)."""
     tree = parse(text)
+    _reject_unknown_facts(tree, text)
     return _make_evaluator(tree)
 
 
@@ -392,6 +530,8 @@ def _make_evaluator(node: object) -> Predicate:
         return lambda fm: _eval_compare(fm, field, op, value)
     if isinstance(node, In):
         return lambda fm: _eval_in(fm, node.value, node.field, node.negated)
+    if isinstance(node, FieldIn):
+        return lambda fm: _eval_field_in(fm, node.field, node.values, node.negated)
     raise AssertionError(f"unknown AST node {type(node).__name__}")
 
 
@@ -401,16 +541,16 @@ def _eval_compare(fm: Mapping[str, object], field: str, op: str, value: object) 
         return False
     actual = fm[field]
     if op in ("==", "!="):
-        # Reject silent bool/int conflation: ``True == 1`` is True in raw
-        # Python, but for YAML frontmatter where ``true`` and ``1`` are
-        # distinct, that's a semantic surprise. If exactly one side is bool,
-        # they're not equal.
-        if isinstance(actual, bool) != isinstance(value, bool):
-            return op == "!="
-        return (actual == value) if op == "==" else (actual != value)
+        equal = _scalar_equal(actual, value)
+        return equal if op == "==" else not equal
     if op == "~~":
         if not isinstance(actual, str) or not isinstance(value, str):
             return False
+        # A path takes the walker's glob language, so a rule over file.path
+        # answers what the walk would; any other string (a URL, a slashed tag)
+        # is not a path, and keeps the fnmatch reading legacy rules were written in.
+        if field == "file.path":
+            return PathGlob(value).matches(actual)
         return fnmatch.fnmatchcase(actual, value)
     # Ordered compares: numeric-numeric or date-date only.
     if op in ("<", ">", "<=", ">="):
@@ -427,11 +567,36 @@ def _eval_compare(fm: Mapping[str, object], field: str, op: str, value: object) 
     return False
 
 
+def _scalar_equal(actual: object, value: object) -> bool:
+    """Equality that refuses bool/int conflation.
+
+    ``True == 1`` in raw Python, but YAML ``true`` and ``1`` are distinct
+    values, so exactly one side being a bool means not-equal.
+    """
+    if isinstance(actual, bool) != isinstance(value, bool):
+        return False
+    return bool(actual == value)
+
+
+def _eval_field_in(
+    fm: Mapping[str, object], field: str, values: tuple[object, ...], negated: bool
+) -> bool:
+    if field not in fm:
+        return False  # strict null, as for every other comparison
+    actual = fm[field]
+    if isinstance(actual, list | tuple):
+        return False  # a list field belongs on the ``In`` form
+    member = any(_scalar_equal(actual, v) for v in values)
+    return (not member) if negated else member
+
+
 def _eval_in(fm: Mapping[str, object], value: object, field: str, negated: bool) -> bool:
     if field not in fm:
         return False  # strict null even for `not in`
     container = fm[field]
-    if not isinstance(container, list | tuple):
+    if not isinstance(container, list | tuple | set | frozenset):
+        # Sets included: every tag API returns frozenset, and a type gate that
+        # rejected them would make ``'x' in file.tags.os`` silently False.
         return False
     is_member = value in container
     return (not is_member) if negated else is_member
