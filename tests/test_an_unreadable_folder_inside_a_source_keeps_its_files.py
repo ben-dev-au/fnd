@@ -124,3 +124,26 @@ def test_a_folder_that_is_really_gone_still_prunes_its_files_quietly(
         assert "unreadable" not in capsys.readouterr().err
 
     assert parent_id not in _indexed(tmp_index_dir)
+
+
+def test_a_source_whose_parent_is_locked_keeps_its_files(
+    tmp_path: Path, tmp_index_dir: Path
+) -> None:
+    """A root that cannot even be stat'ed is unreadable, not a crash and not empty."""
+    parent = tmp_path / "share"
+    root = parent / "vault"
+    root.mkdir(parents=True)
+    note = root / "note.md"
+    note.write_text("# Note\n\nhaystack\n", encoding="utf-8")
+    config = CollectionConfig(sources=[SourceConfig(path=root)])
+    build_index_from_config(config=config, collection="vault", index_dir=tmp_index_dir)
+
+    os.chmod(parent, 0o000)
+    try:
+        if os.access(parent, os.R_OK):
+            pytest.skip("running as a user that bypasses directory permissions")
+        build_index_from_config(config=config, collection="vault", index_dir=tmp_index_dir)
+    finally:
+        os.chmod(parent, stat.S_IRWXU)
+
+    assert _path_parent_id(note) in _indexed(tmp_index_dir)

@@ -115,18 +115,21 @@ def walk(
 
     for root in roots:
         original = root.expanduser()
-        if not follow_symlinks and original.is_symlink():
-            # A symlinked root is the only way the index can end up
-            # following the link target (the inner symlink-checks below
-            # only handle members). Refuse unless the user opted in.
-            continue
+        # A root that cannot be stat'ed (a locked parent) is skipped here and
+        # reported by the caller, like one that cannot be listed.
         try:
+            if not follow_symlinks and original.is_symlink():
+                # A symlinked root is the only way the index can end up
+                # following the link target (the inner symlink-checks below
+                # only handle members). Refuse unless the user opted in.
+                continue
             root = original.resolve()
+            if not root.exists():
+                continue
+            is_file = root.is_file()
         except OSError:
             continue
-        if not root.exists():
-            continue
-        if root.is_file():
+        if is_file:
             if root.suffix.lower() in suffixes:
                 yield root
             continue
