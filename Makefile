@@ -1,5 +1,9 @@
 .PHONY: sync test test-fast lint fmt tui snapshot install-hooks batch-close flake-soft harness-real
 
+# Private additions from the dev/ tree, when present. It may set
+# BATCH_CLOSE_DONE, a command run once batch-close has passed.
+-include dev/tools/local.mk
+
 # Scenarios that build their own fake HOME. The `real_*` three read the
 # developer's own documents, so they are opt-in via `harness-real`.
 HARNESS_SCENARIOS = tui_renders_chrome open_settings_palette drill_into_indexing \
@@ -36,11 +40,7 @@ batch-close:
 	@if [ -f dev/tools/workflow_audit_tmux.py ]; then \
 		uv run python dev/tools/workflow_audit_tmux.py $(HARNESS_SCENARIOS); \
 	else echo "skip: dev/tools/workflow_audit_tmux.py absent"; fi
-	@# Records that THIS tree passed. `green_gate` refuses a commit whose tree
-	@# has changed since, because pyright is a pre-push hook and a loop that
-	@# never pushes never runs it.
-	@mkdir -p .claude && python3 ~/.claude/hooks/green_gate.py --record > .claude/batch-close.ok \
-		&& echo "batch-close: recorded green"
+	@$(BATCH_CLOSE_DONE)
 
 # Detector A: the suite with `_wait_for_screen`'s bound shrunk to 1ms. Produces
 # false positives by design, so it is a round-close instrument, not a gate.
@@ -52,8 +52,10 @@ flake-soft:
 
 # Reads the developer's own documents through symlinks into a private index.
 harness-real:
-	uv run python dev/tools/workflow_audit_tmux.py \
-		real_index_one_collection real_update_all_chain real_update_all_top5
+	@if [ -f dev/tools/workflow_audit_tmux.py ]; then \
+		uv run python dev/tools/workflow_audit_tmux.py \
+			real_index_one_collection real_update_all_chain real_update_all_top5; \
+	else echo "skip: dev/tools/workflow_audit_tmux.py absent"; fi
 
 tui:
 	uv run textual run --dev fnd.tui.app:FNDApp
