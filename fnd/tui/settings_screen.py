@@ -1065,6 +1065,10 @@ class SettingsList(Widget, can_focus=True):
         # (ellipsis / wrap), so only a width change needs a full rebuild;
         # height-only or duplicate resizes are skipped. -1 = never rendered.
         self._last_render_width: int = -1
+        # One per item, in order. A query of the body also returns rows a
+        # rebuild removed that Textual has not yet pruned; filling those leaves
+        # the live rows blank.
+        self._rows: list[Static] = []
 
     def compose(self) -> ComposeResult:
         # VerticalScroll (not plain Vertical) so long lists like the
@@ -1106,6 +1110,7 @@ class SettingsList(Widget, can_focus=True):
         rendering_search = bool(self._search_breadcrumbs)
         current_subsection: str | None = None
         current_container: Vertical | VerticalScroll = body
+        self._rows = []
         for item in items:
             target_sub = None if rendering_search else item.subsection
             if target_sub != current_subsection:
@@ -1126,7 +1131,9 @@ class SettingsList(Widget, can_focus=True):
                     cls += " -hint-section"
             elif in_hint_section:
                 cls += " -hint-section"
-            current_container.mount(Static("", classes=cls))
+            row = Static("", classes=cls)
+            current_container.mount(row)
+            self._rows.append(row)
         self.call_after_refresh(self._init_cursor)
 
     def _init_cursor(self) -> None:
@@ -1151,12 +1158,8 @@ class SettingsList(Widget, can_focus=True):
 
     def _render_all(self) -> None:
         app: FNDApp = self.app  # type: ignore[assignment]
-        try:
-            body = self.query_one("#settings_list_body", VerticalScroll)
-        except Exception:
-            return
         width = self.size.width or 80
-        rows = list(body.query(Static))
+        rows = self._rows
         highlight = self._search_query or None
         # Budget chars eaten by the wrapping containers so the row's
         # ellipsis fires before content clips past a border. The outer
@@ -1221,11 +1224,7 @@ class SettingsList(Widget, can_focus=True):
         ``cursor_index`` (screen restoration, jump-to-row, tests) goes
         through this watcher so the cascade always fires.
         """
-        try:
-            body = self.query_one("#settings_list_body", VerticalScroll)
-        except Exception:
-            return
-        rows = list(body.query(Static))
+        rows = self._rows
         if 0 <= old < len(rows):
             rows[old].remove_class("-cursor")
         if 0 <= new < len(rows) and new < len(self._items) and self._items[new].kind != KIND_HEADER:
@@ -1290,13 +1289,10 @@ class SettingsList(Widget, can_focus=True):
             self._post_highlight()
 
     def _scroll_cursor_into_view(self) -> None:
-        try:
-            body = self.query_one("#settings_list_body", VerticalScroll)
-            rows = list(body.query(Static))
-            if 0 <= self.cursor_index < len(rows):
+        rows = self._rows
+        if 0 <= self.cursor_index < len(rows):
+            with contextlib.suppress(Exception):
                 self.scroll_to_widget(rows[self.cursor_index], animate=False)
-        except Exception:
-            pass
 
     # Item kinds that "drill into a sub-screen" — these are what `right`
     # activates. Right does nothing on scalars / toggles / actions / leaf
