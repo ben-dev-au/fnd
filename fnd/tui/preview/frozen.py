@@ -28,7 +28,9 @@ from textual.message import Message
 from textual.strip import Strip
 from textual.widget import Widget
 
+from fnd.matching import MatchSpec
 from fnd.tui.preview.match_row import chunk_stop_rows, row_within, rows_to_first_match
+from fnd.tui.widgets.markdown import FNDMarkdown, paints_match
 
 
 @dataclass(slots=True)
@@ -47,6 +49,12 @@ class FrozenChunk:
     first_match_row: int | None = None
     stop_rows: list[int] = field(default_factory=list)
     cell_rows: dict[tuple[int, int, int], int] = field(default_factory=dict)
+    # What decides whether this capture can stand in under another query; see
+    # `stands_in_for`. None when the capture did not come from a markdown build.
+    source: str | None = None
+    block_plains: tuple[str, ...] = ()
+    painted_match: bool = True
+    style_key: tuple[str, bool] | None = None
 
     @property
     def outer_height(self) -> int:
@@ -70,8 +78,6 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
     """
     from textual._compositor import Compositor
     from textual.widgets import DataTable
-
-    from fnd.tui.widgets.markdown import FNDMarkdown
 
     size = chunk.size
     if size.height == 0 or size.width == 0:
@@ -139,7 +145,7 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
     )
     comp = Compositor()
     comp.reflow(chunk, full)
-    return FrozenChunk(
+    frozen = FrozenChunk(
         chunk_seq=chunk_seq,
         width=full.width,
         strips=comp.render_strips(full),
@@ -147,6 +153,31 @@ def freeze(chunk: Widget, chunk_seq: int) -> FrozenChunk | None:
         stop_rows=stop_rows,
         cell_rows=cell_rows,
     )
+    if isinstance(chunk, FNDMarkdown):
+        frozen.source = chunk.source_text
+        frozen.block_plains = chunk.block_plains
+        frozen.painted_match = chunk.painted_match
+        frozen.style_key = style_key(chunk.app.theme, render_mermaid=chunk.render_mermaid)
+    return frozen
+
+
+def style_key(theme: str, *, render_mermaid: bool) -> tuple[str, bool]:
+    """The settings besides the query that change what a chunk paints."""
+    return (theme, render_mermaid)
+
+
+def stands_in_for(
+    capture: FrozenChunk, source: str, spec: MatchSpec, key: tuple[str, bool]
+) -> bool:
+    """Whether ``capture`` paints what a fresh build of ``source`` under ``spec`` would.
+
+    Only a capture that highlighted nothing qualifies, and only when ``spec``
+    highlights nothing either. The source is asked as well as the rendered text
+    because rendering hides comments and link targets unless they hold a match.
+    """
+    if capture.painted_match or capture.source != source or capture.style_key != key:
+        return False
+    return not paints_match((source,), spec) and not paints_match(capture.block_plains, spec)
 
 
 class FrozenChunkView(Widget):

@@ -32,6 +32,10 @@ __all__ = ["ChunkCaptureStore"]
 # row. Used to price a capture in bytes without walking its strips.
 BYTES_PER_ROW = 1670
 
+# The query slot of the key captures that highlighted nothing are filed under.
+# No query signature can equal it: they all carry `|hl=`.
+_PLAIN = "\x00plain"
+
 # Share of system memory the preview cache may hold. A document viewer is
 # expected to spend memory on the document — PDF readers and editors of this
 # kind sit in the hundreds of MB routinely — so this is not trying to be frugal,
@@ -125,7 +129,9 @@ class ChunkCaptureStore:
 
     Keyed by (file, query, width): a
     capture carries the query's highlighting baked in, and its strips are cut at
-    one width. A resize does not invalidate anything, it simply misses.
+    one width. A resize does not invalidate anything, it simply misses. A capture
+    that highlighted nothing is also filed under a query-free key, and outlives
+    the query that cut it.
 
     Bounded in rows against the same machine-scaled budget, evicting whole files
     oldest-first — never the file just written to, which is the one on screen.
@@ -163,7 +169,30 @@ class ChunkCaptureStore:
         return chunk_seq in self._files.get((parent_id, query_sig, width), {})
 
     def put(self, parent_id: str, query_sig: str, width: int, capture: FrozenChunk) -> None:
-        key = (parent_id, query_sig, width)
+        if not capture.painted_match and capture.source is not None:
+            # Filed first, so the query's own entry is the newer of the two.
+            self._file((parent_id, _PLAIN, width), capture)
+        self._file((parent_id, query_sig, width), capture)
+        self._evict(budget_rows())
+
+    def get_plain(self, parent_id: str, width: int, chunk_seq: int) -> FrozenChunk | None:
+        """A capture that highlighted nothing, cut by any query at this width.
+
+        Whether it may stand in under the current query is the caller's question
+        (see `stands_in_for`): only the caller knows the source and the spec.
+        """
+        return self.get(parent_id, _PLAIN, width, chunk_seq)
+
+    def clear_query_captures(self) -> None:
+        """Forget every capture that carries a query's highlighting.
+
+        The plain ones stay: they are what a file looks like under any query
+        that matches nothing in them, which is most of a file under most queries.
+        """
+        for key in [k for k in self._files if k[1] != _PLAIN]:
+            self._rows -= sum(c.outer_height for c in self._files.pop(key).values())
+
+    def _file(self, key: tuple[str, str, int], capture: FrozenChunk) -> None:
         captures = self._files.get(key)
         if captures is None:
             captures = {}
@@ -174,7 +203,6 @@ class ChunkCaptureStore:
         captures[capture.chunk_seq] = capture
         self._rows += capture.outer_height
         self._files.move_to_end(key)
-        self._evict(budget_rows())
 
     def _evict(self, budget: int) -> None:
         while len(self._files) > 1 and self._rows > budget:

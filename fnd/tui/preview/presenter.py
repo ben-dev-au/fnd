@@ -26,9 +26,7 @@ from fnd.render import render_chunk_pieces
 from fnd.tui.line_buffer import LineBufferPreview, build_rendered_document
 from fnd.tui.preview import decode_progress, tuning
 from fnd.tui.preview.coverage import coverage_targets, neighbour_order
-from fnd.tui.preview.frozen import (
-    FrozenChunkView,
-)
+from fnd.tui.preview.frozen import FrozenChunk, FrozenChunkView, stands_in_for, style_key
 from fnd.tui.preview.frozen_store import ChunkCaptureStore
 from fnd.tui.preview.liveness import is_condemned, is_live
 from fnd.tui.preview.visibility import set_node_class, set_preview_visibility
@@ -2256,8 +2254,9 @@ class PreviewPresenter:
         # from here is work whose result can never be served — the store key
         # carries the query signature, so it would be stored and never read.
         # Captures for a superseded query can never be served; holding them
-        # only spends the row budget that the new query's captures need.
-        self.capture_store.clear()
+        # only spends the row budget that the new query's captures need. The
+        # ones that highlighted nothing are kept: they can.
+        self.capture_store.clear_query_captures()
         # Same lifetime as the store: which hits a file HAS is a property of
         # the query's result set, so a new query has to re-establish it.
         self._unservable.clear()
@@ -3977,12 +3976,12 @@ class PreviewPresenter:
             pane = self._app.query_one("#preview_pane", VerticalScroll)
         except Exception:
             return False
+        width = self.capture_width(pane)
         captured = self.capture_store.get(
-            container.parent_doc_id,
-            container.query_signature,
-            self.capture_width(pane),
-            chunk.chunk_seq,
+            container.parent_doc_id, container.query_signature, width, chunk.chunk_seq
         )
+        if captured is None:
+            captured = self._plain_stand_in(container.parent_doc_id, chunk, width)
         if captured is None:
             return False
         view = FrozenChunkView(captured)
@@ -3996,6 +3995,27 @@ class PreviewPresenter:
         # for chunks the freeze sweep replaced.
         container.match_targets.pop(chunk.chunk_seq, None)
         return True
+
+    def _plain_stand_in(self, parent_id: str, chunk: FileChunk, width: int) -> FrozenChunk | None:
+        """An earlier query's capture of ``chunk``, when neither query highlights
+        anything in it. Most of a file, under most queries: re-querying one file
+        would otherwise rebuild every chunk of it."""
+        if not uses_markdown_renderer(chunk):
+            return None
+        capture = self.capture_store.get_plain(parent_id, width, chunk.chunk_seq)
+        if capture is None:
+            return None
+        config = self._app._config
+        key = style_key(
+            self._app.theme,
+            render_mermaid=config.defaults.render_mermaid if config is not None else True,
+        )
+        source = chunk.body_md or _legacy_blocks_to_md(chunk.blocks)
+        return (
+            capture
+            if stands_in_for(capture, source, self._app._effective_match_spec, key)
+            else None
+        )
 
     @property
     def scrollbar_markers_enabled(self) -> bool:
