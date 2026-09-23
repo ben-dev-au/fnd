@@ -1,4 +1,4 @@
-"""Phase 2c: source deletion via Ctrl+D in the source-edit form.
+"""Source deletion via Ctrl+D in the source-edit form.
 
 The actual TUI flow (Ctrl+D → DeleteSourceScreen modal → confirm)
 needs Pilot for the keystroke path; this file pins the persistence

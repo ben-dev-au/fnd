@@ -1,4 +1,4 @@
-"""Phase 5.5e-2: TUI extracts inline [filter] from query bar."""
+"""TUI extracts inline [filter] from query bar."""
 
 from __future__ import annotations
 

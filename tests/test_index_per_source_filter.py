@@ -1,4 +1,4 @@
-"""Phase 5.5e-1: end-to-end build with one filtered md source + one pdf source."""
+"""End-to-end build with one filtered md source + one pdf source."""
 
 from __future__ import annotations
 

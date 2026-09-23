@@ -1,4 +1,4 @@
-"""Phase 5.5e-2: `fnd search --meta` filters at query time."""
+"""`fnd search --meta` filters at query time."""
 
 from __future__ import annotations
 

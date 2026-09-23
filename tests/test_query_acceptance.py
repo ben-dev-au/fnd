@@ -9,7 +9,7 @@ verified against BOTH live search paths:
 Rows that pass today are regression guards. Rows that are broken today are marked
 ``xfail(strict=True)`` with the phase that will fix them — flip the marker to a plain
 test as each phase lands (a strict xfail that starts passing fails the suite, so we
-can't forget). See dev/audits/QUERY_SYNTAX_AUDIT.md.
+can't forget).
 
 This is a *query-layer* contract: the index is built directly against ``build_schema``
 with controlled field values, so behaviour is deterministic and covers fields

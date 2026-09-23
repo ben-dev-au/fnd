@@ -1,4 +1,4 @@
-"""Phase 9: parallel multi-query + RRF fusion (§9d).
+"""Parallel multi-query + RRF fusion.
 
 Three new pieces land here:
 
@@ -269,7 +269,7 @@ def test_parse_multi_input_basic() -> None:
 
 def test_parse_multi_input_uses_default_weights_per_source() -> None:
     """`lex:` defaults to weight 1.0, `phrase:` to 2.0, `syn:` to 0.6 —
-    matching the auto-mode weights in §9d."""
+    matching the auto-mode weights."""
     result = parse_multi_input('lex: a\nphrase: "b c"\nsyn: a', synonyms=None)
     by_source = {s.source: s for s in result.subqueries}
     assert by_source["lex"].weight == pytest.approx(1.0)

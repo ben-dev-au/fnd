@@ -364,10 +364,9 @@ def _handle_reveal(req: OpenRequest) -> int:
 
 
 def _handle_skim(req: OpenRequest) -> int:
-    """Defer to the existing ``opener.skim_url`` builder so the URL stays
-    bit-for-bit identical to the pre-refactor output. Importing inside the
-    function avoids a top-level cycle with ``fnd.opener`` which itself
-    will import ``fnd.apps`` after the Phase 1 refactor."""
+    """Defer to the ``opener.skim_url`` builder so every entry point emits the
+    same URL. The import is inside the function: ``fnd.opener`` imports
+    ``fnd.apps``, so a top-level import would cycle."""
     from fnd.opener import open_pdf_via_url
 
     return open_pdf_via_url(req.path, req.page, search=req.query.strip())
@@ -870,7 +869,7 @@ def _validate_template(
         bad = e.args[0] if e.args else "?"
         raise ValueError(
             f"app {app_id!r}: template references unknown placeholder {{{bad}}}. "
-            f"See docs/apps/README.md for the variable list."
+            f"See docs/apps.md for the variable list."
         ) from None
 
 
@@ -965,7 +964,7 @@ def resolve_app(
     return registry["system"]
 
 
-# ── Vault detection (Phase 2 helper, lives here so opener can use it) ─────
+# ── Vault detection (lives here so opener can use it) ────────────────────
 
 
 def detect_obsidian_vault_path(path: Path) -> Path | None:

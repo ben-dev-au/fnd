@@ -1,4 +1,4 @@
-"""Phase 2: per-source app fields + Config-level cross-validation.
+"""Per-source app fields + Config-level cross-validation.
 
 The new optional fields on :class:`fnd.config.SourceConfig`:
 

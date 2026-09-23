@@ -1,6 +1,6 @@
 """Install/uninstall progress modal — modal-lifecycle tests.
 
-Follows docs/test_patterns/settings_screen.md §9: task lives on
+Follows dev/docs/test_patterns/settings_screen.md §9: task lives on
 FNDApp, Background dismisses but task survives, Cancel SIGTERMs the
 subprocess.
 

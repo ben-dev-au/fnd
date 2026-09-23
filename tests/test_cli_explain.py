@@ -1,4 +1,4 @@
-"""UXP-4 §2 (CLI surface) — `fnd search --explain N` JSON trace."""
+"""CLI surface: `fnd search --explain N` JSON trace."""
 
 from __future__ import annotations
 

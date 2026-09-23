@@ -4,7 +4,7 @@ Translates fnd shorthand into Tantivy QueryParser-compatible syntax.
 Tantivy handles natively: phrase, boolean (AND/OR/NOT), fuzzy (``~N``), wildcards,
 ranges (``[low TO high]``), and field-restricted queries.
 
-This pre-pass adds, per plan §3 + §9:
+This pre-pass adds:
 
 * ``c:papers`` / ``c:papers,notes``       → ``collection:papers (OR ...)``
 * ``mtime:today``/``yesterday``/``week``/

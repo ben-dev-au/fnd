@@ -1,4 +1,4 @@
-"""UXP-4 §2 — explain trace shape and content."""
+"""Explain trace shape and content."""
 
 from __future__ import annotations
 

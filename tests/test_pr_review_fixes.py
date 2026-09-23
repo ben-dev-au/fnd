@@ -265,7 +265,7 @@ def test_load_user_apps_rejects_unknown_placeholder_in_url() -> None:
 
 
 def test_load_user_apps_accepts_all_documented_placeholders() -> None:
-    """Sanity check: every variable listed in docs/apps/README.md
+    """Sanity check: every variable listed in docs/apps.md
     must render without KeyError. Catches the case where the docs
     drift away from ``_render_vars`` or vice versa."""
     placeholders = [

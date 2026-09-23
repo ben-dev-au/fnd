@@ -146,9 +146,9 @@ _FALLBACK_AREA_RATIO = 0.15
 # the region itself is below the area threshold (HBR-style narrow tables).
 _TABLE_LABEL_RE = re.compile(r"\b(?:TABLE|Table)\s+\d", re.MULTILINE)
 
-# A Markdown table row: one or more `| ... |` lines. Copy of
-# dev/tools/pdf_bakeoff/metrics._TABLE_ROW_RE (fnd must not import the
-# dev tree); keep the two in sync.
+# A Markdown table row: one or more `| ... |` lines. The scoring harness
+# holds an identical pattern and cannot import this module; the two must
+# agree or its table counts stop matching what the extractor produces.
 _TABLE_LINE_RE = re.compile(r"^\s*\|.+\|\s*$")
 
 
@@ -700,9 +700,8 @@ def _needs_docling_fallback(page: pymupdf.Page, pymupdf_md: str) -> bool:
 def _extract_page_md(doc: pymupdf.Document, page_index: int) -> str:
     """Extract one page's Markdown via pymupdf4llm. Returns "" on failure.
 
-    Only called when `_HAS_PYMUPDF4LLM` is True. Config matches the
-    Phase 0 bake-off winning settings: vector tables on, OCR off,
-    image emission off.
+    Only called when `_HAS_PYMUPDF4LLM` is True. Config: vector tables
+    on, OCR off, image emission off.
     """
     try:
         pymupdf4llm = importlib.import_module("pymupdf4llm")

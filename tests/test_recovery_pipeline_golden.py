@@ -38,8 +38,8 @@ def _direct_page_md() -> dict[int, str]:
 def test_extract_body_md_matches_direct_production_path() -> None:
     """Black-box: ``extract()``'s body_md equals the direct production
     transform on every born-digital page. Holds before the refactor
-    (inline call) and must keep holding after (pipeline) — and through
-    Phase A, proving the coverage gate never fires on born-digital."""
+    (inline call) and must keep holding after (pipeline), proving the
+    coverage gate never fires on born-digital."""
     from fnd.extract import pdf
 
     expected = _direct_page_md()

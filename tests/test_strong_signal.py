@@ -1,4 +1,4 @@
-"""UXP-4 §1 — strong-signal regime: bypass fusion when the literal probe
+"""Strong-signal regime: bypass fusion when the literal probe
 is unambiguous AND no intent supplied."""
 
 from __future__ import annotations

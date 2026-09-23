@@ -72,7 +72,7 @@ def test_renderer_blank_when_no_match_map() -> None:
 
 
 def test_renderer_line_precise_maps_to_exact_cell() -> None:
-    """Phase 3 contract: a 1000-line file with a single match at line
+    """Line-precise contract: a 1000-line file with a single match at line
     500, painted on a 10-cell track, places exactly one marker — at
     cell 5 (mid). The chunk-uniform path can't pin this; the line-
     precise path must."""

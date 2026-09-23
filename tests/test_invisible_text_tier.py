@@ -1,4 +1,4 @@
-"""Phase A: coverage gate + InvisibleTextTier (content + code recovery).
+"""Coverage gate + InvisibleTextTier (content + code recovery).
 
 Unit tests drive the gate branches with fakes; integration tests prove
 the real ignore_alpha lever recovers a synthetic invisible-text page

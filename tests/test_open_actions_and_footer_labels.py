@@ -1,4 +1,4 @@
-"""Phase 5.7: per-chunk widgets, click=preview-only, footer dedup."""
+"""Per-chunk widgets, click=preview-only, footer dedup."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def built_index(fixtures_dir: Path, tmp_index_dir: Path) -> Path:
 async def test_enter_does_not_open_external_app(
     built_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Phase 5.7: pressing Enter on a section node must NOT call the opener."""
+    """Pressing Enter on a section node must NOT call the opener."""
     calls: list[Any] = []
     monkeypatch.setattr(opener, "open_smart", lambda **kw: calls.append(kw) or 0)
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
@@ -118,7 +118,7 @@ async def test_capital_o_action_open_default_app(
 async def test_chunk_widgets_rebuild_when_focus_moves_to_different_file(
     two_pdf_index: Path,
 ) -> None:
-    """Phase 5 contract for the same bug ('doesn't find the correct
+    """Contract for the same bug ('doesn't find the correct
     section in the second document'): switching between two PDFs swaps
     the active LineBufferPreview to the second file's widget, keyed by
     its parent_id, and the new FileView covers all 12 pages."""

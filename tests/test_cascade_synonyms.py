@@ -1,10 +1,10 @@
-"""Phase 8: cascading multi-pass + synonym expansion (§9c, §9e).
+"""Cascading multi-pass + synonym expansion.
 
 Two features land here:
 
 * :func:`fnd.synonyms.expand` rewrites a query string by wrapping any
   single-term that matches a synonym group into ``(term OR sym1 OR sym2)``.
-  Synonyms live in a user-owned TOML file (§6) and apply at *query time*
+  Synonyms live in a user-owned TOML file and apply at *query time*
   only — the index never sees the expansion, so synonym edits don't require
   a rebuild.
 * :func:`fnd.cascade.cascade_search` orchestrates a sequence of widening

@@ -1,4 +1,4 @@
-"""Textual TUI for fnd (phase 5+)."""
+"""Textual TUI for fnd."""
 
 from fnd.tui.app import FNDApp
 

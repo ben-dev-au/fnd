@@ -1,4 +1,4 @@
-"""UXP-4 §4 — preview-load worker keeps the UI responsive on big files
+"""Preview-load worker keeps the UI responsive on big files
 and surfaces a real ProgressBar + LoadingIndicator (no border-title text)
 so the user gets unambiguous feedback that work is happening."""
 
@@ -219,7 +219,7 @@ async def test_repeat_visit_uses_cached_widgets(cfg: Config, two_file_index: Pat
         )
         cached = app._preview.preview_cache.get(big_group.parent_id, app._search.query_signature())
         assert cached is not None
-        # Mount is radius-bounded (Phase 2a/2b cap at _BACKGROUND_FILL_RADIUS).
+        # Mount is radius-bounded (stages 2a/2b cap at _BACKGROUND_FILL_RADIUS).
         # The contract this test guards is "revisit hits the same cached
         # container" (line 201 below), not full-file completion.
         big_container = cached

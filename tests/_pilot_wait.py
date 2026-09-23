@@ -192,22 +192,39 @@ async def run_search(pilot: Pilot[None], app: Any, query: str, *, timeout: float
     )
 
 
-async def settings_ready(pilot: Pilot[None], app: Any, *, timeout: float = 30.0) -> Any:
-    """Wait until the settings screen is pushed AND its list has populated.
+async def screen_ready(
+    pilot: Pilot[None], app: Any, screen_type: Any = None, *, timeout: float = 30.0
+) -> Any:
+    """Wait until ``screen_type`` is the active screen AND its rows exist.
 
-    Pushing the screen and composing its rows are separate frames, so a single
-    pause reads an empty list on a machine that has not got to the second one.
+    Pushing a screen and composing its rows are separate frames, so the common
+    `push_screen(...)` followed by one `pilot.pause()` reads the screen object
+    a frame before it has any content: `query_one` then raises NoMatches, and
+    under load the single tick degrades to nothing at all. Every screen that
+    carries a `SettingsList` is covered; pass the class you pushed.
+
     Returns the screen.
     """
     from fnd.tui.settings_screen import SettingsList, SettingsScreen
 
+    want = SettingsScreen if screen_type is None else screen_type
+
     def _ready() -> bool:
         screen = app.screen
-        if not isinstance(screen, SettingsScreen):
+        if not isinstance(screen, want):
             return False
-        return bool(screen.query_one(SettingsList)._items)
+        rows = screen.query(SettingsList)
+        return bool(rows) and bool(rows.first()._items)
 
     await wait_until(
-        pilot, _ready, timeout=timeout, message="the settings screen never populated its list"
+        pilot,
+        _ready,
+        timeout=timeout,
+        message=f"{want.__name__} never populated its rows",
     )
     return app.screen
+
+
+async def settings_ready(pilot: Pilot[None], app: Any, *, timeout: float = 30.0) -> Any:
+    """:func:`screen_ready` for the settings screen. Kept for its callers."""
+    return await screen_ready(pilot, app, timeout=timeout)

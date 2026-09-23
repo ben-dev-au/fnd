@@ -1,4 +1,4 @@
-"""Phase 3: Shift-O 'Open with…' modal picker.
+"""Shift-O 'Open with…' modal picker.
 
 Contract:
 

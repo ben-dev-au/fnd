@@ -1,4 +1,4 @@
-"""Phase 5.6: visible highlights, precise scroll, Skim search, Esc, theme."""
+"""Visible highlights, precise scroll, Skim search, Esc, theme."""
 
 from __future__ import annotations
 
@@ -177,7 +177,7 @@ async def test_tui_passes_query_to_opener_for_skim_search(
         await pilot.pause()
         tree.focus()
         await pilot.press("down")
-        # Phase 5.7: explicit `o` action is the open trigger now;
+        # The explicit `o` action is the open trigger;
         # plain Enter / click only updates the preview.
         app.action_open_at_locator()
         await pilot.pause()
@@ -244,13 +244,13 @@ async def test_theme_is_set_on_mount(built_index: Path) -> None:
 async def test_chunk_widgets_mounted_per_pdf_page(
     built_index: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Phase 5 model: PDFs mount through the flat-buffer pipeline.
+    """PDFs mount through the flat-buffer pipeline.
     The widget owns a FileView whose ``chunk_to_range`` covers every
     page; the focused chunk's first-match line is the scroll target.
 
     Forces flat preview routing — when the pdf-structure extra is
     installed in the dev venv, PDFs carry body_md and would otherwise
-    route structural. The Phase 5 flat-pipeline contract is what this
+    route structural. The flat-pipeline contract is what this
     test asserts; structural routing has its own coverage."""
     monkeypatch.setenv("_FND_FORCE_FLAT", "1")
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")

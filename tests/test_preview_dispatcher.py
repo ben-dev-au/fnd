@@ -1,4 +1,4 @@
-"""Phase 5: ``choose_preview_mode`` routes chunks to the right pipeline.
+"""``choose_preview_mode`` routes chunks to the right pipeline.
 
 Pure-function tests on the dispatcher — no Textual pilot needed. The
 host wire-in (``fnd/tui/app.py``) calls this once per file-load to

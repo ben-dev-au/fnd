@@ -1,4 +1,4 @@
-"""Phase 5: body_struct → highlighted Markdown render."""
+"""``body_struct`` → highlighted Markdown render."""
 
 from __future__ import annotations
 
