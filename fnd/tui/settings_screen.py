@@ -2448,19 +2448,6 @@ def _kinds_to_include_globs(kind_ids: list[str]) -> list[str]:
     return globs
 
 
-def _split_includes_globs(globs: list[str]) -> tuple[list[str], str]:
-    """Map includes globs back to ``(kind_ids, custom_blob)``.
-
-    A kind is recognised as selected iff any of its suffix globs (``**/*<sfx>``)
-    is present; those globs are then consumed. Whatever remains becomes the
-    comma-joined custom blob so the user keeps their original patterns verbatim.
-    """
-    from fnd.kinds import split_type_globs
-
-    kinds, remaining = split_type_globs(globs)
-    return kinds, ", ".join(remaining)
-
-
 def _split_excludes_globs(globs: list[str]) -> tuple[list[str], str]:
     """Map excludes globs back to ``(preset_keys, custom_blob)``.
 
@@ -2530,7 +2517,6 @@ class SourceFormScreen(Screen[None]):
         self._fields: dict[str, Any] = {
             "path": "",
             "includes_custom": "",  # comma-separated free-form globs
-            "includes_types": [],  # type globs the absorber left in place
             "excludes_presets": [],  # list[str] of EXCLUDES_PRESETS keys
             "excludes_custom": "",  # comma-separated free-form globs
             "filter": "",
@@ -2609,18 +2595,13 @@ class SourceFormScreen(Screen[None]):
         if not (0 <= self._source_index < len(sources)):
             return
         s = sources[self._source_index]
-        # File types live in the filter set, but only when the absorber moved
-        # them: it declines on a mixed list, leaving the type globs in
-        # `includes`. Discarding them here deleted them on the next save, so
-        # keep the glob strings themselves rather than the kind ids.
-        _kinds, includes_custom = _split_includes_globs(list(s.includes))
-        free_form = {g.strip() for g in includes_custom.split(",") if g.strip()}
-        type_globs = [g for g in s.includes if g not in free_form]
+        # Every include glob, type globs too: the model folds those into
+        # `kinds` only when nothing else is listed, so one still here is an
+        # ORed path glob like its neighbours, not a file type.
         preset_keys, excludes_custom = _split_excludes_globs(list(s.excludes))
         self._fields = {
             "path": str(s.path),
-            "includes_custom": includes_custom,
-            "includes_types": type_globs,
+            "includes_custom": ", ".join(s.includes),
             "excludes_presets": preset_keys,
             "excludes_custom": excludes_custom,
             "filter": _source_frontmatter(s),
@@ -2629,9 +2610,8 @@ class SourceFormScreen(Screen[None]):
             "app_params_vault": (s.app_params or {}).get("vault", ""),
             "filters": _seeded_filters(s),
         }
-        # Copied wholesale rather than key by key: the hand-written list had
-        # drifted from `_fields`, missing `includes_types`, so the snapshot
-        # never equalled the fields and every save forced a rebuild.
+        # Copied wholesale rather than key by key: a snapshot missing a field
+        # never equals the fields, so every save would force a rebuild.
         self._snapshot = copy.deepcopy(self._fields)
 
     def _frontmatter_text(self) -> str:
@@ -3108,10 +3088,7 @@ class SourceFormScreen(Screen[None]):
         if blocked := self.save_blocked():
             self._show_error(blocked)
             return
-        # Type globs the absorber declined to move stay exactly as they were:
-        # this form has no control for them, so rebuilding without them was a
-        # silent deletion.
-        includes_globs: list[str] = list(self._fields.get("includes_types") or [])
+        includes_globs: list[str] = []
         for g in str(self._fields.get("includes_custom") or "").split(","):
             g = g.strip()
             if g:

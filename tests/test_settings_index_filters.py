@@ -585,20 +585,9 @@ class TestClearClearsWhatItClaims:
 
 
 class TestANoOpSaveChangesNothing:
-    """Three ways opening a source and saving unchanged altered what it
-    indexes. Each was invisible afterwards, and two fired no reindex."""
-
-    def test_mixed_include_globs_survive(self) -> None:
-        """The absorber declines to move type globs out of a mixed list, so
-        they stay in `includes`; the form discarded them, taking the source
-        from seven files to one."""
-        from fnd.tui.settings_screen import _split_includes_globs
-
-        original = ["**/*.md", "**/*.markdown", "repo/**"]
-        _kinds, custom = _split_includes_globs(original)
-        free_form = {g.strip() for g in custom.split(",") if g.strip()}
-        rebuilt = [g for g in original if g not in free_form] + sorted(free_form)
-        assert sorted(rebuilt) == sorted(original)
+    """Ways opening a source and saving unchanged altered what it indexes,
+    each invisible afterwards. A mixed include list is covered in
+    test_the_source_form_shows_every_include_glob."""
 
     def test_an_empty_clears_is_not_an_override(self) -> None:
         """It defaults to a list, so `exclude_none` always carried it, and
