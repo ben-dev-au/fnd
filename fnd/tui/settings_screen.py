@@ -1,4 +1,4 @@
-"""Settings & Commands menu — rendering and dispatch (Phase 2).
+"""Settings & Commands menu: rendering and dispatch.
 
 The menu's *data* lives in :mod:`fnd.tui.menu`. This module renders it
 as a stack of Textual ``Screen``s that share the main app's visual
@@ -26,9 +26,12 @@ naturally; no pre-popping or manual back stacks.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+import contextlib
+import copy
+import textwrap
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from rich.text import Text
 from textual import events, on
@@ -40,8 +43,11 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Input, OptionList, Static, TextArea
-from textual.widgets.option_list import Option
+from textual.widgets.option_list import Option, OptionDoesNotExist
 
+from fnd.display_text import sanitise_display_text
+from fnd.fsmeta import path_is_absent
+from fnd.tui.actions import load_keymap
 from fnd.tui.menu import (
     KIND_ACTION,
     KIND_DISPLAY,
@@ -54,11 +60,14 @@ from fnd.tui.menu import (
     ChoiceOption,
     MenuItem,
     build_root_items,
+    drill_summary,
+    header,
     section_items,
     section_label,
     walk_all_sections,
 )
-from fnd.tui.widgets import DetailStrip
+from fnd.tui.widgets import COMMIT_KEY, DetailStrip
+from fnd.tui.widgets.clear_bar import RETURN_TO_DEFAULTS, ClearFiltersBar
 from fnd.tui.widgets.toggle_tree import ToggleGroup, ToggleItem, ToggleTree
 
 if TYPE_CHECKING:
@@ -70,12 +79,97 @@ if TYPE_CHECKING:
 _KEY_COL = 12
 
 
-def _hint_bar(app: FNDApp, contextual: tuple[tuple[str, str], ...]) -> Any:
-    """Build the shared hint-bar Text for a Settings screen. Anchors
-    come from the main app (single source of truth)."""
+def _wizard_hints(screen: Any, app: Any) -> Any:
+    """The wizard's footer, without the anchors while a box has focus."""
+    hints = (
+        ("⏎", "Edit"),
+        *((("Tab", "Test a sample"),) if len(_focus_targets(screen)) > 1 else ()),
+        (COMMIT_KEY, "Save & Index"),
+        ("Esc", "Cancel"),
+    )
+    return _editor_hint_bar(hints) if _typing_in(screen) else _hint_bar(app, hints)
+
+
+def _focus_targets(screen: Any) -> list[Any]:
+    """Panes Tab can reach. The sample tester is hidden without a rule to
+    test, and focusing a hidden pane put the cursor somewhere invisible."""
+    targets: list[Any] = [screen.query_one(SettingsList)]
+    sample = screen.query_one("#frontmatter_sample", TextArea)
+    if sample.display:
+        targets.append(sample)
+    return targets
+
+
+def _commit_then(screen: Any, resume: Callable[[], None]) -> bool:
+    """Land an open edit before saving, and say whether the caller should wait.
+
+    The commit travels as a message, so the value is not in `_fields` until
+    the next refresh. If it is rejected the bar stays open showing why, and
+    the save does not happen.
+    """
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        bar = screen.query_one(EditBar)
+        if bar.is_open:
+            bar.commit_pending()
+
+            def _resume() -> None:
+                if not screen.query_one(EditBar).is_open:
+                    resume()
+
+            screen.call_after_refresh(_resume)
+            return True
+    return False
+
+
+def _typing_in(screen: Any) -> bool:
+    """Whether a text box on ``screen`` has focus, so the anchors are inert.
+
+    `/`, `:`, `?` and `q` reach a focused box instead of acting, so a footer
+    naming them there names keys that do not work.
+    """
+    import contextlib
+
+    from textual.widgets import Input, TextArea
+
+    with contextlib.suppress(Exception):
+        if "-hidden" not in screen.query_one(EditBar).classes:
+            return True
+    for widget in screen.query(Input):
+        if widget.has_focus:
+            return True
+    return any(widget.has_focus for widget in screen.query(TextArea))
+
+
+def _editor_hint_bar(contextual: tuple[tuple[str, str], ...]) -> Any:
+    """A footer for a screen whose focus is a text box.
+
+    The app's anchors are inert there (`/`, `:`, `?` and `q` type into the
+    box), so advertising them names four keys that do not work.
+    """
     from fnd.tui.app import render_hint_bar
 
-    return render_hint_bar(app._FOOTER_ANCHORS, contextual)  # type: ignore[attr-defined]
+    return render_hint_bar((), contextual)
+
+
+def _hint_bar(app: FNDApp, contextual: tuple[tuple[str, str], ...], *, screen: Any = None) -> Any:
+    """Build the shared hint-bar Text for a Settings screen. Anchors
+    come from the main app (single source of truth), minus ``/``.
+
+    The anchor means "focus the app's query bar", and nowhere in Settings does
+    ``/`` do that: on a screen with a row filter it focuses THAT, and on one
+    without it does nothing at all. Dropping it only where the filter is
+    missing would show ``/ Search`` and ``/ Filter`` in the same footer, one
+    key with two labels. The screens that own the key name it themselves, in
+    their contextual cluster.
+
+    ``screen`` is accepted for callers that pass it and is not read.
+    """
+    from fnd.tui.app import render_hint_bar
+
+    anchors: tuple[tuple[str, str], ...] = app._FOOTER_ANCHORS  # type: ignore[attr-defined]
+    return render_hint_bar(tuple(a for a in anchors if a[0] != "/"), contextual)
 
 
 _SETTINGS_HINTS: tuple[tuple[str, str], ...] = (
@@ -134,6 +228,50 @@ def build_confirm_body(
     return text
 
 
+class ConfirmList(OptionList):
+    """A confirm dialog's Yes/Cancel list, which does not wrap.
+
+    The safe row is the default AND the last one, and a wrapping two-item list
+    puts the irreversible row one `Down` away, the reflex that reads a list.
+    Both rows stay reachable; only the wrap-around goes.
+    """
+
+    def _step(self, direction: Literal[-1, 1]) -> None:
+        from textual import _widget_navigation
+
+        landing = _widget_navigation.find_next_enabled_no_wrap(
+            self.options, anchor=self.highlighted, direction=direction
+        )
+        if landing is not None:
+            self.highlighted = landing
+
+    def action_cursor_up(self) -> None:
+        self._step(-1)
+
+    def action_cursor_down(self) -> None:
+        self._step(1)
+
+
+def open_confirm_list(screen: Screen[Any], *, land_on: str = "") -> tuple[str, str]:
+    """Focus a screen's ``#confirm_list``, and say what Enter does from there.
+
+    Irreversible dialogs start on the way out: Enter is one keypress from a
+    delete otherwise, and Enter is how every one of these screens is reached.
+
+    The hint is `Select` from every row, because it is computed once at mount
+    and nothing recomputes it on a move: a `Confirm` hint on a screen that
+    LANDS on the affirmative would stay on screen after one `Down`. A hint
+    that follows the highlight would say more, and would need a handler on
+    each of the seven screens; this one is true from all of them.
+    """
+    options = screen.query_one("#confirm_list", OptionList)
+    if land_on:
+        with contextlib.suppress(OptionDoesNotExist):
+            options.highlighted = options.get_option_index(land_on)
+    options.focus()
+    return ("⏎", "Select")
+
+
 def confirm_yes_option(label: str, severity: str = "safe") -> Option:
     """Construct the affirming OptionList row with severity-coloured verb.
 
@@ -167,6 +305,109 @@ _GLYPH_TOGGLE_OFF = "✗ off"  # U+2717 + text
 _GLYPH_DRILL = "▸"  # U+25B8 small triangle
 _GLYPH_PICKER = "▾"  # U+25BE small caret
 _GLYPH_EXTERNAL = "↗"  # U+2197 upper-right arrow
+
+
+def _display_path(raw: str) -> str:
+    """A source path as the user wrote it: `~` rather than a home prefix."""
+    from fnd.config_render import under_home
+
+    return under_home(Path(raw).expanduser())
+
+
+def _discard_custom_globs(screen: Any, field_key: str) -> None:
+    """Clear a custom-glob field, keeping the text on offer for the visit.
+
+    The tick is derived from the text, so the value cannot simply stay; but
+    dropping it outright would lose typed globs to one keypress, with no undo.
+    """
+    text = str(screen._fields.get(field_key) or "").strip()
+    if not text:
+        return
+    screen._discarded_globs[field_key] = text
+    screen._fields[field_key] = ""
+    screen.app.notify(f"Custom globs cleared. Tick again to restore: {text}")
+
+
+def _custom_seed(screen: Any, field_key: str) -> str:
+    """What the glob prompt opens with: the current value, else the one the
+    last untick cleared."""
+    current = str(screen._fields.get(field_key) or "")
+    return current or screen._discarded_globs.get(field_key, "")
+
+
+# Textual selectors are type selectors and a widget's own CSS is scoped to it,
+# so neither `CSS = OtherScreen.CSS` nor a shared class selector matches the
+# borrowing screen, which then renders with no background, border or docked footer.
+# One definition, stamped with each screen's own name.
+_PROMPT_CSS = """
+{cls} {{ background: $surface; }}
+{cls} > #settings_box {{
+    height: auto; border: round $primary 50%; padding: 0 1; margin: 1 4;
+}}
+{cls} > #settings_box:focus-within {{ border: round $accent; }}
+{cls} #clone_list {{ height: auto; }}
+{cls} .info {{ color: $text-muted; padding: 0 0 1 0; }}
+{cls} > #footer_hints {{
+    dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+}}
+"""
+
+_CONFIRM_CSS = """
+{cls} {{ background: $surface; align: center middle; }}
+{cls} > #settings_box {{
+    width: auto; min-width: 60; max-width: 100; height: auto; max-height: 90%;
+    border: round $error; padding: 0 1;
+}}
+{cls} #confirm_list {{ height: auto; }}
+{cls} .warning {{ color: $text-muted; padding: 0 0 1 0; }}
+{cls} > #footer_hints {{
+    dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+}}
+"""
+
+
+def chrome_css(cls: str, *, confirm: bool = False) -> str:
+    """The shared Settings chrome, stamped with one screen's type name."""
+    return (_CONFIRM_CSS if confirm else _PROMPT_CSS).format(cls=cls)
+
+
+#: Rows the browser's summary box shows before it scrolls; matches its CSS.
+_SUMMARY_ROWS = 5
+
+
+class _FilterSummary:
+    """The browser's summary, capped to the rows its box actually has.
+
+    Fits at paint time rather than on a stored width: the screen's size is not
+    settled when the summary is first built, and past five rows the terminal
+    cut the expression mid-token with nothing to say it had. Only reachable
+    below ~60 columns, which is why a pass at the default width never saw it.
+    """
+
+    def __init__(self, head: str, prefix: str, body: str) -> None:
+        self._head = head
+        self._prefix = prefix
+        self._body = body or "no filters"
+
+    def fitted(self, width: int) -> Text:
+        # Wrapped, not estimated: a row-count from character arithmetic assumes
+        # perfect packing and overflowed the box by a row.
+        usable = max(10, width)
+        rows_left = max(1, _SUMMARY_ROWS - len(textwrap.wrap(self._head, usable) or [""]))
+        rows = textwrap.wrap(self._prefix + self._body, usable) or [self._prefix]
+        if len(rows) <= rows_left:
+            # Fits: hand back the natural line and let the widget wrap it, so
+            # the common case is untouched.
+            return Text(str(self))
+        rows = rows[:rows_left]
+        rows[-1] = rows[-1][: usable - 1].rstrip()[:-1] + "…"
+        return Text(self._head + "\n" + "\n".join(rows))
+
+    def __str__(self) -> str:
+        return f"{self._head}\n{self._prefix}{self._body}"
+
+    def __rich_console__(self, console: Any, options: Any) -> Any:
+        yield self.fitted(options.max_width)
 
 
 def _render_row(
@@ -229,12 +470,21 @@ def _render_row(
     # the row width. Without this the action label (`[ Clear… ]`,
     # `[ Rebuild ]`, etc.) clips at the right border, hiding the
     # primary signal of "what Enter does."
-    pending_segments = _trailing_segments(item, app) if not breadcrumb else []
-    label_to_render = item.label
+    # Sanitised here rather than at the inputs: a path, a filter expression or
+    # a tag can also arrive from a hand-edited config, and a tab measures zero
+    # cells, so one would shear the row it is painted into.
+    pending_segments = [
+        (sanitise_display_text(seg), style)
+        for seg, style in (_trailing_segments(item, app) if not breadcrumb else [])
+    ]
+    label_to_render = sanitise_display_text(item.label)
     if width is not None and pending_segments:
         affordance_len = sum(
             len(seg_text) for seg_text, seg_style in pending_segments if "dim" not in seg_style
         )
+        # Capped, so an over-long value elides itself rather than eating the
+        # label's budget and eliding the label.
+        affordance_len = min(affordance_len, max(8, width // 2))
         used_leading = (_KEY_COL if item.key else 0) + leading_used
         # Minimum dotted pad + leading/trailing space around it.
         min_pad = 2
@@ -284,7 +534,9 @@ def _render_row(
         # least a 2-char dotted pad and the whole affordance.
         min_pad = 2
         gap = 2  # leading + trailing space around the dots
-        segments = _truncate_segments_to_fit(segments, budget=width - used - min_pad - gap)
+        segments = _truncate_segments_to_fit(
+            segments, budget=width - used - min_pad - gap, elide=item.elide
+        )
         plain_len = sum(len(seg_text) for seg_text, _ in segments)
         pad = max(min_pad, width - used - plain_len - gap)
         text.append(" " + "·" * pad + " ", style="dim")
@@ -295,8 +547,15 @@ def _render_row(
     return text
 
 
+def _shorten(text: str, keep: int, elide: str) -> str:
+    """``text`` in ``keep`` cells, marking the end that was dropped."""
+    if keep <= 1:
+        return "…"
+    return "…" + text[-(keep - 1) :] if elide == "head" else text[: keep - 1] + "…"
+
+
 def _truncate_segments_to_fit(
-    segments: list[tuple[str, str]], *, budget: int
+    segments: list[tuple[str, str]], *, budget: int, elide: str = "tail"
 ) -> list[tuple[str, str]]:
     """Shrink the first dim/summary segment with ``…`` so the total
     fits within ``budget``. The trailing affordance segment (and any
@@ -311,6 +570,16 @@ def _truncate_segments_to_fit(
     # dim segments to consume whatever's left.
     reserved = sum(len(seg_text) for seg_text, style in segments if "dim" not in style)
     available_for_dim = budget - reserved
+    if reserved > budget:
+        # A value is not an affordance: reserved in full, a long one runs past
+        # the right border and the terminal cuts it unmarked. Glyphs are one or
+        # two cells, so shrinking the longest segment leaves them whole.
+        kept = [(t, s) for t, s in segments if "dim" not in s]
+        longest = max(range(len(kept)), key=lambda i: len(kept[i][0]))
+        room = budget - (reserved - len(kept[longest][0]))
+        text, style = kept[longest]
+        kept[longest] = (_shorten(text, room, elide), style)
+        return kept
     if available_for_dim <= 1:
         # Pathologically narrow row — drop dim segments altogether,
         # keep only the affordance.
@@ -368,7 +637,7 @@ def _trailing_segments(item: MenuItem, app: FNDApp | None) -> list[tuple[str, st
         summary = ""
         if item.value_getter is not None:
             try:
-                summary = item.value_getter(app) or ""
+                summary = drill_summary(app, item.value_getter(app) or "")
             except Exception:
                 summary = ""
         if summary:
@@ -379,7 +648,10 @@ def _trailing_segments(item: MenuItem, app: FNDApp | None) -> list[tuple[str, st
         summary = ""
         if item.value_getter is not None:
             try:
-                summary = item.value_getter(app) or ""
+                raw = item.value_getter(app) or ""
+                # An external-app row's summary is the path it opens, not a
+                # drill summary, so the mode does not govern it.
+                summary = raw if item.external_app else drill_summary(app, raw)
             except Exception:
                 summary = ""
         if item.external_app:
@@ -395,7 +667,15 @@ def _trailing_segments(item: MenuItem, app: FNDApp | None) -> list[tuple[str, st
             v = item.picker_getter(app)
         except Exception:
             v = None
-        if isinstance(v, list):
+        # A count is the fallback, not the rule: "40 selected" is the ABSENCE
+        # of a type restriction, and "2 selected" never names the globs. A row
+        # that can say what it holds says it.
+        if item.value_getter is not None:
+            try:
+                value_str = str(item.value_getter(app))
+            except Exception:
+                value_str = "(unset)"
+        elif isinstance(v, list):
             value_str = f"{len(v)} selected" if v else "(none)"
         else:
             value_str = str(v) if v not in (None, "") else "(unset)"
@@ -419,7 +699,7 @@ def _render_header(item: MenuItem, width: int | None) -> Text:
     Accent colour throughout (rule + label). The rule fills the row to
     the same right edge content rows reach so the buffer between text
     and the bordered subsection's right edge stays consistent."""
-    label_part = f" {item.label} "
+    label_part = f" {sanitise_display_text(item.label)} "
     if width is not None:
         # `used` already includes the leading ─; tail should just fill
         # whatever budget remains. The previous `- 1` over-subtracted
@@ -439,6 +719,38 @@ def _render_header(item: MenuItem, width: int | None) -> Text:
 # ── Bottom edit bar ──────────────────────────────────────────────────
 
 
+def _coercion_error(coerce: Any, hint: str, err: Exception) -> str:
+    """What a rejected value says back.
+
+    `int` and `float` raise about themselves: "invalid literal for int() with
+    base 10" names the coercion function, not the field. The row already
+    carries the range it wants, so say that instead. Anything else raises for
+    its own reasons and keeps its message.
+    """
+    if coerce is int:
+        want = "a whole number"
+    elif coerce is float:
+        want = "a number"
+    else:
+        return f"invalid: {err}"
+    return f"needs {want}" + (f" ({hint})" if hint else "")
+
+
+def _out_of_bounds(item: MenuItem, value: Any) -> str:
+    """Why the row refuses ``value``, or "".
+
+    Nine rows printed a range in two places and enforced it in none, so
+    `result_limit = 99999` against `1-1000` was written without a word.
+    """
+    bounds = getattr(item, "bounds", None)
+    if bounds is None or not isinstance(value, int | float) or isinstance(value, bool):
+        return ""
+    low, high = bounds
+    if low <= value <= high:
+        return ""
+    return f"outside {item.hint or f'{low}-{high}'}"
+
+
 class EditBar(Horizontal):
     """One-line scalar editor that mounts above the hint bar.
 
@@ -456,8 +768,25 @@ class EditBar(Horizontal):
         background: $surface;
     }
     EditBar.-hidden { display: none; }
-    EditBar > Static.-edit-label { color: $text-muted; width: auto; }
-    EditBar > Input#editor_input { border: none; padding: 0 1; color: $primary; background: $surface; width: 1fr; }
+    /* Capped, or on a narrow terminal the label pushes the field off-screen and
+       typing edits a value nobody can see. A width cap alone clips it: measured
+       at 100 cols the Static wrapped to 4 rows inside a 2-row bar.
+       `text-overflow` only elides an unwrapped line. */
+    EditBar > Static.-edit-label {
+        color: $text-muted; width: auto; max-width: 30%;
+        text-wrap: nowrap; text-overflow: ellipsis;
+    }
+    /* Its own field, and capped after the name: eliding one string cut the
+       range out of six rows of nine and rendered a seventh as `1…`, which
+       reads as a different range rather than as a truncated one. */
+    EditBar > Static.-edit-hint {
+        color: $text-muted; width: auto; max-width: 40%;
+        text-wrap: nowrap; text-overflow: ellipsis;
+    }
+    EditBar > Input#editor_input {
+        border: none; padding: 0 1; color: $primary; background: $surface;
+        width: 1fr; min-width: 12;
+    }
     EditBar > Static.-edit-error { color: $error; width: auto; }
     EditBar > Static.-edit-error.-ok { color: $success; }
     EditBar > Static.-edit-error.-warn { color: $warning; }
@@ -481,15 +810,16 @@ class EditBar(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield Static("", classes="-edit-label")
+        yield Static("", classes="-edit-hint")
         yield Input(id="editor_input", placeholder="")
         yield Static("", classes="-edit-error")
 
     def open(self, item: MenuItem, current_value: str) -> None:
         self._item = item
-        label_widget = self.query_one(Static)
         self.query_one(".-edit-error", Static).update("")
-        hint_suffix = f" · {item.hint}" if item.hint else ""
-        label_widget.update(Text(f"Edit {item.label}{hint_suffix} ", style="dim"))
+        self.query_one(".-edit-label", Static).update(Text(f"Edit {item.label}", style="dim"))
+        hint = f" · {item.hint} " if item.hint else " "
+        self.query_one(".-edit-hint", Static).update(Text(hint, style="dim"))
         editor = self.query_one("#editor_input", Input)
         editor.value = current_value
         self.remove_class("-hidden")
@@ -570,10 +900,15 @@ class EditBar(Horizontal):
             self._set_status("", tone="error")
             return
         p = _Path(raw).expanduser()
-        if not p.exists():
+        if path_is_absent(p):
             self._set_status("✗ does not exist", tone="error")
             return
-        if not p.is_dir():
+        try:
+            is_dir = p.is_dir()
+        except OSError:
+            self._set_status("⚠ unreadable", tone="warn")
+            return
+        if not is_dir:
             self._set_status("⚠ not a directory", tone="warn")
             return
         try:
@@ -581,12 +916,15 @@ class EditBar(Horizontal):
             for _ in p.iterdir():
                 n += 1
                 if n >= self._PATH_ENTRY_CAP:
-                    self._set_status(f"✓ {self._PATH_ENTRY_CAP}+ entries", tone="ok")
+                    self._set_status(f"✓ folder: {self._PATH_ENTRY_CAP}+ items", tone="ok")
                     return
         except OSError:
             self._set_status("⚠ unreadable", tone="warn")
             return
-        self._set_status(f"✓ {n} entries", tone="ok")
+        # A bare count beside a green tick reads as "N will be indexed", but it
+        # is a non-recursive `iterdir` counting subfolders and `no_index` files;
+        # `folder:` first survives a clip, and a gated walk would not survive the debounce.
+        self._set_status(f"✓ folder: {n} items", tone="ok")
 
     @on(Input.Submitted, "#editor_input")
     def _on_submit(self, ev: Input.Submitted) -> None:
@@ -595,11 +933,33 @@ class EditBar(Horizontal):
         raw = ev.value.strip()
         coerce = self._item.coerce or str
         try:
-            value: Any = coerce(raw) if raw else raw
+            # Empty input goes through coerce too: it is how an optional
+            # setting is cleared and how a list row empties itself. Skipping
+            # it posted the literal "" and validation rejected the write.
+            value: Any = coerce(raw)
         except (TypeError, ValueError) as e:
-            self.show_error(f"invalid: {e}")
+            self.show_error(_coercion_error(coerce, self._item.hint, e))
+            return
+        out_of_range = _out_of_bounds(self._item, value)
+        if out_of_range:
+            self.show_error(out_of_range)
             return
         self.post_message(self.EditCommitted(self._item, value))
+
+    @property
+    def is_open(self) -> bool:
+        return "-hidden" not in self.classes
+
+    def commit_pending(self) -> None:
+        """Submit what is typed, as Enter would.
+
+        `^S` bypassed the open bar entirely, so a value the user had just
+        typed was dropped without a word while the form saved without it.
+        """
+        if self._item is None or not self.is_open:
+            return
+        field = self.query_one("#editor_input", Input)
+        self._on_submit(Input.Submitted(field, field.value))
 
     def on_key(self, ev: events.Key) -> None:
         if ev.key == "escape":
@@ -700,6 +1060,10 @@ class SettingsList(Widget, can_focus=True):
         # (ellipsis / wrap), so only a width change needs a full rebuild;
         # height-only or duplicate resizes are skipped. -1 = never rendered.
         self._last_render_width: int = -1
+        # One per item, in order. A query of the body also returns rows a
+        # rebuild removed that Textual has not yet pruned; filling those leaves
+        # the live rows blank.
+        self._rows: list[Static] = []
 
     def compose(self) -> ComposeResult:
         # VerticalScroll (not plain Vertical) so long lists like the
@@ -741,6 +1105,7 @@ class SettingsList(Widget, can_focus=True):
         rendering_search = bool(self._search_breadcrumbs)
         current_subsection: str | None = None
         current_container: Vertical | VerticalScroll = body
+        self._rows = []
         for item in items:
             target_sub = None if rendering_search else item.subsection
             if target_sub != current_subsection:
@@ -761,7 +1126,9 @@ class SettingsList(Widget, can_focus=True):
                     cls += " -hint-section"
             elif in_hint_section:
                 cls += " -hint-section"
-            current_container.mount(Static("", classes=cls))
+            row = Static("", classes=cls)
+            current_container.mount(row)
+            self._rows.append(row)
         self.call_after_refresh(self._init_cursor)
 
     def _init_cursor(self) -> None:
@@ -786,12 +1153,8 @@ class SettingsList(Widget, can_focus=True):
 
     def _render_all(self) -> None:
         app: FNDApp = self.app  # type: ignore[assignment]
-        try:
-            body = self.query_one("#settings_list_body", VerticalScroll)
-        except Exception:
-            return
         width = self.size.width or 80
-        rows = list(body.query(Static))
+        rows = self._rows
         highlight = self._search_query or None
         # Budget chars eaten by the wrapping containers so the row's
         # ellipsis fires before content clips past a border. The outer
@@ -856,11 +1219,7 @@ class SettingsList(Widget, can_focus=True):
         ``cursor_index`` (screen restoration, jump-to-row, tests) goes
         through this watcher so the cascade always fires.
         """
-        try:
-            body = self.query_one("#settings_list_body", VerticalScroll)
-        except Exception:
-            return
-        rows = list(body.query(Static))
+        rows = self._rows
         if 0 <= old < len(rows):
             rows[old].remove_class("-cursor")
         if 0 <= new < len(rows) and new < len(self._items) and self._items[new].kind != KIND_HEADER:
@@ -925,13 +1284,10 @@ class SettingsList(Widget, can_focus=True):
             self._post_highlight()
 
     def _scroll_cursor_into_view(self) -> None:
-        try:
-            body = self.query_one("#settings_list_body", VerticalScroll)
-            rows = list(body.query(Static))
-            if 0 <= self.cursor_index < len(rows):
+        rows = self._rows
+        if 0 <= self.cursor_index < len(rows):
+            with contextlib.suppress(Exception):
                 self.scroll_to_widget(rows[self.cursor_index], animate=False)
-        except Exception:
-            pass
 
     # Item kinds that "drill into a sub-screen" — these are what `right`
     # activates. Right does nothing on scalars / toggles / actions / leaf
@@ -954,7 +1310,11 @@ class SettingsList(Widget, can_focus=True):
                 self.post_message(self.Activated(item))
 
     def action_jump(self, n: int) -> None:
-        """1-9 jumps to the Nth selectable item (skipping headers)."""
+        """1-9 jumps to the Nth selectable item (skipping headers) and opens it.
+
+        Opening is deliberate: it is the accelerator, not a side effect, so a
+        digit never merely moves the cursor.
+        """
         target_count = n
         for i, item in enumerate(self._items):
             if item.kind == KIND_HEADER:
@@ -1053,8 +1413,6 @@ class SettingsScreen(Screen[None]):
         # immediately. ``None`` falls back to a value-only re-render.
         self._provider = provider
         self._filter_active: bool = False
-        # Populated during cross-section search: maps id(item) → breadcrumb.
-        self._search_breadcrumbs: dict[int, tuple[str, ...]] = {}
 
     # ── Layout ──────────────────────────────────────────────────
 
@@ -1066,13 +1424,18 @@ class SettingsScreen(Screen[None]):
         )
         with Vertical(id="settings_box") as box:
             box.border_title = title
-            yield Input(placeholder="Type to filter…", id="settings_search")
+            # Naming the key, as the filter browser's box does: these screens
+            # can open with the LIST focused, where a typed letter runs its
+            # command: `q` on the Keybindings sheet quits the app.
+            yield Input(placeholder=_SEARCH_PLACEHOLDER_WITH_KEY, id="settings_search")
             yield SettingsList()
             yield DetailStrip()
             if not self._breadcrumb:
                 # Root-only version + build identifier; sub-screens omit it.
                 yield Static("", id="settings_status")
-        yield EditBar()
+            # Inside the panel: this one is inset, so a screen-docked bar
+            # painted at column 0, detached from the row it was editing.
+            yield EditBar()
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
@@ -1093,7 +1456,11 @@ class SettingsScreen(Screen[None]):
             self._render_version_status()
 
     def on_screen_resume(self) -> None:
-        """Refresh items when control returns from a popped child screen.
+        """Refresh items when control returns from a popped child screen."""
+        self.refresh_items()
+
+    def refresh_items(self) -> None:
+        """Re-run the provider and repaint every row's trailing value.
 
         A scalar/picker edit only changes one row's value — re-rendering
         in place is enough since the row's ``value_getter`` lambda reads
@@ -1110,20 +1477,12 @@ class SettingsScreen(Screen[None]):
         """
         import contextlib
 
-        from fnd.tui.lazy_trailing import invalidate
+        # Every cached trailing value, not a hand-maintained list that drifts:
+        # a screen resuming or a run finishing is exactly the moment none of
+        # them can be trusted.
+        from fnd.tui.lazy_trailing import invalidate_all
 
-        for key in (
-            "indexing.cache_size",
-            "indexing.pdf_status",
-            # The cache-size chip's real key (the old "indexing.summary.
-            # cache_short" was renamed but left dead here, so the chip
-            # showed a stale size after cache actions).
-            "pdf_texture.summary.cache_short",
-            "cache.stale_count",
-            "cache.retexturise_outdated",
-            "pdf_texture.summary.stale_short",
-        ):
-            invalidate(key)
+        invalidate_all()
 
         if self._provider is None:
             with contextlib.suppress(Exception):
@@ -1152,6 +1511,14 @@ class SettingsScreen(Screen[None]):
         if 0 <= lst.cursor_index < len(lst._items):
             prev_id = lst._items[lst.cursor_index].id
         self._items = new_items
+        # A repaint that lands mid-search must not widen the list back out:
+        # the box still holds the query, so the rows have to keep matching it.
+        if self._filter_active:
+            typed = self.query_one("#settings_search", Input).value
+            if typed.strip():
+                self._apply_filter(typed, cursor_id=prev_id)
+                self._refresh_hint_bar()
+                return
         lst.set_items(list(new_items), cursor_id=prev_id)
         self._refresh_hint_bar()
 
@@ -1181,7 +1548,21 @@ class SettingsScreen(Screen[None]):
         breadcrumb, and cursor row."""
         app: FNDApp = self.app  # type: ignore[assignment]
         cluster = self._hint_cluster()
-        self.query_one("#footer_hints", Static).update(_hint_bar(app, cluster))
+        # `/`, `:`, `?` and `q` type into a focused box rather than acting, so
+        # naming them there advertises four keys that do not work.
+        bar = _editor_hint_bar(cluster) if self._is_typing() else _hint_bar(app, cluster)
+        self.query_one("#footer_hints", Static).update(bar)
+
+    def _is_typing(self) -> bool:
+        """Whether a text box has focus, so the anchors are inert."""
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            if "-hidden" not in self.query_one(EditBar).classes:
+                return True
+        with contextlib.suppress(Exception):
+            return self.query_one("#settings_search", Input).has_focus
+        return False
 
     def _hint_cluster(self) -> tuple[tuple[str, str], ...]:
         """Choose the contextual hint cluster for the current state.
@@ -1205,7 +1586,7 @@ class SettingsScreen(Screen[None]):
         # Search input focused: hand-off / clear cluster.
         focused = self.focused
         if isinstance(focused, Input) and getattr(focused, "id", None) == "settings_search":
-            return (("↓", "Results"), ("⏎", "Open first"), ("Esc", "Clear"))
+            return (("↓", "Results"), ("⏎", "Go to first"), ("Esc", "Clear"))
 
         # Keybindings sub-screen: ⏎ Run · [key] Run directly · Esc Back.
         if self._breadcrumb[-1:] == ("Keybindings",):
@@ -1260,30 +1641,36 @@ class SettingsScreen(Screen[None]):
 
     @on(Input.Changed, "#settings_search")
     def _on_search_changed(self, ev: Input.Changed) -> None:
-        q = ev.value.strip().lower()
+        self._apply_filter(ev.value)
+
+    def _apply_filter(self, raw: str, *, cursor_id: str | None = None) -> None:
+        """Show the rows matching ``raw``, or the whole list when it is empty.
+
+        One implementation for typing and for a repaint: a second copy in
+        `refresh_items` kept the rows and dropped the breadcrumbs, which turns
+        a flat result list back into a bordered menu, and destroyed the
+        no-matches placeholder rather than keeping it.
+        """
+        q = raw.strip().lower()
         lst = self.query_one(SettingsList)
         lst._search_query = q
         if not q:
             self._filter_active = False
-            self._search_breadcrumbs = {}
-            lst.set_items(list(self._items))
+            lst.set_items(list(self._items), cursor_id=cursor_id)
             return
         self._filter_active = True
         filtered, breadcrumbs = self._filter_items(q)
-        self._search_breadcrumbs = breadcrumbs
         if not filtered:
             # Empty-state hint — a non-selectable placeholder row so the
             # cursor-skip rule keeps it inert.
             placeholder = MenuItem(
                 id="search.empty",
-                label=(
-                    f"No matches for '{ev.value.strip()}'. Try shorter terms or press Esc to clear."
-                ),
+                label=(f"No matches for '{raw.strip()}'. Try shorter terms or press Esc to clear."),
                 kind=KIND_HEADER,
             )
             lst.set_items([placeholder])
             return
-        lst.set_items(filtered, breadcrumbs=breadcrumbs)
+        lst.set_items(filtered, breadcrumbs=breadcrumbs, cursor_id=cursor_id)
 
     def _filter_items(self, q: str) -> tuple[list[MenuItem], dict[int, tuple[str, ...]]]:
         """Cross-section: walk every section's leaves, score by substring
@@ -1293,22 +1680,31 @@ class SettingsScreen(Screen[None]):
         surface in the detail strip on focus, and indexing them muddies
         the search results.
         """
-        matches: list[tuple[int, MenuItem, tuple[str, ...]]] = []
+        matches: list[tuple[int, int, MenuItem, tuple[str, ...]]] = []
         app: FNDApp = self.app  # type: ignore[assignment]
-        for path, item in walk_all_sections(app):
-            if item.kind == KIND_HEADER:
-                continue
-            haystack = " ".join((item.label, item.key, *item.keywords, *path)).lower()
-            idx = haystack.find(q)
-            if idx == -1:
-                continue
-            # Earlier match in the label scores higher (smaller idx first).
-            label_idx = item.label.lower().find(q)
-            score = label_idx if label_idx != -1 else 1000 + idx
-            matches.append((score, item, path))
-        matches.sort(key=lambda m: (m[0], len(m[1].label)))
-        breadcrumbs = {id(item): path for _, item, path in matches}
-        return [item for _, item, _ in matches], breadcrumbs
+        seen: set[str] = set()
+        # This page's own rows first: `walk_all_sections` does not descend
+        # per-collection sub-screens, so without them the filter would search
+        # everywhere EXCEPT the page in front of you.
+        here: list[tuple[tuple[str, ...], MenuItem]] = [
+            (self._breadcrumb, it) for it in self._items
+        ]
+        for local, source in ((0, iter(here)), (1, walk_all_sections(app))):
+            for path, item in source:
+                if item.kind == KIND_HEADER or item.id in seen:
+                    continue
+                seen.add(item.id)
+                haystack = " ".join((item.label, item.key, *item.keywords, *path)).lower()
+                idx = haystack.find(q)
+                if idx == -1:
+                    continue
+                # Earlier match in the label scores higher (smaller idx first).
+                label_idx = item.label.lower().find(q)
+                score = label_idx if label_idx != -1 else 1000 + idx
+                matches.append((local, score, item, path))
+        matches.sort(key=lambda m: (m[0], m[1], len(m[2].label)))
+        breadcrumbs = {id(item): path for _, _, item, path in matches}
+        return [item for _, _, item, _ in matches], breadcrumbs
 
     @on(Input.Submitted, "#settings_search")
     def _on_search_submitted(self, _ev: Input.Submitted) -> None:
@@ -1336,7 +1732,6 @@ class SettingsScreen(Screen[None]):
         if search.value:
             search.value = ""
             self._filter_active = False
-            self._search_breadcrumbs = {}
             return
         import contextlib
 
@@ -1370,9 +1765,11 @@ class SettingsScreen(Screen[None]):
     def on_descendant_focus(self, _ev: events.DescendantFocus) -> None:
         """Re-render the hint bar when focus moves (search ↔ list)."""
         self._refresh_hint_bar()
+        refresh_search_placeholder(self, "#settings_search")
 
     def on_descendant_blur(self, _ev: events.DescendantBlur) -> None:
         self._refresh_hint_bar()
+        refresh_search_placeholder(self, "#settings_search")
 
     def _row_metadata(self, item: MenuItem) -> str:
         """Build the 2nd-line metadata for the detail strip — storage path,
@@ -1459,7 +1856,9 @@ class SettingsScreen(Screen[None]):
         app: FNDApp = self.app  # type: ignore[assignment]
         item = ev.item
         try:
-            if item.setting_path:
+            if item.scalar_setter is not None:
+                item.scalar_setter(app, ev.value)
+            elif item.setting_path:
                 from fnd.config import default_config_path, load, write_setting
 
                 write_setting(
@@ -1503,6 +1902,15 @@ class SettingsScreen(Screen[None]):
                 continue
             # Never intercept Enter — that belongs to the regular activate path.
             if item.key.lower() == "enter":
+                continue
+            # Nor `/`: invoking it here closes the sheet and focuses the query
+            # bar, leaving this screen's own filter box unreachable while its
+            # placeholder invites typing and every letter runs a command, `q` included.
+            if item.action_id == "focus_query":
+                continue
+            # Rows documenting another screen's widget keys carry no action, so
+            # "invoking" one would close the whole settings stack and do nothing.
+            if not item.action_id:
                 continue
             if item.key.lower() == pressed_label.lower():
                 ev.stop()
@@ -1552,11 +1960,12 @@ class PickerScreen(Screen[None]):
     """Sub-screen for a KIND_PICKER item.
 
     Single-select: Enter writes immediately and pops. Multi-select:
-    Enter toggles ``✓``; Esc commits and pops.
+    Enter toggles ``✓``, ``^S`` commits, Esc cancels.
     """
 
     BINDINGS = [  # noqa: RUF012
         Binding("escape,left", "back", "Back", show=False),
+        Binding("ctrl+s", "save_close", show=False),
         Binding("enter", "activate", show=False),
         Binding("up,k", "cursor(-1)", show=False),
         Binding("down,j", "cursor(1)", show=False),
@@ -1601,17 +2010,25 @@ class PickerScreen(Screen[None]):
         else:
             self._selected = {current} if current not in (None, "") else set()
         self._render_options()
-        self.query_one("#picker_list", OptionList).focus()
+        options = self.query_one("#picker_list", OptionList)
+        options.focus()
+        if options.option_count and options.highlighted is None:
+            # On the current value: unhighlighted, ⏎ is a dead key; on option 0,
+            # a single-select ⏎ changes the setting the user only opened to read.
+            options.highlighted = next(
+                (i for i, c in enumerate(self._choices) if c.value in self._selected), 0
+            )
         self._render_footer()
 
     def _render_footer(self) -> None:
         app: FNDApp = self.app  # type: ignore[assignment]
         hints: tuple[tuple[str, str], ...] = (
-            (("⏎", "Toggle"), ("Esc", "Save"))
+            (("⏎", "Toggle"), (COMMIT_KEY, "Save"), ("Esc", "Cancel"))
             if self._item.multi
             else (("⏎", "Select"), ("Esc", "Cancel"))
         )
-        self.query_one("#footer_hints", Static).update(_hint_bar(app, hints))
+        bar = _editor_hint_bar(hints) if _typing_in(self) else _hint_bar(app, hints, screen=self)
+        self.query_one("#footer_hints", Static).update(bar)
 
     def _render_options(self) -> None:
         """First-paint of the picker list. Toggles after mount use
@@ -1657,6 +2074,13 @@ class PickerScreen(Screen[None]):
         return t
 
     def action_back(self) -> None:
+        """Esc cancels, on a multi picker too, as on the single-select row.
+
+        `^S` saves, as on every other screen that edits something.
+        """
+        self.app.pop_screen()
+
+    def action_save_close(self) -> None:
         if self._item.multi:
             self._commit(self._selected)
         self.app.pop_screen()
@@ -1685,6 +2109,225 @@ class PickerScreen(Screen[None]):
             self.notify(_summarise(e), severity="error", title="Save failed")
 
 
+def _same_setting(value: Any, default: Any) -> bool:
+    """Whether a value differs from the default enough to be an override.
+
+    ``None``, ``""`` and ``[]`` all mean "no value here", so an untouched
+    field must not be recorded: doing so would turn inheriting into an
+    explicit empty and silently drop the default it was inheriting.
+    """
+    empty = (None, "", [], {})
+    if value in empty and default in empty:
+        return True
+    return bool(value == default)
+
+
+def open_source_filter_browser(
+    app: FNDApp,
+    overrides: dict[str, Any],
+    root: Any,
+    on_change: Callable[[], None],
+    globs: list[str] | None = None,
+    excludes: list[str] | None = None,
+) -> None:
+    """The source's *effective* filters, edited as branches.
+
+    Showing the resolved set and recording only what differs from the defaults
+    means there is no third "inherit" state to explain, and no ``-`` sentinel:
+    change something and it becomes an override, put it back and it stops
+    being one.
+    """
+    import dataclasses
+
+    from fnd.config import DefaultFilters, SourceFilters, resolve_filters
+    from fnd.filters import build_gate, spec_from_resolved
+    from fnd.filters.scan import sample_source
+
+    cfg = app._config  # type: ignore[attr-defined]
+    defaults = cfg.defaults.filters if cfg else DefaultFilters()
+    resolved = resolve_filters(SourceFilters.model_validate(overrides or {}), defaults)
+
+    def _sample(spec: Any = None) -> Any:
+        if root is None or path_is_absent(root):
+            return None
+        # The source's own ignore settings, so the offered types and tags are
+        # the ones this source would actually index.
+        names = tuple(
+            name
+            for name, on in (
+                (".gitignore", resolved.respect_gitignore),
+                (".fndignore", resolved.respect_fndignore),
+            )
+            if on
+        )
+        # The rules the screen is SHOWING, not the ones it opened with, minus
+        # the kind rule: a kind the user has not ticked would otherwise read
+        # `· 0` and tell them nothing about what ticking it would bring in.
+        gating = spec if spec is not None else spec_from_resolved(resolved)
+        return sample_source(
+            root,
+            budget_s=0.8,
+            ignore_names=names,
+            # The pane names these in its own footer as paths it is skipping.
+            excludes=list(excludes or ()),
+            gate=build_gate(dataclasses.replace(gating, kinds=())),
+        )
+
+    def _save(spec: Any, gitignore: bool, fndignore: bool) -> None:
+        values = _spec_to_mapping(spec)
+        values["respect_gitignore"] = gitignore
+        values["respect_fndignore"] = fndignore
+        # The tree does not edit `clears`, and this rebuilds the overrides from
+        # scratch, so anything it cannot express has to be carried across or it
+        # is deleted by visiting the screen.
+        carried = {k: v for k, v in overrides.items() if k not in values and v}
+        overrides.clear()
+        overrides.update(carried)
+        for name, value in values.items():
+            if not _same_setting(value, getattr(defaults, name, None)):
+                overrides[name] = value
+        on_change()
+
+    app.push_screen(
+        FilterBrowserScreen(
+            title="Index filters · this source",
+            spec=_spec_from_filters(resolved),
+            gitignore=resolved.respect_gitignore,
+            fndignore=resolved.respect_fndignore,
+            sample_provider=_sample,
+            no_tags_note="no tags found in this source",
+            globs=list(globs or ()),
+            excludes=list(excludes or ()),
+            inherited=(
+                _spec_from_filters(defaults),
+                defaults.respect_gitignore,
+                defaults.respect_fndignore,
+            ),
+            save_note=(
+                f"{COMMIT_KEY} applies here; {COMMIT_KEY} on the source form saves and reindexes"
+            ),
+            commit_label="Apply",
+            on_save=_save,
+        )
+    )
+
+
+def _default_filters(app: Any) -> Any:
+    """The global default filters, or the shipped ones when no config."""
+    from fnd.config import DefaultFilters
+
+    cfg = getattr(app, "_config", None)
+    return getattr(getattr(cfg, "defaults", None), "filters", None) or DefaultFilters()
+
+
+def _default_frontmatter(app: Any) -> str:
+    cfg = getattr(app, "_config", None)
+    return (getattr(cfg.defaults.filters, "frontmatter", None) or "") if cfg else ""
+
+
+def _seeded_filters(source: Any) -> dict[str, Any]:
+    """A source's filter overrides, with a legacy rule folded in.
+
+    ``frontmatter_filter`` predates ``filters.frontmatter``. Seeding it here
+    means the browser, the only surface for the rule, shows it, and clearing
+    it there actually clears it.
+    """
+    values: dict[str, Any] = source.filters.model_dump(exclude_none=True) if source.filters else {}
+    # `clears` defaults to a list, so exclude_none always carries it. An empty
+    # one is not an override, and leaving it in makes every open-and-save look
+    # like a change and force a rebuild.
+    if not values.get("clears"):
+        values.pop("clears", None)
+    legacy = str(source.legacy_frontmatter or "")
+    if legacy and not values.get("frontmatter"):
+        values["frontmatter"] = legacy
+    return values
+
+
+def _source_frontmatter(source: Any) -> str:
+    """This source's frontmatter rule, wherever it is currently stored."""
+    override = getattr(source.filters, "frontmatter", None) if source.filters else None
+    if override is not None:
+        return str(override)
+    return str(source.legacy_frontmatter or "")
+
+
+def _merge_frontmatter(
+    filters: dict[str, Any], text: str, default: str, *, had_override: bool = True
+) -> dict[str, Any]:
+    """Fold the rule into ``filters``, keeping "same as the default" unset.
+
+    Emptying a rule the source owned is a real override to nothing, and
+    dropping the key there would reinstate the inherited rule. A source that
+    never had one renders the same empty field, so without ``had_override``
+    opening the form and saving unchanged converted "inherit" into "no rule"
+    and, because nothing else differed, fired no reindex to reveal it.
+    """
+    value = text.strip()
+    if value == default.strip() or (not value and not had_override):
+        filters.pop("frontmatter", None)
+    else:
+        filters["frontmatter"] = value
+    return filters
+
+
+def _source_filters_or_none(raw: dict[str, Any] | None) -> Any:
+    """Sparse overrides as a ``SourceFilters``, or ``None`` when none are set.
+
+    Only ``None`` means "inherit". An empty list is the explicit override to
+    nothing (the row's ``-``), so dropping it here would silently reinstate
+    the global value the user was overriding.
+    """
+    from fnd.config import CLEARABLE, SourceFilters
+
+    items = raw or {}
+    cleaned = {k: v for k, v in items.items() if v is not None}
+    # A number or date set to None is the user choosing "no limit here" over an
+    # inherited one; dropped, it would revert on the next open. A bool or a
+    # list is not clearable: false and [] already say it.
+    cleared = sorted(k for k, v in items.items() if v is None and k in CLEARABLE)
+    if cleared:
+        cleaned["clears"] = cleared
+    return SourceFilters.model_validate(cleaned) if cleaned else None
+
+
+def _exclude_globs(fields: dict[str, Any]) -> list[str]:
+    """Every exclude glob in force, presets expanded."""
+    from fnd.config import EXCLUDES_PRESETS
+
+    out: list[str] = []
+    for key in fields.get("excludes_presets") or ():
+        if key in EXCLUDES_PRESETS:
+            out.extend(EXCLUDES_PRESETS[key]["globs"])
+    out += [g.strip() for g in str(fields.get("excludes_custom") or "").split(",") if g.strip()]
+    return out
+
+
+def _excludes_summary(fields: dict[str, Any]) -> str:
+    """The presets and globs by name: a count would show the globs nowhere in
+    the UI."""
+    from fnd.config import EXCLUDES_PRESETS
+
+    named = [
+        str(EXCLUDES_PRESETS[key]["label"])
+        for key in fields.get("excludes_presets") or ()
+        if key in EXCLUDES_PRESETS
+    ]
+    named += [g.strip() for g in str(fields.get("excludes_custom") or "").split(",") if g.strip()]
+    return ", ".join(named) if named else "(none)"
+
+
+def _overridden_fields(overrides: dict[str, Any] | None) -> list[str]:
+    """The settings a source overrides, one name each.
+
+    ``clears`` is one key naming any number of fields, so counting keys
+    reports three cleared bounds as one override.
+    """
+    names = {k for k, v in (overrides or {}).items() if k != "clears" and v is not None}
+    names.update((overrides or {}).get("clears") or ())
+    return sorted(names)
+
+
 def _includes_groups() -> list[ToggleGroup]:
     """Category → kind model for the Includes nested picker (all registry
     kinds, since a source can index any supported type)."""
@@ -1704,10 +2347,16 @@ def _includes_groups() -> list[ToggleGroup]:
 class TreePickerScreen(Screen[None]):
     """Nested category→item multi-select for a picker item that supplies a
     ``groups_provider``. Reuses the shared :class:`ToggleTree`, so it toggles,
-    cascades, and repaints exactly like the file-type filter. Esc commits."""
+    cascades, and repaints exactly like the file-type filter. Changes apply as
+    they are toggled, so leaving is all there is to do.
+
+    That is the opposite of the filter browser, which holds its edits because
+    saving one reindexes. Both are right for what they edit; what was wrong is
+    that the gesture a user learnt on one did nothing on the other."""
 
     BINDINGS = [  # noqa: RUF012
-        Binding("escape", "back", "Back", show=False),
+        Binding("escape,left", "back", "Back", show=False),
+        Binding("ctrl+s", "back", "Done", show=False),
     ]
 
     CSS = """
@@ -1740,13 +2389,26 @@ class TreePickerScreen(Screen[None]):
         tree.set_model(groups, selected, expanded={g.id for g in groups})
         tree.focus()
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("⏎/Space", "Toggle"), ("←/→", "Collapse/Expand"), ("Esc", "Save")))
+            _hint_bar(
+                app,
+                (
+                    ("⏎", "Toggle"),
+                    ("←/→", "Collapse/Expand"),
+                    (f"Esc/{COMMIT_KEY}", "Done"),
+                ),
+            )
         )
 
     @on(ToggleTree.SelectionChanged)
     def _on_changed(self, ev: ToggleTree.SelectionChanged) -> None:
         # Commit live so the row summary updates as the user toggles.
         self._commit(ev.selected)
+
+    @on(ToggleTree.NavigatedOut)
+    def _on_navigated_out(self, _ev: ToggleTree.NavigatedOut) -> None:
+        """← at the outermost level leaves, as it does everywhere else in
+        Settings. The tree's own binding would otherwise swallow it."""
+        self.action_back()
 
     def action_back(self) -> None:
         self._commit(self.query_one("#tree_picker", ToggleTree).selected)
@@ -1774,25 +2436,6 @@ def _kinds_to_include_globs(kind_ids: list[str]) -> list[str]:
         if spec is not None:
             globs.extend(f"**/*{sfx}" for sfx in spec.suffixes)
     return globs
-
-
-def _split_includes_globs(globs: list[str]) -> tuple[list[str], str]:
-    """Map includes globs back to ``(kind_ids, custom_blob)``.
-
-    A kind is recognised as selected iff any of its suffix globs (``**/*<sfx>``)
-    is present; those globs are then consumed. Whatever remains becomes the
-    comma-joined custom blob so the user keeps their original patterns verbatim.
-    """
-    from fnd.kinds import KIND_SPECS
-
-    remaining = list(globs)
-    kinds: list[str] = []
-    for spec in KIND_SPECS:
-        kglobs = [f"**/*{sfx}" for sfx in spec.suffixes]
-        if any(g in remaining for g in kglobs):
-            kinds.append(spec.id)
-            remaining = [g for g in remaining if g not in kglobs]
-    return kinds, ", ".join(remaining)
 
 
 def _split_excludes_globs(globs: list[str]) -> tuple[list[str], str]:
@@ -1859,21 +2502,24 @@ class SourceFormScreen(Screen[None]):
         super().__init__()
         self._collection_name = collection_name
         self._source_index = source_index  # None = adding new
+        # Globs an untick cleared, so re-ticking can offer them back.
+        self._discarded_globs: dict[str, str] = {}
         self._fields: dict[str, Any] = {
             "path": "",
-            "includes": [],  # list[str] of indexer ext keys (md / pdf / …)
             "includes_custom": "",  # comma-separated free-form globs
             "excludes_presets": [],  # list[str] of EXCLUDES_PRESETS keys
             "excludes_custom": "",  # comma-separated free-form globs
             "filter": "",
             "follow_symlinks": False,
-            # Phase 2b: per-source app override + Obsidian vault.
+            # Per-source app override + Obsidian vault.
             # ``app`` is the registry id (or "" = no override → resolver
             # walks the global app_defaults / auto-promote ladder).
             # ``app_params_vault`` is the only app_param that has UI
             # surface today; other params still reachable via the TOML.
             "app": "",
             "app_params_vault": "",
+            # Sparse SourceFilters overrides; empty means "inherit everything".
+            "filters": {},
         }
         # Snapshot the current source (if editing) for cancel and the
         # "needs reindex on save" check.
@@ -1888,15 +2534,24 @@ class SourceFormScreen(Screen[None]):
         with Vertical(id="settings_box") as box:
             box.border_title = title
             yield SettingsList()
-            yield Static(
-                "─── Test filter against sample frontmatter ─────────────",
-                classes="form_separator",
-            )
+            yield Static("", id="form_sample_sep", classes="form_separator")
             yield TextArea("", id="frontmatter_sample")
             yield Static("(no sample)", id="match_status")
             yield Static("", id="form_error", classes="-hidden")
+            yield DetailStrip()
         yield EditBar()
         yield Static("", id="footer_hints")
+
+    @on(SettingsList.Highlighted)
+    def _on_field_highlighted(self, ev: SettingsList.Highlighted) -> None:
+        """Show the highlighted row's description, as the wizard editing the
+        same fields does."""
+        strip = self.query_one(DetailStrip)
+        item = ev.item
+        if item is None:
+            strip.clear()
+            return
+        strip.set(item.description or "", item.hint or "", markup=item.description_markup)
 
     def _show_error(self, message: str) -> None:
         err = self.query_one("#form_error", Static)
@@ -1929,51 +2584,170 @@ class SourceFormScreen(Screen[None]):
         if not (0 <= self._source_index < len(sources)):
             return
         s = sources[self._source_index]
-        exts, includes_custom = _split_includes_globs(list(s.includes))
+        # Every include glob, type globs too: the model folds those into
+        # `kinds` only when nothing else is listed, so one still here is an
+        # ORed path glob like its neighbours, not a file type.
         preset_keys, excludes_custom = _split_excludes_globs(list(s.excludes))
         self._fields = {
             "path": str(s.path),
-            "includes": exts,
-            "includes_custom": includes_custom,
+            "includes_custom": ", ".join(s.includes),
             "excludes_presets": preset_keys,
             "excludes_custom": excludes_custom,
-            "filter": s.frontmatter_filter or "",
+            "filter": _source_frontmatter(s),
             "follow_symlinks": bool(s.follow_symlinks),
             "app": s.app or "",
             "app_params_vault": (s.app_params or {}).get("vault", ""),
+            "filters": _seeded_filters(s),
         }
-        self._snapshot = {
-            "path": self._fields["path"],
-            "includes": list(self._fields["includes"]),
-            "includes_custom": self._fields["includes_custom"],
-            "excludes_presets": list(self._fields["excludes_presets"]),
-            "excludes_custom": self._fields["excludes_custom"],
-            "filter": self._fields["filter"],
-            "follow_symlinks": self._fields["follow_symlinks"],
-            "app": self._fields["app"],
-            "app_params_vault": self._fields["app_params_vault"],
-        }
+        # Copied wholesale rather than key by key: a snapshot missing a field
+        # never equals the fields, so every save would force a rebuild.
+        self._snapshot = copy.deepcopy(self._fields)
+
+    def _frontmatter_text(self) -> str:
+        """This source's frontmatter rule.
+
+        Only the overrides: a legacy ``frontmatter_filter`` is folded into
+        them at load, so falling back to it here would resurrect a rule the
+        user has just cleared in the browser.
+        """
+        return str(self._fields["filters"].get("frontmatter") or "")
+
+    def _effective_frontmatter(self) -> tuple[str, bool]:
+        """The rule that actually applies, and whether it came from the
+        defaults. A source with no override of its own still has files dropped
+        by `[defaults.filters].frontmatter`, and testing a sample against
+        nothing told the user the opposite."""
+        own = self._frontmatter_text().strip()
+        if own:
+            return own, False
+        cfg = getattr(self.app, "_config", None)
+        inherited = getattr(getattr(cfg, "defaults", None), "filters", None)
+        return str(getattr(inherited, "frontmatter", None) or "").strip(), True
+
+    def _frontmatter_into_filters(self, text: str) -> dict[str, Any]:
+        """The frontmatter rule as part of this source's filter overrides.
+
+        As a separate field beside the filters, the browser and the row could
+        disagree about the same rule with neither showing the other's value.
+        """
+        return _merge_frontmatter(
+            dict(self._fields["filters"]),
+            text,
+            _default_frontmatter(self.app),
+            had_override=self._fields["filters"].get("frontmatter") is not None,
+        )
+
+    def _open_filters(self) -> None:
+        app: FNDApp = self.app  # type: ignore[assignment]
+        raw_path = str(self._fields.get("path") or "").strip()
+        root = Path(raw_path).expanduser() if raw_path else None
+        globs = [
+            g.strip()
+            for g in str(self._fields.get("includes_custom") or "").split(",")
+            if g.strip()
+        ]
+        open_source_filter_browser(
+            app,
+            self._fields["filters"],
+            root,
+            self._populate_fields,
+            globs,
+            _exclude_globs(self._fields),
+        )
+
+    def _filters_summary(self) -> str:
+        count = len(_overridden_fields(self._fields.get("filters")))
+        return f"{count} overridden" if count else "inherited"
 
     def _populate_fields(self) -> None:
         self.query_one(SettingsList).set_items(self._build_field_items())
+        self._refresh_sample_tester()
+        # A rejected save left its reason on screen while the user fixed the
+        # very field it named, so "Name is required." sat above a filled name.
+        self._clear_error()
+
+    def _refresh_sample_tester(self) -> None:
+        """The tester only appears once there is a rule for it to test.
+
+        It cost a third of the form on every source, and named a rule that
+        lives two screens away without saying which.
+        """
+        rule, inherited = self._effective_frontmatter()
+        for wid in ("#form_sample_sep", "#frontmatter_sample", "#match_status"):
+            self.query_one(wid).display = bool(rule)
+        if not rule:
+            return
+        source = " (inherited)" if inherited else ""
+        shown = sanitise_display_text(rule)
+        width = max(20, self.size.width - 12)
+        if len(shown) > width:
+            shown = shown[: width - 1] + "…"
+        self.query_one("#form_sample_sep", Static).update(
+            f"─── Paste frontmatter to test:  {shown}{source} ───"
+        )
 
     def _build_field_items(self) -> list[MenuItem]:
         from fnd.config import EXCLUDES_PRESETS
 
         return [
-            self._field_item("path", "Path", hint="path or ~/path"),
+            header("Source", level=2),
+            self._field_item(
+                "path",
+                "Path",
+                hint="path or ~/path",
+                description=(
+                    "The folder to index. ~ expands; the path must exist. "
+                    "Changing it reindexes this source from scratch."
+                ),
+            ),
             MenuItem(
-                id="form.includes",
-                label="Includes",
-                kind=KIND_PICKER,
-                multi=True,
-                groups_provider=lambda _app: _includes_groups(),
-                picker_getter=lambda _app: self._includes_picker_state(),
-                picker_setter=lambda _app, vs: self._set_includes(vs),
+                id="form.follow_symlinks",
+                label="Follow symlinks",
+                description=(
+                    "Descend into symlinked folders. Off by default: a link "
+                    "pointing back up the tree would index the same files "
+                    "repeatedly."
+                ),
+                kind=KIND_TOGGLE,
+                toggle_getter=lambda _app: bool(self._fields["follow_symlinks"]),
+                toggle_setter=lambda _app, v: self._set_follow(v),
+            ),
+            header("What gets indexed", level=2),
+            MenuItem(
+                id="form.filters",
+                label="Index filters",
+                description=(
+                    "Ignore files, skipped tags, file types and size for this "
+                    "source. Each setting inherits the global default until you "
+                    "override it here."
+                ),
+                kind=KIND_EXTERNAL,
+                external=lambda _app: self._open_filters(),
+                value_getter=lambda _app: self._filters_summary(),
+            ),
+            self._field_item(
+                "includes_custom",
+                "Restrict to these paths",
+                hint="glob patterns, comma-separated",
+                description=(
+                    "Leave empty to index the whole folder. Set it and ONLY "
+                    "matching paths are indexed: these globs replace the "
+                    "default, they do not add to it, so 'notes/**' alone "
+                    "means notes/ and nothing else. To keep everything and "
+                    "add a hidden folder, name both: "
+                    "'**/*.md, .obsidian/**'. File types belong in Index "
+                    "filters."
+                ),
             ),
             MenuItem(
                 id="form.excludes",
                 label="Excludes",
+                value_getter=lambda _app: _excludes_summary(self._fields),
+                description=(
+                    "Paths to skip, as ready-made presets or your own globs. "
+                    "Applied before any filter, so an excluded folder is never "
+                    "read at all."
+                ),
                 kind=KIND_PICKER,
                 multi=True,
                 choices_provider=lambda _app: [
@@ -1994,22 +2768,15 @@ class SourceFormScreen(Screen[None]):
                 picker_getter=lambda _app: self._excludes_picker_state(),
                 picker_setter=lambda _app, vs: self._set_excludes(vs),
             ),
-            self._field_item("filter", "Filter", hint="frontmatter DSL"),
-            MenuItem(
-                id="form.follow_symlinks",
-                label="Follow symlinks",
-                kind=KIND_TOGGLE,
-                toggle_getter=lambda _app: bool(self._fields["follow_symlinks"]),
-                toggle_setter=lambda _app, v: self._set_follow(v),
-            ),
+            header("Opening", level=2),
             MenuItem(
                 id="form.app",
                 label="App",
                 description=(
                     "Open files from this source with a specific app. "
-                    "Leave as '(default)' to use the global app_defaults "
-                    "+ auto-promote ladder. See ``[apps]`` in config.toml "
-                    "and docs/apps/ for the full list."
+                    "Leave it unset to use the global default and the "
+                    "auto-promote ladder, which [app_defaults] in config.toml "
+                    "sets. docs/apps.md lists every app and how to add one."
                 ),
                 kind=KIND_PICKER,
                 multi=False,
@@ -2089,29 +2856,11 @@ class SourceFormScreen(Screen[None]):
                     self._fields["app_params_vault"] = detected
         self.query_one(SettingsList).refresh_values()
 
-    def _includes_picker_state(self) -> list[str]:
-        # Nested tree picker seed: current kinds, or ALL kinds when empty so a
-        # new source opens with every type selected (empty includes = index all).
-        from fnd.kinds import ALL_KIND_IDS
-
-        inc = list(self._fields["includes"])
-        return inc if inc else list(ALL_KIND_IDS)
-
     def _excludes_picker_state(self) -> list[str]:
         state = list(self._fields["excludes_presets"])
         if str(self._fields.get("excludes_custom") or "").strip():
             state.append("__custom__")
         return state
-
-    def _set_includes(self, values: list[str]) -> None:
-        # Tree picker commit: store the selected kind ids. All selected → store
-        # empty (= index every supported type, and auto-pick up future types).
-        # Any existing custom-glob value is preserved untouched.
-        from fnd.kinds import ALL_KIND_IDS
-
-        picked = [v for v in values if v in set(ALL_KIND_IDS)]
-        self._fields["includes"] = [] if set(picked) >= set(ALL_KIND_IDS) else picked
-        self.query_one(SettingsList).refresh_values()
 
     def _set_excludes(self, values: list[str]) -> None:
         picked = list(values)
@@ -2120,17 +2869,26 @@ class SourceFormScreen(Screen[None]):
         if wants_custom and not str(self._fields.get("excludes_custom") or "").strip():
             self._prompt_custom("excludes_custom", "Excludes custom globs (comma-separated)")
         elif not wants_custom:
-            self._fields["excludes_custom"] = ""
+            self._discard_custom("excludes_custom")
         self.query_one(SettingsList).refresh_values()
+
+    def _discard_custom(self, field_key: str) -> None:
+        """Untick clears the globs, but keeps them for the visit.
+
+        The tick is derived from the text, so leaving it set would re-tick the
+        row; dropping it outright would lose typed globs to one keypress.
+        """
+        _discard_custom_globs(self, field_key)
 
     def _prompt_custom(self, field_key: str, label: str) -> None:
         item = MenuItem(
             id=f"form.{field_key}",
             label=label,
+            hint=_GLOB_HINT,
             kind=KIND_SCALAR,
             value_getter=lambda _app, key=field_key: str(self._fields.get(key) or ""),
         )
-        self.query_one(EditBar).open(item, str(self._fields.get(field_key) or ""))
+        self.query_one(EditBar).open(item, _custom_seed(self, field_key))
 
     def _field_item(self, key: str, label: str, *, hint: str, description: str = "") -> MenuItem:
         def _get(_app: Any) -> str:
@@ -2138,6 +2896,8 @@ class SourceFormScreen(Screen[None]):
             if key == "filter" and v:
                 status = self._parse_status(v)
                 return f"{v}   {status}".rstrip()
+            if key == "path" and v:
+                return _display_path(v)
             return v or "(unset)"
 
         return MenuItem(
@@ -2149,6 +2909,7 @@ class SourceFormScreen(Screen[None]):
             hint=hint,
             coerce=str,
             value_getter=_get,
+            elide="head" if key == "path" else "tail",
         )
 
     def _set_follow(self, value: bool) -> None:
@@ -2165,14 +2926,14 @@ class SourceFormScreen(Screen[None]):
             )
         elif item.kind == KIND_SCALAR:
             current = self._fields.get(item.id.split(".", 1)[-1], "")
-            if item.id == "form.filter":
-                current = self._fields["filter"]
             self.query_one(EditBar).open(item, str(current or ""))
         elif item.kind == KIND_TOGGLE:
             new = not (item.toggle_getter(self.app) if item.toggle_getter else False)  # type: ignore[arg-type]
             if item.toggle_setter is not None:
                 item.toggle_setter(self.app, new)  # type: ignore[arg-type]
             self.query_one(SettingsList).refresh_values()
+        elif item.kind == KIND_EXTERNAL and item.external is not None:
+            item.external(self.app)  # type: ignore[arg-type]
 
     @on(EditBar.EditCommitted)
     def _on_edit_committed(self, ev: EditBar.EditCommitted) -> None:
@@ -2201,7 +2962,7 @@ class SourceFormScreen(Screen[None]):
 
     def _refresh_match_status(self) -> None:
         sample = self.query_one("#frontmatter_sample", TextArea).text
-        filter_text = str(self._fields["filter"] or "").strip()
+        filter_text, inherited = self._effective_frontmatter()
         status = self.query_one("#match_status", Static)
         status.remove_class("-match")
         status.remove_class("-no-match")
@@ -2218,18 +2979,19 @@ class SourceFormScreen(Screen[None]):
             status.add_class("-no-match")
             return
         if not filter_text:
-            status.update("(no filter)")
+            status.update("(no rule, here or in the defaults)")
             return
+        source = " (inherited from the defaults)" if inherited else ""
         pred, err = parse_or_error(filter_text)
         if err is not None or pred is None:
             status.update(f"✗ filter syntax: col {err.column}" if err else "✗ syntax error")
             status.add_class("-no-match")
             return
         if pred(fm):
-            status.update("✓ sample matches filter")
+            status.update(f"✓ sample matches the rule{source}")
             status.add_class("-match")
         else:
-            status.update("✗ sample does not match filter")
+            status.update(f"✗ sample does not match the rule{source}")
             status.add_class("-no-match")
 
     def _parse_status(self, filter_text: str) -> str:
@@ -2245,18 +3007,37 @@ class SourceFormScreen(Screen[None]):
 
     # ── Footer ────────────────────────────────────────────────
 
+    def _still_the_same_source(self, col: Any) -> bool:
+        """Whether this form's row index still names the source it opened on.
+
+        `_snapshot` holds the fields as loaded, so its path is the one the user
+        started editing whatever they have since typed into the field.
+        """
+        index = self._source_index
+        if index is None or index >= len(col.sources):
+            return False
+        opened = str(self._snapshot.get("path") or "")
+        if not opened:
+            # No snapshot means nothing to compare, which is not the same as
+            # agreement: three early returns leave `_snapshot` empty.
+            return False
+        return str(col.sources[index].path) == opened
+
     def _render_footer(self) -> None:
         app: FNDApp = self.app  # type: ignore[assignment]
         # Ctrl+D only meaningful when editing an existing source.
+        # Tab is only named while there is a second pane to reach: the sample
+        # tester is hidden without a rule to test.
         hints: tuple[tuple[str, str], ...] = (
-            ("Tab", "Fields ↔ sample"),
+            *((("Tab", "Test a sample"),) if len(_focus_targets(self)) > 1 else ()),
             ("⏎", "Edit"),
-            ("Ctrl+S", "Save"),
+            (COMMIT_KEY, "Save"),
             ("Esc", "Cancel"),
         )
         if self._source_index is not None:
             hints = (*hints, ("Ctrl+D", "Delete source"))
-        self.query_one("#footer_hints", Static).update(_hint_bar(app, hints))
+        bar = _editor_hint_bar(hints) if _typing_in(self) else _hint_bar(app, hints, screen=self)
+        self.query_one("#footer_hints", Static).update(bar)
 
     # ── Save / cancel ────────────────────────────────────────
 
@@ -2269,10 +3050,15 @@ class SourceFormScreen(Screen[None]):
             DeleteSourceScreen(
                 collection_name=self._collection_name,
                 source_index=self._source_index,
+                source_path=str(self._snapshot.get("path") or ""),
             )
         )
 
     def action_save_close(self) -> None:
+        # An open edit bar holds a value the user has typed but not submitted;
+        # saving over the top of it dropped that value silently.
+        if _commit_then(self, self.action_save_close):
+            return
         from pathlib import Path
 
         from fnd.config import (
@@ -2281,20 +3067,17 @@ class SourceFormScreen(Screen[None]):
             SourceConfig,
             default_config_path,
             load,
+            overlapping_source,
             write_collection,
         )
 
         self._clear_error()
 
         path = str(self._fields["path"] or "").strip().strip("'\"")
-        if not path:
-            self._show_error("Path is required.")
+        if blocked := self.save_blocked():
+            self._show_error(blocked)
             return
-        if not Path(path).expanduser().exists():
-            self._show_error(f"Path does not exist: {path}")
-            return
-        # Reassemble globs from picker-driven fields.
-        includes_globs: list[str] = _kinds_to_include_globs(list(self._fields["includes"]))
+        includes_globs: list[str] = []
         for g in str(self._fields.get("includes_custom") or "").split(","):
             g = g.strip()
             if g:
@@ -2306,29 +3089,66 @@ class SourceFormScreen(Screen[None]):
             g = g.strip()
             if g:
                 excludes_globs.append(g)
+        app: FNDApp = self.app  # type: ignore[assignment]
+        # Read the file, not the launch snapshot: `write_collection` replaces the
+        # collection table wholesale, so a stale model deletes sources added by
+        # hand. No fallback to `app._config`: the guard below would compare it to itself.
+        try:
+            cfg = load()
+        except Exception as e:
+            self._show_error(
+                f"The config on disk cannot be read, so this save would overwrite it: "
+                f"{_summarise(e)}"
+            )
+            return
+        if self._collection_name not in cfg.collections:
+            self._show_error("Collection vanished. Please reopen the menu.")
+            return
+        col: CollectionConfig = cfg.collections[self._collection_name]
+        # A fresh read makes the row index mean whatever now sits there, so an
+        # edit could land on a different source. Refuse rather than guess.
+        if self._source_index is not None and not self._still_the_same_source(col):
+            # Adopt the fresh read even though the write is refused: the form
+            # reseeds from `app._config`, so without this the "reopen it" advice
+            # could never succeed.
+            app._config = cfg  # type: ignore[attr-defined]
+            self._show_error(
+                "This row is not the source it was when the form opened: the "
+                "config changed on disk. Press Esc and reopen it."
+            )
+            return
+        app._config = cfg  # type: ignore[attr-defined]
+        # Start from the source as it stands and overwrite only the fields this
+        # form owns, keeping those it has no control for (app_for, and
+        # app_params beyond vault).
+        prior = col.sources[self._source_index] if self._source_index is not None else None
+        values = dict(prior.model_dump(mode="python")) if prior else {}
         app_id = str(self._fields.get("app") or "").strip()
         vault = str(self._fields.get("app_params_vault") or "").strip()
-        app_params: dict[str, str] = {"vault": vault} if vault else {}
+        app_params: dict[str, str] = dict(values.get("app_params") or {})
+        if vault:
+            app_params["vault"] = vault
+        else:
+            app_params.pop("vault", None)
+        values.update(
+            path=Path(path),
+            includes=includes_globs,
+            excludes=excludes_globs,
+            follow_symlinks=bool(self._fields["follow_symlinks"]),
+            frontmatter_filter=None,
+            filters=_source_filters_or_none(
+                self._frontmatter_into_filters(self._frontmatter_text())
+            ),
+            app=app_id or None,
+            app_params=app_params,
+        )
         try:
-            new_source = SourceConfig(
-                path=Path(path),
-                includes=includes_globs,
-                excludes=excludes_globs,
-                follow_symlinks=bool(self._fields["follow_symlinks"]),
-                frontmatter_filter=(str(self._fields["filter"]) or None),
-                app=app_id or None,
-                app_params=app_params,
-            )
+            new_source = SourceConfig.model_validate(values)
         except Exception as e:
             self._show_error(_summarise(e))
             return
 
-        app: FNDApp = self.app  # type: ignore[assignment]
-        cfg = app._config  # type: ignore[attr-defined]
-        if cfg is None or self._collection_name not in cfg.collections:
-            self._show_error("Collection vanished. Please reopen the menu.")
-            return
-        col: CollectionConfig = cfg.collections[self._collection_name]
+        overlap, overlap_contains = overlapping_source(col.sources, new_source, self._source_index)
         if self._source_index is None:
             col.sources.append(new_source)
         else:
@@ -2344,6 +3164,15 @@ class SourceFormScreen(Screen[None]):
             return
         app._config = load()  # type: ignore[attr-defined]
         app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
+        if overlap:
+            # Harmless (the index keys on the file, so a file reached twice is
+            # stored once), but a source that indexes nothing new is worth
+            # knowing about rather than discovering from a file count.
+            app.notify(
+                f"This folder {'already covers' if overlap_contains else 'is already inside'} "
+                f"{overlap!r} in this collection; files reached by both are indexed once.",
+                severity="warning",
+            )
         # Trigger a reindex if the source set materially changed. Pop
         # FIRST so the IndexerScreen lands on top of the menu, not on
         # top of this wizard.
@@ -2373,13 +3202,40 @@ class SourceFormScreen(Screen[None]):
 
         self.app.call_later(_chain)
 
+    def unsaved_work(self) -> tuple[str, Callable[[], None]] | None:
+        """What leaving now would lose, and how to keep it."""
+        if self._snapshot == self._fields:
+            return None
+        return "this source", self.action_save_close
+
+    def save_blocked(self) -> str:
+        """Why ``^s`` would be refused, or "". The save and the leaving prompt
+        read this same answer, so the prompt cannot offer a save that is
+        certain to fail."""
+        from pathlib import Path
+
+        path = str(self._fields["path"] or "").strip().strip("'\"")
+        if not path:
+            return "Path is required."
+        if path_is_absent(Path(path).expanduser()):
+            return f"Path does not exist: {path}"
+        return ""
+
     def action_back(self) -> None:
-        self.app.pop_screen()
+        # The filter browser saves into `_fields`, not to disk, so leaving the
+        # form is what discards it, including an edit the user has just
+        # committed one screen down.
+        _leave_or_confirm(
+            self,
+            dirty=self._snapshot != self._fields,
+            what="this source",
+            on_save=self.action_save_close,
+        )
 
     # ── Tab cycles field list ↔ sample TextArea ───────────────
 
     def action_cycle_focus(self, direction: int) -> None:
-        widgets = [self.query_one(SettingsList), self.query_one("#frontmatter_sample", TextArea)]
+        widgets = _focus_targets(self)
         focused = self.focused
         # Find current index (default: 0 if not in list).
         idx = 0
@@ -2411,9 +3267,10 @@ class AddCollectionWizard(Screen[None]):
     AddCollectionWizard > #settings_box {
         height: auto;
         max-height: 90%;
-        width: auto;
-        min-width: 72;
-        max-width: 100;
+        /* Fixed, not auto: the edit bar lives inside the panel so it travels
+           with it, and an auto width jumped to max the moment it opened. */
+        width: 76;
+        max-width: 100%;
         border: round $primary 50%;
         padding: 0 1;
     }
@@ -2421,6 +3278,7 @@ class AddCollectionWizard(Screen[None]):
     AddCollectionWizard #frontmatter_sample {
         height: 6; border: round $primary 50%; padding: 0 1;
     }
+
     AddCollectionWizard #frontmatter_sample:focus { border: round $accent; }
     AddCollectionWizard .form_separator { color: $text-muted; padding: 1 0 0 0; }
     AddCollectionWizard #match_status { color: $text-muted; }
@@ -2437,6 +3295,8 @@ class AddCollectionWizard(Screen[None]):
         super().__init__()
         from fnd.config import EXCLUDES_PRESETS
 
+        # Globs an untick cleared, so re-ticking can offer them back.
+        self._discarded_globs: dict[str, str] = {}
         self._fields: dict[str, Any] = {
             "name": "",
             "path": "",
@@ -2454,20 +3314,20 @@ class AddCollectionWizard(Screen[None]):
         with Vertical(id="settings_box") as box:
             box.border_title = "Add Collection"
             yield SettingsList()
-            yield Static(
-                "─── Test filter against sample frontmatter ───",
-                classes="form_separator",
-            )
+            yield Static("", id="form_sample_sep", classes="form_separator")
             yield TextArea("", id="frontmatter_sample")
             yield Static("(no sample)", id="match_status")
             yield Static("", id="wizard_error", classes="-hidden")
             yield DetailStrip()
-        yield EditBar()
+            # Inside the panel: this one is centred with an auto width, so a
+            # screen-docked bar painted at the far left, detached from the row
+            # it was editing.
+            yield EditBar()
         yield Static("", id="footer_hints")
 
     def _show_error(self, message: str) -> None:
         """Render an inline validation error in the wizard's #wizard_error
-        Static. Phase 6 dropped the old `notify()` toast pattern so the
+        Static. The old `notify()` toast pattern was dropped so the
         user sees errors anchored to the form they're filling out."""
         err = self.query_one("#wizard_error", Static)
         err.update(message)
@@ -2481,21 +3341,28 @@ class AddCollectionWizard(Screen[None]):
     def on_mount(self) -> None:
         self._populate_fields()
         self.query_one(SettingsList).focus()
+        # An untouched form, to tell "nothing typed yet" from "a filled form
+        # about to be thrown away".
+        self._opened_with = copy.deepcopy(self._fields)
         app: FNDApp = self.app  # type: ignore[assignment]
-        self.query_one("#footer_hints", Static).update(
-            _hint_bar(
-                app,
-                (
-                    ("⏎", "Edit"),
-                    ("Tab", "Sample"),
-                    ("Ctrl+S", "Save & Index"),
-                    ("Esc", "Cancel"),
-                ),
-            )
-        )
+        self.query_one("#footer_hints", Static).update(_wizard_hints(self, app))
 
     def _populate_fields(self) -> None:
         self.query_one(SettingsList).set_items(self._build_field_items())
+        self._refresh_sample_tester()
+        # A rejected save left its reason on screen while the user fixed the
+        # very field it named, so "Name is required." sat above a filled name.
+        self._clear_error()
+
+    def _refresh_sample_tester(self) -> None:
+        """As on the source form: nothing to test without a rule."""
+        rule = str(self._fields.get("filter") or "").strip()
+        for wid in ("#form_sample_sep", "#frontmatter_sample", "#match_status"):
+            self.query_one(wid).display = bool(rule)
+        if rule:
+            self.query_one("#form_sample_sep", Static).update(
+                f"─── Paste frontmatter to test:  {sanitise_display_text(rule)} ───"
+            )
 
     def _build_field_items(self) -> list[MenuItem]:
         from fnd.config import EXCLUDES_PRESETS
@@ -2504,18 +3371,26 @@ class AddCollectionWizard(Screen[None]):
             MenuItem(
                 id="wiz.name",
                 label="Name",
+                description="What this collection is called in the sidebar and in `-c`.",
                 kind=KIND_SCALAR,
                 value_getter=lambda _app: self._fields["name"] or "(required)",
             ),
             MenuItem(
                 id="wiz.path",
                 label="Source path",
+                description="The folder to index. Add more sources to it afterwards.",
                 kind=KIND_SCALAR,
                 value_getter=lambda _app: self._fields["path"] or "(required)",
+                elide="head",
             ),
             MenuItem(
                 id="wiz.includes",
-                label="Includes",
+                label="File types",
+                value_getter=lambda _app: self._summarise_includes(),
+                description=(
+                    "Which types to index. Tick none for every supported type, "
+                    "which also picks up ones added in later versions."
+                ),
                 kind=KIND_PICKER,
                 multi=True,
                 groups_provider=lambda _app: _includes_groups(),
@@ -2525,6 +3400,11 @@ class AddCollectionWizard(Screen[None]):
             MenuItem(
                 id="wiz.excludes",
                 label="Excludes",
+                value_getter=lambda _app: self._summarise_excludes(),
+                description=(
+                    "Paths to skip, as presets or your own globs. Applied "
+                    "before any filter, so an excluded folder is never read."
+                ),
                 kind=KIND_PICKER,
                 multi=True,
                 choices_provider=lambda _app: [
@@ -2547,7 +3427,11 @@ class AddCollectionWizard(Screen[None]):
             ),
             MenuItem(
                 id="wiz.filter",
-                label="Frontmatter filter",
+                label="Frontmatter rule",
+                description=(
+                    "Index only notes whose YAML frontmatter matches, e.g. "
+                    "status == 'done'. Files without frontmatter are unaffected."
+                ),
                 kind=KIND_SCALAR,
                 hint="frontmatter DSL",
                 value_getter=lambda _app: self._filter_with_status(),
@@ -2555,6 +3439,7 @@ class AddCollectionWizard(Screen[None]):
             MenuItem(
                 id="wiz.follow_symlinks",
                 label="Follow symlinks",
+                description="Index through symlinked folders. Off avoids indexing a tree twice.",
                 kind=KIND_TOGGLE,
                 toggle_getter=lambda _app: bool(self._fields["follow_symlinks"]),
                 toggle_setter=lambda _app, v: self._set_follow(v),
@@ -2562,11 +3447,26 @@ class AddCollectionWizard(Screen[None]):
         ]
 
     def _summarise_includes(self) -> str:
+        """What the new collection will actually index.
+
+        Setting nothing here does not mean "every type": the source inherits
+        `defaults.filters`, so with a default of `kinds = ["md"]` "every type"
+        would be false while the collection indexes 3 files of 12.
+        """
+        from fnd.kinds import ALL_KIND_IDS
+
         n = len(self._fields["includes"])
-        return "all types" if n == 0 else f"{n} type{'s' if n != 1 else ''}"
+        if n == len(ALL_KIND_IDS):
+            return "every type"
+        if n:
+            return f"{n} of {len(ALL_KIND_IDS)} types"
+        inherited = list(_default_filters(self.app).kinds)
+        if inherited:
+            return f"{', '.join(inherited)} (inherited)"
+        return "every type"
 
     def _summarise_excludes(self) -> str:
-        return f"{len(self._fields['excludes_presets'])} presets"
+        return _excludes_summary(self._fields)
 
     def _set_follow(self, value: bool) -> None:
         self._fields["follow_symlinks"] = bool(value)
@@ -2577,7 +3477,10 @@ class AddCollectionWizard(Screen[None]):
         syntax mistakes surface without leaving the form."""
         text = str(self._fields.get("filter") or "").strip()
         if not text:
-            return "(none)"
+            # Same reason as `_summarise_includes`: an unset rule here means
+            # the default's rule applies, not that nothing does.
+            inherited = _default_frontmatter(self.app).strip()
+            return f"{inherited} (inherited)" if inherited else "(none)"
         from fnd.filter_dsl import parse_or_error
 
         _pred, err = parse_or_error(text)
@@ -2617,7 +3520,7 @@ class AddCollectionWizard(Screen[None]):
         if wants_custom and not str(self._fields.get("excludes_custom") or "").strip():
             self._prompt_custom("excludes_custom", "Excludes custom globs (comma-separated)")
         elif not wants_custom:
-            self._fields["excludes_custom"] = ""
+            _discard_custom_globs(self, "excludes_custom")
         self.query_one(SettingsList).refresh_values()
 
     def _prompt_custom(self, field_key: str, label: str) -> None:
@@ -2626,10 +3529,11 @@ class AddCollectionWizard(Screen[None]):
         item = MenuItem(
             id=f"wiz.{field_key}",
             label=label,
+            hint=_GLOB_HINT,
             kind=KIND_SCALAR,
             value_getter=lambda _app, key=field_key: str(self._fields.get(key) or ""),
         )
-        self.query_one(EditBar).open(item, str(self._fields.get(field_key) or ""))
+        self.query_one(EditBar).open(item, _custom_seed(self, field_key))
 
     @on(SettingsList.Activated)
     def _on_field_activated(self, ev: SettingsList.Activated) -> None:
@@ -2719,10 +3623,49 @@ class AddCollectionWizard(Screen[None]):
         self._refresh_match_status()
         self.query_one(SettingsList).focus()
 
+    def unsaved_work(self) -> tuple[str, Callable[[], None]] | None:
+        if self._fields == getattr(self, "_opened_with", self._fields):
+            return None
+        return "this collection", self.action_save_close
+
+    def save_blocked(self) -> str:
+        """As on the source form: the one answer both the save and the leaving
+        prompt read."""
+        from pathlib import Path
+
+        from fnd.config import InvalidCollectionNameError, validate_collection_name
+
+        name = str(self._fields["name"]).strip()
+        if not name:
+            return "Name is required."
+        try:
+            validate_collection_name(name)
+        except InvalidCollectionNameError as e:
+            return str(e)
+        cfg = self.app._config  # type: ignore[attr-defined]
+        if cfg is not None and name in cfg.collections:
+            return f"Collection {name!r} already exists."
+        path = str(self._fields["path"]).strip().strip("'\"")
+        if not path:
+            return "Source path is required."
+        expanded = Path(path).expanduser()
+        if path_is_absent(expanded):
+            return f"Path does not exist: {expanded}"
+        return ""
+
     def action_back(self) -> None:
-        self.app.pop_screen()
+        _leave_or_confirm(
+            self,
+            dirty=self._fields != getattr(self, "_opened_with", self._fields),
+            what="this collection",
+            on_save=self.action_save_close,
+        )
 
     def action_save_close(self) -> None:
+        # An open edit bar holds a value the user has typed but not submitted;
+        # saving over the top of it dropped that value silently.
+        if _commit_then(self, self.action_save_close):
+            return
         from pathlib import Path
 
         from fnd.config import (
@@ -2732,7 +3675,6 @@ class AddCollectionWizard(Screen[None]):
             SourceConfig,
             default_config_path,
             load,
-            validate_collection_name,
             write_collection,
         )
 
@@ -2740,25 +3682,14 @@ class AddCollectionWizard(Screen[None]):
 
         name = str(self._fields["name"]).strip()
         path = str(self._fields["path"]).strip().strip("'\"")
-        if not name:
-            self._show_error("Name is required.")
-            return
-        # Validate up-front so the user sees a focused error instead of a
+        # Validated up-front so the user sees a focused error instead of a
         # crash from deep inside write_collection if they typed something
         # the persistence layer would reject (path separators, quotes,
         # control chars, …). Spaces ARE allowed — see validate_collection_name.
-        try:
-            validate_collection_name(name)
-        except InvalidCollectionNameError as e:
-            self._show_error(str(e))
-            return
-        if not path:
-            self._show_error("Source path is required.")
+        if blocked := self.save_blocked():
+            self._show_error(blocked)
             return
         p = Path(path).expanduser()
-        if not p.exists():
-            self._show_error(f"Path does not exist: {p}")
-            return
 
         includes_globs: list[str] = _kinds_to_include_globs(list(self._fields["includes"]))
         includes_custom = str(self._fields.get("includes_custom") or "")
@@ -2777,18 +3708,31 @@ class AddCollectionWizard(Screen[None]):
                 excludes_globs.append(g)
 
         app: FNDApp = self.app  # type: ignore[assignment]
-        cfg = app._config  # type: ignore[attr-defined]
-        if cfg is not None and name in cfg.collections:
-            self._show_error(f"Collection {name!r} already exists.")
-            return
 
-        source = SourceConfig(
-            path=p,
-            includes=includes_globs,
-            excludes=excludes_globs,
-            follow_symlinks=bool(self._fields["follow_symlinks"]),
-            frontmatter_filter=(str(self._fields["filter"]).strip() or None),
-        )
+        # The row shows a live ✗ col N but nothing stopped a save, and the
+        # model validates the rule, so an invalid one reached the user as an
+        # unhandled ValidationError with the whole form's input lost.
+        try:
+            source = SourceConfig(
+                path=p,
+                includes=includes_globs,
+                excludes=excludes_globs,
+                follow_symlinks=bool(self._fields["follow_symlinks"]),
+                frontmatter_filter=None,
+                filters=_source_filters_or_none(
+                    _merge_frontmatter(
+                        dict(self._fields.get("filters", {})),
+                        str(self._fields["filter"]),
+                        _default_frontmatter(self.app),
+                        had_override=self._fields.get("filters", {}).get("frontmatter") is not None,
+                    )
+                ),
+            )
+        except ValueError as e:
+            # pydantic's ValidationError is a ValueError; `_summarise` renders
+            # it as the field and message the row already showed.
+            self._show_error(_summarise(e))
+            return
         new_collection = CollectionConfig(sources=[source])
         config_path = default_config_path()
         config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2816,10 +3760,7 @@ class AddCollectionWizard(Screen[None]):
         app._indexer.reindex_with_warning(name, rebuild=True)  # type: ignore[attr-defined]
 
     def action_cycle_focus(self, direction: int) -> None:
-        widgets = [
-            self.query_one(SettingsList),
-            self.query_one("#frontmatter_sample", TextArea),
-        ]
+        widgets = _focus_targets(self)
         focused = self.focused
         idx = 0
         for i, w in enumerate(widgets):
@@ -2836,19 +3777,7 @@ class NewCollectionScreen(Screen[None]):
         Binding("escape,left", "back", "Cancel", show=False),
     ]
 
-    CSS = """
-    NewCollectionScreen { background: $surface; }
-    NewCollectionScreen > #settings_box {
-        height: auto;
-        border: round $primary 50%;
-        padding: 0 1;
-        margin: 1 4;
-    }
-    NewCollectionScreen > #settings_box:focus-within { border: round $accent; }
-    NewCollectionScreen > #footer_hints {
-        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
-    }
-    """
+    CSS = chrome_css("NewCollectionScreen")
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
@@ -2861,9 +3790,8 @@ class NewCollectionScreen(Screen[None]):
         self._render_footer()
 
     def _render_footer(self) -> None:
-        app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("⏎", "Create"), ("Esc", "Cancel")))
+            _editor_hint_bar((("⏎", "Create"), ("Esc", "Cancel")))
         )
 
     @on(Input.Submitted, "#new_collection_name")
@@ -2904,7 +3832,7 @@ class RenameCollectionScreen(Screen[None]):
         Binding("escape,left", "back", "Cancel", show=False),
     ]
 
-    CSS = NewCollectionScreen.CSS  # share styling
+    CSS = chrome_css("RenameCollectionScreen")
 
     def __init__(self, *, collection_name: str) -> None:
         super().__init__()
@@ -2918,9 +3846,8 @@ class RenameCollectionScreen(Screen[None]):
 
     def on_mount(self) -> None:
         self.query_one("#new_collection_name", Input).focus()
-        app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("⏎", "Save"), ("Esc", "Cancel")))
+            _editor_hint_bar((("⏎", "Save"), ("Esc", "Cancel")))
         )
 
     @on(Input.Submitted, "#new_collection_name")
@@ -2937,13 +3864,38 @@ class RenameCollectionScreen(Screen[None]):
         )
 
         app: FNDApp = self.app  # type: ignore[assignment]
-        cfg = app._config  # type: ignore[attr-defined]
-        if cfg is None or self._old_name not in cfg.collections:
-            self.notify("Collection vanished", severity="error")
+        # The file, not `app._config`: the collection is copied whole under the
+        # new name, so a stale model drops or resurrects sources.
+        try:
+            cfg = load()
+        except Exception as e:
+            self.notify(
+                f"The config file cannot be read, so nothing was renamed: {_summarise(e)}",
+                severity="error",
+                timeout=8,
+            )
+            return
+        if self._old_name not in cfg.collections:
+            app._config = cfg  # type: ignore[attr-defined]
+            self.notify(
+                f"{self._old_name!r} is no longer in the config file, so nothing was renamed.",
+                severity="error",
+                timeout=8,
+            )
             self.app.pop_screen()
             return
         if new_name in cfg.collections:
             self.notify(f"{new_name!r} already exists", severity="warning")
+            return
+        busy = _indexing_now(app)
+        if busy is not None:
+            self.notify(
+                f"Indexing {busy!r} is still running. Renaming now would leave "
+                f"{self._old_name!r}'s documents in the index with nothing able to "
+                "reach them. Cancel it or let it finish first.",
+                severity="warning",
+                timeout=8,
+            )
             return
         existing = cfg.collections[self._old_name]
         write_collection(
@@ -2951,14 +3903,84 @@ class RenameCollectionScreen(Screen[None]):
             name=new_name,
             collection=existing,
         )
-        delete_collection(config_path=default_config_path(), name=self._old_name)
+        delete_collection(
+            config_path=default_config_path(), name=self._old_name, renamed_to=new_name
+        )
         app._config = load()  # type: ignore[attr-defined]
         app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
         # Pop twice — past Rename and the now-stale per-collection
         # screen — before pushing the IndexerScreen.
         self.app.pop_screen()
         self.app.pop_screen()
-        app._indexer.reindex_with_warning(new_name, rebuild=True)  # type: ignore[attr-defined]
+        # Confirmed like the other acts that empty the index: this drops the
+        # old name's documents and rebuilds from scratch, which on a large
+        # collection is minutes, from a single Enter in a text field.
+        self.app.push_screen(
+            RebuildConfirmScreen(
+                collection_name=new_name,
+                crumb="Rename",
+                body=(
+                    f"Renamed to {new_name!r}. Reindex it now?\n\n"
+                    f"The old name's documents are dropped and {new_name!r} is "
+                    "built from scratch, which takes as long as indexing it "
+                    "does. Until it finishes, this collection holds less than "
+                    "it does now.\n\n"
+                    "The config is already saved either way, and the files on "
+                    "disk are untouched. Skipping leaves the old name's "
+                    "documents in the index: nothing can reach them once the "
+                    "config no longer names that collection, and no later run "
+                    "removes them. Reindexing now is what clears them."
+                ),
+                confirm_label=f"Yes, reindex {new_name}",
+                # NOT "Cancel": the rename is already written, and only the
+                # reindex is on offer here. A user reading "Cancel" reasonably
+                # expects the rename undone, and it is not.
+                decline_label="No, leave the index for now",
+                on_confirm=lambda: self._drop_old_then_reindex(app, new_name),
+            )
+        )
+
+    def _drop_old_then_reindex(self, app: FNDApp, new_name: str) -> None:
+        """The old name's documents go before the new name's are built.
+
+        Nothing can reach them once the config no longer names them: Delete is
+        the only caller that drops by collection, and a rebuild only touches
+        the names the config still has. Sequential because tantivy takes one
+        writer, and threaded because the drop is seconds on a fragmented index.
+        """
+        import contextlib
+
+        from fnd.index import drop_collection
+
+        old = self._old_name
+        index_dir = app._index_dir  # type: ignore[attr-defined]
+
+        def _then(error: str | None) -> None:
+            if error:
+                app.notify(
+                    f"{old!r} could not be dropped from the index: {error}", severity="error"
+                )
+            app._indexer.reindex_with_warning(new_name, rebuild=True)  # type: ignore[attr-defined]
+
+        _defaults = getattr(getattr(app, "_config", None), "defaults", None)
+
+        def _work() -> None:
+            error: str | None = None
+            try:
+                drop_collection(
+                    index_dir,
+                    old,
+                    tag_sources=tuple(_defaults.tag_sources)
+                    if _defaults
+                    else ("frontmatter", "os"),
+                    tag_frontmatter_keys=tuple(_defaults.tag_frontmatter_keys) if _defaults else (),
+                )
+            except Exception as e:
+                error = str(e)
+            with contextlib.suppress(Exception):
+                app.call_from_thread(_then, error)
+
+        app.run_worker(_work, thread=True, exclusive=True, group=f"rename-{old}")
 
     def action_back(self) -> None:
         self.app.pop_screen()
@@ -2975,26 +3997,15 @@ class DeleteCollectionScreen(Screen[None]):
         Binding("enter", "activate", show=False),
     ]
 
-    CSS = """
-    DeleteCollectionScreen { background: $surface; align: center middle; }
-    DeleteCollectionScreen > #settings_box {
-        width: auto;
-        min-width: 60;
-        max-width: 100;
-        height: auto;
-        max-height: 90%;
-        border: round $error;
-        padding: 0 1;
-    }
+    CSS = (
+        chrome_css("DeleteCollectionScreen", confirm=True)
+        + """
     DeleteCollectionScreen #confirm_summary { padding: 0 0 1 0; }
-    DeleteCollectionScreen #confirm_list { height: auto; }
     DeleteCollectionScreen #deleting_status { padding: 1 0; color: $text-muted; }
     DeleteCollectionScreen #deleting_spinner { height: 1; }
     DeleteCollectionScreen .-hidden { display: none; }
-    DeleteCollectionScreen > #footer_hints {
-        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
-    }
     """
+    )
 
     def __init__(self, *, collection_name: str) -> None:
         super().__init__()
@@ -3003,6 +4014,7 @@ class DeleteCollectionScreen(Screen[None]):
         # can't re-fire "Yes" (a second worker) or escape onto the now-stale
         # parent screen mid-delete. Never cleared — the screen is single-use.
         self._deleting = False
+        self._default_moved = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_box") as box:
@@ -3025,7 +4037,7 @@ class DeleteCollectionScreen(Screen[None]):
                 ),
                 id="confirm_summary",
             )
-            yield OptionList(
+            yield ConfirmList(
                 confirm_yes_option(f"Yes, delete {self._name}", severity="destructive"),
                 Option("Cancel", id="no"),
                 id="confirm_list",
@@ -3044,10 +4056,10 @@ class DeleteCollectionScreen(Screen[None]):
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
-        self.query_one("#confirm_list", OptionList).focus()
+        enter = open_confirm_list(self, land_on="no")
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("⏎", "Confirm"), ("Esc", "Cancel")))
+            _hint_bar(app, (("↑↓", "Choose"), enter, ("Esc", "Cancel")))
         )
 
     def action_cursor(self, direction: int) -> None:
@@ -3081,22 +4093,35 @@ class DeleteCollectionScreen(Screen[None]):
         from fnd.config import default_config_path, delete_collection, load
 
         app: FNDApp = self.app  # type: ignore[assignment]
-        delete_collection(config_path=default_config_path(), name=self._name)
+        busy = _indexing_now(app)
+        if busy is not None:
+            self.notify(
+                f"Indexing {busy!r} is still running. Deleting now would leave "
+                f"{self._name!r}'s documents in the index with nothing able to "
+                "reach them. Cancel it or let it finish first.",
+                severity="warning",
+                timeout=8,
+            )
+            return
+        self._default_moved = delete_collection(config_path=default_config_path(), name=self._name)
         app._config = load()  # type: ignore[attr-defined]
         self._show_deleting()
         name = self._name
         index_dir = app._index_dir  # type: ignore[attr-defined]
+        _defaults = getattr(getattr(app, "_config", None), "defaults", None)
 
         def _drop() -> str | None:
-            from fnd.index import _ensure_index, commit
-            from fnd.schema import F_COLLECTION
+            from fnd.index import drop_collection
 
             try:
-                index = _ensure_index(index_dir)
-                writer = index.writer(heap_size=50_000_000)
-                writer.delete_documents(F_COLLECTION, name)
-                commit(writer)
-                writer.wait_merging_threads()
+                drop_collection(
+                    index_dir,
+                    name,
+                    tag_sources=tuple(_defaults.tag_sources)
+                    if _defaults
+                    else ("frontmatter", "os"),
+                    tag_frontmatter_keys=tuple(_defaults.tag_frontmatter_keys) if _defaults else (),
+                )
             except Exception as e:
                 return str(e)
             return None
@@ -3132,6 +4157,15 @@ class DeleteCollectionScreen(Screen[None]):
 
         if error:
             app.notify(f"Index drop failed: {error}", severity="error")
+        else:
+            # Two screens pop and the row is gone; nothing said the act had
+            # happened, which on an irreversible one is the moment to say it.
+            app.notify(f"{self._name!r} deleted. The files on disk are untouched.")
+        if self._default_moved:
+            app.notify(
+                f"{self._name!r} was your default collection. Searches now cover every one.",
+                severity="warning",
+            )
         with contextlib.suppress(Exception):
             app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
         # Pop the Delete screen + the now-stale per-collection screen beneath it
@@ -3171,27 +4205,17 @@ class CacheMaintenanceConfirm(Screen[None]):
         Binding("enter", "activate", show=False),
     ]
 
-    CSS = """
-    CacheMaintenanceConfirm { background: $surface; align: center middle; }
-    CacheMaintenanceConfirm > #settings_box {
-        width: auto;
-        min-width: 60;
-        max-width: 100;
-        height: auto;
-        max-height: 90%;
-        border: round $warning;
-        padding: 0 1;
-    }
+    CSS = (
+        chrome_css("CacheMaintenanceConfirm", confirm=True)
+        + """
+    CacheMaintenanceConfirm > #settings_box { border: round $warning; }
     CacheMaintenanceConfirm.-destructive > #settings_box { border: round $error; }
     CacheMaintenanceConfirm #confirm_summary { padding: 0 0 1 0; }
     CacheMaintenanceConfirm #confirm_irreversible {
         color: $error; text-style: bold; padding: 0 0 1 0;
     }
-    CacheMaintenanceConfirm #confirm_list { height: auto; }
-    CacheMaintenanceConfirm > #footer_hints {
-        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
-    }
     """
+    )
 
     def __init__(
         self,
@@ -3219,7 +4243,7 @@ class CacheMaintenanceConfirm(Screen[None]):
             yield Static(self._summary, id="confirm_summary")
             if self._irreversible:
                 yield Static("⚠  Cannot be undone.", id="confirm_irreversible")
-            yield OptionList(
+            yield ConfirmList(
                 Option(Text(self._confirm_label, style="bold"), id="yes"),
                 Option("Cancel", id="no"),
                 id="confirm_list",
@@ -3227,10 +4251,10 @@ class CacheMaintenanceConfirm(Screen[None]):
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
-        self.query_one("#confirm_list", OptionList).focus()
+        enter = open_confirm_list(self, land_on="no" if self._irreversible else "")
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("↑↓", "Nav"), ("⏎", "Confirm"), ("Esc", "Cancel")))
+            _hint_bar(app, (("↑↓", "Nav"), enter, ("Esc", "Cancel")))
         )
 
     def action_cursor(self, direction: int) -> None:
@@ -3363,8 +4387,9 @@ class UpdateAllConfirm(Screen[None]):
             text.append("Order     ", style="dim")
             text.append("Sequential. Each shows its own progress; queue advances on completion.\n")
             yield Static(text, id="confirm_summary")
-            confirm = f"Yes, update all {len(self._names)} collections"
-            yield OptionList(
+            n = len(self._names)
+            confirm = "Yes, update it" if n == 1 else f"Yes, update all {n} collections"
+            yield ConfirmList(
                 Option(Text(confirm, style="bold green"), id="yes"),
                 Option("Cancel", id="no"),
                 id="confirm_list",
@@ -3372,10 +4397,10 @@ class UpdateAllConfirm(Screen[None]):
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
-        self.query_one("#confirm_list", OptionList).focus()
+        enter = open_confirm_list(self)
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("↑↓", "Nav"), ("⏎", "Confirm"), ("Esc", "Cancel")))
+            _hint_bar(app, (("↑↓", "Nav"), enter, ("Esc", "Cancel")))
         )
 
     def action_cursor(self, direction: int) -> None:
@@ -3515,7 +4540,7 @@ class StructuredPdfConfirmScreen(Screen[None]):
                 if self._installed
                 else "Yes, install the texturising engine"
             )
-            yield OptionList(
+            yield ConfirmList(
                 confirm_yes_option(confirm_label, severity=self._severity),
                 Option("Cancel", id="no"),
                 id="confirm_list",
@@ -3564,10 +4589,10 @@ class StructuredPdfConfirmScreen(Screen[None]):
         )
 
     def on_mount(self) -> None:
-        self.query_one("#confirm_list", OptionList).focus()
+        enter = open_confirm_list(self)
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("↑↓", "Nav"), ("⏎", "Confirm"), ("Esc", "Cancel")))
+            _hint_bar(app, (("↑↓", "Nav"), enter, ("Esc", "Cancel")))
         )
 
     def action_cursor(self, direction: int) -> None:
@@ -3621,16 +4646,197 @@ class StructuredPdfConfirmScreen(Screen[None]):
         start_extras_install(app, cmds=cmds, action_label=label)
 
 
-# ── Clone-source flow (Phase 5) ─────────────────────────────────────
+# ── Clone-source flow ───────────────────────────────────────────────
 
 
-class DeleteSourceScreen(Screen[None]):
-    """Confirm + remove a single source from a collection.
+def _indexing_now(app: FNDApp) -> str | None:
+    """The collection being indexed, if a run holds the index writer.
 
-    Triggered by ``Ctrl+D`` inside :class:`SourceFormScreen` (only when
-    editing an existing source). The source's path is dropped from
-    ``[collections.<name>.sources]`` via :func:`fnd.config.write_collection`.
-    Reindex of the collection follows because the source set changed.
+    Renaming or deleting pairs a config write with a drop from the index, and
+    the drop needs that writer. Mid-run it cannot have it, so the drop fails
+    after the config write has landed, and the running task goes on writing
+    under a name nothing can reach afterwards.
+    """
+    service = getattr(app, "_indexer", None)
+    task = getattr(service, "task", None)
+    if task is None or task.done():
+        return None
+    return str(getattr(service, "collection", "") or "another collection")
+
+
+class UnsavedChangesScreen(Screen[None]):
+    """Save, discard, or stay: for a screen holding work that is not on disk.
+
+    Esc on an editing screen asks rather than throwing the work away, so a
+    user who cannot lose work does not have to know which key saves.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Keep editing", show=False),
+        Binding("up,k", "cursor(-1)", show=False),
+        Binding("down,j", "cursor(1)", show=False),
+        Binding("enter", "activate", show=False),
+        # The question is "are you sure you want to quit"; `q` reaching the
+        # app's quit through it would answer yes by pressing it again.
+        Binding("q", "back", "Keep editing", show=False, priority=True),
+    ]
+
+    CSS = chrome_css("UnsavedChangesScreen", confirm=True)
+
+    def __init__(
+        self,
+        *,
+        what: str,
+        on_save: Callable[[], None] | None,
+        on_leave: Callable[[], None] | None = None,
+        leave_label: str = "Discard changes",
+        blocked: str = "",
+    ) -> None:
+        super().__init__()
+        self._what = what
+        # A save the screen below has already refused loops: it repaints
+        # nothing, so pressing the default again looks like a dead key.
+        self._blocked = blocked
+        self._on_save = None if blocked else on_save
+        self._leave_action = on_leave
+        self._leave_label = leave_label
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings_box") as box:
+            box.border_title = "Unsaved changes"
+            # Subject-agnostic: the subjects are a mix of singular and plural
+            # ("this source", "these filters"), and a sentence carrying its own
+            # verb would read "These filters has changes that are not saved."
+            yield Static(f"Unsaved changes to {self._what}.", classes="warning")
+            if self._blocked:
+                yield Static(f"Cannot save yet: {self._blocked}", classes="warning")
+            # Save is offered only where the work is on the screen below this
+            # one. A form buried under another editor cannot be saved from
+            # here: its own save pops whatever is on top, which is not it.
+            options = (
+                [Option(Text("Save changes", style="bold"), id="save")] if self._on_save else []
+            )
+            options += [Option(self._leave_label, id="discard"), Option("Keep editing", id="stay")]
+            yield ConfirmList(*options, id="confirm_list")
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        # Always the row that changes nothing. This dialog is reached by Esc,
+        # which the editor's footer offers as a way OUT, so landing on "Save
+        # changes" put a write one Enter from a key that means the opposite.
+        open_confirm_list(self, land_on="stay")
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(app, (("↑↓", "Choose"), ("⏎", "Select"), ("Esc", "Keep editing")))
+        )
+
+    def action_cursor(self, direction: int) -> None:
+        lst = self.query_one("#confirm_list", OptionList)
+        if direction > 0:
+            lst.action_cursor_down()
+        else:
+            lst.action_cursor_up()
+
+    def action_activate(self) -> None:
+        self.query_one("#confirm_list", OptionList).action_select()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    @on(OptionList.OptionSelected, "#confirm_list")
+    def _chosen(self, ev: OptionList.OptionSelected) -> None:
+        choice = ev.option.id
+        self.app.pop_screen()
+        if choice == "save" and self._on_save is not None:
+            # The editor's own save pops it, and reports its own failure.
+            self._on_save()
+        elif choice == "discard":
+            with contextlib.suppress(Exception):
+                if self._leave_action is not None:
+                    self._leave_action()
+                else:
+                    self.app.pop_screen()
+
+
+def _leave_or_confirm(
+    screen: Screen[None], *, dirty: bool, what: str, on_save: Callable[[], None]
+) -> None:
+    """Leave, or ask first. Unsaved work never leaves without being offered."""
+    if not dirty:
+        screen.app.pop_screen()
+        return
+    screen.app.push_screen(
+        UnsavedChangesScreen(what=what, on_save=on_save, blocked=save_blocked_on(screen))
+    )
+
+
+def save_blocked_on(screen: object) -> str:
+    """Why the screen cannot save what it is holding, or "".
+
+    A screen answers by exposing ``save_blocked``; anything else can save.
+    """
+    ask = getattr(screen, "save_blocked", None)
+    if not callable(ask):
+        return ""
+    try:
+        return str(ask() or "")
+    except Exception:
+        return ""
+
+
+def unsaved_on_stack(
+    screens: Sequence[object],
+) -> tuple[str, Callable[[], None] | None, str] | None:
+    """What the SCREEN STACK would lose, topmost holder first, and why saving
+    it here is not on offer.
+
+    Every screen is asked, not only the top one: the filter browser is only
+    ever pushed on top of the source form, so a dirty form can sit under a
+    clean browser. The saver comes back only for the topmost screen: a form
+    buried under another editor cannot be saved from a modal, because its own
+    save pops whatever is on top of it.
+    """
+    for depth, screen in enumerate(reversed(list(screens))):
+        answer = unsaved_on(screen)
+        if answer is not None:
+            what, save = answer
+            if depth:
+                return what, None, "the screen holding it is behind this one"
+            return what, save, save_blocked_on(screen)
+    return None
+
+
+def unsaved_on(screen: object) -> tuple[str, Callable[[], None]] | None:
+    """What a screen would lose if it were left now, and how to save it.
+
+    One seam so `q` can ask the same question Esc does. A screen answers by
+    exposing ``unsaved_work``; anything else has nothing to lose.
+    """
+    ask = getattr(screen, "unsaved_work", None)
+    if not callable(ask):
+        return None
+    try:
+        answer = ask()
+    except Exception:
+        return None
+    if not isinstance(answer, tuple) or len(answer) != 2:
+        return None
+    what, save = answer
+    return str(what), cast("Callable[[], None]", save)
+
+
+class RebuildConfirmScreen(Screen[None]):
+    """Confirm an act that empties the index before refilling it.
+
+    Delete-source, delete-collection and Update-all confirm, and so must the
+    acts that empty an index. Rebuild sits one row under "Update index" on
+    the same panel, and a rename drops the old name's documents and rebuilds
+    from the field you typed in: both one Enter away, both differing from
+    their harmless neighbour only in cost and consequence, which is exactly
+    what a label cannot carry alone.
+
+    One screen, two callers: the wording differs because the acts do, but a
+    second class would be a second dialog to keep in step.
     """
 
     BINDINGS = [  # noqa: RUF012
@@ -3640,50 +4846,182 @@ class DeleteSourceScreen(Screen[None]):
         Binding("enter", "activate", show=False),
     ]
 
-    CSS = DeleteCollectionScreen.CSS
+    CSS = chrome_css("RebuildConfirmScreen", confirm=True)
 
-    def __init__(self, *, collection_name: str, source_index: int) -> None:
+    def __init__(
+        self,
+        *,
+        collection_name: str,
+        on_confirm: Callable[[], None],
+        crumb: str = "Rebuild",
+        body: str = "",
+        confirm_label: str = "",
+        decline_label: str = "Cancel",
+    ) -> None:
         super().__init__()
         self._collection_name = collection_name
-        self._source_index = source_index
+        self._on_confirm = on_confirm
+        self._crumb = crumb
+        self._body = body
+        self._confirm_label = confirm_label
+        self._decline_label = decline_label
 
     def compose(self) -> ComposeResult:
-        app: FNDApp = self.app  # type: ignore[assignment]
-        cfg = app._config  # type: ignore[attr-defined]
-        path_display = "(unknown)"
-        if (
-            cfg is not None
-            and self._collection_name in cfg.collections
-            and 0 <= self._source_index < len(cfg.collections[self._collection_name].sources)
-        ):
-            src = cfg.collections[self._collection_name].sources[self._source_index]
-            path_display = str(src.path) or "(no path)"
-
+        name = self._collection_name
+        body = self._body or (
+            f"Rebuild {name!r} from scratch?\n\n"
+            "Its chunks are dropped first, so until the run finishes this "
+            "collection holds less than it does now, and a rebuild that "
+            "is cancelled or interrupted leaves it part-built.\n\n"
+            "The files on disk are untouched. Update index adds and drops "
+            "what changed without emptying anything, and is what you want "
+            "unless you are re-texturising after an engine upgrade."
+        )
         with Vertical(id="settings_box") as box:
-            box.border_title = (
-                f"Collections › {self._collection_name} › Sources › "
-                f"Source {self._source_index + 1} › Delete"
-            )
-            yield Static(
-                f"Remove this source from {self._collection_name!r}?\n"
-                f"Path: {path_display}\n\n"
-                "Only the config entry is removed. The files on disk are "
-                "untouched. Indexed chunks for files only reachable via "
-                "this source become orphaned until the next reindex.",
-                classes="warning",
-            )
-            yield OptionList(
-                Option(Text("Yes, remove this source", style="bold"), id="yes"),
-                Option("Cancel", id="no"),
+            box.border_title = f"Collections › {name} › {self._crumb}"
+            yield Static(body, classes="warning")
+            yield ConfirmList(
+                Option(Text(self._confirm_label or f"Yes, rebuild {name}", style="bold"), id="yes"),
+                Option(self._decline_label, id="no"),
                 id="confirm_list",
             )
         yield Static("", id="footer_hints")
 
     def on_mount(self) -> None:
-        self.query_one("#confirm_list", OptionList).focus()
+        enter = open_confirm_list(self, land_on="no")
         app: FNDApp = self.app  # type: ignore[assignment]
         self.query_one("#footer_hints", Static).update(
-            _hint_bar(app, (("⏎", "Confirm"), ("Esc", "Cancel")))
+            _hint_bar(app, (("↑↓", "Choose"), enter, ("Esc", self._decline_label)))
+        )
+
+    def action_cursor(self, direction: int) -> None:
+        lst = self.query_one("#confirm_list", OptionList)
+        if direction > 0:
+            lst.action_cursor_down()
+        else:
+            lst.action_cursor_up()
+
+    def action_activate(self) -> None:
+        self.query_one("#confirm_list", OptionList).action_select()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    @on(OptionList.OptionSelected, "#confirm_list")
+    def _chosen(self, ev: OptionList.OptionSelected) -> None:
+        confirmed = ev.option.id == "yes"
+        self.app.pop_screen()
+        if confirmed:
+            self._on_confirm()
+
+
+def _find_source(sources: Sequence[Any], path: str, hint: int) -> int | None:
+    """Row of the source at ``path``: ``hint`` if it still holds it, else its only row."""
+    if 0 <= hint < len(sources) and str(sources[hint].path) == path:
+        return hint
+    rows = [i for i, src in enumerate(sources) if str(src.path) == path]
+    return rows[0] if len(rows) == 1 else None
+
+
+class DeleteSourceScreen(Screen[None]):
+    """Confirm + remove a single source from a collection.
+
+    Triggered by ``Ctrl+D`` inside :class:`SourceFormScreen` (only when
+    editing an existing source). The source's path is dropped from
+    ``[collections.<name>.sources]`` via :func:`fnd.config.write_collection`.
+    Reindex of the collection follows because the source set changed.
+
+    The source is found by its path in the file as it is at each step, never by
+    row index into ``app._config``: any reload replaces that model, and
+    ``write_collection`` writes the whole collection table back.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Cancel", show=False),
+        Binding("up,k", "cursor(-1)", show=False),
+        Binding("down,j", "cursor(1)", show=False),
+        Binding("enter", "activate", show=False),
+    ]
+
+    CSS = chrome_css("DeleteSourceScreen", confirm=True)
+
+    def __init__(
+        self, *, collection_name: str, source_index: int, source_path: str | None = None
+    ) -> None:
+        super().__init__()
+        self._collection_name = collection_name
+        self._source_index = source_index
+        # None pins whichever source sits at `source_index` when the dialog opens.
+        self._source_path = source_path
+
+    def _locate(self) -> tuple[Any, int | None, str]:
+        """The config as the file holds it now, this source's row in it, and why not.
+
+        A read that cannot find the source is adopted as ``app._config``, so
+        reopening Sources shows the file rather than the model that lost it.
+        """
+        from fnd.config import load
+
+        try:
+            cfg = load()
+        except Exception as e:
+            return None, None, f"The config file cannot be read: {_summarise(e)}"
+        name = self._collection_name
+        col = cfg.collections.get(name)
+        sources = [] if col is None else col.sources
+        if self._source_path is None and 0 <= self._source_index < len(sources):
+            self._source_path = str(sources[self._source_index].path)
+        index = _find_source(sources, self._source_path or "", self._source_index)
+        if index is not None:
+            return cfg, index, ""
+        self.app._config = cfg  # type: ignore[attr-defined]
+        where = f"\nPath: {self._source_path}" if self._source_path else ""
+        return cfg, None, f"This source is no longer in {name!r} in the config file.{where}"
+
+    def compose(self) -> ComposeResult:
+        cfg, index, problem = self._locate()
+        name = self._collection_name
+        with Vertical(id="settings_box") as box:
+            box.border_title = (
+                f"Collections › {name} › Sources › "
+                f"Source {(self._source_index if index is None else index) + 1} › Delete"
+            )
+            if problem:
+                yield Static(
+                    f"{problem}\n\nNothing was removed. Press Esc and reopen Sources "
+                    "to see the file as it is now.",
+                    classes="warning",
+                )
+                yield ConfirmList(Option("Back", id="no"), id="confirm_list")
+            else:
+                # "Files another source still reaches stay" is false comfort
+                # where there is no other source: everything this one reached leaves.
+                shared = (
+                    "Files another source still reaches stay."
+                    if len(cfg.collections[name].sources) > 1
+                    else "It is the only source, so the collection is left empty."
+                )
+                yield Static(
+                    f"Remove this source from {name!r}?\n"
+                    f"Path: {self._source_path}\n\n"
+                    "The files on disk are untouched.\n"
+                    f"{name!r} is rebuilt straight afterwards, which "
+                    "takes as long as indexing it does and drops the chunks only "
+                    f"this source reached. {shared}",
+                    classes="warning",
+                )
+                yield ConfirmList(
+                    Option(Text("Yes, remove this source", style="bold"), id="yes"),
+                    Option("Cancel", id="no"),
+                    id="confirm_list",
+                )
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        enter = open_confirm_list(self, land_on="no")
+        app: FNDApp = self.app  # type: ignore[assignment]
+        self.query_one("#footer_hints", Static).update(
+            _hint_bar(app, (("↑↓", "Choose"), enter, ("Esc", "Cancel")))
         )
 
     def action_cursor(self, direction: int) -> None:
@@ -3707,17 +5045,25 @@ class DeleteSourceScreen(Screen[None]):
         from fnd.config import default_config_path, load, write_collection
 
         app: FNDApp = self.app  # type: ignore[assignment]
-        cfg = app._config  # type: ignore[attr-defined]
-        if cfg is None or self._collection_name not in cfg.collections:
-            self.notify("Collection vanished", severity="error")
+        cfg, index, problem = self._locate()
+        if index is None:
+            self.notify(f"{problem}\nNothing was removed.", severity="error", timeout=8)
             self.app.pop_screen()
             return
         col = cfg.collections[self._collection_name]
-        if not 0 <= self._source_index < len(col.sources):
-            self.notify("Source vanished", severity="error")
-            self.app.pop_screen()
+        busy = _indexing_now(app)
+        if busy is not None:
+            # The dialog promises the collection is rebuilt straight
+            # afterwards. Mid-run that rebuild is refused and dropped, so the
+            # removed source's files stay searchable and the promise is false.
+            self.notify(
+                f"Indexing {busy!r} is still running, and removing a source "
+                "rebuilds the collection. Cancel it or let it finish first.",
+                severity="warning",
+                timeout=8,
+            )
             return
-        del col.sources[self._source_index]
+        del col.sources[index]
         try:
             write_collection(
                 config_path=default_config_path(),
@@ -3758,21 +5104,7 @@ class CloneSourcePickCollectionScreen(Screen[None]):
         Binding("enter", "activate", show=False),
     ]
 
-    CSS = """
-    CloneSourcePickCollectionScreen { background: $surface; }
-    CloneSourcePickCollectionScreen > #settings_box {
-        height: auto;
-        border: round $primary 50%;
-        padding: 0 1;
-        margin: 1 4;
-    }
-    CloneSourcePickCollectionScreen > #settings_box:focus-within { border: round $accent; }
-    CloneSourcePickCollectionScreen #clone_list { height: auto; }
-    CloneSourcePickCollectionScreen .info { color: $text-muted; padding: 0 0 1 0; }
-    CloneSourcePickCollectionScreen > #footer_hints {
-        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
-    }
-    """
+    CSS = chrome_css("CloneSourcePickCollectionScreen")
 
     def __init__(self, *, target_collection: str) -> None:
         super().__init__()
@@ -3853,12 +5185,13 @@ class CloneSourcePickSourceScreen(Screen[None]):
         Binding("enter", "activate", show=False),
     ]
 
-    CSS = CloneSourcePickCollectionScreen.CSS
+    CSS = chrome_css("CloneSourcePickSourceScreen")
 
     def __init__(self, *, source_collection: str, target_collection: str) -> None:
         super().__init__()
         self._source_coll = source_collection
         self._target = target_collection
+        self._paths: list[str] = []
 
     def compose(self) -> ComposeResult:
         app: FNDApp = self.app  # type: ignore[assignment]
@@ -3874,6 +5207,7 @@ class CloneSourcePickSourceScreen(Screen[None]):
             options: list[Option] = []
             if cfg is not None and self._source_coll in cfg.collections:
                 sources = cfg.collections[self._source_coll].sources
+                self._paths = [str(src.path) for src in sources]
                 for i, src in enumerate(sources):
                     base = Path(str(src.path)).name or str(src.path)
                     types = (
@@ -3884,8 +5218,11 @@ class CloneSourcePickSourceScreen(Screen[None]):
                         )
                         or "all"
                     )
-                    label = f"{i + 1}. {base}  ·  {types}  ·  {src.path}"
-                    options.append(Option(label, id=str(i)))
+                    label = f"{i + 1}. {base}  ·  {types}  ·  {_display_path(str(src.path))}"
+                    # Wrapped, a long path reads as another source in the list.
+                    options.append(
+                        Option(Text(label, no_wrap=True, overflow="ellipsis"), id=str(i))
+                    )
             if not options:
                 options.append(Option("(collection has no sources)", id="__empty__"))
             yield OptionList(*options, id="clone_list")
@@ -3921,18 +5258,39 @@ class CloneSourcePickSourceScreen(Screen[None]):
             return
         from fnd.config import clone_source, default_config_path, load
 
+        app: FNDApp = self.app  # type: ignore[assignment]
+        # `clone_source` indexes the file, and these rows came from `app._config`.
+        try:
+            cfg = load()
+        except Exception as e:
+            self.notify(
+                f"The config file cannot be read, so nothing was cloned: {_summarise(e)}",
+                severity="error",
+                timeout=8,
+            )
+            return
+        col = cfg.collections.get(self._source_coll)
+        found = _find_source([] if col is None else col.sources, self._paths[idx], idx)
+        if found is None:
+            app._config = cfg  # type: ignore[attr-defined]
+            self.notify(
+                f"That source is no longer in {self._source_coll!r} in the config file, "
+                "so nothing was cloned.",
+                severity="error",
+                timeout=8,
+            )
+            return
         try:
             clone_source(
                 config_path=default_config_path(),
                 source_collection=self._source_coll,
-                source_index=idx,
+                source_index=found,
                 target_collection=self._target,
             )
         except (KeyError, IndexError, ValueError) as e:
             self.notify(f"Clone failed: {e}", severity="error")
             return
 
-        app: FNDApp = self.app  # type: ignore[assignment]
         app._config = load()  # type: ignore[attr-defined]
         app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
         self.notify(
@@ -3967,6 +5325,23 @@ def open_settings(app: FNDApp) -> None:
             provider=lambda a: tuple(build_root_items(a)),
         )
     )
+
+
+SEARCH_PLACEHOLDER = "Filter rows…"
+_SEARCH_PLACEHOLDER_WITH_KEY = f"{SEARCH_PLACEHOLDER}  (/)"
+
+
+def refresh_search_placeholder(screen: Screen[None], selector: str) -> None:
+    """Offer `(/)` only where `/` reaches the binding.
+
+    The box opens WITH focus, so the advertised key goes in as text and the
+    empty state then blames the terms: `No matches for '/collect'`.
+    """
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        box = screen.query_one(selector, Input)
+        box.placeholder = SEARCH_PLACEHOLDER if box.has_focus else _SEARCH_PLACEHOLDER_WITH_KEY
 
 
 def open_settings_section(
@@ -4448,4 +5823,1037 @@ class StillFlatDrillIn(Screen[None]):
             self.notify(f"Could not copy: {e}", severity="error")
 
     def action_back(self) -> None:
+        self.app.pop_screen()
+
+
+class FilterTextScreen(Screen[None]):
+    """Edit a filter set as one expression.
+
+    The rows and this text are two views of the same set: a clause typed here
+    that matches a row's shape becomes that row when saved.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape", "back", "Back", show=False),
+        Binding("ctrl+s", "save_close", show=False),
+    ]
+
+    CSS = """
+    FilterTextScreen { background: $surface; }
+    FilterTextScreen > #settings_box {
+        height: 1fr; border: round $primary 50%; padding: 0 1;
+    }
+    FilterTextScreen > #settings_box:focus-within { border: round $accent; }
+    FilterTextScreen #filter_text { height: 1fr; }
+    FilterTextScreen #filter_status { height: auto; padding: 0 1; color: $text-muted; }
+    FilterTextScreen #filter_status.-ok { color: $success; }
+    FilterTextScreen #filter_status.-bad { color: $error; }
+    FilterTextScreen > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        spec: Any,
+        on_save: Callable[[Any], None],
+    ) -> None:
+        super().__init__()
+        self._title = title
+        self._spec = spec
+        self._on_save = on_save
+
+    def compose(self) -> ComposeResult:
+        from fnd.filters.text_form import render
+
+        with Vertical(id="settings_box") as box:
+            box.border_title = self._title
+            yield TextArea(render(self._spec), id="filter_text")
+            yield Static("", id="filter_status")
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        self.query_one("#filter_text", TextArea).focus()
+        self._refresh_status()
+        self.query_one("#footer_hints", Static).update(
+            # Applies, never saves: both editors hand back to the filter
+            # browser, which decides whether anything reaches disk.
+            _editor_hint_bar(((COMMIT_KEY, "Apply"), ("Esc", "Cancel")))
+        )
+
+    @on(TextArea.Changed, "#filter_text")
+    def _on_changed(self, _ev: TextArea.Changed) -> None:
+        self._refresh_status()
+
+    def _parsed(self) -> tuple[Any, Any]:
+        from fnd.filters.text_form import parse_or_error
+
+        return parse_or_error(self.query_one("#filter_text", TextArea).text)
+
+    def _refresh_status(self) -> None:
+        status = self.query_one("#filter_status", Static)
+        spec, err = self._parsed()
+        status.remove_class("-ok", "-bad")
+        if err is not None:
+            status.add_class("-bad")
+            status.update(f"✗ col {err.column}: {err.message}")
+            return
+        status.add_class("-ok")
+        rows = _describe_spec(spec)
+        dropped = _protection_dropped(self._spec, spec)
+        if dropped:
+            # Replacing the text is how the guard leaves: it is rendered into
+            # the box, so deleting it reads as typing one rule.
+            status.add_class("-bad")
+            status.remove_class("-ok")
+            status.update(
+                f"⚠ this drops the {dropped} exclusion: {rows}"
+                if rows
+                else f"⚠ this drops the {dropped} exclusion"
+            )
+            return
+        status.update(f"✓ {rows}" if rows else "✓ no filters")
+
+    def action_back(self) -> None:
+        from fnd.filters.text_form import render
+
+        typed = self.query_one("#filter_text", TextArea).text.strip()
+        _leave_or_confirm(
+            self,
+            dirty=typed != render(self._spec).strip(),
+            what="this filter text",
+            on_save=self.action_save_close,
+        )
+
+    def save_blocked(self) -> str:
+        """Why Apply would be refused, or "".
+
+        The leaving prompt reads this, as the source form's does, so it never
+        offers to save text the screen has already rejected.
+        """
+        _spec, err = self._parsed()
+        return f"col {err.column}: {err.message}" if err is not None else ""
+
+    def action_save_close(self) -> None:
+        spec, err = self._parsed()
+        if err is not None or spec is None:
+            # The status line may already be showing this error, in which case
+            # refreshing it changes nothing on screen and the key reads dead:
+            # measured at 14 identical pane captures over 3.5 seconds.
+            self._refresh_status()
+            self.app.notify(f"Not applied: {self.save_blocked()}", severity="error", timeout=4)
+            return
+        self._on_save(spec)
+        self.app.pop_screen()
+
+
+def _protection_dropped(before: Any, after: Any) -> str:
+    """A guard tag the edit would remove, or "".
+
+    ``no_index`` is the one exclusion a user cannot see the effect of until a
+    file they meant to keep private turns up in results.
+    """
+    from fnd.tui.widgets.toggle_tree import NEVER_ONLY_TAGS
+
+    def _tags(spec: Any) -> set[str]:
+        return {t for tags in spec.exclude_tags.values() for t in tags}
+
+    lost = sorted((_tags(before) - _tags(after)) & set(NEVER_ONLY_TAGS))
+    return "/".join(lost)
+
+
+def _any_tag(sample: Any) -> bool:
+    """Whether a sample offers a single tag.
+
+    ``sample_source`` seeds ``tags`` with an empty dict per provider, so the
+    mapping is truthy on a source that carries none.
+    """
+    tags = getattr(sample, "tags", None) or {}
+    return any(values for values in tags.values())
+
+
+def _describe_spec(spec: Any) -> str:
+    """Which rows the text currently fills, so the effect is visible on save."""
+    parts: list[str] = []
+    if spec.kinds:
+        parts.append(f"{len(spec.kinds)} kind" + ("s" if len(spec.kinds) > 1 else ""))
+    for field_name, phrase in (("include_tags", "only files tagged"), ("exclude_tags", "never")):
+        values = sorted({t for tags in getattr(spec, field_name).values() for t in tags})
+        if values:
+            parts.append(
+                f"{phrase} {'/'.join(values)}"
+                if len(values) < 4
+                else f"{phrase} {len(values)} tags"
+            )
+    if spec.min_size is not None or spec.max_size is not None:
+        parts.append("size")
+    if any(
+        getattr(spec, f) is not None
+        for f in ("created_after", "created_before", "modified_after", "modified_before")
+    ):
+        parts.append("dates")
+    if spec.frontmatter:
+        parts.append("frontmatter")
+    if spec.expression or spec.raw:
+        parts.append("custom")
+    return " · ".join(parts)
+
+
+_SPEC_FIELDS = (
+    "kinds",
+    "include_tags",
+    "exclude_tags",
+    "min_size",
+    "max_size",
+    "created_after",
+    "created_before",
+    "modified_after",
+    "modified_before",
+    "frontmatter",
+    "expression",
+)
+
+
+def _spec_from_filters(filters: Any) -> Any:
+    """A ``DefaultFilters``/``SourceFilters`` as the text form's spec.
+
+    The two ignore-file toggles have no expression form (they select which
+    files are read, not a predicate over one), so they stay on their rows.
+    """
+    from fnd.filters import FilterSpec
+    from fnd.filters.dimensions import tag_selection
+
+    values: dict[str, Any] = {}
+    for name in _SPEC_FIELDS:
+        value = getattr(filters, name, None)
+        if value is None:
+            continue
+        if name in ("include_tags", "exclude_tags"):
+            values[name] = tag_selection(value)
+        else:
+            values[name] = tuple(value) if isinstance(value, list) else value
+    return FilterSpec(**values)
+
+
+def _spec_to_mapping(spec: Any) -> dict[str, Any]:
+    """The spec's fields as config values, with the text form's leftovers
+    folded back into ``expression`` so nothing typed is lost."""
+    out: dict[str, Any] = {}
+    for name in _SPEC_FIELDS:
+        value = getattr(spec, name)
+        if isinstance(value, dict):
+            # Every source holding the same tags is the bare list the user
+            # most likely typed; anything else needs the table to stay exact.
+            from fnd.tags import TAG_PROVIDERS
+
+            sets = {source: frozenset(tags) for source, tags in value.items() if tags}
+            uniform = len(sets) == len(TAG_PROVIDERS) and len(set(sets.values())) == 1
+            # Empty stays a list: it is the explicit "override the default to
+            # nothing", and a bare list is how that reads in the config.
+            out[name] = (
+                (
+                    sorted(next(iter(sets.values())))
+                    if uniform or not sets
+                    else {source: sorted(tags) for source, tags in sets.items()}
+                )
+                if sets
+                else []
+            )
+        else:
+            out[name] = list(value) if isinstance(value, tuple) else value
+    if spec.raw:
+        joined = " AND ".join(f"({c})" for c in (spec.expression, *spec.raw) if c)
+        out["expression"] = joined
+    return out
+
+
+def _matching_group(group: ToggleGroup, query: str) -> ToggleGroup | None:
+    """The group with only the rows that match, or None when none do.
+
+    A group whose own name matches keeps everything under it, so searching for
+    a branch shows the branch rather than emptying it.
+    """
+    from dataclasses import replace
+
+    if query in group.label.lower():
+        return group
+    items = tuple(i for i in group.items if query in i.label.lower())
+    groups = tuple(g for g in (_matching_group(s, query) for s in group.groups) if g is not None)
+    if not items and not groups:
+        return None
+    # Kept so the branch's roll-up still speaks for the whole branch: counted
+    # over the surviving rows alone it read `● File types (every type)` with
+    # one of forty ticked. Each level holds only what it dropped itself.
+    kept_items = {i.id for i in items}
+    kept_groups = {g.id for g in groups}
+    hidden = tuple(i for i in group.items if i.id not in kept_items) + tuple(
+        leaf for sub in group.groups if sub.id not in kept_groups for leaf in sub.leaves
+    )
+    return replace(group, items=items, groups=groups, hidden=hidden)
+
+
+def _branch_group(branch: Any) -> ToggleGroup:
+    """A model :class:`Branch` as the widget's :class:`ToggleGroup`, nested."""
+    return ToggleGroup(
+        id=branch.id,
+        label=branch.label,
+        items=tuple(ToggleItem(*i) for i in branch.items),
+        mode=branch.mode,
+        empty_label=branch.empty_label,
+        full_label=branch.full_label,
+        noun=branch.noun,
+        name_leaves=branch.name_leaves,
+        elsewhere=branch.elsewhere,
+        complete=branch.complete,
+        groups=tuple(_branch_group(b) for b in branch.groups),
+    )
+
+
+#: Shown under the rule box, where an inert glob is easy to write: `*` does
+#: not cross `/`, so `'*drafts*'` never matches while `'drafts/**'` does, and
+#: a bare folder name matches only a FILE of that name.
+_GLOB_HINT = "'build/**' for a folder; 'build' matches only a file called build"
+
+_RULE_HELP = (
+    "fields  file.path/name/ext/kind/size, file.tags.all, or any frontmatter key\n"
+    "match   ~~ is a glob and * stops at /, so 'drafts/**' matches, '*drafts*' does not"
+)
+
+
+class RuleTextScreen(Screen[None]):
+    """One typed filter rule, validated as you type.
+
+    Separate from :class:`FilterTextScreen`, which edits the whole set: a row
+    that opens the entire expression to change one clause is a trap.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape", "back", "Back", show=False),
+        Binding("ctrl+s", "save_close", show=False),
+    ]
+
+    CSS = """
+    RuleTextScreen { background: $surface; }
+    RuleTextScreen > #settings_box {
+        height: 1fr; border: round $primary 50%; padding: 0 1;
+    }
+    RuleTextScreen > #settings_box:focus-within { border: round $accent; }
+    RuleTextScreen #rule_text { height: 1fr; }
+    RuleTextScreen #rule_status { height: auto; padding: 0 1; color: $text-muted; }
+    RuleTextScreen #rule_status.-ok { color: $success; }
+    RuleTextScreen #rule_status.-bad { color: $error; }
+    RuleTextScreen #rule_help {
+        height: auto; padding: 0 1; color: $text-muted; text-style: dim;
+    }
+    RuleTextScreen > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        value: str,
+        note_scoped: bool,
+        on_save: Callable[[str], None],
+    ) -> None:
+        super().__init__()
+        self._title = title
+        self._value = value
+        self._note_scoped = note_scoped
+        self._on_save = on_save
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings_box") as box:
+            box.border_title = self._title
+            yield TextArea(self._value, id="rule_text")
+            yield Static("", id="rule_status")
+            yield Static(_RULE_HELP, id="rule_help")
+        yield Static("", id="footer_hints")
+
+    def on_mount(self) -> None:
+        self.query_one("#rule_text", TextArea).focus()
+        self._refresh_status()
+        self.query_one("#footer_hints", Static).update(
+            # Applies, never saves: both editors hand back to the filter
+            # browser, which decides whether anything reaches disk.
+            _editor_hint_bar(((COMMIT_KEY, "Apply"), ("Esc", "Cancel")))
+        )
+
+    @on(TextArea.Changed, "#rule_text")
+    def _on_changed(self, _ev: TextArea.Changed) -> None:
+        self._refresh_status()
+
+    def _parsed(self) -> Any:
+        from fnd.filter_dsl import parse_or_error
+
+        text = self.query_one("#rule_text", TextArea).text.strip()
+        return (None, None) if not text else parse_or_error(text)
+
+    def _refresh_status(self) -> None:
+        status = self.query_one("#rule_status", Static)
+        _pred, err = self._parsed()
+        status.remove_class("-ok", "-bad")
+        if err is not None:
+            status.add_class("-bad")
+            status.update(f"✗ col {err.column}: {err.message}")
+            return
+        status.add_class("-ok")
+        scope = "files with a frontmatter block" if self._note_scoped else "every file"
+        # "✓ every file" alone reads as "this matches every file". It is the
+        # rule's scope, and a rule that parses can still match nothing or
+        # exclude nothing.
+        status.update(f"✓ reads as valid: it will be tested against {scope}")
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    def action_save_close(self) -> None:
+        _pred, err = self._parsed()
+        if err is not None:
+            self._refresh_status()
+            return
+        self._on_save(self.query_one("#rule_text", TextArea).text.strip())
+        self.app.pop_screen()
+
+
+#: Spec fields as the screens name them, so a message reads like the UI. Two
+#: fields sharing a name collapse to one entry.
+_FIELD_WORDS: dict[str, str] = {
+    "kinds": "file types",
+    "include_tags": "required tags",
+    "exclude_tags": "skipped tags",
+    "min_size": "size limits",
+    "max_size": "size limits",
+    "created_after": "created dates",
+    "created_before": "created dates",
+    "modified_after": "modified dates",
+    "modified_before": "modified dates",
+    "frontmatter": "the frontmatter rule",
+    "expression": "the custom rule",
+}
+
+
+def _cleared_note(before: Any, after: Any) -> str:
+    """What returning to the defaults just took away, named as screens name it.
+
+    A set with nothing to return to refuses the act, so no sentence here claims
+    an empty set, which would be false anyway: ignore files and hidden-name
+    pruning survive any clear.
+    """
+    dropped = list(
+        dict.fromkeys(
+            _FIELD_WORDS[name]
+            for name in _SPEC_FIELDS
+            if getattr(before, name) and not getattr(after, name)
+        )
+    )
+    if not dropped:
+        return "Nothing to return"
+    lost = ", ".join(dropped)
+    return f"Back to the inherited filters: this source no longer overrides {lost}"
+
+
+#: What the sidebar's clear bar answers to. Read once, like the app's own
+#: bindings, so the two panes cannot drift onto different keys.
+_CLEAR_FILTERS_KEY: str = load_keymap().for_action("clear_filters") or "X"
+
+
+class FilterBrowserScreen(Screen[None]):
+    """Filters as the Filters pane shows them: collapsible branches, tri-state.
+
+    The same set is editable as text (``t``); each view writes the model the
+    other reads, so neither is the source of truth.
+    """
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape,left", "back", "Back", show=False),
+        # As every other settings list binds it, and this is the longest one:
+        # a vault's tags run to thousands of rows reachable by arrow key alone.
+        Binding("slash", "focus_search", "Filter", show=False),
+        # Down from the filter box reaches the rows, as it does on every other
+        # settings screen. Without it the box was a one-way door: narrow the
+        # tree, then have no key that leaves the Input for what you narrowed.
+        Binding("down", "tree_from_input", show=False),
+        Binding("ctrl+s", "save_close", show=False),
+        Binding("t", "edit_text", show=False),
+        # The sidebar's own clear gesture, not a second letter for the same
+        # act: one pane cleared on `X` from anywhere, the other on `c`, and a
+        # single unconfirmed letter beside `t` and `y` wiped the set.
+        Binding(_CLEAR_FILTERS_KEY, "clear_all", show=False),
+        # Not ctrl+y: the app binds that to "copy query command" with
+        # priority, so a screen binding there never fires.
+        Binding("y", "copy_text", show=False),
+        # `?` does not come back here: it lands on the settings menu, taking
+        # the unsaved edit with it. `:` returns intact, so it is left alone.
+        Binding("question_mark", "help_if_saved", show=False),
+    ]
+
+    CSS = """
+    FilterBrowserScreen { background: $surface; }
+    FilterBrowserScreen > #settings_box {
+        height: 1fr; border: round $primary 50%; padding: 0 1;
+    }
+    FilterBrowserScreen > #settings_box:focus-within { border: round $accent; }
+    FilterBrowserScreen #filter_legend {
+        height: auto; padding: 0 1; color: $text-muted; text-style: dim;
+    }
+    FilterBrowserScreen #filter_search {
+        height: 1; padding: 0 0; border: none; background: $surface; color: $text;
+    }
+    FilterBrowserScreen #filter_search:focus { color: $accent; }
+    /* visibility (not display) so the row is always reserved: the bar
+       appearing on the first active filter must not shove the tree down.
+       Same rule, glyph and position as the sidebar's. */
+    FilterBrowserScreen #clear_filters_bar {
+        height: 1; padding: 0 1; visibility: hidden; color: $primary 50%;
+    }
+    FilterBrowserScreen #clear_filters_bar:hover { color: $accent; text-style: bold; }
+    FilterBrowserScreen #clear_filters_bar:focus {
+        color: $accent; text-style: bold; background: $accent 15%;
+    }
+    FilterBrowserScreen #filter_summary {
+        height: auto; max-height: 5; overflow-y: auto;
+        padding: 0 1; color: $text-muted;
+    }
+    FilterBrowserScreen > #footer_hints {
+        dock: bottom; height: 1; background: $surface; padding: 0 1; color: $text-muted;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        spec: Any,
+        gitignore: bool,
+        fndignore: bool,
+        sample_provider: Callable[[Any], Any] | None = None,
+        globs: list[str] | None = None,
+        excludes: list[str] | None = None,
+        inherited: tuple[Any, bool, bool] | None = None,
+        save_note: str = "",
+        no_tags_note: str = "",
+        unindexed_note: str = "",
+        commit_label: str = "Save",
+        on_save: Callable[[Any, bool, bool], None],
+    ) -> None:
+        super().__init__()
+        # What this source falls back to with nothing of its own. `None` on the
+        # global defaults, which inherit from nothing.
+        self._inherited = inherited
+        # What Ctrl+S does to the index. The two routes differ: a source save
+        # reindexes its collection, the defaults save reindexes nothing.
+        self._save_note = save_note
+        # A branch that is simply absent reads as a missing feature, and the
+        # two routes are silent for different reasons, as are "nothing is
+        # indexed yet" and "indexed, and none of it is tagged".
+        self._no_tags_note = no_tags_note
+        self._unindexed_note = unindexed_note
+        # And what it does at all. On a source this screen stages into the
+        # form, which owns the write, so calling it "Save" would promise
+        # something only the form does.
+        self._commit_label = commit_label
+        # Include globs restrict the file types too, but they cannot be shown
+        # as ticked kinds: saving them back as kinds would widen a glob that
+        # names one suffix of a multi-suffix type. Say so instead.
+        self._globs = list(globs or ())
+        # Excludes drop files before any filter runs, so a summary that names
+        # only the includes is silent about half of what is skipped.
+        self._excludes = list(excludes or ())
+        self._title = title
+        self._spec = spec
+        self._gitignore = gitignore
+        self._fndignore = fndignore
+        self._sample: Any = None
+        # Which spec the current sample was gated with. The counts are only
+        # true of that one, and the screen edits the spec under them.
+        self._sampled_spec: Any = None
+        self._resample_timer: Any = None
+        # What the screen opened with, so leaving can say whether anything is
+        # being thrown away.
+        self._opened_with = (spec, gitignore, fndignore)
+        # A custom bound stays on offer for the visit: the radio row carrying
+        # it exists only while the spec holds it, so picking a preset instead
+        # would otherwise discard the value with no way back to it.
+        self._kept_custom: dict[str, str] = {}
+        self._sample_provider = sample_provider
+        # Nothing has been sampled yet, and `_spec` is not `None`, so the
+        # first `_rebuild` would schedule a scan on top of the mount one.
+        self._sampled_spec = spec
+        self._scanning = sample_provider is not None
+        self._query = ""
+        self._on_save = on_save
+
+    def compose(self) -> ComposeResult:
+        from fnd.filters.tree_model import LEGEND
+
+        with Vertical(id="settings_box") as box:
+            box.border_title = self._title
+            yield Static(LEGEND, id="filter_legend")
+            yield Input(placeholder=_SEARCH_PLACEHOLDER_WITH_KEY, id="filter_search")
+            yield ClearFiltersBar(
+                "", id="clear_filters_bar", on_clear=self.action_clear_all, focus_id="filter_tree"
+            )
+            yield ToggleTree("Filters", id="filter_tree")
+            yield Static("", id="filter_summary")
+        yield Static("", id="footer_hints")
+
+    @on(ToggleTree.ActionSelected, "#filter_tree")
+    def _on_rule_selected(self, ev: ToggleTree.ActionSelected) -> None:
+        """A typed rule lives with the ticked ones, not on the screen above.
+
+        Beside Index filters, the frontmatter rule could hold a different answer
+        to the same question, with neither showing the other's.
+        """
+        from dataclasses import replace as _replace
+
+        if ev.item_id.startswith(("beyond:", "rule:raw:")):
+            # No picker can express these, so the row hands over to the one
+            # editor that can rather than being a dead end.
+            self.action_edit_text()
+            return
+        field_name = ev.item_id.removeprefix("rule:")
+        titles = {
+            "frontmatter": "Frontmatter rule · files with frontmatter",
+            "expression": "Custom rule · any file",
+        }
+        if field_name not in titles:
+            return
+
+        def _save(text: str) -> None:
+            self._spec = _replace(self._spec, **{field_name: text})
+            self._rebuild()
+
+        self.app.push_screen(
+            RuleTextScreen(
+                title=titles[field_name],
+                value=str(getattr(self._spec, field_name, "") or ""),
+                note_scoped=field_name == "frontmatter",
+                on_save=_save,
+            )
+        )
+
+    @on(Input.Changed, "#filter_search")
+    def _on_search_changed(self, ev: Input.Changed) -> None:
+        self._query = ev.value.strip().lower()
+        self._rebuild(focus_tree=False)
+
+    @on(Input.Submitted, "#filter_search")
+    def _on_search_submitted(self, _ev: Input.Submitted) -> None:
+        """Enter hands the rows back, with the query still narrowing them."""
+        self.query_one("#filter_tree", ToggleTree).focus()
+
+    def action_tree_from_input(self) -> None:
+        """Bridge Down from the filter Input into the tree, and land on a row.
+
+        The tree's own Down consumes the key whenever it has focus, so this
+        fires only from the box.
+        """
+        tree = self.query_one("#filter_tree", ToggleTree)
+        if tree.cursor_line < 0 and tree.root.children:
+            tree.cursor_line = 0
+        tree.focus()
+
+    def action_focus_search(self) -> None:
+        self.query_one("#filter_search", Input).focus()
+
+    @on(ToggleTree.NodeHighlighted, "#filter_tree")
+    def _on_row_highlighted(self, _ev: ToggleTree.NodeHighlighted[dict[str, Any]]) -> None:
+        self._refresh_legend()
+
+    def _refresh_legend(self) -> None:
+        """The glyph meanings for the branch the cursor is in.
+
+        The shared line is false on the ignore branch (● there means "obey
+        this file", which indexes FEWER files), so a branch that reads
+        differently says so, and the rest keep one wording.
+        """
+        from fnd.filters.tree_model import LEGEND
+
+        tree = self.query_one("#filter_tree", ToggleTree)
+        node = tree.cursor_node
+        top: str = ""
+        while node is not None and node.parent is not None:
+            data = node.data if isinstance(node.data, dict) else {}
+            top = str(data.get("id") or data.get("group") or top)
+            node = node.parent
+        branch = next(
+            (
+                b
+                for b in getattr(self, "_branches", ())
+                if top == b.id or top.startswith(b.id + ":")
+            ),
+            None,
+        )
+        self.query_one("#filter_legend", Static).update(
+            (getattr(branch, "legend", "") or LEGEND) if branch is not None else LEGEND
+        )
+
+    @on(ToggleTree.NavigatedOut, "#filter_tree")
+    def _on_navigated_out(self, _ev: ToggleTree.NavigatedOut) -> None:
+        """← at the outermost level leaves the screen, as it does everywhere
+        else in Settings. The tree's own binding would otherwise swallow it."""
+        self.action_back()
+
+    def on_mount(self) -> None:
+        self._rebuild()
+        self._render_footer()
+        if self._sample_provider is not None:
+            self.run_worker(self._load_sample, thread=True)
+
+    def _render_footer(self) -> None:
+        """The row keys are single letters, so a focused search box swallows
+        them; naming them there advertises keys that do not work."""
+        app: FNDApp = self.app  # type: ignore[assignment]
+        typing = _typing_in(self)
+        cluster: tuple[tuple[str, str], ...] = (
+            (("⏎", "Rows"), ("Esc", "Clear"))
+            if typing
+            else (
+                ("⏎", "Toggle"),
+                ("→", "Open"),
+                ("/", "Filter"),
+                ("t", "As text"),
+                *(
+                    ((_CLEAR_FILTERS_KEY, "Return to defaults"),)
+                    if self._can_return_to_defaults()
+                    else ()
+                ),
+                (COMMIT_KEY, self._commit_label),
+                ("y", "Copy"),
+                # Esc asks; it does not discard. Naming one of the answers on
+                # the key that opens the question invites Esc then Enter, which
+                # loses a filter set.
+                ("Esc/←", "Leave"),
+            )
+        )
+        bar = _editor_hint_bar(cluster) if typing else _hint_bar(app, cluster)
+        self.query_one("#footer_hints", Static).update(bar)
+
+    def on_descendant_focus(self, _ev: events.DescendantFocus) -> None:
+        self._render_footer()
+        refresh_search_placeholder(self, "#filter_search")
+
+    def on_descendant_blur(self, _ev: events.DescendantBlur) -> None:
+        self._render_footer()
+        refresh_search_placeholder(self, "#filter_search")
+
+    def _load_sample(self) -> None:
+        """Sampling opens files, so it cannot run on the event loop: the scan's
+        budget is only checked between files, and one cloud-evicted note
+        overruns it by as long as the provider takes to deliver."""
+        wanted = self._spec
+        try:
+            sample = self._sample_provider(wanted) if self._sample_provider is not None else None
+        except Exception:
+            sample = None
+        self.app.call_from_thread(self._sample_arrived, sample, wanted)
+
+    def _sample_arrived(self, sample: Any, spec: Any = None) -> None:
+        """The scan lands on a worker's schedule, so it must not move focus:
+        the user may be mid-word in the row filter."""
+        self._scanning = False
+        self._sample = sample
+        self._sampled_spec = spec
+        self._rebuild(focus_tree=False)
+
+    def _gating_spec(self, spec: Any) -> Any:
+        """What the counts are actually gated with: the spec minus its kinds.
+
+        `_sample` strips `kinds` before building the gate, so a file-type tick
+        cannot change any count and must not buy a walk of the source.
+        """
+        import dataclasses
+
+        if spec is None:
+            return None
+        return dataclasses.replace(spec, kinds=())
+
+    def _resample_if_stale(self) -> None:
+        """Re-scan when the rules on screen are not the ones the counts describe.
+
+        Debounced: ticking through a branch changes the spec once per keypress
+        and each scan walks the source. Grouped, because the mount scan is
+        started directly by `on_mount` and a timer firing during it otherwise
+        puts two walks in `sample_source` at once.
+        """
+        if self._sample_provider is None:
+            return
+        if self._gating_spec(self._spec) == self._gating_spec(self._sampled_spec):
+            return
+        if self._resample_timer is not None:
+            self._resample_timer.stop()
+        self._resample_timer = self.set_timer(0.3, self._start_resample)
+
+    def _start_resample(self) -> None:
+        self._resample_timer = None
+        if self._gating_spec(self._spec) == self._gating_spec(self._sampled_spec):
+            return
+        self._scanning = True
+        # Painted, or the pane shows the old counts with nothing saying they
+        # are being recomputed and the flag is False again by the next repaint.
+        self._refresh_summary()
+        self.run_worker(self._load_sample, thread=True, exclusive=True, group="sample")
+
+    def _rebuild(self, *, focus_tree: bool = True) -> None:
+        """``focus_tree`` False where the user is typing or a worker landed.
+
+        Focusing unconditionally meant every keystroke in the row filter moved
+        focus to the tree, so the second character onwards ran as a binding:
+        `/cle` reached `c`, which clears the whole set without asking.
+        """
+        import contextlib
+
+        from fnd.filters.tree_model import custom_ids, selection_for, spec_branches
+
+        self._resample_if_stale()
+        tree = self.query_one("#filter_tree", ToggleTree)
+        keep = tree.expanded_group_ids if tree.root.children else set()
+        line = tree.cursor_line
+        self._kept_custom.update(custom_ids(self._spec))
+        branches = spec_branches(self._spec, self._sample, self._kept_custom)
+        # Kept so a commit knows which kinds were actually on screen: ticking
+        # every visible box means "all of them", not the sampled subset.
+        self._branches = branches
+        groups = [_branch_group(b) for b in branches]
+        if self._query:
+            groups = [g for g in (_matching_group(g, self._query) for g in groups) if g]
+            # Everything open, or a match two levels down is still invisible.
+            keep = {g.id for top in groups for g in top.walk()}
+        selected, excluded = selection_for(
+            self._spec, gitignore=self._gitignore, fndignore=self._fndignore
+        )
+        tree.set_model(groups, selected, excluded=excluded, expanded=keep)
+        # The sample can land while the user is already navigating; keep them
+        # where they were rather than snapping back to the first row.
+        with contextlib.suppress(Exception):
+            if line > 0:
+                tree.cursor_line = line
+        if focus_tree:
+            tree.focus()
+        self._update_clear_bar()
+        self._refresh_legend()
+        self._refresh_summary()
+        self._say_when_nothing_matches(bool(groups))
+
+    @on(ToggleTree.SelectionChanged, "#filter_tree")
+    def _on_selection(self, ev: ToggleTree.SelectionChanged) -> None:
+        from fnd.filters.tree_model import apply_selection, selection_for
+
+        self._spec, self._gitignore, self._fndignore = apply_selection(
+            self._spec, ev.selected, ev.excluded, self._offered_kind_ids()
+        )
+        # Ticking every file type IS "no rule" (the model collapses `kinds` to
+        # empty), so re-derive from the spec whenever the two disagree, or
+        # `● every type` stays as a state that saves nothing and returns as `○`.
+        settled, settled_out = selection_for(
+            self._spec, gitignore=self._gitignore, fndignore=self._fndignore
+        )
+        if settled != set(ev.selected) or settled_out != set(ev.excluded):
+            self._rebuild(focus_tree=False)
+            return
+        # The ordinary tick ends here, so this is where the counts learn that
+        # their rules moved. `_rebuild` is the other caller, not the only one.
+        self._resample_if_stale()
+        self._refresh_summary()
+
+    def _say_when_nothing_matches(self, any_rows: bool) -> None:
+        """Put an empty row filter in the pane's title.
+
+        A blank tree that says nothing reads as a hung process. The border
+        title is where this app already carries counts, so it is where the
+        absence of them belongs too.
+        """
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            box = self.query_one("#settings_box", Vertical)
+            if self._query and not any_rows:
+                box.border_title = f"{self._title}: no rows match {self._query!r}"
+            else:
+                box.border_title = self._title
+
+    def _can_return_to_defaults(self) -> bool:
+        """Whether this screen has defaults to go back to, and has left them.
+
+        ONE predicate, read by the row, the key and the footer, so the key is
+        never bound where the row is hidden: on the global set it would empty
+        the shipped never-index exclusion, and the browser cannot offer that
+        tag back once no file carries it.
+        """
+        return self._inherited is not None and (
+            (self._spec, self._gitignore, self._fndignore) != self._inherited
+        )
+
+    def _update_clear_bar(self) -> None:
+        """The sidebar's row, doing the index side's act.
+
+        Search filters are ephemeral, so that row counts what it clears. These
+        are config: the row restores what this source inherits, and appears
+        only where the source has departed from it. The global set inherits
+        from nothing, so there is nothing to return to.
+        """
+        bar = self.query_one("#clear_filters_bar", ClearFiltersBar)
+        bar.visible = self._can_return_to_defaults()
+        bar.update(RETURN_TO_DEFAULTS)
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Textual asks this before firing a binding AND before showing it, so
+        the key and the row cannot disagree about whether the act exists."""
+        if action == "clear_all":
+            return self._can_return_to_defaults() or None
+        return True
+
+    def _offered_kind_ids(self) -> set[str]:
+        """Kind ids the tree actually showed, so "all ticked" means all of
+        them rather than every id in the registry."""
+        ids: set[str] = set()
+        stack = list(getattr(self, "_branches", []))
+        while stack:
+            branch = stack.pop()
+            ids |= {i[0] for i in branch.items if i[0].startswith("kind:")}
+            stack.extend(branch.groups)
+        return ids
+
+    def _refresh_summary(self) -> None:
+        """Show the rows as the expression they compile to.
+
+        The text is not a separate feature to go and find: it is this filter
+        set, written out, and ``t`` opens it for editing.
+        """
+        from fnd.filters.text_form import render
+
+        text = render(self._spec)
+        # What the expression below does NOT cover: ignore files (that they
+        # apply, not which), and the walk's pruning of every dot-prefixed name,
+        # lifted only for what an include glob naming a dot component matches.
+        obeying = self._gitignore or self._fndignore
+        head = ["obeying ignore files" if obeying else "ignore files off"]
+        head.append("skipping hidden files")
+        if self._globs:
+            head.append("restricted to paths: " + ", ".join(self._globs))
+        if self._excludes:
+            head.append("skipping paths: " + ", ".join(self._excludes))
+        for clash in self._spec.impossible_bounds():
+            # Decidable without a corpus, and the outcome is an empty index.
+            head.append(f"nothing can match: {clash}")
+        if self._save_note:
+            head.append(self._save_note)
+        if self._query:
+            head.append(f"showing rows matching {self._query!r}")
+        if self._scanning:
+            head.append("scanning source for types and tags…")
+        elif self._unindexed_note and self._sample is None:
+            head.append(self._unindexed_note)
+        elif self._no_tags_note and not _any_tag(self._sample):
+            head.append(self._no_tags_note)
+        if self._sample is not None and self._sample.truncated:
+            # Its own `if`, not the chain's last arm: the per-source browser
+            # always passes a tags note, so a tagless source would never reach
+            # it, and a bare row then means "none here", not "not counted".
+            head.append("partial scan: this source has more types and tags")
+        # Named separately because neither is a predicate over a file, so
+        # neither can appear in the expression below.
+        self.query_one("#filter_summary", Static).update(
+            _FilterSummary(
+                "Outside the expression: " + " · ".join(head),
+                "expression ('t' edits, 'y' copies):  ",
+                text,
+            )
+        )
+
+    def _dirty(self) -> bool:
+        return (self._spec, self._gitignore, self._fndignore) != self._opened_with
+
+    def action_help_if_saved(self) -> None:
+        if self._dirty():
+            self.notify(f"Unsaved filter changes: {COMMIT_KEY} to save, Esc to discard, then ?")
+            return
+        self.app.action_show_help()  # type: ignore[attr-defined]
+
+    def action_copy_text(self) -> None:
+        """Copy the expression. The app owns the mouse, so a terminal
+        selection cannot reach this text."""
+        from fnd.filters.text_form import render
+        from fnd.tui.clipboard import copy_text
+
+        text = render(self._spec)
+        if not text:
+            self.notify("No filter expression to copy", severity="information")
+            return
+        try:
+            copy_text(text)
+            self.notify("Filter expression copied", severity="information")
+        except OSError as e:
+            self.notify(f"Could not copy: {e}", severity="error")
+
+    def action_clear_all(self) -> None:
+        """Return this screen's set to what it inherits.
+
+        Emptying the resolved set instead widens the index: on a source it
+        drops the inherited `no_index` exclusion, so undoing a file-type filter
+        would also switch off the never-index opt-out, silently.
+        """
+        if not self._can_return_to_defaults():
+            # The global set inherits from nothing. Emptying it here would drop
+            # the shipped never-index exclusion, which is a protection rather
+            # than a preference, and no row on this screen can put it back.
+            return
+
+        before = self._spec
+        assert self._inherited is not None
+        self._spec, self._gitignore, self._fndignore = self._inherited
+        self._rebuild()
+        # It takes no confirmation, so it has to say what it took, above all
+        # a tag exclusion, which is a protection rather than a preference.
+        self.notify(_cleared_note(before, self._spec))
+
+    def action_edit_text(self) -> None:
+        def _save(spec: Any) -> None:
+            # Named when it lands, not only while typing: the text screen's
+            # warning is gone by the time the tree is back.
+            dropped = _protection_dropped(self._spec, spec)
+            self._spec = spec
+            self._rebuild()
+            if dropped:
+                self.app.notify(f"{dropped} files are no longer excluded", severity="warning")
+
+        self.app.push_screen(
+            FilterTextScreen(title=f"{self._title} (text)", spec=self._spec, on_save=_save)
+        )
+
+    def action_back(self) -> None:
+        # Esc clears a narrowing before it leaves, as it does on the settings
+        # list: leaving straight from a filtered tree loses the rows silently.
+        search = self.query_one("#filter_search", Input)
+        if search.value:
+            search.value = ""
+            self.query_one("#filter_tree", ToggleTree).focus()
+            return
+        _leave_or_confirm(
+            self, dirty=self._dirty(), what="these filters", on_save=self.action_save_close
+        )
+
+    def unsaved_work(self) -> tuple[str, Callable[[], None]] | None:
+        if not self._dirty():
+            return None
+        return "these filters", self.action_save_close
+
+    def action_save_close(self) -> None:
+        if not self._dirty():
+            # The exit guard calls this state clean and leaves without asking;
+            # saving anyway would report "Filters saved." over a byte-identical
+            # config and reindex, a costly answer to a question nobody asked.
+            self.app.notify("No changes to save")
+            self.app.pop_screen()
+            return
+        try:
+            self._on_save(self._spec, self._gitignore, self._fndignore)
+        except Exception as e:
+            self.app.notify(_summarise(e), severity="error", title="Save failed")
+            return
         self.app.pop_screen()
