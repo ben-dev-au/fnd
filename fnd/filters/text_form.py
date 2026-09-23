@@ -5,8 +5,8 @@ must show up in the other. Rendering is canonical; parsing recognises the
 clause shapes the rows can edit and keeps everything else verbatim.
 
 A clause the user typed as free text that happens to match a row's shape
-becomes that row. That is the point — it is how typing
-``file.kind in ['pdf']`` makes the File type row show PDF — so the round-trip
+becomes that row. That is the point (it is how typing
+``file.kind in ['pdf']`` makes the File type row show PDF), so the round-trip
 guarantee is that the *filter behaves the same*, not that a value stays in the
 field it started in.
 """
@@ -103,8 +103,8 @@ def render(spec: FilterSpec) -> str:
     if spec.kinds:
         clauses.append(f"file.kind in [{', '.join(_value(k) for k in spec.kinds)}]")
     # Rendered by the dimensions themselves: they own how a tag names its
-    # source, and this second copy drifted — the qualifier leaked into the tag
-    # value, so 'os:archive' re-parsed as 'os:os:archive'.
+    # source, and a second copy here leaks the qualifier into the value, so
+    # 'os:archive' re-parses as 'os:os:archive'.
     for dim_id in ("include_tags", "exclude_tags"):
         text = dimension(dim_id).render(getattr(spec, dim_id))
         if text:
@@ -147,7 +147,7 @@ def _is_note_escape(node: object) -> bool:
 def _match_frontmatter(node: object) -> str | None:
     """A clause that only a file with frontmatter can answer.
 
-    Either it asks about frontmatter fields alone — no ``file.*`` anywhere —
+    Either it asks about frontmatter fields alone (no ``file.*`` anywhere),
     or it is the kind-scoped form an older version wrote, which is unwrapped
     so a config written then still round-trips.
     """
@@ -228,10 +228,8 @@ def parse(text: str) -> FilterSpec:
     if not stripped:
         return FilterSpec()
     # Before anything is recognised: a dotted name that is not a reserved fact
-    # is a typo, and every downstream path treats it as a frontmatter key that
-    # no file has. `file.kinds == 'pdf'` validated with a tick and indexed
-    # nothing. Frontmatter keys cannot contain a dot, so nothing legitimate is
-    # caught here.
+    # is a typo every downstream path would treat as a frontmatter key no file
+    # has. Frontmatter keys cannot contain a dot, so nothing legitimate is caught.
     _reject_unknown_facts(parse_dsl(stripped), stripped)
     updates: dict[str, object] = {}
     tags: dict[str, tuple[str, ...]] = {}
@@ -245,8 +243,7 @@ def parse(text: str) -> FilterSpec:
         if name == "include_tags":
             # "index only files carrying any of these" is a disjunction, so
             # merging a second top-level conjunct into it turns the user's AND
-            # into an OR. A multi-tag include renders as one OR clause, so the
-            # renderer never needs the merge; only typed text reaches here.
+            # into an OR. The renderer emits one OR clause; only typed text lands here.
             if "include_tags" in updates:
                 leftover.append(_unparse(clause) or stripped)
             else:
@@ -254,14 +251,13 @@ def parse(text: str) -> FilterSpec:
         elif name == "exclude_tags":
             tags = _merge_tags(tags, value)  # type: ignore[arg-type]
         elif name in ("frontmatter", "expression"):
-            # These carry arbitrary text, so two recognised clauses are two
-            # conjuncts of one rule. Assigning kept only the last: a rule of
-            # `Course == 'X' AND NOT ('private' in tags)` came back as the
-            # tag half alone, widening the source to the whole vault.
+            # Arbitrary text, so two recognised clauses are two conjuncts of one
+            # rule; assigning would keep only the tag half of `Course == 'X' AND
+            # NOT ('private' in tags)`, widening the source to the whole vault.
             updates[name] = _and_join(updates.get(name), value)  # type: ignore[arg-type]
         elif name in updates:
             # A dimension has one slot, so a second clause for it is a further
-            # conjunct that assigning would drop — and dropping a conjunct can
+            # conjunct that assigning would drop, and dropping a conjunct can
             # only ever admit more files. Keep it as typed text instead.
             leftover.append(_unparse(clause) or stripped)
         else:
@@ -324,15 +320,11 @@ def split_frontmatter(text: str) -> tuple[str, str]:
 def _reject_unknown_facts(node: object, text: str = "") -> None:
     """Raise on any ``file.*`` name the fact registry does not define.
 
-    `RESERVED_FACTS` has said callers should do this in its own comment since
-    it was written, and none did — so the live-validating editor showed ✓ for
-    a misspelled field, the tree silently dropped the clause it could not
-    place, and only the save refused it.
+    Checked as the text is typed, so the live-validating editor never shows ✓
+    for a misspelled field the tree would drop and the save would refuse.
 
-    The column is found in the source the way `filter_dsl` already finds it for
-    its own unknown-field error: `referenced_fields` returns names, not
-    positions, and reporting column 1 for every one of these made this the only
-    error kind that could not point at itself.
+    The column is found in the source the way `filter_dsl` finds it for its own
+    unknown-field error, since `referenced_fields` returns names, not positions.
     """
     from fnd.file_facts import RESERVED_FACTS, is_fact_name
     from fnd.filter_dsl import referenced_fields
@@ -344,7 +336,7 @@ def _reject_unknown_facts(node: object, text: str = "") -> None:
         return
     known = ", ".join(sorted(RESERVED_FACTS))
     column = max(text.find(unknown[0]) + 1, 1)
-    raise FilterError(f"unknown field {unknown[0]!r} — known fields are: {known}", column)
+    raise FilterError(f"unknown field {unknown[0]!r}; known fields are: {known}", column)
 
 
 def parse_or_error(text: str) -> tuple[FilterSpec | None, FilterError | None]:

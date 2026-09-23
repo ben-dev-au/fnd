@@ -84,9 +84,8 @@ class ChoiceOption:
 def drill_summary(app: FNDApp, summary: str) -> str:
     """A drill row's trailing text under ``defaults.drill_summary_mode``.
 
-    One implementation for both the renderer and :meth:`MenuItem.trailing_value`
-    — the mode lived only on the latter, which nothing in the app calls, so the
-    setting saved and did nothing.
+    Shared by the renderer and :meth:`MenuItem.trailing_value`; a mode honoured
+    only by the latter, which nothing in the app calls, saves and does nothing.
     """
     cfg = getattr(app, "_config", None)
     if cfg is None:
@@ -367,7 +366,7 @@ _KEYS_SETTINGS: tuple[tuple[str, str, str, str], ...] = (
         "Jump by index",
         "",
         "Number keys jump the cursor to the nth visible row in the current "
-        "section AND open it — it is a shortcut, not a move. With the row "
+        "section AND open it: it is a shortcut, not a move. With the row "
         "list focused: a settings screen opens with the filter box focused, "
         "where digits type instead, so press ↓ to reach the rows first.",
     ),
@@ -470,8 +469,8 @@ _KEYS_AX_MODAL: tuple[tuple[str, str, str, str], ...] = (
 )
 
 
-# The filter browser's keys are screen and ToggleTree bindings, so the registry
-# does not know them and the sheet had no Index-filters section at all. A
+# The filter browser's keys are screen and ToggleTree bindings the registry
+# does not know, so the sheet's Index-filters section is listed here. A
 # function because the clear key is the user's keymap, not a literal.
 def _keys_filter_browser() -> tuple[tuple[str, str, str, str], ...]:
     from fnd.tui.settings_screen import _CLEAR_FILTERS_KEY
@@ -528,7 +527,7 @@ def _keys_filter_browser() -> tuple[tuple[str, str, str, str], ...]:
             COMMIT_KEY,
             "Save / Apply",
             "",
-            "On the global defaults this writes them and indexes nothing — "
+            "On the global defaults this writes them and indexes nothing; "
             "collections keep their current contents until the next Update "
             "index. On a source it is Apply, handing the set back to the form, "
             "which is what saves and rebuilds that collection.",
@@ -781,7 +780,7 @@ def _choices_tag_sources(_app: FNDApp) -> list[ChoiceOption]:
     out: list[ChoiceOption] = []
     for tag_id, provider in TAG_PROVIDERS.items():
         label, what = labels.get(tag_id, (tag_id, ""))
-        inert = "" if provider.available_on(sys.platform) else " — not available here"
+        inert = "" if provider.available_on(sys.platform) else " (not available here)"
         out.append(ChoiceOption(value=tag_id, label=label, description=what + inert))
     return out
 
@@ -1256,10 +1255,9 @@ def interrupted_index(name: str) -> tuple[int, int] | None:
     """``(files_completed, total_files)`` for a run of ``name`` that stopped
     part-way, or None.
 
-    The app has always written this state — cancelling at 7% left
-    `files_completed = 210, total_files = 3000` on disk — and then showed the
-    collection as though nothing had happened. A search over it returned 7% of
-    the corpus with no way to tell from any screen.
+    A run cancelled at 7% leaves `files_completed = 210, total_files = 3000` on
+    disk, and a search over the collection returns 7% of the corpus; this is
+    how a screen can say so.
     """
     import contextlib
 
@@ -1287,7 +1285,7 @@ def _collection_summary(app: FNDApp, name: str) -> str:
     part = interrupted_index(name)
     if part is not None:
         done, total = part
-        summary = f"⚠ incomplete — {done} of {total} files · {summary}"
+        summary = f"⚠ incomplete: {done} of {total} files · {summary}"
     elif _holds_nothing(app, name):
         # A filter that empties a collection leaves every other column reading
         # exactly as it did: `● 1 source · ranking:default` over zero files.
@@ -1298,8 +1296,8 @@ def _collection_summary(app: FNDApp, name: str) -> str:
 def _holds_nothing(app: FNDApp, name: str) -> bool:
     """Whether the index holds no document for ``name``, as far as we can ask.
 
-    False when there is no index to ask — "not indexed yet" is the first-run
-    state and the launch warning already covers it.
+    False when there is no index to ask: "not indexed yet" is the first-run
+    state, and the launch warning covers it.
     """
     import contextlib
 
@@ -1497,9 +1495,8 @@ def _summary_collection_update(app: FNDApp, name: str) -> str:
     """Trailing context on the per-collection Update row, and the place an
     interrupted run has to say so.
 
-    The warning went on the Collections LIST, where someone browsing sees it,
-    and not here — on the row whose button is what fixes it. A user who opened
-    this screen to act had no idea anything was wrong.
+    The Collections list warns someone browsing; this row warns someone who
+    opened the screen to act, on the row whose button fixes it.
     """
     cfg = app._config  # type: ignore[attr-defined]
     if cfg is None or name not in cfg.collections:
@@ -1508,7 +1505,7 @@ def _summary_collection_update(app: FNDApp, name: str) -> str:
     part = interrupted_index(name)
     if part is not None:
         done, total = part
-        return f"⚠ incomplete — {done} of {total} files · {n_sources} sources"
+        return f"⚠ incomplete: {done} of {total} files · {n_sources} sources"
     return f"{n_sources} sources"
 
 
@@ -1650,7 +1647,7 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
             label="Rename",
             description=(
                 "Change this collection's name. The index is rebuilt under the "
-                "new name, and your saved scope selection does not follow it — "
+                "new name, and your saved scope selection does not follow it; "
                 "re-tick the collection afterwards."
             ),
             kind=KIND_EXTERNAL,
@@ -1679,8 +1676,8 @@ def _provider_collection(app: FNDApp, name: str) -> tuple[MenuItem, ...]:
             id=f"col.{name}.ranking_profile",
             label="Ranking profile",
             description=(
-                "Which [ranking.<name>] block scores this collection's results "
-                "— recency, file-type and phrase-proximity weights. Applies to "
+                "Which [ranking.<name>] block scores this collection's results: "
+                "recency, file-type and phrase-proximity weights. Applies to "
                 "the next search; no reindex."
             ),
             kind=KIND_PICKER,
@@ -1792,10 +1789,9 @@ def _source_trailing(collection_name: str, idx: int) -> Callable[[FNDApp], str]:
         # holds suffix globs that name only part of a kind.
         path_globs = [g for g in src.includes if not _re.fullmatch(r"\*\*/\*\.\w+", g)]
         if not kinds and src.includes and not path_globs:
-            # Suffix globs restrict the types as kinds do, even when they are
-            # not a complete set and so were not folded in. A path glob among
-            # them does not: include globs are ORed, so "notes/**" admits
-            # every type under notes/ whatever its neighbours say.
+            # Suffix globs restrict the types as kinds do, folded in or not. A
+            # path glob among them does not: include globs are ORed, so
+            # "notes/**" admits every type under notes/.
             suffixes = {glob[glob.rfind(".") :] for glob in src.includes if glob.rfind(".") != -1}
             kinds = sorted({k for k, spec in KIND_BY_ID.items() if set(spec.suffixes) & suffixes})
         types = ", ".join(kinds) if kinds else "All types"
@@ -1808,17 +1804,15 @@ def _source_trailing(collection_name: str, idx: int) -> Callable[[FNDApp], str]:
                 suffix = " · ⚠ path not found"
             elif p.is_symlink() and not src.follow_symlinks:
                 # A symlinked root is refused unless the user opts in, so this
-                # source indexes nothing at all — and every other column reads
-                # perfectly healthy while it does.
-                suffix = " · ⚠ symlink, not followed — indexes nothing"
+                # source indexes nothing while every other column reads healthy.
+                suffix = " · ⚠ symlink, not followed: indexes nothing"
             else:
                 folder = _folder_glob(p, [*src.includes, *src.excludes])
                 if folder:
-                    suffix = f" · ⚠ {folder!r} names a folder — use {folder.rstrip('/') + '/**'!r}"
+                    suffix = f" · ⚠ {folder!r} names a folder; use {folder.rstrip('/') + '/**'!r}"
         except Exception:
-            # Not "not found": the probes below raise on a path we cannot
-            # SEARCH, and naming a folder that is there as missing is the
-            # answer this batch removed from the prune guard and the opener.
+            # Not "not found": these probes raise on a path we cannot
+            # SEARCH, and a folder that is there must not be named as missing.
             suffix = ""
         return f"{types}{suffix}"
 
@@ -1866,10 +1860,10 @@ def _narrowing_dimensions(f: Any) -> list[str]:
 def _other_filters(src: Any) -> list[str]:
     """Dimensions narrowing this source: its own by name, the defaults' as one.
 
-    Reading `effective_filters` alone put `tags` on every row in the app — the
-    shipped `no_index` exclusion is a default — while the same source's detail
-    screen said `inherited`. Dropping them instead is the opposite lie: an
-    inherited rule can cut a source to one file in sixteen.
+    `effective_filters` alone would put `tags` on every row (the shipped
+    `no_index` exclusion is a default) while the source's detail screen says
+    `inherited`; dropping the defaults is the opposite lie, since an inherited
+    rule can cut a source to one file in sixteen.
     """
     own = src.filters
     named = []
@@ -1925,10 +1919,8 @@ def _source_labels(paths: list[str]) -> list[str]:
             for i, label in enumerate(labels)
             if counts[label] > 1
             and at(i, depths[i] + 1) != label
-            # Two rows on the SAME path never separate, so growing them buys
-            # nothing and costs the summary column: a duplicated source
-            # rendered as two identical full paths with no room for what
-            # either one filters. The row number tells those apart.
+            # Two rows on the SAME path never separate, so growing them only
+            # costs the summary column; the row number tells them apart.
             and any(
                 parts[j] != parts[i] for j, other in enumerate(labels) if other == label and j != i
             )
@@ -2029,10 +2021,9 @@ def _summary_collections(app: FNDApp) -> str:
 def _summary_keybindings(app: FNDApp) -> str:
     """Counted from the sheet this row opens, not from the keymap.
 
-    The keymap holds the registry's bindings alone, and the sheet also carries
-    the static widget tables and lists a multi-pane action under each pane —
-    so the row said "28 keys across 6 contexts" over a screen showing 55 across
-    9. The section count was a literal.
+    The keymap holds the registry's bindings alone, while the sheet also carries
+    the static widget tables and lists a multi-pane action under each pane
+    (55 keys across 9 sections, against the keymap's 28 across 6).
     """
     items = _provider_keybindings(app)
     rows = sum(1 for i in items if not i.is_header)
@@ -2418,28 +2409,23 @@ def _open_filter_browser(app: FNDApp) -> None:
     )
 
     current = _filters_defaults(app)
-    # What the file looked like when this editor read it. `:` opens a second
-    # settings stack straight over this screen with no gate, so a second Index
-    # filters can be opened, edited and saved while this one still holds the
-    # values it started with — and `^s` here then reverted that save and
-    # reported success. The CLI writing between open and save is the same bug
-    # through a different door.
+    # What the file looked like when this editor read it, so `^s` refuses to
+    # revert a save made meanwhile (a second Index filters, or the CLI).
     opened_with = config_fingerprint(default_config_path())
 
     def _save(spec: Any, gitignore: bool, fndignore: bool) -> None:
         if config_fingerprint(default_config_path()) != opened_with:
             raise ConfigChangedError(
-                "The config changed since this screen opened — most likely "
+                "The config changed since this screen opened, most likely "
                 "saved from another Filters screen. Nothing was written. "
                 "Close this screen and reopen it to see the current filters."
             )
         values = _spec_to_mapping(spec)
         values["respect_gitignore"] = gitignore
         values["respect_fndignore"] = fndignore
-        # One write, not thirteen: a failure partway through used to leave a
-        # filter set that was neither the old one nor the new one. An empty
-        # list is written rather than deleted, since deleting the key lets the
-        # model default (exclude_tags = ["no_index"]) come back.
+        # One write, so a failure cannot leave a half-old, half-new filter set.
+        # An empty list is written, not deleted: deleting the key brings back
+        # the model default (exclude_tags = ["no_index"]).
         write_settings(
             config_path=default_config_path(),
             values={
@@ -2481,10 +2467,10 @@ def _indexed_tags(app: FNDApp) -> Any:
     The index already knows them, so this asks it rather than re-walking the
     disk: one aggregation over all collections, no file opened, nothing
     hydrated from a cloud folder. Measured on a real 12-collection index at
-    65 ms for 141 distinct tags — against a walk that reached the first three
+    65 ms for 141 distinct tags, where a walk reached only the first three
     collections and called itself a partial scan.
 
-    Returns None only when it could not ASK — no config, or no index open. An
+    Returns None only when it could not ASK (no config, or no index open). An
     index that holds no tags returns an empty sample, because "nothing indexed
     yet" and "indexed, and none of it is tagged" are different sentences and
     the screen says one of them.
@@ -2557,7 +2543,7 @@ def _provider_index_filters(_app: FNDApp) -> tuple[MenuItem, ...]:
             label="Index filters",
             description=(
                 "Which files enter the index: file types, tags, size, dates "
-                "and ignore files, as branches you tick — or as one expression "
+                "and ignore files, as branches you tick, or as one expression "
                 "if you prefer. Applies at the next Update index: files that "
                 "now match are added, files that no longer match are dropped."
             ),
@@ -3210,7 +3196,7 @@ def _provider_root(_app: FNDApp) -> tuple[MenuItem, ...]:
             id=f"root.{SECTION_FILTERS}",
             label="Filters",
             description=(
-                "What enters the index, and what a search returns from it — "
+                "What enters the index, and what a search returns from it: "
                 "file types, tags, size, dates and ignore files."
             ),
             kind=KIND_EXTERNAL,

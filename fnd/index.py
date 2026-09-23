@@ -572,9 +572,8 @@ def drop_collection(
     writer = index.writer(heap_size=_WRITER_HEAP)
     for parent_id in indexed_parent_ids(index, collection):
         # No enumerability guard here (the source may already be out of config),
-        # so never delete a shared file on a missing path: it could be a
-        # transient unmount, and the dropped collection lingering in a sibling's
-        # membership is harmless.
+        # so never delete a shared file on a missing path: it could be a transient
+        # unmount, and a dropped collection lingering in a membership is harmless.
         _reduce_membership(
             index,
             writer,

@@ -6,14 +6,14 @@ every other key falls through to the file's frontmatter. The two namespaces
 cannot collide: a frontmatter key can never contain a dot
 (``fnd.frontmatter._KEY_VALUE``).
 
-Caching is load-bearing, not an optimisation — ``Mapping.__contains__`` falls
+Caching is load-bearing, not an optimisation: ``Mapping.__contains__`` falls
 through to ``__getitem__``, so the evaluator's ``field not in fm`` followed by
 ``fm[field]`` reads every key twice.
 
 ``__getitem__`` raises only ``KeyError``. A fact that cannot be determined
 (no birth time on ext4, an unreadable xattr) is *unknown* rather than absent:
 both raise, but :meth:`FileFacts.is_unknown` distinguishes them so a rule can
-decide whether unknown means pass or drop. Nothing else may raise — a
+decide whether unknown means pass or drop. Nothing else may raise: a
 predicate is documented as pure, and an escaping error would abort the whole
 index run on one malformed file.
 """
@@ -57,10 +57,9 @@ RESERVED_FACTS: Final[frozenset[str]] = frozenset(
 def frontmatter_kinds() -> frozenset[str]:
     """Kinds that can carry a YAML frontmatter block.
 
-    One line, because the answer belongs to the kind. Deriving it from a
-    category shipped the same bug three times: the reader and the filter's
-    scope drifted apart, and a bare file of the kind nobody had thought about
-    sailed past a rule that dropped its neighbour.
+    The answer belongs to the kind, never a category, so the reader and the
+    filter's scope cannot drift apart and let a bare file of an overlooked kind
+    past a rule that drops its neighbour.
     """
     from fnd.kinds import FRONTMATTER_KINDS
 
@@ -161,7 +160,7 @@ class FileFacts(Mapping[str, object]):
     def is_unknown(self, key: str) -> bool:
         """True when a reserved fact exists but could not be determined.
 
-        A frontmatter key is never unknown, only absent — the strict-null rule
+        A frontmatter key is never unknown, only absent: the strict-null rule
         already drops a file whose frontmatter does not answer the question.
         """
         if not is_fact_name(key):
@@ -229,7 +228,7 @@ class FileFacts(Mapping[str, object]):
         times = read_file_times(self._path)
         stamp = times.created if key == "file.created" else times.mtime
         # 0 is fsmeta's "no information" (ext4 without statx birth time), not
-        # the epoch — reporting it as a real date would filter on a lie.
+        # the epoch; reporting it as a real date would filter on a lie.
         if stamp <= 0:
             return _UNKNOWN
         # Local, not UTC: a bound names the calendar day the user typed. East

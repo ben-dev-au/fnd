@@ -166,9 +166,8 @@ class IndexerService:
                     )
                 else:
                     # A caller that wanted no modal still has to learn its
-                    # request was dropped. Delete-source promises a rebuild
-                    # "straight afterwards" and got silence: the run never
-                    # happened, and the removed folder stayed searchable.
+                    # request was dropped: Delete-source promises a rebuild
+                    # "straight afterwards", and silence leaves the folder searchable.
                     with contextlib.suppress(Exception):
                         self._app.notify(
                             f"Indexing '{self.collection or collection}' is already "
@@ -442,17 +441,15 @@ class IndexerService:
         if not resumable:
             return
         if not cfg.defaults.indexer_auto_resume:
-            # Saying nothing is what made an interrupted rebuild invisible: the
-            # state on disk knew a run stopped at 210 of 3000, every screen
-            # showed the collection as whole, and searches answered from 7% of
-            # it forever. Opting out of auto-resume is not opting out of being
-            # told.
+            # Opting out of auto-resume is not opting out of being told: a run
+            # stopped at 210 of 3000 otherwise reads as whole on every screen
+            # while searches answer from 7% of it.
             names = ", ".join(sorted({s.collection for s in resumable}))
             first = resumable[0]
             with contextlib.suppress(Exception):
                 self._app.notify(
                     f"{names} indexed only {first.files_completed} of "
-                    f"{first.total_files} files — Update it to finish.",
+                    f"{first.total_files} files. Update it to finish.",
                     title="Interrupted index",
                     severity="warning",
                     timeout=10,

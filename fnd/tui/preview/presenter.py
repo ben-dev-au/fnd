@@ -1277,11 +1277,10 @@ class PreviewPresenter:
     def show_pane_message(self, text: str, *, replace_only: bool = False) -> None:
         """Say something in the pane, reusing its one empty-state Static.
 
-        Without it a search that found nothing left the pane reading "Type a
-        query and press Enter" over the query the user had just pressed Enter
-        on. ``replace_only`` writes over a message already showing and does
-        nothing otherwise — a preview is on screen then, and a mount would
-        stack the line above it rather than replacing it.
+        A search that finds nothing must not leave "Type a query and press
+        Enter" over the query just run. ``replace_only`` writes over a message
+        already showing and does nothing otherwise: a preview is on screen
+        then, and a mount would stack the line above it rather than replace it.
         """
         import contextlib
 
@@ -1866,7 +1865,7 @@ class PreviewPresenter:
         # Step 2: wait for the above-window chunks to be MOUNTED, then built.
         # We cannot just read chunk_widgets now: when the focus chunk was
         # prefetched its build_done is already set, so Step 1 returns before
-        # stage 1b has mounted the window — chunk_widgets would hold only the
+        # stage 1b has mounted the window; chunk_widgets would hold only the
         # focus chunk (above_waited=0), the scroll would land against a
         # focus-at-top layout, and the view would settle-scroll once the real
         # above content mounts. Yield until every expected above seq exists.
@@ -2400,7 +2399,7 @@ class PreviewPresenter:
         expensive: a fully-filled file measured 99 chunks holding 2,735 widgets,
         and Textual's arrange is linear in widget count, so the whole file's DOM
         taxes every interaction. Freezing keeps what the fill buys and drops what
-        it costs — the chunk is still there to jump to, at one widget instead of
+        it costs: the chunk is still there to jump to, at one widget instead of
         ~28.
 
         Runs as one pass after the fill rather than per chunk during it: a chunk
@@ -3678,7 +3677,7 @@ class PreviewPresenter:
 
             # Stage 2a: background fill BELOW the window, capped at the
             # lazy-mount radius. Kept SMALL so first paint only needs the
-            # window — the full mount is deferred to stage 3, strictly
+            # window; the full mount is deferred to stage 3, strictly
             # after the reveal, so it never delays first paint.
             self.mount_phase = "2a-below"
             below_end = min(len(chunks), focus_idx + 1 + tuning.BACKGROUND_FILL_RADIUS)

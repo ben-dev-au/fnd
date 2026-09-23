@@ -95,9 +95,8 @@ def _score_style(score: float, max_score: float) -> str:
 #: compete with them, and ``◐`` is a roll-up rather than a state of its own.
 STATE_COLOUR_VARIABLE = {"●": "success", "⊘": "error"}
 
-#: Used when the theme names no such variable. Without a fallback the colour
-#: was dropped in silence, which is indistinguishable from the feature being
-#: absent — and a theme is not required to define every semantic colour.
+#: Used when the theme names no such variable, which a theme may omit: a
+#: colour dropped in silence is indistinguishable from the feature being absent.
 STATE_COLOUR_FALLBACK = {"●": "green", "⊘": "red"}
 
 
@@ -145,8 +144,8 @@ def reapply_state_marker(rendered: Any, label: Any) -> Any:
     """Put a marker's colour back over a row style applied on top of it.
 
     Textual stylises a whole label with the cursor's component style, and a
-    span added last wins — so the marker lost its colour on exactly the row
-    the user was looking at. Only styles this module minted are restored.
+    span added last wins, so the marker would lose its colour on exactly the
+    row the user is looking at. Only styles this module minted are restored.
     """
     from rich.text import Text
 
@@ -313,10 +312,9 @@ def _format_hit_label(
     snippet = _shorten(h.snippet, 80) if h.snippet else ""
     body = f"{loc}  {snippet}" if snippet else loc
     if body_budget > 0 and cell_len(body) > body_budget:
-        # The locator always survives; the space after it is the snippet's.
-        # Dropping the snippet whole left `p.57` alone on a half-empty line at
-        # any real pane width. Only when the locator itself overruns does it
-        # fall back to its distinguishing tail (24 sibling `section` rows).
+        # The locator always survives and the snippet, never dropped whole,
+        # fills the space after it. Only a locator that overruns falls back to
+        # its distinguishing tail (24 sibling `section` rows).
         room = body_budget - cell_len(loc) - 2
         if snippet and room >= 4:
             body = f"{loc}  {_shorten(snippet, room)}"
@@ -342,7 +340,7 @@ def disambiguated_names(paths: Sequence[str]) -> dict[str, str]:
     from collections import defaultdict
 
     # Split each path once and group the rivals once. Recomputing `Path(q).parts`
-    # inside the depth loop, over every other path, measured 73 ms at 200 rows —
+    # inside the depth loop, over every other path, measured 73 ms at 200 rows,
     # and `_refresh_status` reaches this from twenty call sites.
     parts_by: dict[str, tuple[str, ...]] = {p: Path(p).parts for p in paths}
     by_name: dict[str, list[str]] = defaultdict(list)
@@ -361,7 +359,7 @@ def disambiguated_names(paths: Sequence[str]) -> dict[str, str]:
             out[group[0]] = name
             continue
         # Sorted on the reversed path, the rival sharing the deepest tail with
-        # a row is one of its two neighbours — so each row compares twice
+        # a row is one of its two neighbours, so each row compares twice
         # instead of against every other row.
         order = sorted(group, key=lambda q: tuple(reversed(parts_by[q])))
         for i, path in enumerate(order):

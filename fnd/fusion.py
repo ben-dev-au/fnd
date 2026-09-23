@@ -1,6 +1,6 @@
 """Parallel multi-query + Reciprocal Rank Fusion.
 
-The cascade in :mod:`fnd.cascade` widens *sequentially* — only run the next
+The cascade in :mod:`fnd.cascade` widens *sequentially*: only run the next
 pass if the previous one came up short. This module runs sub-queries *in
 parallel* and fuses them with Reciprocal Rank Fusion (RRF), so a doc that
 ranks well in several sub-queries gets a real boost. The two mechanisms are
@@ -107,8 +107,8 @@ _SOURCE_TO_PASS_INDEX: dict[str, int] = {
 }
 
 # Strong-signal bypass thresholds. Operate on a normalized BM25 score
-# ``s_norm = s / (1 + s)``, monotone in [0, 1) — query-independent and
-# corpus-stable. Adapted from tobi/qmd (MIT) — see README acknowledgments.
+# ``s_norm = s / (1 + s)``, monotone in [0, 1), so query-independent and
+# corpus-stable. Adapted from tobi/qmd (MIT); see the README's Acknowledgments.
 STRONG_SIGNAL_MIN_NORM_SCORE: float = 0.85
 STRONG_SIGNAL_MIN_NORM_GAP: float = 0.15
 
@@ -379,8 +379,8 @@ def fusion_search(
 
     ``precomputed_lex_ranking``: when supplied, the lex sub-query reuses
     this list instead of issuing a fresh ``_filtered_raw_hits`` call. Lets
-    the regime probe in :mod:`fnd.layered` double as fusion's lex pass —
-    saves one Tantivy round-trip on every non-bypass query.
+    the regime probe in :mod:`fnd.layered` double as fusion's lex pass,
+    saving one Tantivy round-trip on every non-bypass query.
 
     ``with_trace``: when ``True``, returns ``(hits, FusionTrace)`` so
     callers (CLI ``--explain`` / TUI ``:explain``) can inspect which

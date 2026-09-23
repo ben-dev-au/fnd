@@ -18,8 +18,8 @@ class StateMarkerLabel:
     """Mixin for a ``Tree`` whose rows carry ``●``/``⊘``/``◐`` markers.
 
     Textual's cursor component style is stylised over the whole label after
-    the label's own spans, so the marker read plain on the highlighted row —
-    the one place a user is certain to be looking.
+    the label's own spans, so without this the marker reads plain on the
+    highlighted row, the one place a user is certain to be looking.
     """
 
     def render_label(self, node: TreeNode[Any], base_style: Style, style: Style) -> Text:

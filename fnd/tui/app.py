@@ -143,17 +143,15 @@ def _hint_clusters(
             # and the Keybindings page then can't disagree.
             key = os_labels.localise(key)
             label = os_labels.localise(label)
-            # `[key]` is markup to Rich, so the chip painted a reversed blank.
+            # `[key]` is markup to Rich; unescaped, the chip paints a reversed blank.
             out.append_text(Text.from_markup(f"[reverse] {escape(key)} [/] {escape(label)}"))
         return out
 
     from rich.text import Text as _Text
 
     joined = _cluster(anchors)
-    # Anchors are dropped off the LEFT, so their marker goes there. Appending
-    # it pointed at a tail that was complete: at 120 columns the bar lost
-    # `/ Search`, `: Menu`, `? Keys` and `q Quit` — every way to search, get
-    # help or quit — and put the … after `Discard`, which was still on screen.
+    # Anchors are dropped off the LEFT, so their marker goes there; a trailing
+    # one points at contextual keys that are all still on screen.
     if elided and _ELISION not in contextual:
         head = _Text("…  ", style="dim")
         head.append_text(joined)
@@ -189,8 +187,8 @@ class _HintBar:
 
     Anchors repeat on every screen and are listed under `?`; a screen's own
     keys are neither, so an overlong bar drops anchors from the right first.
-    Without this the terminal cropped the tail and the form's `^S Save`
-    never painted. Not a :class:`Text` subclass: Rich renders one through a
+    Otherwise the terminal crops the tail, and with it the form's `^S Save`.
+    Not a :class:`Text` subclass: Rich renders one through a
     fast path that never consults ``__rich_console__``.
     """
 
@@ -217,10 +215,9 @@ class _HintBar:
     def _kept(self, n: int) -> tuple[tuple[str, str], ...]:
         """The first ``n`` hints, always including the keys that save and leave.
 
-        Dropping from the right cut `^s Save` while leaving `c Clear` — a
-        destructive key outliving the one that keeps the work — and then cut
-        `Esc Discard` too, so a narrow terminal advertised seven things to do
-        on a screen and no way off it.
+        Dropping from the right would cut `^s Save` while keeping `c Clear` (a
+        destructive key outliving the one that keeps the work), then `Esc
+        Discard`, leaving a narrow terminal no way off the screen.
         """
         must = [h for h in self._contextual if _is_commit(h[0]) or _is_leave(h[0])]
         room = max(0, n - len(must))
@@ -235,9 +232,8 @@ class _HintBar:
         # Back into bar order, so the keys do not reshuffle as the pane resizes.
         kept = [h for h in rest if h in kept]
         dropped = len(rest) - len(kept)
-        # The cut is in the MIDDLE — the keys that save and leave are held back
-        # to the end — so a trailing ellipsis pointed at a tail that is still
-        # there. Mark the join instead.
+        # The cut is in the MIDDLE (the keys that save and leave are held back
+        # to the end), so the ellipsis marks the join, not the tail.
         gap = (_ELISION,) if dropped > 0 else ()
         return (*kept, *gap, *must)
 
@@ -270,7 +266,7 @@ def render_hint_bar(
     (always present, builds muscle memory), ``contextual`` on the right
     (changes by focus / screen). Both use the same key-glyph rendering
     so the visual is identical across the main app and the Settings
-    menu — this is the renderer both call into.
+    menu; this is the renderer both call into.
     """
     return _HintBar(anchors, contextual)
 
@@ -394,7 +390,7 @@ class FNDApp(App[None]):
     #filters_pane #clear_filters_bar:focus { color: $accent; text-style: bold; background: $accent 15%; }
     /* Notices wear the app's chrome, not Textual's. The stock toast is a
        filled $panel-lighten-1 slab with a thick outer bar down one side,
-       padded 1 1 and fixed at 60 columns — dropped over panes that are all
+       padded 1 1 and fixed at 60 columns; dropped over panes that are all
        thin round outlines on $surface, it reads as something else's widget.
        Same border grammar as every pane here: round, severity-coloured, and
        sized to what it says. */
@@ -469,9 +465,9 @@ class FNDApp(App[None]):
        Zero the pane's own scrollbar too: for flat-buffer previews the
        inner LineBufferPreview already shows the match-marker bar, so the
        pane's bar is a bare duplicate. */
-    /* Top edge only. The border went entirely so the frame would not be
-       copied with the text, and a top edge is not inside a selection —
-       while nothing else on screen said which document this was. */
+    /* Top edge only: a full frame would be copied with the text, a top edge
+       is not inside a selection, and nothing else on screen names the
+       document. */
     #preview_pane.-reading {
         border: none;
         border-top: round $accent;
@@ -481,7 +477,7 @@ class FNDApp(App[None]):
     /* While a partial mount is in flight we hide the scrollbar (its
        virtual size keeps growing as chunks land, so the thumb would
        jitter). Programmatic ``scroll_to_widget`` calls during the hidden
-       prepend above the window still need to work — using
+       prepend above the window still need to work; using
        ``overflow-y: hidden`` would prevent that, so we only suppress the
        bar's chrome, not scrolling.
 
@@ -1040,9 +1036,8 @@ class FNDApp(App[None]):
     def action_quit(self) -> None:  # type: ignore[override]
         """Quit, unless the screen is holding work nobody has saved.
 
-        `q` used to mean "back" on six editing screens and "quit" everywhere
-        else — one key, two meanings, a screen apart — because nothing stopped
-        a quit throwing an edit away. Esc is back; `q` is quit; both ask first.
+        Esc is back and `q` is quit on every screen; both ask first, so a quit
+        never throws an unsaved edit away.
         """
         from fnd.tui.settings_screen import UnsavedChangesScreen, unsaved_on_stack
 
@@ -1159,9 +1154,9 @@ class FNDApp(App[None]):
         Delegates the actual rendering to :func:`render_hint_bar` so the
         Settings menu uses the same visual.
         """
-        # Every read below reaches the active screen, and a footer refresh can
-        # land after the stack has emptied — a resize or a focus change during
-        # teardown. `ScreenStackError` from here killed whatever was running.
+        # A footer refresh can land after the stack has emptied (a resize or a
+        # focus change during teardown); reading the active screen then raises
+        # `ScreenStackError` into whatever was running.
         if not self.screen_stack:
             return
         ctx = self._focus_context()
@@ -1197,10 +1192,8 @@ class FNDApp(App[None]):
             contextual = (("n/b", "Matches"), *contextual)
 
         # Every anchor reaches a focused text box as a character, so naming
-        # them while the query bar has focus advertises four dead keys — and
-        # the app opens with that focus. The settings screens already drop
-        # them for the same reason.
-        #
+        # them while the query bar (the app's opening focus) has focus
+        # advertises four dead keys.
         from textual.widgets import Input, TextArea
 
         with contextlib.suppress(Exception):
@@ -1903,10 +1896,9 @@ class FNDApp(App[None]):
         one at a time is a lot of thrown-away work. Holding the modifier
         batches them; the query runs once, on the next Enter in the query bar.
         """
-        # Only the two scope trees: the action declares those contexts, but
-        # ``contexts`` groups the keybindings menu and gates nothing, so the
-        # results pane reached here too — posting NodeSelected on a result row
-        # and leaving the deferral set for the next real toggle.
+        # Only the scope trees: ``contexts`` gates nothing, and from the results
+        # pane this would post NodeSelected on a result row and leave the
+        # deferral set for the next real toggle.
         if self._focus_context() not in ("collections", "filters"):
             return
         tree = self._focused_tree()
@@ -2301,19 +2293,16 @@ class FNDApp(App[None]):
         )
 
         if isinstance(self.screen, UnsavedChangesScreen):
-            # The question is already on screen and waiting for an answer.
-            # Asking it again stacked a second guard that had dropped its own
-            # Save option, because the screen holding the work was then two
-            # deep, and the layers render identically.
+            # The question is already on screen. A second guard would lose its
+            # Save option (the work is then two screens deep) and render
+            # identically over the first.
             return
         if isinstance(self.screen, SettingsScreen):
             self._close_settings_stack()
             return
-        # Opening a stack over a dirty editor is as much a way to lose the
-        # edit as closing one. The filter browser is not a SettingsScreen, so
-        # `:` landed here and pushed a SECOND settings stack over it — from
-        # which a second Index filters could be opened and saved, leaving the
-        # first holding stale values that its own `^s` then wrote back.
+        # The filter browser is not a SettingsScreen: a second settings stack
+        # over it could open and save a second Index filters, leaving the
+        # first holding stale values that its own `^s` then writes back.
         pending = unsaved_on_stack(self.screen_stack)
         if pending is not None:
             what, save, blocked = pending
@@ -2335,8 +2324,8 @@ class FNDApp(App[None]):
         the menu is open.
 
         ``ask`` routes through the unsaved-changes gate, because this is an
-        exit like any other: Esc, ←, `q` and the menu all prompted, and `:` —
-        which the screen's own footer advertises — discarded in silence.
+        exit like any other: Esc, ←, `q`, the menu and `:` (which the screen's
+        own footer advertises) all ask before discarding.
         """
         from fnd.tui.settings_screen import (
             UnsavedChangesScreen,

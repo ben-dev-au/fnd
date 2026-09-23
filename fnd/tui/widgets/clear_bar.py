@@ -5,9 +5,9 @@ focusable widget: Up from the top of the filters tree focuses it, Enter clears,
 and Down returns to the tree. It stays clickable, and the pane's clear key
 still clears from anywhere.
 
-Both filter panes mount one. A key advertised in a footer is not an
-affordance — the settings pane cleared on `c` and showed nothing that said so,
-while the sidebar had a row you could see, focus and click.
+Both filter panes mount one: a key advertised in a footer is not an
+affordance, so a pane that clears on `c` also shows a row you can see, focus
+and click.
 """
 
 from __future__ import annotations

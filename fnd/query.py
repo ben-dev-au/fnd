@@ -92,12 +92,12 @@ def scope_arms(
     """The scope as a UNION: whole collections OR a partial one's own sources.
 
     ``None`` means unscoped. An empty list means an explicitly empty scope,
-    which matches NOTHING — the panel painting "0/5 active" while every
-    collection answered is the dishonesty the partial case was fixed for.
+    which matches NOTHING, so the panel never paints "0/5 active" while every
+    collection answers.
 
-    Every caller that filters by scope builds it here. Two of them once ANDed
-    the two channels instead, so one full collection beside one partial one
-    intersected a collection name with another collection's source path.
+    Every caller that filters by scope builds it here: ANDing the two channels
+    instead intersects a collection name with another collection's source path
+    whenever a full collection sits beside a partial one.
     """
     import tantivy
 
@@ -112,10 +112,9 @@ def scope_arms(
     )
     arms: list[Query] = [tantivy.Query.term_query(schema, F_COLLECTION, c) for c in cols]
     for name, sids in (source_scope or {}).items():
-        # One compound (collection, source) term per source. A file is stored
-        # once with multi-valued collection and source fields, so ANDing them
-        # would match a file in this collection via a DIFFERENT source; the
-        # membership token keeps the pairing exact.
+        # One compound (collection, source) term per source: a file is stored once
+        # with multi-valued collection and source fields, so ANDing them would
+        # match via a DIFFERENT source. The membership token keeps the pairing exact.
         srcs = [
             tantivy.Query.term_query(schema, F_MEMBERSHIP, membership_token(name, s)) for s in sids
         ]
@@ -167,7 +166,7 @@ class Hit:
     # template variables (vscode, sublime, etc.).
     line: int = 0
     # Unix epoch seconds; 0 means "unknown / unindexed file". Used by the
-    # reranker's recency boost — pulled from the F_MTIME fast field at
+    # reranker's recency boost; pulled from the F_MTIME fast field at
     # search time, not stored on the Hit until reranking runs.
     mtime: int = 0
     # Cascade pass that produced this hit: 0 = exact, 1 = fuzzy,
@@ -918,11 +917,9 @@ def group_by_file(
             kept = [h for h in all_hits if h.score >= min_score]
         else:
             kept = all_hits
-        # Ranked, then document order as the TIE-BREAK: 60 equal-scoring
-        # sections of one file rendered "Day 3 … Day 60, Day 1, Day 2" because
-        # equal scores come back in whatever order the segments hold. Ordering
-        # by position outright is a different change — it demotes the section
-        # that scored best, and the preview lands on the first one.
+        # Ranked, then document order as the TIE-BREAK: equal scores come back in
+        # segment order ("Day 3 … Day 60, Day 1, Day 2"). Position alone would
+        # demote the best-scoring section and land the preview on the first.
         section_hits = sorted(
             kept[:sections_per_file], key=lambda h: (-h.score, h.chunk_seq, h.line)
         )

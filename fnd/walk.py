@@ -8,7 +8,7 @@ Includes/excludes precedence:
    matched an ``includes``.
 4. Hidden files (``.foo``) are excluded by default. Only an include glob that
    names a dot-prefixed component admits one, and only the paths that glob
-   itself matches — ``**/*.md`` alongside it does not widen the exception.
+   itself matches; ``**/*.md`` alongside it does not widen the exception.
 5. Symlinks are followed only if ``follow_symlinks = True``. This applies in
    two places:
    - The collection root itself — if the user-supplied ``root`` is a symlink,
@@ -20,8 +20,8 @@ Includes/excludes precedence:
      Python 3.13 default).
 
 Globs are matched against the path **relative to its root** by
-:mod:`fnd.globs`, the same translator the filter DSL's ``~~`` uses — ``*`` and
-``?`` stop at ``/``, a whole ``**`` segment spans zero or more directories.
+:mod:`fnd.globs`, the same translator the filter DSL's ``~~`` uses: ``*`` and
+``?`` stop at ``/``, and a whole ``**`` segment spans zero or more directories.
 """
 
 from __future__ import annotations
@@ -47,8 +47,8 @@ def _is_hidden(rel: Path) -> bool:
 def _hidden_includes(globs: list[str]) -> GlobSet:
     """The include patterns that explicitly name a dot-prefixed component.
 
-    A set, not a flag: one ``.obsidian/**`` beside ``**/*.md`` used to lift the
-    hidden prune for the whole tree, so an Obsidian vault indexed every note in
+    A set, not a flag: one ``.obsidian/**`` beside ``**/*.md`` must not lift the
+    hidden prune for the whole tree, or an Obsidian vault indexes every note in
     ``.trash``. Only these globs may admit a hidden path.
     """
     return GlobSet.parse([g for g in globs if names_hidden(g)])
@@ -161,9 +161,9 @@ def _dir_identity(path: Path) -> tuple[int, int] | None:
     """(device, inode) for a directory, or None if it cannot be stat'd.
 
     Identity rather than the path string: a symlink cycle produces endlessly
-    many distinct paths for the same directory, and the walk only terminated
-    when the OS refused the depth — after walking one file dozens of times and
-    storing the deepest alias as its path.
+    many distinct paths for the same directory, so a path-keyed walk ends only
+    when the OS refuses the depth, having walked one file dozens of times and
+    stored the deepest alias as its path.
     """
     try:
         info = path.stat()
@@ -223,11 +223,9 @@ def _scandir_walk(
         scope = inherited
         if ignore_names:
             present = {e.name for e in entries}
-            # A directory holding .git is a repository root: git applies no
-            # outer .gitignore inside it, so neither do we. Nested repos are
-            # common in a corpus of cloned assignments. Only git's own files
-            # are dropped: a .fndignore is ours and says what the user does
-            # not want searched, which a cloned repo has no say over.
+            # A directory holding .git is a repository root: git applies no outer
+            # .gitignore inside it, so neither do we. A .fndignore still applies:
+            # it says what the user does not want searched, which a clone cannot.
             outer = inherited.without(".gitignore") if ".git" in present else inherited
             scope = outer.push(
                 *(load_ignore_file(current, n) for n in ignore_names if n in present)
@@ -253,7 +251,7 @@ def _scandir_walk(
                 # index lives inside a scanned corpus.
                 if _is_index_dir(entry.path):
                     continue
-                # Descent asks only whether any hidden-targeting glob exists —
+                # Descent asks only whether any hidden-targeting glob exists:
                 # a glob cannot say whether something under a prefix could match
                 # it. The file test below is what decides membership.
                 if name.startswith(".") and not hidden_inc:
@@ -348,10 +346,9 @@ def walk_sources(
         resolved = source.effective_filters
         spec = spec_from_resolved(resolved)
         gate = build_gate(spec)
-        # Scoped through the dimension rather than by hand: strict null would
-        # otherwise fail a frontmatter comparison on every PDF and drop the
-        # lot, and a hand-rolled scope here is what let a note with no block
-        # through the rule that named its course.
+        # Scoped through the dimension, not by hand: strict null would fail a
+        # frontmatter comparison on every PDF and drop the lot, and a hand-rolled
+        # scope lets a note with no block through the rule that names its course.
         frontmatter_dim = dimension("frontmatter")
         scoped = [
             rule
@@ -374,10 +371,9 @@ def walk_sources(
             if on and name in IGNORE_FILENAMES
         ]
         providers = [p for p in TAG_PROVIDERS.values() if p.available_on(sys.platform)]
-        # ``walk`` resolves the root before yielding, so facts must measure
-        # against the resolved form. macOS /tmp and /var are themselves
-        # symlinks, so a mismatch here silently turns ``file.path`` into an
-        # absolute path and any rule using it stops matching.
+        # ``walk`` yields under the resolved root, so facts measure against it:
+        # macOS /tmp and /var are symlinks, and a mismatch silently turns
+        # ``file.path`` absolute, so any rule using it stops matching.
         facts_root = _resolved_root(source.path)
         for path in walk(
             roots=[source.path],

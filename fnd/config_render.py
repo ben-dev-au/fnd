@@ -87,10 +87,9 @@ def extract_preserved(text: str) -> str:
         return ""
     end = text.find(PRESERVE_END, start)
     if end < 0:
-        # No end marker: take the comment run that follows and stop at the
-        # first line that is neither blank nor a comment. Running to end of
-        # file swallows the generated prose below, which is then preserved
-        # forever and grows the file on every write.
+        # No end marker: stop at the first line that is neither blank nor a
+        # comment; running to end of file would preserve the generated prose
+        # below forever and grow the file on every write.
         rest = text[start + len(PRESERVE_BEGIN) :].split("\n")
         stop = next(
             (i for i, ln in enumerate(rest) if ln.strip() and not ln.lstrip().startswith("#")),
@@ -252,11 +251,9 @@ def _model_body(model: BaseModel, names: tuple[str, ...]) -> list[str]:
 
 def _set_fields(model: BaseModel, order: tuple[str, ...] = ()) -> list[str]:
     """Only what differs from the default; repeated tables stay readable."""
-    # Declaration order, never a set: set iteration follows the hash seed, so
-    # the rendered order changed per process and ensure_current saw a diff and
-    # rewrote the file, with a backup, on every launch.
-    # Deprecated fields are advertised nowhere but still written when set: a
-    # missing migration must not silently delete a rule the user relies on.
+    # Declaration order, never a set: set order follows the hash seed, so
+    # ensure_current would rewrite the file on every launch. Deprecated fields
+    # are still written when set, so a missing migration never drops a rule.
     declared = list(type(model).model_fields)
     names = [*(n for n in order if n in declared), *(n for n in declared if n not in order)]
     out: list[str] = []

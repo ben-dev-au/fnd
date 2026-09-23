@@ -3,9 +3,8 @@
 One translation core, two policies over it: ignore files add git's anchoring,
 negation, directory-only and case-folding rules; a config glob is the anchored,
 case-sensitive case. Sharing the core is what stops ``walk``'s include/exclude
-globs and the filter DSL's ``~~`` from answering differently about one path —
-they were separate ``fnmatch`` call sites and disagreed on every ``**/``-prefixed
-pattern.
+globs and the filter DSL's ``~~`` from answering differently about one path, as
+separate ``fnmatch`` call sites do on every ``**/``-prefixed pattern.
 
 ``*``, ``?`` and a character class all stop at ``/``; a whole ``**`` segment
 spans zero or more directories. A pattern the regex engine cannot compile never
@@ -146,15 +145,9 @@ def translate(pattern: str, *, anchored: bool, fold_case: bool = False) -> re.Pa
             parts.append("/")
     body = "".join(parts)
     prefix = "" if anchored else "(?:.*/)?"
-    # Matches the path itself only. A pattern naming a directory covers its
-    # contents because the walker never descends into an ignored directory —
-    # extending the regex over descendants instead would let a negated
-    # pattern re-include files the following patterns should still exclude.
-    # No re.IGNORECASE: that folds a character class too, so "*.[CH]" would
-    # match "x.c" where git keeps it. The literals are lowered above and the
-    # path is lowered at match time, which is what git's WM_CASEFOLD does.
-    # \Z, not $: $ also matches before a trailing newline, so a file
-    # literally named "report.md\n" would match the glob "report.md".
+    # The path itself only: the walker skips ignored directories, and covering
+    # descendants would let a negation re-include what later patterns exclude.
+    # No re.IGNORECASE, which folds "[CH]" where git does not; \Z, as $ matches before "\n".
     return re.compile(f"^{prefix}{body}\\Z")
 
 

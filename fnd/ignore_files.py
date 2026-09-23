@@ -1,8 +1,8 @@
 """``.gitignore`` / ``.fndignore`` matching.
 
 Git's own semantics, hand-rolled over the shared translator in
-:mod:`fnd.globs`: this module owns the *policy* — per-directory stacking,
-innermost-wins, negation, anchoring, case-folding — while the pattern language
+:mod:`fnd.globs`: this module owns the *policy* (per-directory stacking,
+innermost-wins, negation, anchoring, case-folding) while the pattern language
 itself is shared with config globs. Correctness is held by differential tests
 against ``git check-ignore``.
 
@@ -90,7 +90,7 @@ def _fold_case(directory: Path, name: str) -> bool:
 
     git sets ``core.ignorecase`` from the filesystem at clone time, so a
     case-sensitive volume on macOS gets case-sensitive matching. Keying off
-    ``sys.platform`` instead would exclude files git keeps — the same class of
+    ``sys.platform`` instead would exclude files git keeps: the same class of
     silent over-exclusion, in the other direction.
     """
     flipped = name.upper() if name != name.upper() else name.lower()
@@ -142,9 +142,9 @@ def parse_patterns(text: str, *, fold_case: bool = False) -> tuple[Pattern, ...]
             regex = translate(line, anchored=anchored, fold_case=fold_case)
 
         except re.error:
-            # git tolerates a pattern its own matcher cannot use — an inverted
-            # character range, say — by never matching it. Aborting the whole
-            # index run over one line of one .gitignore does not.
+            # git tolerates a pattern its own matcher cannot use (an inverted
+            # character range, say) by never matching it, rather than aborting
+            # the whole index run over one line of one .gitignore.
             continue
         out.append(
             Pattern(
@@ -189,8 +189,8 @@ def load_ignore_file(directory: Path, name: str) -> IgnoreFile | None:
     except OSError:
         return None
     # utf-8-sig, because git strips a BOM and PowerShell 5.1 and VS Code's
-    # "UTF-8 with BOM" both write one. Kept, it makes the first pattern —
-    # usually the big one — match nothing while every later line works.
+    # "UTF-8 with BOM" both write one. Kept, it makes the first pattern
+    # (usually the big one) match nothing while every later line works.
     text = raw.decode("utf-8-sig", errors="replace")
     patterns = parse_patterns(text, fold_case=_fold_case(directory, name))
     return IgnoreFile(path=path, anchor=directory, patterns=patterns) if patterns else None
@@ -200,7 +200,7 @@ def load_ignore_file(directory: Path, name: str) -> IgnoreFile | None:
 class IgnoreStack:
     """Ignore files in scope, outermost first.
 
-    Immutable so the walker can carry one per stack entry — its DFS holds
+    Immutable so the walker can carry one per stack entry: its DFS holds
     siblings from several parents at once, and a mutable push/pop would apply
     a sibling's rules to the wrong subtree.
     """
@@ -219,9 +219,9 @@ class IgnoreStack:
         """The decision, taken per KIND of ignore file, exclusion winning.
 
         `.gitignore` and `.fndignore` are separate policies, not one merged
-        file. Deciding across both together let a negation in one re-admit
-        what the other excluded — so switching `.fndignore` ON could *add*
-        files, and a whitelisting one made `.gitignore` a no-op entirely.
+        file. Deciding across both together would let a negation in one
+        re-admit what the other excluded, so switching `.fndignore` ON could
+        *add* files, and a whitelisting one would make `.gitignore` a no-op.
         Within a single kind the innermost file still wins, as git does.
         """
         negated: IgnoreMatch | None = None
@@ -253,8 +253,8 @@ def ancestor_stack(_root: Path, _names: Sequence[str]) -> IgnoreStack:
     git would apply an enclosing repository's rules to a subdirectory, but a
     source is a folder the user named, and honouring rules written for a
     different purpose above it is destructive out of proportion to the case it
-    serves. A dotfiles repository in the home directory — ``*`` plus a handful
-    of negations, a common shape — makes every file under ``~/Documents``
+    serves. A dotfiles repository in the home directory (``*`` plus a handful
+    of negations, a common shape) makes every file under ``~/Documents``
     ignored, and the source indexes nothing at all.
     """
     return IgnoreStack()

@@ -37,7 +37,7 @@ def skim_url(path: Path, page: int, *, search: str = "") -> str:
     """Build a Skim deep-link URL for ``path`` at 1-based ``page``.
 
     When ``search`` is non-empty, Skim opens with that string highlighted /
-    selected on the page — Skim's URL fragment supports ``&search=…``.
+    selected on the page (Skim's URL fragment supports ``&search=…``).
 
     Format: ``skim:///<pct-encoded-abs-path>#page=N`` with three slashes
     (skim:// + absolute path starting with /).

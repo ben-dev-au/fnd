@@ -331,7 +331,7 @@ def test_a_window_names_the_date_it_freezes_to() -> None:
     rolling when it is not."""
     labels = {lbl for b in spec_branches(FilterSpec()) if b.id == "modified" for _i, lbl in b.items}
     week = (dt.date.today() - dt.timedelta(days=7)).isoformat()
-    assert f"Last 7 days — from {week}" in labels
+    assert f"Last 7 days, from {week}" in labels
     assert "Any time" in labels, "the no-bound row names no date"
 
 

@@ -64,8 +64,8 @@ class Rule:
 
     def _in_scope(self, facts: FileFacts) -> bool:
         """A rule scoped to kinds ignores every other kind, so a frontmatter
-        predicate cannot silently drop the PDFs it was never about — and, with
-        ``needs_frontmatter``, still judges any file that carries a block."""
+        predicate cannot silently drop the PDFs it was never about; with
+        ``needs_frontmatter``, it still judges any file that carries a block."""
         if self.applies_to is not None:
             try:
                 kind = facts["file.kind"]
@@ -187,7 +187,7 @@ class FilterSpec:
         """Whether the tag rules can admit nothing at all.
 
         A file must carry a required tag to pass, and is dropped if it carries
-        an excluded one — so when each required tag is excluded too, the set is
+        an excluded one, so when each required tag is excluded too, the set is
         empty however large the corpus.
         """
         includes = self.tag_includes
@@ -199,19 +199,17 @@ class FilterSpec:
         )
 
     def __post_init__(self) -> None:
-        # Tags are a set per source: order carries no meaning, and the
-        # dimensions render them sorted, so an unsorted spec would not survive
-        # its own text form. A bare sequence claims every source — the rule the
-        # config and ``--tag`` already use.
+        # Tags are a set per source, sorted so a spec survives its own text form.
+        # A bare sequence claims every source, the rule the config and ``--tag``
+        # already use.
         from fnd.filters.dimensions import tag_selection
 
         for name in ("include_tags", "exclude_tags"):
             object.__setattr__(self, name, tag_selection(getattr(self, name)))
 
-        # An expression naming only frontmatter fields is a frontmatter rule.
-        # Left in ``expression`` it would be evaluated against every file and
-        # strict-null every PDF out of the index; and the two fields would
-        # disagree about the same text depending on which one it landed in.
+        # An expression naming only frontmatter fields is a frontmatter rule: left
+        # in ``expression`` it would strict-null every PDF out of the index, and
+        # the same text would mean different things in the two fields.
         if self.expression and not self.frontmatter:
             with contextlib.suppress(Exception):
                 from fnd.filter_dsl import parse as _parse
@@ -222,10 +220,9 @@ class FilterSpec:
                     object.__setattr__(self, "frontmatter", self.expression)
                     object.__setattr__(self, "expression", "")
 
-        # The mirror. A frontmatter rule naming ``file.*`` is not one, and the
-        # text round trip used to notice: `t` then save with no edit moved the
-        # rule and changed what was indexed. Canonicalising here lands the
-        # change where the user typed it.
+        # The mirror: a frontmatter rule naming ``file.*`` is not one. Moved here,
+        # where the user typed it, so `t` then save with no edit cannot move the
+        # rule and change what is indexed.
         if self.frontmatter:
             with contextlib.suppress(Exception):
                 from fnd.filters.text_form import _and_join, split_frontmatter

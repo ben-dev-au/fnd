@@ -49,10 +49,9 @@ class ResultsView:
         """Border title for the results pane — counts live next to the data
         they describe, not in a global status bar.
 
-        A collapsed pane says so: two `←` presses shrink it to one row, the
-        state persists across launches, and the title was byte-identical to an
-        open pane's — so the app came up looking as though the results had
-        simply gone.
+        A collapsed pane says so: two `←` presses shrink it to one row and the
+        state persists across launches, so a title identical to an open pane's
+        would make the results look simply gone.
         """
         return f"{self._collapsed_marker()}{self._title_text()}"
 
@@ -70,9 +69,8 @@ class ResultsView:
             # "Results" alone is what an untouched app shows, so a search that
             # matched nothing was indistinguishable from never having run.
             return "Results" if not self._searched() else "Results: nothing matched"
-        # A capped list read as a fact about the corpus: at limit 50 over 290
-        # matches the title said `50 files`, identical to a search that really
-        # matched 50. `+` marks a floor.
+        # `+` marks a floor: at limit 50 over 290 matches, a bare `50 files`
+        # would read as a search that really matched 50.
         trace = self._app._search.latest_trace
         files_mark = "+" if trace is not None and trace.files_truncated else ""
         sections_mark = "+" if trace is not None and trace.sections_truncated else ""
@@ -105,10 +103,8 @@ class ResultsView:
             lines.append("Nothing is indexed in this scope yet: run Update index from the menu.")
         n_filters = scope.active_filter_count if scope.has_active_filters else 0
         if n_filters:
-            # A place, not a keystroke. Focus is in the query bar when this
-            # paints, so a named key types itself into the query instead of
-            # firing — the message promised `X clears it` and produced
-            # `risottoX`. The panel carries a visible row that does clear them.
+            # A place, not a keystroke: focus is in the query bar when this
+            # paints, so a named key would type itself into the query.
             one = n_filters == 1
             noun = "filter is" if one else "filters are"
             lines.append(

@@ -118,7 +118,7 @@ def fuzzy_body_clauses(
     ``F_BODY`` is en_stem-analyzed, so the on-disk token form for "Templates"
     is ``templat``. This bypasses parse_query (and its query-time stemming),
     so each query term is lowercased and Snowball-stemmed before the
-    dictionary is consulted — otherwise the Levenshtein distance is computed
+    dictionary is consulted; otherwise the Levenshtein distance is computed
     between mismatched token shapes.
 
     Each stem expands into the indexed stems within edit distance, OR-ed as
@@ -149,7 +149,7 @@ def fuzzy_body_clauses(
     for stem, dist in stems_with_dists:
         variants = _fuzzy_term_variants(searcher, stem, dist)
         if not variants:
-            # No indexed stem within distance — the AND of fuzzy term clauses
+            # No indexed stem within distance, so the AND of fuzzy term clauses
             # can never match.
             return None
         if len(variants) == 1:

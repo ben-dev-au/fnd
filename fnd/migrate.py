@@ -67,11 +67,9 @@ def check_schema_status(index_dir: Path) -> tuple[SchemaStatus, str | None]:
 def _next_step(config: Config, *, invoked: str = "") -> str:
     """What to do next, given what has been done already and what was just run.
 
-    The message used to name `collection add` unconditionally, so a user who
-    had just run it was told to run it again — the same text, verbatim, with
-    no way forward. The fix mended one branch and left the identical loop in
-    the other: `fnd tui` answered with "run `fnd tui`". ``invoked`` names the
-    command that is printing, and it is never the advice.
+    ``invoked`` names the command that is printing, and it is never the
+    advice: a user who has just run `collection add` or `fnd tui` is not told
+    to run it again.
     """
     names = list(config.collections)
     if not names:

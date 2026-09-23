@@ -18,7 +18,7 @@ This module wires three thin subclasses:
 
 Two marker-mapping modes coexist:
 
-* **Line-precise** (preferred) — driven by
+* **Line-precise** (preferred): driven by
   ``set_match_lines(lines, total_lines)``. Each match line maps to one
   exact track cell via ``cell = int(line * track_height / total_lines)``,
   so a single big chunk and many tiny ones each get a marker at the right
@@ -367,11 +367,9 @@ class MatchAwareScroll(VerticalScroll):
     # paging horizontally into empty space.
     BINDINGS = [  # noqa: RUF012 — Textual widget BINDINGS expects a class-level list
         Binding("left", "bridge_left", "Focus results", show=False),
-        # The footer has advertised `j/k Scroll` in the preview and in Reading
-        # View since before this widget existed, and Textual's scroll view
-        # binds only the arrows. The rest of the app speaks vi keys — the
-        # settings list binds `up,k` / `down,j` — so the keys are what was
-        # missing, not the promise.
+        # The footer advertises `j/k Scroll` here and the rest of the app speaks
+        # vi keys (the settings list binds `up,k` / `down,j`), but Textual's
+        # scroll view binds only the arrows.
         Binding("j", "scroll_down", "Scroll down", show=False),
         Binding("k", "scroll_up", "Scroll up", show=False),
     ]

@@ -1,8 +1,8 @@
 """Python post-rank score adjustments.
 
 Tantivy hardcodes BM25 ``k1``/``b`` upstream and exposes no per-doc score
-callback. The high-leverage knobs — recency decay, per-kind weighting,
-query-term clustering — are applied here in Python after the raw search
+callback. The high-leverage knobs (recency decay, per-kind weighting,
+query-term clustering) are applied here in Python after the raw search
 returns, then the hit list is re-sorted.
 
 Three pure functions plus an orchestrator. Each pure function is unit-tested

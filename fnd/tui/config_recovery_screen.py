@@ -136,8 +136,8 @@ class ConfigRecoveryScreen(Screen["Literal['valid', 'exit']"]):
         super().__init__()
         self._error_text = error_text
         self._config_path = config_path
-        # Backing out of the startup flow ends the process — there is no
-        # session behind it to return to — so the row cannot say "Dismiss"
+        # Backing out of the startup flow ends the process (there is no
+        # session behind it to return to), so the row cannot say "Dismiss"
         # on both routes.
         self._standalone = standalone
 

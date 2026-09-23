@@ -90,8 +90,8 @@ def _branch_row(
 ) -> str:
     """A `label (value)` row, collapsing toward the VALUE as room runs out.
 
-    At 62 columns the padded form does not fit and the pane dropped the value,
-    so an inert `Tags (none indexed)` painted identically to a live filter.
+    At 62 columns the padded form does not fit, and dropping the value would
+    paint an inert `Tags (none indexed)` identically to a live filter.
     ``column`` aligns a fixed set of rows; 0 suits a label that is user data
     and has no column to line up with.
     """
@@ -583,10 +583,9 @@ class ScopeController:
             # on this row reads perfectly healthy while it does. One stat each,
             # because this rebuilds on every scope toggle.
             gone = _missing_sources(col)
-            # The NAME was cut with no ellipsis, so `research-notes` painted as
-            # `research-note`: a collection that does not exist, and
-            # indistinguishable from one that could. The marker keeps its place
-            # at the front; the row elides from the name inwards.
+            # The row elides from the name inwards with an ellipsis, marker kept
+            # at the front: a bare cut (`research-note`) names a collection that
+            # could exist.
             prefix = f"{marker}  "
             value = f"{n_sources} source{plural}"
             compact = f"{n_sources} src"
@@ -819,7 +818,7 @@ class ScopeController:
         self.refresh_filters_panel_title()
         self._update_clear_bar()
         # Clear-bar showing/hiding (and a rebuilt tag list) change the pane's
-        # row demand — reflow the sidebar heights.
+        # row demand, so reflow the sidebar heights.
         self._app._reflow_sidebar()
 
     def refresh_filters_panel_title(self) -> None:
@@ -908,7 +907,7 @@ class ScopeController:
         if query:
             self._app._search.run(query)
         # Results arriving re-lay the sidebar out, and Textual clamps a tree's
-        # scroll offset without moving its cursor — so the row the user was on
+        # scroll offset without moving its cursor, so the row the user was on
         # can end up off screen until the next keypress snaps back to it.
         self._app.call_after_refresh(self._keep_scope_cursors_visible)
 
@@ -978,9 +977,8 @@ class ScopeController:
     def active_filter_count(self) -> int:
         """How many FILTERS are active, as the pane title counts them.
 
-        Counting selections instead read `Clear 4 filters` one row under
-        `Filters — 2 kinds, month, 1 tag`: two ticks inside one facet are not
-        two filters, and the two lines disagreed about the same state.
+        Two ticks inside one facet are one filter, so `Clear 3 filters` agrees
+        with `Filters: 2 kinds, month, 1 tag` on the row above it.
         """
         return (
             (1 if self.filter_kinds else 0)
@@ -1352,8 +1350,8 @@ class ScopeController:
     def on_filters_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
         """Consume the batch-toggle deferral however this handler exits.
 
-        Most of its paths return without committing — a section header, an
-        unknown node kind — and a flag left set would silence the *next*
+        Most of its paths return without committing (a section header, an
+        unknown node kind), and a flag left set would silence the *next*
         real toggle instead of this one.
         """
         try:
@@ -1438,8 +1436,8 @@ class ScopeController:
     def on_collections_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
         """Consume the batch-toggle deferral however this handler exits.
 
-        Most of its paths return without committing — a section header, an
-        unknown node kind — and a flag left set would silence the *next*
+        Most of its paths return without committing (a section header, an
+        unknown node kind), and a flag left set would silence the *next*
         real toggle instead of this one.
         """
         try:
@@ -1485,16 +1483,12 @@ class ScopeController:
         self._update_collections_panel_node(ev.node)
         self._refresh_collections_panel_title()
         # The tag and file-type rows are index-derived and scoped to the active
-        # collections, so a scope change changes which of them exist. Without
-        # this the tags living only in the collection just ticked stayed
-        # unfilterable until a search or a restart rebuilt the panel.
+        # collections, so a scope change changes which of them exist.
         self.refresh_filters_panel()
         self._app._refresh_status()
         self.persist()
-        # Re-run on the same debounce the filter toggles use, so a scope
-        # change shows its result instead of emptying both panes with nothing
-        # to say why. Batch-toggling is served by the modifier (see
-        # ``batched``) rather than by making every change manual.
+        # Re-run on the filter toggles' debounce so a scope change shows its
+        # result; batch-toggling is the modifier's job (see ``batched``).
         self._commit_filter_change()
 
     def _toggle_source(self, collection: str, source_id: str) -> None:

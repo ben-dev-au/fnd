@@ -93,14 +93,14 @@ class ToggleGroup:
     ``mode`` picks the leaf behaviour, so one tree can carry the several kinds
     of choice a filter set needs:
 
-    * ``multi``   — any number on (file types)
-    * ``cycle``   — off → exclude → include → off; see ``_cycle`` for why
+    * ``multi``: any number on (file types)
+    * ``cycle``: off → exclude → include → off; see ``_cycle`` for why
       this differs from the query pane
-    * ``radio``   — at most one on (a date window, a size bound)
-    * ``actions`` — leaves carry no state; Enter asks the host to open an
+    * ``radio``: at most one on (a date window, a size bound)
+    * ``actions``: leaves carry no state; Enter asks the host to open an
       editor. For the rules that are typed rather than ticked.
 
-    ``empty_label`` is what the branch means when nothing under it is on —
+    ``empty_label`` is what the branch means when nothing under it is on:
     "no file type ticked" reads as *nothing included* unless the row says
     otherwise.
     """
@@ -119,22 +119,21 @@ class ToggleGroup:
     partly-on branch says how much is on rather than only that some is."""
     complete: bool = True
     """False while the leaves are still being discovered. Until then the only
-    tags known are the excluded ones the spec named, so the roll-up read ⊘ —
-    a red "never index any of these" that became ◐ when the scan landed."""
+    tags known are the excluded ones the spec named, so the roll-up must not
+    read ⊘, a red "never index any of these" that becomes ◐ when the scan lands."""
     groups: tuple[ToggleGroup, ...] = ()
     """Sub-categories. A group carries items or sub-groups, not usually both."""
     name_leaves: bool = False
     """Name what is on rather than counting it. For a branch of two or three
-    short labels, "1 of 2 files" says less than the file's name — and the
-    summary below the tree was carrying the names instead."""
+    short labels, "1 of 2 files" says less than the file's name."""
     elsewhere: str = ""
     """A bound on this dimension the branch cannot show. A radio branch reading
-    `○ (Any size)` while a minimum filtered was a false statement, not a
+    `○ (Any size)` while a minimum filters is a false statement, not a
     partial one."""
     hidden: tuple[ToggleItem, ...] = ()
     """Leaves a row filter is not showing. They still belong to the branch, so
-    a roll-up counted over the visible ones alone read `● every type` with one
-    of forty ticked."""
+    a roll-up counted over the visible ones alone would read `● every type`
+    with one of forty ticked."""
 
     @property
     def leaves(self) -> tuple[ToggleItem, ...]:
@@ -147,7 +146,7 @@ class ToggleGroup:
         toggling still acts on what is on screen.
 
         Each level holds only the leaves it dropped itself, so nothing is
-        counted twice — an inflated denominator is the same defect as a
+        counted twice: an inflated denominator is the same defect as a
         shrunken one.
         """
         return self.items + self.hidden + tuple(it for g in self.groups for it in g.counted_leaves)
@@ -212,7 +211,7 @@ class ToggleTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str, 
         self, label: str = "", *, id: str | None = None, cycle_leaves: bool = False
     ) -> None:
         super().__init__(label, id=id)
-        # Cycle mode gives leaves a third state — ⊘ exclude — matching the
+        # Cycle mode gives leaves a third state (⊘ exclude), matching the
         # Filters pane's tag rows, where "not selected" and "actively
         # excluded" are different answers.
         self._cycle_leaves = cycle_leaves
@@ -262,7 +261,7 @@ class ToggleTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str, 
 
     @property
     def expanded_group_ids(self) -> set[str]:
-        """Group ids currently expanded, at any depth — for the host to persist."""
+        """Group ids currently expanded, at any depth, for the host to persist."""
         out: set[str] = set()
         stack = list(self.root.children)
         while stack:
@@ -306,8 +305,7 @@ class ToggleTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str, 
 
         # Count what the user can tell apart, not rows: one tag is drawn under
         # every source that can carry it. Keyed on `key`, because a label may
-        # also carry a per-source file count, which made the same tag look
-        # like two.
+        # also carry a per-source file count.
         def _key(item: ToggleItem) -> str:
             return item.key or item.label
 
@@ -319,8 +317,7 @@ class ToggleTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str, 
             on = [it.label for it in counted if it.id in self._selected]
             return f"  ({', '.join(on)})" if on else ""
         # Deduplicated like the counts above: one tag is drawn under every
-        # source that can carry it, and naming it twice is the same defect the
-        # counts were fixed for.
+        # source that can carry it.
         on = sorted({_key(it) for it in counted if it.id in self._selected})
         off = sorted({_key(it) for it in counted if it.id in self._excluded})
         parts = []
@@ -338,7 +335,7 @@ class ToggleTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str, 
         """A branch row. Its marker is a state too, so it carries the colour.
 
         Every marker on a collapsed screen is one of these: colouring only the
-        leaves meant a user saw no colour at all until they expanded a branch.
+        leaves would show no colour at all until a branch is expanded.
         """
         mode = self._mode(g)
         # A roll-up speaks for the whole branch; a row filter hides rows, it
@@ -361,7 +358,7 @@ class ToggleTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str, 
         if mode == "radio":
             chosen = next((it for it in leaves if it.id in self._selected), None)
             # The "any" option is the absence of a filter, so the branch reads
-            # as unset — a ● there says a bound is active when none is.
+            # as unset: a ● there says a bound is active when none is.
             active = chosen is not None and not chosen.id.endswith(":any")
             marker = _FULL if active else (_PARTIAL if g.elsewhere else _EMPTY)
             suffix = f"  ({chosen.label})" if chosen else "  (any)"
@@ -421,18 +418,14 @@ class ToggleTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str, 
                 return
             ids = {it.id for it in g.leaves}
             if self._mode(g) == "actions":
-                # Expand, like the branches beside it. Returning here made
-                # Enter the one key that did nothing at all on this row, under
-                # a legend saying it opens an editor — which it does, on the
-                # leaf one row down that this reveals.
+                # Expand, like the branches beside it: the legend says Enter
+                # opens an editor, which it does on the leaf this reveals.
                 node.toggle()
                 return
             if self._mode(g) in ("cycle", "radio"):
-                # Expand, do not wipe. Selecting every tag is never what the
-                # user means, but neither is discarding several exclusions to
-                # one keypress with no confirmation and no undo — while the
-                # same key on a multi branch means "select all". Enter on a
-                # branch does what Enter on a branch does everywhere else.
+                # Expand, do not wipe: selecting every tag is never what the
+                # user means, and neither is discarding several exclusions in
+                # one keypress with no confirmation and no undo.
                 node.toggle()
                 return
             elif ids and ids <= self._selected:
@@ -441,8 +434,8 @@ class ToggleTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str, 
                 self._selected |= ids
             self._repaint_group(node, g)
             # Repaints this node and everything under it; the roll-up above it
-            # is what goes stale, so a category toggle left "File types" still
-            # reading its old count for the rest of the session.
+            # is what goes stale, and without this "File types" keeps its old
+            # count for the rest of the session.
             self._repaint_parent(node)
         elif kind == "item":
             item_id = str(data.get("id"))
@@ -457,8 +450,8 @@ class ToggleTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str, 
                 self._repaint_parent(node)
             elif mode == "radio" and group is not None:
                 # Re-selecting the current option is a no-op, as a radio group
-                # means everywhere: toggling it off left nothing selected, a
-                # fourth state the legend cannot express.
+                # means everywhere: toggling it off would leave nothing selected,
+                # a fourth state the legend cannot express.
                 self._selected -= {it.id for it in group.leaves if it.id != item_id}
                 self._selected.add(item_id)
                 parent = node.parent

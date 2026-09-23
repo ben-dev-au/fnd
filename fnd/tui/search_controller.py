@@ -91,11 +91,9 @@ class _PrefixingSearcher:
 
     def __init__(self, inner: Searcher, *, clauses: Sequence[str]) -> None:
         self._inner = inner
-        # One input, so the two forms cannot disagree. The join must be AND:
-        # the parser is OR-default, and space-joining made a second filter
-        # WIDEN the results. Passes that build their own boolean query read
-        # the clauses, because `extract_filters` will not lift one adjacent
-        # to `AND`.
+        # The join must be AND: the parser is OR-default, so a space join makes
+        # a second filter WIDEN the results. Passes building their own boolean
+        # query read the clauses; `extract_filters` will not lift one by `AND`.
         self.filter_clauses = tuple(c for c in (c.strip() for c in clauses) if c)
         self._prefix = " AND ".join(self.filter_clauses)
         self.filter_prefix = self._prefix
@@ -220,8 +218,7 @@ class SearchController:
             group="search",
         )
         # Say the search is running before it can say anything else. A preview
-        # already on screen stays — it is the last thing the user chose, and
-        # blanking it to announce a query is the worse trade.
+        # already on screen stays: it is the last thing the user chose.
         self._app._preview.show_pane_message(f"Searching for {query.strip()!r}…", replace_only=True)
         self._app._refresh_status()
 
@@ -344,12 +341,9 @@ class SearchController:
             multicolour=defaults.multicolour_highlights if defaults else True,
         )
 
-        # Build the filter scaffolding (kind:, mtime:) and multi-collection
-        # scope (c:) as a SEPARATE prefix. The lexical part stays clean so
-        # the fusion phrase-pass can wrap it in quotes without dragging
-        # field qualifiers inside the phrase (which Tantivy would parse as
-        # a literal phrase ``kind:md glimmer`` rather than a
-        # field-restricted query).
+        # Filters (kind:, mtime:) and scope (c:) form a SEPARATE prefix, so the
+        # fusion phrase-pass can quote the lexical part without Tantivy reading
+        # ``kind:md glimmer`` as a literal phrase.
         filter_clauses: list[str] = []
         if self._app._scope.filter_kinds:
             if len(self._app._scope.filter_kinds) == 1:
@@ -382,10 +376,9 @@ class SearchController:
         # A fresh dict of fresh lists, so the worker cannot read a scope the
         # panel is mutating on the event loop.
         scoped = self._app._scope.source_scope
-        # Whether there is anything to scope BY. An empty selection map means
-        # "the user unticked everything" only where collections exist to tick;
-        # with no config it is simply an app that cannot be scoped, and both
-        # toggle paths pop their key, so the map alone cannot tell them apart.
+        # An empty selection map means "the user unticked everything" only where
+        # collections exist to tick; both toggle paths pop their key, so the map
+        # alone cannot tell that from an app with no config to scope by.
         cfg = self._app._config
         scopeable = bool(cfg and cfg.collections)
         from fnd.config import DEFAULT_RESULT_LIMIT
@@ -405,10 +398,9 @@ class SearchController:
             # `kind:(md pdf)`, stay a deliberate OR.
             filter_clauses=tuple(filter_clauses),
             metadata_filter=plan.metadata_filter,
-            # A partly-ticked collection contributes no name and is scoped by
-            # its own sources, so the channel stays open. An empty list means
-            # the user unticked everything; an app with nothing to scope by
-            # means all.
+            # A partly-ticked collection contributes no name and is scoped by its
+            # own sources, so the channel stays open (None), as it does with
+            # nothing to scope by. An empty list means the user unticked all.
             collection=list(cols) if cols else (None if (scoped or not scopeable) else []),
             source_scope=scoped or None,
             tag_filter=tag_filter,

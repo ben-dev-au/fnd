@@ -76,10 +76,9 @@ def secure_write_text(path: Path, text: str, *, atomic: bool = False) -> None:
     """
     path = path.expanduser()
     if atomic:
-        # A unique sibling: a fixed ".tmp" is shared, so two writers race and
-        # the loser's os.replace hits a path the winner already renamed. The
-        # name carries pid and a counter, which covers threads in one process
-        # as well as separate processes.
+        # A unique sibling (pid plus a counter, so threads and processes both
+        # differ): with a fixed ".tmp" two writers race, and the loser's
+        # os.replace hits a path the winner already renamed.
         tmp = path.with_suffix(f"{path.suffix}.{os.getpid()}.{next(_TMP_SEQ)}.tmp")
         try:
             tmp.write_text(text, encoding="utf-8")

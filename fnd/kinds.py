@@ -47,8 +47,8 @@ class KindSpec:
     Declared per kind and REQUIRED, so a format added without an answer is an
     import error rather than a silent no. An index filter asking about a
     frontmatter key judges exactly these kinds and leaves every other alone:
-    a note with no block has answered, a PDF cannot answer at all. Scoping
-    this by category instead shipped the same bug three times.
+    a note with no block has answered, a PDF cannot answer at all. Never
+    derive this from a category.
     """
     highlight_lang: str = ""  # code-fence language; defaults to id
 
@@ -145,7 +145,7 @@ SUFFIX_TO_MODULE: dict[str, str] = {
 }
 SUFFIX_TO_KIND: dict[str, str] = {sfx: k.id for k in KIND_SPECS for sfx in k.suffixes}
 MARKDOWN_RENDERED_KINDS: frozenset[str] = frozenset(k.id for k in KIND_SPECS if k.markdown_rendered)
-#: Kinds that can carry a YAML frontmatter block. The ONE source for it —
+#: Kinds that can carry a YAML frontmatter block. The ONE source for it:
 #: derive from this, never from a category or a hand-written set.
 FRONTMATTER_KINDS: frozenset[str] = frozenset(k.id for k in KIND_SPECS if k.carries_frontmatter)
 

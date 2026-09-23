@@ -80,7 +80,7 @@ async def test_the_row_carries_it(config: Config, tmp_index_dir: Path) -> None:
         interrupted = _collection_summary(app, "bulk")
 
     assert "incomplete" not in healthy, healthy
-    assert "⚠ incomplete — 210 of 3000 files" in interrupted, interrupted
+    assert "⚠ incomplete: 210 of 3000 files" in interrupted, interrupted
     assert "ranking:" in interrupted, "the row lost what it already said"
 
 
@@ -99,5 +99,5 @@ async def test_the_update_row_carries_it_too(config: Config, tmp_index_dir: Path
         interrupted = _summary_collection_update(app, "bulk")
 
     assert "incomplete" not in healthy, healthy
-    assert "⚠ incomplete — 210 of 3000 files" in interrupted, interrupted
+    assert "⚠ incomplete: 210 of 3000 files" in interrupted, interrupted
     assert "sources" in interrupted, "the row lost what it already said"

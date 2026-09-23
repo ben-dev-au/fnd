@@ -43,8 +43,8 @@ A run has two phases, and both must stay answerable to the user:
   one opaque thread hop, so cancel is honoured mid-scan and each slice
   emits an `enumerating` event carrying the running file count. This
   matters because a scan is not always fast: a filter that asks about a
-  note's content — a frontmatter rule, or a tag rule reading YAML `tags:`
-  — must open each Markdown candidate to evaluate it, and on cloud-backed
+  note's content (a frontmatter rule, or a tag rule reading YAML `tags:`)
+  must open each Markdown candidate to evaluate it, and on cloud-backed
   storage each open blocks on a download.
 - **Per-file.** Extraction runs off-loop in `asyncio.to_thread`, with
   progress events over an `AsyncIterator` and atomic resume state
@@ -82,8 +82,8 @@ that name still wins, and new ones can't take it).
 `fnd/ignore_files.py`, `fnd/walk.py`). These decide what enters the index
 at all, as opposed to what a query returns from it. `filters/dimensions.py`
 holds one `Dimension` per thing a user can filter on, each compiling to a
-predicate over `FileFacts` — a lazy mapping of `file.*` attributes plus a
-note's frontmatter — and rendering to the same DSL the query side parses,
+predicate over `FileFacts` (a lazy mapping of `file.*` attributes plus a
+note's frontmatter) and rendering to the same DSL the query side parses,
 so the settings tree and its text view are two views of one model.
 `ignore_files.py` is a hand-rolled gitwildmatch, checked against
 `git check-ignore`; it applies from a source's own folder downwards, never

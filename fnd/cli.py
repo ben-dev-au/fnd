@@ -76,9 +76,9 @@ def _rewrite_default_command(argv: list[str]) -> list[str]:
     return ["tui", *argv]
 
 
-#: Invocations that only report. Migrating on these rewrote the file the user
-#: was asking about — `fnd --help` rewrote the config as a side effect, and
-#: `config validate` answered by replacing what it was validating.
+#: Invocations that only report, so must not migrate: otherwise `fnd --help`
+#: rewrites the config as a side effect, and `config validate` replaces what it
+#: is validating.
 _REPORT_ONLY = frozenset({"--help", "-h", "--version", "--show-completion"})
 
 
@@ -115,7 +115,7 @@ def main() -> None:
 
 def _migrate_config() -> None:
     """Bring the config file up to the current shape once, before anything
-    reads it. A failure here must not stop the app starting — the config is
+    reads it. A failure here must not stop the app starting: the config is
     still loadable in its old shape, and the recovery screen handles the rest.
     """
     from fnd.config import ensure_current
@@ -155,10 +155,9 @@ def index(
 
     config = load()
     defaults = config.defaults
-    # Through the configured path, not the raw walk: ad-hoc means "no
-    # collection needed", not "ignore the filters you set". Skipping them let
-    # `fnd index` admit files that `collection reindex` excludes — a file
-    # tagged never-index among them.
+    # Through the configured path, not the raw walk: ad-hoc means "no collection
+    # needed", not "ignore the filters you set", so `fnd index` excludes what
+    # `collection reindex` excludes (a file tagged never-index among them).
     source = SourceConfig(path=root)
     source._resolved_filters = resolve_filters(source.filters, defaults.filters)
     written = build_index_from_config(
@@ -166,8 +165,8 @@ def index(
         collection=collection,
         index_dir=default_index_dir(),
         # One root is never the whole collection, so nothing this walk missed
-        # is stale. Pruning here emptied a configured collection down to the
-        # ad-hoc root, reported "indexed N chunks", and exited 0.
+        # is stale. Pruning here would empty a configured collection down to the
+        # ad-hoc root while reporting success.
         prune=False,
         tag_sources=tuple(defaults.tag_sources),
         tag_frontmatter_keys=tuple(defaults.tag_frontmatter_keys),
@@ -746,7 +745,7 @@ def collection_add(
         # Indexing it yields nothing and says nothing, so a typo looks like a
         # working collection until the first search comes back empty.
         typer.echo(
-            f"fnd: {source[0]} does not exist — indexing it will find no files.",
+            f"fnd: {source[0]} does not exist; indexing it will find no files.",
             err=True,
         )
     elif root.is_symlink() and not follow_symlinks:

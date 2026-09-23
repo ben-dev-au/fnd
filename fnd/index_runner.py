@@ -324,8 +324,8 @@ def _enumerate_iter(
     except Exception:
         skip = resolve_skip_dirs(None)
     # The first source to reach a file owns it, as in build_index_from_config:
-    # a folder listed twice, or nested inside another source, reported seven
-    # files for five and did the extraction twice.
+    # a folder listed twice, or nested inside another source, would otherwise
+    # count seven files for five and extract twice.
     claimed: set[str] = set()
     for source in config.sources:
         try:
@@ -495,7 +495,7 @@ class _FileOutcome:
 
     ``extraction_reused`` answers "did we do the work" and feeds the ETA rate;
     ``already_indexed`` answers "was this file already in THIS collection".
-    Conflating them reported 0 newly indexed for files that had just landed.
+    Conflating them reports 0 newly indexed for files that have just landed.
     """
 
     chunks: int
@@ -579,7 +579,7 @@ def _process_one_file(
         cur_mtime = times.mtime or prior_mtime
         cur_ctime = times.inode_changed or prior_ctime
         # Re-process only if changed, or if it's a flat PDF this run
-        # could texturise — the one improvement an incremental pass
+        # could texturise: the one improvement an incremental pass
         # should still make.
         improvable = is_pdf and texturise_on and not prior_textured
         changed = _should_reprocess(
@@ -676,10 +676,9 @@ def _process_one_file(
         mark_seen(non_pdf_sha)
 
     reused = (cache.hits > cache_before_hits) if is_pdf else non_pdf_was_seen
-    # A literal rebuild (``wipe``) clears each file's seen-marker and cache, so
-    # it is genuine fresh work and is reported as newly indexed, not "already" —
-    # even though the file stays a member of the collection under normalised
-    # storage. Membership drives the skip decision above; the count follows work.
+    # A literal rebuild (``wipe``) clears each file's seen-marker and cache, so it
+    # is fresh work, reported as newly indexed although the file stays a member:
+    # membership drives the skip decision above, and the count follows work.
     reported_already = already_indexed and not wipe
     return _FileOutcome(n_chunks, reused, reported_already, has_textured, "")
 
@@ -902,21 +901,14 @@ async def run_indexer(
         local_pdfs_total = sum(1 for p, _src in local_paths if p.suffix.lower() == ".pdf")
         local_bytes_total = sum(local_sizes.values())
         # A rebuild that cannot read its sources must not wipe: the walk would
-        # bring nothing back and the collection would be emptied by a route
-        # the prune guard never sees. Asked BEFORE `_ensure_index(force=)`,
-        # which is itself the wipe for a whole-index rebuild.
+        # bring nothing back, emptying the collection past the prune guard. Asked
+        # BEFORE `_ensure_index(force=)`, which is the wipe for a whole-index rebuild.
         local_blocked = unreadable_roots(Path(s.path).expanduser() for s in config.sources)
         local_index = _ensure_index(index_dir, force=rebuild and not local_blocked)
         local_writer = local_index.writer(heap_size=_WRITER_HEAP)
-        # Normalised storage keeps one document per file across collections, so
-        # a rebuild no longer bulk-deletes by collection (that would strip a
-        # shared file's sibling memberships). Every walked file is re-extracted
-        # and whole-file-replaced with its membership merged; prune drops the
-        # files the walk did not reach.
-        #
-        # Prior-committed snapshot: a point-in-time searcher reflects only what
-        # previous runs committed. Every file this run processes reads its prior
-        # membership from here to merge, so it is always needed, rebuild too.
+        # One document per file across collections, so a rebuild never bulk-deletes
+        # by collection (that strips siblings' memberships); each walked file merges
+        # its prior membership from this committed snapshot, and prune drops the rest.
         local_prior_searcher = None
         with contextlib.suppress(Exception):
             local_prior_searcher = local_index.searcher()
@@ -1179,9 +1171,9 @@ async def run_indexer(
             live_parent_ids = {_path_parent_id(p) for p, _src in paths}
             live_parent_ids.update(_path_parent_id(p) for p, _reason in scan_blocked)
             if not blocked_roots:
-                # Rebuild no longer wipes, so it prunes like an update: a file
-                # the walk did not reach loses this collection, keeping its
-                # document only if another collection still holds it.
+                # A rebuild prunes like an update: a file the walk did not reach
+                # loses this collection, keeping its document only if another
+                # collection still holds it.
                 pruned = prune_removed_files(
                     index,
                     writer,

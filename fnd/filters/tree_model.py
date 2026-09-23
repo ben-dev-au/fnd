@@ -5,7 +5,7 @@ Pure model: no Textual import, so the mapping between a
 its own. The screen renders these groups and hands the selection back.
 
 Date and size branches offer named windows rather than a typed value, and a
-window resolves to an absolute bound when it is chosen — an index must not
+window resolves to an absolute bound when it is chosen: an index must not
 change what it holds as the clock moves.
 """
 
@@ -62,26 +62,25 @@ BRANCHES = ("kinds", "tags", "ignore", "size", "modified", "created")
 LEGEND = "⊘  never index these   ●  index ONLY these   ◐  some of these   ○  no rule"
 
 #: Branches where that reading is FALSE. On the ignore branch ● means "obey
-#: this file", which indexes FEWER files, and ○ means more — the opposite of
+#: this file", which indexes FEWER files, and ○ means more: the opposite of
 #: what the shared line claims. A branch names its own meaning or inherits.
-IGNORE_LEGEND = "●  obey this file   ○  ignore it — obeying one indexes fewer files"
+IGNORE_LEGEND = "●  obey this file   ○  ignore it   (obeying one indexes fewer files)"
 RULES_LEGEND = "⏎  opens a branch, then the editor for a rule in it"
-#: `kinds` is an include-only list in the model, so `⊘` is unreachable here.
-#: Two hunters read the shared line, hunted for an exclude state that does not
-#: exist, and allow-listed everything else instead — which also drops every
-#: file type added later.
-KINDS_LEGEND = "●  index ONLY these   ◐  some of these   ○  no rule — ⊘ needs a typed rule (t)"
+#: `kinds` is an include-only list in the model, so `⊘` is unreachable here. The
+#: shared line would send a user looking for an exclude state that does not exist,
+#: and allow-listing everything else instead drops every file type added later.
+KINDS_LEGEND = "●  index ONLY these   ◐  some of these   ○  no rule   ⊘  needs a typed rule (t)"
 #: Size and date branches are radio: one bound is in force or none. Neither ⊘
 #: nor ◐ can occur on them, and "index ONLY these" is the wrong sentence for
 #: "Up to 1 MB".
-BOUND_LEGEND = "●  the bound in force   ○  no bound — one at a time"
+BOUND_LEGEND = "●  the bound in force   ○  no bound   (one at a time)"
 
 
 @dataclass(frozen=True, slots=True)
 class Branch:
     """One collapsible row: its leaves, its sub-branches and how they behave.
 
-    ``empty_label`` says what the branch means with nothing switched on —
+    ``empty_label`` says what the branch means with nothing switched on;
     without it, "no file type ticked" reads as *nothing is indexed*.
     """
 
@@ -90,8 +89,8 @@ class Branch:
     mode: str
     items: tuple[tuple[str, ...], ...] = ()
     """(item id, label) or (item id, label, key). The key says what makes
-    two leaves the same thing to a user, where the label carries more —
-    a tag row shows its file count, so the label alone counted one tag twice."""
+    two leaves the same thing to a user, where the label carries more: a tag
+    row shows its file count, so the label alone would count one tag twice."""
     groups: tuple[Branch, ...] = ()
     empty_label: str = ""
     full_label: str = ""
@@ -102,7 +101,7 @@ class Branch:
     """Name what is on rather than counting it. See :class:`ToggleGroup`."""
     elsewhere: str = ""
     """A bound on this dimension that this branch cannot show. Without it the
-    row read `○ Maximum file size (Any size)` while a minimum was filtering —
+    row reads `○ Maximum file size (Any size)` while a minimum is filtering:
     two rows contradicting each other on the same frame."""
     complete: bool = True
     """False while the leaves are still being discovered. A roll-up that says
@@ -129,16 +128,15 @@ def _kind_items(sample: SourceSample | None) -> list[tuple[str, str, str]]:
             spec = KIND_BY_ID.get(kind)
             if spec is None:
                 continue
-            # What the source's other rules admit, not the raw disk tally:
-            # `Markdown · 3` sat four lines above `Tags (no_index excluded)`
-            # and the index held 2.
+            # What the source's other rules admit, not the raw disk tally, or
+            # `Markdown · 3` sits above `Tags (no_index excluded)` while the index
+            # holds 2.
             raw = sample.kinds if sample else {}
             counts = sample.kinds_kept if sample and sample.gated else raw
             count = counts.get(kind, 0) or 0
             # `· 0` where the source HAS files of this kind and the rules keep
-            # none: that is the loudest thing the pane can say, and it said it
-            # by falling silent. A kind the source has none of stays bare,
-            # because every kind is offered and forty zeros say nothing.
+            # none is the loudest thing the pane can say. A kind the source has
+            # none of stays bare: every kind is offered, and forty zeros say nothing.
             counted = (raw.get(kind, 0) or 0) > 0
             suffixes = "/".join(spec.suffixes)
             label = f"{spec.label} ({suffixes})"
@@ -204,7 +202,7 @@ def _tag_branch(
     """Tags, one sub-branch per source.
 
     A Finder tag and a note's ``tags:`` entry that share a word are different
-    statements about a file, so they get different rows — the shape
+    statements about a file, so they get different rows, the shape
     :class:`~fnd.tag_query.TagFilter` already uses on the query side.
     """
     sources = [s for s in TAG_SOURCE_LABELS if s in (sample.tags if sample else {})]
@@ -237,16 +235,14 @@ def _tag_branch(
             )
     if not groups:
         return None
-    # `no_index` disappearing from a typed edit was announced nowhere: the
-    # branch went on reading "any tag".
+    # A typed edit that drops `no_index` must say so here, or the branch goes on
+    # reading "any tag".
     typed = any(f.startswith("file.tags") for f in free)
     note = _elsewhere_note(False, "", typed)
     if len(groups) == 1:
-        # Collapse the single source's rows into this branch, but KEEP the
-        # name: taking the source's label instead renamed the branch from
-        # "Tags" to "Note tags (YAML)" the moment a rule about the other
-        # source was cleared, so a row changed its own name as a side effect
-        # of an edit somewhere else.
+        # Collapse the single source's rows into this branch, but KEEP the name:
+        # the source's label would rename "Tags" to "Note tags (YAML)" as a side
+        # effect of clearing a rule about the other source.
         return replace(groups[0], id="tags", label="Tags", empty_label="any tag", elsewhere=note)
     return Branch(
         "tags",
@@ -347,7 +343,7 @@ def spec_branches(
             (
                 -1 if d is None else d,
                 f"{field_name}:{i}",
-                lbl if d is None else f"{lbl} — from {_window_start(d).isoformat()}",
+                lbl if d is None else f"{lbl}, from {_window_start(d).isoformat()}",
             )
             for i, lbl, d in _WINDOWS
         ]
@@ -384,11 +380,9 @@ def spec_branches(
                 legend=RULES_LEGEND,
             )
         )
-    # An actions branch carries no marker, so a collapsed one has to say in
-    # its label whether a rule is set.
-    # Decomposition keeps what no picker owns in `raw`, one entry per clause.
-    # Without a row each, appending a second clause left the branch naming the
-    # first and counting "1 set" over however many were typed.
+    # An actions branch carries no marker, so a collapsed one says in its label
+    # whether a rule is set. One row per clause in `raw`, so a second typed
+    # clause is not counted as "1 set" under the first one's name.
     raw_rows = tuple(
         (f"rule:raw:{i}", _rule_label("Typed rule", text))
         for i, text in enumerate(spec.raw)
@@ -457,14 +451,14 @@ CUSTOM = "custom"
 """Prefix for the row shown when a bound is not one of the offered options.
 
 The options set a bound; the bound itself is an arbitrary number or date.
-Mapping an unmatched value back to "any" let an unrelated toggle delete it,
-and made a window stop matching two days after it was picked.
+Mapping an unmatched value back to "any" would let an unrelated toggle delete
+it, and make a window stop matching two days after it was picked.
 
-The id carries the value — ``size:custom:5000000`` — rather than meaning
+The id carries the value (``size:custom:5000000``) rather than meaning
 "whatever the spec holds". The tree's labels are built when it is rebuilt
 while a selection is resolved as it is made, so an id that referred to the
-current spec resolved a row still reading "Up to 5 MB" to a bound the user
-had since changed.
+current spec would resolve a row still reading "Up to 5 MB" to a bound the
+user had since changed.
 """
 
 
@@ -533,15 +527,13 @@ def apply_selection(
     saying "all of them" even though the registry has more.
     """
     picked = {i.removeprefix("kind:") for i in selected if i.startswith("kind:")}
-    # Every box ticked means "every type", not the list of types that exist
-    # today: freezing it meant a PDF added tomorrow was never indexed, while
-    # leaving the branch untouched indexed it, and both read as "all types".
-    # `AddCollectionWizard._set_includes` already collapses the same way.
+    # Every box ticked means "every type", not today's list, which would never
+    # index a PDF added tomorrow while an untouched branch does, both reading
+    # "all types". `AddCollectionWizard._set_includes` collapses the same way.
     shown = {i.removeprefix("kind:") for i in offered if i.startswith("kind:")} if offered else None
     # Only when the tree offered EVERY type does ticking them all mean "no
-    # restriction". The tree lists what a source contains, so on a homogeneous
-    # folder a genuine `kinds = ["md"]` was already "all of them" and collapsed
-    # to no rule at all — deleting the restriction with no keypress on it.
+    # restriction": on a homogeneous folder a genuine `kinds = ["md"]` is already
+    # "all of them", and collapsing it would delete the rule with no keypress.
     everything = shown if shown is not None else set(ALL_KIND_IDS)
     complete = shown is None or shown >= set(ALL_KIND_IDS)
     kinds = () if picked and complete and picked >= everything else tuple(sorted(picked))

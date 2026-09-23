@@ -16,8 +16,8 @@ __all__ = ["ScopeTree"]
 class ScopeTree(ArrowsExpand, HomeToFirstRow, Tree[dict[str, Any]]):
     """A ``Tree`` whose highlighted row survives a change of viewport.
 
-    Every search re-lays the sidebar out — results arriving and leaving change
-    the panel's height — and Textual clamps the scroll offset without moving
+    Every search re-lays the sidebar out (results arriving and leaving change
+    the panel's height), and Textual clamps the scroll offset without moving
     the cursor. The highlighted row then sits outside the visible window until
     the next keypress snaps back to it, which reads as the panel having jumped
     to the top on its own.

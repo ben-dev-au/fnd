@@ -1,4 +1,4 @@
-"""Settings & Commands menu — rendering and dispatch.
+"""Settings & Commands menu: rendering and dispatch.
 
 The menu's *data* lives in :mod:`fnd.tui.menu`. This module renders it
 as a stack of Textual ``Screen``s that share the main app's visual
@@ -145,8 +145,8 @@ def _typing_in(screen: Any) -> bool:
 def _editor_hint_bar(contextual: tuple[tuple[str, str], ...]) -> Any:
     """A footer for a screen whose focus is a text box.
 
-    The app's anchors are inert there — `/`, `:`, `?` and `q` type into the
-    box — so advertising them names four keys that do not work.
+    The app's anchors are inert there (`/`, `:`, `?` and `q` type into the
+    box), so advertising them names four keys that do not work.
     """
     from fnd.tui.app import render_hint_bar
 
@@ -159,12 +159,12 @@ def _hint_bar(app: FNDApp, contextual: tuple[tuple[str, str], ...], *, screen: A
 
     The anchor means "focus the app's query bar", and nowhere in Settings does
     ``/`` do that: on a screen with a row filter it focuses THAT, and on one
-    without it does nothing at all. Dropping it only where the filter was
-    missing left the Collections screen showing ``/ Search`` and ``/ Filter``
-    in the same footer, one key with two labels. The screens that own the key
-    name it themselves, in their contextual cluster.
+    without it does nothing at all. Dropping it only where the filter is
+    missing would show ``/ Search`` and ``/ Filter`` in the same footer, one
+    key with two labels. The screens that own the key name it themselves, in
+    their contextual cluster.
 
-    ``screen`` is accepted for callers that pass it and is no longer read.
+    ``screen`` is accepted for callers that pass it and is not read.
     """
     from fnd.tui.app import render_hint_bar
 
@@ -232,7 +232,7 @@ class ConfirmList(OptionList):
     """A confirm dialog's Yes/Cancel list, which does not wrap.
 
     The safe row is the default AND the last one, and a wrapping two-item list
-    puts the irreversible row one `Down` away — the reflex that reads a list.
+    puts the irreversible row one `Down` away, the reflex that reads a list.
     Both rows stay reachable; only the wrap-around goes.
     """
 
@@ -255,15 +255,14 @@ class ConfirmList(OptionList):
 def open_confirm_list(screen: Screen[Any], *, land_on: str = "") -> tuple[str, str]:
     """Focus a screen's ``#confirm_list``, and say what Enter does from there.
 
-    Irreversible dialogs start on the way out — Enter is one keypress from a
+    Irreversible dialogs start on the way out: Enter is one keypress from a
     delete otherwise, and Enter is how every one of these screens is reached.
 
     The hint is `Select` from every row, because it is computed once at mount
-    and nothing recomputes it on a move: returning `Confirm` for a screen that
-    LANDS on the affirmative left that promise on screen after one `Down`, on
-    three dialogs. A hint that follows the highlight would say more, and would
-    need a handler on each of the seven screens; this one is true from all of
-    them.
+    and nothing recomputes it on a move: a `Confirm` hint on a screen that
+    LANDS on the affirmative would stay on screen after one `Down`. A hint
+    that follows the highlight would say more, and would need a handler on
+    each of the seven screens; this one is true from all of them.
     """
     options = screen.query_one("#confirm_list", OptionList)
     if land_on:
@@ -319,14 +318,14 @@ def _discard_custom_globs(screen: Any, field_key: str) -> None:
     """Clear a custom-glob field, keeping the text on offer for the visit.
 
     The tick is derived from the text, so the value cannot simply stay; but
-    dropping it outright lost typed globs to one keypress, with no undo.
+    dropping it outright would lose typed globs to one keypress, with no undo.
     """
     text = str(screen._fields.get(field_key) or "").strip()
     if not text:
         return
     screen._discarded_globs[field_key] = text
     screen._fields[field_key] = ""
-    screen.app.notify(f"Custom globs cleared — tick again to restore: {text}")
+    screen.app.notify(f"Custom globs cleared. Tick again to restore: {text}")
 
 
 def _custom_seed(screen: Any, field_key: str) -> str:
@@ -338,7 +337,7 @@ def _custom_seed(screen: Any, field_key: str) -> str:
 
 # Textual selectors are type selectors and a widget's own CSS is scoped to it,
 # so neither `CSS = OtherScreen.CSS` nor a shared class selector matches the
-# borrowing screen — it renders with no background, border or docked footer.
+# borrowing screen, which then renders with no background, border or docked footer.
 # One definition, stamped with each screen's own name.
 _PROMPT_CSS = """
 {cls} {{ background: $surface; }}
@@ -483,9 +482,8 @@ def _render_row(
         affordance_len = sum(
             len(seg_text) for seg_text, seg_style in pending_segments if "dim" not in seg_style
         )
-        # Capped: an over-long value used to eat the label's budget and elide
-        # the label instead of itself, so one row lost its name while the row
-        # above lost its value.
+        # Capped, so an over-long value elides itself rather than eating the
+        # label's budget and eliding the label.
         affordance_len = min(affordance_len, max(8, width // 2))
         used_leading = (_KEY_COL if item.key else 0) + leading_used
         # Minimum dotted pad + leading/trailing space around it.
@@ -573,10 +571,9 @@ def _truncate_segments_to_fit(
     reserved = sum(len(seg_text) for seg_text, style in segments if "dim" not in style)
     available_for_dim = budget - reserved
     if reserved > budget:
-        # A value is not an affordance: a long one reserved in full ran past
-        # the right border and the terminal cut it, with nothing to say so.
-        # Glyphs are one or two cells, so shrinking the longest segment
-        # leaves them whole.
+        # A value is not an affordance: reserved in full, a long one runs past
+        # the right border and the terminal cuts it unmarked. Glyphs are one or
+        # two cells, so shrinking the longest segment leaves them whole.
         kept = [(t, s) for t, s in segments if "dim" not in s]
         longest = max(range(len(kept)), key=lambda i: len(kept[i][0]))
         room = budget - (reserved - len(kept[longest][0]))
@@ -725,7 +722,7 @@ def _render_header(item: MenuItem, width: int | None) -> Text:
 def _coercion_error(coerce: Any, hint: str, err: Exception) -> str:
     """What a rejected value says back.
 
-    `int` and `float` raise about themselves — "invalid literal for int() with
+    `int` and `float` raise about themselves: "invalid literal for int() with
     base 10" names the coercion function, not the field. The row already
     carries the range it wants, so say that instead. Anything else raises for
     its own reasons and keeps its message.
@@ -771,11 +768,10 @@ class EditBar(Horizontal):
         background: $surface;
     }
     EditBar.-hidden { display: none; }
-    /* The label was uncapped, so on a narrow terminal it pushed the field
-       off-screen entirely: typing changed no painted row while the value
-       accumulated, and saving wrote it. The width cap alone was not enough:
-       measured at 100 cols the Static wrapped to 4 rows inside a 2-row bar,
-       which clipped the field. `text-overflow` only elides an unwrapped line. */
+    /* Capped, or on a narrow terminal the label pushes the field off-screen and
+       typing edits a value nobody can see. A width cap alone clips it: measured
+       at 100 cols the Static wrapped to 4 rows inside a 2-row bar.
+       `text-overflow` only elides an unwrapped line. */
     EditBar > Static.-edit-label {
         color: $text-muted; width: auto; max-width: 30%;
         text-wrap: nowrap; text-overflow: ellipsis;
@@ -925,10 +921,9 @@ class EditBar(Horizontal):
         except OSError:
             self._set_status("⚠ unreadable", tone="warn")
             return
-        # `✓ 4 entries` beside a green tick read as "4 will be indexed". It is
-        # a non-recursive `iterdir` including subfolders, and a `no_index` file
-        # pushes it UP. Naming the folder first survives a clip; a gated walk
-        # on every keystroke does not survive the debounce.
+        # A bare count beside a green tick reads as "N will be indexed", but it
+        # is a non-recursive `iterdir` counting subfolders and `no_index` files;
+        # `folder:` first survives a clip, and a gated walk would not survive the debounce.
         self._set_status(f"✓ folder: {n} items", tone="ok")
 
     @on(Input.Submitted, "#editor_input")
@@ -1317,9 +1312,8 @@ class SettingsList(Widget, can_focus=True):
     def action_jump(self, n: int) -> None:
         """1-9 jumps to the Nth selectable item (skipping headers) and opens it.
 
-        The opening is deliberate — it is the accelerator, not a side effect —
-        and was described nowhere, so a hunter pressing a digit to move the
-        cursor found itself on another screen.
+        Opening is deliberate: it is the accelerator, not a side effect, so a
+        digit never merely moves the cursor.
         """
         target_count = n
         for i, item in enumerate(self._items):
@@ -1432,7 +1426,7 @@ class SettingsScreen(Screen[None]):
             box.border_title = title
             # Naming the key, as the filter browser's box does: these screens
             # can open with the LIST focused, where a typed letter runs its
-            # command — `q` on the Keybindings sheet quit the app.
+            # command: `q` on the Keybindings sheet quits the app.
             yield Input(placeholder=_SEARCH_PLACEHOLDER_WITH_KEY, id="settings_search")
             yield SettingsList()
             yield DetailStrip()
@@ -1483,10 +1477,9 @@ class SettingsScreen(Screen[None]):
         """
         import contextlib
 
-        # Every cached trailing value, not a hand-maintained list of them: the
-        # list had drifted twice over — two keys nothing produces, and two
-        # rows nothing cleared. A screen resuming or a run finishing is
-        # exactly the moment none of them can be trusted.
+        # Every cached trailing value, not a hand-maintained list that drifts:
+        # a screen resuming or a run finishing is exactly the moment none of
+        # them can be trusted.
         from fnd.tui.lazy_trailing import invalidate_all
 
         invalidate_all()
@@ -1690,10 +1683,9 @@ class SettingsScreen(Screen[None]):
         matches: list[tuple[int, int, MenuItem, tuple[str, ...]]] = []
         app: FNDApp = self.app  # type: ignore[assignment]
         seen: set[str] = set()
-        # This page's own rows first. `walk_all_sections` deliberately does not
-        # descend per-collection sub-screens, so the filter searched everywhere
-        # EXCEPT the page in front of you: `Delete coll` on a collection page
-        # answered "No matches" for a row visible a keystroke earlier.
+        # This page's own rows first: `walk_all_sections` does not descend
+        # per-collection sub-screens, so without them the filter would search
+        # everywhere EXCEPT the page in front of you.
         here: list[tuple[tuple[str, ...], MenuItem]] = [
             (self._breadcrumb, it) for it in self._items
         ]
@@ -1911,14 +1903,13 @@ class SettingsScreen(Screen[None]):
             # Never intercept Enter — that belongs to the regular activate path.
             if item.key.lower() == "enter":
                 continue
-            # Nor `/`: invoking it from here closes the sheet and focuses the
-            # query bar, which left this screen's own filter box unreachable
-            # while a placeholder invited typing into it — and every letter
-            # typed ran a command, `q` included.
+            # Nor `/`: invoking it here closes the sheet and focuses the query
+            # bar, leaving this screen's own filter box unreachable while its
+            # placeholder invites typing and every letter runs a command, `q` included.
             if item.action_id == "focus_query":
                 continue
             # Rows documenting another screen's widget keys carry no action, so
-            # "invoking" one closed the whole settings stack and did nothing.
+            # "invoking" one would close the whole settings stack and do nothing.
             if not item.action_id:
                 continue
             if item.key.lower() == pressed_label.lower():
@@ -2083,11 +2074,9 @@ class PickerScreen(Screen[None]):
         return t
 
     def action_back(self) -> None:
-        """Esc cancels, on a multi picker too.
+        """Esc cancels, on a multi picker too, as on the single-select row.
 
-        It used to commit here and cancel on the single-select row beside it —
-        one key, opposite meanings, and no way to back out of a multi picker
-        at all. `^S` saves, as on every other screen that edits something.
+        `^S` saves, as on every other screen that edits something.
         """
         self.app.pop_screen()
 
@@ -2124,7 +2113,7 @@ def _same_setting(value: Any, default: Any) -> bool:
     """Whether a value differs from the default enough to be an override.
 
     ``None``, ``""`` and ``[]`` all mean "no value here", so an untouched
-    field must not be recorded — doing so would turn inheriting into an
+    field must not be recorded: doing so would turn inheriting into an
     explicit empty and silently drop the default it was inheriting.
     """
     empty = (None, "", [], {})
@@ -2240,12 +2229,12 @@ def _seeded_filters(source: Any) -> dict[str, Any]:
     """A source's filter overrides, with a legacy rule folded in.
 
     ``frontmatter_filter`` predates ``filters.frontmatter``. Seeding it here
-    means the browser — now the only surface for the rule — shows it, and
-    clearing it there actually clears it.
+    means the browser, the only surface for the rule, shows it, and clearing
+    it there actually clears it.
     """
     values: dict[str, Any] = source.filters.model_dump(exclude_none=True) if source.filters else {}
     # `clears` defaults to a list, so exclude_none always carries it. An empty
-    # one is not an override, and leaving it in made every open-and-save look
+    # one is not an override, and leaving it in makes every open-and-save look
     # like a change and force a rebuild.
     if not values.get("clears"):
         values.pop("clears", None)
@@ -2286,7 +2275,7 @@ def _source_filters_or_none(raw: dict[str, Any] | None) -> Any:
     """Sparse overrides as a ``SourceFilters``, or ``None`` when none are set.
 
     Only ``None`` means "inherit". An empty list is the explicit override to
-    nothing — the row's ``-`` — so dropping it here would silently reinstate
+    nothing (the row's ``-``), so dropping it here would silently reinstate
     the global value the user was overriding.
     """
     from fnd.config import CLEARABLE, SourceFilters
@@ -2294,8 +2283,7 @@ def _source_filters_or_none(raw: dict[str, Any] | None) -> Any:
     items = raw or {}
     cleaned = {k: v for k, v in items.items() if v is not None}
     # A number or date set to None is the user choosing "no limit here" over an
-    # inherited one. Dropping it made that choice indistinguishable from never
-    # having made it, so it silently reverted on the next open. A bool or a
+    # inherited one; dropped, it would revert on the next open. A bool or a
     # list is not clearable: false and [] already say it.
     cleared = sorted(k for k, v in items.items() if v is None and k in CLEARABLE)
     if cleared:
@@ -2316,8 +2304,8 @@ def _exclude_globs(fields: dict[str, Any]) -> list[str]:
 
 
 def _excludes_summary(fields: dict[str, Any]) -> str:
-    """The presets and globs by name. A count never showed the globs anywhere
-    in the UI, and the picker put the widget's help text in their place."""
+    """The presets and globs by name: a count would show the globs nowhere in
+    the UI."""
     from fnd.config import EXCLUDES_PRESETS
 
     named = [
@@ -2556,9 +2544,8 @@ class SourceFormScreen(Screen[None]):
 
     @on(SettingsList.Highlighted)
     def _on_field_highlighted(self, ev: SettingsList.Highlighted) -> None:
-        """Every row already carries a description; this screen was the one
-        with nowhere to show it, beside a wizard that edits the same fields
-        and has had the strip since it was written."""
+        """Show the highlighted row's description, as the wizard editing the
+        same fields does."""
         strip = self.query_one(DetailStrip)
         item = ev.item
         if item is None:
@@ -2640,8 +2627,8 @@ class SourceFormScreen(Screen[None]):
     def _frontmatter_into_filters(self, text: str) -> dict[str, Any]:
         """The frontmatter rule as part of this source's filter overrides.
 
-        It was a field beside the filters, so the browser and the row could
-        disagree about the same rule and neither showed the other's value.
+        As a separate field beside the filters, the browser and the row could
+        disagree about the same rule with neither showing the other's value.
         """
         return _merge_frontmatter(
             dict(self._fields["filters"]),
@@ -2744,7 +2731,7 @@ class SourceFormScreen(Screen[None]):
                 hint="glob patterns, comma-separated",
                 description=(
                     "Leave empty to index the whole folder. Set it and ONLY "
-                    "matching paths are indexed — these globs replace the "
+                    "matching paths are indexed: these globs replace the "
                     "default, they do not add to it, so 'notes/**' alone "
                     "means notes/ and nothing else. To keep everything and "
                     "add a hidden folder, name both: "
@@ -2889,7 +2876,7 @@ class SourceFormScreen(Screen[None]):
         """Untick clears the globs, but keeps them for the visit.
 
         The tick is derived from the text, so leaving it set would re-tick the
-        row; dropping it outright lost typed globs to one keypress.
+        row; dropping it outright would lose typed globs to one keypress.
         """
         _discard_custom_globs(self, field_key)
 
@@ -3103,13 +3090,9 @@ class SourceFormScreen(Screen[None]):
             if g:
                 excludes_globs.append(g)
         app: FNDApp = self.app  # type: ignore[assignment]
-        # Read the file, not the snapshot taken at launch. `write_collection`
-        # replaces the collection table wholesale, so writing from a stale
-        # model deleted any source added to it by hand in the meantime.
-        # Falling back to `app._config` here made the guard below vacuous: it
-        # compares the snapshot against the model the snapshot came from, so it
-        # could never disagree, and the stale write went ahead — the exact
-        # deletion this reload exists to stop.
+        # Read the file, not the launch snapshot: `write_collection` replaces the
+        # collection table wholesale, so a stale model deletes sources added by
+        # hand. No fallback to `app._config`: the guard below would compare it to itself.
         try:
             cfg = load()
         except Exception as e:
@@ -3126,18 +3109,18 @@ class SourceFormScreen(Screen[None]):
         # edit could land on a different source. Refuse rather than guess.
         if self._source_index is not None and not self._still_the_same_source(col):
             # Adopt the fresh read even though the write is refused: the form
-            # reseeds from `app._config`, so returning without this made
-            # "reopen it" advice that could never succeed.
+            # reseeds from `app._config`, so without this the "reopen it" advice
+            # could never succeed.
             app._config = cfg  # type: ignore[attr-defined]
             self._show_error(
-                "This row is not the source it was when the form opened — the "
+                "This row is not the source it was when the form opened: the "
                 "config changed on disk. Press Esc and reopen it."
             )
             return
         app._config = cfg  # type: ignore[attr-defined]
-        # Start from the source as it stands and overwrite only the fields
-        # this form owns. Rebuilding from the form's fields deleted every
-        # field it has no control for — app_for, and app_params beyond vault.
+        # Start from the source as it stands and overwrite only the fields this
+        # form owns, keeping those it has no control for (app_for, and
+        # app_params beyond vault).
         prior = col.sources[self._source_index] if self._source_index is not None else None
         values = dict(prior.model_dump(mode="python")) if prior else {}
         app_id = str(self._fields.get("app") or "").strip()
@@ -3182,8 +3165,8 @@ class SourceFormScreen(Screen[None]):
         app._config = load()  # type: ignore[attr-defined]
         app._scope.refresh_collections_panel()  # type: ignore[attr-defined]
         if overlap:
-            # Harmless — the index keys on the file, so a file reached twice is
-            # stored once — but a source that indexes nothing new is worth
+            # Harmless (the index keys on the file, so a file reached twice is
+            # stored once), but a source that indexes nothing new is worth
             # knowing about rather than discovering from a file count.
             app.notify(
                 f"This folder {'already covers' if overlap_contains else 'is already inside'} "
@@ -3240,7 +3223,7 @@ class SourceFormScreen(Screen[None]):
 
     def action_back(self) -> None:
         # The filter browser saves into `_fields`, not to disk, so leaving the
-        # form is what discards it — including an edit the user had just
+        # form is what discards it, including an edit the user has just
         # committed one screen down.
         _leave_or_confirm(
             self,
@@ -3467,8 +3450,8 @@ class AddCollectionWizard(Screen[None]):
         """What the new collection will actually index.
 
         Setting nothing here does not mean "every type": the source inherits
-        `defaults.filters`, so a default of `kinds = ["md"]` was painted as
-        "every type" while the collection indexed 3 files of 12.
+        `defaults.filters`, so with a default of `kinds = ["md"]` "every type"
+        would be false while the collection indexes 3 files of 12.
         """
         from fnd.kinds import ALL_KIND_IDS
 
@@ -3909,7 +3892,7 @@ class RenameCollectionScreen(Screen[None]):
             self.notify(
                 f"Indexing {busy!r} is still running. Renaming now would leave "
                 f"{self._old_name!r}'s documents in the index with nothing able to "
-                "reach them — cancel it or let it finish first.",
+                "reach them. Cancel it or let it finish first.",
                 severity="warning",
                 timeout=8,
             )
@@ -4115,7 +4098,7 @@ class DeleteCollectionScreen(Screen[None]):
             self.notify(
                 f"Indexing {busy!r} is still running. Deleting now would leave "
                 f"{self._name!r}'s documents in the index with nothing able to "
-                "reach them — cancel it or let it finish first.",
+                "reach them. Cancel it or let it finish first.",
                 severity="warning",
                 timeout=8,
             )
@@ -4670,9 +4653,9 @@ def _indexing_now(app: FNDApp) -> str | None:
     """The collection being indexed, if a run holds the index writer.
 
     Renaming or deleting pairs a config write with a drop from the index, and
-    the drop needs that writer. Mid-run it cannot have it: the drop failed,
-    the config write had already landed, and the running task went on writing
-    under a name nothing could reach afterwards.
+    the drop needs that writer. Mid-run it cannot have it, so the drop fails
+    after the config write has landed, and the running task goes on writing
+    under a name nothing can reach afterwards.
     """
     service = getattr(app, "_indexer", None)
     task = getattr(service, "task", None)
@@ -4682,11 +4665,10 @@ def _indexing_now(app: FNDApp) -> str | None:
 
 
 class UnsavedChangesScreen(Screen[None]):
-    """Save, discard, or stay — for a screen holding work that is not on disk.
+    """Save, discard, or stay: for a screen holding work that is not on disk.
 
-    Every editing screen threw work away on Esc: seven silently, one with a
-    notice after the fact, none with a prompt. A user who cannot lose work
-    does not have to know which key saves.
+    Esc on an editing screen asks rather than throwing the work away, so a
+    user who cannot lose work does not have to know which key saves.
     """
 
     BINDINGS = [  # noqa: RUF012
@@ -4695,7 +4677,7 @@ class UnsavedChangesScreen(Screen[None]):
         Binding("down,j", "cursor(1)", show=False),
         Binding("enter", "activate", show=False),
         # The question is "are you sure you want to quit"; `q` reaching the
-        # app's quit through it answered yes by pressing it again.
+        # app's quit through it would answer yes by pressing it again.
         Binding("q", "back", "Keep editing", show=False, priority=True),
     ]
 
@@ -4724,13 +4706,13 @@ class UnsavedChangesScreen(Screen[None]):
             box.border_title = "Unsaved changes"
             # Subject-agnostic: the subjects are a mix of singular and plural
             # ("this source", "these filters"), and a sentence carrying its own
-            # verb read "These filters has changes that are not saved."
+            # verb would read "These filters has changes that are not saved."
             yield Static(f"Unsaved changes to {self._what}.", classes="warning")
             if self._blocked:
-                yield Static(f"Cannot save yet — {self._blocked}", classes="warning")
+                yield Static(f"Cannot save yet: {self._blocked}", classes="warning")
             # Save is offered only where the work is on the screen below this
             # one. A form buried under another editor cannot be saved from
-            # here — its own save pops whatever is on top, which is not it.
+            # here: its own save pops whatever is on top, which is not it.
             options = (
                 [Option(Text("Save changes", style="bold"), id="save")] if self._on_save else []
             )
@@ -4808,11 +4790,11 @@ def unsaved_on_stack(
     """What the SCREEN STACK would lose, topmost holder first, and why saving
     it here is not on offer.
 
-    Asking only the top screen missed the common shape: the filter browser is
-    only ever pushed on top of the source form, so a dirty form under a clean
-    browser quit with no prompt at all. The saver comes back only for the
-    topmost screen — a form buried under another editor cannot be saved from
-    a modal, because its own save pops whatever is on top of it.
+    Every screen is asked, not only the top one: the filter browser is only
+    ever pushed on top of the source form, so a dirty form can sit under a
+    clean browser. The saver comes back only for the topmost screen: a form
+    buried under another editor cannot be saved from a modal, because its own
+    save pops whatever is on top of it.
     """
     for depth, screen in enumerate(reversed(list(screens))):
         answer = unsaved_on(screen)
@@ -4846,10 +4828,10 @@ def unsaved_on(screen: object) -> tuple[str, Callable[[], None]] | None:
 class RebuildConfirmScreen(Screen[None]):
     """Confirm an act that empties the index before refilling it.
 
-    Delete-source, delete-collection and Update-all all confirmed; the acts
-    that empty an index did not. Rebuild sat one row under "Update index" on
-    the same panel, and a rename dropped the old name's documents and rebuilt
-    from the field you typed in — both one Enter away, both differing from
+    Delete-source, delete-collection and Update-all confirm, and so must the
+    acts that empty an index. Rebuild sits one row under "Update index" on
+    the same panel, and a rename drops the old name's documents and rebuilds
+    from the field you typed in: both one Enter away, both differing from
     their harmless neighbour only in cost and consequence, which is exactly
     what a label cannot carry alone.
 
@@ -4889,7 +4871,7 @@ class RebuildConfirmScreen(Screen[None]):
         body = self._body or (
             f"Rebuild {name!r} from scratch?\n\n"
             "Its chunks are dropped first, so until the run finishes this "
-            "collection holds less than it does now — and a rebuild that "
+            "collection holds less than it does now, and a rebuild that "
             "is cancelled or interrupted leaves it part-built.\n\n"
             "The files on disk are untouched. Update index adds and drops "
             "what changed without emptying anything, and is what you want "
@@ -5076,7 +5058,7 @@ class DeleteSourceScreen(Screen[None]):
             # removed source's files stay searchable and the promise is false.
             self.notify(
                 f"Indexing {busy!r} is still running, and removing a source "
-                "rebuilds the collection — cancel it or let it finish first.",
+                "rebuilds the collection. Cancel it or let it finish first.",
                 severity="warning",
                 timeout=8,
             )
@@ -5927,7 +5909,7 @@ class FilterTextScreen(Screen[None]):
             status.add_class("-bad")
             status.remove_class("-ok")
             status.update(
-                f"⚠ this drops the {dropped} exclusion — {rows}"
+                f"⚠ this drops the {dropped} exclusion: {rows}"
                 if rows
                 else f"⚠ this drops the {dropped} exclusion"
             )
@@ -5948,9 +5930,8 @@ class FilterTextScreen(Screen[None]):
     def save_blocked(self) -> str:
         """Why Apply would be refused, or "".
 
-        The leaving prompt reads this, so it stops offering to save text the
-        screen has already rejected — the same arrangement the source form
-        uses, which this screen was left out of.
+        The leaving prompt reads this, as the source form's does, so it never
+        offers to save text the screen has already rejected.
         """
         _spec, err = self._parsed()
         return f"col {err.column}: {err.message}" if err is not None else ""
@@ -5962,7 +5943,7 @@ class FilterTextScreen(Screen[None]):
             # refreshing it changes nothing on screen and the key reads dead:
             # measured at 14 identical pane captures over 3.5 seconds.
             self._refresh_status()
-            self.app.notify(f"Not applied — {self.save_blocked()}", severity="error", timeout=4)
+            self.app.notify(f"Not applied: {self.save_blocked()}", severity="error", timeout=4)
             return
         self._on_save(spec)
         self.app.pop_screen()
@@ -6038,8 +6019,8 @@ _SPEC_FIELDS = (
 def _spec_from_filters(filters: Any) -> Any:
     """A ``DefaultFilters``/``SourceFilters`` as the text form's spec.
 
-    The two ignore-file toggles have no expression form — they select which
-    files are read, not a predicate over one — so they stay on their rows.
+    The two ignore-file toggles have no expression form (they select which
+    files are read, not a predicate over one), so they stay on their rows.
     """
     from fnd.filters import FilterSpec
     from fnd.filters.dimensions import tag_selection
@@ -6130,10 +6111,9 @@ def _branch_group(branch: Any) -> ToggleGroup:
     )
 
 
-#: Shown under the rule box. Both hunters wrote an inert glob here: `*` does
-#: not cross `/`, so `'*drafts*'` never matches while `'drafts/**'` does.
-# The same trap _RULE_HELP names, one field over: * stops at /, so a bare
-# folder name matches only a FILE of that name.
+#: Shown under the rule box, where an inert glob is easy to write: `*` does
+#: not cross `/`, so `'*drafts*'` never matches while `'drafts/**'` does, and
+#: a bare folder name matches only a FILE of that name.
 _GLOB_HINT = "'build/**' for a folder; 'build' matches only a file called build"
 
 _RULE_HELP = (
@@ -6223,10 +6203,10 @@ class RuleTextScreen(Screen[None]):
             return
         status.add_class("-ok")
         scope = "files with a frontmatter block" if self._note_scoped else "every file"
-        # "✓ every file" was read as "this matches every file". It is the
+        # "✓ every file" alone reads as "this matches every file". It is the
         # rule's scope, and a rule that parses can still match nothing or
         # exclude nothing.
-        status.update(f"✓ reads as valid — it will be tested against {scope}")
+        status.update(f"✓ reads as valid: it will be tested against {scope}")
 
     def action_back(self) -> None:
         self.app.pop_screen()
@@ -6260,11 +6240,9 @@ _FIELD_WORDS: dict[str, str] = {
 def _cleared_note(before: Any, after: Any) -> str:
     """What returning to the defaults just took away, named as screens name it.
 
-    There was a second wording for a set that inherits from nothing — "nothing
-    is filtered out now" — which was false even then, since ignore files and
-    hidden-name pruning survive any clear. That route no longer exists: a set
-    with nothing to return to refuses the act, so the sentence is gone rather
-    than left unreachable.
+    A set with nothing to return to refuses the act, so no sentence here claims
+    an empty set, which would be false anyway: ignore files and hidden-name
+    pruning survive any clear.
     """
     dropped = list(
         dict.fromkeys(
@@ -6276,7 +6254,7 @@ def _cleared_note(before: Any, after: Any) -> str:
     if not dropped:
         return "Nothing to return"
     lost = ", ".join(dropped)
-    return f"Back to the inherited filters — this source no longer overrides {lost}"
+    return f"Back to the inherited filters: this source no longer overrides {lost}"
 
 
 #: What the sidebar's clear bar answers to. Read once, like the app's own
@@ -6327,7 +6305,7 @@ class FilterBrowserScreen(Screen[None]):
         height: 1; padding: 0 0; border: none; background: $surface; color: $text;
     }
     FilterBrowserScreen #filter_search:focus { color: $accent; }
-    /* visibility (not display) so the row is always reserved — the bar
+    /* visibility (not display) so the row is always reserved: the bar
        appearing on the first active filter must not shove the tree down.
        Same rule, glyph and position as the sidebar's. */
     FilterBrowserScreen #clear_filters_bar {
@@ -6371,13 +6349,13 @@ class FilterBrowserScreen(Screen[None]):
         # reindexes its collection, the defaults save reindexes nothing.
         self._save_note = save_note
         # A branch that is simply absent reads as a missing feature, and the
-        # two routes are silent for different reasons — as are "nothing is
+        # two routes are silent for different reasons, as are "nothing is
         # indexed yet" and "indexed, and none of it is tagged".
         self._no_tags_note = no_tags_note
         self._unindexed_note = unindexed_note
         # And what it does at all. On a source this screen stages into the
-        # form, which owns the write, so calling it "Save" promised something
-        # only the form does.
+        # form, which owns the write, so calling it "Save" would promise
+        # something only the form does.
         self._commit_label = commit_label
         # Include globs restrict the file types too, but they cannot be shown
         # as ticked kinds: saving them back as kinds would widen a glob that
@@ -6428,8 +6406,8 @@ class FilterBrowserScreen(Screen[None]):
     def _on_rule_selected(self, ev: ToggleTree.ActionSelected) -> None:
         """A typed rule lives with the ticked ones, not on the screen above.
 
-        The frontmatter rule sat beside Index filters, so the two could hold
-        different answers to the same question and neither showed the other's.
+        Beside Index filters, the frontmatter rule could hold a different answer
+        to the same question, with neither showing the other's.
         """
         from dataclasses import replace as _replace
 
@@ -6490,8 +6468,8 @@ class FilterBrowserScreen(Screen[None]):
     def _refresh_legend(self) -> None:
         """The glyph meanings for the branch the cursor is in.
 
-        The shared line is false on the ignore branch — ● there means "obey
-        this file", which indexes FEWER files — so a branch that reads
+        The shared line is false on the ignore branch (● there means "obey
+        this file", which indexes FEWER files), so a branch that reads
         differently says so, and the rest keep one wording.
         """
         from fnd.filters.tree_model import LEGEND
@@ -6548,8 +6526,8 @@ class FilterBrowserScreen(Screen[None]):
                 (COMMIT_KEY, self._commit_label),
                 ("y", "Copy"),
                 # Esc asks; it does not discard. Naming one of the answers on
-                # the key that opens the question is how a hunter lost a
-                # filter set to Esc followed by Enter.
+                # the key that opens the question invites Esc then Enter, which
+                # loses a filter set.
                 ("Esc/←", "Leave"),
             )
         )
@@ -6669,11 +6647,9 @@ class FilterBrowserScreen(Screen[None]):
         self._spec, self._gitignore, self._fndignore = apply_selection(
             self._spec, ev.selected, ev.excluded, self._offered_kind_ids()
         )
-        # Ticking every file type IS "no rule", and the model says so by
-        # collapsing `kinds` to empty. The tree went on showing every box
-        # ticked, so `● File types (every type)` sat there as a state that
-        # compiles identically to `○ no rule`, saves nothing, and comes back
-        # as `○`. Re-derive from the spec whenever the two disagree.
+        # Ticking every file type IS "no rule" (the model collapses `kinds` to
+        # empty), so re-derive from the spec whenever the two disagree, or
+        # `● every type` stays as a state that saves nothing and returns as `○`.
         settled, settled_out = selection_for(
             self._spec, gitignore=self._gitignore, fndignore=self._fndignore
         )
@@ -6688,27 +6664,26 @@ class FilterBrowserScreen(Screen[None]):
     def _say_when_nothing_matches(self, any_rows: bool) -> None:
         """Put an empty row filter in the pane's title.
 
-        A query matching nothing painted a blank tree and said nothing — a
-        hunter probed the process for liveness thinking it had hung. The
-        border title is where this app already carries counts, so it is where
-        the absence of them belongs too.
+        A blank tree that says nothing reads as a hung process. The border
+        title is where this app already carries counts, so it is where the
+        absence of them belongs too.
         """
         import contextlib
 
         with contextlib.suppress(Exception):
             box = self.query_one("#settings_box", Vertical)
             if self._query and not any_rows:
-                box.border_title = f"{self._title} — no rows match {self._query!r}"
+                box.border_title = f"{self._title}: no rows match {self._query!r}"
             else:
                 box.border_title = self._title
 
     def _can_return_to_defaults(self) -> bool:
         """Whether this screen has defaults to go back to, and has left them.
 
-        ONE predicate, read by the row, the key and the footer. Hiding the row
-        and leaving the key bound turned a destructive gesture invisible: on
-        the global set it emptied the shipped never-index exclusion, and the
-        browser cannot offer that tag back once no file carries it.
+        ONE predicate, read by the row, the key and the footer, so the key is
+        never bound where the row is hidden: on the global set it would empty
+        the shipped never-index exclusion, and the browser cannot offer that
+        tag back once no file carries it.
         """
         return self._inherited is not None and (
             (self._spec, self._gitignore, self._fndignore) != self._inherited
@@ -6747,21 +6722,15 @@ class FilterBrowserScreen(Screen[None]):
     def _refresh_summary(self) -> None:
         """Show the rows as the expression they compile to.
 
-        The text is not a separate feature to go and find — it is this filter
+        The text is not a separate feature to go and find: it is this filter
         set, written out, and ``t`` opens it for editing.
         """
         from fnd.filters.text_form import render
 
         text = render(self._spec)
-        # This line's claim is "what the expression below does NOT cover", and
-        # ignore files do not appear in it — so the line has to mention them
-        # even though the branch above names WHICH. It says that they apply,
-        # not which they are; dropping it entirely left the expression looking
-        # like the whole story.
-        #
-        # The walk also prunes every dot-prefixed name whatever the filters
-        # say, and nothing else on any screen says so. Only an include glob
-        # naming a dot-prefixed component admits one, and only what it matches.
+        # What the expression below does NOT cover: ignore files (that they
+        # apply, not which), and the walk's pruning of every dot-prefixed name,
+        # lifted only for what an include glob naming a dot component matches.
         obeying = self._gitignore or self._fndignore
         head = ["obeying ignore files" if obeying else "ignore files off"]
         head.append("skipping hidden files")
@@ -6771,7 +6740,7 @@ class FilterBrowserScreen(Screen[None]):
             head.append("skipping paths: " + ", ".join(self._excludes))
         for clash in self._spec.impossible_bounds():
             # Decidable without a corpus, and the outcome is an empty index.
-            head.append(f"nothing can match — {clash}")
+            head.append(f"nothing can match: {clash}")
         if self._save_note:
             head.append(self._save_note)
         if self._query:
@@ -6783,11 +6752,10 @@ class FilterBrowserScreen(Screen[None]):
         elif self._no_tags_note and not _any_tag(self._sample):
             head.append(self._no_tags_note)
         if self._sample is not None and self._sample.truncated:
-            # Its own line, not the last arm of the chain above: the per-source
-            # browser always passes a tags note, so a tagless source could
-            # never reach this, and a bare row now positively means "none
-            # here" rather than "not counted".
-            head.append("partial scan — this source has more types and tags")
+            # Its own `if`, not the chain's last arm: the per-source browser
+            # always passes a tags note, so a tagless source would never reach
+            # it, and a bare row then means "none here", not "not counted".
+            head.append("partial scan: this source has more types and tags")
         # Named separately because neither is a predicate over a file, so
         # neither can appear in the expression below.
         self.query_one("#filter_summary", Static).update(
@@ -6803,7 +6771,7 @@ class FilterBrowserScreen(Screen[None]):
 
     def action_help_if_saved(self) -> None:
         if self._dirty():
-            self.notify(f"Unsaved filter changes — {COMMIT_KEY} to save, Esc to discard, then ?")
+            self.notify(f"Unsaved filter changes: {COMMIT_KEY} to save, Esc to discard, then ?")
             return
         self.app.action_show_help()  # type: ignore[attr-defined]
 
@@ -6827,11 +6795,11 @@ class FilterBrowserScreen(Screen[None]):
         """Return this screen's set to what it inherits.
 
         Emptying the resolved set instead widens the index: on a source it
-        threw away the inherited `no_index` exclusion, so undoing a file-type
-        filter also switched off the never-index opt-out, silently.
+        drops the inherited `no_index` exclusion, so undoing a file-type filter
+        would also switch off the never-index opt-out, silently.
         """
         if not self._can_return_to_defaults():
-            # The global set inherits from nothing. Emptying it here dropped
+            # The global set inherits from nothing. Emptying it here would drop
             # the shipped never-index exclusion, which is a protection rather
             # than a preference, and no row on this screen can put it back.
             return
@@ -6840,7 +6808,7 @@ class FilterBrowserScreen(Screen[None]):
         assert self._inherited is not None
         self._spec, self._gitignore, self._fndignore = self._inherited
         self._rebuild()
-        # It takes no confirmation, so it has to say what it took — above all
+        # It takes no confirmation, so it has to say what it took, above all
         # a tag exclusion, which is a protection rather than a preference.
         self.notify(_cleared_note(before, self._spec))
 
@@ -6877,10 +6845,9 @@ class FilterBrowserScreen(Screen[None]):
 
     def action_save_close(self) -> None:
         if not self._dirty():
-            # The screen already knows: the exit guard calls this same state
-            # clean and leaves without asking. Saving it anyway reported
-            # "Filters saved." over a byte-identical config and, worse, the
-            # save path reindexes — a costly answer to a question nobody asked.
+            # The exit guard calls this state clean and leaves without asking;
+            # saving anyway would report "Filters saved." over a byte-identical
+            # config and reindex, a costly answer to a question nobody asked.
             self.app.notify("No changes to save")
             self.app.pop_screen()
             return

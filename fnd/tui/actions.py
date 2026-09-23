@@ -105,7 +105,7 @@ REGISTRY: tuple[Action, ...] = (
     Action(
         id="scope_toggle_batch",
         description="Toggle a collection, source or filter WITHOUT re-running the "
-        f"query — hold Ctrl / {os_labels.ALT_WORD} while pressing Enter to change "
+        f"query: hold Ctrl / {os_labels.ALT_WORD} while pressing Enter to change "
         "several at once, then Enter in the query bar to run them together.",
         default_key="ctrl+enter,alt+enter",
         command="toggle-batch",

@@ -242,8 +242,8 @@ def _known_kinds(values: list[str] | None) -> list[str] | None:
     from fnd.kinds import ALL_KIND_IDS, KIND_BY_ID
 
     # A wrong guess is usually the type's NAME or its extension rather than a
-    # misspelling of the id — `markdown` for `md`, `.py` for `python` — so
-    # look those up before falling back to fuzzy matching.
+    # misspelling of the id (`markdown` for `md`, `.py` for `python`), so look
+    # those up before falling back to fuzzy matching.
     by_word = {
         word.lower().lstrip("."): kind
         for kind, spec in KIND_BY_ID.items()
@@ -473,10 +473,9 @@ class SourceConfig(_ConfigModel):
         if self.filters is not None and self.filters.kinds is not None:
             return self
         kinds, rest = split_type_globs(self.includes)
-        # Only when the globs say nothing else. ``walk`` ORs its include
-        # globs, while ``kinds`` is a separate rule that is ANDed with what is
-        # left; so absorbing half of ["**/*.md", "notes/**"] would turn "md
-        # files or anything under notes/" into "md files under notes/".
+        # Only when the globs say nothing else: ``walk`` ORs include globs but
+        # ANDs ``kinds`` with them, so absorbing half of ["**/*.md", "notes/**"]
+        # would turn "md files or anything under notes/" into "md files under notes/".
         if not kinds or rest:
             return self
         merged = (
@@ -539,10 +538,10 @@ def overlapping_source(
     """``(sibling path, whether the NEW source contains it)``, or ``("", False)``.
 
     The relation comes back because the check runs both ways and the warning
-    has to name the one that matched: a caller told only the path said "already
-    inside" when the new folder was the parent. Not a refusal — the index keys
-    on the file, so a file two sources reach is stored once; it is silence that
-    misleads. ``editing`` is the row being replaced, not its own rival.
+    has to name the one that matched: a caller told only the path would say
+    "already inside" when the new folder is the parent. Not a refusal: the
+    index keys on the file, so a file two sources reach is stored once; it is
+    silence that misleads. ``editing`` is the row being replaced, not its own rival.
     """
     import contextlib
 
@@ -993,8 +992,8 @@ def validate_collection_name(name: str) -> str:
         raise InvalidCollectionNameError(
             f"collection name {name!r} contains forbidden character(s): {shown}"
         )
-    # Windows reserves device names (CON, PRN, …) for ANY file whose stem;
-    # the part before the first dot; matches, so ``CON`` → ``CON.state.toml``
+    # Windows reserves device names (CON, PRN, …) for ANY file whose stem (the
+    # part before the first dot) matches, so ``CON`` → ``CON.state.toml``
     # can't be created. Reject only on Windows so an existing macOS/Linux config
     # with such a name keeps loading; it fails clearly if that config is opened
     # on Windows rather than dying on an opaque file-creation error.

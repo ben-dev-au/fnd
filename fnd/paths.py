@@ -103,8 +103,8 @@ def _uv_tool_dir() -> str:
     """``uv tool dir``, asked once per process; ``""`` when uv isn't callable.
 
     Measured 60 ms warm / 90 ms cold, and a Settings row reaches it several
-    times per screen open. uv's tool root does not move while fnd runs —
-    installing a tool *into* it does not change it — so the answer is cached
+    times per screen open. uv's tool root does not move while fnd runs
+    (installing a tool *into* it does not change it), so the answer is cached
     while the ``.exists()`` checks built on it stay live.
     """
     try:

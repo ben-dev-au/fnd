@@ -23,12 +23,9 @@ from fnd.tags import TAG_PROVIDERS, normalise_tag, source_tag_selection
 
 __all__ = ["DIMENSIONS", "Dimension", "dimension", "rule_from_text"]
 
-# Frontmatter is a Markdown convention: a .txt file has no YAML block, so a
-# frontmatter predicate must not be evaluated against one — strict null would
-# drop every plain-text file in the source.
-#: Exactly the kinds that can carry a block, read from the one function that
-#: decides it. Narrowed to ``md`` by hand, a bare ``.txt`` was out of scope and
-#: sailed past the rule that dropped the identical ``.md`` beside it.
+#: Kinds that can carry a frontmatter block, from the one function that decides
+#: it: a frontmatter predicate evaluated against any other kind strict-nulls,
+#: dropping every such file (a PDF, say) in the source.
 NOTE_KINDS: Final[frozenset[str]] = frontmatter_kinds()
 
 
@@ -43,8 +40,8 @@ def _as_list(value: object) -> list[object]:
 def tag_selection(value: object) -> dict[str, tuple[str, ...]]:
     """Config tags as ``{source: tags}``.
 
-    A bare list claims every source — the rule ``source_tag_selection`` already
-    applies to ``--tag`` on the query side — while a table names them:
+    A bare list claims every source (the rule ``source_tag_selection`` already
+    applies to ``--tag`` on the query side), while a table names them:
 
         exclude_tags = ["no_index"]
         [defaults.filters.exclude_tags]
@@ -110,7 +107,7 @@ class Dimension(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class _ListDimension:
-    """``file.kind in ['pdf','md']`` — a set membership over a scalar fact."""
+    """``file.kind in ['pdf','md']``: a set membership over a scalar fact."""
 
     id: str
     fact: str
@@ -135,7 +132,7 @@ class _ListDimension:
 
 @dataclass(frozen=True, slots=True)
 class _TagExcludeDimension:
-    """``NOT ('no_index' in file.tags.all)`` — one clause per excluded tag.
+    """``NOT ('no_index' in file.tags.all)``: one clause per excluded tag.
 
     A tag may name the source it came from (``os:archive``), because a Finder
     tag and a note's ``tags:`` entry that happen to share a word are not the
@@ -172,7 +169,7 @@ class _TagExcludeDimension:
 
 @dataclass(frozen=True, slots=True)
 class _TagIncludeDimension:
-    """``'a' in file.tags.all OR 'b' in file.tags.all`` — carry at least one.
+    """``'a' in file.tags.all OR 'b' in file.tags.all``: carry at least one.
 
     Strict, unlike its exclude counterpart: "only files tagged X" cannot be
     satisfied by a file whose tags nothing could read.
@@ -243,19 +240,17 @@ class _ExpressionDimension:
 def _reject_unknown_facts(facts: frozenset[str]) -> None:
     """A dotted name that is not a reserved fact is a typo, not a field.
 
-    `RESERVED_FACTS` has said so in its own comment since it was written —
-    "callers can reject it at parse time instead of strict-nulling to False" —
-    and no caller did. So `file.kinds == 'pdf'`, one letter from `file.kind`,
-    validated with a tick, indexed nothing, and the tree quietly dropped the
-    clause it could not place. Frontmatter keys cannot contain a dot, so
-    nothing legitimate is caught here.
+    Rejected at parse time rather than strict-nulled to False, so
+    `file.kinds == 'pdf'` (one letter from `file.kind`) fails validation instead
+    of indexing nothing. Frontmatter keys cannot contain a dot, so nothing
+    legitimate is caught here.
     """
     unknown = sorted(f for f in facts if is_fact_name(f) and f not in RESERVED_FACTS)
     if not unknown:
         return
     known = ", ".join(sorted(RESERVED_FACTS))
     raise FilterError(
-        f"unknown field {unknown[0]!r} — known fields are: {known}",
+        f"unknown field {unknown[0]!r}; known fields are: {known}",
         1,
     )
 
@@ -269,11 +264,9 @@ def _compile(
     node = parse_dsl(text)
     facts = referenced_fields(node)
     _reject_unknown_facts(facts)
-    # A rule naming a frontmatter key cannot be answered by a file with no
-    # block, whatever ELSE it names. Scoping only the rules that name nothing
-    # else sent a mixed one — `Course == 'X' OR file.size < 10` — to the
-    # unscoped channel, where the frontmatter half strict-nulled on every PDF
-    # and took the whole clause down with it.
+    # A rule naming any frontmatter key is scoped to note kinds, even a mixed one
+    # (`Course == 'X' OR file.size < 10`): unscoped, its frontmatter half
+    # strict-nulls on every PDF and takes the whole clause down with it.
     if not needs_frontmatter and any(not is_fact_name(f) for f in facts):
         needs_frontmatter = True
         applies_to = NOTE_KINDS

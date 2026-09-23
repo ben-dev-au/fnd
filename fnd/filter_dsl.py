@@ -104,8 +104,7 @@ def _scan_string(text: str, start: int, quote: str) -> tuple[str, int] | None:
 
     Backslash escapes the quote and itself. A trailing backslash is read as a
     literal instead when escaping it would run off the end, so a value that
-    ends in one — a Windows path, say — still parses as it did before escapes
-    existed.
+    ends in one (a Windows path, say) still parses.
     """
     for escaping in (True, False):
         parts: list[str] = []
@@ -307,7 +306,7 @@ _SIZE_SUFFIXES = ("kb", "mb", "gb", "tb", "k", "m", "g", "b", "kib", "mib", "gib
 def _unit_hint(value: object) -> str:
     """A pointer at the unit, when the leftover token looks like one."""
     if isinstance(value, str) and value.strip().lower() in _SIZE_SUFFIXES:
-        return " — sizes are in bytes, so 200 kB is 200000"
+        return "; sizes are in bytes, so 200 kB is 200000"
     return ""
 
 
@@ -406,7 +405,7 @@ class _Parser:
         raise FilterError(f"unexpected token {first.value!r}", first.column)
 
     def _parse_value_list(self) -> tuple[object, ...]:
-        """``[ value, value, ... ]`` — a trailing comma and an empty list are
+        """``[ value, value, ... ]``; a trailing comma and an empty list are
         rejected, so a typo can't silently become a filter that matches nothing."""
         open_tok = self.expect(TokenKind.LBRACKET)
         values: list[object] = []
@@ -472,7 +471,7 @@ def referenced_fields(node: object) -> frozenset[str]:
 def _reject_unknown_facts(tree: object, text: str) -> None:
     """Raise on a `file.` name that is not a fact.
 
-    An unknown fact is *unknown*, not false, so its rule is waived — and a
+    An unknown fact is *unknown*, not false, so its rule is waived, and a
     typo therefore admits every file rather than none. Frontmatter keys
     provably cannot contain a dot, so anything dotted here is a mistake.
     """

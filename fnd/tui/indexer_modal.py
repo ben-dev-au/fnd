@@ -193,9 +193,9 @@ class IndexerScreen(ModalScreen[None]):
         height: 1;
         padding: 0;
     }
-    /* These two carry counts, and a clipped count is a different number: at 80
-       columns `2 removed` painted as a bare `2`, on a run that had emptied the
-       index. They wrap rather than losing a word. */
+    /* These two carry counts, and a clipped count is a different number (at
+       80 columns `2 removed` clips to a bare `2`), so they wrap rather than
+       lose a word. */
     #indexer_indexed_line, #indexer_texture_line {
         height: auto;
         padding: 0;
@@ -286,9 +286,8 @@ class IndexerScreen(ModalScreen[None]):
                     Option("Cancel", id="cancel"),
                     id="indexer_actions",
                 )
-        # A modal screen is see-through, so the app's own footer showed under
-        # it — `/`, `:`, `?` and `q`, none of which work while this is up,
-        # and none of this screen's keys.
+        # A modal screen is see-through, so without its own footer the app's
+        # shows under it: `/`, `:`, `?` and `q`, none of which work here.
         yield Static("", id="footer_hints")
 
     def _title_text(self) -> str:
@@ -430,7 +429,7 @@ class IndexerScreen(ModalScreen[None]):
         pages, page_secs = live_progress.session_snapshot()
         per_page = fmt_per_page(pages, page_secs)
         # `?` is honest while pages are still being counted and noise on a run
-        # that has none to count — a corpus with no PDFs never gets an average.
+        # that has none to count: a corpus with no PDFs never gets an average.
         average = "" if per_page == "?" else f"    [dim]·[/]    [dim]Avg:[/] {per_page}"
         with contextlib.suppress(Exception):
             timing = self.query_one("#indexer_timing", Static)
@@ -528,8 +527,8 @@ class IndexerScreen(ModalScreen[None]):
         from fnd.tui.app import render_hint_bar
 
         hints: tuple[tuple[str, str], ...] = (("↑↓", "Choose"), ("⏎", "Select"))
-        # The per-collection summary — which is where the removed-file counts
-        # are read — is focusable and was named nowhere.
+        # The per-collection summary (where the removed-file counts are read)
+        # is focusable, so the footer names it.
         if history:
             hints = (*hints, ("Tab", "Completed"))
         if done:
@@ -1003,9 +1002,9 @@ def _format_indexed_line(
 ) -> str:
     """Short enough to survive a 75%-wide modal at 80 columns.
 
-    `12 newly indexed    340 already indexed    2 removed` overflowed and
-    painted the last count as a bare `2` — on a run that had emptied the
-    index. A non-breaking space does not help: Rich wraps on it too.
+    `12 newly indexed    340 already indexed    2 removed` overflows and
+    paints the last count as a bare `2`. A non-breaking space does not help:
+    Rich wraps on it too.
     """
     warnings = []
     # First, because it changes what every other number on the line means: a
@@ -1022,10 +1021,9 @@ def _format_indexed_line(
     # A run that adds nothing and removes three read as "nothing happened".
     changed = [f"{newly} new"] + ([f"{removed} removed"] if removed > 0 else [])
     if compact:
-        # The tree indents these rows and CLIPS them: measured, the body gets
-        # 54 columns at both 60 and 80. Ordered so the clip eats `already`,
-        # the least informative number, before a warning or the label — which
-        # is the only thing telling this row from the PDF one below it.
+        # The tree indents these rows and CLIPS them (measured: 54 columns at
+        # both 60 and 80), so the clip eats `already` before a warning or the
+        # label, which alone tells this row from the PDF one below it.
         return "[dim]Files[/] " + " · ".join([*warnings, *changed, f"{already} already"])
     return "[dim]Indexed:[/]     " + "    ".join(
         [*changed[:1], f"{already} already", *changed[1:], *warnings]
@@ -1038,8 +1036,8 @@ def _format_texturising_line(
     """Short for the same reason as :func:`_format_indexed_line`.
 
     These lines also appear inside the Completed tree, which indents them and
-    CLIPS rather than wrapping — at 80 columns the row lost `⚠ 1 still flat`
-    entirely, and hiding the tree's scrollbar had removed the only sign of it.
+    CLIPS rather than wrapping: at 80 columns the long form loses
+    `⚠ 1 still flat` entirely, with no scrollbar to hint at it.
     """
     flat = [f"[yellow]⚠ {still_flat} still flat[/]"] if still_flat > 0 else []
     if compact:
