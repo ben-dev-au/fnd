@@ -2321,7 +2321,7 @@ class FNDApp(App[None]):
                 UnsavedChangesScreen(
                     what=what,
                     on_save=save,
-                    on_leave=lambda: open_settings(self),
+                    on_leave=self._discard_and_open_settings,
                     leave_label="Discard and open the menu",
                     blocked=blocked,
                 )
@@ -2339,7 +2339,6 @@ class FNDApp(App[None]):
         which the screen's own footer advertises — discarded in silence.
         """
         from fnd.tui.settings_screen import (
-            SettingsScreen,
             UnsavedChangesScreen,
             unsaved_on_stack,
         )
@@ -2359,8 +2358,27 @@ class FNDApp(App[None]):
                 )
             )
             return
-        while isinstance(self.screen, SettingsScreen):
+        self._discard_settings_stack()
+
+    def _discard_settings_stack(self) -> None:
+        """Pop the settings stack down to the app, unsaved editors included.
+
+        The editors that can hold unsaved work are not SettingsScreens, so
+        popping only those stopped at the editor and discarded nothing.
+        """
+        from fnd.tui.settings_screen import SettingsScreen, unsaved_on_stack
+
+        while len(self.screen_stack) > 1 and (
+            isinstance(self.screen, SettingsScreen)
+            or unsaved_on_stack(self.screen_stack) is not None
+        ):
             self.pop_screen()
+
+    def _discard_and_open_settings(self) -> None:
+        from fnd.tui.settings_screen import open_settings
+
+        self._discard_settings_stack()
+        open_settings(self)
 
     def action_open_multi_input(self) -> None:
         """Open the :multi DSL panel for typed sub-queries + intent line.
