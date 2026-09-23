@@ -26,9 +26,7 @@ from fnd.render import render_chunk_pieces
 from fnd.tui.line_buffer import LineBufferPreview, build_rendered_document
 from fnd.tui.preview import decode_progress, tuning
 from fnd.tui.preview.coverage import coverage_targets, neighbour_order
-from fnd.tui.preview.frozen import (
-    FrozenChunkView,
-)
+from fnd.tui.preview.frozen import FrozenChunk, FrozenChunkView, stands_in_for, style_key
 from fnd.tui.preview.frozen_store import ChunkCaptureStore
 from fnd.tui.preview.liveness import is_condemned, is_live
 from fnd.tui.preview.visibility import set_node_class, set_preview_visibility
@@ -162,9 +160,9 @@ class PreviewPresenter:
         # full document on every cursor move within the same file. Keyed by
         # parent_id, invalidated on new query.
         self.chunk_cache: dict[str, list[FileChunk]] = {}
-        # Widget-level cache (UX-pass-4 §4 hybrid): keeps the mounted
-        # widget tree alive across file switches so repeat visits are
-        # O(1). Cleared on every new query (highlights would be wrong).
+        # Widget-level cache: keeps the mounted widget tree alive across
+        # file switches so repeat visits are O(1). Cleared on every new
+        # query (highlights would be wrong).
         self.preview_cache: PreviewCache = PreviewCache()
         # The currently-active PreviewContainer (the one with `-active`
         # class). None until the first file is rendered.
@@ -550,7 +548,7 @@ class PreviewPresenter:
         """Render the full document for ``parent_id`` as one widget per
         chunk, then scroll to the chunk identified by ``focus_chunk_seq``.
 
-        Hybrid load (UX-pass-4 §4 follow-up):
+        Hybrid load:
 
         1. Look up the cached :class:`PreviewContainer` for this file +
            query. If complete, activate (O(1) class flip) and scroll —
@@ -931,10 +929,9 @@ class PreviewPresenter:
         flat path; structural ignores it."""
         import asyncio
 
-        # Phase 5 redesign: route by format. PDF / TXT take the flat-
-        # buffer path (one widget per file, line API, line-precise
-        # scrollbar markers). MD / DOCX / PPTX stay on the structural
-        # Markdown widget below.
+        # Route by format: PDF / TXT take the flat-buffer path (one
+        # widget per file, line API, line-precise scrollbar markers).
+        # MD / DOCX / PPTX stay on the structural Markdown widget below.
         if choose_preview_mode(chunks) == "flat":
             # NOT hidden here: the flat buffer replaces it in the same tick, and
             # hiding first leaves the pane blank in between.
@@ -1276,6 +1273,26 @@ class PreviewPresenter:
         mount window rather than the file's chunk count — the old denominator
         that left the line reading ~1% on a thousand-chunk PDF."""
         del progress
+
+    def show_pane_message(self, text: str, *, replace_only: bool = False) -> None:
+        """Say something in the pane, reusing its one empty-state Static.
+
+        A search that finds nothing must not leave "Type a query and press
+        Enter" over the query just run. ``replace_only`` writes over a message
+        already showing and does nothing otherwise: a preview is on screen
+        then, and a mount would stack the line above it rather than replace it.
+        """
+        import contextlib
+
+        from textual.widgets import Static
+
+        with contextlib.suppress(Exception):
+            pane = self._app.query_one("#preview_pane", VerticalScroll)
+            existing = [c for c in pane.children if isinstance(c, Static) and c.id == "placeholder"]
+            if existing:
+                existing[0].update(text)
+            elif not replace_only:
+                pane.mount(Static(text, id="placeholder"))
 
     def clear_pane_placeholder(self) -> None:
         """Drop the empty-state Static. Called by every activate path so the
@@ -1848,7 +1865,7 @@ class PreviewPresenter:
         # Step 2: wait for the above-window chunks to be MOUNTED, then built.
         # We cannot just read chunk_widgets now: when the focus chunk was
         # prefetched its build_done is already set, so Step 1 returns before
-        # Phase 1b has mounted the window — chunk_widgets would hold only the
+        # stage 1b has mounted the window; chunk_widgets would hold only the
         # focus chunk (above_waited=0), the scroll would land against a
         # focus-at-top layout, and the view would settle-scroll once the real
         # above content mounts. Yield until every expected above seq exists.
@@ -2236,8 +2253,9 @@ class PreviewPresenter:
         # from here is work whose result can never be served — the store key
         # carries the query signature, so it would be stored and never read.
         # Captures for a superseded query can never be served; holding them
-        # only spends the row budget that the new query's captures need.
-        self.capture_store.clear()
+        # only spends the row budget that the new query's captures need. The
+        # ones that highlighted nothing are kept: they can.
+        self.capture_store.clear_query_captures()
         # Same lifetime as the store: which hits a file HAS is a property of
         # the query's result set, so a new query has to re-establish it.
         self._unservable.clear()
@@ -2376,12 +2394,13 @@ class PreviewPresenter:
     ) -> None:
         """Swap every background-filled chunk for its frozen capture.
 
-        Phase 3 exists so an intra-file jump lands on an already-mounted chunk
-        rather than rebuilding. That works, and it is expensive: a fully-filled
-        file measured 99 chunks holding 2,735 widgets, and Textual's arrange is
-        linear in widget count, so the whole file's DOM taxes every interaction.
-        Freezing keeps what Phase 3 buys and drops what it costs — the chunk is
-        still there to jump to, at one widget instead of ~28.
+        The full background fill exists so an intra-file jump lands on an
+        already-mounted chunk rather than rebuilding. That works, and it is
+        expensive: a fully-filled file measured 99 chunks holding 2,735 widgets,
+        and Textual's arrange is linear in widget count, so the whole file's DOM
+        taxes every interaction. Freezing keeps what the fill buys and drops what
+        it costs: the chunk is still there to jump to, at one widget instead of
+        ~28.
 
         Runs as one pass after the fill rather than per chunk during it: a chunk
         mounted a moment ago has not been laid out, ``size.height`` is 0, and
@@ -3487,17 +3506,17 @@ class PreviewPresenter:
     ) -> None:
         """Visible-first mount + hidden-prepend background fill.
 
-        Phase 1 (sync, fast): mount the focused chunk plus
+        Stage 1 (sync, fast): mount the focused chunk plus
         :data:`tuning.VISIBLE_FIRST_ABOVE` chunks above and
         :data:`tuning.VISIBLE_FIRST_BELOW` below — a window roughly matching
         the typical viewport. The user sees the relevant content
         instantly.
 
-        Phase 2a (async, batched): append the remaining chunks BELOW
+        Stage 2a (async, batched): append the remaining chunks BELOW
         the visible window in document order. These add to virtual
         size but don't shift the visible viewport.
 
-        Phase 2b (async, batched): mount the chunks ABOVE the visible
+        Stage 2b (async, batched): mount the chunks ABOVE the visible
         window, but set ``display = False`` on each newly-mounted
         widget the moment it lands. Hidden widgets contribute zero
         layout, so the focused chunk's screen position stays put while
@@ -3538,7 +3557,7 @@ class PreviewPresenter:
             return
 
         needs_pre_reveal = not is_live(container) or container.has_class("-hidden")
-        # Newly-mounted "above-window" widgets get hidden until phase 2b
+        # Newly-mounted "above-window" widgets get hidden until stage 2b
         # finishes; the finally block makes sure every entry in this
         # list ends up displayed even on cancellation.
         hidden_widgets: list[Widget] = []
@@ -3585,7 +3604,7 @@ class PreviewPresenter:
             # mount phase can never read as finished.
             container.mount_window = max(0, win_end - win_start)
 
-            # Phase 1a: mount the focused chunk first and yield so it
+            # Stage 1a: mount the focused chunk first and yield so it
             # paints before the surrounding context mounts. On large
             # files the rest of the visible window can take several
             # hundred ms to mount; the user clicked a specific match
@@ -3606,11 +3625,11 @@ class PreviewPresenter:
 
                 # Reference held on the container so GC doesn't collect
                 # the task mid-await (RUF006). Cleared once it completes.
-                # The above-window chunks Phase 1b will mount. finalise must
+                # The above-window chunks stage 1b will mount. finalise must
                 # wait for THESE to exist + build, not just whatever is in
                 # chunk_widgets when it first looks — a prefetched focus chunk
                 # has build_done already set, so finalise would otherwise run
-                # before Phase 1b mounts the window and scroll to a stale
+                # before stage 1b mounts the window and scroll to a stale
                 # (focus-at-top) position, then settle-scroll once they land.
                 expected_above_seqs = [chunks[i].chunk_seq for i in range(win_start, focus_idx)]
                 _finalise_task = asyncio.create_task(
@@ -3626,7 +3645,7 @@ class PreviewPresenter:
             self.update_progress_bar(progress=len(container.mounted_indices))
             await asyncio.sleep(0)
 
-            # Phase 1b: mount the visible window, ABOVE the focus first and
+            # Stage 1b: mount the visible window, ABOVE the focus first and
             # closest-to-focus first within each side.
             #
             # The finalise waits only on the chunks ABOVE the focus — they are
@@ -3656,9 +3675,9 @@ class PreviewPresenter:
             self.update_progress_bar(progress=len(container.mounted_indices))
             await asyncio.sleep(0)
 
-            # Phase 2a: background fill BELOW the window, capped at the
+            # Stage 2a: background fill BELOW the window, capped at the
             # lazy-mount radius. Kept SMALL so first paint only needs the
-            # window — Option C's full-mount is deferred to Phase 3, strictly
+            # window; the full mount is deferred to stage 3, strictly
             # after the reveal, so it never delays first paint.
             self.mount_phase = "2a-below"
             below_end = min(len(chunks), focus_idx + 1 + tuning.BACKGROUND_FILL_RADIUS)
@@ -3670,7 +3689,7 @@ class PreviewPresenter:
                 await asyncio.sleep(0.002)
             await asyncio.sleep(0)
 
-            # Phase 2b: hidden-prepend ABOVE the window, capped at the
+            # Stage 2b: hidden-prepend ABOVE the window, capped at the
             # same radius. display=False keeps the focused chunk
             # anchored while earlier sections mount.
             self.mount_phase = "2b-above"
@@ -3705,8 +3724,8 @@ class PreviewPresenter:
                     with contextlib.suppress(Exception):
                         self._app._preview_scroll.reconcile()
 
-            # Phase 3 (Option C): the first view has now painted (finalise
-            # revealed during Phase 1/2). Fill the REST of the file in the
+            # Stage 3: the first view has now painted (finalise revealed
+            # during stages 1/2). Fill the REST of the file in the
             # background so internal match-jumps land on an already-mounted
             # chunk. Strictly AFTER the reveal so it never delays first paint;
             # outward in small batches via _lazy_mount_batch (which keeps the
@@ -3869,7 +3888,7 @@ class PreviewPresenter:
                 self.hide_progress_bar()
                 self.inflight_target = None
             # Re-anchor only needed for cancellation case: a successful
-            # Phase 2b reveal+anchor inline already scrolled to the
+            # stage 2b reveal+anchor inline already scrolled to the
             # focused chunk. The inline anchor sees the post-reveal
             # widget y and lands accurately; an additional chained
             # anchor here would compete with the inline one and can
@@ -3956,12 +3975,12 @@ class PreviewPresenter:
             pane = self._app.query_one("#preview_pane", VerticalScroll)
         except Exception:
             return False
+        width = self.capture_width(pane)
         captured = self.capture_store.get(
-            container.parent_doc_id,
-            container.query_signature,
-            self.capture_width(pane),
-            chunk.chunk_seq,
+            container.parent_doc_id, container.query_signature, width, chunk.chunk_seq
         )
+        if captured is None:
+            captured = self._plain_stand_in(container.parent_doc_id, chunk, width)
         if captured is None:
             return False
         view = FrozenChunkView(captured)
@@ -3975,6 +3994,27 @@ class PreviewPresenter:
         # for chunks the freeze sweep replaced.
         container.match_targets.pop(chunk.chunk_seq, None)
         return True
+
+    def _plain_stand_in(self, parent_id: str, chunk: FileChunk, width: int) -> FrozenChunk | None:
+        """An earlier query's capture of ``chunk``, when neither query highlights
+        anything in it. Most of a file, under most queries: re-querying one file
+        would otherwise rebuild every chunk of it."""
+        if not uses_markdown_renderer(chunk):
+            return None
+        capture = self.capture_store.get_plain(parent_id, width, chunk.chunk_seq)
+        if capture is None:
+            return None
+        config = self._app._config
+        key = style_key(
+            self._app.theme,
+            render_mermaid=config.defaults.render_mermaid if config is not None else True,
+        )
+        source = chunk.body_md or _legacy_blocks_to_md(chunk.blocks)
+        return (
+            capture
+            if stands_in_for(capture, source, self._app._effective_match_spec, key)
+            else None
+        )
 
     @property
     def scrollbar_markers_enabled(self) -> bool:

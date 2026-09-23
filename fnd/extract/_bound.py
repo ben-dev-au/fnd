@@ -1,9 +1,10 @@
 """The chunk-size contract, enforced where every extractor's output passes.
 
-A chunk is at most ``MAX_CHUNK_CHARS`` of body. Extractors may split earlier
-to yield better pieces (exact line numbers, whole rows); this is the guarantee
-behind them, so a new extractor cannot ship an oversized chunk because it never
-had the option. Measured: one dump with a whole post per line became 527
+A chunk is at most ``MAX_CHUNK_CHARS`` of body, or ``MAX_TABLE_CHARS`` for a
+table: ranking and proximity are scored per chunk, so a table stays whole while
+it can. Extractors may split earlier to yield better pieces (exact line numbers,
+whole rows); this is the guarantee behind them, so a new extractor cannot ship an
+oversized chunk because it never had the option. Measured: one dump with a whole post per line became 527
 chunks of 33,000 words, and every query scoped to it paid for every word.
 
 Pieces are cut at block boundaries, so one never starts mid-paragraph; a lone
@@ -22,7 +23,7 @@ import dataclasses
 import re
 from collections.abc import Iterable, Iterator
 
-from fnd.extract.base import MAX_CHUNK_CHARS, Block, Chunk
+from fnd.extract.base import MAX_CHUNK_CHARS, MAX_TABLE_CHARS, Block, Chunk
 
 __all__ = ["bounded"]
 
@@ -55,6 +56,13 @@ def _block_runs(blocks: list[Block]) -> Iterator[list[Block]]:
     held: list[Block] = []
     size = 0
     for block in blocks:
+        if block.kind == "table" and len(block.text) <= MAX_TABLE_CHARS:
+            # Its own run, never split nor merged: a table is one unit.
+            if held:
+                yield held
+                held, size = [], 0
+            yield [block]
+            continue
         if len(block.text) > MAX_CHUNK_CHARS:
             if held:
                 yield held
@@ -109,4 +117,8 @@ def _slice_source(source: str, run: list[Block]) -> str:
     assert first is not None
     assert last is not None
     lines = source.splitlines()
-    return "\n".join(lines[max(first[0], 0) : last[1]])
+    body = lines[max(first[0], 0) : last[1]]
+    head = run[0].head
+    if len(run) == 1 and head is not None:
+        return "\n".join(lines[max(head[0], 0) : head[1]] + body)
+    return "\n".join(body)
