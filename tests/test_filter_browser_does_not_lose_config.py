@@ -32,7 +32,7 @@ def _round_trip(
     """As the screen does it, INCLUDING `offered`.
 
     Passing no offered set left the all-ticked collapse unreachable, so the
-    one defect this file exists to catch — a real rule silently discarded —
+    one defect this file exists to catch (a real rule silently discarded)
     could not fire in any test here.
     """
     selected, excluded = selection_for(spec, gitignore=True, fndignore=True)
@@ -101,13 +101,11 @@ class TestKindsTheSampleNeverSaw:
 
 class TestTheCustomRowMeansItsLabel:
     """The tree's labels are built when it rebuilds; a selection is resolved
-    when it is made. An id meaning "whatever the spec holds now" resolved a
-    row still reading "Up to 5 MB" to a bound the user had since changed —
-    F1's own failure mode, reinstated inside its fix.
+    when it is made. An id meaning "whatever the spec holds now" would resolve
+    a row still reading "Up to 5 MB" to a bound the user has since changed.
 
     These deliberately do NOT re-derive the selection from the spec: doing so
-    reconciles the two and is exactly why the first regression test could not
-    see this.
+    reconciles the two and hides the defect.
     """
 
     def test_reselecting_a_stale_row_gives_what_it_says(self) -> None:
@@ -146,10 +144,10 @@ class TestTheCustomRowMeansItsLabel:
 
 
 class TestAHomogeneousFolderKeepsItsRule:
-    """The defect this file exists to catch, now reachable: the tree lists
-    what a source contains, so on an all-markdown folder a real
-    `kinds = ["md"]` was "everything offered" and collapsed to no rule —
-    deleted by opening the screen, with the index widened to match."""
+    """The defect this file exists to catch: the tree lists what a source
+    contains, so on an all-markdown folder a real `kinds = ["md"]` is
+    "everything offered" and must not collapse to no rule (deleted by opening
+    the screen, with the index widened to match)."""
 
     def test_the_rule_survives(self) -> None:
         from fnd.filters.scan import SourceSample
@@ -159,10 +157,10 @@ class TestAHomogeneousFolderKeepsItsRule:
         assert _round_trip(spec, sample=sample).kinds == ("md",)
 
     def test_the_branch_may_now_claim_every_type(self) -> None:
-        """The guard existed because ticking every VISIBLE kind on a sampled
-        list would collapse to "every type" and silently widen. The list is
-        never sampled now, so the promise is honest — and the collapse test
-        below still proves ticking all of them is what earns it."""
+        """Ticking every VISIBLE kind on a sampled list would collapse to
+        "every type" and silently widen; the list is never sampled, so the
+        promise is honest, and the collapse test below proves ticking all of
+        them is what earns it."""
         from fnd.filters.scan import SourceSample
         from fnd.filters.tree_model import spec_branches
 

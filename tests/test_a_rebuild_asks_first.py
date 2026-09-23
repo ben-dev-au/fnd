@@ -1,11 +1,9 @@
 """The one act that empties an index asks before doing it.
 
-Delete-source, delete-collection and Update-all all confirmed. `Rebuild index`
-ran on a single Enter — one row under `Update index`, on a panel titled
-`Update index › <name>`, differing from its neighbour only in cost and
-consequence. A hunter proved the difference by the counters rather than the
-labels: the update row gave `0 newly / 71 already`, the rebuild row gave
-`72 newly / 0 already`.
+Delete-source, delete-collection and Update-all all confirm. `Rebuild index`
+sits one row under `Update index`, on a panel titled `Update index › <name>`,
+differing from its neighbour only in cost and consequence: the update row gives
+`0 newly / 71 already`, the rebuild row `72 newly / 0 already`.
 """
 
 from __future__ import annotations
@@ -163,7 +161,7 @@ async def test_update_index_still_runs_straight_away(config: Config, tmp_index_d
 
 class TestARenameAsksBeforeDroppingTheIndex:
     """A rename dropped the old name's documents and rebuilt from scratch on
-    the Enter that submitted the text field — minutes of work on a large
+    the Enter that submitted the text field: minutes of work on a large
     collection, from typing a name.
 
     The config write is not the part being confirmed: that is saved either
@@ -173,13 +171,13 @@ class TestARenameAsksBeforeDroppingTheIndex:
     @staticmethod
     async def _rename_to(app: FNDApp, pilot: object, new_name: str, dropped: list[str]) -> None:
         """Drive the real submit path, with the config path already redirected
-        by the fixture — `_save` writes through `default_config_path()`."""
+        by the fixture: `_save` writes through `default_config_path()`."""
         from textual.widgets import Input
 
         from fnd.tui.settings_screen import RenameCollectionScreen
 
-        # `_save` pops twice — past Rename and the now-stale per-collection
-        # screen — so the stack has to be as deep as the real one.
+        # `_save` pops twice (past Rename and the now-stale per-collection
+        # screen), so the stack has to be as deep as the real one.
         app.push_screen(_Filler())
         for _ in range(4):
             await pilot.pause()  # type: ignore[attr-defined]
@@ -273,9 +271,7 @@ class TestTheDeclineSaysWhatItDeclines:
     before the dialog appears, and only the reindex is on offer. A user
     reading "Cancel" reasonably expects the rename undone.
 
-    And the cursor starts on the safe option, which every other irreversible
-    dialog in the app gets wrong — only the unsaved-changes gate defaults to
-    safe today.
+    And the cursor starts on the safe option, as on the unsaved-changes gate.
     """
 
     @pytest.mark.asyncio

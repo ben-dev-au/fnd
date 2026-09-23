@@ -174,8 +174,8 @@ def _maximal() -> conf.Config:
 
 
 class TestTheWholeSurfaceRoundTrips:
-    """The renderer silently dropped every collection-level field until this
-    existed — a sample that sets only what the renderer handles cannot fail."""
+    """Every collection-level field round-trips; a sample that sets only what
+    the renderer handles cannot fail."""
 
     def test_the_fixture_really_sets_every_field(self) -> None:
         config = _maximal()
@@ -247,7 +247,7 @@ class TestDocumentationCannotDrift:
         assert "\u2014" not in conf.starter_config()
 
     def test_source_filters_borrows_the_defaults_prose(self) -> None:
-        """One vocabulary, described once — writing it twice is the duplication
+        """One vocabulary, described once: writing it twice is the duplication
         the renderer exists to remove."""
         rendered = render_config(_sample())
         assert conf.DefaultFilters.model_fields["kinds"].description is not None
@@ -310,9 +310,8 @@ class TestDeterminism:
 
     def test_a_source_orders_named_fields_first_then_declaration_order(self) -> None:
         """`app_for` and `app_params` sit outside _SOURCE_ORDER, so they take
-        the branch that was hash-ordered. A source using only ordered fields
-        never reaches it, which is why the first version of this test could
-        not fail."""
+        the branch where hash ordering would show; a source using only ordered
+        fields never reaches it."""
         source = conf.SourceConfig(
             path=Path("~/N"),
             includes=["**/*.md"],
@@ -458,9 +457,10 @@ class TestRefusingBadOutput:
 
 
 class TestSlashlessGlobsKeepTheirReach:
-    """`*` used to cross `/`, so `includes = ["*.md"]` took the whole tree. It
-    stops at a separator now, which would narrow such a source to its root and
-    let the next update prune everything below it out of the index."""
+    """A slashless glob keeps its reach through migration: `*` stops at a
+    separator, so `includes = ["*.md"]` written for the whole tree would narrow
+    such a source to its root and let the next update prune everything below
+    it out of the index."""
 
     def test_a_slashless_glob_is_anchored_on_migration(self, tmp_path: Path) -> None:
         path = tmp_path / "config.toml"

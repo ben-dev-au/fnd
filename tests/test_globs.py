@@ -11,7 +11,7 @@ from fnd.filter_dsl import compile_filter
 from fnd.globs import GlobSet, PathGlob
 from fnd.walk import walk
 
-# Shapes the real config never uses — the corpus diff is green over its two
+# Shapes the real config never uses: the corpus diff is green over its two
 # include shapes either way, so a gate built on it proves nothing.
 GLOBS = [
     "**/*.md",
@@ -100,12 +100,12 @@ class TestTheLanguage:
 
 
 class TestOnePathThroughTheEngine:
-    """Several `*` in one segment used to let the engine try every way of
-    splitting the text between them, and it tried them all before failing."""
+    """Several `*` in one segment must not make the engine try every way of
+    splitting the text between them before failing."""
 
     def test_a_multi_star_segment_does_not_stall(self) -> None:
-        """Five stars against a 255-character name did not finish. The corpus
-        this was found on has PDF names over 140 characters."""
+        """Five stars against a 255-character name must finish; real corpora
+        hold PDF names over 140 characters."""
         started = time.perf_counter()
         assert not PathGlob("*a*a*a*a*a*b.md").matches("a" * 255 + ".md")
         assert time.perf_counter() - started < 1.0

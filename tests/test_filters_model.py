@@ -25,7 +25,7 @@ class TestValuesTheGrammarCannotQuote:
 
     The grammar has no escape for a quote inside a string literal, so a tag
     like ``don't-index`` rendered to text and re-parsed came back as
-    ``dont-index`` — a rule that could never match the real tag.
+    ``dont-index``: a rule that could never match the real tag.
     """
 
     def test_a_tag_containing_a_quote_still_matches(self, tmp_path: Path) -> None:
@@ -74,7 +74,7 @@ class TestScope:
         assert rule.passes(_facts(tmp_path, "plain.txt", "just text")) is True
 
     def test_frontmatter_rule_judges_a_file_that_has_one(self, tmp_path: Path) -> None:
-        """Whatever its extension — frontmatter is not Markdown-only."""
+        """Whatever its extension: frontmatter is not Markdown-only."""
         rule = rule_from_text("Course == 'DPwC'", needs_frontmatter=True)
         yes = _facts(tmp_path, "n.md", "---\nCourse: DPwC\n---\n")
         no = _facts(tmp_path, "o.md", "---\nCourse: Other\n---\n")
@@ -84,10 +84,10 @@ class TestScope:
         assert rule.passes(txt) is True
 
     def test_a_rule_naming_frontmatter_scopes_itself(self, tmp_path: Path) -> None:
-        """REVERSED: it used to judge everything, so a mixed rule like
-        `Course == 'X' OR file.size < 10` dropped every PDF — the frontmatter
-        half strict-nulled and took the whole clause with it. A rule naming a
-        frontmatter key is answerable only by a file that can carry one."""
+        """A rule naming a frontmatter key is answerable only by a file that
+        can carry one. Judging everything, a mixed rule like
+        `Course == 'X' OR file.size < 10` drops every PDF: the frontmatter half
+        strict-nulls and takes the whole clause with it."""
         rule = rule_from_text("Course == 'DPwC'")
         assert rule.passes(_facts(tmp_path, "paper.pdf")) is True
 

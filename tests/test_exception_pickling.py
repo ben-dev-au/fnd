@@ -3,7 +3,7 @@
 PDF extraction runs in a process pool, and an exception crosses it by pickle.
 ``ExtractError`` collapsed its two arguments into a one-element ``args``, so
 an encrypted PDF surfaced as ``BrokenProcessPool: a process terminated
-abruptly`` — after a teardown, a respawn and a doomed retry — instead of
+abruptly`` (after a teardown, a respawn and a doomed retry) instead of
 "encrypted PDF (password required)". The structural test below fails for the
 next exception with a custom constructor, whether or not it crosses a pool
 today.
@@ -71,7 +71,7 @@ def test_every_constructor_args_cannot_satisfy_declares_a_rebuild() -> None:
             seen += 1
             if _unrebuildable_init(node) and not _defines_reduce(node):
                 missing.append(f"{path.relative_to(_FND.parent)}:{node.lineno} {node.name}")
-    assert seen > 5, "the scan found no exception classes — it has stopped looking"
+    assert seen > 5, "the scan found no exception classes: it has stopped looking"
     assert not missing, (
         "custom __init__ without __reduce__ (unpickles wrong or raises): " + ", ".join(missing)
     )

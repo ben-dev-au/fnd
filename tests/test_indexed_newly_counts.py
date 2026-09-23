@@ -53,7 +53,7 @@ async def test_the_same_files_under_a_second_collection_are_new(tmp_path: Path) 
 
 @pytest.mark.asyncio
 async def test_re_running_the_same_collection_still_says_already(tmp_path: Path) -> None:
-    """The control: the fix must not report every run as new."""
+    """The control: a re-run must not report every document as new."""
     cfg = _corpus(tmp_path)
     await _run(cfg, "Alpha", tmp_path)
     done = await _run(cfg, "Alpha", tmp_path)

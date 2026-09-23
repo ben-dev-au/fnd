@@ -1,9 +1,8 @@
-"""A run that could not read a source reported `Done.`, like a healthy one.
+"""A run that could not read a source says so, not a bare `Done.`.
 
-That sameness is what let the destructive version survive: with the prune
-ungated, `chmod 000` emptied a collection and the screen said `Done. 0 / 0
-files`. The guard now keeps the files, and this is the run saying so, because
-a silent rescue reads exactly like a run that had nothing to do.
+With the prune ungated, `chmod 000` emptied a collection under `Done. 0 / 0
+files`. The guard keeps the files, and this is the run saying so, because a
+silent rescue reads exactly like a run that had nothing to do.
 """
 
 from __future__ import annotations

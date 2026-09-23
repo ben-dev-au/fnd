@@ -1,10 +1,10 @@
-"""The rename dialog promised Update index would reclaim the old name.
+"""The rename dialog does not promise Update index will reclaim the old name.
 
 Declining the reindex leaves the old name's documents in the index. Nothing
-reaches them — the config no longer names that collection — and nothing removes
+reaches them (the config no longer names that collection) and nothing removes
 them: a rebuild only touches names the config still has, and `_ensure_index`
-wipes the directory only on a schema mismatch. A hunter's orphan survived two
-Update-all runs, an Update index, a later rename WITH reindex, and a restart.
+wipes the directory only on a schema mismatch. The orphan survives Update all,
+Update index, a later rename WITH reindex, and a restart.
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ def test_update_index_does_not_reclaim_the_old_name(
     _update(corpus, tmp_index_dir, "research")
 
     orphaned = indexed_parent_ids(_open(tmp_index_dir), "papers")
-    assert orphaned, "if this is empty the dialog's sentence became true — reword it back"
+    assert orphaned, "if this is empty the dialog's sentence became true: reword it back"
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-"""The filter set as tree branches, and back — the model behind the browser."""
+"""The filter set as tree branches, and back: the model behind the browser."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from fnd.filters.tree_model import (
 
 
 def _leaves(branches: list[Branch]) -> set[str]:
-    """Every item id at any depth — kinds now sit under one File types parent."""
+    """Every item id at any depth: kinds sit under one File types parent."""
     out: set[str] = set()
     stack = list(branches)
     while stack:
@@ -39,8 +39,8 @@ def _sample() -> SourceSample:
 
 class TestBranches:
     def test_every_kind_is_offered_and_the_present_ones_are_counted(self) -> None:
-        """Overruled deliberately: a picker showing only today's types has to
-        be revisited as files are added. The counts carry what the sample saw."""
+        """A picker showing only today's types would need revisiting as files
+        are added, so every kind is offered; the counts carry what the sample saw."""
         from fnd.kinds import ALL_KIND_IDS
 
         branch = next(b for b in spec_branches(FilterSpec(), _sample()) if b.id == "kinds")
@@ -198,9 +198,9 @@ class TestEveryTypeTickedMeansEveryType:
     """ "All of them" only when all of them were on offer.
 
     The tree lists what a source contains, so on a homogeneous folder a real
-    `kinds = ["md"]` was already "everything offered" and collapsed to no rule
-    at all — deleting the restriction without a keypress on it, and widening
-    the index. Ticking a full SAMPLE now stores those types and the branch
+    `kinds = ["md"]` is already "everything offered"; collapsing it to no rule
+    would delete the restriction without a keypress on it, and widen the
+    index. Ticking a full SAMPLE stores those types and the branch
     says "N of N types" rather than claiming "every type"; the way to mean
     every type is to tick nothing, which is what the legend's ○ says.
     """
@@ -211,7 +211,7 @@ class TestEveryTypeTickedMeansEveryType:
         assert spec.kinds == ("md", "python", "txt")
 
     def test_a_real_rule_survives_a_no_op_round_trip(self) -> None:
-        """hunt-k's case: the rule was deleted by opening the screen."""
+        """Opening the screen does not delete a rule it can show."""
         offered = {"kind:md"}
         spec, _g, _f = apply_selection(FilterSpec(kinds=("md",)), offered, set(), offered)
         assert spec.kinds == ("md",)
@@ -288,7 +288,7 @@ def test_a_typed_rule_is_visible_while_the_branch_is_shut() -> None:
 
 
 def test_unticking_the_last_type_widens_and_the_branch_says_so() -> None:
-    """Nothing ticked is "no rule", which is every type — the one untick that
+    """Nothing ticked is "no rule", which is every type: the one untick that
     widens rather than narrows. The branch has to name that state."""
     offered = {"kind:md", "kind:pdf"}
     narrowed, _g, _f = apply_selection(FilterSpec(), {"kind:md"}, set(), offered)
@@ -304,8 +304,8 @@ def test_unticking_the_last_type_widens_and_the_branch_says_so() -> None:
 class TestBoundsNoPickerCanShow:
     """`min_size`, `modified_before` and `created_before` have no branch:
     "Maximum file size" cannot hold a minimum and "Modified within" cannot
-    hold an upper bound. With no row, the tree looked complete while they
-    filtered — measured elsewhere at 16 files down to 4."""
+    hold an upper bound. With no row, the tree looks complete while they
+    filter (measured elsewhere at 16 files down to 4)."""
 
     def test_they_get_a_row_naming_each_one(self) -> None:
         live = FilterSpec(min_size=100, modified_before=dt.date(2026, 1, 1))
@@ -326,8 +326,8 @@ class TestBoundsNoPickerCanShow:
 
 
 def test_a_window_names_the_date_it_freezes_to() -> None:
-    """A window resolves to an absolute date at pick time — an index must not
-    change what it holds as the clock moves — so "Last 7 days" alone reads as
+    """A window resolves to an absolute date at pick time (an index must not
+    change what it holds as the clock moves), so "Last 7 days" alone reads as
     rolling when it is not."""
     labels = {lbl for b in spec_branches(FilterSpec()) if b.id == "modified" for _i, lbl in b.items}
     week = (dt.date.today() - dt.timedelta(days=7)).isoformat()

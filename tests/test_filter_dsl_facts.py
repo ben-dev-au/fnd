@@ -142,7 +142,7 @@ class TestStringEscapes:
 
 class TestTrailingBackslash:
     """A value ending in one literal backslash predates escapes and must keep
-    working — a config that loaded yesterday must load today."""
+    working: a config that loaded yesterday must load today."""
 
     @pytest.mark.parametrize(
         ("text", "want"),

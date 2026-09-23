@@ -22,7 +22,7 @@ def test_an_app_specific_key_outlives_a_guessable_one() -> None:
 
 
 def test_the_way_out_is_never_dropped() -> None:
-    """The existing rule still holds: leaving beats everything."""
+    """The standing rule holds: leaving beats everything."""
     tiny = render_hint_bar((), _HINTS).fitted(20).plain
 
     assert "Esc" in tiny, tiny

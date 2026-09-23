@@ -3,7 +3,7 @@ govern it did nothing.
 
 `search_controller` hardcoded `limit=50` while `defaults.result_limit` sat in
 Preferences being written to config and read by nobody. The header stated the
-truncated count as though it were the total — and ticking a tag facet surfaced
+truncated count as though it were the total, and ticking a tag facet surfaced
 files the unfiltered query had hidden, because narrowing the query changed
 which 50 survived.
 """
@@ -53,7 +53,7 @@ async def _groups(app: FNDApp) -> int:
 async def test_more_than_fifty_files_all_come_back(
     tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A limit above 50 has to reach the searcher; the cap used to be hardcoded."""
+    """A limit above 50 has to reach the searcher, not a hardcoded cap."""
     cfg = _corpus(tmp_path, monkeypatch, 60, 100)
     build_index(roots=[tmp_path / "notes"], index_dir=tmp_index_dir, collection="notes")
     app = FNDApp(index_dir=tmp_index_dir, config=cfg, collection="notes", initial_query="saffron")

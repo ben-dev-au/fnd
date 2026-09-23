@@ -1,4 +1,4 @@
-"""Two settings rows shipped RST markup and a value the picker never offers.
+"""A settings row carries no RST markup and names only values the picker offers.
 
 The source form's App row read "Leave as '(default)' … See ``[apps]`` in
 config.toml": the row displays `(unset)`, the picker offers

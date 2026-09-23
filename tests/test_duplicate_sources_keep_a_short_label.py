@@ -1,9 +1,9 @@
-"""Two identical sources both grew to the same full path.
+"""Two identical sources keep a short label rather than the same full path.
 
-They can never be told apart by their path — they ARE the same path — so
-deepening bought nothing and cost the summary column: a hunter saw two rows
-showing one long shared prefix with no room for what either one filters. The
-row number is what distinguishes them.
+They can never be told apart by their path (they ARE the same path), so
+deepening buys nothing and costs the summary column: two rows of one long
+shared prefix with no room for what either one filters. The row number is what
+distinguishes them.
 """
 
 from __future__ import annotations

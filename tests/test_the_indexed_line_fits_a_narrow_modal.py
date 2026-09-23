@@ -1,8 +1,8 @@
-"""At 80 columns the removed count painted as a bare digit.
+"""At 80 columns the removed count keeps its word, not a bare digit.
 
-`Indexed: 0 newly indexed  0 already indexed  2` — the word cut off, two blank
-cells beside it, no ellipsis. The run that printed it had emptied the index:
-a hunter measured Files in index going 9 → 0 → 9.
+`Indexed: 0 newly indexed  0 already indexed  2` cut the word off, with two
+blank cells beside it and no ellipsis. The count matters: the run that printed
+it had emptied the index (Files in index went 9 → 0 → 9).
 """
 
 from __future__ import annotations

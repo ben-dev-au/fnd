@@ -2,7 +2,7 @@
 
 `Maximum file size` cannot hold a minimum and `Modified within` cannot hold an
 upper bound, so those bounds live in a second branch. The picker branch went
-on painting `○  (Any size)` beside it — the same screen saying both.
+on painting `○  (Any size)` beside it: the same screen saying both.
 """
 
 from __future__ import annotations
@@ -66,11 +66,11 @@ async def test_the_row_stops_reading_no_rule(tmp_index_dir: Path) -> None:
 
 
 class TestABoundTheBranchCannotParse:
-    """The pickers understand `<=` and `>=`. A user writing `<` or `>` gets a
-    live rule and a row that says there is none.
+    """The pickers understand `<=` and `>=`; a `<` or `>` bound is still a
+    live rule, so its row must not say there is none.
 
-    Measured by a hunter on a real corpus: `file.size < 150` took the walk from
-    ten files to six, including the only PDF, while `Maximum file size` read
+    Measured on a real corpus: `file.size < 150` took the walk from ten files
+    to six, including the only PDF, while `Maximum file size` read
     `○ (Any size)` and no tree row mentioned it.
     """
 

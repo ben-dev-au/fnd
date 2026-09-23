@@ -1,10 +1,9 @@
-"""A settings screen open when a run finishes kept the status from mid-run.
+"""A settings screen open when a run finishes repaints to the finished status.
 
 Backgrounding the indexer modal resumes the settings screen straight away, so
-`on_screen_resume` repaints it against a run still in flight. When the run
-later finished, nothing repainted it: a hunter watched
-`⚠ nothing indexed` sit over a collection its own modal had reported Done
-12/12, and `⚠ incomplete — 1 of 5 files` sit for 45 seconds against a 5/5 index.
+`on_screen_resume` repaints it against a run still in flight. Without a repaint
+on finish, `⚠ nothing indexed` sat over a collection its own modal reported
+Done 12/12, and `⚠ incomplete` for 45 seconds against a 5/5 index.
 """
 
 from __future__ import annotations

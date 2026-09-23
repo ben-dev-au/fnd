@@ -2,7 +2,7 @@
 
 The sidebar had a focusable `✕ Clear N filters` row; the settings pane cleared
 on a key and showed nothing that said so. A key named in a footer is not an
-affordance — nothing on the screen offers it, and Up from the top row reached
+affordance: nothing on the screen offers it, and Up from the top row reached
 nothing.
 
 The two acts are not the same. Search filters are ephemeral and clearing them
@@ -185,10 +185,10 @@ def test_neither_pane_builds_the_label_itself() -> None:
 class TestTheKeyAndTheRowAgree:
     """A hidden row with a live key is a destructive gesture nobody can see.
 
-    The global set inherits from nothing, so the row was correctly hidden —
-    and the key stayed bound, emptying the shipped never-index exclusion. The
-    browser cannot put that tag back: a tag is only offered as a row while some
-    file still carries it, so the only way back was the raw text editor.
+    The global set inherits from nothing, so the row is correctly hidden, and
+    a key left bound would empty the shipped never-index exclusion. The browser
+    cannot put that tag back: a tag is only offered as a row while some file
+    still carries it, so the only way back is the raw text editor.
     """
 
     @pytest.mark.asyncio
@@ -248,7 +248,7 @@ class TestTheKeyAndTheRowAgree:
 class TestSavingNothingSaysNothingWasSaved:
     """`^s` on an untouched set toasted `Filters saved.` over a byte-identical
     config, while the exit guard called that same state clean and left without
-    asking. Two answers to one question — and the save path reindexes, so the
+    asking. Two answers to one question, and the save path reindexes, so the
     lie cost a rebuild as well.
     """
 

@@ -1,9 +1,8 @@
-"""`ba75823` said the row "Refreshes when an Update index run finishes".
+"""The Files in index row "Refreshes when an Update index run finishes".
 
 The row's trailing value comes from the lazy-trailing cache under
-`indexing.files_in_index`, and `refresh_items` invalidates seven keys — not
-that one. Its 30-second TTL then held the pre-run count, so a sentence I wrote
-to replace a true one was false.
+`indexing.files_in_index`, whose 30-second TTL holds the pre-run count unless
+`refresh_items` invalidates that key along with the others.
 """
 
 from __future__ import annotations

@@ -1,16 +1,15 @@
 """An editor holding old values cannot write them over a newer save.
 
-Proved by a hunter with `diff config.toml`, twice: `:` — the screen's own
-"Menu" key — opened the palette OVER the Index filters editor with no unsaved
-gate, the palette walked back into a SECOND Index filters, and `^s` on the
-first one reverted the second's save and reported "Filters saved."
-`modified_after = 2026-08-09` became `# modified_after =` again.
+`:` (the screen's own "Menu" key) can open the palette OVER the Index filters
+editor, the palette can walk into a SECOND Index filters, and `^s` on the first
+must not revert the second's save: `modified_after = 2026-08-09` must not
+become `# modified_after =` again.
 
 Re-reading the file at write time does not help: the VALUES being written are
 the stale ones. The only thing that catches it is noticing the file moved.
 
-The same bug reaches the same place from the CLI — write a source from the
-command line while a form is open, save the form, and the source is gone.
+The CLI reaches the same place: write a source from the command line while a
+form is open, save the form, and the source must survive.
 """
 
 from __future__ import annotations
@@ -92,7 +91,7 @@ async def test_the_editor_refuses_rather_than_reverting(
             await pilot.pause()
         screen = app.screen
         assert isinstance(screen, FilterBrowserScreen), screen
-        # Someone else saves — a second editor, or the CLI.
+        # Someone else saves: a second editor, or the CLI.
         write_settings(config_path=cfg_path, values={"defaults.result_limit": 7})
         after_theirs = cfg_path.read_text(encoding="utf-8")
 

@@ -3,7 +3,7 @@
 Every read in `_refresh_footer_hints` reaches the active screen, and it can be
 called from a resize or a focus change while the app is coming down. The
 failure surfaced as `ScreenStackError: No screens on stack` inside unrelated
-preview tests — three runs in six of one of them — which read as a flake until
+preview tests (three runs in six of one of them), which read as a flake until
 the rate held under isolation.
 """
 

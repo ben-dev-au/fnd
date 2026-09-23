@@ -1,8 +1,8 @@
-"""One site still asked the suffix, not the registry, and it asked for `.md`.
+"""Every kind that carries frontmatter gives up its tags, not only `.md`.
 
-`KindSpec.carries_frontmatter` was made the single answer precisely so this
-could not drift, and `read_file_metadata` was missed. The cost is wider than a
-`.txt`: every Markdown variant beyond `.md` loses its tags too, so `.qmd` and
+`KindSpec.carries_frontmatter` is the single answer, so `read_file_metadata`
+asks it rather than the suffix. The cost of asking the suffix is wider than a
+`.txt`: every Markdown variant beyond `.md` loses its tags, so `.qmd` and
 `.rmd`, which an academic corpus carries, index as untagged.
 """
 

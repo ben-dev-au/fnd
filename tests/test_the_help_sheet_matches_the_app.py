@@ -3,7 +3,7 @@
 Two of its claims were checked by pressing them: Tab on the source form does
 not move focus while the frontmatter sample is hidden, and 1-9 types rather
 than jumps because a settings screen opens with the filter box focused. The
-Index-filters screen had no section at all — its keys are widget bindings, and
+Index-filters screen had no section at all: its keys are widget bindings, and
 only the action registry and four hand-written tables reach the sheet.
 """
 
@@ -61,7 +61,7 @@ def config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
 async def test_tab_does_nothing_until_there_is_a_sample(
     config: Config, tmp_index_dir: Path
 ) -> None:
-    """The behaviour the row now describes, both halves of it."""
+    """The behaviour the row describes, both halves of it."""
     app = FNDApp(index_dir=tmp_index_dir, config=config)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -134,8 +134,8 @@ def test_the_number_row_names_the_filter_box() -> None:
 def _key_cells(section: str) -> set[str]:
     """The key column, split into the tokens a row actually offers.
 
-    Substring-matching the joined column let `"t" in "Enter"` pass, so deleting
-    the `t` row left the guard green — a test that could not fail.
+    Substring-matching the joined column lets `"t" in "Enter"` pass, so deleting
+    the `t` row would leave the guard green.
     """
     cells: set[str] = set()
     for key, _label, _description in _rows(section):
@@ -167,7 +167,7 @@ def test_the_filter_browser_has_a_section() -> None:
 
 
 def test_that_guard_can_actually_fail() -> None:
-    """The reviewer deleted a row and the guard stayed green. It must not."""
+    """Deleting the row this guard exists for must turn it red."""
     assert "t" in _key_cells("Index filters"), "the row this guard exists for"
     assert "t" not in _key_cells("Global"), "a cell, not a substring of Enter"
 

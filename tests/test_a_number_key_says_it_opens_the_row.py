@@ -1,8 +1,7 @@
-"""`1-9 Jump by index` moved the cursor and opened the row.
+"""`1-9 Jump by index` moves the cursor and opens the row, and says so.
 
-A hunter pressed a digit expecting to move and found itself on another screen.
-The opening is deliberate — `action_jump` posts `Activated` on purpose — but
-neither the docstring nor the cheat sheet said so.
+The opening is deliberate (`action_jump` posts `Activated` on purpose), so the
+docstring and the cheat sheet must say a digit leaves for another screen.
 
 If the opening is ever decided to be wrong, this test changes with it: it
 asserts the app and its description agree, not that the key must open.
@@ -50,7 +49,7 @@ async def test_a_digit_opens_the_row_it_jumps_to(tmp_index_dir: Path) -> None:
 
 def test_the_sheet_says_it_opens() -> None:
     """ "open" alone is satisfied by "a settings screen opens…" further along
-    the same sentence — the assertion has to name the key's own effect."""
+    the same sentence; the assertion has to name the key's own effect."""
     description = _row_description()
 
     assert "open it" in description.lower(), description

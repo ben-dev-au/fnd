@@ -1,8 +1,8 @@
 """An update that removed three files reported "0 newly / 11 already".
 
-`prune_removed_files` has always returned the number it dropped, and the
-runner discarded it — so the one line the user reads after a filter change
-described everything except the change.
+`prune_removed_files` returns the number it dropped; discarding it leaves the
+one line the user reads after a filter change describing everything except the
+change.
 """
 
 from __future__ import annotations

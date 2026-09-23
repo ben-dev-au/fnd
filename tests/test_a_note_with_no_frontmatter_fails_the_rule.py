@@ -4,7 +4,7 @@ Skipping such a file turned "index this course" into "index everything except
 other courses": every untagged note in a vault reached the index, and the
 search that found them named a course filter it had never applied.
 
-The rule still must not judge a PDF, which cannot answer the question — and it
+The rule still must not judge a PDF, which cannot answer the question, and it
 must judge any file that does carry a block, whatever its extension.
 """
 

@@ -1,4 +1,4 @@
-"""Settings UX redesign — visual foundation tests."""
+"""Settings UX redesign: visual foundation tests."""
 
 from __future__ import annotations
 
@@ -20,9 +20,8 @@ def test_indexer_filetypes_exposed_and_complete() -> None:
     assert tuple(INDEXER_FILETYPES) == tuple(ALL_KIND_IDS)
     # The original document kinds are still present with descriptive labels…
     assert INDEXER_FILETYPES["pdf"] == "PDF (.pdf)"
-    # Derived, not spelled: Markdown gained seven extensions the day someone
-    # noticed `.qmd` was not being indexed, and a literal here would have to
-    # be edited for each one.
+    # Derived, not spelled: Markdown carries seven extensions, and a literal
+    # here would need editing for each one added.
     from fnd.kinds import KIND_BY_ID
 
     md = KIND_BY_ID["md"]

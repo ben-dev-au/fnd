@@ -32,7 +32,7 @@ def test_frontmatter_filter_excludes_non_matching_md(tmp_path: Path) -> None:
 
     A note with no ``Course`` is not a note for that course, so the question
     is answerable and the answer is no. Waiving it turned "index this course"
-    into "index everything except other courses" — every untagged note in a
+    into "index everything except other courses": every untagged note in a
     vault reached the index. A file that could not carry a block at all is a
     different case, and the test below keeps it out of this one.
     """

@@ -1,9 +1,8 @@
-"""A filter that emptied a collection left every column reading as before.
+"""A collection a filter has emptied says so on its row.
 
-A hunter cut `Archive` to ZERO documents with a path filter and the row still
-read `● 1 source`, `2/2 active`; searching a file that is on disk returned
-"nothing matched" with nothing anywhere explaining it. The config said 31/11
-while the index held 21/3.
+Cut to ZERO documents by a path filter, a row reading `● 1 source`, `2/2 active`
+leaves "nothing matched" for a file on disk with nothing explaining it (config
+31/11, index 21/3).
 
 "Behind the config" needs a record of the last run and is a separate question.
 "Holds nothing at all" does not: the index can answer it.

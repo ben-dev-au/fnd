@@ -1,6 +1,6 @@
 """``clone_source`` deep-copies a source into another collection.
 
-The clone preserves every field — including the app refs —
+The clone preserves every field, including the app refs,
 and is independent of the original (no shared mutable state). The TOML
 round-trip is exercised via ``Config.load`` after the write.
 """

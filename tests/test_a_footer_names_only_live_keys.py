@@ -1,7 +1,7 @@
 """Three surfaces advertised keys that do nothing, or offered nothing at all.
 
-`/` focuses a row filter, and the screens without one — the source form, the
-wizard, every confirm dialog — named it anyway. The indexer modal is a modal
+`/` focuses a row filter, and the screens without one (the source form, the
+wizard, every confirm dialog) named it anyway. The indexer modal is a modal
 screen, so the app's own footer showed through it: four anchors, none of which
 work while it is up, and none of the keys that do. And the ranking picker
 opened on an empty list, because `[ranking.*]` blocks are optional while the
@@ -60,7 +60,7 @@ async def test_a_form_with_no_row_filter_does_not_offer_one(
             await pilot.pause()
         after = (type(app.focused).__name__, len(app.screen_stack))
 
-    assert before == after, "the key must still do nothing — that is the point"
+    assert before == after, "the key must still do nothing: that is the point"
     assert "Search" not in footer, footer
     assert "Menu" in footer, "the anchors that do work stay"
 
@@ -70,9 +70,9 @@ async def test_a_screen_with_a_row_filter_names_it_once(
     config: Config, tmp_index_dir: Path
 ) -> None:
     """One key, one label. The anchor means "focus the query bar", which `/`
-    never does in Settings — on a screen with a row filter it focuses THAT, so
+    never does in Settings: on a screen with a row filter it focuses THAT, so
     the screen's own cluster is where the key is named. Keeping the anchor
-    where the filter existed showed `/ Search` and `/ Filter` together."""
+    there would show `/ Search` and `/ Filter` together."""
     from fnd.tui.settings_screen import open_settings
 
     app = FNDApp(index_dir=tmp_index_dir, config=config)

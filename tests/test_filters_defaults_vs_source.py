@@ -66,7 +66,7 @@ class TestPerFieldResolution:
         assert got == {"paper.pdf"}, "the default's kinds must not survive an override"
 
     def test_a_source_can_override_a_default_to_nothing(self, corpus: Path) -> None:
-        """An empty list is an override, not an absence — otherwise clearing a
+        """An empty list is an override, not an absence; otherwise clearing a
         field silently reinstates the value it was overriding."""
         got = _names(corpus, DefaultFilters(kinds=["md"], exclude_tags=[]), SourceFilters(kinds=[]))
         assert "paper.pdf" in got
@@ -95,7 +95,7 @@ class TestDimensionsCombine:
 
     def test_exclude_beats_include_for_the_same_tag(self, corpus: Path) -> None:
         """Both rules are ANDed, so a contradiction drops the file rather than
-        resolving to one side — the safe direction for a corpus filter."""
+        resolving to one side: the safe direction for a corpus filter."""
         got = _names(
             corpus,
             DefaultFilters(exclude_tags=["keep"]),

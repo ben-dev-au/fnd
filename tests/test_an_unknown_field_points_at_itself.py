@@ -1,9 +1,8 @@
-"""Every "unknown field" error reported column 1, whatever the column was.
+"""An "unknown field" error reports the field's own column, not column 1.
 
-It is the one error kind the live editor could not point at: a hunter checked
-six expressions and found every other kind reporting its true column, one of
-them 41, while this one always said 1. `referenced_fields` returns names and
-not positions, and I raised with a literal.
+Every other error kind reports its true column (one of them 41), so the live
+editor can point at it. `referenced_fields` returns names and not positions, so
+the column has to be located separately.
 """
 
 from __future__ import annotations

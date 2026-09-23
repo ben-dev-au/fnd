@@ -1,9 +1,8 @@
 """A row filter matching nothing says so, rather than painting a blank pane.
 
-A hunter typed a query that matched no rows, got thirty blank lines and no
-message, and probed the process for liveness thinking it had hung. The border
-title is where this app already carries counts — `Results — 2 files`,
-`Filters — 2 kinds` — so it is where the absence of them belongs too.
+Thirty blank lines and no message read as a hung process. The border title is
+where this app already carries counts (the Results and Filters titles), so it
+is where the absence of them belongs too.
 """
 
 from __future__ import annotations

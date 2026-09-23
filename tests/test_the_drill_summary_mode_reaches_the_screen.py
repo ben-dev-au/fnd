@@ -1,7 +1,7 @@
 """`Drill row summaries` saved, showed itself as saved, and did nothing.
 
 The mode was implemented on `MenuItem.trailing_value`, which the renderer never
-calls — `_trailing_segments` reads `value_getter` directly. Its only callers
+calls: `_trailing_segments` reads `value_getter` directly. Its only callers
 were tests, one of which asserted `always_ellipsis` renders `…` and passed
 against a screen that has never done so.
 """

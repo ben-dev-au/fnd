@@ -1,8 +1,8 @@
 """The preview footer has advertised `j/k Scroll` and neither key did anything.
 
 Ten presses moved nothing; `↓` worked. Textual's scroll view binds the arrows
-only, and the rest of the app speaks vi keys — the settings list binds `up,k`
-and `down,j` — so what was missing was the binding, not the claim.
+only, and the rest of the app speaks vi keys (the settings list binds `up,k`
+and `down,j`), so what was missing was the binding, not the claim.
 """
 
 from __future__ import annotations

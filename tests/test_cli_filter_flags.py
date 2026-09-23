@@ -162,7 +162,7 @@ class TestTwoFiltersNarrow:
         assert self._names(index_dir, "(kind:javascript AND kind:md) AND (widget)") == set()
 
     def test_space_joining_them_would_have_unioned(self, tmp_path: Path) -> None:
-        """The negative control: this is the shape the TUI used to build."""
+        """The negative control: space-joined kinds union rather than intersect."""
         index_dir = self._index(tmp_path)
         assert self._names(index_dir, "(kind:javascript kind:md) AND (widget)") == {
             "note.md",
@@ -179,7 +179,7 @@ class TestTwoFiltersNarrow:
 
 class TestAdHocIndexHonoursTheDefaults:
     """`fnd index <root>` walked ungated while `collection reindex` applied
-    `defaults.filters`, so the two commands indexed different file sets — a
+    `defaults.filters`, so the two commands indexed different file sets: a
     file the configured path excludes could be admitted by the ad-hoc one."""
 
     @staticmethod
@@ -211,7 +211,7 @@ class TestAdHocIndexHonoursTheDefaults:
         assert kept == {"a.md"}, kept
 
     def test_the_ungated_walk_would_have_taken_everything(self, tmp_path: Path) -> None:
-        """The negative control: what the ad-hoc command used to call."""
+        """The negative control: the ungated walk takes everything."""
         from fnd.index import build_index
         from fnd.query import Searcher
 
@@ -226,7 +226,7 @@ class TestAdHocIndexHonoursTheDefaults:
 
 class TestReportingCommandsLeaveTheConfigAlone:
     """`main()` migrated before dispatching, so every invocation rewrote the
-    file — `fnd --help` rewrote the config as a side effect, and `config
+    file: `fnd --help` rewrote the config as a side effect, and `config
     validate` answered by replacing what it was asked to validate, dropping
     the user's comments."""
 
@@ -322,7 +322,7 @@ class TestIndexingIntoAnUnconfiguredCollection:
 
 class TestCollectionAddWritesTheCurrentShape:
     """`--filter` wrote the deprecated `frontmatter_filter`, and a source path
-    that does not exist was accepted in silence — the collection then indexes
+    that does not exist was accepted in silence; the collection then indexes
     nothing and looks fine until the first search comes back empty."""
 
     def test_the_filter_lands_under_filters(self, tmp_path: Path) -> None:

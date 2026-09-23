@@ -1,7 +1,7 @@
 """Typing a word into a numeric setting surfaced Python's own ValueError.
 
 `Result limit · 1-1000   Notes   invalid: invalid literal for int() with base
-10: 'Notes'` — the row already knows the range it wants, and the message named
+10: 'Notes'`: the row already knows the range it wants, and the message named
 the coercion function instead.
 """
 
@@ -67,9 +67,8 @@ async def test_a_valid_number_is_still_accepted(tmp_index_dir: Path) -> None:
 def test_a_non_numeric_row_keeps_its_own_message() -> None:
     """The control on scope: only int/float rows get the reworded message.
 
-    This asserted that an int row exists, which is true whether or not
-    `_coercion_error` does anything — deleting the function left it green.
-    It now puts a non-numeric coercion through the same call.
+    Asserting only that an int row exists passes with `_coercion_error`
+    deleted, so a non-numeric coercion goes through the same call.
     """
     from fnd.tui.menu import MenuItem
     from fnd.tui.settings_screen import _coercion_error

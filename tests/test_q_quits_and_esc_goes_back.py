@@ -1,7 +1,7 @@
 """`q` quits, `Esc` goes back, and neither loses unsaved work.
 
-`q` meant "back" on six editing screens and "quit" everywhere else — one key,
-two meanings, a screen apart — because nothing stopped a quit throwing an edit
+`q` meant "back" on six editing screens and "quit" everywhere else (one key,
+two meanings, a screen apart) because nothing stopped a quit throwing an edit
 away. Esc already did back on all eighteen, so `q` was duplicating it. With
 the prompt in place, `q` can mean one thing.
 """

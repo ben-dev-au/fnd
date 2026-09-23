@@ -7,7 +7,7 @@ not instead of it, and it is spent on the two states that change what gets
 indexed.
 
 `no_index` ships excluded, so one press on the state a user finds turned "never
-index these" into "index ONLY these" — nine files to zero, a reindex to undo.
+index these" into "index ONLY these": nine files to zero, a reindex to undo.
 It skips include entirely; every other tag keeps the full cycle.
 """
 
@@ -66,12 +66,11 @@ async def _tree(app: FNDApp, pilot: object, spec: FilterSpec) -> ToggleTree:
     for _ in range(25):
         await pilot.pause()  # type: ignore[attr-defined]
     tree = app.screen.query_one("#filter_tree", ToggleTree)
-    # Only the branches under test: File types now offers all forty kinds, so
+    # Only the branches under test: File types offers all forty kinds, so
     # expanding everything pushes the tag rows off the screen.
     #
-    # Case-insensitively, because this means "the tag branch" and was matching
-    # a lowercase substring that only appeared while the branch was borrowing
-    # its single source's name (`Note tags (YAML)`).
+    # Case-insensitively: this means "the tag branch", and a lowercase match
+    # only hits while the branch borrows its single source's name.
     for node in tree.root.children:
         label = str(node.label).lower()
         if any(word in label for word in ("tags", "notes & text")):
@@ -229,9 +228,9 @@ def test_the_theme_wins_when_it_names_one() -> None:
 
 @pytest.mark.asyncio
 async def test_a_collapsed_screen_shows_colour(tmp_index_dir: Path) -> None:
-    """The case the earlier tests missed. Every marker on a collapsed screen
-    is a BRANCH roll-up, and colouring only the leaves meant a user saw no
-    colour at all until they expanded something — which is how it shipped."""
+    """Every marker on a collapsed screen is a BRANCH roll-up, so colouring
+    only the leaves would show a user no colour at all until they expand
+    something."""
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(110, 30)) as pilot:
         await pilot.pause()
@@ -281,8 +280,8 @@ def _rows(app: FNDApp) -> list[tuple[str, list[str]]]:
     """Each painted row, with the colours its state markers carry.
 
     Row-scoped, not screen-scoped: a whole-screen scan passes on a coloured
-    marker anywhere, which is how a branch that was never coloured went
-    unnoticed while the tags rows below it carried the assertion.
+    marker anywhere, so an uncoloured branch passes while the tags rows below
+    it carry the assertion.
     """
     return [
         (
@@ -402,8 +401,8 @@ async def test_the_cursor_row_keeps_its_marker_colour(cfg_and_index: tuple[objec
 
 @pytest.mark.asyncio
 async def test_the_settings_cursor_row_keeps_it_too(tmp_index_dir: Path) -> None:
-    """The same fix, through the same seam, on the other pane — the two are
-    the reason the mixin exists rather than a fix inside one tree."""
+    """The same contract, through the same seam, on the other pane: the two
+    are the reason the mixin exists rather than a fix inside one tree."""
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(110, 40)) as pilot:
         await pilot.pause()
@@ -423,8 +422,8 @@ async def test_the_settings_cursor_row_keeps_it_too(tmp_index_dir: Path) -> None
 
 def test_a_branch_still_scanning_never_claims_all_of_them() -> None:
     """The red flash. Before the scan lands the only tags known are the
-    excluded ones the spec named, so the roll-up read ⊘ — "never index any
-    of these" — and became ◐ a moment later when the real tags arrived."""
+    excluded ones the spec named, so the roll-up read ⊘ ("never index any
+    of these") and became ◐ a moment later when the real tags arrived."""
     from fnd.filters.tree_model import spec_branches
 
     spec = FilterSpec(exclude_tags={"frontmatter": ("no_index",)})

@@ -1,4 +1,4 @@
-"""Settings UX redesign — cross-section search tests."""
+"""Settings UX redesign: cross-section search tests."""
 
 from __future__ import annotations
 

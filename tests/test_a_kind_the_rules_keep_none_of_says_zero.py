@@ -1,7 +1,7 @@
 """`Markdown … · 0` was rendered as `Markdown …`, with no number at all.
 
 A rule that matches nothing is the loudest thing the pane can say, and it said
-it by falling silent — indistinguishable from `(24 of 40 types)`, where the
+it by falling silent, indistinguishable from `(24 of 40 types)`, where the
 counts are deliberately withheld, and from a kind this source simply has none
 of. Ground truth at the time: `walk_sources` yielded 0 files and the run had
 just reported `0 / 0 files · 11 removed`.
@@ -54,10 +54,10 @@ def test_an_ungated_sample_is_unchanged() -> None:
 async def test_a_truncated_scan_says_so_even_on_a_tagless_source(
     tmp_path: Path, tmp_index_dir: Path
 ) -> None:
-    """A bare row now positively means "none here", so the qualifier saying the
-    scan stopped early has to be reachable. It sat last in an `elif` chain
-    whose earlier arm always wins for a source with no tags, and the
-    per-source browser always passes that arm's note."""
+    """A bare row positively means "none here", so the qualifier saying the
+    scan stopped early has to be reachable, not last in an `elif` chain whose
+    earlier arm always wins for a source with no tags (the per-source browser
+    always passes that arm's note)."""
     from textual.widgets import Static
 
     from fnd.filters import FilterSpec

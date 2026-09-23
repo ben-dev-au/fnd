@@ -7,9 +7,9 @@ from fnd.tui.indexer_modal import _format_indexed_line, _format_texturising_line
 
 def test_indexed_line_drops_failed_tail_when_zero() -> None:
     out = _format_indexed_line(newly=5, already=8, failed=0)
-    # Shortened from "newly indexed"/"already indexed": the long form
-    # overflowed a 75%-wide modal at 80 columns and clipped the last count to
-    # a bare digit. The label above them still reads "Indexed:".
+    # Not "newly indexed"/"already indexed": the long form overflows a
+    # 75%-wide modal at 80 columns and clips the last count to a bare digit.
+    # The label above them reads "Indexed:".
     assert "5 new" in out
     assert "8 already" in out
     assert "failed" not in out

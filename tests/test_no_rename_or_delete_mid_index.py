@@ -3,7 +3,7 @@
 Both verbs pair a config write with a drop from the index, and the drop needs
 the index writer. Mid-run it cannot have it: measured, the drop raised, the
 config write had already landed, and the running task kept writing under the
-old name — 3,600 documents under a collection no config held, reachable by no
+old name: 3,600 documents under a collection no config held, reachable by no
 UI path, and a full `reindex -c all --rebuild` did not clear them.
 """
 

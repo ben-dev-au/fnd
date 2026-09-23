@@ -1,9 +1,8 @@
 """Up at the top of a filters pane must settle, not bounce.
 
-A hunter pressed Up eight times in two independent sessions and watched focus
-oscillate forever between `✕ Clear N filters` and `File type`. The tree sends
-Up to the bar when its cursor is on the top row — that is how the row became
-keyboard-reachable — and the bar answered Up by focusing the tree again.
+The tree sends Up to the bar when its cursor is on the top row (that is how the
+row is keyboard-reachable); a bar that answers Up by focusing the tree again
+makes focus oscillate forever between `✕ Clear N filters` and `File type`.
 
 Reachable and escapable are not the same thing.
 """
@@ -43,7 +42,7 @@ async def _browser_with_a_bar(app: FNDApp, pilot: object) -> FilterBrowserScreen
 
 @pytest.mark.asyncio
 async def test_repeated_up_settles_on_the_row(tmp_index_dir: Path) -> None:
-    """Eight presses, as the hunter did. It must stop somewhere."""
+    """Eight presses of Up must stop somewhere."""
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(110, 30)) as pilot:
         await pilot.pause()
@@ -87,8 +86,8 @@ async def test_down_from_the_row_still_reaches_the_tree(tmp_index_dir: Path) -> 
 
 @pytest.mark.asyncio
 async def test_up_still_reaches_the_row_in_the_first_place(tmp_index_dir: Path) -> None:
-    """The other control: it is still keyboard-reachable, which is what the
-    Up handling was added for."""
+    """The other control: it stays keyboard-reachable, which is what the Up
+    handling is for."""
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(110, 30)) as pilot:
         await pilot.pause()

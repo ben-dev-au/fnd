@@ -1,7 +1,7 @@
 """The ignore matcher, held to git's own answer.
 
 ``git check-ignore`` is the oracle. It is pinned away from the developer's
-global excludes and ``.git/info/exclude`` — without that, a machine with a
+global excludes and ``.git/info/exclude``; without that, a machine with a
 ``~/.gitignore_global`` grades against a different rulebook than CI does.
 """
 
@@ -53,7 +53,7 @@ def _ours_ignores(root: Path, rel: str) -> bool:
     """Walk the stack down to ``rel`` exactly as the walker would.
 
     A directory decided ignored is never descended into, so nothing beneath it
-    can be re-included — git's rule, and the reason this cannot just test the
+    can be re-included: git's rule, and the reason this cannot just test the
     leaf in isolation.
     """
     stack = IgnoreStack()
@@ -116,8 +116,8 @@ CASES: list[tuple[str, str, bool]] = [
 # Every case above is written utf-8 with \n, so the encoding and the line
 # separator were graded over exactly one shape. (bytes, path, is_dir):
 BYTE_CASES: list[tuple[bytes, str, bool]] = [
-    # A BOM — PowerShell 5.1 and VS Code's "UTF-8 with BOM" write one, git
-    # strips it — used to kill the first pattern, usually the big one.
+    # A BOM (PowerShell 5.1 and VS Code's "UTF-8 with BOM" write one, git
+    # strips it) must not kill the first pattern, usually the big one.
     (b"\xef\xbb\xbfdist/\r\nbuild.md\r\n", "dist/sub/a.md", False),
     (b"\xef\xbb\xbfdist/\r\nbuild.md\r\n", "build.md", False),
     (b"dist/\r\n", "dist/sub/a.md", False),
@@ -277,8 +277,8 @@ class TestScopeIsTheSourceDownwards:
     """An ignore file above the source root does not govern it."""
 
     def test_a_repository_enclosing_the_source_does_not_empty_it(self, tmp_path: Path) -> None:
-        """A dotfiles repo in the home directory — ``*`` plus a few negations,
-        a common shape — otherwise makes every file under ~/Documents ignored
+        """A dotfiles repo in the home directory (``*`` plus a few negations,
+        a common shape) otherwise makes every file under ~/Documents ignored
         and the source indexes nothing at all."""
         import subprocess
 
@@ -360,8 +360,7 @@ class TestCaseFollowsGit:
         folds both sides and silently drops files git keeps.
 
         Only a file the walker can index is a valid probe: one with no suffix
-        is skipped for its kind, which reads as "ignored" and hides a
-        mismatch — that flaw cost a false result while writing this.
+        is skipped for its kind, which reads as "ignored" and hides a mismatch.
         """
         from fnd.config import Config
         from fnd.walk import walk_sources
@@ -409,7 +408,7 @@ def test_a_nested_repo_does_not_switch_off_fndignore(tmp_path: Path) -> None:
 class TestTwoIgnoreFilesAreTwoPolicies:
     """`.gitignore` and `.fndignore` are separate policies, not one merged
     file. Deciding across both together let a negation in one re-admit what
-    the other excluded — so switching `.fndignore` on could ADD files, and a
+    the other excluded, so switching `.fndignore` on could ADD files, and a
     whitelisting one made `.gitignore` a no-op entirely."""
 
     @staticmethod
@@ -459,9 +458,9 @@ class TestTwoIgnoreFilesAreTwoPolicies:
 
 def test_the_local_git_excludes_are_documented_as_skipped(tmp_path: Path) -> None:
     """`.git/info/exclude` is git's local, uncommitted half. fnd does not read
-    it, the README said only what it DOES honour, and the differential suite
-    blanks the file for oracle hygiene — so nothing pinned the decision either
-    way. It is a decision, recorded: `.fndignore` is fnd's local half."""
+    it, the README says only what it DOES honour, and the differential suite
+    blanks the file for oracle hygiene, so this pins the decision. It is a
+    decision, recorded: `.fndignore` is fnd's local half."""
     readme = (Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
     row = next(line for line in readme.splitlines() if line.startswith("| `respect_gitignore` |"))
     assert ".git/info/exclude" in row, row

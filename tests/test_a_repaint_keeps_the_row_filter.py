@@ -1,9 +1,9 @@
-"""An index run finishing threw away a search the user was part-way through.
+"""An index run finishing keeps a row filter the user was part-way through.
 
-`1f23aec` repaints an open settings screen when a run completes, so a stale
+An open settings screen repaints when a run completes, so a stale
 `⚠ nothing indexed` cannot outlive the run that cleared it. `refresh_items`
-rebuilds the list from the provider and does not re-apply the row filter, so
-four filtered rows became all eight while the box still read the query.
+rebuilds the list from the provider, so without re-applying the row filter
+four filtered rows become all eight while the box still reads the query.
 """
 
 from __future__ import annotations
@@ -39,9 +39,8 @@ async def test_a_repaint_keeps_the_rows_the_query_narrowed_to(
     """The repaint has to DO something as well as preserve something.
 
     Asserting only that the count did not widen is satisfied by
-    `refresh_items` returning immediately — every test in this file passed
-    with it stubbed out. The provider is made to report a NEW row first, so a
-    repaint that does nothing cannot show it.
+    `refresh_items` returning immediately. The provider is made to report a
+    NEW row first, so a repaint that does nothing cannot show it.
     """
     isolated_config_path.write_text(
         f'[[collections.alpha.sources]]\npath = "{tmp_path.as_posix()}"\n', encoding="utf-8"
@@ -86,7 +85,7 @@ async def test_a_repaint_keeps_the_rows_the_query_narrowed_to(
 
 @pytest.mark.asyncio
 async def test_a_repaint_keeps_the_search_rendering(tmp_index_dir: Path) -> None:
-    """Row COUNT surviving is not the contract — the rendering has to survive.
+    """Row COUNT surviving is not the contract: the rendering has to survive.
 
     Search results are drawn flat with a breadcrumb per row; `set_items` decides
     that from its `breadcrumbs` argument. Passing rows without them redrew the
@@ -135,10 +134,10 @@ async def test_an_unfiltered_screen_still_gets_the_new_rows(tmp_index_dir: Path)
 
 @pytest.mark.asyncio
 async def test_a_repaint_keeps_the_no_matches_placeholder(tmp_index_dir: Path) -> None:
-    """The repaint destroyed the placeholder and left a blank panel.
+    """A repaint keeps the "No matches" placeholder, not a blank panel.
 
     `_on_search_changed` substitutes a "No matches" row when nothing matches;
-    the repaint's own copy of the filter did not, so it painted nothing at all
+    the repaint's own copy of the filter must too, or it paints nothing at all
     with the query still in the box.
     """
     app = FNDApp(index_dir=tmp_index_dir)

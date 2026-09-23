@@ -171,7 +171,7 @@ def test_an_emptied_override_beats_the_global_default() -> None:
 async def test_editing_as_text_fills_the_rows_back_in(built_index: Path) -> None:
     """The text view and the rows are two views of one set.
 
-    Typing a row-shaped clause must populate that row on save — that is the
+    Typing a row-shaped clause must populate that row on save; that is the
     "text informs the UI" half, not a mis-parse.
     """
     from textual.widgets import TextArea
@@ -313,7 +313,7 @@ async def test_the_source_scan_does_not_block_the_screen(built_index: Path) -> N
             await pilot.pause()
         screen = app.screen
         assert isinstance(screen, FilterBrowserScreen)
-        assert screen._scanning, "test setup — the scan should still be running"
+        assert screen._scanning, "test setup: the scan should still be running"
         tree = screen.query_one(ToggleTree)
         assert tree.root.children, "the tree must be usable before the scan lands"
         assert "scanning" in _summary_text(screen)
@@ -374,7 +374,7 @@ async def test_a_legacy_frontmatter_rule_is_visible_and_clearable(
     built_index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The form's own row is gone, so the browser is the only surface for the
-    rule — it must read a legacy ``frontmatter_filter``, and clearing it there
+    rule: it must read a legacy ``frontmatter_filter``, and clearing it there
     must not be undone by the value the form loaded with."""
     from fnd.config import CollectionConfig, SourceConfig, write_collection
     from fnd.tui.settings_screen import SourceFormScreen
@@ -415,9 +415,9 @@ async def test_clearing_the_default_tags_does_not_reinstate_them(
     removing an exclusion handed it straight back on save.
 
     Driven by unticking the row rather than by the clear gesture: the global
-    set inherits from nothing, so it no longer offers one — emptying it there
-    dropped a protection no row on that screen could put back. The contract
-    under test is the SAVE path, which is unchanged.
+    set inherits from nothing, so it offers none (emptying it there would drop
+    a protection no row on that screen could put back). The contract under
+    test is the SAVE path.
     """
     from fnd.config import load, starter_config
     from fnd.tui.menu import _open_filter_browser
@@ -458,7 +458,7 @@ async def test_clearing_the_default_tags_does_not_reinstate_them(
 @pytest.mark.asyncio
 async def test_the_expression_can_be_copied(built_index: Path) -> None:
     """The app owns the mouse, so a terminal selection cannot reach the
-    summary text — without a copy key the expression is display-only.
+    summary text; without a copy key the expression is display-only.
 
     Not ctrl+y: the app binds that to "copy query command" with priority, so
     a screen binding there silently never fires."""
@@ -502,9 +502,9 @@ async def test_the_summary_says_what_the_expression_leaves_out(built_index: Path
     cannot appear in the expression; presenting it as the whole filter
     invited the question of whether it was complete.
 
-    The ignore files are named by their own row rather than by this line —
-    the summary repeated the row it sits under, which cost three of the
-    twenty-four rows a narrow terminal has.
+    The ignore files are named by their own row rather than by this line:
+    a summary repeating the row it sits under costs three of the twenty-four
+    rows a narrow terminal has.
     """
     from fnd.filters import FilterSpec
     from fnd.tui.settings_screen import FilterBrowserScreen
@@ -707,7 +707,7 @@ class TestTheSummaryBoxTellsTheTruth:
     """It is five rows; past them the terminal cut the expression mid-token
     with nothing to say it had. Only reachable below ~60 columns."""
 
-    HEAD = "Outside the expression — obeying .gitignore, .fndignore"
+    HEAD = "Outside the expression: obeying .gitignore, .fndignore"
     PREFIX = "expression ('t' edits, 'y' copies):  "
     BODY = "(file.kind in ['pdf', 'docx', 'md', 'txt', 'pptx']) AND (NOT ('no_index' in file.tags.all))"
 
@@ -787,9 +787,10 @@ async def test_the_wizard_refuses_an_invalid_rule_instead_of_crashing(built_inde
 
 @pytest.mark.asyncio
 async def test_the_rule_editor_names_the_glob_trap(built_index: Path) -> None:
-    """Both hunters wrote `'*drafts*'`, watched it green-tick, and indexed
-    every draft: `*` does not cross `/`. And "✓ every file" was the rule's
-    scope, read as a claim that it matches everything."""
+    """The rule editor names the glob trap: `'*drafts*'` green-ticks and
+    matches no draft in a subfolder, because `*` does not cross `/`. And
+    "✓ every file" as the rule's scope reads as a claim that it matches
+    everything."""
     from textual.widgets import Static
 
     from fnd.tui.settings_screen import RuleTextScreen
@@ -826,8 +827,8 @@ def test_the_legend_names_every_glyph_the_tree_paints() -> None:
 
 
 def test_the_sources_row_names_every_dimension_that_narrows_it() -> None:
-    """It named file types alone, so an inherited rule that cut a source to
-    one file in sixteen still left the row reading "All types"."""
+    """An inherited rule that cuts a source to one file in sixteen must not
+    leave the row reading "All types"."""
     from fnd.config import (
         CollectionConfig,
         Config,
@@ -851,9 +852,9 @@ def test_the_sources_row_names_every_dimension_that_narrows_it() -> None:
     )
     inheriting, bounded = config.collections["c"].sources
     # The contract is that the row cannot read as unfiltered while an
-    # inherited rule narrows it. It named the dimension until `12cd8bb`, which
-    # collects the defaults' dimensions under one `inherited` chip so a source
-    # stops advertising them as its own — the detail screen names which.
+    # inherited rule narrows it. The defaults' dimensions collect under one
+    # `inherited` chip so a source does not advertise them as its own; the
+    # detail screen names which.
     assert _other_filters(inheriting) == ["inherited"], "it reads as unfiltered"
     assert "size" in _other_filters(bounded), "its own bound is still named"
     assert "size" not in _other_filters(inheriting)
@@ -861,7 +862,7 @@ def test_the_sources_row_names_every_dimension_that_narrows_it() -> None:
 
 def test_a_radio_group_keeps_one_option_selected() -> None:
     """`⏎` on the already-selected "Any size" turned it off, leaving nothing
-    selected and the branch reading `(any)` — a fourth state, differing from
+    selected and the branch reading `(any)`: a fourth state, differing from
     `(Any size)` only in case, that the legend cannot express."""
     from fnd.tui.widgets.toggle_tree import ToggleGroup, ToggleItem, ToggleTree
 
@@ -976,7 +977,7 @@ class TestUnsavedFilterWork:
 
     @pytest.mark.asyncio
     async def test_the_command_palette_comes_back_with_the_edit(self, built_index: Path) -> None:
-        """The negative control for the key we chose NOT to guard."""
+        """The negative control: the palette key is deliberately NOT guarded."""
         from dataclasses import replace
 
         from fnd.tui.settings_screen import FilterBrowserScreen
@@ -999,7 +1000,7 @@ class TestUnsavedFilterWork:
 
 class TestEscMeansOneThing:
     """It committed on a multi-select picker and cancelled on the single-select
-    row beside it — one key, opposite meanings, and no way to back out of a
+    row beside it: one key, opposite meanings, and no way to back out of a
     multi picker at all."""
 
     @staticmethod
@@ -1066,8 +1067,8 @@ def test_the_rename_row_describes_what_rename_does() -> None:
 
     stub = cast("Any", None)
     row = next(i for i in _provider_collection(stub, "c") if i.id == "col.c.rename")
-    # The whole class: the rebuild moved out of _save when the old name's
-    # index drop had to run before it, and reading one method missed it.
+    # The whole class, not one method: the rebuild runs outside `_save`,
+    # after the old name's index drop.
     source = inspect.getsource(RenameCollectionScreen)
     assert "rebuild=True" in source, "guard: this test pins the row against the code"
     assert "not rebuilt" not in row.description
@@ -1077,9 +1078,8 @@ def test_the_rename_row_describes_what_rename_does() -> None:
 @pytest.mark.asyncio
 async def test_leaving_the_source_form_says_what_it_discards(built_index: Path) -> None:
     """The filter browser saves into `_fields`, not to disk, so ^S there and
-    Esc here threw the edit away without a word. It said so afterwards once
-    that was fixed; it asks first now, which is what makes the edit
-    recoverable rather than merely reported."""
+    Esc here would throw the edit away. Leaving asks first, which makes the
+    edit recoverable rather than merely reported."""
     from fnd.config import CollectionConfig, Config, SourceConfig
     from fnd.tui.settings_screen import SourceFormScreen
 
@@ -1149,7 +1149,7 @@ async def test_the_edit_field_is_never_off_screen(built_index: Path, width: int)
 
 
 def test_the_footer_never_drops_the_save_key() -> None:
-    """Dropping from the right cut `^S Save` while leaving `c Clear` — a
+    """Dropping from the right cut `^S Save` while leaving `c Clear`: a
     destructive key outliving the one that keeps the work."""
     from fnd.tui.app import render_hint_bar
 
@@ -1174,7 +1174,7 @@ def test_the_footer_never_drops_the_save_key() -> None:
 @pytest.mark.asyncio
 async def test_the_summary_names_the_excludes_too(built_index: Path) -> None:
     """It named the include globs and never the excludes, which drop files
-    before any filter runs — so it was silent about half of what is skipped."""
+    before any filter runs, so it was silent about half of what is skipped."""
     from fnd.config import CollectionConfig, Config, SourceConfig
     from fnd.tui.settings_screen import FilterBrowserScreen, SourceFormScreen
 
@@ -1274,7 +1274,7 @@ async def test_a_text_editor_advertises_only_keys_that_work(built_index: Path) -
 class TestTheTwoLevelSaveSaysWhichLevelItIs:
     """The per-source browser stages into the form, which owns the write. It
     said "^S Save" and promised "saving reindexes this collection", so a single
-    ^S looked committed while writing nothing — and a later Esc then reported
+    ^S looked committed while writing nothing, and a later Esc then reported
     the work discarded, after the user had pressed save."""
 
     @pytest.mark.asyncio
@@ -1334,7 +1334,7 @@ class TestTheTwoLevelSaveSaysWhichLevelItIs:
 
 
 class TestClearSaysWhatItTook:
-    """Clearing takes no confirmation and wiped the set in silence —
+    """Clearing takes no confirmation and wiped the set in silence,
     including a tag exclusion, which is a protection rather than a
     preference. The gesture is the sidebar's, not a second letter of its
     own; the tests press whatever that action is bound to."""
@@ -1356,8 +1356,8 @@ class TestClearSaysWhatItTook:
         assert "file types" in note
 
     def test_no_wording_claims_nothing_is_filtered_out(self) -> None:
-        """It was never true — ignore files and hidden-name pruning survive
-        any clear — and the route that said it no longer exists."""
+        """Ignore files and hidden-name pruning survive any clear, so no
+        wording may claim nothing is filtered out."""
         import inspect
 
         from fnd.tui import settings_screen
@@ -1382,7 +1382,7 @@ class TestClearSaysWhatItTook:
 
     @pytest.mark.asyncio
     async def test_clearing_raises_it(self, built_index: Path) -> None:
-        """On a SOURCE, which is the only place the act exists now: the global
+        """On a SOURCE, which is the only place the act exists: the global
         set inherits from nothing, so there is nothing to return to there."""
         from fnd.filters import FilterSpec
         from fnd.tui.settings_screen import _CLEAR_FILTERS_KEY, FilterBrowserScreen
@@ -1460,7 +1460,7 @@ class TestSettingsScreenTyping:
             await pilot.pause()
             screen = await self._open(app, pilot)
             footer = screen.query_one("#footer_hints", Static)
-            # `Menu`, not `Search`: `/` is no longer an anchor in Settings,
+            # `Menu`, not `Search`: `/` is not an anchor in Settings,
             # because there it focuses the row filter rather than the query
             # bar and the screen's own cluster names it.
             assert "Menu" in footer.render_line(0).text, "idle, the anchors do work"
@@ -1545,7 +1545,7 @@ class TestARejectedSaveStopsComplainingOnceFixed:
 
     @pytest.mark.asyncio
     async def test_the_source_form_clears_it_too(self, built_index: Path) -> None:
-        """Same pattern, same screen family — fixed as a class."""
+        """Same pattern, same screen family: guarded as a class."""
         from textual.widgets import Static
 
         from fnd.config import CollectionConfig, Config, SourceConfig
@@ -1575,10 +1575,8 @@ class TestARejectedSaveStopsComplainingOnceFixed:
 class TestNothingIsThrownAwayInSilence:
     """Every screen holding user work asks before leaving discards it.
 
-    These asserted a notification saying the work HAD been discarded, which
-    was the best the app did before the prompt existed — telling the user
-    after it was gone. The intent is unchanged; the mechanism is now a modal
-    offering Save, Discard or Keep editing, so the work is recoverable.
+    The prompt is a modal offering Save, Discard or Keep editing, so the work
+    is recoverable rather than reported gone after the fact.
     """
 
     @pytest.mark.asyncio
@@ -1798,8 +1796,8 @@ class TestTheCollectionsTitleCountsWhatIsSearched:
 
 
 def test_only_a_screen_that_writes_says_save() -> None:
-    """Four nested screens said "Save" and one of them saved. The rule now:
-    "Apply" hands the value up, "Save" reaches disk."""
+    """Of four nested screens only one writes: "Apply" hands the value up,
+    "Save" reaches disk."""
     import inspect
     import re
 
@@ -1820,7 +1818,7 @@ def test_only_a_screen_that_writes_says_save() -> None:
 
 class TestTheDefaultsScreenOffersEveryType:
     """It sampled the first few collections for kinds, so file-type groups
-    vanished from it as collections were added — while the defaults it edits
+    vanished from it as collections were added, while the defaults it edits
     apply to every collection, including the ones never scanned."""
 
     def test_every_registry_kind_is_offered(self) -> None:
@@ -1835,8 +1833,8 @@ class TestTheDefaultsScreenOffersEveryType:
         assert offered == set(ALL_KIND_IDS)
 
     def test_a_sampled_screen_offers_every_type_too(self) -> None:
-        """Overruled deliberately: a picker showing only today's types has to
-        be revisited as the corpus grows. The counts still say what is there."""
+        """A picker showing only today's types would need revisiting as the
+        corpus grows; the counts say what is there."""
         from fnd.filters import FilterSpec
         from fnd.filters.scan import SourceSample
         from fnd.filters.tree_model import spec_branches

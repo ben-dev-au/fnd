@@ -1,8 +1,8 @@
 """Pressing `:` twice on a dirty editor stacked a second guard that had
 dropped its own Save option.
 
-The second one replaced `Save changes` with `Cannot save yet — the screen
-holding it is behind this one`, which describes the screen stack rather than
+The second one replaced `Save changes` with a note that the screen holding
+it is behind this one, which describes the screen stack rather than
 anything the user did. Esc pops one layer per press and the layers render
 identically, so the way back to a dialog that can save is a guess.
 

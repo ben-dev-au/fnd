@@ -1,17 +1,15 @@
 """A scan that stopped early narrows nothing.
 
-sample_source stops at 4000 files in walk order, and the picker offered only
-what it reached: 4500 notes beside 200 PDFs offered Markdown alone, so "md and
-pdf" could not be expressed on that screen at all. Walk order is reverse
-alphabetical, so the 4000 are systematically the last 4000 — a year-foldered
+sample_source stops at 4000 files in walk order, so a picker offering only what
+it reached turns 4500 notes beside 200 PDFs into Markdown alone, and "md and
+pdf" cannot be expressed on that screen at all. Walk order is reverse
+alphabetical, so the 4000 are systematically the last 4000: a year-foldered
 corpus loses its earliest years from every picker.
 
-An audit called this file unconditionally true, and it is right about the
-PARAMETRISATION: `truncated` no longer reaches `_kind_items` at all, so each
-pair of cases here exercises one path. The assertions still guard the contract
-— they fail the moment the picker goes back to offering what it saw — but the
-flag they are named for now earns its keep somewhere else entirely, and the
-last test holds it to that so removing it cannot pass silently.
+`truncated` does not reach `_kind_items`, so each pair of cases here exercises
+one path; the assertions still fail the moment the picker goes back to offering
+what it saw. The flag earns its keep elsewhere, and the last test holds it to
+that so removing it cannot pass silently.
 """
 
 from __future__ import annotations
@@ -67,8 +65,8 @@ def test_the_counts_still_say_what_is_there_now() -> None:
 
 
 def test_the_flag_still_reaches_the_user_somewhere() -> None:
-    """`truncated` no longer narrows the picker, so the only thing left that
-    it does is say so — and nothing above would fail if that went too."""
+    """`truncated` does not narrow the picker, so the only thing it does is
+    say so, and nothing above would fail if that went too."""
     import inspect
 
     from fnd.tui import settings_screen

@@ -1,9 +1,8 @@
-"""Narrowing the filter tree was a one-way door.
+"""Down from the filter tree's row filter leads back to the rows it narrowed.
 
-`/` reaches the box and typing narrows the tree, but Down did nothing from
-there — so a hunter narrowed the rows and had no key that left the box for
-what it had narrowed. Every other settings screen bridges Down; this one is
-the longest list in the app.
+`/` reaches the box and typing narrows the tree; without a Down bridge no key
+leaves the box for what it narrowed. Every other settings screen bridges Down,
+and this one is the longest list in the app.
 """
 
 from __future__ import annotations

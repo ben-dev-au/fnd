@@ -98,7 +98,7 @@ def test_rebuild_preserves_all_fields_except_intentional_overrides(name: str, re
     """Every field except the one the helper overrides (score or
     pass_index) must round-trip. Without this guard, adding a field to
     Hit silently defaults that field to 0/""/None in every rebuilt
-    Hit — the exact class of bug behind the missing ``line``."""
+    Hit, the exact class of bug behind the missing ``line``."""
     original = _populated_hit()
     overridden = {"score", "pass_index"}
     for field in dataclasses.fields(Hit):

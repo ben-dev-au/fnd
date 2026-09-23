@@ -86,9 +86,9 @@ async def test_footer_global_actions_always_visible(built_index: Path) -> None:
     """Help and Quit are relevant in every context that can receive them.
 
     The exception, and it is the state the app opens in: a focused text box
-    takes `?` and `q` as characters. The settings screens already drop the
-    anchors while one has focus; the main screen now does the same, so this
-    asserts the rule from a context where the keys actually arrive.
+    takes `?` and `q` as characters. The settings screens and the main screen
+    drop the anchors while one has focus, so this asserts the rule from a
+    context where the keys actually arrive.
     """
     app = FNDApp(index_dir=built_index)
     async with app.run_test() as pilot:

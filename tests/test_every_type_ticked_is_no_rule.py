@@ -1,7 +1,7 @@
 """`● File types (every type)` was a state that could not exist.
 
 Its summary and its compiled expression are identical to `○ no rule`, it saves
-nothing, and it comes back as `○` — because the model collapses "every type
+nothing, and it comes back as `○`, because the model collapses "every type
 ticked" to no restriction, deliberately, so a file type added to the registry
 tomorrow is not excluded by a box nobody could have ticked.
 
@@ -66,9 +66,9 @@ async def test_ticking_them_all_leaves_the_tree_showing_no_rule(tmp_index_dir: P
         assert isinstance(screen, FilterBrowserScreen)
         tree = screen.query_one("#filter_tree", ToggleTree)
 
-        # Toggled the way a user does — Enter on the branch ticks every child
-        # — because posting the message by hand never touches the tree's own
-        # selection, which is the half that was wrong.
+        # Toggled the way a user does (Enter on the branch ticks every child),
+        # because posting the message by hand never touches the tree's own
+        # selection, which is the half under test.
         tree.focus()
         tree.cursor_line = 0
         await pilot.pause()

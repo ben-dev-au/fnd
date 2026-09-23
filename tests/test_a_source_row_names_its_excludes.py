@@ -1,7 +1,7 @@
 """A source cut down by `build/**` read as unfiltered.
 
-The row names the dimensions narrowing a source — types, tags, size, dates, a
-typed rule — and excludes were missing, though they drop files before any of
+The row names the dimensions narrowing a source (types, tags, size, dates, a
+typed rule), and excludes were missing, though they drop files before any of
 the others run.
 """
 
@@ -22,7 +22,7 @@ def test_an_excluding_source_says_so(tmp_path: Path) -> None:
 def test_a_source_without_them_does_not_say_it(tmp_path: Path) -> None:
     """The control: a chip on every row would say nothing about any of them.
 
-    A bare source still names `tags` — the shipped `no_index` exclusion is a
+    A bare source still names `tags`: the shipped `no_index` exclusion is a
     real rule and it is inherited by everything.
     """
     src = SourceConfig(path=tmp_path)

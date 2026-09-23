@@ -3,7 +3,7 @@
 Surveyed across all eighteen settings screens: seven lost unsaved work
 silently on Esc, one said "discarded" after it was gone, and none prompted.
 Esc was the one gesture consistent on all eighteen, and on seven of them it
-destroyed work with no signal — so knowing which key saves was a precondition
+destroyed work with no signal, so knowing which key saves was a precondition
 for not losing data.
 """
 
@@ -102,9 +102,9 @@ async def test_discard_leaves_and_drops_the_edit(tmp_path: Path) -> None:
         form._fields["excludes_custom"] = "build/**"
         await pilot.press("escape")
         await pilot.pause()
-        # Reach Discard from wherever the prompt lands, and say so: `7b3c59e`
-        # moved the landing to the row that changes nothing, and a relative
-        # `down` from the old landing silently stopped reaching Discard.
+        # Reach Discard from wherever the prompt lands, and say so: it lands on
+        # the row that changes nothing, so a relative `down` from an assumed
+        # landing can silently miss Discard.
         from textual.widgets import OptionList
 
         prompt = app.screen
@@ -144,10 +144,9 @@ def test_no_editing_screen_leaves_unsaved_work_silently() -> None:
 def test_every_screen_can_actually_be_left() -> None:
     """A screen whose Esc neither pops nor asks is a trap with no way out.
 
-    One shipped: a method inserted into the middle of `action_back` stranded
-    its exit as dead code, so the filter browser could not be left once its
-    search box was empty. A single end-to-end test caught it; this catches the
-    shape.
+    A method inserted into the middle of `action_back` can strand its exit as
+    dead code, so the filter browser cannot be left once its search box is
+    empty. An end-to-end test catches one instance; this catches the shape.
     """
     source = _MODULE.read_text(encoding="utf-8")
     trapped: list[str] = []
@@ -181,13 +180,12 @@ def test_no_method_hides_code_after_its_return() -> None:
 
 
 class TestTheGateCoversTheWholeStack:
-    """Two holes an adversary found in the gate, both measured on the app.
+    """The gate asks every screen in the stack, and `q` cannot answer it.
 
-    The filter browser is only ever pushed on top of the source form, so a
-    dirty form under a clean browser quit with no prompt at all — the gate
-    asked the top screen and nothing below it. And `q` reached the app's quit
-    THROUGH the gate, so the question it raised was answered by pressing the
-    same key again.
+    The filter browser is only ever pushed on top of the source form, so a gate
+    asking only the top screen lets a dirty form under a clean browser quit
+    with no prompt. And `q` reaching the app's quit THROUGH the gate would
+    answer its question by pressing the same key again.
     """
 
     @pytest.mark.asyncio
@@ -227,7 +225,7 @@ class TestTheGateCoversTheWholeStack:
     async def test_the_gate_does_not_offer_to_save_what_it_cannot_reach(
         self, tmp_index_dir: Path
     ) -> None:
-        """A form buried under another editor cannot be saved from a modal —
+        """A form buried under another editor cannot be saved from a modal:
         its own save pops whatever is on top, which is not it."""
         from textual.widgets import OptionList
 
@@ -297,12 +295,10 @@ class _DirtyScreen(Screen[None]):
 
 
 class TestEveryAdvertisedExitAsks:
-    """The gate covered Esc, ←, `q` and the menu. `:` — the key the screen's
-    own footer names — closed the whole settings stack in silence.
+    """Every exit the footer advertises asks first, `:` included.
 
-    A hunter found it by pressing what the footer told it to press, which is
-    the only way this class of hole is ever found: I tested the exits I had
-    thought of.
+    Esc, ←, `q` and the menu are the obvious exits; `:` is the key the screen's
+    own footer names, and ungated it closes the whole settings stack in silence.
     """
 
     @pytest.mark.asyncio
@@ -347,7 +343,7 @@ class TestEveryAdvertisedExitAsks:
 
     @pytest.mark.asyncio
     async def test_discarding_from_the_gate_does_close_it(self, tmp_index_dir: Path) -> None:
-        """And the prompt must not become a second thing to escape from —
+        """And the prompt must not become a second thing to escape from,
         driven through the option list, which is what the user presses."""
         from textual.widgets import OptionList
 
@@ -381,7 +377,7 @@ class TestOpeningAStackIsAlsoAnExit:
     as closing one does.
 
     The filter browser is not a `SettingsScreen`, so `:` fell through to the
-    open branch and pushed a SECOND stack over it — from which a second Index
+    open branch and pushed a SECOND stack over it, from which a second Index
     filters could be opened and saved, leaving the first holding stale values
     that its own `^s` then wrote back over the newer save.
     """

@@ -1,8 +1,7 @@
-"""The removed-file counts live in the `Completed` band, which nothing named.
+"""The footer names the `Completed` band that holds the removed-file counts.
 
-A hunter reached them by trying Shift+Tab and then Space. The footer offered
-`↑↓ / ⏎ / Esc`, which drive the action list, and the band beside it is
-focusable and was mentioned nowhere.
+`↑↓ / ⏎ / Esc` drive the action list; the band beside it is focusable, and
+without a footer entry only a guess at Shift+Tab then Space reaches it.
 """
 
 from __future__ import annotations

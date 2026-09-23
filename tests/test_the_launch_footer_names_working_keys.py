@@ -1,7 +1,7 @@
 """fnd opens with the query box focused, under a footer naming four keys that
 all type into it.
 
-`/`, `:`, `?` and `q` reach a focused text box as characters — measured: the
+`/`, `:`, `?` and `q` reach a focused text box as characters. Measured: the
 box ends up holding `/:?q`. The settings screens already drop the anchors while
 a box has focus; the screen the app opens on did not.
 """

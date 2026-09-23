@@ -62,7 +62,7 @@ def test_a_readable_source_is_enumerable(tmp_path: Path) -> None:
 
 def test_an_empty_readable_source_is_still_enumerable(tmp_path: Path) -> None:
     """ "No files" is a real answer and must stay distinguishable from "could
-    not look" — emptying a source is how a user removes its files."""
+    not look": emptying a source is how a user removes its files."""
     d = tmp_path / "empty"
     d.mkdir()
 

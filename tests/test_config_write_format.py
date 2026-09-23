@@ -32,7 +32,7 @@ def test_the_spacing_is_idempotent(tmp_path: Path) -> None:
 
 def test_every_commented_key_can_be_uncommented_and_still_load(tmp_path: Path) -> None:
     """The renderer offers each unset key as a commented example, so each one
-    must sit in the table it belongs to — uncommenting it is the documented way
+    must sit in the table it belongs to: uncommenting it is the documented way
     to change a setting, and a misplaced key fails the whole config."""
     from fnd.config import load, starter_config
 

@@ -1,6 +1,6 @@
 """Every source row read `… · tags` while its own detail screen said `inherited`.
 
-`_other_filters` asked `effective_filters`, which resolves the defaults in — and
+`_other_filters` asked `effective_filters`, which resolves the defaults in, and
 the shipped `no_index` exclusion is a default, so the chip landed on every row
 in the app and distinguished none of them.
 """

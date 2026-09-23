@@ -121,9 +121,8 @@ async def test_a_tree_row_keeps_its_still_flat_chip(width: int, tmp_index_dir: P
 @pytest.mark.asyncio
 @pytest.mark.parametrize("width", [60, 80, 110])
 async def test_a_tree_row_keeps_its_failed_chip(width: int, tmp_index_dir: Path) -> None:
-    """`16e2f6a` fixed the live status line, which wraps, and left the archived
-    copy in the tree, which clips. A failure count is the last thing that may
-    silently vanish.
+    """The live status line wraps; the archived copy in the tree clips, and a
+    failure count is the last thing that may silently vanish there.
     """
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(width, 34)) as pilot:
@@ -131,7 +130,7 @@ async def test_a_tree_row_keeps_its_failed_chip(width: int, tmp_index_dir: Path)
         screen = await _open(app, pilot, ("notes", "papers"))
         rows = ["".join(s.text for s in strip) for strip in screen._compositor.render_strips()]
 
-    # Found by its label, not by the tail: `340 already` is now deliberately
+    # Found by its label, not by the tail: `340 already` is deliberately
     # the first thing the clip eats, so it cannot be the row's selector.
     indexed = [r for r in rows if "Files" in r and "12 new" in r]
     assert indexed, "nothing painted"

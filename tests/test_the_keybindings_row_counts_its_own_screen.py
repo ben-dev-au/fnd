@@ -1,7 +1,7 @@
 """The Keybindings row said "28 keys across 6 contexts" over a screen showing
 55 keys across 9 sections.
 
-It counted `keymap.bindings` — the action registry alone — while the sheet also
+It counted `keymap.bindings` (the action registry alone) while the sheet also
 carries four static widget tables and lists a multi-pane action under each pane
 it works in. The section count was a literal.
 """
@@ -30,7 +30,7 @@ def test_the_numbers_match_the_screen() -> None:
 
 
 def test_it_counts_more_than_the_registry() -> None:
-    """The premise: the sheet is bigger than the keymap it used to count."""
+    """The premise: the sheet is bigger than the action registry."""
     from fnd.tui.actions import REGISTRY
 
     items = _provider_keybindings(_app())

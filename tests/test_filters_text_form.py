@@ -104,7 +104,7 @@ class TestRoundTripBehaviour:
 
 
 class TestTextInformsTheRows:
-    """Typing a row-shaped clause is how the UI picks it up — not a defect."""
+    """Typing a row-shaped clause is how the UI picks it up, not a defect."""
 
     def test_a_typed_kind_clause_becomes_the_kinds_row(self) -> None:
         assert parse("file.kind in ['pdf', 'md']").kinds == ("pdf", "md")

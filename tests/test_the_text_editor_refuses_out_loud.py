@@ -1,11 +1,9 @@
-"""`^s Apply` on an invalid expression did nothing observable.
+"""`^s Apply` on an invalid expression refuses observably.
 
-The status line was already showing the parse error, so refreshing it changed
-no pixel — a hunter measured 14 identical pane captures over 3.5 seconds and
-concluded the key was dead. The leaving prompt then offered "Save changes" for
-the same text and bounced back with no explanation.
-
-Both are item 194 on the source form, which was fixed there and not here.
+The status line already shows the parse error, so refreshing it changes no
+pixel (14 identical pane captures over 3.5 seconds read as a dead key). The
+leaving prompt must not offer "Save changes" for the same text and bounce back
+with no explanation. The source form holds the same contract.
 """
 
 from __future__ import annotations

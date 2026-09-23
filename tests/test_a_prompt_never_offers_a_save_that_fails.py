@@ -1,7 +1,7 @@
 """Leaving a form with an invalid field offered "Save changes" as the default.
 
-Choosing it ran the save, which refused, popped nothing and repainted nothing —
-the error line was already on screen from the last attempt — so the prompt came
+Choosing it ran the save, which refused, popped nothing and repainted nothing
+(the error line was already on screen from the last attempt), so the prompt came
 straight back. Enter on the default looped; the only exit was Discard.
 """
 
@@ -109,8 +109,8 @@ async def test_a_form_that_can_save_still_offers_it(
         highlighted = prompt.query_one("#confirm_list", OptionList).highlighted
 
     assert ids[0] == "save", "the save must still be OFFERED, which is the point"
-    # `7b3c59e` moved the landing off Save: this prompt is reached by a key the
-    # footer offers as a way out, so Enter must not write.
+    # The landing is off Save: this prompt is reached by a key the footer
+    # offers as a way out, so Enter must not write.
     assert ids[highlighted or 0] == "stay", ids
 
 

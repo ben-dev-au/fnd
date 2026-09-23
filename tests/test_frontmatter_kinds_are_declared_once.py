@@ -1,10 +1,8 @@
 """Which formats carry frontmatter is declared on the kind, once.
 
-This shipped as a bug three times, each time for a different extension: the
-rule's scope and the reader that opens a file to look for a block were two
-expressions that had to agree by hand, and each time one of them was widened
-the other was not. A bare `.md` was dropped while the identical bare `.txt`
-beside it sailed through, under a green test.
+The rule's scope and the reader that opens a file to look for a block must
+agree. As two expressions kept in step by hand, widening one and not the other
+drops a bare `.md` while the identical bare `.txt` beside it sails through.
 
 `KindSpec.carries_frontmatter` is required, so a format added without an
 answer is an import error. Everything else derives from it. The tests below
@@ -22,7 +20,7 @@ from fnd.filters.dimensions import NOTE_KINDS, dimension
 from fnd.kinds import ALL_KIND_IDS, FRONTMATTER_KINDS, KIND_BY_ID, kind_for_suffix
 
 #: Reviewed, kind by kind. A new format fails this until someone decides,
-#: which is the point — not a list to sync, a decision to make.
+#: which is the point: not a list to sync, a decision to make.
 _EXPECTED: dict[str, bool] = {
     "pdf": False,
     "docx": False,

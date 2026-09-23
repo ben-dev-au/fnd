@@ -4,7 +4,7 @@ The rename wrote the new name and deleted the old one from the config, and
 stopped there. The old name's documents stayed: Delete is the only caller of
 delete_documents(F_COLLECTION, …) and it is unreachable once the config no
 longer names the collection, `-c <old>` is refused, and `reindex -c all
---rebuild` leaves them. They are served, too — the CLI's default scope applies
+--rebuild` leaves them. They are served, too: the CLI's default scope applies
 no collection filter, so a file deleted from disk came back as the top hit.
 """
 
@@ -77,9 +77,9 @@ async def test_rename_leaves_no_documents_under_the_old_name(
         await pilot.press("enter")
         for _ in range(10):
             await pilot.pause()
-        # Dropping the old name's documents is confirmed now, so the test
-        # confirms — which also proves the dialog does not disturb the
-        # drop-then-rebuild ordering the rest of this test is about.
+        # Dropping the old name's documents asks first, so the test confirms,
+        # which also proves the dialog does not disturb the drop-then-rebuild
+        # ordering the rest of this test is about.
         assert app.screen.__class__.__name__ == "RebuildConfirmScreen", app.screen
         options = app.screen.query_one("#confirm_list", OptionList)
         options.highlighted = next(i for i, o in enumerate(options._options) if o.id == "yes")

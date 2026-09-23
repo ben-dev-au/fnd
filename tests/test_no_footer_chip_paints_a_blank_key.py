@@ -1,8 +1,8 @@
-"""`[key] Run directly` painted a reversed blank slot.
+"""No footer chip paints a reversed blank slot where its key should be.
 
 The chip renderer interpolates into Rich markup, so a key holding `[` is parsed
-as a tag and vanishes. I swept the source for an empty string and found
-nothing, because the string was never empty — Rich ate it.
+as a tag and vanishes. A search for an empty key string cannot find it: the
+string is not empty, Rich eats it.
 """
 
 from __future__ import annotations

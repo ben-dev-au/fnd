@@ -1,9 +1,8 @@
-"""Adding a source inside another was accepted in silence.
+"""Adding a source inside, above or equal to another is pointed out.
 
-A hunter added an overlapping nested source deliberately, confirmed the index
-deduplicated it (11 docs, not 12), and noted that nothing in the app had said
-so. It is harmless and it is also pointless — a source that indexes nothing new
-reads exactly like one that does.
+The index deduplicates the overlap (11 docs, not 12), so it is harmless, and it
+is also pointless: a source that indexes nothing new reads exactly like one
+that does.
 """
 
 from __future__ import annotations

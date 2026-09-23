@@ -48,9 +48,8 @@ def _all_selectable() -> list[MenuItem]:
 
 @pytest.mark.asyncio
 async def test_rows_needing_a_real_config_also_carry_descriptions(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    """The sweep above walks providers with no config, so the screens that
-    need one — a collection, its sources, the source form — were never
-    reached, and rows there shipped bare."""
+    """The sweep above walks providers with no config, so it never reaches the
+    screens that need one: a collection, its sources, the source form."""
     from fnd.config import CollectionConfig, SourceConfig, write_collection
     from fnd.tui import FNDApp
     from fnd.tui.menu import _provider_collection, _provider_sources

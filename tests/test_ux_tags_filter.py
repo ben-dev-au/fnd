@@ -481,7 +481,7 @@ async def test_leaf_markers_align_with_branch_markers(
 class TestTheTagsBranchDoesNotOverclaim:
     """The catalogue is scoped to the TICKED tag sources, so an empty one said
     "none indexed" while the index held plenty and the user had merely
-    switched the sources off — and with nothing to draw, the branch returned
+    switched the sources off, and with nothing to draw, the branch returned
     early, leaving a live tag filter narrowing the search with no row."""
 
     def test_switching_the_sources_off_is_not_an_empty_index(self) -> None:

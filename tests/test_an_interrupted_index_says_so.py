@@ -1,11 +1,9 @@
 """A run that stopped part-way is visible, on the screen and at launch.
 
-Measured by a hunter against a real corpus: cancelling a rebuild at 7% took a
-collection from 3007 documents to 377, and SIGKILL took it to 207. The app
-wrote `files_completed = 210, total_files = 3000` to disk — it knew exactly
-what had happened — and then showed that collection identically to the intact
-ones on every screen. Searches answered from 7% of the corpus, silently,
-for as long as the user never thought to rebuild.
+Measured against a real corpus: cancelling a rebuild at 7% took a collection
+from 3007 documents to 377, and SIGKILL took it to 207. The app writes
+`files_completed = 210, total_files = 3000` to disk, so it knows; shown like
+the intact collections, searches answer from 7% of the corpus, silently.
 
 Opting out of auto-resume is not opting out of being told.
 """
@@ -87,8 +85,8 @@ async def test_the_row_carries_it(config: Config, tmp_index_dir: Path) -> None:
 @pytest.mark.asyncio
 async def test_the_update_row_carries_it_too(config: Config, tmp_index_dir: Path) -> None:
     """On the screen whose button fixes it, not only where someone browsing
-    would notice. The first version marked the Collections LIST and left the
-    collection's own screen — the one you open to act — saying nothing."""
+    would notice: the collection's own screen (the one you open to act) as
+    well as the Collections LIST."""
     from fnd.tui.menu import _summary_collection_update
 
     app = FNDApp(index_dir=tmp_index_dir, config=config)

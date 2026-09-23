@@ -1,6 +1,6 @@
 """Every numeric preference printed a range twice and enforced none of it.
 
-Seven of seven rows accepted and persisted out-of-range values silently —
+Seven of seven rows accepted and persisted out-of-range values silently:
 `result_limit = 99999` against `1-1000`, `preview_warm_margin = -3` against
 `0-20`. The validator demonstrably knows the range: it quotes it when refusing
 letters, then waves 99999 through.

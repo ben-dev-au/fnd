@@ -1,8 +1,8 @@
 """A screen that lists settings rows shows the focused row's description.
 
 Every MenuItem already carries one. SettingsScreen and AddCollectionWizard
-each render it in a DetailStrip — the wizard's handler says "Mirror the
-SettingsScreen pattern" — and SourceFormScreen, which edits the same fields
+each render it in a DetailStrip (the wizard's handler says "Mirror the
+SettingsScreen pattern"), and SourceFormScreen, which edits the same fields
 and had eighteen blank lines to spare, showed nothing. The explainer is the
 house strategy; it was applied to two screens of three.
 """

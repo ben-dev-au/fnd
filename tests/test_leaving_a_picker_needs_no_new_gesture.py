@@ -1,6 +1,6 @@
 """The gestures that leave a settings editor work on every settings editor.
 
-The tree picker commits live and the filter browser holds its edits — both
+The tree picker commits live and the filter browser holds its edits, both
 right for what they edit. What was wrong is that `^s` and `←`, learnt on every
 other screen, silently did nothing on the picker: same widget, same rows, a
 dead key.

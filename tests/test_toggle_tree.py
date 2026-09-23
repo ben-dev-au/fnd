@@ -216,7 +216,7 @@ class TestNesting:
             tt = app.query_one("#tt", ToggleTree)
             tag_a = next(n for n in tt.root.children if str(n.label).endswith("Tags")).children[0]
             tt.cursor_line = tag_a.line
-            await pilot.press("enter")  # exclude, the first state now
+            await pilot.press("enter")  # exclude, the first state
             await pilot.pause()
             assert tt.excluded == frozenset({"a"})
             assert _labels(tt)["tags"].startswith("◐"), _labels(tt)["tags"]
@@ -299,7 +299,7 @@ async def test_enter_on_a_tag_branch_does_not_discard_the_exclusions() -> None:
 
 class TestABranchSaysHowMuchIsOn:
     """A marker says only *that* a branch is partly on, so a collapsed one hid
-    how much — while the radio branches beside it named their choice.
+    how much, while the radio branches beside it named their choice.
 
     Few enough to name are named: `1 of 2 types` describes the setting, `PDF`
     describes what it does. Past three it counts again.
@@ -468,8 +468,8 @@ async def test_a_tree_opens_with_a_cursor() -> None:
 
 @pytest.mark.asyncio
 async def test_both_ends_of_a_no_restriction_branch_read_alike() -> None:
-    """Ticking every file type is the same no-restriction as ticking none —
-    `kinds` collapses to () either way — but one painted `○ (every type)` and
+    """Ticking every file type is the same no-restriction as ticking none
+    (`kinds` collapses to () either way), but one painted `○ (every type)` and
     the other a bare `●`, which the legend reads as "index ONLY these"."""
 
     class _Kinds(App[None]):
@@ -535,7 +535,7 @@ async def test_a_branch_without_a_full_label_is_unchanged() -> None:
 
 class TestCountingWhatTheUserCanTellApart:
     """The dedup keyed on the label, but a tag row's label carries its file
-    count — so the same tag seen 1 and 2 times looked like two tags. And the
+    count, so the same tag seen 1 and 2 times looked like two tags. And the
     noun never singularised: "only 1 tags".
 
     The same dedup has to hold when the summary NAMES what is on rather than

@@ -1,14 +1,13 @@
 """A dotted name the fact registry does not define is a typo, not a field.
 
-`RESERVED_FACTS` has carried the instruction in its own comment since it was
-written — "Anything else dotted is a typo, not a frontmatter key, so callers
-can reject it at parse time instead of strict-nulling to False" — and no
-caller did it.
+`RESERVED_FACTS` says so in its own comment: "Anything else dotted is a typo,
+not a frontmatter key, so callers can reject it at parse time instead of
+strict-nulling to False".
 
-So `file.kinds == 'pdf'`, one letter from `file.kind`, validated with a ✓ in
-the live editor, matched nothing when it ran, and the tree quietly dropped the
-clause it could not place. Only the save refused it, by which point the user
-had been told twice that the rule was fine.
+Unrejected, `file.kinds == 'pdf'` (one letter from `file.kind`) validates with
+a ✓ in the live editor, matches nothing when it runs, and the tree quietly
+drops the clause it cannot place; only the save refuses it, after the user has
+been told twice that the rule is fine.
 """
 
 from __future__ import annotations

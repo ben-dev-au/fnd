@@ -2,8 +2,8 @@
 
 It said the rule applies to any file with a frontmatter block whatever the
 extension, and that a file without one passes. Measured through the gate the
-walk builds: a note without a block is kept OUT — which is the whole point of
-the scoping fix — and a PDF passes because it is out of scope, not because it
+walk builds: a note without a block is kept OUT (the whole point of the
+scoping rule), and a PDF passes because it is out of scope, not because it
 lacks a block.
 """
 

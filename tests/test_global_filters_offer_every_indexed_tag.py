@@ -6,9 +6,9 @@ roots, flagged itself "partial scan", and simply did not offer the tags of the
 other nine. These are the defaults for EVERY collection, so the answer wanted
 is every collection's tags.
 
-The index already holds them. Asking it is faster than the capped walk was,
-opens no file, and hydrates nothing from a cloud folder — measured at 65 ms
-for 141 distinct tags across a real twelve-collection index.
+The index already holds them. Asking it is faster than a walk, opens no
+file, and hydrates nothing from a cloud folder: measured at 65 ms for 141
+distinct tags across a real twelve-collection index.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from fnd.tui.menu import _indexed_tags
 
 @pytest.fixture
 def three_collections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Config, Path]:
-    """More collections than the old walk would reach, each with its own tag."""
+    """More collections than a capped walk would reach, each with its own tag."""
     index_dir = tmp_path / "index"
     lines = []
     for n in range(4):
@@ -97,8 +97,8 @@ async def test_the_index_sample_carries_no_kinds(
 async def test_an_unbuilt_corpus_offers_no_tags(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_index_dir: Path
 ) -> None:
-    """Owner's call: none is the right answer before the first index. The walk
-    that stood in for it offered tags from files the index does not hold."""
+    """None is the right answer before the first index: a walk standing in for
+    it offers tags from files the index does not hold."""
     root = tmp_path / "vault"
     root.mkdir()
     (root / "a.md").write_text("---\ntags: [never_indexed]\n---\n\nbody\n", encoding="utf-8")
@@ -161,8 +161,8 @@ async def test_the_screen_says_why_it_offers_none(tmp_index_dir: Path) -> None:
 def test_the_index_lookup_survives_a_stub_app() -> None:
     """The settings invariant tests drive these getters with a SimpleNamespace
     carrying only `_config`. Reaching straight through `app._search` raised
-    AttributeError and took the walk fallback down with it — eight tests, all
-    of them about the fallback rather than about the index."""
+    AttributeError and took the walk fallback down with it (eight tests, all
+    of them about the fallback rather than about the index)."""
     from types import SimpleNamespace
     from typing import Any, cast
 

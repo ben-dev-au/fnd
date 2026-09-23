@@ -1,7 +1,7 @@
 """A query in flight changes the screen.
 
 Search is the one operation whose work happens entirely off the loop, so
-every pane could stay byte-identical for its whole duration — the results
+every pane could stay byte-identical for its whole duration: the results
 border read "Results" and the preview read "Type a query and press Enter",
 over the query the user had just pressed Enter on.
 """

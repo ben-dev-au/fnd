@@ -336,7 +336,7 @@ async def test_run_indexer_counters_warm_pdf_run_is_already(
 
     # One index across both runs, which is what a re-run is. Against a fresh
     # index the documents are genuinely new however warm the extraction cache
-    # is, and that is what the counters now say.
+    # is, and that is what the counters say.
     index_dir = tmp_path / "idx"
 
     async for _ev in run_indexer(

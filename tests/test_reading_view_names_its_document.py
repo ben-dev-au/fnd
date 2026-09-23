@@ -1,12 +1,11 @@
-"""Reading View showed full-bleed text and named nothing.
+"""Reading View names its document in the pane's top edge.
 
-A hunter grepped the whole pane for any filename pattern and got no hit. In a
-corpus of four documents that read alike, the claim being checked turns on
+In a corpus of documents that read alike, the claim being checked turns on
 which one says what.
 
-The whole border was dropped so the frame would not be copied with the text. A
+The rest of the border is dropped so the frame is not copied with the text. A
 top edge is not inside a text selection, and pane names live at the top
-everywhere else in this app, so that edge comes back and carries the title.
+everywhere else in this app, so that edge carries the title.
 """
 
 from __future__ import annotations

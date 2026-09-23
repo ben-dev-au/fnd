@@ -1,4 +1,4 @@
-"""The generated starter config must be generic — no developer's personal setup."""
+"""The generated starter config must be generic: no developer's personal setup."""
 
 from __future__ import annotations
 

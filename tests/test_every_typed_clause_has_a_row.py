@@ -1,9 +1,8 @@
-"""A clause typed in the text form and not owned by a picker had no row at all.
+"""A clause typed in the text form and not owned by a picker has a row.
 
-Decomposition puts what the pickers cannot render into ``spec.raw``. The tree
-named ``spec.expression`` only, so appending a second clause left the screen
-showing the first — which a hunter read, reasonably, as a row two edits out of
-date.
+Decomposition puts what the pickers cannot render into ``spec.raw``. A tree
+naming ``spec.expression`` only shows the first of two appended clauses, which
+reads as a row two edits out of date.
 """
 
 from __future__ import annotations
@@ -73,9 +72,8 @@ def test_a_spec_with_no_raw_clause_says_nothing_extra() -> None:
 async def test_enter_on_a_typed_rule_opens_the_text_form() -> None:
     """The routing, driven rather than asserted on an id prefix.
 
-    `62a9144` widened `_on_action`'s prefix tuple to admit `rule:raw:`. Revert
-    that tuple and every test still passed while Enter on a Typed rule became a
-    dead key — the row's id was checked, the behaviour was not.
+    `_on_action`'s prefix tuple must admit `rule:raw:`; checking the row's id
+    alone passes while Enter on a Typed rule is a dead key.
     """
     from fnd.tui import FNDApp
     from fnd.tui.settings_screen import FilterBrowserScreen, FilterTextScreen

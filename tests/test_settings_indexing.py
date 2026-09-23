@@ -1,4 +1,4 @@
-"""Indexing settings section — tests follow dev/docs/test_patterns/settings_screen.md."""
+"""Indexing settings section: tests follow dev/docs/test_patterns/settings_screen.md."""
 
 from __future__ import annotations
 

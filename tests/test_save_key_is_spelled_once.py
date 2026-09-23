@@ -1,7 +1,7 @@
 """The save gesture is written one way, everywhere.
 
 It was `Ctrl+S` in three places and `^S` in four, on screens a user moves
-between in one session — `app._is_commit` normalises both spellings, so the
+between in one session; `app._is_commit` normalises both spellings, so the
 code already knew. Lowercase, because it sits beside `t`, `c` and `y` hints
 and a capital reads as though Shift is wanted.
 """
@@ -32,8 +32,8 @@ def _docstrings(tree: ast.AST) -> set[int]:
 def test_no_module_spells_it_another_way() -> None:
     """Anywhere inside a user-visible string, not only as the whole of one.
 
-    The line-wise version passed while two notices still said `^S` mid
-    sentence — a capital beside the lowercase `t`, `c`, `y` hints.
+    A line-wise check passes with `^S` mid sentence in a notice: a capital
+    beside the lowercase `t`, `c`, `y` hints.
     """
     offenders: list[str] = []
     for path in sorted(_TUI.rglob("*.py")):

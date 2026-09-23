@@ -1,9 +1,8 @@
-"""Saving the global filters left every collection behind the config.
+"""Saving the global filters offers to update every collection.
 
 `[defaults.filters]` govern all of them, and the defaults route deliberately
-reindexes nothing — so a hunter measured config=3 against index=4, with a file
-it had just excluded still searchable, twice. The only statement was a toast.
-The act that fixes it already existed one menu away; the save now offers it.
+reindexes nothing, so without the offer every collection stays behind the
+config (measured: config=3 against index=4, a just-excluded file searchable).
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """A query that matched nothing says so, and names what narrowed it.
 
 Zero results painted two blank panes and the words "Type a query and press
-Enter" — over the query the user had just pressed Enter on. A filter set in an
+Enter", over the query the user had just pressed Enter on. A filter set in an
 earlier session survives in `scope.toml` and narrows every search after it,
 which is what makes the blank screen unreadable rather than merely bare.
 """
@@ -87,7 +87,7 @@ async def test_a_filter_that_emptied_the_search_is_named(cfg: Config, indexed: P
 @pytest.mark.asyncio
 async def test_it_names_a_place_and_not_a_key(cfg: Config, indexed: Path) -> None:
     """Focus is in the query bar when this paints, and a key pressed there
-    types itself into the query — which is correct. So the message said
+    types itself into the query, which is correct. So the message said
     `X clears it` and produced `risottoX`, with the filter untouched. It names
     the panel, which carries a row that works whatever has focus.
     """

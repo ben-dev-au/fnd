@@ -1,8 +1,7 @@
-"""`Esc/← Discard` opened a dialog whose cursor sat on "Save changes".
+"""`Esc/← Discard` opens a dialog whose cursor does not sit on "Save changes".
 
-Enter — the reflex after a key that already says discard — wrote
-`kinds = ["md"]`, which pruned files out of the corpus at the next update. One
-keypress, measured by a hunter as a config diff.
+Enter, the reflex after a key that already says discard, would write
+`kinds = ["md"]` and prune files out of the corpus at the next update.
 """
 
 from __future__ import annotations

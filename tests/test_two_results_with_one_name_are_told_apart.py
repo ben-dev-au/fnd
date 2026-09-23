@@ -1,8 +1,8 @@
-"""Result rows carry the basename, so `build/out-01.md` and `notes/out-01.md`
-were two identical rows.
+"""Result rows that share a basename are told apart by their folder.
 
-A hunter asked the question the app is for — "which ones did that drop?" — and
-could not answer it from the result list.
+Rows carry the basename, so `build/out-01.md` and `notes/out-01.md` would be two
+identical rows, and "which ones did that drop?" could not be answered from the
+result list.
 """
 
 from __future__ import annotations
@@ -56,10 +56,10 @@ def test_the_same_path_twice_is_not_its_own_rival() -> None:
 
 def test_it_does_not_grow_quadratically_with_the_result_count() -> None:
     """`_refresh_status` reaches this from twenty call sites, so a focus change
-    pays it. Measured before the fix: 4.9 ms at 50 rows, 73.5 ms at 200.
+    pays it. Measured quadratic: 4.9 ms at 50 rows, 73.5 ms at 200.
 
     Asserted as a ratio rather than a wall-clock budget: the shape is what
-    regressed, and a threshold in milliseconds would be a flake on a busy box.
+    matters, and a threshold in milliseconds would be a flake on a busy box.
     """
     import time
 

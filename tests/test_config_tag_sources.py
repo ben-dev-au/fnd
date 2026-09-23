@@ -75,7 +75,7 @@ def test_enabling_a_source_needs_a_reindex(tmp_path: Path) -> None:
 
 def test_the_config_says_a_folder_tag_is_not_inherited() -> None:
     """Tagging a folder is the natural gesture for "keep this out", and the
-    tag is read per file — so a folder's own tag applies to nothing."""
+    tag is read per file, so a folder's own tag applies to nothing."""
     from fnd.config import DefaultFilters
 
     description = DefaultFilters.model_fields["exclude_tags"].description or ""

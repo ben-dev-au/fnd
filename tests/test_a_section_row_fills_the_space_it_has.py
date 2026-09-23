@@ -43,8 +43,8 @@ def test_a_short_locator_leaves_the_rest_for_the_snippet() -> None:
 
 
 def test_the_row_stays_within_its_budget() -> None:
-    """The control on the fix: keeping the snippet must not overrun the budget
-    and clip against the border, which is what dropping it avoided."""
+    """The control: keeping the snippet must not overrun the budget and clip
+    against the border."""
     from rich.cells import cell_len
 
     from fnd.tui.results_labels import _shorten

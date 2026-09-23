@@ -1,8 +1,7 @@
-"""The overlap warning reached one door of three.
+"""The CLI points out a duplicate or nested source, as the source form does.
 
-A hunter set its collections up through the CLI — because the TUI will not
-launch without an index — added duplicate and nested sources, and got silence.
-The warning I added lived in the source form only.
+The TUI will not launch without an index, so a first collection is often set
+up through the CLI; the overlap warning is one shared helper, not a copy.
 """
 
 from __future__ import annotations
@@ -31,8 +30,8 @@ def test_it_still_finds_a_nested_folder(tmp_path: Path) -> None:
     parent = tmp_path / "vault"
     (parent / "notes").mkdir(parents=True)
 
-    # `2a2fc64` made this return `(path, relation)`; a non-empty tuple is
-    # always truthy, so the bare assert stopped testing anything.
+    # This returns `(path, relation)`; a non-empty tuple is always truthy, so
+    # a bare assert would test nothing.
     found, _contains = overlapping_source(
         [SourceConfig(path=parent)], SourceConfig(path=parent / "notes")
     )
@@ -52,9 +51,8 @@ def configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         encoding="utf-8",
     )
     # `fnd.cli` binds this name at import, so patching `fnd.config`'s copy
-    # leaves the CLI pointed at the real config. Every other CLI test in the
-    # suite patches `fnd.cli.default_config_path`; this one did not, and wrote
-    # three sources into the user's live config before the assertion failed.
+    # leaves the CLI pointed at the real config, which a failing test would
+    # then write sources into.
     monkeypatch.setattr("fnd.cli.default_config_path", lambda: cfg_path)
     monkeypatch.setattr("fnd.config.default_config_path", lambda: cfg_path)
     return root

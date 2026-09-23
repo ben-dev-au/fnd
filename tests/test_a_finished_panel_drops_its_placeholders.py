@@ -1,7 +1,7 @@
 """A finished run read `Current: ?` and `Avg: ?`.
 
-`?` is honest while a run is going — the modal genuinely does not know the file
-yet, or has no pages counted — and meaningless once it has stopped, where there
+`?` is honest while a run is going (the modal genuinely does not know the file
+yet, or has no pages counted) and meaningless once it has stopped, where there
 is no current file and a corpus without PDFs will never have an average.
 """
 
@@ -53,8 +53,8 @@ async def test_a_panel_with_no_run_shows_neither(tmp_index_dir: Path) -> None:
         assert isinstance(screen, IndexerScreen)
         screen._render_timing(1.0)
         # The current-file line is written by the pages-progress render, which
-        # a headless run never reaches — so this asserted on the empty string
-        # the widget was composed with and passed against the reverted fix.
+        # a headless run never reaches, so it is driven here; otherwise this
+        # asserts on the empty string the widget was composed with.
         screen._render_pages_progress(app)
         await pilot.pause()
         current = str(screen.query_one("#indexer_current_file", Static).content)

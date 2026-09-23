@@ -1,7 +1,7 @@
 """The Index-filters row said "Needs a reindex to take effect".
 
-Reindex reads as Rebuild — the expensive one that empties the collection
-first — and an Update already does the job: it walks with the current filters,
+Reindex reads as Rebuild (the expensive one that empties the collection
+first), and an Update already does the job: it walks with the current filters,
 so a file that now matches is added, and one that no longer matches is pruned.
 The tag rows are the opposite case and say so: tags are read when a file is
 indexed, and an Update skips files that have not changed.
@@ -99,7 +99,7 @@ def _description(row_id: str) -> str:
     ],
 )
 def test_each_row_names_the_command_it_needs(row_id: str, must_say: str, must_not_say: str) -> None:
-    """Two commands, two different answers — "reindex" named neither."""
+    """Two commands, two different answers; "reindex" named neither."""
     description = _description(row_id)
     assert must_say in description, description
     assert must_not_say not in description, description

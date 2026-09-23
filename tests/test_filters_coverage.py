@@ -189,8 +189,8 @@ class TestEveryFieldFilters:
 
 
 class TestInvariantsOverCombinations:
-    """Chosen examples cover the cases I thought of. These hold for any
-    combination, which is where interaction bugs live."""
+    """Properties that hold for any combination, which is where interaction
+    bugs live."""
 
     @staticmethod
     def _sets(names: list[str]) -> dict[str, Any]:
@@ -360,7 +360,7 @@ class TestConfigStampsResolvedFilters:
 
 class TestClearDropsOverridesNotProtections:
     """`c` on a source emptied the resolved set, which threw away the
-    inherited `no_index` exclusion — so undoing a file-type filter also
+    inherited `no_index` exclusion, so undoing a file-type filter also
     switched off the never-index opt-out, with no confirmation."""
 
     @staticmethod
@@ -394,7 +394,7 @@ class TestClearDropsOverridesNotProtections:
         assert walked == {"public.md", "note.txt"}
 
     def test_clearing_to_an_empty_set_would_have_readmitted_it(self, tmp_path: Path) -> None:
-        """The negative control: this is what the old behaviour wrote."""
+        """The negative control: clearing to an empty set readmits the file."""
         from fnd.filters import FilterSpec
 
         self._corpus(tmp_path)
@@ -463,7 +463,7 @@ class TestTheTextViewNeverWidens:
 
 
 class TestATypoCannotOpenTheIndex:
-    """An unknown fact is *unknown*, not false, so its rule is waived — which
+    """An unknown fact is *unknown*, not false, so its rule is waived, which
     means a misspelt field admits every file instead of none, and voids the
     valid clause beside it."""
 
@@ -501,7 +501,7 @@ class TestATypoCannotOpenTheIndex:
 
 class TestATypedAndStaysAnAnd:
     """ "Index only files carrying any of these" is a disjunction, so merging a
-    second top-level conjunct into it turned a typed AND into an OR — which
+    second top-level conjunct into it turned a typed AND into an OR, which
     can only admit more files."""
 
     def test_two_include_clauses_do_not_collapse_into_one_or(self) -> None:
@@ -613,7 +613,7 @@ class TestAnUnknownKindIsRefused:
 
 class TestThePickerOffersWhatWouldBeIndexed:
     """The sample walked without ignore files, so a `.fndignore`-d folder
-    still contributed its types and tags — the picker offered a file type the
+    still contributed its types and tags: the picker offered a file type the
     walk could never yield, with a count of files that are never indexed."""
 
     @staticmethod
@@ -651,7 +651,7 @@ class TestThePickerOffersWhatWouldBeIndexed:
 class TestTagsThatCannotBothHold:
     """A file must carry a required tag to pass and is dropped if it carries
     an excluded one, so when every required tag is excluded too the set is
-    empty however large the corpus — and nothing said so."""
+    empty however large the corpus, and nothing said so."""
 
     @staticmethod
     def _survivors(root: Path, spec: Any) -> set[str]:

@@ -6,7 +6,7 @@ user reads showed them that way. The match navigator already sorted them by
 wrong by the one consumer that depended on it.
 
 Position is the TIE-BREAK, not the order. Sorting by position outright demotes
-the section that scored best — and the preview lands on the first one, so that
+the section that scored best, and the preview lands on the first one, so that
 is a different change with a different consequence.
 """
 

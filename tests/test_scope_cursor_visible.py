@@ -63,11 +63,11 @@ async def test_a_viewport_change_does_not_strand_the_cursor(
     async with app.run_test(size=(120, 20)) as pilot:
         await pilot.pause()
         tree = await _deep_tree(app, pilot)
-        assert tree.cursor_line > 3, "test setup — the panel must be long enough to scroll"
+        assert tree.cursor_line > 3, "test setup: the panel must be long enough to scroll"
         tree.scroll_to(y=0, animate=False)
         for _ in range(4):
             await pilot.pause()
-        assert not _visible(tree), "test setup — the cursor should be off screen"
+        assert not _visible(tree), "test setup: the cursor should be off screen"
 
         tree.post_message(Resize(tree.size, tree.container_size))
         for _ in range(20):
@@ -84,7 +84,7 @@ async def test_the_re_search_restores_the_highlighted_row(
     async with app.run_test(size=(120, 20)) as pilot:
         await pilot.pause()
         tree = await _deep_tree(app, pilot)
-        assert tree.cursor_line > 3, "test setup — the panel must be long enough to scroll"
+        assert tree.cursor_line > 3, "test setup: the panel must be long enough to scroll"
         tree.scroll_to(y=0, animate=False)
         for _ in range(4):
             await pilot.pause()

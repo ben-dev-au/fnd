@@ -1,9 +1,8 @@
-"""`⏎ Confirm` stayed on screen after the cursor moved off the affirmative.
+"""`⏎ Confirm` leaves the footer once the cursor moves off the affirmative.
 
-`fc32e96` returns the hint from the same call that places the cursor, and
-claims that is "the only arrangement in which the two cannot disagree". It is
-the arrangement in which they agree at mount. Nothing recomputes on a move, so
-one `Down` left the footer promising Confirm while Enter cancelled.
+Returning the hint from the same call that places the cursor makes the two
+agree at mount only. Without a recompute on a move, one `Down` leaves the
+footer promising Confirm while Enter cancels.
 """
 
 from __future__ import annotations
@@ -54,7 +53,7 @@ async def test_the_footer_does_not_promise_confirm_from_another_row(
         rows = ["".join(s.text for s in strip) for strip in app.screen._compositor.render_strips()]
         footer = rows[-1]
 
-    assert landed != "yes", f"{name}: precondition — the cursor moved off the affirmative"
+    assert landed != "yes", f"{name}: precondition, the cursor moved off the affirmative"
     assert "Confirm" not in footer, f"{name}: {footer.strip()!r}"
 
 

@@ -2,7 +2,7 @@
 
 The pickers own the shapes they can render; anything else stays as typed text,
 and the branch went on claiming there was no rule on its dimension. The size
-and date branches already say "a rule is typed below" for exactly this — the
+and date branches already say "a rule is typed below" for exactly this; the
 two branches a user is most likely to type a rule FOR did not.
 """
 

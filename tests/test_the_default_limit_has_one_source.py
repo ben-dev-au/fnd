@@ -1,8 +1,8 @@
 """Every fallback for `result_limit` reads the model default, not a copy of it.
 
-The original defect was a second number: `search_controller` held `limit=50`
-while `defaults.result_limit` said otherwise. Three call sites each carrying
-their own literal is the same hazard one drift away.
+The defect is a second number: `search_controller` holding `limit=50` while
+`defaults.result_limit` says otherwise. Three call sites each carrying their
+own literal is the same hazard one drift away.
 """
 
 from __future__ import annotations

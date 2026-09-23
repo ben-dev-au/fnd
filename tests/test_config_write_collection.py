@@ -25,7 +25,7 @@ def test_write_creates_collection_in_empty_file(tmp_path: Path) -> None:
     write_collection(config_path=cfg_path, name="notes", collection=cc)
     out = load(cfg_path)
     assert out.collection("notes").sources[0].path == Path("/tmp/notes")
-    # ``**/*.md`` is not the ``md`` kind — that also covers ``.markdown`` —
+    # ``**/*.md`` is not the ``md`` kind (that also covers ``.markdown``),
     # so it stays a glob rather than being folded into ``filters.kinds``.
     assert out.collection("notes").sources[0].includes == ["**/*.md"]
 

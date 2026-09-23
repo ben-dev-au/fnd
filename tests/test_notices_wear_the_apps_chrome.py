@@ -3,7 +3,7 @@
 Textual's stock toast is a filled `$panel-lighten-1` slab with a thick `outer`
 bar down one side, padded `1 1` at a fixed 60 columns, docked bottom right.
 Every pane in fnd is a thin round outline on `$surface`, so a notice read as
-another program's widget — and the bottom rows carry the hint bar and the
+another program's widget, and the bottom rows carry the hint bar and the
 progress strip, which it covered.
 
 Toasts do not mount under `run_test`, so this asserts the rules; the rendering

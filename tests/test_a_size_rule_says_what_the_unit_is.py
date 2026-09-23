@@ -1,6 +1,6 @@
 """`file.size < 200kb` failed with "unexpected token 'kb'" and nothing else.
 
-The DSL has no units — sizes are bytes — and the escape hatch for a bound the
+The DSL has no units (sizes are bytes), and the escape hatch for a bound the
 presets cannot express is exactly where a user reaches for `kb`. The presets
 start at 1 MB, so anyone wanting a smaller cap arrives here.
 """

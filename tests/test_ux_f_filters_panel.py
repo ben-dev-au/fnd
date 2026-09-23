@@ -386,7 +386,7 @@ async def test_filters_compose_into_query(cfg_one_collection: Config, mixed_inde
         assert "mtime:week" in joined, joined
         assert "glimmer" in joined, joined
         # Substring presence passes whether the two are ANDed or space-joined,
-        # and the parser is OR-default — so space-joining made a second filter
+        # and the parser is OR-default, so space-joining makes a second filter
         # WIDEN the results. Pin the join itself.
         assert "kind:md AND mtime:week" in joined, joined
 

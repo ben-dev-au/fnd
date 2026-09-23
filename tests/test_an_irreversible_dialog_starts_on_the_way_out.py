@@ -1,16 +1,15 @@
 """A confirm dialog whose Yes cannot be undone starts on Cancel.
 
 Every one of these screens is reached by pressing Enter, so landing the cursor
-on "Yes, delete…" put the irreversible act one keypress from the one that
-opened it. The rebuild and rename dialogs were fixed first; the delete screens
-and the cache clear were the same defect, in the same file, with the same
-hand-rolled `on_mount`.
+on "Yes, delete…" puts the irreversible act one keypress from the one that
+opened it. The rebuild, rename and delete screens and the cache clear share the
+same hand-rolled `on_mount`.
 
 `UpdateAllConfirm` is the control: its affirmative is safe, and nothing moves.
 
-Moving the cursor then left the footer behind: four screens went on reading
-`⏎ Confirm` while Enter cancelled, and cancelling is silent, so the screen you
-land on is indistinguishable from the one you would land on if it had worked.
+The footer follows the cursor: `⏎ Confirm` while Enter cancels is silent, so the
+screen you land on is indistinguishable from the one you would land on if it
+had worked.
 """
 
 from __future__ import annotations
@@ -170,10 +169,9 @@ async def test_the_footer_says_what_enter_will_do(
     """The invariant, across every confirm screen: the footer never promises
     `Confirm`.
 
-    It used to allow it where Enter confirmed ON ARRIVAL, which is the only
-    moment the hint is computed — one `Down` then left the promise standing on
-    three dialogs while Enter cancelled. A screen that cannot recompute the
-    hint cannot make the promise.
+    The hint is computed only on arrival, so even where Enter confirms then,
+    one `Down` leaves the promise standing while Enter cancels. A screen that
+    cannot recompute the hint cannot make the promise.
     """
     app = FNDApp(index_dir=tmp_index_dir, config=config)
     async with app.run_test(size=(120, 34)) as pilot:

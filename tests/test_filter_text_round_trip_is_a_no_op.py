@@ -2,7 +2,7 @@
 
 The browser offers the tree "or as one expression if you prefer". Pressing `t`
 and then saving with no edit moved a rule from ``frontmatter`` to
-``expression`` — the same text, a different field, and a different index: a
+``expression``; the same text, a different field, and a different index: a
 frontmatter rule is skipped for a file that has none, while the same text as
 an expression strict-nulls that file out. Eleven chunks against ten.
 """

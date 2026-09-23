@@ -1,8 +1,8 @@
-"""Eliding the edit bar's label cut the constraint out of it.
+"""Eliding the edit bar's label keeps the constraint in it.
 
-`cbb25fb` stopped the label wrapping over its own field, and capped it at 40%
-with an ellipsis. Measured at 110 columns: six of nine numeric rows lost their
-range entirely and one rendered `1…`, which does not read as truncated — it
+The label is capped at 40% with an ellipsis so it cannot wrap over its own
+field. Measured at 110 columns, a plain cap cut the range from six of nine
+numeric rows and rendered one as `1…`, which does not read as truncated: it
 reads as a different range.
 """
 
@@ -62,9 +62,9 @@ async def test_every_range_survives_the_elision(tmp_index_dir: Path) -> None:
 async def test_the_field_is_wide_enough_to_read_what_is_typed(
     width: int, tmp_index_dir: Path
 ) -> None:
-    """The control on the fix: an uncapped label pushed the field off-screen.
+    """The control: an uncapped label pushes the field off-screen.
 
-    `>= 12` restated `min-width: 12` from the stylesheet and could not fail.
+    Asserting `>= 12` would restate `min-width: 12` from the stylesheet.
     The field has to hold the value it is seeded with, which is what the user
     is actually deprived of when the label eats the row.
     """

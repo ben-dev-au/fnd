@@ -1,10 +1,9 @@
 """An empty scope returns nothing, because that is what the panel says.
 
-Unticking every collection painted `Collections · 0/5 active`, every row `○`,
-and returned hits from all five: the controller collapsed an empty selection
-to None, which the query layer reads as "unscoped". The same dishonesty was
-fixed for PARTLY ticked collections and left open on the zero case, with a
-test asserting the misleading label.
+Unticking every collection paints `Collections · 0/5 active` and every row
+`○`, so it must not return hits from all five: an empty selection collapsed to
+None reads as "unscoped" to the query layer. PARTLY ticked collections are held
+to the same honesty.
 """
 
 from __future__ import annotations
@@ -75,11 +74,10 @@ def _config(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_an_app_with_nothing_to_scope_by_still_searches(two_collections: Path) -> None:
-    """The regression the first attempt at this caused.
+    """An empty selection map is not always the user unticking everything.
 
-    An empty selection map is not always the user unticking everything: an app
-    with no config has no collections to tick, and reading the two the same
-    made a fresh app find nothing. Only a preview-navigation test noticed.
+    An app with no config has no collections to tick; reading the two the same
+    makes a fresh app find nothing.
     """
     from fnd.tui import FNDApp
 
@@ -98,10 +96,9 @@ async def test_unticking_every_collection_through_the_panel_finds_nothing(
 ) -> None:
     """Driven through the toggle the user actually presses.
 
-    The first fix asked whether the selection map was empty. Both toggle paths
-    POP their key, so unticking everything leaves the same empty map a launch
-    has — and the earlier test set that map by hand, so it passed either way
-    while the panel read `0/2 active` and the search returned both.
+    Both toggle paths POP their key, so unticking everything leaves the same
+    empty map a launch has; a map set by hand passes either way while the panel
+    reads `0/2 active` and the search returns both.
     """
     from textual.widgets import Tree
 
@@ -127,14 +124,12 @@ async def test_unticking_every_collection_through_the_panel_finds_nothing(
 async def test_the_search_the_tui_actually_runs_honours_it(
     two_collections: Path, tmp_path: Path
 ) -> None:
-    """End to end, because every layer above this one was already honest.
+    """End to end, because only the search the TUI runs shows the defect.
 
-    `query.py` returns nothing for an explicit empty list and has since the
-    first fix. The cascade — the pass that recovers a sparse query — tested
-    `if collection:`, and an empty list is falsy, so it skipped the collection
-    filter entirely and answered from every collection. The panel read
-    `0/2 active` over results from both, and three tests at three levels all
-    passed because none of them ran the search the TUI runs.
+    `query.py` returns nothing for an explicit empty list, but the cascade (the
+    pass that recovers a sparse query) must not test `if collection:`: an empty
+    list is falsy, so it would skip the collection filter and answer from every
+    collection under a panel reading `0/2 active`.
     """
     from textual.widgets import Tree
 

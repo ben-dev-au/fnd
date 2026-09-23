@@ -1,4 +1,4 @@
-"""Settings UX redesign — Add Collection wizard tests."""
+"""Settings UX redesign: Add Collection wizard tests."""
 
 from __future__ import annotations
 
@@ -352,7 +352,7 @@ async def test_source_form_shows_include_globs_as_ticked_file_types(
 ) -> None:
     """Spec: existing include globs show as pre-checked file types.
 
-    They are stated once now — as ``filters.kinds`` — so the guarantee lives
+    They are stated once, as ``filters.kinds``, so the guarantee lives
     in Index filters rather than a second picker beside it.
     """
     from textual.widgets import Static

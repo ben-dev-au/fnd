@@ -1,7 +1,7 @@
 """`Highlights` looks like the five persisted toggles beside it and is not one.
 
-It writes no config key — `highlights_enabled` lives on the SearchController
-and is `True` at construction — so it resets on relaunch while its neighbours
+It writes no config key (`highlights_enabled` lives on the SearchController
+and is `True` at construction), so it resets on relaunch while its neighbours
 survive. Nothing on the row says which kind it is.
 """
 

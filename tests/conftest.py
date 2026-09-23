@@ -156,9 +156,8 @@ def isolated_config_path(  # pyright: ignore[reportUnusedFunction]
 
     `fnd.cli` and several TUI modules do `from fnd.config import
     default_config_path` at import, so patching `fnd.config`'s copy alone
-    leaves them pointed at the user's real config — a test that did exactly
-    that wrote three sources into it. A test wanting a specific path still
-    patches over this; a test that forgets now hits a temp file instead.
+    leaves them pointed at the user's real config. A test wanting a specific
+    path still patches over this; a test that forgets hits a temp file.
     """
     # Not under the test's own `tmp_path`: two tests enumerate that directory
     # and assert exactly what is in it.

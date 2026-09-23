@@ -1,9 +1,8 @@
 """The advice on an empty index never names the command that printed it.
 
-`fnd tui` answered with "run `fnd tui` and choose Add Collection" — 102
-keystrokes and three refusals before a new user saw a screen. `_next_step`'s
-own docstring describes this loop as a bug it fixed, having mended one branch
-of the `if` and left the identical loop in the other.
+`fnd tui` answering with "run `fnd tui` and choose Add Collection" cost 102
+keystrokes and three refusals before a new user saw a screen. Both branches of
+`_next_step`'s `if` must move forward, not only one.
 """
 
 from __future__ import annotations

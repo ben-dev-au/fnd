@@ -1,4 +1,4 @@
-"""`Results — 1 files / 2 sections`, found independently by two hunters.
+"""The results title counts in English: `1 file`, not `1 files`.
 
 The title is where this app carries its counts, so it is read constantly.
 """

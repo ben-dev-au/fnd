@@ -2,7 +2,7 @@
 way out.
 
 Eight rows of content sat under three lines of prose that repeated the row
-above them, and the hint bar dropped `Esc/← Discard` from the right — seven
+above them, and the hint bar dropped `Esc/← Discard` from the right: seven
 things to do on the screen and no advertised way off it.
 """
 
@@ -88,11 +88,9 @@ async def test_the_summary_stops_repeating_the_row_above(tmp_index_dir: Path) ->
 class TestTheHeadNamesWhatTheExpressionCannot:
     """Its claim is "what the expression below does NOT cover".
 
-    Trimming it for the narrow terminal took the ignore files out, on the
-    grounds that the branch above names them — but the branch says WHICH files
-    are obeyed, and this line says THAT they apply at all. Without it the
-    expression looked like the whole story, which is the question this line
-    exists to answer.
+    The branch above says WHICH ignore files are obeyed; this line says THAT
+    they apply at all. Without it the expression looks like the whole story,
+    which is the question this line exists to answer.
     """
 
     @pytest.mark.asyncio
@@ -152,10 +150,10 @@ class TestTheHeadNamesWhatTheExpressionCannot:
 
 
 class TestTheElisionMarksWhereTheCutIs:
-    """The bar held the save and leave keys back to the end, so the drop moved
-    to the middle — and the `…` stayed at the tail, pointing at hints that
-    were still there. It reads as "there is more after Discard" when what is
-    missing is `Clear` and `Copy`, three columns to the left.
+    """The bar holds the save and leave keys back to the end, so the drop is
+    in the middle, and a `…` at the tail would point at hints still there: it
+    reads as "there is more after Discard" when what is missing is `Clear` and
+    `Copy`, three columns to the left.
     """
 
     def test_the_marker_sits_at_the_join(self) -> None:
@@ -165,7 +163,7 @@ class TestTheElisionMarksWhereTheCutIs:
         assert not trimmed.rstrip().endswith("…"), "it still points off the right"
         assert trimmed.index("…") < trimmed.index("Save"), trimmed
         # Any surviving contextual key, not `Toggle` specifically: hints are
-        # now kept by how guessable they are, and `⏎ Toggle` is a key the
+        # kept by how guessable they are, and `⏎ Toggle` is a key the
         # user tries unprompted, so it is among the first to go.
         assert trimmed.index("…") > trimmed.index("Clear"), trimmed
 
@@ -185,10 +183,9 @@ class TestTheElisionMarksWhereTheCutIs:
 class TestTheAnchorMarkerGoesLeft:
     """Anchors are dropped off the LEFT, so their marker belongs there.
 
-    At 120 columns the bar lost `/ Search`, `: Menu`, `? Keys` and `q Quit` —
-    every advertised way to search, get help or quit — and put the `…` after
-    `Discard`, which was still on screen. The middle-drop marker added for the
-    contextual keys had left this path appending at the end.
+    At 120 columns the bar drops `/ Search`, `: Menu`, `? Keys` and `q Quit`
+    (every advertised way to search, get help or quit), so a `…` after
+    `Discard`, which is still on screen, would point at the wrong end.
     """
 
     _ANCHORS = (("/", "Search"), (":", "Menu"), ("?", "Keys"), ("q", "Quit"))

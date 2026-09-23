@@ -1,10 +1,9 @@
-"""Two hunters hunted for a way to exclude a file type, because the legend
-said there was one.
+"""The File type legend does not advertise an exclude state it lacks.
 
 `⊘ never index these` is the shared line, and `kinds` is an include-only tuple
-in the model — there is no exclude state to reach. Both finished the job by
-allow-listing every other category instead, which silently drops every file
-type added to the registry later.
+in the model: there is no exclude state to reach. The workaround, allow-listing
+every other category, silently drops every file type added to the registry
+later.
 """
 
 from __future__ import annotations

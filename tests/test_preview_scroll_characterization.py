@@ -482,7 +482,7 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
         delay_target_landing = True
         rtree.move_cursor(rtree.root.children[1])
 
-        # Step 1: prove the delayed-finalise path actually armed — the nav must
+        # Step 1: prove the delayed-finalise path actually armed: the nav must
         # enter the settling state on the target before we wait for it to clear,
         # so a swap-in of the prefetched container can't satisfy step 2 without
         # the controller ever settling. Gate on the latch (not a live is_settling
@@ -493,7 +493,7 @@ async def test_cold_nav_delayed_landing_waits_for_real_settle(
             timeout=20.0,
             message="cold-nav target never entered settling",
         )
-        # Step 2: gate on the real landed signal — it waits out the delayed
+        # Step 2: gate on the real landed signal; it waits out the delayed
         # correcting scroll that a fixed-tick settle would miss.
         await wait_until(
             pilot,

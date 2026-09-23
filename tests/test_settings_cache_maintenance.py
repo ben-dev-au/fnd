@@ -241,7 +241,7 @@ async def test_clear_cancel_path(built_index: Path, cfg: Config, isolated_cache:
         await pilot.pause()
         _run_cache_clear(app)
         await pilot.pause()
-        # The cursor starts on Cancel now; choose it by name, not by position.
+        # The cursor starts on Cancel; choose it by name, not by position.
         options = app.screen.query_one("#confirm_list", OptionList)
         options.highlighted = next(i for i, o in enumerate(options._options) if o.id == "no")
         await pilot.press("enter")

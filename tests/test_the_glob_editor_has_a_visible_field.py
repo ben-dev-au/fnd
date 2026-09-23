@@ -61,7 +61,7 @@ async def test_the_label_stays_on_one_row(probe_config: Path, tmp_path: Path) ->
 
 @pytest.mark.asyncio
 async def test_the_field_still_paints_what_is_typed(probe_config: Path, tmp_path: Path) -> None:
-    """The control on the fix: capping the label must not clip the field away."""
+    """The control: capping the label must not clip the field away."""
     app = FNDApp(index_dir=tmp_path / "idx")
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()

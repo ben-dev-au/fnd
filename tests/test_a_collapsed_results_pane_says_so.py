@@ -1,8 +1,8 @@
 """Two `←` presses collapse the Results pane, and it looked identical to an
 open one.
 
-The collapse is deliberate — it is the lazygit section gesture — but the title
-went on reading `Results — 32 files / 269 sections` with no chevron and no
+The collapse is deliberate (it is the lazygit section gesture), but the title
+went on reading `32 files / 269 sections` with no chevron and no
 marker, and the state persists to `scope.toml`, so six fresh sessions in six
 came up looking as though the results had simply gone.
 """

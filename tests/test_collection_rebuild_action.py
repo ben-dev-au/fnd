@@ -6,7 +6,7 @@ a Rebuild that silently ran a plain incremental update.
 Drives the real menu action callback against the real app, capturing the
 exact kwargs start_indexer receives — the layer where the bug would hide.
 
-The action now asks first, because it empties the collection before
+The action asks first, because it empties the collection before
 refilling it, so the test confirms as a user would. That also proves the
 confirmation passes the flags through untouched, which is the way this same
 regression could return.

@@ -1,8 +1,8 @@
-"""Space did two different things in two panes of the same screen.
+"""Space is not an expand key: arrows own expansion, and space reaches no tree.
 
-On a sidebar row it was Textual's stock `toggle_node` (expand/collapse); on a
-settings filter row it toggled the selection. Arrows own expansion now, and
-space reaches no tree at all.
+Textual's stock `toggle_node` binds space to expand/collapse, while on a
+settings filter row space toggles the selection: one key doing two things in
+two panes of the same screen.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from fnd.tui.widgets.toggle_tree import ToggleGroup, ToggleItem, ToggleTree
 
 
 def _fnd_tree_classes() -> list[type[Tree[Any]]]:
-    """Every ``Tree`` subclass fnd defines — importing the app is what defines them."""
+    """Every ``Tree`` subclass fnd defines; importing the app is what defines them."""
     import fnd.tui.app  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
     found: list[type[Tree[Any]]] = []

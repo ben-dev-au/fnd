@@ -1,7 +1,7 @@
 """`End` reached the last result and `Home` did nothing at all.
 
 The scroll view binds both, but scrolling a viewport the cursor does not follow
-leaves the pane looking frozen — measured: End took the cursor from row 1 to
+leaves the pane looking frozen. Measured: End took the cursor from row 1 to
 row 30 and scrolled 23 lines, Home moved neither.
 """
 

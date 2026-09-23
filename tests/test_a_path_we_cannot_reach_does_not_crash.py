@@ -62,7 +62,7 @@ def test_a_path_that_is_really_gone_is_called_absent(tmp_path: Path) -> None:
 async def test_the_app_launches_with_a_source_it_cannot_reach(
     tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The sidebar's per-source check runs from `on_mount`, so this was fatal."""
+    """The sidebar's per-source check runs from `on_mount`, so a raise there is fatal."""
     inner = _locked(tmp_path)
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(
@@ -97,7 +97,7 @@ async def test_the_app_launches_with_a_source_it_cannot_reach(
 async def test_pressing_open_on_a_file_we_cannot_reach_does_not_take_the_app_down(
     tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A real keypress, because the crash was an exception escaping an ACTION.
+    """A real keypress, because the crash is an exception escaping an ACTION.
 
     The file is still there and still indexed; only its directory is closed.
     """

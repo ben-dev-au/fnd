@@ -99,9 +99,8 @@ def test_search_works_when_schema_already_current(
 
 
 class TestTheFirstRunMessageMovesYouOn:
-    """It named `collection add` unconditionally, so a user who had just run
-    it was told to run it again — the same text, verbatim, with no way
-    forward. hunt-g hit this as a new user and could not reach the wizard."""
+    """The first-run message names the next step, not `collection add` to a
+    user who has just run it."""
 
     @staticmethod
     def _config(*names: str):

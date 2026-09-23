@@ -2,7 +2,7 @@
 
 One line claimed `●  index ONLY these` for the whole screen. On "Obey ignore
 files" `●` means *obey this file*, which indexes FEWER files, and `○` means
-more — the legend stated the opposite of what the row does.
+more; the legend stated the opposite of what the row does.
 """
 
 from __future__ import annotations
@@ -34,10 +34,9 @@ def test_only_the_branches_that_read_differently_override_it() -> None:
     assert by_id["ignore"].legend == IGNORE_LEGEND
     assert by_id["rules"].legend == RULES_LEGEND
     # `kinds` earned one: the shared line promises ⊘ and the model has no
-    # exclude state for a file type, which blocked two hunters outright.
+    # exclude state for a file type.
     assert by_id["kinds"].legend == KINDS_LEGEND
-    # These three asserted they needed no wording of their own. Overturned by
-    # measurement: they are radio, so neither ⊘ nor ◐ can occur on them, and
+    # These three are radio, so neither ⊘ nor ◐ can occur on them, and
     # "index ONLY these" is the wrong sentence for "Up to 1 MB".
     for name in ("size", "modified", "created"):
         assert by_id[name].legend == BOUND_LEGEND
@@ -87,8 +86,8 @@ async def test_the_painted_legend_follows_the_cursor(tmp_index_dir: Path) -> Non
 
 @pytest.mark.asyncio
 async def test_enter_on_a_rules_branch_does_something(tmp_index_dir: Path) -> None:
-    """It was the one row where Enter did nothing at all — no toggle, no
-    expand — under a legend saying it opens an editor. Every branch beside it
+    """It was the one row where Enter did nothing at all (no toggle, no
+    expand) under a legend saying it opens an editor. Every branch beside it
     either toggles or expands, so this one expands, and the editor is then one
     row down where the legend says it is."""
     app = FNDApp(index_dir=tmp_index_dir)
@@ -124,7 +123,7 @@ async def test_enter_on_a_rules_branch_does_something(tmp_index_dir: Path) -> No
 class TestABranchKeepsItsName:
     """A row renamed itself as a side effect of an edit somewhere else.
 
-    With one tag source showing rows, the branch took that SOURCE's label —
+    With one tag source showing rows, the branch took that SOURCE's label,
     so clearing a rule about the other source renamed `Tags` to
     `Note tags (YAML)` and took the `System tags` sub-branch with it. The
     user had changed a tag rule, not the shape of the pane.

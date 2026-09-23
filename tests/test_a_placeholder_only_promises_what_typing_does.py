@@ -1,9 +1,9 @@
-"""A box reading "Type to filter…" sat on a screen where typing runs commands.
+"""A filter box only promises "Type to filter…" where typing reaches it.
 
 On the Keybindings sheet the LIST has focus so press-key-to-invoke works, which
-is the design — and the sheet lists `q Quit` three rows under that box. A
-hunter typing to narrow the list quit the app, twice. The box now names the key
-that reaches it, as the filter browser's already did.
+is the design, and the sheet lists `q Quit` three rows under that box: typing
+to narrow the list quits the app. The box names the key that reaches it, as the
+filter browser's does.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ async def test_the_box_names_the_key_that_reaches_it(tmp_index_dir: Path) -> Non
 
 @pytest.mark.asyncio
 async def test_slash_still_reaches_it_and_filtering_works(tmp_index_dir: Path) -> None:
-    """The control: the key the box now names must do what it says."""
+    """The control: the key the box names must do what it says."""
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -109,7 +109,7 @@ async def test_a_real_action_row_still_invokes(tmp_index_dir: Path) -> None:
         app.action_show_help()
         for _ in range(20):
             await pilot.pause()
-        await pilot.press("h")  # Highlights — a registry action with a key
+        await pilot.press("h")  # Highlights: a registry action with a key
         for _ in range(6):
             await pilot.pause()
         left = not isinstance(app.screen, SettingsScreen)

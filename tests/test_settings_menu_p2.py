@@ -304,14 +304,12 @@ class TestSourceRowsCanBeToldApart:
         assert _source_labels(["/a/notes"]) == ["notes"]
 
     def test_two_rows_for_one_path_stay_short(self) -> None:
-        """OVERTURNED, deliberately: this used to grow both to the whole path
-        on the reasoning that they should show as much as they can.
+        """Identical sources do not grow to the whole path.
 
-        A hunter measured what that costs at real path lengths — two rows of
-        one long shared prefix, with the summary column squeezed out, and
-        still no way to tell them apart. They are the SAME path; the row
-        number distinguishes them and the column is better spent saying what
-        each one filters.
+        At real path lengths that costs two rows of one long shared prefix,
+        with the summary column squeezed out, and still no way to tell them
+        apart. They are the SAME path; the row number distinguishes them and
+        the column is better spent saying what each one filters.
         """
         from fnd.tui.menu import _source_labels
 

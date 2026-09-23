@@ -1,7 +1,7 @@
 """A long filter branch can be searched, as every other settings list can.
 
-`/` binds to a filter on the settings list, and the filter browser — which
-renders a vault's whole tag vocabulary, thousands of rows on a real corpus —
+`/` binds to a filter on the settings list, and the filter browser (which
+renders a vault's whole tag vocabulary, thousands of rows on a real corpus)
 had no equivalent. Not slow; unnavigable by arrow key.
 """
 
@@ -155,9 +155,9 @@ async def test_the_footer_drops_the_row_keys_while_typing(tmp_index_dir: Path) -
 @pytest.mark.asyncio
 async def test_typing_reaches_the_box_and_not_the_bindings(tmp_index_dir: Path) -> None:
     """Setting Input.value drives the handler without touching focus, so the
-    whole defect was invisible to a test written that way: after the first
+    whole defect is invisible to a test written that way: after the first
     keystroke the tree took focus and `t`, `c` and `y` ran as bindings.
-    `/cle` reached `c` — clear everything, no confirmation."""
+    `/cle` reached `c`: clear everything, no confirmation."""
     app = FNDApp(index_dir=tmp_index_dir)
     async with app.run_test(size=(120, 34)) as pilot:
         await pilot.pause()

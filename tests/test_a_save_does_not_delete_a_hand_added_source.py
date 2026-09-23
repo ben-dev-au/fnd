@@ -1,7 +1,7 @@
 """Toggling one source's checkbox deleted a source added to the file by hand.
 
 `action_save_close` builds its write from `app._config`, loaded at launch, and
-`write_collection` replaces the collection table wholesale — so anything added
+`write_collection` replaces the collection table wholesale, so anything added
 to that table after launch is written away. Scalar hand-edits survive because
 they live in `[defaults.filters]`, which this write does not touch.
 """
@@ -129,8 +129,8 @@ async def test_a_config_that_will_not_load_refuses_rather_than_falling_back(
 ) -> None:
     """The fallback made the guard vacuous and did the write it exists to stop.
 
-    `load()` raising sent it back to `app._config` — the very model
-    `_snapshot` came from — so the identity check could never disagree, and the
+    `load()` raising sent it back to `app._config` (the very model
+    `_snapshot` came from), so the identity check could never disagree, and the
     stale write went ahead. A validation failure, not just malformed TOML.
     """
     app = FNDApp(index_dir=tmp_index_dir)
@@ -190,7 +190,7 @@ async def test_the_refusal_advice_actually_works(
     """ "Press Esc and reopen" re-read the same stale model and refused again.
 
     The refusal returned before `app._config = cfg`, and `_load_snapshot` reads
-    `app._config` — so the reopened form was seeded from the model that was
+    `app._config`, so the reopened form was seeded from the model that was
     already wrong, and the loop only broke on restart.
     """
     app = FNDApp(index_dir=tmp_index_dir)

@@ -1,8 +1,8 @@
-"""Landing on Cancel put it LAST, and a two-item OptionList wraps.
+"""`Down` from the safe row of an irreversible dialog does not wrap onto "Yes".
 
-So `Down` — which on every other list in the app moves within the list — jumped
-straight onto "Yes, delete…". A hunter did it twice by accident in one session;
-the second time it dropped and rebuilt a renamed collection unasked.
+Cancel sits LAST, and a two-item OptionList wraps, so `Down` (which on every
+other list in the app moves within the list) would land on "Yes, delete…"; one
+slip drops and rebuilds a renamed collection unasked.
 """
 
 from __future__ import annotations

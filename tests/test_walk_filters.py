@@ -122,7 +122,7 @@ class TestTagExclusion:
     """``exclude_tags`` reads every tag source, so the default is not macOS-only."""
 
     def test_a_yaml_tag_excludes_like_a_finder_tag_would(self, tmp_path: Path) -> None:
-        """The only cross-platform way to say "keep this out" — no Finder needed."""
+        """The only cross-platform way to say "keep this out": no Finder needed."""
         _write(tmp_path, "tagged.md", "---\ntags: [no_index]\n---\nbody\n")
         _write(tmp_path, "plain.md", "---\ntags: [keep]\n---\nbody\n")
         assert _names(tmp_path) == {"plain.md"}
@@ -142,7 +142,7 @@ class TestTagExclusion:
         assert _names(tmp_path, defaults=spec) == {"keep.md"}
 
     def test_untagged_notes_survive_a_negated_tag_filter(self, tmp_path: Path) -> None:
-        """``NOT (x in tags)`` is true on a note with no tags: — keep it."""
+        """``NOT (x in tags)`` is true on a note with no tags: keep it."""
         _write(tmp_path, "plain.md", "no frontmatter here\n")
         spec = DefaultFilters(frontmatter="NOT ('no_index' in tags)")
         assert _names(tmp_path, defaults=spec) == {"plain.md"}
@@ -286,7 +286,7 @@ class TestSymlinkedRoot:
     def test_hidden_is_not_confused_by_a_dot_in_an_ancestor(self, tmp_path: Path) -> None:
         """An absolute-path fallback would read a dotted ancestor as hidden.
 
-        The source root itself is a real directory — a symlinked *root* is
+        The source root itself is a real directory: a symlinked *root* is
         refused outright unless ``follow_symlinks`` is set, so the ancestor
         is what carries the link.
         """
@@ -329,7 +329,7 @@ class TestOverrideToNothing:
 def _all_globs(kind: str) -> list[str]:
     """Every suffix glob for a kind, from the registry.
 
-    Absorption is deliberately conservative — it fires only on a COMPLETE set —
+    Absorption is deliberately conservative (it fires only on a COMPLETE set),
     so a hard-coded pair stops being complete the moment a format is added.
     """
     from fnd.kinds import KIND_BY_ID
@@ -465,15 +465,13 @@ class TestTagsAreNotConflated:
 class TestFrontmatterScopeIsEveryKindThatCanCarryOne:
     """A frontmatter rule judges every kind that can carry a block.
 
-    REVERSED deliberately. This class asserted Markdown only, on the reasoning
-    that ``.txt`` carries no YAML block — but ``FileFacts`` opens ``.txt``
-    looking for one, so the app already treats it as a note. Scoping the rule
-    to ``md`` alone dropped a bare ``.md`` and let the identical bare ``.txt``
-    through, which is the owner's reported bug surviving under a green test.
+    ``FileFacts`` opens ``.txt`` looking for a block, so the app treats it as
+    a note; scoping the rule to ``md`` alone would drop a bare ``.md`` and let
+    the identical bare ``.txt`` through.
 
-    The scope is now literally ``frontmatter_kinds()`` — the one function that
-    decides which files are opened at all — so the two cannot disagree again.
-    A PDF is still never judged: it cannot carry a block, so it cannot answer.
+    The scope is literally ``frontmatter_kinds()`` (the one function that
+    decides which files are opened at all), so the two cannot disagree. A PDF
+    is never judged: it cannot carry a block, so it cannot answer.
     """
 
     def test_a_plain_text_file_is_judged_like_any_other_note(self, tmp_path: Path) -> None:
@@ -492,9 +490,8 @@ class TestFrontmatterScopeIsEveryKindThatCanCarryOne:
         assert _names(tmp_path, defaults=spec) == {"tagged.txt"}
 
     def test_the_markdown_extension_is_judged_too(self, tmp_path: Path) -> None:
-        """``.markdown`` is Markdown and does carry frontmatter. ``main`` keyed
-        on ``suffix == ".md"`` and never filtered it; that was the accident,
-        and this is the one extension whose behaviour the fix changed."""
+        """``.markdown`` is Markdown and does carry frontmatter, so a rule
+        filters it; a ``suffix == ".md"`` check would not."""
         _write(tmp_path, "yes.markdown", "---\ntype: note\n---\nbody\n")
         _write(tmp_path, "no.markdown", "---\ntype: other\n---\nbody\n")
         spec = DefaultFilters(exclude_tags=[], frontmatter="type == 'note'")
@@ -617,7 +614,7 @@ class TestAFrontmatterOnlyExpression:
 
 class TestASymlinkCycleTerminates:
     """A cycle produced endlessly many distinct paths for the same directory,
-    so the walk only stopped when the OS refused the depth — after walking one
+    so the walk only stopped when the OS refused the depth, after walking one
     file dozens of times and storing the deepest alias as its path."""
 
     def test_a_loop_yields_each_file_once(self, tmp_path: Path) -> None:
@@ -670,7 +667,7 @@ class TestASymlinkCycleTerminates:
 
 
 class TestASymlinkedRootIsNotSilent:
-    """A symlinked root is deliberately refused unless the user opts in — it
+    """A symlinked root is deliberately refused unless the user opts in: it
     is the only way the index would follow a link target. The defect was that
     it said nothing: the source indexed zero files while every column read
     healthy."""
@@ -731,9 +728,9 @@ class TestASymlinkedRootIsNotSilent:
 
 
 class TestAFileBelongsToOneSource:
-    """A file reachable from two sources — one nested inside another, or the
-    same folder listed twice — was extracted and written once per source, so
-    a seven-file collection reported twelve and did the work twice."""
+    """A file reachable from two sources (one nested inside another, or the
+    same folder listed twice) is extracted and written once, not once per
+    source, which made a seven-file collection report twelve."""
 
     @staticmethod
     def _corpus(root: Path) -> Path:

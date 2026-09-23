@@ -1,8 +1,8 @@
 """Only a glob naming a dot-prefixed component admits a hidden path.
 
-``.obsidian/**`` added beside ``**/*.md`` used to lift the hidden prune for the
-whole tree, so an Obsidian vault indexed every note the user had deleted into
-``.trash`` — which is not in DEFAULT_JUNK_DIRS (that list holds macOS's
+``.obsidian/**`` added beside ``**/*.md`` must not lift the hidden prune for the
+whole tree: an Obsidian vault would index every note the user had deleted into
+``.trash``, which is not in DEFAULT_JUNK_DIRS (that list holds macOS's
 ``.Trashes``). Private material entering a searchable index, with nothing on
 any screen saying the prune had been lifted.
 """
