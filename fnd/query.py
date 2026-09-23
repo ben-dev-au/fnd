@@ -1,11 +1,11 @@
 """Query layer: parse → search → group-by-parent → top-N sections per file.
 
-Phase 1: single-pass query, no rerank. Phase 7 adds the reranker (recency,
-filetype, phrase-proximity); phase 8 adds cascading multi-pass; phase 9 adds
-RRF fusion of parallel sub-queries. Phase 5.5e-2 adds the optional
-``metadata_filter`` kwarg on :meth:`Searcher.search` and
-:meth:`Searcher.search_grouped`: a DSL string (same grammar as the
-index-time ``frontmatter_filter``) is compiled once and applied as a
+Single-pass: reranking, cascading and RRF fusion live in :mod:`fnd.rerank`,
+:mod:`fnd.cascade` and :mod:`fnd.fusion`.
+
+The optional ``metadata_filter`` kwarg on :meth:`Searcher.search` and
+:meth:`Searcher.search_grouped` takes a DSL string (same grammar as the
+index-time ``frontmatter_filter``); it is compiled once and applied as a
 post-rank predicate against each md chunk's stored ``meta_blob``, with
 oversample-and-retry inside :meth:`Searcher._filtered_raw_hits` so the
 caller still gets ``limit`` survivors when the filter is strict.
@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -38,9 +39,11 @@ from fnd.schema import (
     F_BODY_MD,
     F_BODY_STRUCT,
     F_CHUNK_SEQ,
+    F_COLLECTION,
     F_HEADING_PATH,
     F_KIND,
     F_LINE,
+    F_MEMBERSHIP,
     F_META_BLOB,
     F_MTIME,
     F_PAGE,
@@ -51,9 +54,15 @@ from fnd.schema import (
     F_TITLE,
     SCHEMA_VERSION,
     build_schema,
+    membership_token,
 )
 
 _SNIPPET_CTX = 240
+#: Ticked sources per PARTLY selected collection. The collection key is the
+#: provenance a flat path list throws away: a folder listed under two
+#: collections is otherwise in scope for both.
+SourceScope = Mapping[str, Sequence[str]]
+
 # A chunk longer than this is anchored in a window around its first typed
 # term, not scanned whole. Honest chunks stay under it (a PDF page peaks near
 # 12k), so their window choice is unchanged. Measured: 364 pooled chunks of
@@ -61,6 +70,64 @@ _SNIPPET_CTX = 240
 _SNIPPET_SCAN_CHARS = 24_000
 _SNIPPET_REGION_CHARS = 6_000
 _DEFAULT_LIMIT: Final = 10
+
+
+def scope_or(arms: list[Query]) -> Query:
+    """The arms as one OR. Callers test emptiness themselves, because an empty
+    scope means NOTHING and a single query cannot say that."""
+    import tantivy
+
+    return (
+        arms[0]
+        if len(arms) == 1
+        else tantivy.Query.boolean_query([(tantivy.Occur.Should, a) for a in arms])
+    )
+
+
+def scope_arms(
+    schema: Schema,
+    collection: str | list[str] | None,
+    source_scope: SourceScope | None,
+) -> list[Query] | None:
+    """The scope as a UNION: whole collections OR a partial one's own sources.
+
+    ``None`` means unscoped. An empty list means an explicitly empty scope,
+    which matches NOTHING, so the panel never paints "0/5 active" while every
+    collection answers.
+
+    Every caller that filters by scope builds it here: ANDing the two channels
+    instead intersects a collection name with another collection's source path
+    whenever a full collection sits beside a partial one.
+    """
+    import tantivy
+
+    if collection is None and not source_scope:
+        return None
+    cols = (
+        []
+        if collection is None
+        else [collection]
+        if isinstance(collection, str)
+        else list(collection)
+    )
+    arms: list[Query] = [tantivy.Query.term_query(schema, F_COLLECTION, c) for c in cols]
+    for name, sids in (source_scope or {}).items():
+        # One compound (collection, source) term per source: a file is stored once
+        # with multi-valued collection and source fields, so ANDing them would
+        # match via a DIFFERENT source. The membership token keeps the pairing exact.
+        srcs = [
+            tantivy.Query.term_query(schema, F_MEMBERSHIP, membership_token(name, s)) for s in sids
+        ]
+        if not srcs:
+            continue
+        arms.append(
+            srcs[0]
+            if len(srcs) == 1
+            else tantivy.Query.boolean_query([(tantivy.Occur.Should, s) for s in srcs])
+        )
+    return arms
+
+
 # Content tokens that parse_query can't handle on the body field and which we
 # resolve against the stemmed dictionary ourselves:
 #   _WILDCARD_RE  trailing prefix wildcard ``crypto*``  → BM25 prefix_variants
@@ -99,17 +166,17 @@ class Hit:
     # template variables (vscode, sublime, etc.).
     line: int = 0
     # Unix epoch seconds; 0 means "unknown / unindexed file". Used by the
-    # reranker (§4 recency boost) — pulled from the F_MTIME fast field at
+    # reranker's recency boost; pulled from the F_MTIME fast field at
     # search time, not stored on the Hit until reranking runs.
     mtime: int = 0
-    # Cascade pass that produced this hit (§9c): 0 = exact, 1 = fuzzy,
+    # Cascade pass that produced this hit: 0 = exact, 1 = fuzzy,
     # 2 = synonym. Used by the TUI to render a per-pass glyph (●/~/⊕).
     pass_index: int = 0
     # JSON-encoded frontmatter for the file (md only); empty bytes for
     # non-md or md without frontmatter. Read at search time from F_META_BLOB
-    # so query-time post-filters (§5.5e-2) can decode and evaluate.
+    # so query-time post-filters can decode and evaluate.
     meta_blob: bytes = b""
-    # Decoded chunk body text (from F_BODY_STRUCT). Carried so the §4
+    # Decoded chunk body text (from F_BODY_STRUCT). Carried so the
     # phrase-proximity reranker can measure term spread across the whole
     # chunk, not just the ~240-char snippet. Empty until populated.
     body_text: str = ""
@@ -161,8 +228,8 @@ class FileChunk:
 class FileGroup:
     """One file with its ranked matched sections.
 
-    The TUI tree (phase 5) renders the file as a parent node and ``hits`` as
-    its sorted children. ``top_score`` mirrors ``hits[0].score`` for sorting.
+    The TUI tree renders the file as a parent node and ``hits`` as its sorted
+    children. ``top_score`` mirrors ``hits[0].score`` for sorting.
     """
 
     parent_id: str
@@ -311,8 +378,8 @@ def _make_snippet(
     "testing" for the query "test" found no anchor at all and fell back to the
     chunk's opening characters — a row whose snippet showed no match.
 
-    When ``intent`` is supplied (UX-pass-4 §3), prefers a window whose context
-    overlaps with intent tokens. Otherwise prefers the window covering the most
+    When ``intent`` is supplied, prefers a window whose context overlaps with
+    intent tokens. Otherwise prefers the window covering the most
     distinct terms (the actual proximity / phrase match), then the earliest.
 
     A chunk over ``_SNIPPET_SCAN_CHARS`` is anchored within :func:`_scan_region`
@@ -395,6 +462,14 @@ def _parse_query(index: Index, query: str, **kwargs: object) -> Query:
 class Searcher:
     """Single-pass searcher against an existing fnd index."""
 
+    # Hard-filter clauses every pass must honour. Wrappers that scope a search
+    # set both: `filter_prefix` is the joined string the tantivy parser sees,
+    # and `filter_clauses` is the same clauses UNJOINED, for passes that build
+    # their own boolean query. Re-splitting the joined form loses them, because
+    # a clause adjacent to `AND` is not lifted (see fnd/query_filters.py).
+    filter_prefix: str = ""
+    filter_clauses: tuple[str, ...] = ()
+
     def __init__(self, *, index_dir: Path) -> None:
         self._index = _open_index(index_dir)
         self._index.reload()
@@ -445,7 +520,7 @@ class Searcher:
         *,
         limit: int,
         collection: str | list[str] | None,
-        active_sources: list[str] | None = None,
+        source_scope: SourceScope | None = None,
         fuzzy_distance: int = 0,
         intent: str | None = None,
         tag_filter: TagFilter | None = None,
@@ -456,10 +531,8 @@ class Searcher:
         from fnd.query_filters import extract_filters
         from fnd.schema import (
             F_BODY,
-            F_COLLECTION,
             F_HEADING_PATH,
             F_PATH_TOKENS,
-            F_SOURCE_PATH,
             build_schema,
         )
         from fnd.stopwords import strip_query_stopwords
@@ -483,28 +556,14 @@ class Searcher:
             compiled_tags = compile_tag_filter(tag_filter, schema)
             if compiled_tags is not None:
                 filters.append(compiled_tags)
-        # Active collection (-c / settings) and source scope are hard filters.
-        # ``collection`` accepts a single name (CLI ``-c``) or a list (the
-        # TUI's multi-collection scope); a list becomes an OR over F_COLLECTION
-        # terms so multi-collection scope HARD-restricts instead of riding a
-        # re-parsed ``c:`` string that ranks softly and splits spaced names.
-        # ``active_sources`` stays a SEPARATE filter, ANDed in: it narrows
-        # WITHIN the collection (partial-source selection), not a union.
-        if collection:
-            cols = [collection] if isinstance(collection, str) else list(collection)
-            col_terms = [tantivy.Query.term_query(schema, F_COLLECTION, c) for c in cols]
-            filters.append(
-                col_terms[0]
-                if len(col_terms) == 1
-                else tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in col_terms])
-            )
-        if active_sources:
-            src_terms = [tantivy.Query.term_query(schema, F_SOURCE_PATH, s) for s in active_sources]
-            filters.append(
-                src_terms[0]
-                if len(src_terms) == 1
-                else tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in src_terms])
-            )
+        # Scope is a hard filter and a UNION; `scope_arms` is the one place
+        # that decides its shape, so the cascade and the facet aggregation
+        # cannot drift from it.
+        arms = scope_arms(schema, collection, source_scope)
+        if arms is not None:
+            if not arms:
+                return []
+            filters.append(scope_or(arms))
         # tantivy-py's QueryParser doesn't honour ``term~N`` syntax for
         # tokenized fields, but it accepts a ``fuzzy_fields`` mapping
         # that auto-fuzzes every parsed term against the listed field.
@@ -605,7 +664,7 @@ class Searcher:
         target: int,
         collection: str | list[str] | None,
         metadata_filter: str | None,
-        active_sources: list[str] | None = None,
+        source_scope: SourceScope | None = None,
         fuzzy_distance: int = 0,
         intent: str | None = None,
         tag_filter: TagFilter | None = None,
@@ -617,7 +676,7 @@ class Searcher:
                 query,
                 limit=target,
                 collection=collection,
-                active_sources=active_sources,
+                source_scope=source_scope,
                 fuzzy_distance=fuzzy_distance,
                 intent=intent,
                 tag_filter=tag_filter,
@@ -632,7 +691,7 @@ class Searcher:
                 query,
                 limit=target * oversample,
                 collection=collection,
-                active_sources=active_sources,
+                source_scope=source_scope,
                 fuzzy_distance=fuzzy_distance,
                 intent=intent,
                 tag_filter=tag_filter,
@@ -655,7 +714,7 @@ class Searcher:
         profile: object | None = None,
         now: int | None = None,
         metadata_filter: str | None = None,
-        active_sources: list[str] | None = None,
+        source_scope: SourceScope | None = None,
         fuzzy_distance: int = 0,
         intent: str | None = None,
         tag_filter: TagFilter | None = None,
@@ -666,11 +725,11 @@ class Searcher:
         ordering the TUI uses: a doc matching every query term outranks one
         matching only a single rarer term (raw BM25 over an OR does not
         guarantee that). The legacy single-pass BM25 path is kept only for the
-        rerank ``profile`` (§4 recency / filetype / phrase-proximity) and the
+        rerank ``profile`` (recency / filetype / phrase-proximity) and the
         explicit cascade ``fuzzy_distance`` callers.
 
         Use :meth:`search_grouped` to keep all matched sections of each file.
-        ``active_sources`` further narrows scope to chunks indexed from the
+        ``source_scope`` further narrows scope to chunks indexed from the
         listed source paths.
         """
         if not query.strip():
@@ -684,7 +743,7 @@ class Searcher:
                 limit=limit * 5,  # oversample: per-file dedup below thins this
                 collection=collection,
                 metadata_filter=metadata_filter,
-                active_sources=active_sources,
+                source_scope=source_scope,
                 intent=intent,
                 tag_filter=tag_filter,
             )
@@ -694,7 +753,7 @@ class Searcher:
             target=limit * 5,
             collection=collection,
             metadata_filter=metadata_filter,
-            active_sources=active_sources,
+            source_scope=source_scope,
             fuzzy_distance=fuzzy_distance,
             intent=intent,
             tag_filter=tag_filter,
@@ -759,8 +818,7 @@ class Searcher:
             f'parent_id:"{parent_id}"',
             default_field_names=[F_PARENT_ID],
         )
-        # 5000 chunks/file is a generous ceiling; phase 12 will revisit for
-        # books / very long PDFs.
+        # 5000 chunks/file is a generous ceiling, books and long PDFs included.
         # Pin one generation for the whole search→decode sequence: the
         # decode threads below dereference these DocAddresses, and a
         # concurrent reload() must not swap the searcher under them.
@@ -776,21 +834,9 @@ class Searcher:
                 chunks = list(pool.map(partial(self._decode_chunk, searcher), addresses))
         else:
             chunks = [self._decode_chunk(searcher, a) for a in addresses]
-        chunks.sort(key=lambda c: c.chunk_seq)
-        # A file listed under several collections (typical: an Obsidian
-        # vault reachable via two nested source roots) is stored once per
-        # collection — same parent_id, same content, distinct `collection`
-        # field. The query above is scoped only by parent_id, so it sees
-        # every collection's copy. Collapse to one chunk per chunk_seq so
-        # the full-document preview renders each chunk once, not N times.
-        seen: set[int] = set()
-        deduped = []
-        for c in chunks:
-            if c.chunk_seq in seen:
-                continue
-            seen.add(c.chunk_seq)
-            deduped.append(c)
-        return deduped
+        # Normalised storage keeps one document per (parent_id, chunk_seq), so
+        # a shared file is not duplicated here; order by chunk_seq for the preview.
+        return sorted(chunks, key=lambda c: c.chunk_seq)
 
     def search_grouped(
         self,
@@ -802,12 +848,12 @@ class Searcher:
         profile: object | None = None,
         now: int | None = None,
         metadata_filter: str | None = None,
-        active_sources: list[str] | None = None,
+        source_scope: SourceScope | None = None,
         fuzzy_distance: int = 0,
         intent: str | None = None,
     ) -> list[FileGroup]:
         """Return ranked FileGroups, each with up to ``sections_per_file`` ranked
-        section hits. ``active_sources`` narrows scope to chunks indexed
+        section hits. ``source_scope`` narrows scope to chunks indexed
         from a subset of the active collection's sources.
         """
         if not query.strip():
@@ -817,7 +863,7 @@ class Searcher:
             target=limit * 10,
             collection=collection,
             metadata_filter=metadata_filter,
-            active_sources=active_sources,
+            source_scope=source_scope,
             fuzzy_distance=fuzzy_distance,
             intent=intent,
         )
@@ -840,7 +886,9 @@ def group_by_file(
 
     Hits keep first-seen order, so passing pre-ranked output (BM25,
     reranked, fusion-fused, cascade-stitched) produces FileGroups in the
-    same order. Sections are kept when the section's score is at least
+    same order. Within a group, sections that scored equally are ordered by
+    position, so a file's own sections never read out of sequence for want of
+    a tie-break. Sections are kept when the section's score is at least
     ``score_threshold * file_top_score`` and the per-file cap
     ``sections_per_file`` hasn't been hit yet; ``score_threshold = 0``
     disables the relative filter (cap-only behaviour).
@@ -869,7 +917,12 @@ def group_by_file(
             kept = [h for h in all_hits if h.score >= min_score]
         else:
             kept = all_hits
-        section_hits = kept[:sections_per_file]
+        # Ranked, then document order as the TIE-BREAK: equal scores come back in
+        # segment order ("Day 3 … Day 60, Day 1, Day 2"). Position alone would
+        # demote the best-scoring section and land the preview on the first.
+        section_hits = sorted(
+            kept[:sections_per_file], key=lambda h: (-h.score, h.chunk_seq, h.line)
+        )
         out.append(
             FileGroup(
                 parent_id=pid,

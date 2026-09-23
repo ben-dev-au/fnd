@@ -69,6 +69,7 @@ _MODIFIER_RE = re.compile(r"(?:~\d*|\^[\d.]+)")
 # A proximity phrase in DSL-expanded form: ``"a b c"~N``. ``{N}``/``NEAR/N`` both
 # rewrite to this, so matching it captures every proximity group uniformly.
 _PROX_PHRASE = re.compile(r'"([^"]*)"~(\d+)')
+_HYPHENATED = re.compile(r"\b[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+\b")
 
 
 def _proximity_members(phrase: str) -> tuple[list[str], list[str]]:
@@ -473,6 +474,8 @@ class MatchSpec:
         if not terms and not phrases and not wildcards and not regexes and not proximity_groups:
             return cls()
         raw = {t.lower() for t in terms if t}
+        # A hyphenated word matches its joined form too (fnd.synonyms.compound_table).
+        raw.update(m.group(0).replace("-", "").lower() for m in _HYPHENATED.finditer(bare_query))
         exact = {_stem(t) for t in raw}
         # Pull synonym variants in: the cascade's synonym pass would
         # have surfaced docs containing them, so the highlighter

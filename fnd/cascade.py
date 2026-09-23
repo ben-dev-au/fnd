@@ -1,4 +1,4 @@
-"""Cascading multi-pass query (§9c).
+"""Cascading multi-pass query.
 
 Three widening passes are tried in order:
 
@@ -31,7 +31,7 @@ import tantivy
 
 from fnd.explain import CascadePassTrace, CascadeTrace
 from fnd.matching import auto_fuzzy_distance
-from fnd.query import Hit, Searcher
+from fnd.query import Hit, Searcher, SourceScope, scope_arms, scope_or
 
 if TYPE_CHECKING:
     from fnd.tag_query import TagFilter
@@ -39,7 +39,7 @@ from fnd.query_resolvers import fuzzy_stem as _fuzzy_stem
 from fnd.query_resolvers import fuzzy_variants as _fuzzy_term_variants
 from fnd.schema import F_BODY, F_META_BLOB, F_PAGE_LABEL, F_PARENT_ID, build_schema
 from fnd.struct import decode as decode_body_struct
-from fnd.synonyms import SynonymTable, expand
+from fnd.synonyms import SynonymTable, compound_table, expand
 
 
 def _carries_precision_intent(query: str) -> bool:
@@ -106,13 +106,74 @@ def _strip_fuzzy_modifiers(query: str) -> str:
     return _STRIP_FUZZY_MOD_RE.sub("", query)
 
 
+def fuzzy_body_clauses(
+    searcher: Searcher,
+    query: str,
+    *,
+    auto_fuzzy_enabled: bool = True,
+    min_term_chars: int = 0,
+) -> list[tuple[tantivy.Occur, tantivy.Query]] | None:
+    """The fuzzy pass's body clauses, or None where it would not run.
+
+    ``F_BODY`` is en_stem-analysed, so the on-disk token form for "Templates"
+    is ``templat``. This bypasses parse_query (and its query-time stemming),
+    so each query term is lowercased and Snowball-stemmed before the
+    dictionary is consulted; otherwise the Levenshtein distance is computed
+    between mismatched token shapes.
+
+    Each stem expands into the indexed stems within edit distance, OR-ed as
+    regular ``term_query``s: the rewrite Lucene applies to ``MultiTermQuery``,
+    so a matched doc lands on BM25 rather than Tantivy's constant-1.0
+    ``fuzzy_term_query`` output.
+
+    Shared with the filters pane, which needs the same expansion to describe
+    the results a fuzzy-only query put on screen.
+    """
+    term_dists = _terms_with_fuzzy(query)
+    if not term_dists:
+        return None
+    schema = build_schema()
+    stems_with_dists: list[tuple[str, int]] = []
+    for term, explicit in term_dists:
+        stem = _fuzzy_stem(term)
+        if explicit is not None:
+            d = explicit
+        elif auto_fuzzy_enabled and len(stem) >= min_term_chars:
+            d = auto_fuzzy_distance(stem)
+        else:
+            d = 0
+        stems_with_dists.append((stem, d))
+    if all(d == 0 for _, d in stems_with_dists):
+        return None
+    clauses: list[tuple[tantivy.Occur, tantivy.Query]] = []
+    for stem, dist in stems_with_dists:
+        variants = _fuzzy_term_variants(searcher, stem, dist)
+        if not variants:
+            # No indexed stem within distance, so the AND of fuzzy term clauses
+            # can never match.
+            return None
+        if len(variants) == 1:
+            clauses.append(
+                (tantivy.Occur.Must, tantivy.Query.term_query(schema, F_BODY, variants[0]))
+            )
+        else:
+            term_or = tantivy.Query.boolean_query(
+                [
+                    (tantivy.Occur.Should, tantivy.Query.term_query(schema, F_BODY, v))
+                    for v in variants
+                ]
+            )
+            clauses.append((tantivy.Occur.Must, term_or))
+    return clauses
+
+
 def _fuzzy_pass(
     searcher: Searcher,
     *,
     query: str,
     limit: int,
     collection: str | list[str] | None,
-    active_sources: list[str] | None = None,
+    source_scope: SourceScope | None = None,
     intent: str | None = None,
     auto_fuzzy_enabled: bool = True,
     min_term_chars: int = 0,
@@ -131,94 +192,42 @@ def _fuzzy_pass(
     Stems shorter than this skip auto-fuzzy regardless of the AUTO
     heuristic. Per-term ``~N`` overrides the floor.
 
-    ``active_sources`` further narrows the fuzzy pass to chunks indexed
-    from a subset of the active collection's sources, so the §9c cascade
+    ``source_scope`` further narrows the fuzzy pass to chunks indexed
+    from a subset of the active collection's sources, so the cascade
     fallback honours the same source-scope as the literal pass.
     """
-    term_dists = _terms_with_fuzzy(query)
-    if not term_dists:
-        return []
     schema = build_schema()
-    # ``F_BODY`` is en_stem-analyzed, so the on-disk token form for
-    # "Templates" is ``templat``. The fuzzy pass bypasses parse_query
-    # (and its query-time stemming), so we lowercase + Snowball-stem
-    # each query term ourselves before consulting the dictionary —
-    # otherwise the Levenshtein distance is computed between
-    # mismatched token shapes (``templatas`` vs ``templat`` would
-    # read as distance 2).
-    #
-    # We then expand each query stem into the set of indexed stems
-    # within edit distance and OR them as regular ``term_query``s.
-    # This is the same rewrite Lucene applies to ``MultiTermQuery``
-    # so each matched doc lands on BM25 scoring rather than Tantivy's
-    # constant-1.0 ``fuzzy_term_query`` output.
-    stems_with_dists: list[tuple[str, int]] = []
-    for term, explicit in term_dists:
-        stem = _fuzzy_stem(term)
-        if explicit is not None:
-            d = explicit
-        elif auto_fuzzy_enabled and len(stem) >= min_term_chars:
-            d = auto_fuzzy_distance(stem)
-        else:
-            d = 0
-        stems_with_dists.append((stem, d))
-    if all(d == 0 for _, d in stems_with_dists):
+    body = fuzzy_body_clauses(
+        searcher,
+        query,
+        auto_fuzzy_enabled=auto_fuzzy_enabled,
+        min_term_chars=min_term_chars,
+    )
+    if body is None:
         return []
-    subqueries: list[tuple[tantivy.Occur, tantivy.Query]] = []
-    for stem, dist in stems_with_dists:
-        variants = _fuzzy_term_variants(searcher, stem, dist)
-        if not variants:
-            # No indexed stem within distance — the AND of fuzzy term
-            # clauses can never match, so bail early.
+    subqueries: list[tuple[tantivy.Occur, tantivy.Query]] = list(body)
+    arms = scope_arms(schema, collection, source_scope)
+    if arms is not None:
+        # An explicitly empty scope matches nothing, which a single query
+        # cannot express: `None` would mean unscoped.
+        if not arms:
             return []
-        if len(variants) == 1:
-            subqueries.append(
-                (
-                    tantivy.Occur.Must,
-                    tantivy.Query.term_query(schema, F_BODY, variants[0]),
-                )
-            )
-        else:
-            term_or = tantivy.Query.boolean_query(
-                [
-                    (tantivy.Occur.Should, tantivy.Query.term_query(schema, F_BODY, v))
-                    for v in variants
-                ]
-            )
-            subqueries.append((tantivy.Occur.Must, term_or))
-    if collection:
-        # Restrict to a collection (or, for the TUI's multi-collection scope,
-        # ANY of a list) on the ``collection`` field. Const-scored to 0 so it's
-        # a pure hard filter — without it a multi-collection OR lets per-
-        # collection IDF skew BM25 between the selected collections (matches
-        # the unscored hard-filter handling in ``query.py::_raw_hits``).
-        cols = [collection] if isinstance(collection, str) else list(collection)
-        col_terms = [tantivy.Query.term_query(schema, "collection", c) for c in cols]
-        col_q = (
-            col_terms[0]
-            if len(col_terms) == 1
-            else tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in col_terms])
-        )
-        subqueries.append((tantivy.Occur.Must, tantivy.Query.const_score_query(col_q, 0.0)))
-    if active_sources:
-        # Active source-set filter, ANDed within the collection scope above
-        # (not unioned). Const-scored for the same reason as the collection
-        # filter: source-path IDF must not perturb ranking.
-        from fnd.schema import F_SOURCE_PATH
-
-        src_terms = [tantivy.Query.term_query(schema, F_SOURCE_PATH, src) for src in active_sources]
-        src_q = (
-            src_terms[0]
-            if len(src_terms) == 1
-            else tantivy.Query.boolean_query([(tantivy.Occur.Should, t) for t in src_terms])
-        )
-        subqueries.append((tantivy.Occur.Must, tantivy.Query.const_score_query(src_q, 0.0)))
+        scope = scope_or(arms)
+        # Const-scored: collection and source-path IDF must not perturb the
+        # fuzzy pass's ranking.
+        subqueries.append((tantivy.Occur.Must, tantivy.Query.const_score_query(scope, 0.0)))
     # Apply the same field/range/collection hard filters as the literal pass, so
-    # widening to fuzzy can't leak docs the user's qualifiers excluded.
+    # widening to fuzzy can't leak docs the user's qualifiers excluded. The
+    # prefix rides on the searcher; ``query`` is the bare lexical string.
     from fnd.query_filters import extract_filters
 
-    for filt in extract_filters(query, schema, searcher._index).filters:
-        subqueries.append((tantivy.Occur.Must, tantivy.Query.const_score_query(filt, 0.0)))
+    # One clause at a time. Joined into `kind:(md txt) AND mtime:week zephyr`
+    # neither survives: `extract_filters` will not lift a clause adjacent to a
+    # boolean operator, so two filters leaked where one held.
+    sources = [*searcher.filter_clauses, query]
+    for source in sources:
+        for filt in extract_filters(source, schema, searcher._index).filters:
+            subqueries.append((tantivy.Occur.Must, tantivy.Query.const_score_query(filt, 0.0)))
     # Tags are typed state rather than query text, so extract_filters can't
     # see them; without this the fuzzy pass re-admits tag-excluded files.
     if tag_filter is not None and not tag_filter.is_empty():
@@ -300,7 +309,7 @@ def cascade_search(
     collection: str | list[str] | None = ...,
     synonyms: SynonymTable | None = ...,
     metadata_filter: str | None = ...,
-    active_sources: list[str] | None = ...,
+    source_scope: SourceScope | None = ...,
     intent: str | None = ...,
     auto_fuzzy_enabled: bool = ...,
     min_term_chars: int = ...,
@@ -319,7 +328,7 @@ def cascade_search(
     collection: str | list[str] | None = ...,
     synonyms: SynonymTable | None = ...,
     metadata_filter: str | None = ...,
-    active_sources: list[str] | None = ...,
+    source_scope: SourceScope | None = ...,
     intent: str | None = ...,
     auto_fuzzy_enabled: bool = ...,
     min_term_chars: int = ...,
@@ -337,31 +346,29 @@ def cascade_search(
     collection: str | list[str] | None = None,
     synonyms: SynonymTable | None = None,
     metadata_filter: str | None = None,
-    active_sources: list[str] | None = None,
+    source_scope: SourceScope | None = None,
     intent: str | None = None,
     auto_fuzzy_enabled: bool = True,
     min_term_chars: int = 0,
     tag_filter: TagFilter | None = None,
     with_trace: bool = False,
 ) -> list[Hit] | tuple[list[Hit], CascadeTrace]:
-    """Run literal → fuzzy → synonym passes until ``threshold`` hits found.
+    """Run literal → fuzzy → synonym → compound passes until ``threshold`` hits found.
 
     Returns hits with :attr:`Hit.pass_index` set to the pass that first
-    surfaced each one (0=literal, 1=fuzzy, 2=synonym). Order: pass-0 hits
-    in original score order, then pass-1, then pass-2 — so the TUI shows
-    exact matches above looser matches.
+    surfaced each one (0=literal, 1=fuzzy or compound, 2=synonym), in pass
+    order, so the TUI shows exact matches above looser matches.
 
-    ``metadata_filter`` and ``active_sources`` apply to every pass so
+    ``metadata_filter`` and ``source_scope`` apply to every pass so
     cascade preserves the same scope a single-pass search would, even
     when widening to fuzzy / synonym. Literal + synonym passes go through
     :meth:`Searcher._filtered_raw_hits` (which honours the metadata
     filter); the programmatic fuzzy pass adds an inline source-set
     clause to its boolean query.
 
-    ``with_trace`` (UX-pass-4 §2): when ``True``, returns
-    ``(hits, CascadeTrace)`` so the layered search can format the
-    regime label as ``cascade(+fuzzy)`` / ``cascade(+syn)`` based on
-    which passes contributed new hits.
+    ``with_trace``: when ``True``, returns ``(hits, CascadeTrace)`` so the
+    layered search can format the regime label as ``cascade(+fuzzy)`` /
+    ``cascade(+syn)`` based on which passes contributed new hits.
     """
     seen: set[tuple[str, int]] = set()
     out: list[Hit] = []
@@ -402,7 +409,7 @@ def cascade_search(
         target=pass_target,
         collection=collection,
         metadata_filter=metadata_filter,
-        active_sources=active_sources,
+        source_scope=source_scope,
         intent=intent,
         tag_filter=tag_filter,
     )
@@ -434,7 +441,7 @@ def cascade_search(
             query=query,
             limit=pass_target,
             collection=collection,
-            active_sources=active_sources,
+            source_scope=source_scope,
             intent=intent,
             auto_fuzzy_enabled=auto_fuzzy_enabled,
             min_term_chars=min_term_chars,
@@ -469,7 +476,7 @@ def cascade_search(
                 target=pass_target,
                 collection=collection,
                 metadata_filter=metadata_filter,
-                active_sources=active_sources,
+                source_scope=source_scope,
                 intent=intent,
                 tag_filter=tag_filter,
             )
@@ -480,6 +487,35 @@ def cascade_search(
                         pass_index=2,
                         name="synonym",
                         query=syn_q,
+                        hit_count=len(raw),
+                        new_count=new_count,
+                        bm25_top=raw[0].score if raw else 0.0,
+                    )
+                )
+    if len(out) >= threshold:
+        return _trace_result() if with_trace else out
+
+    # Pass 3: compounds, which the tokenizer splits (see `compound_table`).
+    # Tagged as fuzzy: to the reader it is a looser spelling of the word.
+    if not _carries_precision_intent(query):
+        comp_q = expand(literal_query, compound_table(literal_query))
+        if comp_q != literal_query:
+            raw = searcher._filtered_raw_hits(
+                comp_q,
+                target=pass_target,
+                collection=collection,
+                metadata_filter=metadata_filter,
+                source_scope=source_scope,
+                intent=intent,
+                tag_filter=tag_filter,
+            )
+            new_count = _ingest(raw, 1)
+            if with_trace:
+                pass_traces.append(
+                    CascadePassTrace(
+                        pass_index=3,
+                        name="compound",
+                        query=comp_q,
                         hit_count=len(raw),
                         new_count=new_count,
                         bm25_top=raw[0].score if raw else 0.0,

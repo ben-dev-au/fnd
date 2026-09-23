@@ -2,13 +2,13 @@
 Textual's :class:`textual.widgets.Markdown` widget, with query-term highlights
 applied via a Markdown bold wrap.
 
-Per plan §5: preview should show structured text (headings / paragraphs /
-lists), not a raw blob. Phase 5 ships the simplest faithful renderer; phase 7
-adds match-cluster minimap.
+The preview shows structured text (headings / paragraphs / lists), not a raw
+blob.
 """
 
 from __future__ import annotations
 
+import itertools
 import re
 import threading
 from collections.abc import Sequence
@@ -110,9 +110,10 @@ def text_has_any_match(text: str, spec: MatchSpec) -> bool:
 
     if spec.is_empty or not text:
         return False
-    if any(word_matches(m.group(0), spec) for m in DOC_WORD_RE.finditer(text)):
+    tokens = list(DOC_WORD_RE.finditer(text))
+    if any(word_matches(m.group(0), spec) for m in tokens):
         return True
-    return bool(phrase_char_spans(text, spec))
+    return bool(phrase_char_spans(text, spec) or _hyphenated_runs(text, tokens, set(), spec))
 
 
 def text_has_full_match(text: str, spec: MatchSpec) -> bool:
@@ -225,15 +226,36 @@ def match_word_spans_multi(
     members, full = _proximity_tiers(words, spec)
     out: list[list[tuple[int, int, str]]] = []
     base = 0
-    for tokens in per_segment:
+    for segment, tokens in zip(segments, per_segment, strict=True):
         runs: list[tuple[int, int, str]] = []
+        matched: set[int] = set()
         for local, m in enumerate(tokens):
             ti = base + local
             dim = ti in members and ti not in full
             for offset_start, offset_end, style in word_highlight_runs(m.group(0), spec, dim=dim):
                 runs.append((m.start() + offset_start, m.start() + offset_end, style))
-        out.append(runs)
+                matched.add(local)
+        runs.extend(_hyphenated_runs(segment, tokens, matched, spec))
+        out.append(sorted(runs))
         base += len(tokens)
+    return out
+
+
+def _hyphenated_runs(
+    text: str, tokens: list[re.Match[str]], matched: set[int], spec: MatchSpec
+) -> list[tuple[int, int, str]]:
+    """``drop-down`` under a query for ``dropdown``: the two words the tokenizer
+    split, matching as the one they spell. A hyphen only, since a space would
+    light up "may be" under ``maybe``."""
+    from fnd.matching import _stem, match_color
+
+    out: list[tuple[int, int, str]] = []
+    for i, (a, b) in enumerate(itertools.pairwise(tokens)):
+        if i in matched or i + 1 in matched or text[a.end() : b.start()] != "-":
+            continue
+        joined = a.group(0) + b.group(0)
+        if _stem(joined) in spec.exact_stems:
+            out.append((a.start(), b.end(), match_style(match_color(joined, spec))))
     return out
 
 

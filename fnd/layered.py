@@ -1,14 +1,14 @@
-"""Regime-aware layered search (§9a + §9c + §9d + UX-pass-4 §1).
+"""Regime-aware layered search.
 
 One entry point — :func:`search_layered` — chosen by both the TUI and
 the CLI. Encapsulates the three search regimes through a single
 decision tree:
 
-* **strong-signal** (UX-pass-4 §1): literal probe alone, when the
-  normalized top BM25 ≥ 0.85 AND gap ≥ 0.15 AND no intent provided.
+* **strong-signal**: literal probe alone, when the normalised top BM25
+  ≥ 0.85 AND gap ≥ 0.15 AND no intent provided.
   Bypasses fusion's phrase + syn passes entirely.
-* **fusion** (§9d): phrase + lex + syn sub-queries, RRF-fused. Default.
-* **cascade** (§9c): widening fallback when fusion's chunk pool is
+* **fusion**: phrase + lex + syn sub-queries, RRF-fused. Default.
+* **cascade**: widening fallback when fusion's chunk pool is
   sparse (< limit / 4). Adds fuzzy~1 and synonym passes.
 
 The regime decision logic lives here, not scattered across modules.
@@ -30,7 +30,7 @@ from fnd.fusion import (
     fusion_search,
     normalise_bm25,
 )
-from fnd.query import FileGroup, Hit, Searcher, group_by_file
+from fnd.query import FileGroup, Hit, Searcher, SourceScope, group_by_file
 
 if TYPE_CHECKING:
     from fnd.tag_query import TagFilter
@@ -48,7 +48,7 @@ def search_layered(
     collection: str | list[str] | None = ...,
     synonyms: SynonymTable | None = ...,
     metadata_filter: str | None = ...,
-    active_sources: list[str] | None = ...,
+    source_scope: SourceScope | None = ...,
     intent: str | None = ...,
     profile: object | None = ...,
     auto_fuzzy_enabled: bool = ...,
@@ -69,7 +69,7 @@ def search_layered(
     collection: str | list[str] | None = ...,
     synonyms: SynonymTable | None = ...,
     metadata_filter: str | None = ...,
-    active_sources: list[str] | None = ...,
+    source_scope: SourceScope | None = ...,
     intent: str | None = ...,
     profile: object | None = ...,
     auto_fuzzy_enabled: bool = ...,
@@ -89,7 +89,7 @@ def search_layered(
     collection: str | list[str] | None = None,
     synonyms: SynonymTable | None = None,
     metadata_filter: str | None = None,
-    active_sources: list[str] | None = None,
+    source_scope: SourceScope | None = None,
     intent: str | None = None,
     profile: object | None = None,
     auto_fuzzy_enabled: bool = True,
@@ -117,7 +117,7 @@ def search_layered(
         target=chunk_pool,
         collection=collection,
         metadata_filter=metadata_filter,
-        active_sources=active_sources,
+        source_scope=source_scope,
         intent=intent,
         tag_filter=tag_filter,
     )
@@ -141,7 +141,7 @@ def search_layered(
                 collection=collection,
                 synonyms=synonyms,
                 metadata_filter=metadata_filter,
-                active_sources=active_sources,
+                source_scope=source_scope,
                 precomputed_lex_ranking=probe,
                 intent=intent,
                 tag_filter=tag_filter,
@@ -155,7 +155,7 @@ def search_layered(
                 collection=collection,
                 synonyms=synonyms,
                 metadata_filter=metadata_filter,
-                active_sources=active_sources,
+                source_scope=source_scope,
                 precomputed_lex_ranking=probe,
                 intent=intent,
                 tag_filter=tag_filter,
@@ -173,7 +173,7 @@ def search_layered(
                     collection=collection,
                     synonyms=synonyms,
                     metadata_filter=metadata_filter,
-                    active_sources=active_sources,
+                    source_scope=source_scope,
                     tag_filter=tag_filter,
                     intent=intent,
                     auto_fuzzy_enabled=auto_fuzzy_enabled,
@@ -189,7 +189,7 @@ def search_layered(
                     collection=collection,
                     synonyms=synonyms,
                     metadata_filter=metadata_filter,
-                    active_sources=active_sources,
+                    source_scope=source_scope,
                     tag_filter=tag_filter,
                     intent=intent,
                     auto_fuzzy_enabled=auto_fuzzy_enabled,
@@ -215,10 +215,15 @@ def search_layered(
     )
 
     if with_trace:
+        shown = {g.parent_id for g in groups}
         trace = SearchTrace(
             query=query,
             intent=intent,
             regime=regime,
+            files_truncated=len({h.parent_id for h in hits}) > len(groups),
+            sections_truncated=(
+                sum(len(g.hits) for g in groups) < sum(1 for h in hits if h.parent_id in shown)
+            ),
             strong_signal=ss_trace,
             fusion=fusion_trace,
             cascade=cascade_trace,
@@ -270,6 +275,8 @@ def _cascade_regime_label(trace: CascadeTrace) -> str:
             suffixes.append("+fuzzy")
         elif p.name == "synonym" and p.new_count > 0:
             suffixes.append("+syn")
+        elif p.name == "compound" and p.new_count > 0:
+            suffixes.append("+compound")
     return f"cascade({''.join(suffixes)})" if suffixes else "cascade"
 
 
