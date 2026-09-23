@@ -1,4 +1,4 @@
-"""Filesystem timestamps for a file, read in one ``stat()``.
+"""What one ``stat()`` can say about a file, and what it refuses to say.
 
 ``created`` is best-effort per OS: ``st_birthtime`` on macOS (and statx-capable
 Linux, e.g. ext4 on 3.12+); on Windows ``st_ctime`` *is* the creation time.
@@ -12,7 +12,26 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-__all__ = ["FileTimes", "read_file_times"]
+__all__ = ["FileTimes", "path_is_absent", "read_file_times"]
+
+
+def path_is_absent(path: Path) -> bool:
+    """True only when ``path`` is provably not there.
+
+    `Path.exists()` re-raises every OSError outside ENOENT/ENOTDIR/EBADF/ELOOP,
+    so a path under a directory with mode 000 raises EACCES: an unguarded call
+    from the sidebar took the app down during mount. Cannot-look answers the
+    same as present, because a warning nobody can act on is worse than none.
+    """
+    try:
+        path.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except (OSError, ValueError):
+        # ValueError, not OSError, is what a NUL byte in a hand-edited config
+        # path raises, and it reaches here through the same call.
+        return False
+    return False
 
 
 @dataclass(slots=True, frozen=True)

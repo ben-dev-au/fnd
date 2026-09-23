@@ -1,13 +1,14 @@
 """Filesystem walker — yield supported files under a collection's roots.
 
-Includes/excludes precedence per plan §8:
+Includes/excludes precedence:
 
 1. A path is in scope only if it lives under one of ``roots``.
 2. If ``includes`` is set, the path must match at least one ``includes`` glob.
 3. If the path matches **any** ``excludes`` glob, it is dropped — even if it
    matched an ``includes``.
-4. Hidden files (``.foo``) are excluded by default unless an explicit include
-   matches.
+4. Hidden files (``.foo``) are excluded by default. Only an include glob that
+   names a dot-prefixed component admits one, and only the paths that glob
+   itself matches; ``**/*.md`` alongside it does not widen the exception.
 5. Symlinks are followed only if ``follow_symlinks = True``. This applies in
    two places:
    - The collection root itself — if the user-supplied ``root`` is a symlink,
@@ -18,15 +19,16 @@ Includes/excludes precedence per plan §8:
      ``recurse_symlinks=False`` to ``Path.rglob`` rather than relying on the
      Python 3.13 default).
 
-Globs are matched against the path **relative to its root** using ``PurePath.match``-
-compatible semantics extended to support ``**`` (recursive).
+Globs are matched against the path **relative to its root** by
+:mod:`fnd.globs`, the same translator the filter DSL's ``~~`` uses: ``*`` and
+``?`` stop at ``/``, and a whole ``**`` segment spans zero or more directories.
 """
 
 from __future__ import annotations
 
-import fnmatch
 import os
-from collections.abc import Callable, Iterable, Iterator
+import sys
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -34,40 +36,22 @@ if TYPE_CHECKING:
     from fnd.config import SourceConfig
 
 from fnd.extract import supported_suffixes
-
-
-def _matches_any(globs: list[str], rel_str: str) -> bool:
-    """Return True if ``rel_str`` matches any glob.
-
-    ``**`` matches any number of path segments, including zero — so
-    ``**/*.md`` must match both ``sub/a.md`` *and* ``a.md`` (root-level).
-    ``fnmatch`` treats ``**`` as a literal wildcard across ``/`` characters
-    which covers the subdir case but not the zero-segment case, so for
-    patterns that start with ``**/`` we also try the pattern without that
-    prefix against root-level paths (no ``/`` in ``rel_str``).
-    """
-    root_level = "/" not in rel_str
-    for g in globs:
-        if fnmatch.fnmatchcase(rel_str, g):
-            return True
-        # ``**/*.ext`` should match ``a.ext`` at the root level too.
-        if root_level and g.startswith("**/") and fnmatch.fnmatchcase(rel_str, g[3:]):
-            return True
-    return False
+from fnd.globs import GlobSet, names_hidden
+from fnd.ignore_files import IgnoreStack, ancestor_stack, load_ignore_file
 
 
 def _is_hidden(rel: Path) -> bool:
     return any(part.startswith(".") for part in rel.parts)
 
 
-def _glob_targets_hidden(globs: list[str]) -> bool:
-    """True if any include pattern explicitly references a dot-prefixed
-    component (e.g. ``.git/**`` or ``**/.foo/**``)."""
-    for g in globs:
-        for part in g.split("/"):
-            if part.startswith("."):
-                return True
-    return False
+def _hidden_includes(globs: list[str]) -> GlobSet:
+    """The include patterns that explicitly name a dot-prefixed component.
+
+    A set, not a flag: one ``.obsidian/**`` beside ``**/*.md`` must not lift the
+    hidden prune for the whole tree, or an Obsidian vault indexes every note in
+    ``.trash``. Only these globs may admit a hidden path.
+    """
+    return GlobSet.parse([g for g in globs if names_hidden(g)])
 
 
 def resolve_skip_dirs(defaults: object | None = None) -> frozenset[str]:
@@ -99,6 +83,8 @@ def walk(
     excludes: list[str] | None = None,
     follow_symlinks: bool = False,
     skip_dirs: frozenset[str] | None = None,
+    ignore_names: Sequence[str] = (),
+    on_unreadable: Callable[[Path], None] | None = None,
 ) -> Iterator[Path]:
     """Yield supported files under ``roots`` in deterministic order.
 
@@ -107,6 +93,13 @@ def walk(
     :data:`fnd.config.DEFAULT_JUNK_DIRS` so callers that don't pass this
     parameter get the expected developer-junk prune. Pass ``frozenset()``
     to disable the prune entirely (legacy behaviour).
+
+    ``ignore_names`` names the ignore files to honour (``.gitignore``,
+    ``.fndignore``); empty disables the mechanism entirely.
+
+    ``on_unreadable`` receives each directory below a root that exists but
+    cannot be listed: what it holds is unknown, not absent. A root that cannot
+    be listed is the caller's question (:func:`fnd.index.unreadable_roots`).
     """
     if skip_dirs is None:
         # Late import: fnd.config imports fnd.walk transitively, so keep
@@ -116,24 +109,27 @@ def walk(
         skip_dirs = DEFAULT_JUNK_DIRS
 
     suffixes = supported_suffixes()
-    inc = list(includes or [])
-    exc = list(excludes or [])
-    inc_targets_hidden = _glob_targets_hidden(inc)
+    inc = GlobSet.parse(includes)
+    exc = GlobSet.parse(excludes)
+    hidden_inc = _hidden_includes(list(includes or []))
 
     for root in roots:
         original = root.expanduser()
-        if not follow_symlinks and original.is_symlink():
-            # A symlinked root is the only way the index can end up
-            # following the link target (the inner symlink-checks below
-            # only handle members). Refuse unless the user opted in.
-            continue
+        # A root that cannot be stat'ed (a locked parent) is skipped here and
+        # reported by the caller, like one that cannot be listed.
         try:
+            if not follow_symlinks and original.is_symlink():
+                # A symlinked root is the only way the index can end up
+                # following the link target (the inner symlink-checks below
+                # only handle members). Refuse unless the user opted in.
+                continue
             root = original.resolve()
+            if not root.exists():
+                continue
+            is_file = root.is_file()
         except OSError:
             continue
-        if not root.exists():
-            continue
-        if root.is_file():
+        if is_file:
             if root.suffix.lower() in suffixes:
                 yield root
             continue
@@ -143,9 +139,11 @@ def walk(
             suffixes=suffixes,
             inc=inc,
             exc=exc,
-            inc_targets_hidden=inc_targets_hidden,
+            hidden_inc=hidden_inc,
             follow_symlinks=follow_symlinks,
             skip_dirs=skip_dirs,
+            ignore_names=ignore_names,
+            on_unreadable=on_unreadable,
         )
 
 
@@ -159,15 +157,32 @@ def _is_index_dir(path: str) -> bool:
     return os.path.exists(os.path.join(path, _INDEX_SIDECAR))
 
 
+def _dir_identity(path: Path) -> tuple[int, int] | None:
+    """(device, inode) for a directory, or None if it cannot be stat'd.
+
+    Identity rather than the path string: a symlink cycle produces endlessly
+    many distinct paths for the same directory, so a path-keyed walk ends only
+    when the OS refuses the depth, having walked one file dozens of times and
+    stored the deepest alias as its path.
+    """
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    return (info.st_dev, info.st_ino)
+
+
 def _scandir_walk(
     *,
     root: Path,
     suffixes: frozenset[str],
-    inc: list[str],
-    exc: list[str],
-    inc_targets_hidden: bool,
+    inc: GlobSet,
+    exc: GlobSet,
+    hidden_inc: GlobSet,
     follow_symlinks: bool,
     skip_dirs: frozenset[str],
+    ignore_names: Sequence[str] = (),
+    on_unreadable: Callable[[Path], None] | None = None,
 ) -> Iterator[Path]:
     """DFS via ``os.scandir`` so excluded directories aren't descended.
 
@@ -179,14 +194,42 @@ def _scandir_walk(
     # An index directory used directly as a scan root would otherwise have its
     # internals (Tantivy meta.json, the schema sidecar, …) yielded — the
     # per-child guard below only catches index dirs *nested* under the root.
-    stack: list[Path] = [] if _is_index_dir(str(root)) else [root]
+    # Ignore files apply from the source root downwards; see ancestor_stack.
+    base = ancestor_stack(root, ignore_names)
+    stack: list[tuple[Path, IgnoreStack]] = [] if _is_index_dir(str(root)) else [(root, base)]
+    # Real directories already entered, so a symlink cycle terminates on the
+    # first repeat rather than on the OS running out of path. Only needed when
+    # following links, and only then does the identity lookup cost anything.
+    seen: set[tuple[int, int]] = set()
     while stack:
-        current = stack.pop()
+        current, inherited = stack.pop()
+        if follow_symlinks:
+            identity = _dir_identity(current)
+            if identity is not None:
+                if identity in seen:
+                    continue
+                seen.add(identity)
         try:
             with os.scandir(current) as it:
                 entries = sorted(it, key=lambda e: e.name)
-        except (OSError, PermissionError):
+        except (FileNotFoundError, NotADirectoryError):
             continue
+        except OSError:
+            if on_unreadable is not None and current != root:
+                on_unreadable(current)
+            continue
+        # Read this directory's ignore files only when scandir already proved
+        # they exist, so a tree without any costs no extra syscalls.
+        scope = inherited
+        if ignore_names:
+            present = {e.name for e in entries}
+            # A directory holding .git is a repository root: git applies no outer
+            # .gitignore inside it, so neither do we. A .fndignore still applies:
+            # it says what the user does not want searched, which a clone cannot.
+            outer = inherited.without(".gitignore") if ".git" in present else inherited
+            scope = outer.push(
+                *(load_ignore_file(current, n) for n in ignore_names if n in present)
+            )
 
         for entry in entries:
             name = entry.name
@@ -208,13 +251,15 @@ def _scandir_walk(
                 # index lives inside a scanned corpus.
                 if _is_index_dir(entry.path):
                     continue
-                # Hidden directories pruned by default. Skipping at
-                # descent saves walking gigabytes of e.g. ``.git`` on
-                # cloned repos even when the user's includes happen to
-                # target hidden files for a different reason.
-                if name.startswith(".") and not inc_targets_hidden:
+                # Descent asks only whether any hidden-targeting glob exists:
+                # a glob cannot say whether something under a prefix could match
+                # it. The file test below is what decides membership.
+                if name.startswith(".") and not hidden_inc:
                     continue
-                stack.append(Path(entry.path))
+                child = Path(entry.path)
+                if scope and scope.ignored(child, is_dir=True):
+                    continue
+                stack.append((child, scope))
                 continue
 
             if not is_file:
@@ -239,17 +284,26 @@ def _scandir_walk(
             # would yield backslash separators and never match.
             rel_str = rel.as_posix()
 
-            # Hidden-file filter mirrors the historical post-rglob check
-            # for the file itself; descent-time prune already dropped
-            # hidden ancestor directories.
-            if _is_hidden(rel) and not inc_targets_hidden:
+            # A hidden path needs a glob that names a dot-prefixed component;
+            # ``**/*.md`` matching it is not consent to index ``.trash``.
+            if _is_hidden(rel) and not hidden_inc.matches(rel_str):
                 continue
-            if inc and not _matches_any(inc, rel_str):
+            if inc and not inc.matches(rel_str):
                 continue
-            if exc and _matches_any(exc, rel_str):
+            if exc and exc.matches(rel_str):
+                continue
+            if scope and scope.ignored(entry_path, is_dir=False):
                 continue
 
             yield entry_path
+
+
+def _resolved_root(path: Path) -> Path:
+    """The root as :func:`walk` sees it, or the original if it cannot resolve."""
+    try:
+        return path.expanduser().resolve()
+    except OSError:
+        return path.expanduser()
 
 
 def walk_sources(
@@ -257,14 +311,15 @@ def walk_sources(
     sources: list[SourceConfig],
     skip_dirs: frozenset[str] | None = None,
     read_frontmatter: Callable[[Path], dict[str, object] | None] | None = None,
+    on_unreadable: Callable[[Path], None] | None = None,
 ) -> Iterator[Path]:
     """Yield in-scope paths across every source.
 
-    Per source: applies includes/excludes via :func:`walk`, then on
-    ``.md`` files runs the source's frontmatter filter. Frontmatter parse
-    errors and missing-field strict-null cases drop the file silently —
-    the indexer will eventually log them via ``fnd status --errors``
-    (phase 10).
+    Per source: ``walk`` applies includes/excludes and the ignore files, then
+    the source's resolved filters gate each candidate (:mod:`fnd.filters`).
+    Frontmatter parse errors and missing-field strict-null cases drop the file
+    silently: there is no command that reports them, which is why
+    :meth:`IgnoreMatch.describe` exists unused.
 
     ``skip_dirs`` is forwarded to :func:`walk`. Indexer entry points
     resolve this from ``defaults.skip_junk_dirs`` + ``extra_junk_dirs``;
@@ -276,32 +331,67 @@ def walk_sources(
     substitutes a reader that reports and bounds that wait. Returning
     ``None`` drops the file, so an override can also decline to fetch.
     Defaults to a plain read.
+
+    ``on_unreadable`` is forwarded to :func:`walk`.
     """
     from fnd.config import SourceConfig  # local import: avoid cycle
-    from fnd.filter_dsl import compile_filter
-    from fnd.frontmatter import (
-        FrontmatterParseError,
-        read_frontmatter_from_file,
-    )
-
-    read = read_frontmatter or read_frontmatter_from_file
+    from fnd.file_facts import FileFacts
+    from fnd.filters import FileGate, build_gate, spec_from_resolved
+    from fnd.filters.dimensions import dimension
+    from fnd.ignore_files import IGNORE_FILENAMES
+    from fnd.tags import TAG_PROVIDERS
 
     for source in sources:
         assert isinstance(source, SourceConfig)
-        predicate = compile_filter(source.frontmatter_filter) if source.frontmatter_filter else None
+        resolved = source.effective_filters
+        spec = spec_from_resolved(resolved)
+        gate = build_gate(spec)
+        # Scoped through the dimension, not by hand: strict null would fail a
+        # frontmatter comparison on every PDF and drop the lot, and a hand-rolled
+        # scope lets a note with no block through the rule that names its course.
+        frontmatter_dim = dimension("frontmatter")
+        scoped = [
+            rule
+            for rule in (
+                frontmatter_dim.rule(text)
+                for text in (source.legacy_frontmatter, spec.frontmatter)
+                if text
+            )
+            if rule is not None
+        ]
+        # One gate, not a second `all(...)` beside it: the walk reimplementing
+        # the rule combination is how an OR there would go unnoticed.
+        gate = FileGate.of(gate.rules + tuple(scoped))
+        names = [
+            name
+            for name, on in (
+                (".gitignore", resolved.respect_gitignore),
+                (".fndignore", resolved.respect_fndignore),
+            )
+            if on and name in IGNORE_FILENAMES
+        ]
+        providers = [p for p in TAG_PROVIDERS.values() if p.available_on(sys.platform)]
+        # ``walk`` yields under the resolved root, so facts measure against it:
+        # macOS /tmp and /var are symlinks, and a mismatch silently turns
+        # ``file.path`` absolute, so any rule using it stops matching.
+        facts_root = _resolved_root(source.path)
         for path in walk(
             roots=[source.path],
             includes=source.includes or None,
             excludes=source.excludes or None,
             follow_symlinks=source.follow_symlinks,
             skip_dirs=skip_dirs,
+            ignore_names=names,
+            on_unreadable=on_unreadable,
         ):
-            if predicate is None or path.suffix.lower() != ".md":
+            if not gate:
                 yield path
                 continue
-            try:
-                fm = read(path) or {}
-            except FrontmatterParseError:
-                continue
-            if predicate(fm):
+            facts = FileFacts(
+                path,
+                root=facts_root,
+                read_frontmatter=read_frontmatter,
+                tag_providers=providers,
+            )
+            if gate.passes(facts):
                 yield path
