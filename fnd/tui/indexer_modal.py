@@ -1009,10 +1009,10 @@ def _format_indexed_line(
     """
     warnings = []
     # First, because it changes what every other number on the line means: a
-    # source the run could not list contributed nothing and was NOT pruned.
+    # folder the run could not list contributed nothing and was NOT pruned.
     if unreadable:
         n = len(unreadable)
-        warnings.append(f"[yellow]⚠ {n} source{'s' if n != 1 else ''} unreadable[/]")
+        warnings.append(f"[yellow]⚠ {n} folder{'s' if n != 1 else ''} unreadable[/]")
     if failed > 0:
         warnings.append(f"[yellow]⚠ {failed} failed[/]")
     # `N removed` is true of this collection and false of the corpus while a

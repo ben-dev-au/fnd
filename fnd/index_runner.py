@@ -113,8 +113,9 @@ class ProgressEvent:
     # Collections that still index a file this run removed. `N removed` is
     # true of the collection and false of the corpus without it.
     removed_still_in: tuple[str, ...] = ()
-    # Sources the run could not list. Their files were KEPT rather than pruned,
-    # and a run that stayed silent about it read like a healthy one.
+    # Folders the run could not list: a source root or a directory under one.
+    # Their files were KEPT rather than pruned, and a run that stayed silent
+    # about it read like a healthy one.
     unreadable_sources: tuple[str, ...] = ()
     textured_newly_total: int = 0
     textured_already_total: int = 0
@@ -304,6 +305,7 @@ def _enumerate_iter(
     config: CollectionConfig,
     *,
     read_frontmatter: Callable[[Path], dict[str, object] | None] | None = None,
+    on_unreadable: Callable[[Path], None] | None = None,
 ) -> Iterator[tuple[Path, str]]:
     """Lazily walk all sources, yielding ``(path, source_id)`` pairs in
     deterministic walk order.
@@ -331,7 +333,10 @@ def _enumerate_iter(
         except OSError:
             source_id = str(Path(source.path).expanduser())
         for path in walk_sources(
-            sources=[source], skip_dirs=skip, read_frontmatter=read_frontmatter
+            sources=[source],
+            skip_dirs=skip,
+            read_frontmatter=read_frontmatter,
+            on_unreadable=on_unreadable,
         ):
             key = str(path.resolve())
             if key in claimed:
@@ -819,6 +824,7 @@ async def run_indexer(
     # Files the scan could not resolve. Recorded once the run starts so they
     # surface in the same failure list as extraction errors.
     scan_blocked: list[tuple[Path, str]] = []
+    unreadable_dirs: list[Path] = []
 
     def _scan_frontmatter(path: Path) -> dict[str, object] | None:
         """Frontmatter for a filter candidate, fetching it if it is
@@ -856,7 +862,9 @@ async def run_indexer(
     # minutes; draining it in slices keeps cancel responsive and lets the
     # modal show a growing file count instead of a static "Scanning
     # sources…" the user reads as a hang.
-    walk_iter = _enumerate_iter(config, read_frontmatter=_scan_frontmatter)
+    walk_iter = _enumerate_iter(
+        config, read_frontmatter=_scan_frontmatter, on_unreadable=unreadable_dirs.append
+    )
     while True:
         try:
             batch, exhausted = await asyncio.to_thread(
@@ -1179,13 +1187,12 @@ async def run_indexer(
                     writer,
                     collection=collection,
                     live_parent_ids=live_parent_ids,
+                    unreadable_dirs=unreadable_dirs,
                     tag_sources=tag_sources,
                     tag_frontmatter_keys=tag_frontmatter_keys,
                 )
             removed = len(pruned)
-            if blocked_roots:
-                # True of a refused wipe and a refused prune alike.
-                unreadable = tuple(sorted(str(r) for r in blocked_roots))
+            unreadable = tuple(sorted(str(p) for p in (*blocked_roots, *unreadable_dirs)))
             # A file leaving this collection has not left the corpus. Asked
             # before the commit, while the other collections' chunks are still
             # there to answer.
@@ -1233,6 +1240,10 @@ async def run_indexer(
     )
 
 
+class IndexRunError(RuntimeError):
+    """A run that ended without its ``done`` event; the message is the reason it gave."""
+
+
 def run_sync(
     *,
     config: CollectionConfig,
@@ -1241,10 +1252,15 @@ def run_sync(
     rebuild: bool = False,
     progress_callback: Callable[[ProgressEvent], None] | None = None,
 ) -> int:
-    """Drive ``run_indexer`` to completion; returns the chunks written."""
+    """Drive ``run_indexer`` to completion; returns the chunks written.
+
+    Raises :class:`IndexRunError` if it ends without ``done``: nothing here
+    cancels it, so that is a refusal (an older schema, a busy lock, a failed scan).
+    """
 
     async def _drive() -> int:
-        n = 0
+        written: int | None = None
+        reason = ""
         async for ev in run_indexer(
             config=config,
             collection=collection,
@@ -1254,14 +1270,19 @@ def run_sync(
         ):
             if progress_callback is not None:
                 progress_callback(ev)
-            if ev.kind == "done":
-                n = ev.chunks_written
-        return n
+            if ev.kind == "file_error":
+                reason = ev.error
+            elif ev.kind == "done":
+                written = ev.chunks_written
+        if written is None:
+            raise IndexRunError(reason or "the run stopped before it finished")
+        return written
 
     return asyncio.run(_drive())
 
 
 __all__ = [
+    "IndexRunError",
     "IndexState",
     "ProgressEvent",
     "clear_state",

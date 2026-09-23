@@ -767,7 +767,14 @@ def collection_reindex(
         "--collection",
         help="Collection(s) to index, comma-separated, or 'all' for every one.",
     ),
-    rebuild: bool = typer.Option(False, "--rebuild", help="Drop existing chunks first."),
+    rebuild: bool = typer.Option(
+        False,
+        "--rebuild",
+        help=(
+            "Re-extract every file rather than only changed ones. Required when the "
+            "index is on an older schema, which clears the whole index first."
+        ),
+    ),
 ) -> None:
     """Index (or re-index) configured collections.
 
@@ -779,7 +786,7 @@ def collection_reindex(
     """
     from fnd.cli_scope import FilterIssues, resolve_collection_option, resolve_or_exit
     from fnd.config import load
-    from fnd.index_runner import run_sync
+    from fnd.index_runner import IndexRunError, run_sync
     from fnd.query_errors import MissingFilterValueError
 
     cfg = load()
@@ -829,13 +836,17 @@ def collection_reindex(
             if ev.kind == "done" and ev.unreadable_sources:
                 blocked.extend(ev.unreadable_sources)
 
-        written = run_sync(
-            config=cfg.collection(target),
-            collection=target,
-            index_dir=default_index_dir(),
-            rebuild=rebuild,
-            progress_callback=_watch,
-        )
+        try:
+            written = run_sync(
+                config=cfg.collection(target),
+                collection=target,
+                index_dir=default_index_dir(),
+                rebuild=rebuild,
+                progress_callback=_watch,
+            )
+        except IndexRunError as e:
+            typer.echo(f"error: {target} was not indexed. {e}", err=True)
+            raise typer.Exit(code=1) from e
         typer.echo(f"indexed {written} chunks for collection {target}")
         for root in blocked:
             typer.echo(

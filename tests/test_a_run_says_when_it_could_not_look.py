@@ -27,14 +27,14 @@ def test_the_line_names_an_unreadable_source() -> None:
     """`0 new  48 already` alone is what a healthy no-op run says too."""
     line = _plain(0, 48, 0, 0, (), ("/Users/x/vault",))
 
-    assert "1 source unreadable" in line, line
+    assert "1 folder unreadable" in line, line
 
 
 def test_it_counts_them() -> None:
     """Plural, because two dead shares is a different problem from one."""
     line = _plain(0, 48, 0, 0, (), ("/a", "/b"))
 
-    assert "2 sources unreadable" in line, line
+    assert "2 folders unreadable" in line, line
 
 
 def test_a_healthy_run_says_nothing_about_it() -> None:

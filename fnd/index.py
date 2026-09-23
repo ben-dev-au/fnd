@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import datetime as _dt
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from pathlib import Path
 
 from tantivy import Document, Index, IndexWriter, Query, Schema
 
 from fnd.config import CollectionConfig
 from fnd.extract import Chunk, ExtractError, extract, no_text_reason
+from fnd.fsmeta import path_is_absent
 from fnd.membership import after_index, after_prune
 from fnd.meta_blob import encode as encode_meta_blob
 from fnd.schema import (
@@ -318,11 +319,13 @@ def build_index(
 
     written = 0
     live_parent_ids: set[str] = set()
+    unreadable_dirs: list[Path] = []
     paths: Iterable[Path] = walk(
         roots=roots,
         includes=includes,
         excludes=excludes,
         follow_symlinks=follow_symlinks,
+        on_unreadable=unreadable_dirs.append,
     )
     for path in paths:
         parent_id = _path_parent_id(path)
@@ -362,6 +365,7 @@ def build_index(
             writer,
             collection=collection,
             live_parent_ids=live_parent_ids,
+            unreadable_dirs=unreadable_dirs,
             tag_sources=tag_sources,
             tag_frontmatter_keys=tag_frontmatter_keys,
         )
@@ -401,13 +405,14 @@ def build_index_from_config(
     searcher = index.searcher()
     written = 0
     live_parent_ids: set[str] = set()
+    unreadable_dirs: list[Path] = []
     # Walk per-source so each file records which source reached it, letting the
     # search layer scope to a subset of a collection's sources. A file reachable
     # from two of this collection's sources is owned by the first (claimed).
     claimed: set[str] = set()
     for source in config.sources:
         source_id = str(Path(source.path).expanduser().resolve())
-        for path in walk_sources(sources=[source]):
+        for path in walk_sources(sources=[source], on_unreadable=unreadable_dirs.append):
             key = str(path.resolve())
             if key in claimed:
                 continue
@@ -446,6 +451,7 @@ def build_index_from_config(
                 writer,
                 collection=collection,
                 live_parent_ids=live_parent_ids,
+                unreadable_dirs=unreadable_dirs,
                 tag_sources=tag_sources,
                 tag_frontmatter_keys=tag_frontmatter_keys,
             )
@@ -455,6 +461,13 @@ def build_index_from_config(
             print(
                 f"[fnd skip {_skip_stamp()}] source unreadable ({blocked}); "
                 f"kept existing chunks for collection {collection}",
+                file=sys.stderr,
+            )
+        if unreadable_dirs:
+            blocked = ", ".join(str(d) for d in unreadable_dirs)
+            print(
+                f"[fnd skip {_skip_stamp()}] could not read {blocked}; "
+                f"kept existing chunks there for collection {collection}",
                 file=sys.stderr,
             )
     writer.wait_merging_threads()
@@ -581,6 +594,7 @@ def prune_removed_files(
     *,
     collection: str,
     live_parent_ids: set[str],
+    unreadable_dirs: Collection[Path] = (),
     tag_sources: Sequence[str] = ("frontmatter", "os"),
     tag_frontmatter_keys: Sequence[str] = (),
 ) -> set[str]:
@@ -593,13 +607,16 @@ def prune_removed_files(
     deleted. See :func:`_reduce_membership`.
 
     ``live_parent_ids`` must be every file the walk yielded, including ones
-    skipped as unchanged and ones that failed to extract — anything missing
-    from it is treated as gone. Returns the pruned ``parent_id``s so the
-    caller can say which of them the rest of the index still holds. The
-    caller commits.
+    skipped as unchanged and ones that failed to extract; anything missing
+    from it is treated as gone, except a file stored under one of
+    ``unreadable_dirs`` (the folders the walk could not list), which is kept.
+    Returns the pruned ``parent_id``s so the caller can say which of them the
+    rest of the index still holds. The caller commits.
     """
     index.reload()
     stale = indexed_parent_ids(index, collection) - live_parent_ids
+    if unreadable_dirs:
+        stale = _outside(index, stale, unreadable_dirs)
     for parent_id in stale:
         # Callers run prune only when the sources were enumerable, so a file
         # missing from disk is genuinely deleted, not transiently unmounted.
@@ -613,6 +630,18 @@ def prune_removed_files(
             delete_if_unreachable=True,
         )
     return stale
+
+
+def _outside(index: Index, parent_ids: set[str], dirs: Collection[Path]) -> set[str]:
+    """The files among ``parent_ids`` whose stored path lies under none of ``dirs``."""
+    blocked = frozenset(dirs)
+    searcher = index.searcher()
+    out: set[str] = set()
+    for parent_id in parent_ids:
+        path = _stored_path(searcher, index.schema, parent_id)
+        if path is None or blocked.isdisjoint(path.parents):
+            out.add(parent_id)
+    return out
 
 
 def collections_still_holding(
@@ -719,7 +748,7 @@ def _reduce_membership(
         writer.delete_documents_by_query(delete_q)
         return
     path = _stored_path(searcher, schema, parent_id)
-    if path is None or not path.exists():
+    if path is None or path_is_absent(path):
         if delete_if_unreachable:
             writer.delete_documents_by_query(delete_q)
         return

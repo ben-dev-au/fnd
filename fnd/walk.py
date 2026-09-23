@@ -84,6 +84,7 @@ def walk(
     follow_symlinks: bool = False,
     skip_dirs: frozenset[str] | None = None,
     ignore_names: Sequence[str] = (),
+    on_unreadable: Callable[[Path], None] | None = None,
 ) -> Iterator[Path]:
     """Yield supported files under ``roots`` in deterministic order.
 
@@ -95,6 +96,10 @@ def walk(
 
     ``ignore_names`` names the ignore files to honour (``.gitignore``,
     ``.fndignore``); empty disables the mechanism entirely.
+
+    ``on_unreadable`` receives each directory below a root that exists but
+    cannot be listed: what it holds is unknown, not absent. A root that cannot
+    be listed is the caller's question (:func:`fnd.index.unreadable_roots`).
     """
     if skip_dirs is None:
         # Late import: fnd.config imports fnd.walk transitively, so keep
@@ -135,6 +140,7 @@ def walk(
             follow_symlinks=follow_symlinks,
             skip_dirs=skip_dirs,
             ignore_names=ignore_names,
+            on_unreadable=on_unreadable,
         )
 
 
@@ -173,6 +179,7 @@ def _scandir_walk(
     follow_symlinks: bool,
     skip_dirs: frozenset[str],
     ignore_names: Sequence[str] = (),
+    on_unreadable: Callable[[Path], None] | None = None,
 ) -> Iterator[Path]:
     """DFS via ``os.scandir`` so excluded directories aren't descended.
 
@@ -202,7 +209,11 @@ def _scandir_walk(
         try:
             with os.scandir(current) as it:
                 entries = sorted(it, key=lambda e: e.name)
-        except (OSError, PermissionError):
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError:
+            if on_unreadable is not None and current != root:
+                on_unreadable(current)
             continue
         # Read this directory's ignore files only when scandir already proved
         # they exist, so a tree without any costs no extra syscalls.
@@ -299,6 +310,7 @@ def walk_sources(
     sources: list[SourceConfig],
     skip_dirs: frozenset[str] | None = None,
     read_frontmatter: Callable[[Path], dict[str, object] | None] | None = None,
+    on_unreadable: Callable[[Path], None] | None = None,
 ) -> Iterator[Path]:
     """Yield in-scope paths across every source.
 
@@ -318,6 +330,8 @@ def walk_sources(
     substitutes a reader that reports and bounds that wait. Returning
     ``None`` drops the file, so an override can also decline to fetch.
     Defaults to a plain read.
+
+    ``on_unreadable`` is forwarded to :func:`walk`.
     """
     from fnd.config import SourceConfig  # local import: avoid cycle
     from fnd.file_facts import FileFacts
@@ -369,6 +383,7 @@ def walk_sources(
             follow_symlinks=source.follow_symlinks,
             skip_dirs=skip_dirs,
             ignore_names=names,
+            on_unreadable=on_unreadable,
         ):
             if not gate:
                 yield path
