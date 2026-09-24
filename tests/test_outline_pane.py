@@ -364,7 +364,12 @@ async def test_enter_lands_the_heading_on_the_reading_line(corpus: Path) -> None
         widget = app._preview.chunk_widgets[entry.chunk_seq]
         rows = heading_rows(widget)
         assert rows
-        assert widget.region.y + rows[0] == _reading_line(app)
+        # Screen regions catch up with a scroll on the next render.
+        await wait_until(
+            pilot,
+            lambda: widget.region.y + rows[0] == _reading_line(app),
+            message="the heading never painted on the reading line",
+        )
         assert app._preview_scroll.reading_position(MATCH_CONTEXT_FRACTION)[0] == entry.chunk_seq  # type: ignore[index]
         assert _cursor_title(app) == "Usage"
         assert not app._current_match_unlocatable()
@@ -406,7 +411,11 @@ async def test_a_heading_later_in_a_chunk_lands_individually(corpus: Path) -> No
         await wait_until(pilot, lambda: bool(heading_rows(widget)), message="no heading rows")
         rows = heading_rows(widget)
         assert rows is not None
-        assert widget.region.y + rows[2] == _reading_line(app)
+        await wait_until(
+            pilot,
+            lambda: widget.region.y + rows[2] == _reading_line(app),
+            message="the heading never painted on the reading line",
+        )
         await wait_until(pilot, lambda: _cursor_title(app) == "Findings", message="cursor moved")
 
 
