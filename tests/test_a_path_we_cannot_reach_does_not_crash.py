@@ -147,7 +147,7 @@ async def test_pressing_open_on_a_file_we_cannot_reach_does_not_take_the_app_dow
             )
             tree.focus()
             tree.cursor_line = 0
-            await pilot.press("o")
+            await pilot.press("alt+o")
             for _ in range(6):
                 await pilot.pause()
             alive = app.is_running

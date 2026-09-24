@@ -53,7 +53,7 @@ def test_reveal_action_is_registered() -> None:
 
 
 def test_reveal_action_has_a_default_key() -> None:
-    """Shift+R — `R` pairs with `r` (focus results) the way `O` pairs with `o`."""
+    """Shift+R: `R` pairs with `r` (focus results)."""
     action = next(a for a in REGISTRY if a.id == ACTION_ID)
     assert action.default_key == "R"
     assert load_keymap().bindings["R"] == ACTION_ID
@@ -178,14 +178,14 @@ def test_reveal_handler_reveals_rather_than_opens(
 
 
 def test_reveal_is_not_offered_as_a_default_app() -> None:
-    """Picking it as the default for a kind would make `o` stop opening files,
+    """Picking it as the default for a kind would make Open stop opening files,
     so it's excluded from the default-app pickers while staying in Open-with."""
     assert apps.BUILTIN_APPS["reveal"].selectable_default is False
     assert apps.BUILTIN_APPS["system"].selectable_default is True
 
 
 def test_reveal_never_becomes_the_resolved_default() -> None:
-    """`o` must keep opening even though a wildcard-handling app was added."""
+    """Open must keep opening even though a wildcard-handling app was added."""
     resolved = apps.resolve_app(
         kind="pdf", source=None, app_defaults={}, registry=apps.BUILTIN_APPS
     )

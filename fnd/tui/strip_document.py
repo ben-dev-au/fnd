@@ -169,9 +169,10 @@ class StripDocumentView(ScrollView, can_focus=True):
         prefer_first_match: bool = True,
         center: bool = False,
         context_fraction: float = 0.0,
-    ) -> None:
+    ) -> int | None:
         """Scroll to a chunk by id. By default jumps to the chunk's first
-        matched row if one exists; otherwise the chunk's first row."""
+        matched row if one exists; otherwise the chunk's first row. Returns
+        the address it aimed at."""
         target: int | None = None
         if prefer_first_match:
             target = self.first_match_address_of_chunk(chunk_id)
@@ -179,6 +180,11 @@ class StripDocumentView(ScrollView, can_focus=True):
             target = self.address_of_chunk(chunk_id)
         if target is not None:
             self.scroll_to_address(target, center=center, context_fraction=context_fraction)
+        return target
+
+    def row_of(self, address: int) -> int:
+        """The visual row ``address`` renders on, from the document top."""
+        return self._visual_row(address)
 
     # ── Scrollbar markers ───────────────────────────────────────
 

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from fnd import opener
+from fnd import opener, os_labels
 from fnd.index import build_index
 from fnd.tui import FNDApp
 from fnd.tui.actions import REGISTRY
@@ -65,9 +65,7 @@ async def test_enter_does_not_open_external_app(
 
 
 @pytest.mark.asyncio
-async def test_o_key_action_open_at_locator(
-    built_index: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_open_at_locator_action(built_index: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[Any] = []
     monkeypatch.setattr(opener, "open_smart", lambda **kw: seen.append(kw) or 0)
     app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
@@ -86,6 +84,68 @@ async def test_o_key_action_open_at_locator(
     assert seen
     assert seen[-1]["kind"] == "pdf"
     assert seen[-1]["page"] == 7
+
+
+async def _on_a_hit(pilot: Any, app: FNDApp) -> None:
+    from textual.widgets import Tree
+
+    tree = app.query_one("#results_pane", Tree)
+    first = next(iter(tree.root.children))
+    first.expand()
+    await pilot.pause()
+    tree.focus()
+    await pilot.press("down")
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_a_bare_o_focuses_the_outline_and_never_opens(
+    built_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[Any] = []
+    monkeypatch.setattr(opener, "open_smart", lambda **kw: seen.append(kw) or 0)
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _on_a_hit(pilot, app)
+        await pilot.press("o")
+        await pilot.pause()
+        assert app.focused is app.query_one("#outline_pane")
+    assert seen == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("chord", ["alt+o", "ctrl+o"])
+async def test_the_open_chords_open(
+    built_index: Path, monkeypatch: pytest.MonkeyPatch, chord: str
+) -> None:
+    seen: list[Any] = []
+    monkeypatch.setattr(opener, "open_smart", lambda **kw: seen.append(kw) or 0)
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _on_a_hit(pilot, app)
+        await pilot.press(chord)
+        await pilot.pause()
+    assert len(seen) == 1
+    assert seen[0]["kind"] == "pdf"
+
+
+@pytest.mark.asyncio
+async def test_a_typed_o_slash_never_opens_even_on_a_mac(
+    built_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ø` is what Option+O types, and a bare key on Danish and Norwegian layouts."""
+    monkeypatch.setattr(os_labels, "is_macos", lambda: True)
+    seen: list[Any] = []
+    monkeypatch.setattr(opener, "open_smart", lambda **kw: seen.append(kw) or 0)
+    app = FNDApp(index_dir=built_index, initial_query="blue penguin sandwich")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _on_a_hit(pilot, app)
+        await pilot.press("ø")
+        await pilot.pause()
+    assert seen == []
 
 
 @pytest.mark.asyncio

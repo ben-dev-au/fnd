@@ -71,8 +71,13 @@ class ResultsTree(ArrowsExpand, HomeToFirstRow, StateMarkerLabel, Tree[dict[str,
         # it is a plain dict lookup and never a scan of the result groups.
         self.warm_states: dict[str, WarmState] = {}
 
+    #: Whether a resize asks the app to re-elide the file rows; a subclass
+    #: with nothing elided turns it off (Textual runs every class's on_resize).
+    posts_geometry: ClassVar[bool] = True
+
     def on_resize(self, _event: events.Resize) -> None:
-        self.post_message(self.GeometryChanged())
+        if self.posts_geometry:
+            self.post_message(self.GeometryChanged())
         # While collapsed-to-header the pane shows a single content row; keep
         # the cursor (the file driving the preview) parked in it, else the
         # strip snaps back to the top result. Fires when add-class shrinks the

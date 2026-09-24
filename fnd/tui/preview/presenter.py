@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from fnd.tui.line_buffer import RenderedDocument
     from fnd.tui.progress import ProgressSession
 
-__all__ = ["PreviewPresenter", "target_from_node_data"]
+__all__ = ["PreviewPresenter", "decode_abandonable", "target_from_node_data"]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -95,7 +95,7 @@ def target_from_node_data(data: Any) -> tuple[str, int] | None:
     return None
 
 
-async def _decode_abandonable(fn: Callable[..., Any], *args: Any) -> Any:
+async def decode_abandonable(fn: Callable[..., Any], *args: Any) -> Any:
     """Run ``fn`` off the loop on a thread the process may exit without.
 
     ``asyncio.to_thread`` uses the loop's default executor, and the loop drains
@@ -215,8 +215,10 @@ class PreviewPresenter:
         self.load_timer: _Any | None = None
         self.load_target: tuple[str, int] | None = None
         # Landing intent for one navigation, ``(parent_id, chunk_seq, intent)``.
-        # Set by a backward n/b hand-over; dropped when a different target loads.
+        # Set by a backward n/b hand-over or an outline jump; see _drop_stale_landing_intent.
         self.pending_landing_intent: tuple[str, int, LandingIntent] | None = None
+        # The heading an outline jump ("chunk_top") aims at; travels with the intent.
+        self.pending_heading: int = -1
         # True while the cursor is moving via Option/Alt + arrow ("scan" mode):
         # schedule_load skips its leading fire so fast browsing doesn't mount
         # every row — the preview only loads once the sweep settles (trailing).
@@ -433,16 +435,43 @@ class PreviewPresenter:
             return pending[2]
         return "first_match"
 
+    def _landing_heading(self, parent_id: str, focus_chunk_seq: int) -> int:
+        """The heading an outline jump to this target aims at, else -1."""
+        if self._landing_intent(parent_id, focus_chunk_seq) == "chunk_top":
+            return self.pending_heading
+        return -1
+
     def _drop_stale_landing_intent(self, parent_id: str, focus_chunk_seq: int) -> None:
         """Forget a request the reader has navigated away from — the end of the
-        navigation it was set for, and the only thing that clears it."""
+        navigation it was set for, and the only thing that clears it. An outline
+        jump never outlives the next load that did not ask for it."""
         pending = self.pending_landing_intent
-        if pending is not None and pending[:2] != (parent_id, focus_chunk_seq):
+        if pending is None:
+            return
+        if pending[:2] != (parent_id, focus_chunk_seq):
             self.pending_landing_intent = None
+        elif pending[2] == "chunk_top":
+            self.pending_landing_intent = None
+            # The jump's own render may have left the latch on this target, and
+            # the load back to its match must not be deduped against it.
+            if self.inflight_target == (parent_id, focus_chunk_seq):
+                self.inflight_target = None
 
-    def schedule_load(self, parent_id: str, focus_chunk_seq: int) -> None:
-        """Debounce a cursor-move → preview-load; coalesces rapid arrow sweeps."""
-        self._drop_stale_landing_intent(parent_id, focus_chunk_seq)
+    def schedule_load(
+        self,
+        parent_id: str,
+        focus_chunk_seq: int,
+        *,
+        intent: LandingIntent | None = None,
+        heading: int = -1,
+    ) -> None:
+        """Debounce a cursor-move → preview-load; coalesces rapid arrow sweeps.
+        ``intent`` aims this load's landing; without one, it lands on the match."""
+        if intent is None:
+            self._drop_stale_landing_intent(parent_id, focus_chunk_seq)
+        else:
+            self.pending_landing_intent = (parent_id, focus_chunk_seq, intent)
+            self.pending_heading = heading
         if self._scan_move:
             # Option/Alt+arrow scan: browse the results without mounting anything.
             # Record where the cursor is but DON'T load and DON'T arm a timer — so
@@ -544,6 +573,27 @@ class PreviewPresenter:
         # silently suppressed as a scan move.
         self._scan_move = False
 
+    def jump_to_chunk_top(self, parent_id: str, focus_chunk_seq: int, heading: int = -1) -> None:
+        """Land ``heading`` of chunk ``focus_chunk_seq`` (or the chunk's top) on
+        the reading line: the outline's jump, through the ordinary navigation."""
+        self._scan_move = False
+        self._app._match_nav.on_manual_scroll()
+        if self.inflight_target == (parent_id, focus_chunk_seq):
+            if self.pipeline_busy():
+                # That very render is still landing: re-aim it rather than
+                # starting a second one over its half-built container.
+                self.pending_landing_intent = (parent_id, focus_chunk_seq, "chunk_top")
+                self.pending_heading = heading
+                self._app._preview_scroll.arm(
+                    ScrollAnchor(parent_id, focus_chunk_seq, intent="chunk_top", heading=heading)
+                )
+                self._app._preview_scroll.reconcile()
+                self._app.call_after_refresh(self._app._refresh_preview_match_indicator)
+                return
+            self.inflight_target = None
+        self.cancel_pending_load()
+        self.schedule_load(parent_id, focus_chunk_seq, intent="chunk_top", heading=heading)
+
     def render_full_doc(self, parent_id: str, *, focus_chunk_seq: int) -> None:
         """Render the full document for ``parent_id`` as one widget per
         chunk, then scroll to the chunk identified by ``focus_chunk_seq``.
@@ -597,6 +647,7 @@ class PreviewPresenter:
                 focus_chunk_seq,
                 intent=self._landing_intent(parent_id, focus_chunk_seq),
                 animate=target_mounted and glide,
+                heading=self._landing_heading(parent_id, focus_chunk_seq),
             )
         )
         # One progress session spans the whole navigation, opened here because
@@ -1196,7 +1247,11 @@ class PreviewPresenter:
         # chunk so every dispatch for this (file, query) lands on the same
         # match regardless of arrival order. Genuine match chunks (real
         # section navigation) and the no-match browse case are left as-is.
-        if doc.fv.first_hit_line_in_chunk and focus_chunk_seq not in doc.fv.first_hit_line_in_chunk:
+        if (
+            doc.fv.first_hit_line_in_chunk
+            and focus_chunk_seq not in doc.fv.first_hit_line_in_chunk
+            and self._landing_intent(parent_id, focus_chunk_seq) != "chunk_top"
+        ):
             focus_chunk_seq = min(doc.fv.first_hit_line_in_chunk)
 
         buf = self._app._flat.ensure_shared_buffer()
@@ -1224,6 +1279,7 @@ class PreviewPresenter:
                 parent_id,
                 focus_chunk_seq,
                 intent=self._landing_intent(parent_id, focus_chunk_seq),
+                heading=self._landing_heading(parent_id, focus_chunk_seq),
             )
         )
         self._app._preview_scroll.reconcile()
@@ -1433,7 +1489,9 @@ class PreviewPresenter:
 
         This is the same guarantee ``_finalise_via_lock`` gets from its
         ``expected_above_seqs``; the difference is only that the scroll strategy
-        can't know the window, so it asks the presenter, which does.
+        can't know the window, so it asks the presenter, which does. The window
+        is the one the mount builds (:meth:`above_window_start`): chunks above it
+        arrive after the reveal, so waiting on them spends the whole retry budget.
         """
         container = self.active
         if container is None:
@@ -1444,7 +1502,8 @@ class PreviewPresenter:
         focus_idx = next((i for i, c in enumerate(chunks) if c.chunk_seq == focus_chunk_seq), None)
         if focus_idx is None:
             return False
-        for i in range(max(0, focus_idx - tuning.VISIBLE_FIRST_ABOVE), focus_idx):
+        start = self.above_window_start(chunks, focus_idx, self.preview_pane().size.height or 40)
+        for i in range(start, focus_idx):
             widget = container.chunk_widgets.get(chunks[i].chunk_seq)
             if widget is None:
                 return True
@@ -2248,6 +2307,8 @@ class PreviewPresenter:
         # A new query / scope change is a fresh start: the next navigation gets
         # its own repair budget rather than inheriting a spent one.
         self._paint_repair_target = None
+        # ...and lands on its match, whatever an earlier jump asked for.
+        self.pending_landing_intent = None
         # Stop warming immediately rather than at the next batch boundary. Its
         # captures carry the OLD query's highlighting, so every chunk it builds
         # from here is work whose result can never be served — the store key
@@ -3018,7 +3079,7 @@ class PreviewPresenter:
         if searcher is None:
             return []
         try:
-            chunks = await _decode_abandonable(searcher.get_file_chunks, parent_id)
+            chunks = await decode_abandonable(searcher.get_file_chunks, parent_id)
         except Exception:
             return []
         # Keep it, in the same cache the mount path reads. A neighbour decoded

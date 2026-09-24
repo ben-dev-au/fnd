@@ -174,7 +174,8 @@ async def test_the_sidebar_paints_the_same_states_the_same_way(
     in each until they shared one mapping."""
     config, index_dir = cfg_and_index
     app = FNDApp(index_dir=index_dir, config=config)  # type: ignore[arg-type]
-    async with app.run_test(size=(120, 40)) as pilot:
+    # Tall enough for the expanded filter rows beside the Outline's reserved share.
+    async with app.run_test(size=(120, 56)) as pilot:
         await pilot.pause()
         app._scope.tag_include["frontmatter"] = {"recipe"}
         app._scope.tag_exclude["frontmatter"] = {"dinner"}

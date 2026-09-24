@@ -687,7 +687,7 @@ class AppConfig(_ConfigModel):
     """Name shown for this app in the Settings menu."""
 
     handles: list[str]
-    """File types this app opens, e.g. ["md"]. Used to resolve the `o`
+    """File types this app opens, e.g. ["md"]. Used to resolve the Open
     shortcut when a source or default names this app."""
 
     argv: list[str] | None = None

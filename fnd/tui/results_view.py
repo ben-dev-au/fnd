@@ -210,7 +210,7 @@ class ResultsView:
                 top_hit.chunk_seq if top_hit else 0,
             )
 
-    _SIDEBAR_TREE_IDS = frozenset({"filters_panel_tree", "collections_panel_tree"})
+    _SIDEBAR_TREE_IDS = frozenset({"outline_pane", "filters_panel_tree", "collections_panel_tree"})
 
     def _sidebar_has_focus(self) -> bool:
         """Whether the user is currently driving a sidebar panel."""

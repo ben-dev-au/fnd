@@ -1,4 +1,4 @@
-"""`o` and `Shift+R` on a file that is no longer there did nothing, silently.
+"""Open and `Shift+R` on a file that is no longer there did nothing, silently.
 
 Polled at 0.35, 0.85 and 1.9 seconds: byte-identical screens. The same screen
 shows a good error for a malformed query, so silence reads as "it opened, in
@@ -75,11 +75,11 @@ async def _press_on_a_deleted_row(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("key", ["o", "O", "R"])
+@pytest.mark.parametrize("key", ["alt+o", "O", "R"])
 async def test_a_missing_file_is_not_opened_in_silence(
     key: str, indexed: Config, tmp_path: Path, tmp_index_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`o` opens at the locator, `O` offers apps, `R` reveals. None of the
+    """Open opens at the locator, `O` offers apps, `R` reveals. None of the
     three can work, and none of them may look like it did."""
     said, asked = await _press_on_a_deleted_row(indexed, tmp_path, tmp_index_dir, key, monkeypatch)
 

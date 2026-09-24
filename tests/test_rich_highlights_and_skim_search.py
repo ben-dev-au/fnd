@@ -177,7 +177,7 @@ async def test_tui_passes_query_to_opener_for_skim_search(
         await pilot.pause()
         tree.focus()
         await pilot.press("down")
-        # The explicit `o` action is the open trigger;
+        # The explicit Open action is the trigger;
         # plain Enter / click only updates the preview.
         app.action_open_at_locator()
         await pilot.pause()

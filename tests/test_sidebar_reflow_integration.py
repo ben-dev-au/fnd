@@ -68,12 +68,13 @@ async def test_reflow_runs_and_fills_the_column(cfg: Config, idx: Path) -> None:
     async with app.run_test(size=(120, 45)) as pilot:
         await pilot.pause()
         await pilot.pause()
-        # The reflow ran (cache populated) and the three panels tile the column
+        # The reflow ran (cache populated) and the four panels tile the column
         # with no floating gap.
         assert app._sidebar_height_cache, "reflow never applied any height"
         column = app.query_one("#results_column")
         panes = [
             app.query_one("#results_pane"),
+            app.query_one("#outline_pane"),
             app.query_one("#collections_panel_tree"),
             app.query_one("#filters_pane"),
         ]

@@ -94,7 +94,7 @@ Read the table as **what is implemented**, not what is verified:
 | Search · indexing · TUI · preview | ✓              | ✓                                | ✓                  |
 | Open in app / **Open with…**      | ✓              | ✓                                | ✓                  |
 | Reveal in file manager (`R`)      | Finder         | file-manager `--select` → folder | Explorer `/select` |
-| PDF page-jump on `o`              | Skim, Preview  | Zathura, Okular                  | SumatraPDF         |
+| PDF page-jump on Open             | Skim, Preview  | Zathura, Okular                  | SumatraPDF         |
 | Structured PDF extra (docling)    | ✓              | ✓                                | ✓                  |
 | Created-date filter               | ✓ (birth time) | best-effort (statx)              | ✓ (creation time)  |
 | Cloud-only file handling          | iCloud Drive   | not detectable                   | OneDrive & co.     |
@@ -123,10 +123,10 @@ and reindex them with `fnd collection reindex <name>`.
 
 ## Using the TUI
 
-Run `fnd` with no arguments for the interactive interface. It has three panes:
-the **query bar** at the top, the **results tree** (hits grouped by file) on the
-left, and the **preview pane** on the right showing the matching passage with
-your search terms highlighted. Just start typing, and results update as you go,
+Run `fnd` with no arguments for the interactive interface: the **query bar** at
+the top, the **results tree** (hits grouped by file) on the left with the
+**outline** of the previewed document beneath it, and the **preview pane** on the
+right showing the matching passage with your search terms highlighted. Just start typing, and results update as you go,
 and the [query language](#search-how-to) works exactly as it does from the CLI.
 
 ### Moving around with the keyboard
@@ -142,11 +142,28 @@ and the [query language](#search-how-to) works exactly as it does from the CLI.
 | `Ctrl←` / `⌥←` | **Collapse children**: fold away every descendant, keeping the node itself open.                                                                                                                                                                   |
 | `Tab`          | Cycle focus between the query bar, the results tree, and the preview.                                                                                                                                                                              |
 | `/`            | Jump back to the query bar to refine your search.                                                                                                                                                                                                  |
+| `o`            | Focus the **Outline**. `Enter` on a heading (or `→` on one with nothing to expand) moves the preview there.                                                                                                                                        |
 | `↑` / `↓`      | When the preview pane is focused, scroll the preview.                                                                                                                                                                                              |
+
+### The outline
+
+The Outline pane lists the headings of the document in the preview: Markdown,
+Word, OpenDocument, HTML and EPUB headings, slide titles, notebook headings, and
+a PDF's bookmarks (without bookmarks, the headings its preview shows). Its
+highlight follows you as you move between results and as you scroll. A heading
+you jump to lands where matches land, a quarter of the way down the preview.
+Code, data and plain-text files have no outline. Collapse the pane with `←` at
+its top level, like the others.
 
 > **Option-skim on Apple Terminal:** for `⌥↑` / `⌥↓` to reach fnd, enable
 > _Settings → Profiles → Keys → Left Option key → Esc+_. iTerm2 and most modern
 > terminals work without any change.
+>
+> **`⌥O` needs Option to send Meta (Alt).** Without that terminal setting,
+> Option+O types a character instead (`ø` on a US layout). `Ctrl+O` works in
+> every terminal on every keyboard layout, so use it wherever you need Option
+> for typing: Danish, Norwegian and many other layouts put letters and symbols
+> there.
 >
 > **Expand/collapse-all: Ctrl or Option?** These are bound to _both_ `Ctrl` and
 > `Alt`+arrow, because a single physical combo reaches the app under different
@@ -159,7 +176,7 @@ and the [query language](#search-how-to) works exactly as it does from the CLI.
 
 | Key            | What it does                                                                                                                                                                       |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `o`            | Open the hit in its resolved app, jumping to the matching page / slide / line / heading.                                                                                           |
+| `⌥O` / `Ctrl+O` | Open the hit in its resolved app, jumping to the matching page / slide / line / heading. A chord, so a stray `o` cannot launch an app (`Alt+O` on Windows and Linux).        |
 | `O`            | **Open with…**: a picker of every app that handles this file type. Use `↑↓` then `Enter`, or press the letter shown next to an app; `Esc` cancels.                                 |
 | `R`            | **Reveal**: show the file in your file manager (Finder on macOS, File Explorer on Windows) with it selected, without opening it. Also on the last row of the `O` picker. |
 | `Space`        | Quick Look the file.                                                                                                                                                               |
@@ -241,8 +258,9 @@ been exercised against a real corpus.
 
 ## Open with… apps
 
-`o` opens a hit in its resolved app, jumping to the matching page, slide, line
-or heading where the app allows. `O` opens the **Open with…** picker, listing
+`⌥O` (`Alt+O` on Windows and Linux, or `Ctrl+O` anywhere) opens a hit in its
+resolved app, jumping to the matching page, slide, line or heading where the
+app allows. `O` opens the **Open with…** picker, listing
 only installed apps: **Skim, Preview, PDF Expert** (macOS), **Zathura, Okular**
 (Linux), **SumatraPDF** (Windows), plus **Obsidian, VS Code, System Default**.
 
@@ -409,7 +427,7 @@ exclude_tags      = ["no_index"]    # Finder tags and YAML tags:, see below
 # modified_after  = 2020-01-01
 # expression      = "file.size < 50_000_000"
 
-# Default app per file type for the `o` shortcut. Built-in ids:
+# Default app per file type for the Open shortcut (⌥O or Ctrl+O). Built-in ids:
 # system, obsidian, vscode (all OSes); skim, preview, pdf_expert (macOS);
 # zathura, okular (Linux); sumatra (Windows).
 [app_defaults]

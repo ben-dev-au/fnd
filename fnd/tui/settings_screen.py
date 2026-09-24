@@ -47,7 +47,7 @@ from textual.widgets.option_list import Option, OptionDoesNotExist
 
 from fnd.display_text import sanitise_display_text
 from fnd.fsmeta import path_is_absent
-from fnd.tui.actions import load_keymap
+from fnd.tui.actions import Keymap, load_keymap
 from fnd.tui.menu import (
     KIND_ACTION,
     KIND_DISPLAY,
@@ -1017,8 +1017,8 @@ class SettingsList(Widget, can_focus=True):
         Binding("down,j", "move(1)", show=False),
         Binding("home", "move_home", show=False),
         Binding("end", "move_end", show=False),
-        Binding("page_up", "page(-1)", show=False),
-        Binding("page_down", "page(1)", show=False),
+        Binding("pageup", "page(-1)", show=False),
+        Binding("pagedown", "page(1)", show=False),
         # Enter = full activation (drill / save / toggle / run). Right is
         # navigation parity only: drills sub-screens, no-op on
         # scalars / toggles / actions / leaf rows.
@@ -1886,54 +1886,52 @@ class SettingsScreen(Screen[None]):
         """Lazygit-style press-key-to-invoke on the Keybindings sub-screen.
 
         Only fires when the screen's breadcrumb ends in "Keybindings" AND
-        focus is on the list (not the search input). Looks for a row whose
-        ``key`` field matches the pressed key; if found, dispatches the
-        action and closes the settings stack.
+        focus is on the list (not the search input). Looks for the row of the
+        action the pressed key runs; if found, closes the settings stack and
+        dispatches it.
         """
         if self._breadcrumb[-1:] != ("Keybindings",):
             return
         focused = self.focused
         if focused is None or not isinstance(focused, SettingsList):
             return
-        pressed = ev.key
-        pressed_label = _normalise_key_label(pressed)
-        for item in self.query_one(SettingsList)._items:
-            if item.kind == KIND_HEADER or not item.key:
-                continue
-            # Never intercept Enter — that belongs to the regular activate path.
-            if item.key.lower() == "enter":
-                continue
-            # Nor `/`: invoking it here closes the sheet and focuses the query
-            # bar, leaving this screen's own filter box unreachable while its
-            # placeholder invites typing and every letter runs a command, `q` included.
-            if item.action_id == "focus_query":
-                continue
-            # Rows documenting another screen's widget keys carry no action, so
-            # "invoking" one would close the whole settings stack and do nothing.
-            if not item.action_id:
-                continue
-            if item.key.lower() == pressed_label.lower():
-                ev.stop()
-                ev.prevent_default()
-                self._close_settings_stack()
-                if item.action_id:
-                    method = getattr(self.app, f"action_{item.action_id}", None)
-                    if callable(method):
-                        method()
-                return
+        row = self._row_for_key(ev.key)
+        if row is None:
+            return
+        ev.stop()
+        ev.prevent_default()
+        self._close_settings_stack()
+        method = getattr(self.app, f"action_{row.action_id}", None)
+        if callable(method):
+            method()
+
+    def _row_for_key(self, pressed: str) -> MenuItem | None:
+        """The row for the action the keymap binds ``pressed`` to, so a key runs
+        here exactly what it runs in the app. The sheet's own keys run nothing."""
+        keymap = getattr(self.app, "_fnd_keymap", None)
+        if pressed in _SHEET_KEYS or not isinstance(keymap, Keymap):
+            return None
+        bound = keymap.bindings.get(pressed)
+        # Never `/`: it would close the sheet onto the query bar, leaving this
+        # screen's own filter box out of reach.
+        if bound is None or bound == "focus_query":
+            return None
+        items = self.query_one(SettingsList)._items
+        return next((i for i in items if i.kind != KIND_HEADER and i.action_id == bound), None)
 
 
-def _normalise_key_label(key: str) -> str:
-    """Map Textual's key names to the labels used in MenuItem.key."""
-    return {
-        "space": "Space",
-        "ctrl+c": "Ctrl+C",
-        "shift+enter": "Shift+Enter",
-        "tab": "Tab",
-        "question_mark": "?",
-        "colon": ":",
-        "slash": "/",
-    }.get(key, key)
+def _binding_keys(*owners: type[Widget]) -> frozenset[str]:
+    return frozenset(
+        key.strip()
+        for owner in owners
+        for binding in owner.BINDINGS
+        if isinstance(binding, Binding)
+        for key in binding.key.split(",")
+    )
+
+
+# Keys the sheet uses to move about itself (arrows, j/k, digits, Enter, Esc, `/`).
+_SHEET_KEYS = _binding_keys(SettingsList, SettingsScreen)
 
 
 def _summarise(exc: Exception) -> str:

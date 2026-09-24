@@ -131,7 +131,7 @@ class AccessibilityPermissionScreen(ModalScreen[None]):
 
         apps._reset_ax_cache()
         self.app.notify(
-            "Accessibility cache cleared. Press 'o' on the result again to retry.",
+            "Accessibility cache cleared. Open the result again to retry.",
             title="Try again",
             timeout=4,
         )

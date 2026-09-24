@@ -19,6 +19,11 @@ Policy, in priority order (Results first):
                                scrolls inside its own tree. Unused secondary
                                space is handed back to the priority panel.
 
+A ``reserved`` panel (the Outline) is sized from the column, not from its
+content, so what it shows can never resize its neighbours. Expanded, it is
+pinned before the flex split, clamped so Results keeps about half the room and
+every other expanded panel its floor.
+
 The function is pure — it takes measured demands and returns cell heights — so
 the policy is tested without a running app.
 """
@@ -27,7 +32,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-__all__ = ["SECONDARY_MIN", "SOFT_CAP", "Panel", "allocate"]
+__all__ = [
+    "RESERVED_MIN",
+    "RESERVED_SHARE",
+    "SECONDARY_MIN",
+    "SOFT_CAP",
+    "Panel",
+    "allocate",
+    "reserved_demand",
+]
 
 # Under contention the priority (Results) panel is capped here so the secondary
 # panels keep usable room rather than collapsing to their header rows.
@@ -35,6 +48,9 @@ SOFT_CAP = 0.6
 # Every expanded secondary panel keeps at least this many rows (header + a
 # glimpse of content) before it starts scrolling.
 SECONDARY_MIN = 3
+# A reserved panel's share of the column, and the rows it asks for at least.
+RESERVED_SHARE = 0.35
+RESERVED_MIN = 5
 
 
 @dataclass(frozen=True)
@@ -50,6 +66,12 @@ class Panel:
     demand: int
     collapsed: bool
     header: int
+    reserved: bool = False
+
+
+def reserved_demand(avail: int) -> int:
+    """Rows a reserved panel asks for in a column ``avail`` rows tall."""
+    return max(RESERVED_MIN, round(avail * RESERVED_SHARE))
 
 
 def allocate(avail: int, panels: list[Panel]) -> dict[str, int]:
@@ -72,6 +94,12 @@ def allocate(avail: int, panels: list[Panel]) -> dict[str, int]:
         return heights
 
     room = max(0, avail - fixed)
+    reserved = [p for p in expanded if p.reserved]
+    if reserved:
+        expanded = [p for p in expanded if not p.reserved]
+        room -= _pin_reserved(reserved, expanded, room, heights)
+        if not expanded:
+            return heights
     demand = {p.key: max(1, p.demand) for p in expanded}
     total = sum(demand.values())
 
@@ -101,6 +129,27 @@ def allocate(avail: int, panels: list[Panel]) -> dict[str, int]:
     return heights
 
 
+def _pin_reserved(
+    reserved: list[Panel], flex: list[Panel], room: int, heights: dict[str, int]
+) -> int:
+    """Pin each reserved panel into ``heights``; return the rows they took.
+    With no flex panel beside them, the last one takes whatever is left."""
+    if flex:
+        prio = flex[0]
+        floors = min(max(1, prio.demand), max(3, room // 2))
+        floors += sum(min(max(1, p.demand), SECONDARY_MIN) for p in flex[1:])
+        budget = max(0, room - floors)
+    else:
+        budget = room
+    taken = 0
+    for i, p in enumerate(reserved):
+        left = budget - taken
+        h = left if not flex and i == len(reserved) - 1 else min(max(1, p.demand), left)
+        heights[p.key] = max(0, h)
+        taken += heights[p.key]
+    return taken
+
+
 def _split_by_demand(secondaries: list[Panel], room: int, demand: dict[str, int]) -> dict[str, int]:
     """Share ``room`` across ``secondaries`` max-min fairly: every panel keeps
     ``SECONDARY_MIN`` where possible, then small demands are satisfied in full
@@ -113,7 +162,7 @@ def _split_by_demand(secondaries: list[Panel], room: int, demand: dict[str, int]
         return {s.key: 0 for s in secondaries}
 
     heights = {s.key: min(demand[s.key], SECONDARY_MIN) for s in secondaries}
-    if sum(heights.values()) >= room:
+    if sum(heights.values()) > room:
         return _proportional(secondaries, room, demand)
 
     remaining = room - sum(heights.values())

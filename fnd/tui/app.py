@@ -46,6 +46,7 @@ from fnd.tui.actions import REGISTRY, Keymap, load_keymap
 from fnd.tui.indexer_service import IndexerService
 from fnd.tui.match_evidence import evidence_spec_for_pass, has_paintable_match
 from fnd.tui.match_navigator import MatchNavigator
+from fnd.tui.outline_view import OutlineView
 from fnd.tui.preview.flat_view import FlatBufferView
 from fnd.tui.preview.frozen import FrozenChunkView
 from fnd.tui.preview.lazy_mount import LazyMounter
@@ -67,9 +68,10 @@ from fnd.tui.results_labels import (
 from fnd.tui.results_view import ResultsView
 from fnd.tui.scope_panel import ScopeController
 from fnd.tui.search_controller import SearchController
-from fnd.tui.sidebar_layout import Panel, allocate
+from fnd.tui.sidebar_layout import Panel, allocate, reserved_demand
 from fnd.tui.stall_watch import StallWatch
 from fnd.tui.widgets.clear_bar import ClearFiltersBar
+from fnd.tui.widgets.outline_tree import OutlineTree
 from fnd.tui.widgets.preview_container import (
     _HitWithQuery,
 )
@@ -368,6 +370,15 @@ class FNDApp(App[None]):
         overflow-x: hidden;
     }
     #collections_panel_tree.-focused { border: round $accent; }
+    /* Sized from the column, not its content (see sidebar_layout), so moving
+       between files never resizes its neighbours. overflow-x hidden, or the
+       tree takes Left/Right as horizontal scrolls. */
+    #outline_pane {
+        width: 100%; height: auto;
+        border: round $primary 50%;
+        overflow-x: hidden;
+    }
+    #outline_pane.-focused { border: round $accent; }
     #filters_pane {
         width: 100%; height: auto;
         border: round $primary 50%;
@@ -431,6 +442,7 @@ class FNDApp(App[None]):
         scrollbar-size-horizontal: 0;
     }
     #collections_panel_tree.collapsed,
+    #outline_pane.collapsed,
     #filters_pane.collapsed {
         height: 2;
         overflow: hidden;
@@ -512,6 +524,11 @@ class FNDApp(App[None]):
        when the user is typing in the query bar or has focus elsewhere. */
     Tree > .tree--cursor { background: transparent; color: $text; }
     Tree:focus-within > .tree--cursor { background: $accent 40%; text-style: bold; }
+    /* The outline's cursor marks where the reader is, so it shows unfocused. */
+    #outline_pane > .tree--cursor { background: transparent; color: $accent; text-style: bold; }
+    #outline_pane:focus-within > .tree--cursor {
+        background: $accent 40%; color: $text; text-style: bold;
+    }
     """
 
     # BINDINGS is built from the action registry at import time so footer
@@ -550,6 +567,8 @@ class FNDApp(App[None]):
         self._search = SearchController(self)
         # Results-tree rendering; see fnd/tui/results_view.py.
         self._results = ResultsView(self)
+        # The Outline pane over the previewed document; see fnd/tui/outline_view.py.
+        self._outline = OutlineView(self)
         self._fnd_keymap = keymap or load_keymap()
         # Ranking profile applied at search time. Built from the active
         # collection's ``ranking_profile`` field; default profile (all-zero)
@@ -563,6 +582,12 @@ class FNDApp(App[None]):
         # owns mouse capture (off while reading so the terminal handles
         # drag-select, right-click Copy, ⌘C, macOS Speak-selection).
         self._reading_mode: bool = False
+        # Where Left from the preview returns: the pane a Right-arrow bridge
+        # came from, else Results. Pending until the preview's focus lands.
+        self._preview_bridge: str | None = None
+        self._preview_return = "#results_pane"
+        # The pane focus last sat in, overlays and modals aside.
+        self._last_pane_context = "global"
         # Dynamic sidebar height allocation: last-applied heights (or the
         # sentinel "collapsed") per panel, so a reflow only re-styles panels
         # whose share actually changed. Guards against relayout thrash.
@@ -616,6 +641,12 @@ class FNDApp(App[None]):
         # Intra-file match navigation (n/b); see fnd/tui/match_navigator.py.
         self._match_nav = MatchNavigator(self)
 
+    def _tick_outline(self) -> None:
+        """Poll the Outline pane onto the preview. Suppressed whole, as for
+        ``_tick_warmth``: a raising timer callback takes the app down."""
+        with contextlib.suppress(Exception):
+            self._outline.tick()
+
     def _tick_warmth(self) -> None:
         """Poll per-file readiness onto the results arrows.
 
@@ -642,9 +673,10 @@ class FNDApp(App[None]):
         # Calm, practical one-liner for malformed queries — collapsed until set.
         yield Static("", id="query_notice")
         with Horizontal():
-            # Left column: results on top, then Collections, then Filters.
+            # Left column: results on top, the outline, then Collections and Filters.
             with Vertical(id="results_column"):
                 yield ResultsTree("Results", id="results_pane")
+                yield OutlineTree("Outline", id="outline_pane")
                 # Single-widget panels — each carries its summary in
                 # ``border_title``, matching the results-pane styling.
                 # Collections tree uses the plain Tree (expanded
@@ -804,6 +836,9 @@ class FNDApp(App[None]):
         # faster than a file changes state; measured at 0.08 ms a tick over a
         # 50-file result set, which is 0.02% of the period.
         self.set_interval(0.5, self._tick_warmth, name="results-warmth")
+        # The outline follows the reader. Polled for the same reason: a scroll
+        # has no single hook across both preview substrates.
+        self.set_interval(0.2, self._tick_outline, name="outline-follow")
         # Opt-in diagnostic: names whatever held the event loop when it
         # stops answering. Off unless _FND_STALL_WATCH is set.
         self._stall_watch = StallWatch.from_env(self)
@@ -941,9 +976,11 @@ class FNDApp(App[None]):
             self.query_one("#results_pane", Tree).border_title = self._results.title()
 
     def _refresh_panel_titles(self) -> None:
-        """All three collapsible panels, because the gesture that closes one
-        can be aimed at any of them and the marker is what says which."""
+        """Every collapsible panel, because the gesture that closes one can be
+        aimed at any of them and the marker is what says which."""
         self._refresh_results_title()
+        with contextlib.suppress(Exception):
+            self._outline._refresh_title()
         with contextlib.suppress(Exception):
             self._scope._refresh_collections_panel_title()
         with contextlib.suppress(Exception):
@@ -958,6 +995,10 @@ class FNDApp(App[None]):
             pass
         self._refresh_preview_match_indicator()
         self._refresh_footer_hints()
+        # Runs on every preview file activation, and from Settings and mount
+        # teardown too, where the pane may be gone.
+        with contextlib.suppress(Exception):
+            self._outline.sync()
         # A new result set changes how many rows the results pane wants.
         self._reflow_sidebar()
 
@@ -1005,7 +1046,8 @@ class FNDApp(App[None]):
         if not self._preview_scroll.is_armed:
             return False
         anchor = getattr(self._preview_scroll, "anchor", None)
-        if anchor is None:
+        # An outline jump aims at a heading and makes no claim about a match.
+        if anchor is None or anchor.intent == "chunk_top":
             return False
         chunks = self._preview.chunk_cache.get(anchor.parent_id)
         if not chunks:
@@ -1099,6 +1141,8 @@ class FNDApp(App[None]):
                 return "query"
             if wid == "results_pane":
                 return "results"
+            if wid == "outline_pane":
+                return "outline"
             if wid == "collections_panel_tree":
                 return "collections"
             if wid in ("filters_panel_tree", "clear_filters_bar"):
@@ -1127,7 +1171,7 @@ class FNDApp(App[None]):
             ("Esc", "Results"),
         ),
         "results": (
-            ("o", "Open"),
+            ("{alt_key}+O/Ctrl+O", "Open"),
             ("z", "Reading View"),
             ("{alt_key}↑↓", "Skim"),
             ("Tab", "Search"),
@@ -1138,6 +1182,11 @@ class FNDApp(App[None]):
         ),
         "filters": (
             ("Enter", "Toggle"),
+            ("←/→", "Collapse"),
+            ("Esc", "Results"),
+        ),
+        "outline": (
+            ("Enter", "Go to"),
             ("←/→", "Collapse"),
             ("Esc", "Results"),
         ),
@@ -1204,6 +1253,7 @@ class FNDApp(App[None]):
     # border. ``query``/``global`` map to nothing — no pane is accented.
     _FOCUS_BORDER_PANES: ClassVar[dict[str, str]] = {
         "results": "#results_pane",
+        "outline": "#outline_pane",
         "collections": "#collections_panel_tree",
         "filters": "#filters_pane",
         "preview": "#preview_pane",
@@ -1212,6 +1262,14 @@ class FNDApp(App[None]):
     def on_descendant_focus(self) -> None:
         self._refresh_footer_hints()
         self._sync_focus_border()
+        # Only a move INTO the preview sets where Left goes: the terminal
+        # regaining focus, or a modal closing, lands back in it from nowhere.
+        context = self._focus_context()
+        if context == "preview" and self._last_pane_context != "preview":
+            self._preview_return = self._preview_bridge or "#results_pane"
+        self._preview_bridge = None
+        if context != "global":
+            self._last_pane_context = context
 
     def _sync_focus_border(self) -> None:
         """Move the ``-focused`` accent border onto the logically-focused pane.
@@ -1321,6 +1379,12 @@ class FNDApp(App[None]):
         self._preview.cancel_pending_load()
         self._load_result_node(ev.node.data)
 
+    @on(Tree.NodeSelected, "#outline_pane")
+    def _on_outline_selected(self, ev: Tree.NodeSelected[Any]) -> None:
+        ev.stop()
+        data = ev.node.data
+        self._outline.jump(data.get("index") if isinstance(data, dict) else None)
+
     def _load_result_node(self, data: Any) -> None:
         # Same cursor→target mapping the settle-time paint check reads, so the
         # loader and the check can never disagree about which file is selected.
@@ -1411,7 +1475,7 @@ class FNDApp(App[None]):
 
     # Note: we deliberately do NOT bind Tree.NodeSelected to opener.open_smart.
     # Per user feedback, clicking / Enter should populate the preview only;
-    # opening externally requires the explicit `o` (open at locator) or `O`
+    # opening externally requires the explicit Open chord (open at locator) or `O`
     # (open default app) bindings. Selection still fires NodeHighlighted
     # which drives the preview render via `_on_tree_highlight`.
 
@@ -1628,7 +1692,7 @@ class FNDApp(App[None]):
         registry = apps_mod.build_registry(cfg) if cfg is not None else apps_mod.BUILTIN_APPS
         app_defaults: dict[str, str] = dict(getattr(cfg, "app_defaults", {})) if cfg else {}
         # Mirror open_smart's auto-promote ladder so the modal's
-        # highlighted default matches what `o` would fire.
+        # highlighted default matches what Open would fire.
         if "pdf" not in app_defaults:
             if opener._has_skim():
                 app_defaults["pdf"] = "skim"
@@ -1694,6 +1758,8 @@ class FNDApp(App[None]):
         ctx = self._focus_context()
         if ctx == "results":
             return self.query_one("#results_pane", Tree)
+        if ctx == "outline":
+            return self.query_one("#outline_pane", Tree)
         if ctx == "collections":
             return self.query_one("#collections_panel_tree", Tree)
         if ctx == "filters":
@@ -1746,6 +1812,7 @@ class FNDApp(App[None]):
         try:
             column = self.query_one("#results_column", Vertical)
             results = self.query_one("#results_pane", Tree)
+            outline = self.query_one("#outline_pane", Tree)
             collections = self.query_one("#collections_panel_tree", Tree)
             filters_pane = self.query_one("#filters_pane", Vertical)
             filters_tree = self.query_one("#filters_panel_tree", Tree)
@@ -1767,6 +1834,16 @@ class FNDApp(App[None]):
                     int(results.virtual_size.height) + 2,
                     "collapsed" in results.classes,
                     3,
+                ),
+            ),
+            (
+                outline,
+                Panel(
+                    "outline_pane",
+                    reserved_demand(avail),
+                    "collapsed" in outline.classes,
+                    2,
+                    reserved=True,
                 ),
             ),
             (
@@ -1823,6 +1900,11 @@ class FNDApp(App[None]):
         if "collapsed" in frame.classes:
             return
         node = tree.cursor_node
+        if isinstance(tree, OutlineTree) and tree.cursor_line < 0:
+            # No heading under the cursor (a placeholder, or text before the
+            # first heading): Left is at the top already.
+            self._collapse_panel_frame(frame)
+            return
         if node is None:
             return
         if not node.children or not node.is_expanded:
@@ -1831,17 +1913,21 @@ class FNDApp(App[None]):
             if parent is None or parent is tree.root:
                 # Top of the tree, already collapsed — collapse the
                 # entire panel to its header strip.
-                if frame.id:
-                    frame.add_class("collapsed")
-                    self._scope.collapsed_panels.add(frame.id)
-                    self._scope.persist()
-                    self._reflow_sidebar(immediate=True)  # collapse in one frame
-                    self._refresh_panel_titles()
+                self._collapse_panel_frame(frame)
                 return
             parent.collapse()
             tree.move_cursor(parent)
             return
         node.collapse()
+
+    def _collapse_panel_frame(self, frame: Widget) -> None:
+        """Shrink a sidebar panel to its header strip, persisted."""
+        if frame.id:
+            frame.add_class("collapsed")
+            self._scope.collapsed_panels.add(frame.id)
+            self._scope.persist()
+            self._reflow_sidebar(immediate=True)  # collapse in one frame
+            self._refresh_panel_titles()
 
     def action_tree_smart_expand(self) -> None:
         """Right-arrow companion to ``action_tree_smart_collapse``.
@@ -1855,6 +1941,8 @@ class FNDApp(App[None]):
         - Leaf in the results tree → bridge focus to the preview pane
           (the user has already pinned the match; the next natural move
           is to start reading).
+        - Outline: an expanded heading or a leaf bridges to the preview too,
+          jumping to that heading first if the cursor has left the reader.
         - Leaf elsewhere / no children → no-op.
         """
         tree = self._focused_tree()
@@ -1870,6 +1958,15 @@ class FNDApp(App[None]):
             self._refresh_panel_titles()
             return
         node = tree.cursor_node
+        if isinstance(tree, OutlineTree):
+            if node is None or tree.cursor_line < 0:
+                return
+            if node.children and not node.is_expanded:
+                node.expand()
+                self._move_cursor_to_first_child(tree, node)
+            else:
+                self._outline.enter_preview()
+            return
         if node is None or not node.children:
             if node is not None and tree.id == "results_pane":
                 self.action_focus_preview_pane()
@@ -2040,6 +2137,18 @@ class FNDApp(App[None]):
         """Single-key teleport from anywhere → preview pane."""
         self.query_one("#preview_pane").focus()
 
+    def bridge_to_preview(self, origin: str) -> None:
+        """Right from a sidebar pane into the preview; Left comes back to it."""
+        self._preview_bridge = origin
+        self.action_focus_preview_pane()
+
+    def action_leave_preview(self) -> None:
+        """Left from the preview: back to the pane that bridged into it."""
+        for selector in (self._preview_return, "#results_pane"):
+            with contextlib.suppress(NoMatches):
+                self.query_one(selector).focus()
+                return
+
     def action_clear_filters(self) -> None:
         """Reset every active filter (file type, dates, tags) to default.
         Collection/source scope is untouched. No-op when nothing is active."""
@@ -2073,6 +2182,12 @@ class FNDApp(App[None]):
     def action_focus_collections_panel(self) -> None:
         """Single-key teleport from anywhere → collections sidebar panel."""
         self.query_one("#collections_panel_tree", Tree).focus()
+
+    def action_focus_outline_panel(self) -> None:
+        """Single-key teleport from anywhere → Outline panel."""
+        # `o` also fires over Settings or a modal, whose screen has no pane.
+        with contextlib.suppress(NoMatches):
+            self.query_one("#outline_pane", Tree).focus()
 
     @on(Tree.NodeSelected, "#filters_panel_tree")
     def _on_filters_panel_selected(self, ev: Tree.NodeSelected[dict[str, object]]) -> None:
@@ -2137,7 +2252,7 @@ class FNDApp(App[None]):
         1.5. If reading view is active, exit it (restore the sidebar).
         2. Otherwise, branch on the current focus context:
 
-           - ``query`` / ``preview`` / ``filters`` / ``collections``
+           - ``query`` / ``preview`` / ``outline`` / ``filters`` / ``collections``
              → focus the results pane.
            - ``results`` / ``global`` → no-op (you're already at the
              primary pane, or no pane is recognised).
@@ -2164,7 +2279,7 @@ class FNDApp(App[None]):
 
         # Step 2 — cascade focus toward the results pane.
         ctx = self._focus_context()
-        if ctx in ("query", "preview", "filters", "collections"):
+        if ctx in ("query", "preview", "outline", "filters", "collections"):
             import contextlib
 
             with contextlib.suppress(Exception):
@@ -2235,6 +2350,8 @@ class FNDApp(App[None]):
                 return "Preview pane"
             if wid == "results_pane":
                 return "Results pane"
+            if wid == "outline_pane":
+                return "Outline panel"
             if wid in ("filters_panel", "filters_panel_tree"):
                 return "Filters panel"
             if wid in ("collections_panel", "collections_panel_tree"):
