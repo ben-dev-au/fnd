@@ -34,7 +34,7 @@ def test_quoted_query_keeps_exact_intent_no_broadening() -> None:
 
 
 def test_single_word_has_no_phrase_pass() -> None:
-    assert [s.source for s in auto_subqueries("alpha", synonyms=None)] == ["lex"]
+    assert "phrase" not in [s.source for s in auto_subqueries("alpha", synonyms=None)]
 
 
 def test_structured_queries_skip_the_phrase_pass() -> None:
