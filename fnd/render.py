@@ -30,22 +30,24 @@ _HEADING_KINDS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 # both "penfold" and "penfolds" (Tantivy's en_stem on F_BODY).
 # threading.local: snowballstemmer instances aren't thread-safe.
 _STEMMER_LOCAL = threading.local()
-HIGHLIGHT_STYLE = "bold black on #ffd866"
+# Colours are RGB, never ANSI names: Textual's opacity blend skips ANSI colours,
+# so an ANSI foreground shows through a preview hidden at opacity 0.
+HIGHLIGHT_STYLE = "bold #1a1a1a on #ffd866"
 # Mismatch overlay for fuzzy-pass hits — orange so the eye can read
 # at a glance which char(s) in a near-match diverge from what the user
 # typed. Same black foreground as HIGHLIGHT_STYLE so adjacent
 # yellow/orange runs feel like one painted word.
-MISMATCH_STYLE = "bold black on #ff9e64"
+MISMATCH_STYLE = "bold #1a1a1a on #ff9e64"
 # Per-term match palette: in a multi-word query each distinct term highlights
 # in its own colour so the eye can tell which match is which. Slot 0 is
 # HIGHLIGHT_STYLE, so single-term queries are unchanged. The orange
 # MISMATCH_STYLE is shared across terms for the variance/wildcard-filled chars.
 MATCH_STYLES = [
     HIGHLIGHT_STYLE,  # yellow
-    "bold black on #7dcfff",  # cyan
-    "bold black on #9ece6a",  # green
-    "bold black on #bb9af7",  # purple
-    "bold black on #82aaff",  # blue
+    "bold #1a1a1a on #7dcfff",  # cyan
+    "bold #1a1a1a on #9ece6a",  # green
+    "bold #1a1a1a on #bb9af7",  # purple
+    "bold #1a1a1a on #82aaff",  # blue
 ]
 # Dimmed ("receded") variants, used for proximity-group matches that fall OUTSIDE
 # a qualifying co-occurrence window: each swatch is a ~50/50 blend of the full
